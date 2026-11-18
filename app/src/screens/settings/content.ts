@@ -137,8 +137,8 @@ export function settingsPage(tab: string, env: Env): Page {
   const modeLabels = modes.filter(m => m.on).map(m => m.label)
   const defaultMode = modes.find(m => m.id === defaultModeId(data, saved))?.label ?? modeLabels[0]
   const modeRows = modes.map((m): Row => ({
-    title: m.label, desc: `${m.model} · ${m.sub}${m.label === defaultMode ? (env.phone ? ". It stays on while it's the default." : ". It stays on while it's the default. Pick another default to turn it off.") : ''}`, kind: 'mode', need: 0, key: modeEffortKey(m.id), value: EFFORTS.find(([e]) => e === m.effort)![1], options: EFFORTS.map(([, label]) => label),
-    switchKey: modeOnKey(m.id), switchOn: m.on, switchTip: m.label === defaultMode ? 'This is the default model' : undefined, keywords: 'effort how hard it thinks',
+    title: m.label, desc: `${m.model} · ${m.sub}${m.label === defaultMode ? ' · stays on as the default' : ''}`, kind: 'mode', need: 0, key: modeEffortKey(m.id), value: EFFORTS.find(([e]) => e === m.effort)![1], options: EFFORTS.map(([, label]) => label),
+    switchKey: modeOnKey(m.id), switchOn: m.on, switchTip: m.label === defaultMode ? 'This is the default model. Pick another default to turn it off.' : undefined, keywords: 'effort how hard it thinks',
   }))
   const approvers = [...people.members.filter(m => (saved[`p:${m.id}`] ?? m.role) !== 'Member').map(m => m.name), 'Anyone who approves']
   const ruleApprover = (r: { approver: string }, i: number) => saved[`a:${i}`] ?? r.approver

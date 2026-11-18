@@ -1,5 +1,6 @@
 // Skills list.
 import { agent } from '../agent'
+import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
 import type { SkillTab } from '../state/store'
@@ -63,7 +64,7 @@ export function Skills() {
           const key = listKey(s.n)
           const off = !locked && st.toggles[skillKey(s.n)] === false
           return (
-            <div key={key} className="relative flex items-center gap-3.5 rounded-xl p-3 hover:bg-card">
+            <div key={key} className="relative flex items-start gap-3.5 rounded-xl p-3 hover:bg-card">
               <IconTile icon={s.icon} iconSize={22} size="xl" tone={locked ? 'locked' : s.need === 2 && S === 2 ? 'brand' : 'ink'} />
               <div className="min-w-0 flex-1">
                 <div className={`flex items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>
@@ -72,7 +73,7 @@ export function Skills() {
                   {locked && <StageTag tag={STAGE_TAGS[s.need]} />}
                   {off && <Badge variant="muted">Off</Badge>}
                 </div>
-                <div className="text-sm text-muted-foreground">{s.d}</div>
+                <div className="text-sm text-pretty text-muted-foreground">{keepUnitsTogether(s.d)}</div>
                 <div className="mt-0.5 text-xs text-muted-foreground">{s.by} · {s.used}</div>
               </div>
             </div>
@@ -91,13 +92,13 @@ export function Skills() {
             showToast(`Your Inhouse team will add "${s.n}" and test it first`)
           }
           return (
-            <div key={suggestKey(s.n)} className="flex items-center gap-3.5 rounded-xl p-3">
+            <div key={suggestKey(s.n)} className="flex items-start gap-3.5 rounded-xl p-3">
               <IconTile icon={s.icon} iconSize={22} size="xl" tone="outline" />
               <div className="min-w-0 flex-1">
                 <div className="text-md font-strong">{s.n}</div>
-                <div className="text-sm text-muted-foreground">{s.d}</div>
+                <div className="text-sm text-pretty text-muted-foreground">{keepUnitsTogether(s.d)}</div>
               </div>
-              <Button variant={req ? 'requested' : 'outline'} disabled={req} onClick={add} className="flex-none">
+              <Button variant={req ? 'requested' : 'outline'} disabled={req} onClick={add} className="flex-none self-center">
                 {req && <Icon name="check" size={17} />}{req ? 'Requested' : 'Request'}
               </Button>
             </div>

@@ -1,6 +1,7 @@
 // Tools list and the single tool page.
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
+import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, toolCounts, toolDetail, toolView } from '../state/derive'
 import type { ToolState } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
@@ -20,7 +21,7 @@ const DOT_OF: Record<ToolState, string> = { connecting: AMBER_DOT, disconnected:
 const SECTION_HEAD = 'mb-1.5'
 const rule = <Separator className="my-4.5 bg-border" />
 const NAME = 'text-md font-strong'
-const DESC = 'text-sm text-muted-foreground'
+const DESC = 'text-sm text-pretty text-muted-foreground'
 const ROW = 'flex w-full items-center gap-3.5 rounded-xl p-3 text-left transition-colors hover:bg-card'
 const LABEL = 'mt-7 mb-2.5'
 const CARD = 'rounded-2xl border border-border bg-card'
@@ -92,7 +93,7 @@ export function Tools() {
 
       {channels.length > 0 && <>
       <SectionHeader title="Channels" count={channels.length} className={SECTION_HEAD} />
-      <CardGrid size="lg" variant="rows">
+      <CardGrid size="lg" variant="rows" className={channels.length === 1 ? 'grid-cols-1' : undefined}>
         {channels.map(c => {
           const locked = S < c.need
           return (
@@ -228,7 +229,7 @@ export function ToolPage() {
         <div className="relative mx-auto flex max-w-160 flex-col gap-2.5">
           {view.examples.map(t => (
             <button key={t} type="button" data-tool-example onClick={() => { void ask(t) }} className="flex w-full items-center gap-3 rounded-2xl bg-card/90 py-3 pr-3 pl-4 text-left shadow-card transition-colors hover:bg-card">
-              <span className="min-w-0 flex-1 text-md">{t}</span>
+              <span className="min-w-0 flex-1 text-md text-pretty">{keepUnitsTogether(t)}</span>
               <span className="flex size-8.5 flex-none items-center justify-center rounded-full bg-fill">
                 <Icon name="arrow_forward" size={18} />
               </span>

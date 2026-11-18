@@ -3,9 +3,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
+import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
-import { Avatar, Button, EmptyState, Icon, IconButton, NavItem, PageHeader, SectionHeader, StageTag, Switch, SwitchLook } from '../ui'
+import { Avatar, Button, EmptyState, Icon, IconButton, InhouseMark, NavItem, PageHeader, SectionHeader, StageTag, Switch, SwitchLook } from '../ui'
 import { Confirm, SearchBox, Select, TAP } from '../ui/fields'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -96,11 +97,15 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row:
   // A team setting on a phone is read, not changed (D4): the value as text, no control. A button only opens something
   // (the team window, a page) or does a job (pause, forget, export), so it keeps working.
   if (readOnly && row.kind !== 'button' && row.kind !== 'photo') {
+    // One placement for every kind: at the row's right edge, level with the title, wrapping inside a share of the row.
+    const VALUE = 'max-w-2/5 flex-none text-right text-base text-pretty text-foreground-2'
+    // A part never breaks inside, and the dot goes with the part after it, so no line ends on a stranded dot.
+    const parts = (...p: string[]) => p.map((t, i) => <span key={t} className="whitespace-nowrap">{i > 0 && '· '}{t}</span>).flatMap((e, i) => i > 0 ? [' ', e] : [e])
+    if (row.kind === 'mode') return <span className={VALUE}>{parts(row.value, row.switchOn ? 'team can use it' : 'turned off')}</span>
     const shown = row.kind === 'toggle' ? (on ? 'On' : 'Off')
-      : row.kind === 'mode' ? `Effort: ${row.value} · ${row.switchOn ? 'team can use it' : 'team can\'t use it'}`
       : row.kind === 'select' ? `${row.labels?.[row.value] ?? row.value}${row.tag ? ` · ${row.tag}` : ''}`
       : row.value
-    return shown ? <span className="text-right text-base text-foreground-2">{shown}</span> : null
+    return shown ? <span className={VALUE}>{shown}</span> : null
   }
   switch (row.kind) {
     case 'select': {
@@ -146,6 +151,10 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row:
       return <PhotoControl personId={row.avatar!.who} locked={locked} />
   }
 }
+
+/** The Inhouse team's mark, round and the size of a person's avatar, for a line the team wrote. */
+const isTeam = (who: string) => who.includes('Inhouse team')
+const TeamMark = () => <span aria-hidden="true" className="flex size-9 items-center justify-center rounded-full bg-fill"><InhouseMark size={16} /></span>
 
 /** Saves a file from the browser. */
 function download(file: string, text: string, type: string) {
@@ -201,6 +210,8 @@ export function Settings() {
   }
   const page = settingsPage(setTab, env)
   const readOnly = phone && setTab.startsWith('team-')
+  // The note is for a page where a control became text; a page of buttons and plain facts has nothing to explain.
+  const hidesControls = readOnly && page.sections.some(sec => sec.rows.some(r => r.kind === 'toggle' || r.kind === 'select' || r.kind === 'text' || r.kind === 'mode'))
 
   // Search: a menu page matches by its name, or by the name or text of any row on it.
   const [query, setQuery] = useState('')
@@ -255,9 +266,9 @@ export function Settings() {
               </div>
             )
             : <PageHeader title={page.title} className="mb-1" />}
-          {readOnly && (
+          {hidesControls && (
             <p role="note" className="mt-3 flex items-center gap-2 text-sm text-foreground-3">
-              <Icon name="desktop_windows" size={16} className="flex-none" />Change team settings on a computer. You can read them here.
+              <Icon name="desktop_windows" size={16} className="flex-none" />Change these on a computer.
             </p>
           )}
           {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (
@@ -273,16 +284,19 @@ export function Settings() {
                     <span aria-hidden="true" className="invisible inline-flex items-center gap-2"><SwitchLook on /><span className="w-6" /></span>
                   </div>
                 )}
+                {readOnly && sec.caption && <div className="pt-4 text-xs text-muted-foreground">{sec.caption}</div>}
                 {sec.rows.map((row, i) => {
                   const locked = S < row.need
                   const on = !locked && (st.toggles[row.key ?? ''] ?? row.def ?? false)
+                  // A value shown as text (a team page on a phone) sits level with the title, never under the description.
+                  const asText = readOnly && row.kind !== 'button' && row.kind !== 'photo'
                   return (
-                    <div key={`${row.title}|${i}`} className={`flex flex-wrap items-center gap-x-6 gap-y-3 py-4 ${row.kind === 'mode' ? '@xl:flex-nowrap' : ''} ${i === 0 ? '' : 'border-t border-divider'}`}>
-                      <div className="flex min-w-0 grow basis-65 items-center gap-3.5">
-                        {row.avatar?.at === 'row' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={row.kind === 'photo' ? 48 : 36} /></span>}
+                    <div key={`${row.title}|${i}`} className={cn('flex gap-x-6 gap-y-3 py-4', asText ? 'items-start gap-x-4' : 'flex-wrap items-center', row.kind === 'mode' && '@xl:flex-nowrap', i > 0 && 'border-t border-divider')}>
+                      <div className={cn('flex min-w-0 grow items-center gap-3.5', asText ? 'basis-0' : 'basis-65')}>
+                        {row.avatar?.at === 'row' && (memberFor(data, row.avatar.who, userName(ctx)) || isTeam(row.avatar.who)) && <span className={cn('flex flex-none', locked && 'grayscale')}>{isTeam(row.avatar.who) ? <TeamMark /> : <Avatar who={row.avatar.who} size={row.kind === 'photo' ? 48 : 36} />}</span>}
                         <div className="min-w-0 flex-1">
                           <div className={`flex items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>{row.title}{locked && <StageTag tag={STAGE_TAGS[row.need]} />}</div>
-                          {row.desc && <div className="mt-0.5 text-sm text-pretty text-muted-foreground">{row.desc}</div>}
+                          {row.desc && <div className="mt-0.5 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(row.desc)}</div>}
                         </div>
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}

@@ -38,7 +38,7 @@ test('Phone: Settings opens on its menu, a page replaces it, and Back returns to
   await expect(nav).toHaveCount(0)
   // Team settings are read on a phone: the cap shows as text.
   await expect(page.getByRole('textbox', { name: 'Monthly cap' })).toHaveCount(0)
-  await expect(page.getByRole('note')).toContainText('Change team settings on a computer')
+  await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(page.locator('main')).toContainText('$250')
   expect(await page.locator('main').evaluate(e => e.scrollTop)).toBe(0)
   expect(await noSideways(page)).toBe(true)

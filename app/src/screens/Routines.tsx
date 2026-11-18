@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { agent } from '../agent'
+import { keepUnitsTogether } from '../agent/clock'
 import type { RoutineDef } from '../agent'
 import { flags, routineRuns, STAGE_TAGS, whenOf } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
@@ -83,7 +84,7 @@ export function Routines() {
           const mode = modeOf(r, S, locked)
           const next = !locked && paused ? 'Paused' : String(r.next || '').replace(/^Next run /, '')
           return (
-            <li key={it.id} className={cn('relative flex items-center rounded-2xl border border-border bg-card transition-colors hover:bg-accent', phone ? 'gap-3 px-4 py-4' : 'gap-4 px-5 py-4.5')}>
+            <li key={it.id} className={cn('relative flex items-center rounded-2xl border border-border bg-card transition-colors hover:bg-accent', phone ? 'flex-wrap gap-x-3 px-4 py-4' : 'gap-4 px-5 py-4.5')}>
               <div className="min-w-0 flex-1">
                 <div className={`flex flex-wrap items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>
                   {/* The name opens the details; its tap area covers the whole row. */}
@@ -97,9 +98,7 @@ export function Routines() {
                   </Badge>
                   {mode && <span>{mode}</span>}
                 </div>
-                {!locked && <div className="mt-2 text-sm text-muted-foreground">{lastOf(st.routineRuns, r) || 'Not run yet'}</div>}
-                {/* A phone has no room for a next-run column beside the text: the line sits under it. */}
-                {phone && next && <div className="mt-2 text-xs text-muted-foreground">Next run <span className={`text-sm font-medium whitespace-nowrap ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
+                {!phone && !locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r) || 'Not run yet')}</div>}
               </div>
               <div className="relative flex flex-none flex-col items-end gap-2.5 text-right">
                 {!phone && <div className="text-xs text-muted-foreground">Next run<span className={`block text-sm font-medium ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
@@ -108,6 +107,13 @@ export function Routines() {
                   <Switch on={on && !paused} label={`${r.name} on or off`} onChange={locked ? undefined : () => agent.setToggle(it.key, !on)} />
                 </div>
               </div>
+              {/* A phone has no room beside the switch: the last run and the next run take the row's full width under it. */}
+              {phone && (
+                <div className="basis-full">
+                  {!locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r) || 'Not run yet')}</div>}
+                  {next && <div className="mt-2 text-xs text-muted-foreground">Next run <span className={`text-sm font-medium whitespace-nowrap ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
+                </div>
+              )}
             </li>
           )
         })}

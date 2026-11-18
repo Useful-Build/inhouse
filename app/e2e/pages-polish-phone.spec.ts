@@ -13,7 +13,7 @@ test('Phone: team settings read as text with a note, your own settings keep thei
     sessionStorage.setItem('e2e-seeded', '1')
   })
   await page.goto('/?demo#/settings/team-spend')
-  await expect(page.getByRole('note')).toContainText('Change team settings on a computer. You can read them here.')
+  await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(page.getByRole('textbox', { name: 'Monthly cap' })).toHaveCount(0)
   await expect(page.getByRole('combobox')).toHaveCount(0)
   await expect(page.locator('main')).toContainText('$250')

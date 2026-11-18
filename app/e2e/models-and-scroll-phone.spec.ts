@@ -31,11 +31,13 @@ test('Phone: the Models page fits and reads as text', async ({ page }) => {
   await start(page, '#/settings/team-modes')
   expect(await noSideways(page)).toBe(true)
   // Team settings are read on a phone (D4): the values show as text, with no control to change them.
-  await expect(page.getByRole('note')).toContainText('Change team settings on a computer')
+  await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(page.getByRole('switch')).toHaveCount(0)
   await expect(page.getByRole('combobox')).toHaveCount(0)
   await expect(page.locator('main')).toContainText('Instant')
-  await expect(page.locator('main')).toContainText('Effort: Low · team can use it')
+  await expect(page.locator('main')).toContainText('Low · team can use it')
+  // One "How hard it thinks" caption over the rows, not "Effort:" on each.
+  await expect(page.locator('main').getByText('How hard it thinks', { exact: true })).toHaveCount(1)
   // The last row, the default model, is on the page, and the page's own main is the scroll area.
   await expect(page.locator('main').getByText('Default model', { exact: true })).toBeVisible()
   expect(await page.locator('main').evaluate(el => ['auto', 'scroll'].includes(getComputedStyle(el).overflowY))).toBe(true)

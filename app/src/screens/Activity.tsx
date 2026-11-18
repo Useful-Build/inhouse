@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { agent } from '../agent'
-import { plainSpaces } from '../agent/clock'
+import { keepUnitsTogether, plainSpaces } from '../agent/clock'
 import { activityRows, groupByDay, memberFor, userName } from '../state/derive'
 import type { ActivityRow } from '../state/derive'
 import type { ActivityFilter } from '../state/store'
@@ -65,9 +65,9 @@ export function Activity() {
                       <Icon name={r.icon} size={17} />
                     </span>
                     <span className="min-w-0 flex-1">
-                      {r.text}
+                      {keepUnitsTogether(r.text)}
                       {/* A phone has no room for the time and the person beside the line: they sit under it. */}
-                      {phone && <span className="mt-0.5 block text-xs text-muted-foreground"><span className="font-mono whitespace-nowrap">{r.t}</span> · {r.who}</span>}
+                      {phone && <span className="mt-0.5 block text-xs text-pretty text-muted-foreground"><span className="font-mono whitespace-nowrap">{r.t}</span> · {r.who}</span>}
                     </span>
                     {!phone && <span className="inline-flex items-center gap-1.75 text-xs whitespace-nowrap text-muted-foreground">{memberFor(ctx.data, r.whoBy ?? r.who, userName(ctx)) && <Avatar who={r.whoBy ?? r.who} size={20} fontSize={9} />}{r.who}</span>}
                     <Icon name={isOpen ? 'expand_less' : 'expand_more'} size={18} className="text-muted-foreground" />
