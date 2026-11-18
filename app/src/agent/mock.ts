@@ -22,7 +22,14 @@ import { listNames, pendingIds, visibleProblems } from '../state/derive'
  */
 const DATA_OVERRIDE_KEY = 'inhouse.demo.data.v1'
 const override = (() => {
-  try { return (JSON.parse(localStorage.getItem(DATA_OVERRIDE_KEY) ?? '{}') ?? {}) as { brandName?: string; channels?: false } } catch { return {} }
+  try {
+    const raw = (JSON.parse(localStorage.getItem(DATA_OVERRIDE_KEY) ?? '{}') ?? {}) as Record<string, unknown>
+    // Only these shapes count: a non-empty brand name, and `channels: false`. Anything else is ignored.
+    return {
+      brandName: typeof raw.brandName === 'string' && raw.brandName ? raw.brandName : undefined,
+      channels: raw.channels === false ? false as const : undefined,
+    }
+  } catch { return { brandName: undefined, channels: undefined } }
 })()
 const meta = override.brandName ? { ...sampleMeta, brand: { ...sampleMeta.brand, name: override.brandName } } : sampleMeta
 const tools = override.channels === false ? { ...sampleTools, channels: [] } : sampleTools
@@ -654,6 +661,7 @@ export class MockAgent implements AgentClient {
     this.created.clear()
     this.runInfo.clear()
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
+    try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
     this.commit(initialState())
   }
 

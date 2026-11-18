@@ -176,6 +176,11 @@ export const usageHistory = (usageHistoryJson.months as RawMonth[]).map(m => ({
   breakdown: usageRows(m.breakdown),
 }))
 
+/** Each job the agent may finish has a stable id (its Run limits toggle is saved as `l:<id>`), checked once at load. */
+for (const j of peopleJson.runLimits.jobsAgentMayFinish as { id?: unknown }[]) {
+  if (typeof j.id !== 'string' || !j.id) throw new Error('Sample data: a job in runLimits.jobsAgentMayFinish has no id.')
+}
+if (new Set(peopleJson.runLimits.jobsAgentMayFinish.map(j => j.id)).size !== peopleJson.runLimits.jobsAgentMayFinish.length) throw new Error('Sample data: runLimits.jobsAgentMayFinish has a repeated id.')
 export const people = peopleJson
 
 const memLines = (group: string, rows: { text: string; source: string }[]): MemoryLine[] =>

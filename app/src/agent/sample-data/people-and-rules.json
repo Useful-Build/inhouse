@@ -57,10 +57,10 @@
   ],
   "runLimits": {
     "jobsAgentMayFinish": [
-      { "name": "Restock returns", "desc": "When ShipBob marks a return as sellable." },
-      { "name": "Chase late suppliers", "desc": "One polite chase per purchase order." },
-      { "name": "Nudge ShipBob on stuck orders", "desc": "After 3 days without a pick." },
-      { "name": "Pause oversold variants", "desc": "Pauses the variant. Customer emails still wait." }
+      { "id": "returns", "name": "Restock returns", "desc": "When ShipBob marks a return as sellable." },
+      { "id": "chase", "name": "Chase late suppliers", "desc": "One polite chase per purchase order." },
+      { "id": "nudge", "name": "Nudge ShipBob on stuck orders", "desc": "After 3 days without a pick." },
+      { "id": "pause", "name": "Pause oversold variants", "desc": "Pauses the variant. Customer emails still wait." }
     ],
     "alwaysWaitsForAPerson": [
       "Money",

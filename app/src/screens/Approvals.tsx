@@ -1,4 +1,4 @@
-import { amountOf, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, userName, visibleProblems } from '../state/derive'
+import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, userName, visibleProblems } from '../state/derive'
 import { sevClass } from '../ui/severity'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -23,7 +23,8 @@ export function Approvals() {
   const sort = useUi(s => s.approvalSort)
   const tap = phone ? TAP : undefined
   const { S, agent } = ctx
-  const channel = ctx.data.tools.channels[0]
+  // The copy describes Act, so it names the channel Act connects.
+  const channel = channelFrom(ctx.data, 1)
   const where = channel ? `here or in ${channel.name}` : 'here'
   // Sorted on the minute of the day, never on the shown "6:02 AM". Drafts made at the same minute keep the agent's
   // order, whichever way time sorts.

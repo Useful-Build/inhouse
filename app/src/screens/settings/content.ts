@@ -1,6 +1,6 @@
 // Settings content. Pure data: the screen renders it.
 import type { AgentData, AgentState, MemoryLine, StageIndex } from '../../agent/types'
-import { STAGE_TAGS, listNames } from '../../state/derive'
+import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
 import type { Theme } from '../../lib/theme'
@@ -120,13 +120,16 @@ export function settingsPage(tab: string, env: Env): Page {
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
   const teach = R('Teach it something', 'Tell it a rule in a chat, in your own words. It appears here.', 'button', 'Teach in a chat', 1, undefined, undefined, () => env.newChat('Remember that '))
   const lim = people.runLimits
-  const limKeys = ['l:returns', 'l:chase', 'l:nudge', 'l:pause']
-  // The channel the team hears from the agent on, when one is connected (the first). None: no channel wording or option.
-  const channel = data.tools.channels[0]?.name
+  // These rows start at Act, so they name the channel Act connects. None: no channel wording or option.
+  const channel = channelFrom(data, 1)?.name
+  const alertOptions = channel ? ['Email', channel, `Email and ${channel}`, 'In the app only'] : ['Email', 'In the app only']
+  // A saved choice that isn't an option now (another channel, or none) shows and counts as the default.
+  const savedTo = agent.settings['n:channel']
+  const alertsTo = savedTo && alertOptions.includes(savedTo) ? savedTo : (channel ?? 'Email')
   const auditRow = (e: { who: string; what: string; detail: string; at: string }) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${e.at}`, 'value'), e.who)
   const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Routines and jobs stopped · ${agent.paused}`, 'value'), me.id)] : []
   const nextStage = S < 2
-    ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...data.tools.channels.filter(c => c.need === 1).map(c => c.name)])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
+    ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...(channel ? [channel] : [])])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
     : 'You have every stage. Money and customer actions still wait for a person.'
   const stageDesc = ['Watch: your Inhouse agent reads every tool and changes nothing.', 'Act: your Inhouse agent does real work, and each piece waits for approval.', 'Run: your Inhouse agent handles agreed jobs by itself, within your limits.'][S]
 
@@ -166,7 +169,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Region', rows: [{ ...sel('Time zone', "Your team's time zone.", 'g:tz', 'America/New_York', Object.keys(TIME_ZONES)), labels: TIME_ZONES }] },
     ] },
     'you-notif': { title: 'Notifications', sections: [
-      { label: 'Alerts', rows: [sel('Approvals waiting', 'When your Inhouse agent drafts something for you.', 'n:wait', 'Right away', ['Right away', 'Once an hour', 'Once a day'], 1), sel('Send alerts to', 'Where your Inhouse agent tells you about approvals and problems.', 'n:channel', channel ?? 'Email', channel ? ['Email', channel, `Email and ${channel}`, 'In the app only'] : ['Email', 'In the app only'], 1), ...(channel ? [R(channel, `Ask your Inhouse agent and approve work in ${channel}.`, 'toggle', '', 1, 'n:slack', true)] : []), R('Weekly report', 'Fridays at 4:00\u00a0PM.', 'toggle', '', 1, 'n:weekly', true)] },
+      { label: 'Alerts', rows: [sel('Approvals waiting', 'When your Inhouse agent drafts something for you.', 'n:wait', 'Right away', ['Right away', 'Once an hour', 'Once a day'], 1), SEL('Send alerts to', 'Where your Inhouse agent tells you about approvals and problems.', 'n:channel', alertsTo, alertOptions, 1), ...(channel ? [R(channel, `Ask your Inhouse agent and approve work in ${channel}.`, 'toggle', '', 1, 'n:slack' /* the channel toggle: the key stays so saved demo state still lines up */, true)] : []), R('Weekly report', 'Fridays at 4:00\u00a0PM.', 'toggle', '', 1, 'n:weekly', true)] },
     ] },
     'you-memory': { title: 'Memory', sections: [
       { label: 'What your Inhouse agent knows about you', rows: forgetRows(memory.personal) },
@@ -195,7 +198,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Rules', rows: people.approvalRules.map((r, i) => withAvatar({ ...sel(r.what, r.detail, `a:${i}`, r.approver, approvers, 1), tag: approvers.includes(ruleApprover(r, i)) ? undefined : 'Not an approver' }, ruleApprover(r, i), 'control')) },
     ] },
     'team-limits': { title: 'Run limits', sections: [
-      { label: 'Jobs your Inhouse agent may finish by itself', rows: lim.jobsAgentMayFinish.map(({ name, desc }, i) => R(name, desc, 'toggle', '', 2, limKeys[i], true)) },
+      { label: 'Jobs your Inhouse agent may finish by itself', rows: lim.jobsAgentMayFinish.map(({ id, name, desc }) => R(name, desc, 'toggle', '', 2, `l:${id}`, true)) },
       { label: 'How far your Inhouse agent can go', rows: [sel('Daily limit', 'After this many actions in one day, it stops and asks.', 'l:daily', `${lim.dailyActionLimit} actions`, ['10 actions', '25 actions', '50 actions', '100 actions', '200 actions'], 2), sel('Largest restock', 'Bigger restocks wait for a person.', 'l:restock', `${lim.largestRestockUnits} units`, ['25 units', '50 units', '100 units', '250 units', '500 units'], 2)] },
       { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always'), R('Pause Inhouse agent', 'Stops every routine and job at once. Asking questions still works.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause)] },
     ] },

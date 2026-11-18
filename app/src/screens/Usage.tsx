@@ -1,7 +1,7 @@
 // Usage: spend against the cap, daily bars, totals and breakdown.
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { capStatus } from '../state/derive'
+import { activeChannel, capStatus } from '../state/derive'
 import { DEMO_START, fmtCount } from '../agent/clock'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
@@ -72,8 +72,8 @@ export function Usage() {
       : `Admins get an email at ${usage.alertAt}%. Your Inhouse agent pauses routines and jobs at the cap.`
   // A channel counts only from its stage (Act) and once connected: before that, questions come from chats alone, so a
   // row shows its plain `sub`. Once one is, rows that name it show `subWithChannel` with the channel's name.
-  const channel = ctx.data.tools.channels.find(c => ctx.S >= c.need)
-  const rows = usage.breakdown[tab].map(r => (channel && r.subWithChannel ? { ...r, sub: r.subWithChannel.replace('{channel}', channel.name) } : r))
+  const channel = activeChannel(ctx)
+  const rows = usage.breakdown[tab].map(r => (channel && r.subWithChannel ? { ...r, sub: r.subWithChannel.replaceAll('{channel}', channel.name) } : r))
   const stats: [string, string][] = [
     ['Conversations', fmtCount(usage.conversations)],
     ['Questions asked', fmtCount(usage.questionsAsked)],

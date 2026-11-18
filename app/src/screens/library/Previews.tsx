@@ -3,7 +3,7 @@
 // Colors in the drawn contents of a thumbnail (paper, poster, waveform) are content art and stay literal. Type chips use the tag tokens.
 import type { DocPreview, LibraryFile } from '../../agent'
 import { cn } from '@/lib/utils'
-import { useCtx } from '../../state/store'
+import { useAgentData } from '../../state/store'
 import { Icon } from '../../ui'
 
 const GREY = 'bg-fill text-foreground-2'
@@ -32,7 +32,7 @@ export function TypeChip({ type }: { type: string }) {
 /** First page of a document Inhouse agent made. Sizes use the page's own width, so it reads the same small or large. */
 export function DocPage({ doc }: { doc: DocPreview }) {
   // content art: a white sheet of paper, drawn the same in light and dark
-  const brand = useCtx().data.meta.brand.name
+  const brand = useAgentData().meta.brand.name
   const label = 'font-mono text-[2.3cqw] tracking-[.05em] text-[#6b6b6b] uppercase'
   const total = doc.table?.total
   const col = (i: number) => (i === 0 ? 'flex-3 text-left' : 'flex-1 text-right')

@@ -63,7 +63,7 @@ export function Today() {
             })}
           </div>
           <p className="on-page mx-1 mt-3 mb-0 text-sm text-pretty text-muted-foreground shadow-page-md">
-            Today fills in the day after {setup[0] ? setup[0][0] : 'your first tool'} is connected. Until then your Inhouse agent has nothing to read, so it won't guess.
+            Today fills in the day after {setup.find(([, status]) => status.toLowerCase() !== 'connected')?.[0] ?? 'your first tool'} is connected. Until then your Inhouse agent has nothing to read, so it won't guess.
           </p>
         </div>
       )}

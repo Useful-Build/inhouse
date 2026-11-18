@@ -445,7 +445,7 @@ export interface UsageData {
 export interface PeopleData {
   members: { id: string; name: string; photo?: string; email: string; title: string; role: string }[]
   approvalRules: { what: string; detail: string; approver: string }[]
-  runLimits: { jobsAgentMayFinish: { name: string; desc: string }[]; dailyActionLimit: number; largestRestockUnits: number }
+  runLimits: { jobsAgentMayFinish: { id: string; name: string; desc: string }[]; dailyActionLimit: number; largestRestockUnits: number }
 }
 
 export interface MemoryData {

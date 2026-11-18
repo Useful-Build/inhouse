@@ -1,25 +1,26 @@
-// Screens take the brand's name and channel from the agent's data, never from the demo. A brand that isn't Northline and
-// has no chat channel: the sidebar and a Library preview use its name, and no page of a short tour says Northline or Slack.
+// UI chrome takes the brand's name and channel from the agent's data, never from the demo. A brand that isn't Northline and
+// has no chat channel: the sidebar, a Library preview, and the Skills, Usage and Settings pages never say Northline, and no
+// page of a short tour says Slack. What the agent wrote (draft bodies, sign-offs, emails) is its data and may name anyone.
 // The mock reads the override from localStorage `inhouse.demo.data.v1` (see DATA_OVERRIDE_KEY in src/agent/mock.ts).
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 const BRAND = 'Fernwood Supply'
 
-async function start(page: Page, stage: string, hash: string) {
-  await page.addInitScript(([s, brand]) => {
+async function start(page: Page, stage: string, hash: string, scenario = 'Normal') {
+  await page.addInitScript(([s, brand, sc]) => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Off', animateMark: false }))
+    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Off', animateMark: false }))
     localStorage.setItem('inhouse.demo.data.v1', JSON.stringify({ brandName: brand, channels: false }))
     sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, BRAND])
+  }, [stage, BRAND, scenario])
   await page.goto('/?demo' + hash)
 }
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 
-test('another brand without a channel: its name shows, and nothing says Northline or Slack', async ({ page }) => {
+test('another brand without a channel: its name shows in the chrome, and no page says Slack', async ({ page }) => {
   await start(page, 'Run', '#/library')
   await expect(side(page)).toContainText(BRAND)
   await expect(side(page)).not.toContainText('Northline')
@@ -34,7 +35,8 @@ test('another brand without a channel: its name shows, and nothing says Northlin
     await expect(page.locator('main')).toBeVisible()
     await expect(page.getByText('Something went wrong.'), hash).toHaveCount(0)
     await expect(page.locator('main'), hash).not.toContainText('Slack')
-    await expect(page.locator('main'), hash).not.toContainText('Northline')
+    // Today and Approvals hold drafts the agent wrote, so only the chrome pages are checked for the sample brand's name.
+    if (!['#/today', '#/approvals'].includes(hash)) await expect(page.locator('main'), hash).not.toContainText('Northline')
     await expect(side(page), hash).not.toContainText('Northline')
   }
 
@@ -45,6 +47,13 @@ test('another brand without a channel: its name shows, and nothing says Northlin
   // Usage: rows name chats alone.
   await go(page, '#/usage')
   await expect(page.locator('main')).toContainText('Chats')
+})
+
+test('Today on the first day names no sample brand', async ({ page }) => {
+  await start(page, 'Watch', '#/today', 'First day')
+  const line = page.getByText('Today fills in the day after')
+  await expect(line).toBeVisible()
+  await expect(line).not.toContainText('Northline')
 })
 
 test('Approvals at Watch names no channel', async ({ page }) => {
