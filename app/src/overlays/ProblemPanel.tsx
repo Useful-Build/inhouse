@@ -23,7 +23,7 @@ export function ProblemPanel() {
   const phone = useUi(s => s.phone)
   if (!openId) return null
 
-  const { closeProblem, approve, unapprove, undoHandled, ask, newChat, openSettings, showToast, patch } = useUi.getState()
+  const { closeProblem, approve, unapprove, undoHandled, ask, setAside, openSettings, showToast, patch } = useUi.getState()
   const dv = draftView(ctx, openId)
   const p = dv.problem
   const isEditing = editing === openId
@@ -90,7 +90,7 @@ export function ProblemPanel() {
           {dv.mode === 'waiting' && (
             <div className={`${card} mt-3 overflow-hidden shadow-float`}>
               <div className="flex items-center gap-2.5 border-b border-divider px-4.5 py-3.5">
-                <span className="flex-1 text-base font-semibold">Drafted: {dv.draftTitle}</span>
+                <span className="min-w-0 flex-1 text-base font-semibold"><span className="font-normal text-muted-foreground">Drafted · </span>{dv.draftTitle}</span>
                 {dv.waitsLabel && <Badge variant="warning" size="lg" className="gap-1.25">{dv.waitsLabel}</Badge>}
               </div>
               <div className="px-4.5 py-1">
@@ -101,11 +101,11 @@ export function ProblemPanel() {
                   </div>
                 ))}
               </div>
-              {dv.body !== null && (
-                <div className="mx-4.5 mt-2.5 rounded-lg bg-dialog px-3.5 py-3 text-sm leading-prose text-foreground-2">
-                  <div className="mono-label mb-1.5 tracking-caps">{dv.bodyLabel}</div>
+              {(dv.body || isEditing) && (
+                <div className="mx-4.5 mt-2.5 rounded-lg bg-dialog px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">
+                  <div className="mono-label mb-1.5 tracking-caps">{dv.bodyLabel ?? 'Your note'}</div>
                   {isEditing
-                    ? <textarea aria-label={dv.bodyLabel ?? 'Draft text'} value={dv.body} onChange={e => agent.editDraft(openId, e.target.value)}
+                    ? <textarea aria-label={dv.bodyLabel ?? 'Your note'} value={dv.body ?? ''} placeholder={dv.body === null ? 'Add a note to this draft' : undefined} onChange={e => agent.editDraft(openId, e.target.value)}
                         className="block min-h-37.5 w-full resize-y rounded-md border border-border-strong bg-card px-3 py-2.5 text-sm leading-prose text-foreground focus:border-foreground/45 focus:shadow-halo" />
                     : dv.body}
                 </div>
@@ -120,16 +120,8 @@ export function ProblemPanel() {
                   <button type="button" onClick={() => openSettings('team-memory')} className="rounded-xs font-strong whitespace-nowrap">Manage</button>
                 </div>
               )}
-              <div className="flex flex-wrap items-center gap-2 px-4.5 pt-3.5 pb-4">
-                <Button variant="primary" size="lg" onClick={() => approve(openId)}>{dv.cta}</Button>
-                <Button variant="secondary" size="lg"
-                  onClick={dv.body !== null ? () => patch({ editing: isEditing ? null : openId }) : () => newChat(`Change the draft "${p.draft.title}": `)}>
-                  {dv.body !== null ? (isEditing ? 'Done editing' : 'Edit') : 'Ask your Inhouse agent to change it'}
-                </Button>
-                <Button variant="ghost" size="lg" onClick={closeProblem}>Not now</Button>
-              </div>
               {dv.approverNote && (
-                <div className="mx-4.5 flex items-center gap-2 border-t border-divider pt-3 pb-3.5 text-xs text-foreground-3">
+                <div className="mx-4.5 mt-3.5 flex items-center gap-2 border-t border-divider pt-3 pb-3.5 text-xs text-foreground-3">
                   {memberFor(ctx.data, dv.approverNote, userName(ctx)) ? <Avatar who={dv.approverNote} size={22} fontSize={9} /> : <Icon name="person" size={15} />}
                   <span className="min-w-0 flex-1">{dv.approverNote}</span>
                   {dv.askApprover && (
@@ -164,9 +156,17 @@ export function ProblemPanel() {
           )}
         </div>
 
-        <div className="flex gap-2 border-t border-border px-6 pt-3 pb-4">
+        <div className="flex flex-col gap-2.5 border-t border-border px-6 pt-3 pb-4">
+          {/* The actions live here, on one row above the ask bar, so nothing scrolls out of reach or hides under it. */}
+          {dv.mode === 'waiting' && (
+            <div className="flex items-center gap-2">
+              <Button variant="primary" size="lg" className="h-auto min-h-9.5 min-w-0 flex-1 py-1.5 text-left whitespace-normal sm:flex-none" onClick={() => approve(openId)}>{dv.cta}</Button>
+              <Button variant="secondary" size="lg" className="flex-none" onClick={() => patch({ editing: isEditing ? null : openId })}>{isEditing ? 'Done' : 'Edit'}</Button>
+              <Button variant="ghost" size="lg" className="flex-none" onClick={() => { setAside(openId, 'declined'); closeProblem() }}>Don't send</Button>
+            </div>
+          )}
           <button type="button" onClick={askTitle}
-            className="flex h-10 flex-1 items-center gap-2 rounded-xl border border-border bg-card px-3.5 text-base text-muted-foreground">
+            className="flex h-10 w-full items-center gap-2 rounded-xl border border-border bg-card px-3.5 text-base text-muted-foreground">
             <Icon name="chat_bubble" size={17} />Ask about this…
           </button>
         </div>

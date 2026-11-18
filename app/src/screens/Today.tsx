@@ -1,7 +1,6 @@
 // Today: greeting, composer, then the problem cards (or the first-day and loading states).
-import type { MouseEvent } from 'react'
 import { Composer } from '../components/Composer'
-import { amountOf, flags, handled, issueCards, todayCopy, TONE_TEXT } from '../state/derive'
+import { amountOf, flags, handled, issueCards, pendingIds, todayCopy, TONE_TEXT } from '../state/derive'
 import { sevClass } from '../ui/severity'
 import { useCtx, useUi } from '../state/store'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -12,7 +11,6 @@ import { Select, TAP } from '../ui/fields'
 
 const SORT_AMOUNT = 'Biggest amount first'
 const SKELETON_WIDTHS = ['w-39/50', 'w-16/25', 'w-43/50', 'w-7/10', 'w-29/50', 'w-41/50'] // 78, 64, 86, 70, 58 and 82%
-const stop = (fn: () => void) => (e: MouseEvent) => { e.stopPropagation(); fn() }
 
 export function Today() {
   const ctx = useCtx()
@@ -28,6 +26,10 @@ export function Today() {
   if (byAmount) cards.sort((a, b) => Number(a.handled) - Number(b.handled) || amountOf(b.problem) - amountOf(a.problem))
   const h = handled(ctx)
   const setup = ctx.data.scenarios.firstDay.setup
+  // The header follows the state: what needs you, or how the day ended.
+  const settled = ctx.S >= 1 && pendingIds(ctx).length === 0
+  const allApproved = settled && cards.length > 0 && cards.length === ctx.data.problems.length && cards.every(c => ctx.agent.approved[c.problem.id])
+  const headTitle = !settled ? 'Needs you' : allApproved ? 'All approved' : 'Nothing waiting'
 
   return (
     <div className="relative mx-auto box-border max-w-page-wide px-(--app-pad-x) pt-today-top pb-14">
@@ -84,8 +86,8 @@ export function Today() {
 
       {!f.noData && (
         <div className="mt-7">
-          <SectionHeader onDots title="Needs you" count={copy.countLabel} className="mb-3"
-            actions={(
+          <SectionHeader onDots title={headTitle} count={allApproved ? undefined : copy.countLabel} className="mb-3"
+            actions={phone ? undefined : (
               <Select label="Sort cards" value={byAmount ? SORT_AMOUNT : copy.sortLabel} options={[copy.sortLabel, SORT_AMOUNT]} minWidth={0}
                 onChange={v => useUi.getState().patch({ todaySort: v === SORT_AMOUNT ? 'amount' : 'default' })}
                 className={cn('rounded-lg border-transparent bg-transparent pr-1.5 pl-2.5 text-sm text-foreground-3 data-[size=default]:h-7.5', tap)} />
@@ -97,7 +99,7 @@ export function Today() {
               <Icon name="check_circle" size={18} weight={400} />
               <b className="font-semibold whitespace-nowrap">{h.count} handled before you woke up</b>
               {/* On a phone the list gets its own full-width lines under the title. */}
-              <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{h.summary}</span>
+              <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{h.summary.replace(/(\d) (?=[a-z])/g, '$1\u00a0')}</span>
               <span className={`font-semibold whitespace-nowrap ${phone ? 'order-2 ml-auto' : ''}`}>See activity</span>
             </button>
           )}
@@ -113,18 +115,18 @@ export function Today() {
               // Snooze and dismiss are for cards that still need the person, not ones approved or handled.
               const needsYou = !c.handled && !ctx.agent.approved[p.id]
               return (
-                <div key={p.id} className="today-card flex min-h-56 cursor-pointer flex-col rounded-2xl border border-border bg-card px-4.5 py-4 shadow-card transition focus-within:border-border-strong focus-within:shadow-float hover:border-border-strong hover:shadow-float" onClick={open} role="article" aria-label={p.title}>
+                // The title is the card's one link: its ::after stretches over the card, and the card's other buttons sit above it.
+                <article key={p.id} className={cn('today-card relative flex cursor-pointer flex-col rounded-2xl border border-border bg-card px-4.5 py-4 shadow-card transition focus-within:border-border-strong focus-within:shadow-float hover:border-border-strong hover:shadow-float', !phone && 'min-h-56')} aria-label={p.title}>
                   <div className="flex items-center gap-2">
                     <Dot className={c.dimmed ? 'bg-done' : sevClass(p.sev)} />
                     <span className="mono-label flex-1">{p.area}</span>
                     {/* The tiles overhang the label line a little, so cards with and without logos keep the same rhythm. */}
                     {p.logos.map(l => <LogoTile key={l} k={l} size="sm" className="-my-1" />)}
-                    {/* The menu sits in a portal, but React still bubbles its clicks to the card: stop them so the panel stays shut. */}
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
-                        <IconButton icon="more_horiz" label="More" size={18} className={cn('-my-1.5 -mr-1.5', tap)} onClick={e => e.stopPropagation()} />
+                        <IconButton icon="more_horiz" label="More" size={18} className={cn('relative z-raised -my-1.5 -mr-1.5', tap)} />
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input" onClick={e => e.stopPropagation()}>
+                      <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                         <MenuItem onSelect={askAbout}>
                           <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask about this</span>
                         </MenuItem>
@@ -139,29 +141,30 @@ export function Today() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                  <button type="button" onClick={e => { e.stopPropagation(); open() }}
-                    className={`mt-2.5 block rounded-xs text-left text-md leading-card font-strong tracking-card ${done}`}>{p.title}</button>
+                  <button type="button" onClick={open}
+                    className={`mt-2.5 block cursor-pointer rounded-xs text-left text-md leading-card font-strong tracking-card after:absolute after:inset-0 after:rounded-2xl ${done}`}>{p.title}</button>
                   <div className="mt-1 text-sm text-foreground-3">{p.sub}</div>
                   <div className="flex-1" />
+                  {/* Nothing here is cut: the amount line and the status line wrap. */}
                   <div className="mt-3 flex items-end gap-2.5 border-t border-divider pt-3">
                     <div className="min-w-0 flex-1">
-                      <div className={`flex items-baseline gap-1.5 overflow-hidden whitespace-nowrap ${done}`}>
+                      <div className={`flex flex-wrap items-baseline gap-x-1.5 ${done}`}>
                         <span className="text-xl font-semibold tracking-stat tabular-nums">{p.cost}</span>
-                        <span className="ellipsis text-xs text-muted-foreground">{p.costNote}</span>
+                        <span className="text-xs text-muted-foreground">{p.costNote}</span>
                       </div>
-                      <div className={`flex items-center gap-1 overflow-hidden text-xs whitespace-nowrap ${TONE_TEXT[c.tone]}`}>
-                        <Icon name={c.statusIcon} size={13} weight={400} />
-                        <span className="ellipsis">{c.status}</span>
+                      <div className={`mt-0.5 flex items-start gap-1 text-xs ${c.dimmed ? done : TONE_TEXT[c.tone]}`}>
+                        <Icon name={c.statusIcon} size={13} weight={400} className="mt-px" />
+                        <span className="min-w-0 flex-1">{c.status}</span>
                       </div>
                     </div>
                     {c.primary && (
-                      <Button className={tap} onClick={stop(c.primary === 'Approve' ? () => approve(p.id) : open)}>{c.primary}</Button>
+                      <Button className={cn('relative z-raised', tap)} onClick={c.primary === 'Approve' ? () => approve(p.id) : open}>{c.primary}</Button>
                     )}
                     {!c.primary && c.quiet && (
-                      <Button variant="secondary" className={tap} onClick={stop(c.quiet === 'Ask about this' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open)}>{c.quiet}</Button>
+                      <Button variant="secondary" className={cn('relative z-raised', tap)} onClick={c.quiet === 'Ask about this' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
                     )}
                   </div>
-                </div>
+                </article>
               )
             })}
           </CardGrid>

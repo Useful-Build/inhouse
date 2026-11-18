@@ -1,11 +1,13 @@
 import { amountOf, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, userName, visibleProblems } from '../state/derive'
 import { sevClass } from '../ui/severity'
+import { Skeleton } from '@/components/ui/skeleton'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useCtx, useUi } from '../state/store'
 import type { ApprovalSort } from '../state/store'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { Avatar, Button, DetailList, Dot, EmptyState, Icon, IconTile, Page, PageHeader, SectionHeader } from '../ui'
+import { Avatar, Button, DetailList, Dot, EmptyState, Icon, IconButton, IconTile, MenuItem, Page, PageHeader, SectionHeader } from '../ui'
 import { Select, TAP } from '../ui/fields'
 
 const SORTS: [ApprovalSort, string][] = [['oldest', 'Oldest first'], ['newest', 'Newest first'], ['stake', 'Most at stake']]
@@ -16,7 +18,7 @@ export function Approvals() {
   const unapprove = useUi(s => s.unapprove)
   const openProblem = useUi(s => s.openProblem)
   const openTeam = useUi(s => s.openTeam)
-  const { approveMany, setAside, newChat, patch } = useUi.getState()
+  const { approveMany, setAside, patch } = useUi.getState()
   const phone = useUi(s => s.phone)
   const sort = useUi(s => s.approvalSort)
   const tap = phone ? TAP : undefined
@@ -29,26 +31,25 @@ export function Approvals() {
     ? (a, b) => amountOf(draftView(ctx, b).problem) - amountOf(draftView(ctx, a).problem)
     : sort === 'newest' ? (a, b) => byTime(b, a) : byTime)
   const lowRisk = lowRiskIds(ctx)
-  // Edit opens the draft in the panel with its text ready to change; a draft with no text is changed by asking.
+  // Edit always opens the panel with the draft in view: its text ready to change, or a note field when it has no text.
   const edit = (id: string) => {
-    const dv = draftView(ctx, id)
-    if (dv.body === null) { newChat(`Change the draft "${dv.problem.draft.title}": `); return }
     openProblem(id)
     patch({ editing: id })
   }
-  const noData = flags(ctx).noData
+  const { noData, isFirst, isLoading } = flags(ctx)
   // Watch lists what Today shows: problems a person set aside aren't counted.
   const watchList = visibleProblems(ctx)
   const nProblems = watchList.length
   const approvedList = ctx.data.problems.filter(p => agent.approved[p.id]).map(p => draftView(ctx, p.id))
 
+  const approveAll = lowRisk.length >= 2 && (
+    <Button variant="outline" size="sm" className={tap} onClick={() => approveMany(lowRisk)}>
+      <Icon name="done_all" size={16} />Approve all low-risk
+    </Button>
+  )
   const waitingActions = (
     <>
-      {lowRisk.length >= 2 && (
-        <Button variant="outline" size="sm" className={tap} onClick={() => approveMany(lowRisk)}>
-          <Icon name="done_all" size={16} />Approve all low-risk
-        </Button>
-      )}
+      {approveAll}
       <Select label="Sort drafts" value={SORTS.find(([k]) => k === sort)![1]} options={SORTS.map(([, l]) => l)} minWidth={0}
         onChange={v => patch({ approvalSort: SORTS.find(([, l]) => l === v)![0] })}
         className={cn('rounded-lg border-transparent bg-transparent pr-1.5 pl-2.5 text-sm text-foreground-3 data-[size=default]:h-7', tap)} />
@@ -81,21 +82,34 @@ export function Approvals() {
 
       {S >= 1 && (
         <>
-          <SectionHeader title="Waiting for you" count={pending.length} className={phone ? 'mt-7.5 mb-2.5' : 'mt-7.5 mb-3'}
-            actions={phone ? undefined : waitingActions} />
-          {phone && <div className="mb-3 flex flex-wrap items-center gap-2">{waitingActions}</div>}
-          {pending.length === 0 && <EmptyState>All caught up. New drafts will show up here.</EmptyState>}
+          {/* On a phone the header keeps one line: no sort, only Approve all low-risk. */}
+          <SectionHeader title="Waiting for you" count={noData ? undefined : pending.length} className="mt-7.5 mb-3"
+            actions={phone ? approveAll || undefined : waitingActions} />
+          {isFirst && <EmptyState>Nothing to approve yet. Drafts wait here once your tools are connected.</EmptyState>}
+          {isLoading && (
+            <div className="flex flex-col gap-3" aria-hidden="true">
+              {[0, 1].map(i => (
+                <div key={i} className="box-border flex flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">
+                  <Skeleton className="h-3.5 w-3/5 animate-none rounded-sm bg-fill-hover" />
+                  <Skeleton className="h-2.5 w-4/5 animate-none rounded-sm" />
+                  <Skeleton className="h-2.5 w-7/10 animate-none rounded-sm" />
+                  <Skeleton className="mt-1.5 h-9.5 w-30 animate-none rounded-lg bg-fill-hover" />
+                </div>
+              ))}
+            </div>
+          )}
+          {!noData && pending.length === 0 && <EmptyState>All caught up. New drafts will show up here.</EmptyState>}
           <div className="flex flex-col gap-3">
             {pending.map(id => {
               const dv = draftView(ctx, id)
+              // Low risk (no money, no customers): one-tap Approve. Anything else: Review, which opens the panel.
+              const low = lowRisk.includes(id)
               return (
                 <Card key={id} className="gap-0 overflow-hidden rounded-2xl border-border py-0 shadow-card">
                   <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-divider px-4.5 py-3.5">
                     <Dot className={sevClass(dv.problem.sev)} />
                     <h2 className="min-w-40 flex-1 text-base font-semibold">{dv.draftTitle}</h2>
-                    {dv.waitsLabel && (
-                      <Badge variant="warning">{dv.waitsLabel}</Badge>
-                    )}
+                    <Badge variant={dv.waitsLabel ? 'warning' : 'muted'}>{dv.waitsLabel ?? 'Low risk'}</Badge>
                     <span className="text-xs text-muted-foreground">{dv.problem.area} · {dv.problem.draftedAt}</span>
                   </div>
                   <DetailList variant="ruled" strong items={dv.lines} className="px-4.5 py-1 text-sm" />
@@ -105,17 +119,27 @@ export function Approvals() {
                       {dv.body}
                     </div>
                   )}
-                  <div className="flex flex-wrap items-center gap-2 px-4.5 pt-3.5 pb-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button size="lg" className={tap} onClick={() => approve(id)}>{dv.cta}</Button>
-                      <Button variant="secondary" size="lg" className={tap} onClick={() => openProblem(id)}>Open</Button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="secondary" size="lg" className={tap} onClick={() => edit(id)}>Edit</Button>
-                      <Button variant="ghost" size="lg" className={tap} onClick={() => setAside(id, 'declined')}>Don't send</Button>
-                    </div>
-                    <div className="flex-1" />
-                    <span className="text-right text-xs text-muted-foreground">{dv.footNote}</span>
+                  <p className="m-0 px-4.5 pt-3 text-xs text-muted-foreground">{dv.footNote}</p>
+                  <div className="flex items-center gap-2 px-4.5 pt-3 pb-4">
+                    <Button size="lg" className={tap} onClick={low ? () => approve(id) : () => openProblem(id)}>{low ? dv.cta : 'Review'}</Button>
+                    <DropdownMenu modal={false}>
+                      <DropdownMenuTrigger asChild>
+                        <IconButton icon="more_horiz" label="More" size={18} box="icon-lg" className={tap} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" collisionPadding={16} aria-label="Draft actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
+                        {low && (
+                          <MenuItem onSelect={() => openProblem(id)}>
+                            <Icon name="visibility" size={18} /><span className="flex-1">Review</span>
+                          </MenuItem>
+                        )}
+                        <MenuItem onSelect={() => edit(id)}>
+                          <Icon name="edit" size={18} /><span className="flex-1">Edit</span>
+                        </MenuItem>
+                        <MenuItem onSelect={() => setAside(id, 'declined')}>
+                          <Icon name="do_not_disturb_on" size={18} /><span className="flex-1">Don't send</span>
+                        </MenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </Card>
               )
@@ -126,10 +150,11 @@ export function Approvals() {
               <SectionHeader id="approved-today" title="Approved today" className="mt-7.5 mb-2.5" />
               <Card className="gap-0 rounded-2xl border-border px-4.5 py-0.5 shadow-none">
                 {approvedList.map(dv => (
-                  <div key={dv.problem.id} className="flex min-h-14.75 items-center gap-2.5 border-b border-divider py-1.5 text-sm">
+                  // On a phone the text takes its own line and the time and Undo wrap under it.
+                  <div key={dv.problem.id} className="flex min-h-14.75 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-divider py-2 text-sm">
                     <Icon name="check_circle" size={17} weight={400} className="text-foreground" />
-                    <span className="min-w-0 flex-1">{dv.doneText}</span>
-                    <span className="inline-flex items-center gap-1.75 text-muted-foreground">{memberFor(ctx.data, dv.metaBy, userName(ctx)) && <Avatar who={dv.metaBy} size={20} fontSize={9} />}{dv.meta}</span>
+                    <span className="min-w-0 flex-1 basis-40">{dv.doneText}</span>
+                    <span className={cn('inline-flex items-center gap-1.75 text-muted-foreground', phone && 'order-3 basis-full pl-6.5')}>{memberFor(ctx.data, dv.metaBy, userName(ctx)) && <Avatar who={dv.metaBy} size={20} fontSize={9} />}{dv.meta}</span>
                     {dv.canUndo && <Button variant="soft" size="sm" className={tap} onClick={() => unapprove(dv.problem.id)}>Undo</Button>}
                   </div>
                 ))}
