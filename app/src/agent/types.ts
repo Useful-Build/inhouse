@@ -169,6 +169,7 @@ export type RunEvent =
   | { type: 'run.started'; runId: string }
   | { type: 'step'; label: string }
   /** Phase 2: the agent may carry the model id that answered and when (ms since the epoch); the store falls back to its own. */
+  /** `trace` is the turn's trace id (`getTrace`): each message sent into a run starts a turn with its own. */
   | { type: 'part'; part: MessagePart; trace: string; model?: string; at?: number }
   /** A message sent into the running answer (`send`) is now being answered: the store adds it as the person's message and the run goes on. */
   | { type: 'turn.started'; text: string }

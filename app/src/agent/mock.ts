@@ -492,7 +492,7 @@ const QUERY_ANSWER = [
 /** What a run replayed and made: its recorded trace, and the routine or skill it created (Regenerate updates those in place).
  *  `kept` is a routine an earlier run made that this failed run left standing: the next answer updates it in place, so it
  *  isn't made twice, but never takes it back (this run didn't make it). A failed run carries the earlier `skill` as its own.
- *  One per run, not per turn: once `send` is wired (PR 5), each turn needs its own trace id (`${runId}-t${n}`). */
+ *  One per turn: the first turn's id is the run's, a turn started by `send` is `${runId}-t${n}`. */
 type RunInfo = { trace: TraceKey; routine?: string; kept?: string; skill?: string }
 /** A message sent into a running answer, waiting for its turn. */
 type Queued = { text: string; priority: SendPriority; attachments?: Attachment[] }
@@ -1034,7 +1034,9 @@ export class MockAgent implements AgentClient {
       t = setTimeout(done, ms)
       signals.forEach(x => x.addEventListener('abort', done, { once: true }))
     })
-    const info: RunInfo = { trace: 'generic' }
+    let info: RunInfo = { trace: 'generic' }
+    // Each turn has its own trace id: the run's for the first, `${runId}-t${n}` for a message sent into it.
+    let turnId = runId
     // Over before it says so: the run is removed first, so a message sent once it's stopped is refused, not queued and lost.
     const stopped = (): RunEvent => { this.runs.delete(runId); return { type: 'run.stopped', runId } }
     try {
@@ -1042,11 +1044,15 @@ export class MockAgent implements AgentClient {
       let q = question
       // Only the first turn replaces the earlier run's answer; messages sent in later are new questions.
       let replaces = opts.replacesRun
-      for (let first = true; ; first = false) {
-        if (!first) yield { type: 'turn.started', text: q }
+      for (let first = true, n = 1; ; first = false, n++) {
+        if (!first) {
+          turnId = `${runId}-t${n}`
+          info = { trace: 'generic' }
+          yield { type: 'turn.started', text: q }
+        }
         const s = this.script(q.trim(), opts.chatId)
         info.trace = s.trace
-        this.saveRunInfo(runId, info)
+        this.saveRunInfo(turnId, info)
         yield { type: 'step', label: 'Reading your question…' }
         let elapsed = 0, i = 0
         while (elapsed < s.delayMs && !run.turn.signal.aborted) {
@@ -1062,7 +1068,7 @@ export class MockAgent implements AgentClient {
           for (const part of s.parts) {
             // A routine from a request is saved as its card appears, so its id comes from what is saved at that moment.
             const out = part.type === 'routine' && part.routine.id === '' ? this.saveRoutine(part, replaces, info) : part
-            yield { type: 'part', part: out, trace: s.trace }
+            yield { type: 'part', part: out, trace: turnId }
             if (out.type === 'approval') yield { type: 'approval.requested', approvalId: out.problemId }
           }
           s.after?.(info, replaces)
@@ -1072,7 +1078,7 @@ export class MockAgent implements AgentClient {
           if (replaces && !failed) this.takeBack(replaces, info)
           const was = replaces && failed ? this.runInfo.get(replaces) : undefined
           if (was) { info.kept = was.routine ?? was.kept; info.skill = was.skill }
-          this.saveRunInfo(runId, info)
+          this.saveRunInfo(turnId, info)
           if (failed && failed.type === 'error') {
             // Over before it says so, like run.finished: a message sent now is refused, not queued and lost.
             this.runs.delete(runId)
@@ -1090,7 +1096,7 @@ export class MockAgent implements AgentClient {
         run.turn = new AbortController()
         q = next.text
       }
-      const t = this.getTrace(runId)
+      const t = this.getTrace(turnId)
       if (!t) throw new Error(`No recorded trace for ${info.trace}`)
       // Over before it says so: a message sent after this point is refused, not queued and lost.
       this.runs.delete(runId)
