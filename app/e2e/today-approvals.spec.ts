@@ -84,7 +84,7 @@ test('Today: the whole card opens the panel from one real button, and the "··�
   await start(page, 'Act', '#/today')
   const card = page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' })
   // The title is a real button; the card has no click handler of its own.
-  await card.getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days' }).focus()
+  await card.getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true }).focus()
   await page.keyboard.press('Enter')
   await expect(page.getByRole('dialog')).toContainText('What your Inhouse agent found')
   await page.keyboard.press('Escape')
