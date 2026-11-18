@@ -1,0 +1,38 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": [
+      {
+       "number": 233,
+       "state": "OPEN",
+       "isDraft": false,
+       "isInMergeQueue": false,
+       "isCrossRepository": false,
+       "baseRefName": "fleet/demo",
+       "locked": false,
+       "autoMergeRequest": {
+        "enabledAt": "2026-11-17T10:00:00Z"
+       },
+       "commits": {
+        "nodes": [
+         {
+          "commit": {
+           "statusCheckRollup": {
+            "state": "SUCCESS"
+           }
+          }
+         }
+        ]
+       },
+       "mergeable": "CONFLICTING"
+      }
+     ]
+    }
+   }
+  }
+ },
+ "blocked_by": [],
+ "comments": []
+}

@@ -1,0 +1,46 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": []
+    }
+   }
+  }
+ },
+ "blocked_by": [],
+ "comments": [
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T06:00:00Z",
+   "body": "<!-- fleet:attempt run=1341 seat=c outcome=progress retry_after= -->\nRun 1341."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T07:00:00Z",
+   "body": "<!-- fleet:attempt run=1342 seat=a outcome=paused retry_after=2026-11-17T15:00:00Z -->\nRun 1342."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T08:00:00Z",
+   "body": "<!-- fleet:attempt run=1343 seat=b outcome=progress retry_after= -->\nRun 1343."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T10:00:00Z",
+   "body": "<!-- fleet:attempt run=1344 seat=c outcome=progress retry_after= -->\nRun 1344."
+  }
+ ]
+}

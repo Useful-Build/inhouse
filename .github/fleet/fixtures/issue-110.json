@@ -1,0 +1,22 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": []
+    }
+   }
+  }
+ },
+ "blocked_by": [
+  {
+   "number": 101,
+   "state": "open"
+  },
+  {
+   "number": 98,
+   "state": "closed"
+  }
+ ],
+ "comments": []
+}

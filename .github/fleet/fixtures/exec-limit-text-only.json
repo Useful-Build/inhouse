@@ -1,0 +1,13 @@
+[
+ {
+  "type": "system",
+  "subtype": "init",
+  "session_id": "s"
+ },
+ {
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "result": "You've hit your limit \u00b7 resets 3pm (UTC)"
+ }
+]

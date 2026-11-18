@@ -1,0 +1,78 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": [
+      {
+       "number": 242,
+       "state": "OPEN",
+       "isDraft": false,
+       "isInMergeQueue": false,
+       "isCrossRepository": false,
+       "baseRefName": "fleet/demo",
+       "locked": false,
+       "autoMergeRequest": {
+        "enabledAt": "2026-11-17T10:00:00Z"
+       },
+       "commits": {
+        "nodes": [
+         {
+          "commit": {
+           "statusCheckRollup": {
+            "state": "SUCCESS"
+           }
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "blocked_by": [],
+ "comments": [
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T01:00:00Z",
+   "body": "<!-- fleet:attempt run=1421 seat=a outcome=progress retry_after= -->\nRun 1421."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T02:00:00Z",
+   "body": "<!-- fleet:attempt run=1422 seat=b outcome=progress retry_after= -->\nRun 1422."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T03:00:00Z",
+   "body": "<!-- fleet:attempt run=1423 seat=c outcome=failed retry_after= -->\nRun 1423."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T04:00:00Z",
+   "body": "<!-- fleet:attempt run=1424 seat=a outcome=progress retry_after= -->\nRun 1424."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T05:00:00Z",
+   "body": "<!-- fleet:attempt run=1425 seat=b outcome=progress retry_after= -->\nRun 1425."
+  }
+ ]
+}

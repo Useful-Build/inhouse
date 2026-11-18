@@ -1,0 +1,30 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": []
+    }
+   }
+  }
+ },
+ "blocked_by": [],
+ "comments": [
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T11:00:00Z",
+   "body": "<!-- fleet:attempt run=8163 seat=a outcome=failed retry_after= -->\nRun 8163 on seat a: failed."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T11:59:00Z",
+   "body": "<!-- fleet:attempt run=9163 seat=b outcome=failed retry_after= -->\nRun 9163 on seat b: failed."
+  }
+ ]
+}

@@ -1,0 +1,21 @@
+[
+ {
+  "type": "system",
+  "subtype": "init",
+  "session_id": "s"
+ },
+ {
+  "type": "rate_limit_event",
+  "rate_limit_info": {
+   "status": "rejected",
+   "resetsAt": 1794927600,
+   "overageInUse": true
+  }
+ },
+ {
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "done"
+ }
+]

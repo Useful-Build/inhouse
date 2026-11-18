@@ -1,0 +1,607 @@
+$ env FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/141/lock* bash .github/fleet/router.sh
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
+task runs active: 2, cap 25
+#141 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/141/lock --silent
+  (fails)
+::error::failed: gh api -X PUT repos/fixture/repo/issues/141/lock --silent
+#101 skip-running pr=draft
+#102 done pr=merged
+  would run: gh issue comment 102 -R fixture/repo --body Done: the PR from task/102 has merged.
+  would run: gh issue close 102 -R fixture/repo
+#103 skip-waiting pr=queued
+#104 start pr=failing
+  would run: gh api -X PUT repos/fixture/repo/issues/104/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=104 -f inputs[seat]=a
+#105 skip-stopped pr=draft
+#105 stop
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9005/cancel --silent
+#106 skip-failed pr=draft
+#107 skip-waiting pr=automerge
+#108 start pr=ready
+  would run: gh api -X PUT repos/fixture/repo/issues/108/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=108 -f inputs[seat]=a
+#109 skip-author pr=-
+#110 skip-blocked pr=none
+#111 start pr=ready
+  would run: gh api -X PUT repos/fixture/repo/issues/111/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=111 -f inputs[seat]=a
+#112 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/112/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=112 -f inputs[seat]=b
+#113 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/113/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=113 -f inputs[seat]=c
+#114 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/114/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=114 -f inputs[seat]=a
+#115 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/115/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=115 -f inputs[seat]=b
+#116 failed-cap pr=none
+  would run: gh issue edit 116 -R fixture/repo --add-label fleet:failed
+#117 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/117/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=117 -f inputs[seat]=b
+#118 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/118/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=118 -f inputs[seat]=b
+#119 failed-cap pr=none
+  would run: gh issue edit 119 -R fixture/repo --add-label fleet:failed
+#120 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/120/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=120 -f inputs[seat]=c
+#121 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/121/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=121 -f inputs[seat]=a
+#122 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/122/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=122 -f inputs[seat]=b
+#123 start pr=draft
+  would run: gh api -X PUT repos/fixture/repo/issues/123/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=123 -f inputs[seat]=c
+#124 skip-author pr=-
+#125 start pr=none
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=125 -f inputs[seat]=c
+#126 start pr=draft
+  would run: gh api -X PUT repos/fixture/repo/issues/126/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=126 -f inputs[seat]=a
+#127 done pr=merged
+  would run: gh issue comment 127 -R fixture/repo --body Done: the PR from task/127 has merged.
+  would run: gh issue close 127 -R fixture/repo
+fleet: missing fixture .github/fleet/fixtures/issue-129.json
+::warning::#129 skipped this round: reading its state failed
+#131 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/131/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=131 -f inputs[seat]=c
+#132 start pr=failing
+  would run: gh api -X PUT repos/fixture/repo/issues/132/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=132 -f inputs[seat]=a
+#133 start pr=conflicting
+  would run: gh api -X PUT repos/fixture/repo/issues/133/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=133 -f inputs[seat]=b
+#134 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/134/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=134 -f inputs[seat]=b
+#135 skip-paused pr=none
+#136 skip-paused pr=none
+#137 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/137/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=137 -f inputs[seat]=a
+#138 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/138/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=138 -f inputs[seat]=a
+#139 failed-cap pr=none
+  would run: gh issue edit 139 -R fixture/repo --add-label fleet:failed
+#140 done pr=merged
+  would run: gh issue comment 140 -R fixture/repo --body Done: the PR from task/140 has merged.
+  would run: gh issue close 140 -R fixture/repo
+#143 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/143/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=143 -f inputs[seat]=a
+#144 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/144/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=144 -f inputs[seat]=c
+#142 skip-waiting pr=automerge
+#130 skip-full pr=none
+started: 23
+failed_tasks=116 119 139
+would wait for the 23 started runs to show in the run list
+fleet/demo final PR: not ready, an open task names it
+fleet/done final PR: ready
+  would run: gh pr create -R fixture/repo --base main --head fleet/done --title fleet/done into main --body Every fleet task issue for `fleet/done` is closed. Task PRs merged into it:
+
+- #301
+- #302
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/done --silent
+fleet/has-pr final PR: a PR into main is already open
+fleet/empty final PR: not ahead of main
+fleet/closing final PR: ready
+  would run: gh pr create -R fixture/repo --base main --head fleet/closing --title fleet/closing into main --body Every fleet task issue for `fleet/closing` is closed. Task PRs merged into it:
+
+- #240
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/closing --silent
+fleet/orphan final PR: not ready, no closed task names it
+fleet/reviewed final PR: a closed PR into main has this head, not reopened
+fleet/reworked final PR: ready
+  would run: gh pr create -R fixture/repo --base main --head fleet/reworked --title fleet/reworked into main --body Every fleet task issue for `fleet/reworked` is closed. Task PRs merged into it:
+
+- #305
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/reworked --silent
+fleet: 1 changes failed
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
+[exit 1]
+
+$ env FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
+#101 stop
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9001/cancel --silent
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
+[exit 0]
+
+$ env FLEET_EVENT_LABEL=bug FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
+label bug: nothing to do
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
+[exit 0]
+
+$ env FLEET_STOP_ALL=true bash .github/fleet/router.sh
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
+#141 stop all: add fleet:stop
+  would run: gh issue edit 141 -R fixture/repo --add-label fleet:stop
+#101 stop all: add fleet:stop
+  would run: gh issue edit 101 -R fixture/repo --add-label fleet:stop
+#102 stop all: add fleet:stop
+  would run: gh issue edit 102 -R fixture/repo --add-label fleet:stop
+#103 stop all: add fleet:stop
+  would run: gh issue edit 103 -R fixture/repo --add-label fleet:stop
+#104 stop all: add fleet:stop
+  would run: gh issue edit 104 -R fixture/repo --add-label fleet:stop
+#105 stop all: already stopped
+#106 stop all: add fleet:stop
+  would run: gh issue edit 106 -R fixture/repo --add-label fleet:stop
+#107 stop all: add fleet:stop
+  would run: gh issue edit 107 -R fixture/repo --add-label fleet:stop
+#108 stop all: add fleet:stop
+  would run: gh issue edit 108 -R fixture/repo --add-label fleet:stop
+#109 stop all: add fleet:stop
+  would run: gh issue edit 109 -R fixture/repo --add-label fleet:stop
+#110 stop all: add fleet:stop
+  would run: gh issue edit 110 -R fixture/repo --add-label fleet:stop
+#111 stop all: add fleet:stop
+  would run: gh issue edit 111 -R fixture/repo --add-label fleet:stop
+#112 stop all: add fleet:stop
+  would run: gh issue edit 112 -R fixture/repo --add-label fleet:stop
+#113 stop all: add fleet:stop
+  would run: gh issue edit 113 -R fixture/repo --add-label fleet:stop
+#114 stop all: add fleet:stop
+  would run: gh issue edit 114 -R fixture/repo --add-label fleet:stop
+#115 stop all: add fleet:stop
+  would run: gh issue edit 115 -R fixture/repo --add-label fleet:stop
+#116 stop all: add fleet:stop
+  would run: gh issue edit 116 -R fixture/repo --add-label fleet:stop
+#117 stop all: add fleet:stop
+  would run: gh issue edit 117 -R fixture/repo --add-label fleet:stop
+#118 stop all: add fleet:stop
+  would run: gh issue edit 118 -R fixture/repo --add-label fleet:stop
+#119 stop all: add fleet:stop
+  would run: gh issue edit 119 -R fixture/repo --add-label fleet:stop
+#120 stop all: add fleet:stop
+  would run: gh issue edit 120 -R fixture/repo --add-label fleet:stop
+#121 stop all: add fleet:stop
+  would run: gh issue edit 121 -R fixture/repo --add-label fleet:stop
+#122 stop all: add fleet:stop
+  would run: gh issue edit 122 -R fixture/repo --add-label fleet:stop
+#123 stop all: add fleet:stop
+  would run: gh issue edit 123 -R fixture/repo --add-label fleet:stop
+#124 stop all: add fleet:stop
+  would run: gh issue edit 124 -R fixture/repo --add-label fleet:stop
+#125 stop all: add fleet:stop
+  would run: gh issue edit 125 -R fixture/repo --add-label fleet:stop
+#126 stop all: add fleet:stop
+  would run: gh issue edit 126 -R fixture/repo --add-label fleet:stop
+#127 stop all: already stopped
+#129 stop all: add fleet:stop
+  would run: gh issue edit 129 -R fixture/repo --add-label fleet:stop
+#131 stop all: add fleet:stop
+  would run: gh issue edit 131 -R fixture/repo --add-label fleet:stop
+#132 stop all: add fleet:stop
+  would run: gh issue edit 132 -R fixture/repo --add-label fleet:stop
+#133 stop all: add fleet:stop
+  would run: gh issue edit 133 -R fixture/repo --add-label fleet:stop
+#134 stop all: add fleet:stop
+  would run: gh issue edit 134 -R fixture/repo --add-label fleet:stop
+#135 stop all: add fleet:stop
+  would run: gh issue edit 135 -R fixture/repo --add-label fleet:stop
+#136 stop all: add fleet:stop
+  would run: gh issue edit 136 -R fixture/repo --add-label fleet:stop
+#137 stop all: add fleet:stop
+  would run: gh issue edit 137 -R fixture/repo --add-label fleet:stop
+#138 stop all: add fleet:stop
+  would run: gh issue edit 138 -R fixture/repo --add-label fleet:stop
+#139 stop all: add fleet:stop
+  would run: gh issue edit 139 -R fixture/repo --add-label fleet:stop
+#140 stop all: add fleet:stop
+  would run: gh issue edit 140 -R fixture/repo --add-label fleet:stop
+#143 stop all: add fleet:stop
+  would run: gh issue edit 143 -R fixture/repo --add-label fleet:stop
+#144 stop all: add fleet:stop
+  would run: gh issue edit 144 -R fixture/repo --add-label fleet:stop
+#142 stop all: add fleet:stop
+  would run: gh issue edit 142 -R fixture/repo --add-label fleet:stop
+#130 stop all: add fleet:stop
+  would run: gh issue edit 130 -R fixture/repo --add-label fleet:stop
+stop all: cancel run 9001
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9001/cancel --silent
+stop all: cancel run 9005
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9005/cancel --silent
+stop all: done
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
+[exit 0]
+
+$ env FLEET_BUDGET_FLOOR=201 bash .github/fleet/router.sh
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
+::warning::fleet budget: 200 REST requests left, below the floor of 201. This round starts, closes, labels and cancels nothing and opens no final PR, to leave room for the outcome jobs' markers.
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
+[exit 0]
+
+$ env FLEET_BUDGET_FLOOR=201 FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
+#101 stop
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9001/cancel --silent
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
+[exit 0]
+
+$ env FLEET_BUDGET_FLOOR=abc bash .github/fleet/router.sh
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
+fleet: FLEET_BUDGET_FLOOR must be digits only: 0 (no floor), or 1 to 9999999999 with no leading zero. Only the stop rounds run until it's fixed.
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
+[exit 1]
+
+$ env FLEET_BUDGET_FLOOR=-5 FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
+#101 stop
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9001/cancel --silent
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
+[exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/graphql-low bash .github/fleet/router.sh
+fleet budget: REST 900/1000 resets 12:20 UTC, GraphQL 199/1000 resets 12:30 UTC (router start)
+::warning::fleet budget: 199 GraphQL points left, below the floor of 200. This round starts, closes, labels and cancels nothing and opens no final PR, to leave room for the outcome jobs' markers.
+fleet budget: REST 900/1000 resets 12:20 UTC, GraphQL 199/1000 resets 12:30 UTC (router end)
+[exit 0]
+
+$ bash .github/fleet/task.sh check 104
+issue=104
+#104 start
+go=true
+[exit 0]
+
+$ bash .github/fleet/task.sh check 105
+issue=105
+::notice::#105 not started (skip-stopped): has fleet:stop
+go=false
+[exit 0]
+
+$ bash .github/fleet/task.sh check 116
+issue=116
+::notice::#116 not started (failed-cap): 6 starts, cap is 6
+go=false
+[exit 0]
+
+$ bash .github/fleet/task.sh check 124
+issue=124
+::notice::#124 not started (skip-author): author is not FLEET_OWNER
+go=false
+[exit 0]
+
+$ bash .github/fleet/task.sh base 104
+base=fleet/demo
+[exit 0]
+
+$ bash .github/fleet/task.sh base 117
+fleet: issue #117 has no line "Base: fleet/<topic>". Add one and restart.
+[exit 1]
+
+$ env BASE=fleet/demo bash .github/fleet/task.sh pr-state 107
+pr_state=automerge
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-usage-limit.json bash .github/fleet/task.sh usage 104
+paused=true
+retry_after=2026-11-17T15:00:00Z
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-limit-text-only.json bash .github/fleet/task.sh usage 104
+paused=true
+retry_after=
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-error.json bash .github/fleet/task.sh usage 104
+paused=false
+retry_after=
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-overage.json bash .github/fleet/task.sh usage 104
+paused=false
+retry_after=
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-overage-last.json bash .github/fleet/task.sh usage 104
+paused=false
+retry_after=
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-bad.json bash .github/fleet/task.sh usage 104
+::warning::the execution file isn't a list of SDK messages, so the run isn't treated as paused
+paused=false
+retry_after=
+[exit 0]
+
+$ env EXECUTION_FILE= bash .github/fleet/task.sh usage 104
+paused=false
+retry_after=
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 107
+task job: result=success checkout_ran=true agent=success paused=false timed_out=true pr=automerge stopped=false
+  would run: gh issue comment 107 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=done retry_after= -->
+Run 777 on seat b: done. The PR is ready and set to merge.
+outcome=done
+failed_for_good=false
+next_round=true
+  would run: gh api -X PUT repos/fixture/repo/issues/207/lock --silent
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=false RETRY_AFTER= STARTED=1794915600 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 117
+task job: result=success checkout_ran=true agent=failure paused=false timed_out=false pr=none stopped=false
+  would run: gh issue comment 117 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=failed retry_after= -->
+Run 777 on seat b: failed. See the run log.
+::warning::#117 marked fleet:failed: two failed runs in a row
+  would run: gh issue edit 117 -R fixture/repo --add-label fleet:failed
+outcome=failed
+failed_for_good=true
+next_round=true
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 115
+task job: result=success checkout_ran=true agent=success paused=false timed_out=true pr=none stopped=false
+  would run: gh issue comment 115 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+::warning::#115 marked fleet:failed: 6 starts, cap is 6
+  would run: gh issue edit 115 -R fixture/repo --add-label fleet:failed
+outcome=progress
+failed_for_good=true
+next_round=true
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2027-01-01T00:00:00Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
+task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none stopped=false
+::warning::retry_after is more than 8 days ahead, capped at 8 days
+  would run: gh issue comment 121 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=paused retry_after=2026-11-25T12:00:00Z -->
+Run 777 on seat b: paused on a usage limit until 2026-11-25T12:00:00Z. The router starts it again after that.
+outcome=paused
+failed_for_good=false
+next_round=false
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2026-13-45T99:99:99Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
+task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none stopped=false
+::warning::retry_after isn't a time, recorded as empty
+  would run: gh issue comment 121 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=paused retry_after= -->
+Run 777 on seat b: paused on a usage limit. The router starts it again after that.
+outcome=paused
+failed_for_good=false
+next_round=false
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2026-11-17T15:00:00Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
+task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none stopped=false
+  would run: gh issue comment 121 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=paused retry_after=2026-11-17T15:00:00Z -->
+Run 777 on seat b: paused on a usage limit until 2026-11-17T15:00:00Z. The router starts it again after that.
+outcome=paused
+failed_for_good=false
+next_round=false
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=failure CHECKOUT_RAN= AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED= AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
+task job: result=failure checkout_ran= agent= paused= timed_out=false pr=none stopped=false
+  would run: gh issue comment 120 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=failed retry_after= -->
+Run 777 on seat b: failed. See the run log.
+outcome=failed
+failed_for_good=false
+next_round=true
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=skipped CHECKOUT_RAN= AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED= AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
+task job: result=skipped checkout_ran= agent= paused= timed_out=false pr=none stopped=false
+::notice::#120 run 777 didn't start the agent, so no marker
+outcome=none
+failed_for_good=false
+next_round=false
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=cancelled CHECKOUT_RAN=true AGENT_OUTCOME=cancelled PAUSED=false RETRY_AFTER= STARTED=1794915000 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
+task job: result=cancelled checkout_ran=true agent=cancelled paused=false timed_out=false pr=none stopped=false
+  would run: gh issue comment 120 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+outcome=progress
+failed_for_good=false
+next_round=true
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=false AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED=1794916740 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
+task job: result=success checkout_ran=false agent= paused= timed_out=false pr=none stopped=false
+::notice::#120 run 777 didn't start the agent, so no marker
+outcome=none
+failed_for_good=false
+next_round=false
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=false RETRY_AFTER= STARTED=1794913500 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
+task job: result=success checkout_ran=true agent=failure paused=false timed_out=true pr=none stopped=false
+  would run: gh issue comment 120 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+outcome=progress
+failed_for_good=false
+next_round=true
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=cancelled CHECKOUT_RAN=true AGENT_OUTCOME=cancelled PAUSED=false RETRY_AFTER= STARTED=1794915000 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 105
+task job: result=cancelled checkout_ran=true agent=cancelled paused=false timed_out=false pr=draft stopped=true
+  would run: gh issue comment 105 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=cancelled retry_after= -->
+Run 777 on seat b: cancelled.
+outcome=cancelled
+failed_for_good=false
+next_round=false
+  would run: gh api -X PUT repos/fixture/repo/issues/205/lock --silent
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 125
+task job: result=success checkout_ran=true agent=success paused=false timed_out=true pr=none stopped=false
+  would run: gh api -X DELETE repos/fixture/repo/issues/125/lock --silent
+  would run: gh issue comment 125 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+  would run: gh api -X PUT repos/fixture/repo/issues/125/lock --silent
+outcome=progress
+failed_for_good=false
+next_round=true
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b FLEET_ACT_FAIL=gh issue comment 125 * bash .github/fleet/task.sh outcome 125
+task job: result=success checkout_ran=true agent=success paused=false timed_out=true pr=none stopped=false
+  would run: gh api -X DELETE repos/fixture/repo/issues/125/lock --silent
+  would run: gh issue comment 125 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+  (fails)
+  would run: gh api -X PUT repos/fixture/repo/issues/125/lock --silent
+fleet: posting the marker on #125 failed
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 1]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/125/lock* bash .github/fleet/task.sh outcome 125
+task job: result=success checkout_ran=true agent=success paused=false timed_out=true pr=none stopped=false
+  would run: gh api -X DELETE repos/fixture/repo/issues/125/lock --silent
+  would run: gh issue comment 125 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+  would run: gh api -X PUT repos/fixture/repo/issues/125/lock --silent
+  (fails)
+::warning::locking #125 again failed
+outcome=progress
+failed_for_good=false
+next_round=true
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/226/lock* bash .github/fleet/task.sh outcome 126
+task job: result=success checkout_ran=true agent=success paused=false timed_out=true pr=draft stopped=false
+  would run: gh issue comment 126 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+outcome=progress
+failed_for_good=false
+next_round=true
+  would run: gh api -X PUT repos/fixture/repo/issues/226/lock --silent
+  (fails)
+::warning::locking PR #226 failed
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 142
+task job: result=success checkout_ran=true agent=success paused=false timed_out=true pr=automerge stopped=false
+  would run: gh issue comment 142 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=done retry_after= -->
+Run 777 on seat b: done. The PR is ready and set to merge.
+::notice::#142 reached a cap (6 starts, cap is 6), but its PR is automerge, so it isn't marked fleet:failed
+outcome=done
+failed_for_good=false
+next_round=true
+  would run: gh api -X PUT repos/fixture/repo/issues/242/lock --silent
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=bogus CHECKOUT_RAN=yes AGENT_OUTCOME=::error::x PAUSED=::warning::y RETRY_AFTER= STARTED=1794915600 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 104
+task job: result=invalid checkout_ran=invalid agent=invalid paused=invalid timed_out=false pr=failing stopped=false
+  would run: gh issue comment 104 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=failed retry_after= -->
+Run 777 on seat b: failed. See the run log.
+outcome=failed
+failed_for_good=false
+next_round=true
+  would run: gh api -X PUT repos/fixture/repo/issues/204/lock --silent
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794915600 AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b SEAT=A bash .github/fleet/task.sh outcome 104
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=failing stopped=false
+fleet: SEAT must be a, b or c
+fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (outcome end)
+[exit 1]
+
+$ wait_for_runs 101 9001 150 9150 151 9151 152 9152
+#101 run 9001 is in the run list
+#150 run 9150 has finished
+::error::#151: its run 9151 isn't in the run list after 13 checks 5s apart and hasn't finished, so the next round may start task #151 again
+::error::#152: its run 9152 isn't in the run list after 13 checks 5s apart and hasn't finished, so the next round may start task #152 again
+missing=2
+[exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/after-run FLEET_AFTER_RUN=9160 bash .github/fleet/router.sh
+fleet budget: REST 731/1000 resets 12:20 UTC, GraphQL 200/1000 resets 12:20 UTC (router start)
+started by task run 9160, which is ending: it isn't counted as running
+task runs active: 3, cap 25
+#160 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/160/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=160 -f inputs[seat]=c
+#161 skip-running pr=none
+#162 skip-running pr=none
+#163 skip-running pr=none
+started: 1
+would wait for the 1 started runs to show in the run list
+fleet budget: REST 731/1000 resets 12:20 UTC, GraphQL 200/1000 resets 12:20 UTC (router end)
+[exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/after-run FLEET_AFTER_RUN=9162 bash .github/fleet/router.sh
+fleet budget: REST 731/1000 resets 12:20 UTC, GraphQL 200/1000 resets 12:20 UTC (router start)
+started by task run 9162, which is ending: it isn't counted as running
+task runs active: 3, cap 25
+#160 skip-running pr=none
+#161 skip-running pr=none
+#162 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/162/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=162 -f inputs[seat]=c
+#163 skip-running pr=none
+started: 1
+would wait for the 1 started runs to show in the run list
+fleet budget: REST 731/1000 resets 12:20 UTC, GraphQL 200/1000 resets 12:20 UTC (router end)
+[exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/after-run FLEET_AFTER_RUN=9163 bash .github/fleet/router.sh
+fleet budget: REST 731/1000 resets 12:20 UTC, GraphQL 200/1000 resets 12:20 UTC (router start)
+started by task run 9163, which is ending: it isn't counted as running
+task runs active: 3, cap 25
+#160 skip-running pr=none
+#161 skip-running pr=none
+#162 skip-running pr=none
+#163 failed-cap pr=none
+  would run: gh issue edit 163 -R fixture/repo --add-label fleet:failed
+started: 0
+failed_tasks=163
+fleet budget: REST 731/1000 resets 12:20 UTC, GraphQL 200/1000 resets 12:20 UTC (router end)
+[exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/after-run FLEET_AFTER_RUN=91x bash .github/fleet/router.sh
+fleet budget: REST 731/1000 resets 12:20 UTC, GraphQL 200/1000 resets 12:20 UTC (router start)
+fleet: FLEET_AFTER_RUN must be a run id
+fleet budget: REST 731/1000 resets 12:20 UTC, GraphQL 200/1000 resets 12:20 UTC (router end)
+[exit 1]

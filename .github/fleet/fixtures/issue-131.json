@@ -1,0 +1,35 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": [
+      {
+       "number": 231,
+       "state": "MERGED",
+       "isDraft": false,
+       "isInMergeQueue": false,
+       "isCrossRepository": true,
+       "baseRefName": "fleet/demo",
+       "locked": false,
+       "autoMergeRequest": null,
+       "commits": {
+        "nodes": [
+         {
+          "commit": {
+           "statusCheckRollup": {
+            "state": "SUCCESS"
+           }
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "blocked_by": [],
+ "comments": []
+}

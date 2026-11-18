@@ -1,0 +1,70 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": []
+    }
+   }
+  }
+ },
+ "blocked_by": [],
+ "comments": [
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T01:00:00Z",
+   "body": "<!-- fleet:attempt run=1001 seat=a outcome=progress retry_after= -->\nRun 1001."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T02:00:00Z",
+   "body": "<!-- fleet:attempt run=1002 seat=a outcome=done retry_after= -->\nRun 1002."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T03:00:00Z",
+   "body": "<!-- fleet:attempt run=1003 seat=a outcome=cancelled retry_after= -->\nRun 1003."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T04:00:00Z",
+   "body": "<!-- fleet:attempt run=1004 seat=a outcome=progress retry_after= -->\nRun 1004."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T05:00:00Z",
+   "body": "<!-- fleet:attempt run=1005 seat=a outcome=done retry_after= -->\nRun 1005."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T06:00:00Z",
+   "body": "<!-- fleet:attempt run=1006 seat=a outcome=progress retry_after= -->\nRun 1006."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T07:00:00Z",
+   "body": "<!-- fleet:attempt run=1007 seat=a outcome=done retry_after= -->\nRun 1007."
+  }
+ ]
+}

@@ -1,0 +1,558 @@
+{
+ "branches": [
+  {
+   "name": "fleet/demo",
+   "sha": "1111111111111111111111111111111111111111"
+  },
+  {
+   "name": "fleet/done",
+   "sha": "2222222222222222222222222222222222222222"
+  },
+  {
+   "name": "fleet/has-pr",
+   "sha": "3333333333333333333333333333333333333333"
+  },
+  {
+   "name": "fleet/empty",
+   "sha": "4444444444444444444444444444444444444444"
+  },
+  {
+   "name": "fleet/closing",
+   "sha": "5555555555555555555555555555555555555555"
+  },
+  {
+   "name": "fleet/orphan",
+   "sha": "6666666666666666666666666666666666666666"
+  },
+  {
+   "name": "fleet/reviewed",
+   "sha": "7777777777777777777777777777777777777777"
+  },
+  {
+   "name": "fleet/reworked",
+   "sha": "8888888888888888888888888888888888888888"
+  }
+ ],
+ "ahead": {
+  "fleet/demo": 3,
+  "fleet/done": 4,
+  "fleet/has-pr": 2,
+  "fleet/empty": 0,
+  "fleet/closing": 1,
+  "fleet/orphan": 2,
+  "fleet/reviewed": 3,
+  "fleet/reworked": 5
+ },
+ "closed_issues": [
+  {
+   "number": 90,
+   "state": "closed",
+   "body": "Base: fleet/done\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 91,
+   "state": "closed",
+   "body": "Base: fleet/has-pr\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 92,
+   "state": "closed",
+   "body": "Do it.\r\nBase: fleet/done\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 93,
+   "state": "closed",
+   "body": "Base: fleet/empty\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 94,
+   "state": "closed",
+   "body": "Base: fleet/reviewed\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 95,
+   "state": "closed",
+   "body": "Base: fleet/reworked\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  }
+ ],
+ "prs_to_main": {
+  "fleet/has-pr": [
+   {
+    "number": 400
+   }
+  ]
+ },
+ "merged": {
+  "fleet/done": [
+   301,
+   302
+  ],
+  "fleet/closing": [
+   240
+  ],
+  "fleet/reworked": [
+   305
+  ]
+ },
+ "open_issues": [
+  {
+   "number": 101,
+   "state": "open",
+   "body": "Do task 101.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 103,
+   "state": "open",
+   "body": "Do task 103.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 104,
+   "state": "open",
+   "body": "Do task 104.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 105,
+   "state": "open",
+   "body": "Do task 105.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    },
+    {
+     "name": "fleet:stop"
+    }
+   ]
+  },
+  {
+   "number": 106,
+   "state": "open",
+   "body": "Do task 106.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    },
+    {
+     "name": "fleet:failed"
+    }
+   ]
+  },
+  {
+   "number": 107,
+   "state": "open",
+   "body": "Do task 107.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 108,
+   "state": "open",
+   "body": "Do task 108.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 109,
+   "state": "open",
+   "body": "Do task 109.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 110,
+   "state": "open",
+   "body": "Do task 110.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 111,
+   "state": "open",
+   "body": "Do task 111.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 112,
+   "state": "open",
+   "body": "Do task 112.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 113,
+   "state": "open",
+   "body": "Do task 113.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 114,
+   "state": "open",
+   "body": "Do task 114.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 115,
+   "state": "open",
+   "body": "Do task 115.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 116,
+   "state": "open",
+   "body": "Do task 116.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 117,
+   "state": "open",
+   "body": "No base line here.",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 118,
+   "state": "open",
+   "body": "Do task 118.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 119,
+   "state": "open",
+   "body": "Do task 119.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 120,
+   "state": "open",
+   "body": "Do task 120.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 121,
+   "state": "open",
+   "body": "Do task 121.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 122,
+   "state": "open",
+   "body": "Do task 122.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 123,
+   "state": "open",
+   "body": "Do task 123.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 124,
+   "state": "open",
+   "body": "Do task 124.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 125,
+   "state": "open",
+   "body": "Do task 125.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 126,
+   "state": "open",
+   "body": "Do task 126.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 128,
+   "state": "open",
+   "body": "Do task 128.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ],
+   "pull_request": {
+    "url": "x"
+   }
+  },
+  {
+   "number": 129,
+   "state": "open",
+   "body": "Do task 129.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 130,
+   "state": "open",
+   "body": "Do task 130.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 131,
+   "state": "open",
+   "body": "Do task 131.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 132,
+   "state": "open",
+   "body": "Do task 132.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 133,
+   "state": "open",
+   "body": "Do task 133.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 134,
+   "state": "open",
+   "body": "Do task 134.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 135,
+   "state": "open",
+   "body": "Do task 135.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 136,
+   "state": "open",
+   "body": "Do task 136.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 137,
+   "state": "open",
+   "body": "Do task 137.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 138,
+   "state": "open",
+   "body": "Do task 138.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 139,
+   "state": "open",
+   "body": "Do task 139.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 140,
+   "state": "open",
+   "body": "Do task 140.\r\nBase: fleet/closing\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 141,
+   "state": "open",
+   "body": "Do task 141.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 142,
+   "state": "open",
+   "body": "Do task 142.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  }
+ ],
+ "closed_prs_to_main": {
+  "fleet/reviewed": [
+   {
+    "number": 402,
+    "merged_at": null,
+    "head": {
+     "sha": "7777777777777777777777777777777777777777"
+    }
+   }
+  ],
+  "fleet/reworked": [
+   {
+    "number": 403,
+    "merged_at": null,
+    "head": {
+     "sha": "9999999999999999999999999999999999999999"
+    }
+   }
+  ]
+ }
+}
