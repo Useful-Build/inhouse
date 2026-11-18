@@ -49,8 +49,9 @@ interface ToastOpts { undo?: () => void; ms?: number; icon?: string; key?: strin
 /** A chat that is answering: the agent's run id once it started, the thinking line, the ask that owns it, and the
  *  messages sent into it that wait for their turn (`turn.started` shows each with its quote and files). */
 interface ChatRun { runId: string | null; text: string; token: number; sent: QueuedMsg[] }
-/** A message typed while its chat was answering: it waits above the composer until the answer ends, or goes now (H8). */
-export interface QueuedMsg { id: string; text: string; quote?: string; atts?: Attachment[]; model: string | null }
+/** A message typed while its chat was answering: it waits above the composer until the answer ends, or goes now (H8).
+ *  `paused`: Stop (or a reload) stopped the answer it waited for, so it goes only by Send now (D). */
+export interface QueuedMsg { id: string; text: string; quote?: string; atts?: Attachment[]; model: string | null; paused?: true }
 /** Editing a question already sent (M11): it goes in place of the question and its answer. `saved` is what the composer
  *  held before, put back on cancel and after sending. */
 export interface EditingMsg { chatId: string; id: string; hide: string[]; saved: { text: string; atts: Attachment[]; replyTo: string | null } }
@@ -121,7 +122,7 @@ export interface UiState {
   /** Every chat that is answering, by chat id. Several may answer at once; leaving a chat doesn't stop its answer.
    *  The open chat's run is `openRun(state)`. */
   runs: Record<string, ChatRun>
-  /** Messages waiting for a chat's answer to end, by chat id, oldest first. Not saved: a reload stops every answer. */
+  /** Messages waiting for a chat's answer to end, by chat id, oldest first. Saved (D7): after a reload they wait paused. */
   queued: Record<string, QueuedMsg[]>
   /** The question being edited in the composer, or null. */
   editMsg: EditingMsg | null
@@ -389,6 +390,8 @@ interface SavedSession {
   libraryView: LibraryView
   /** The chats that were answering when this was saved. */
   answering: string[]
+  /** Each chat's queued messages, the ones sent into its run first (a reload stops the run before it answers them). */
+  queued: Record<string, QueuedMsg[]>
 }
 
 type Rec = Record<string, unknown>
@@ -418,6 +421,8 @@ const isMsg = (m: unknown): m is ChatMessage => {
   if (m.role === 'agent') return isStr(m.trace) && isPart(m.part) && (m.model === undefined || isStr(m.model)) && (m.at === undefined || typeof m.at === 'number')
   return false
 }
+const isQueued = (v: unknown): v is QueuedMsg => isRec(v) && isStr(v.id) && isStr(v.text) && (v.quote === undefined || isStr(v.quote))
+  && (v.atts === undefined || isAtts(v.atts)) && (v.model === null || isStr(v.model))
 const isAdds = (v: unknown): v is ChatAdds => isRec(v) && Array.isArray(v.extras) && isRec(v.hidden)
 const LIBRARY_VIEWS: LibraryView[] = ['masonry', 'grid', 'list']
 
@@ -451,6 +456,12 @@ function loadSession(): SavedSession | null {
     feedback: Object.fromEntries(Object.entries(isRec(raw.feedback) ? raw.feedback : {}).filter(([, v]) => v === 'up' || v === 'down')) as SavedSession['feedback'],
     libraryView: LIBRARY_VIEWS.find(v => v === raw.libraryView) ?? 'masonry',
     answering: (Array.isArray(raw.answering) ? raw.answering : []).filter((id): id is string => isStr(id) && exists(id)),
+    queued: Object.fromEntries(Object.entries(isRec(raw.queued) ? raw.queued : {}).flatMap(([id, list]) => {
+      const ok = exists(id) && Array.isArray(list) ? list.filter(isQueued) : []
+      // A model the team can't use any more falls back to the default; the reload stopped the answer, so each waits paused.
+      return ok.length ? [[id, ok.map(q => ({ id: q.id, text: q.text, quote: q.quote, atts: q.atts, paused: true as const,
+        model: q.model !== null && data.models.some(m => m.id === q.model) ? q.model : null }))]] : []
+    })),
   }
 }
 
@@ -473,7 +484,7 @@ function restoreSession(saved: SavedSession | null): { ui: Partial<UiState>; sta
       // The open chat by its id, so a scenario switch never moves the open chat under its saved additions.
       chatId: open, started: saved.started, stash, extras: here?.extras ?? [], hidden: here?.hidden ?? {},
       todayDraft: saved.todayDraft, atts: today?.atts ?? [], drafts,
-      modelSel: saved.modelSel, feedback: saved.feedback, libraryView: saved.libraryView,
+      modelSel: saved.modelSel, feedback: saved.feedback, libraryView: saved.libraryView, queued: saved.queued,
     },
   }
 }
@@ -488,7 +499,13 @@ function sessionOf(s: UiState): SavedSession {
   const key = composerKey(s)
   if (key === 'today') { if (s.atts.length) drafts.today = { text: '', atts: s.atts } }
   else if (key !== null && (s.chatDraft || s.atts.length)) drafts[key] = { text: s.chatDraft, atts: s.atts }
-  return { started: s.started, chats, todayDraft: s.todayDraft, drafts, modelSel: s.modelSel, feedback: s.feedback, libraryView: s.libraryView, answering: Object.keys(s.runs) }
+  // A message sent into a run waits in the run until its turn starts: saved at the front of its chat's queue.
+  const queued: Record<string, QueuedMsg[]> = {}
+  for (const id of new Set([...Object.keys(s.runs), ...Object.keys(s.queued)])) {
+    const list = [...(own(s.runs, id)?.sent ?? []), ...(own(s.queued, id) ?? [])]
+    if (list.length) queued[id] = list
+  }
+  return { started: s.started, chats, todayDraft: s.todayDraft, drafts, modelSel: s.modelSel, feedback: s.feedback, libraryView: s.libraryView, answering: Object.keys(s.runs), queued }
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined
@@ -619,6 +636,31 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     if (r.runId) agent.stop(r.runId)
     return true
   }
+  /** The messages waiting in a chat stay, paused: the answer they waited for was stopped, so only Send now sends them (D). */
+  const pauseQueue = (chatId: string) => set(s => {
+    const list = own(s.queued, chatId)
+    return list?.length ? { queued: { ...s.queued, [chatId]: list.map(q => (q.paused ? q : { ...q, paused: true as const })) } } : {}
+  })
+  /** Stop: the chat's answer ends, says so, and what was queued in it waits paused. False when it wasn't answering. */
+  const stopChat = (chatId: string): boolean => {
+    if (!endRun(chatId)) return false
+    pauseQueue(chatId)
+    // Once: a Send now that just stopped the turn already said so.
+    const note: ChatMessage = { id: msgId(), role: 'event', text: STOPPED_NOTE }
+    updateChat(chatId, c => { const last = c.extras.at(-1); return last && isStoppedNote(last) ? c : { ...c, extras: [...c.extras, note] } })
+    return true
+  }
+  /** Ends the edit open in the composer: it gets back what it held before (only while that chat is open). */
+  const restoreEdit = (focus: boolean) => {
+    const e = get().editMsg
+    if (!e) return
+    set({ editMsg: null })
+    if (openChatKey(get(), agent.read()) !== e.chatId) return
+    set({ atts: e.saved.atts, replyTo: e.saved.replyTo })
+    get().setComposerText(e.saved.text, { focus })
+  }
+  /** An ask starting in a chat (Regenerate, Retry, a suggestion, the queue) ends an edit open there first (F). */
+  const dropEdit = (chatId: string) => { if (get().editMsg?.chatId === chatId) restoreEdit(false) }
   let askSeq = 0
   /** Tells the agent about a chat the person started. A failure shows the agent's notice; the chat stays on screen. */
   const createChat = (c: ChatEntry) => {
@@ -631,6 +673,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   /** Asks `q` in chat `cid`, open or not, and writes the answer there. Synchronous up to and including adding the
    *  person's message: regenerate() reads it right after calling ask(). */
   const runAsk = async (cid: string, q: string, o: { quote?: string; atts: Attachment[]; model: string | null; replacesRun?: string }) => {
+    dropEdit(cid)
     // A chat that is already answering stops that answer first. Other chats keep answering.
     endRun(cid)
     const token = ++askSeq
@@ -639,14 +682,22 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     addTo(cid, { id: msgId(), role: 'user', text: q, quote: o.quote, atts: o.atts.length ? o.atts : undefined })
     let errorShown = false
     let runId = ''
+    // The turn being answered: its trace id is the run's for the first, `${runId}-t${n}` for one started by `send` (types.ts).
+    let turn = 1
     // Set once this ask ended its own run (not Stop, a newer ask, a delete or Reset): the queue goes on from there.
     let ended = false
     const setRun = (p: Partial<ChatRun>) => set(s => (own(s.runs, cid)?.token === token ? { runs: { ...s.runs, [cid]: { ...s.runs[cid], ...p } } } : {}))
     // The run is over the moment the agent says so, so a Send now after this point asks anew instead of sending into it.
-    const finish = () => { if (live()) { set(s => ({ runs: without(s.runs, cid) })); ended = true } }
+    // Messages sent into it that it didn't get to (a failed turn ends the run) go back to the front of the queue, as in endRun.
+    const finish = () => {
+      if (!live()) return
+      const left = own(get().runs, cid)?.sent ?? []
+      set(s => ({ runs: without(s.runs, cid), ...(left.length ? { queued: { ...s.queued, [cid]: [...left, ...(own(s.queued, cid) ?? [])] } } : {}) }))
+      ended = true
+    }
     const at = () => demoTime().getTime()
-    // The run's own id is its trace; a run that failed before starting has none.
-    const showError = (text: string) => addTo(cid, { id: msgId(), role: 'agent', trace: runId, at: at(), part: { type: 'error', text, retryQuestion: q } })
+    // The failing turn's trace; a run that failed before starting has none.
+    const showError = (text: string) => addTo(cid, { id: msgId(), role: 'agent', trace: turn === 1 || !runId ? runId : `${runId}-t${turn}`, at: at(), part: { type: 'error', text, retryQuestion: q } })
     try {
       const mode = activeMode(agent.read(), agent.getSnapshot().settings, o.model)
       const events = agent.ask(q, { chatId: cid, quote: o.quote, replacesRun: o.replacesRun, attachments: o.atts, mode: mode.id, effort: mode.effort })
@@ -669,6 +720,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
           case 'turn.started': {
             // A message sent into this run is being answered now: it joins the chat as the person's message, with the
             // quote and files it was sent with.
+            turn++
             const sent = own(get().runs, cid)?.sent ?? []
             const i = sent.findIndex(x => x.text === ev.text)
             const m = i < 0 ? undefined : sent[i]
@@ -694,12 +746,15 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       if (ended) drain(cid)
     }
   }
-  /** A chat that isn't answering asks the first message waiting in it, as a new question (in the background too, D9). */
+  /** A chat that isn't answering asks the first message waiting in it, as a new question (in the background too, D9).
+   *  Paused ones wait for Send now. */
   const drain = (cid: string) => {
     if (own(get().runs, cid)) return
-    const waiting = own(get().queued, cid)
-    if (!waiting?.length) return
-    const [first, ...rest] = waiting
+    const waiting = own(get().queued, cid) ?? []
+    const at = waiting.findIndex(x => !x.paused)
+    if (at < 0) return
+    const first = waiting[at]
+    const rest = waiting.filter((_, j) => j !== at)
     set(s => ({ queued: rest.length ? { ...s.queued, [cid]: rest } : without(s.queued, cid) }))
     void runAsk(cid, first.text, { quote: first.quote, atts: first.atts ?? [], model: first.model })
   }
@@ -775,6 +830,10 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     ask: async (question, askOpts = {}) => {
       const q = question.trim()
       if (!q) return
+      // An edit open in this chat ends first, so the question doesn't take the edited one's quote and files (F).
+      const s0 = get()
+      const here = s0.page === 'chats' && !s0.chatList ? openChatKey(s0, agent.read()) : null
+      if (here !== null) dropEdit(here)
       // A question from Today, a tool page or the list of chats starts a chat of its own.
       const before = get()
       if (before.page !== 'chats' || before.chatList) {
@@ -804,8 +863,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     },
     stopRun: chatId => {
       const id = chatId ?? openChatKey(get(), agent.read())
-      if (id === null || !endRun(id)) return
-      addTo(id, { id: msgId(), role: 'event', text: STOPPED_NOTE })
+      if (id !== null) stopChat(id)
     },
     queueMessage: () => {
       const s = get()
@@ -826,14 +884,30 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     },
     sendQueuedNow: id => {
       const cid = openChatKey(get(), agent.read())
-      const item = get().unqueue(id)
-      if (cid === null || !item) return
+      const queuedItem = get().unqueue(id)
+      if (cid === null || !queuedItem) return
+      // Sent, it waits for nothing any more.
+      const { paused: _paused, ...item } = queuedItem
       const r = own(get().runs, cid)
       const ask = () => { void runAsk(cid, item.text, { quote: item.quote, atts: item.atts ?? [], model: item.model }) }
-      // Nothing answering (it was stopped): it's simply asked.
+      // Nothing answering (it was stopped, or the page reloaded): it's simply asked.
       if (!r) { ask(); return }
-      // The answer stops here, and says so (once: a second Send now before the first is answered stops nothing more).
-      if (!r.sent.length) addTo(cid, { id: msgId(), role: 'event', text: STOPPED_NOTE })
+      // Send now always interrupts what is running (E), a turn an earlier Send now started too: that one keeps its note.
+      // An earlier Send now whose turn hasn't started shows as asked and stopped (its Retry asks it again), and this one
+      // starts a run of its own, so the agent can't answer the earlier one after it.
+      if (r.sent.length) {
+        const earlier = r.sent
+        // Out of the run first, so ending it doesn't put them back in the queue.
+        set(s => { const cur = own(s.runs, cid); return cur?.token === r.token ? { runs: { ...s.runs, [cid]: { ...cur, sent: [] } } } : {} })
+        for (const m of earlier) {
+          addTo(cid, { id: msgId(), role: 'user', text: m.text, quote: m.quote, atts: m.atts })
+          addTo(cid, { id: msgId(), role: 'event', text: STOPPED_NOTE })
+        }
+        ask()
+        return
+      }
+      const note: ChatMessage = { id: msgId(), role: 'event', text: STOPPED_NOTE }
+      addTo(cid, note)
       // Not started yet: a new question takes its place.
       if (!r.runId) { ask(); return }
       // Steer: the agent ends the current turn and answers this one next, in the same run (`turn.started` shows it).
@@ -841,12 +915,15 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const mine = (s: UiState) => { const cur = own(s.runs, cid); return cur?.token === token ? cur : undefined }
       set(s => { const cur = mine(s); return cur ? { runs: { ...s.runs, [cid]: { ...cur, sent: [...cur.sent, item] } } } : {} })
       agent.send(runId, item.text, { priority: 'now', attachments: item.atts }).catch(e => {
-        // The run ended before the agent took it (its notice already showed). It waits at the front again, and goes as
-        // soon as nothing answers in the chat.
+        // The run ended before the agent took it (its notice already showed), so nothing was stopped: the note goes.
         console.warn('Inhouse: the agent did not take the message.', e)
+        updateChat(cid, c => ({ ...c, extras: c.extras.filter(m => m.id !== note.id) }))
+        // Still in the run's list: it waits at the front again and goes as soon as nothing answers in the chat. Gone from
+        // it: Stop or the run's end already put it back in the queue.
         set(s => {
           const cur = mine(s)
-          return { ...(cur ? { runs: { ...s.runs, [cid]: { ...cur, sent: cur.sent.filter(x => x.id !== item.id) } } } : {}), queued: { ...s.queued, [cid]: [item, ...(own(s.queued, cid) ?? [])] } }
+          if (!cur?.sent.some(x => x.id === item.id)) return {}
+          return { runs: { ...s.runs, [cid]: { ...cur, sent: cur.sent.filter(x => x.id !== item.id) } }, queued: { ...s.queued, [cid]: [item, ...(own(s.queued, cid) ?? [])] } }
         })
         drain(cid)
       })
@@ -860,14 +937,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set({ editMsg: { chatId: cid, id: m.id, hide, saved }, replyTo: m.quote ?? null, atts: m.atts ?? [] })
       get().setComposerText(m.text, { focus: true })
     },
-    cancelEdit: () => {
-      const e = get().editMsg
-      if (!e) return
-      set({ editMsg: null })
-      if (openChatKey(get(), agent.read()) !== e.chatId) return
-      set({ atts: e.saved.atts, replyTo: e.saved.replyTo })
-      get().setComposerText(e.saved.text, { focus: true })
-    },
+    cancelEdit: () => restoreEdit(true),
     sendEdit: () => {
       const s = get()
       const e = s.editMsg
@@ -996,7 +1066,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       // A second delete while the first toast is still up joins it (same key, replaced in place), so one Undo brings back both.
       const earlier = lastChatDelete && s.toasts.some(t => t.key === CHAT_DELETE && t.undo === lastChatDelete?.undo) ? lastChatDelete : null
       // Every deleted chat that is answering, open or not, stops, and says so (Undo brings it back with the note).
-      for (const id of ids) if (endRun(id)) addTo(id, { id: msgId(), role: 'event', text: STOPPED_NOTE })
+      for (const id of ids) stopChat(id)
       agent.deleteChats(ids).catch(logFailure('could not delete the chats'))
       // The open chat was deleted: move to the newest chat left (or a new chat), and remember both for Undo.
       // A second delete keeps the first `from`, so Undo goes back to the chat the person was really on.
@@ -1021,9 +1091,12 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
 
     // ---------- conversation ----------
     regenerate: (hideIdList, question) => {
+      const open = openChatKey(get(), agent.read())
+      if (open === null) throw new Error('regenerate: no chat is open.')
+      // An edit open here ends first, so the composer kept below is the one from before it (F).
+      dropEdit(open)
       const s0 = get()
-      const chatId = openChatKey(s0, agent.read())
-      if (chatId === null) throw new Error('regenerate: no chat is open.')
+      const chatId = open
       // The run that wrote the old answer, so the agent updates what it made (a routine, a skill) instead of adding one.
       const replaces = s0.extras.find(m => m.role === 'agent' && hideIdList.includes(m.id) && RUN_ID.test(m.trace))
       const replacesRun = replaces?.role === 'agent' ? replaces.trace : undefined
@@ -1048,7 +1121,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
         const now = openChatKey(u, agent.read()) === chatId ? u.extras : own(u.stash, chatId)?.extras ?? []
         const at = now.findIndex(m => m.id === asked)
         // Still answering it (no newer question): stop that run. The dropped turn needs no stopped note.
-        if (at >= 0 && !now.some((m, j) => j > at && m.role === 'user')) endRun(chatId)
+        // What was queued behind it waits paused, as after Stop.
+        if (at >= 0 && !now.some((m, j) => j > at && m.role === 'user') && endRun(chatId)) pauseQueue(chatId)
         updateChat(chatId, c => {
           const i = c.extras.findIndex(m => m.id === asked)
           if (i < 0) return { ...c, hidden: unhideIds(c.hidden, hideIdList) }
@@ -1100,11 +1174,15 @@ useUi.subscribe((s, prev) => {
   const from = composerKey(prev)
   const to = composerKey(s)
   if (from === to) return
+  // Editing is per chat (F): leaving the chat ends an open edit, and its draft is what the composer held before it.
+  const edit = prev.editMsg !== null && prev.editMsg.chatId === from ? prev.editMsg.saved : null
+  const left = edit ?? { text: prev.chatDraft, atts: prev.atts }
   // A change that also replaced `drafts` (Reset demo) has already set them: don't file the old composer back in.
-  let drafts = s.drafts === prev.drafts && from !== null ? { ...s.drafts, [from]: { text: from === 'today' ? '' : prev.chatDraft, atts: prev.atts } } : s.drafts
+  let drafts = s.drafts === prev.drafts && from !== null ? { ...s.drafts, [from]: { text: from === 'today' ? '' : left.text, atts: left.atts } } : s.drafts
   if (from !== null && !drafts[from]?.text && !drafts[from]?.atts.length) drafts = dropDraft(drafts, from)
   const next = to === null ? undefined : own(drafts, to)
   useUi.setState({
+    ...(edit && s.editMsg === prev.editMsg ? { editMsg: null } : {}),
     drafts: dropDraft(drafts, to),
     atts: next?.atts ?? [],
     // Today keeps its text in todayDraft; a new chat keeps what newChat() put there (its prefill).
@@ -1125,9 +1203,9 @@ export function backToSettingsMenu() {
 }
 
 // ---------- phase 1 memory: save on change and on pagehide ----------
-const SESSION_FIELDS = ['started', 'stash', 'extras', 'hidden', 'todayDraft', 'chatDraft', 'drafts', 'atts', 'modelSel', 'feedback', 'libraryView', 'chatId', 'fresh', 'page', 'chatList'] as const
-/** Only which chats are answering is saved, so a thinking step (a new `runs` object) doesn't schedule a save. */
-const answeringKey = (s: UiState) => Object.keys(s.runs).join('\n')
+const SESSION_FIELDS = ['started', 'stash', 'extras', 'hidden', 'todayDraft', 'chatDraft', 'drafts', 'atts', 'modelSel', 'feedback', 'libraryView', 'chatId', 'fresh', 'page', 'chatList', 'queued'] as const
+/** Only which chats are answering and what was sent into them is saved, so a thinking step (a new `runs` object) doesn't schedule a save. */
+const answeringKey = (s: UiState) => Object.entries(s.runs).map(([id, r]) => `${id}:${r.sent.map(x => x.id).join(',')}`).join('\n')
 useUi.subscribe((s, prev) => {
   if (!SESSION_FIELDS.some(k => s[k] !== prev[k]) && answeringKey(s) === answeringKey(prev)) return
   clearTimeout(saveTimer)
