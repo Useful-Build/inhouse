@@ -54,6 +54,9 @@ test('Today on the first day names no sample brand', async ({ page }) => {
   const line = page.getByText('Today fills in the day after')
   await expect(line).toBeVisible()
   await expect(line).not.toContainText('Northline')
+  // The line names the tool the page's own setup list says is next: the first row that isn't connected.
+  const first = (await page.locator('[data-setup-row]').first().locator('span.font-medium').innerText()).trim()
+  await expect(line).toContainText(`after ${first} is connected`)
 })
 
 test('Approvals at Watch names no channel', async ({ page }) => {

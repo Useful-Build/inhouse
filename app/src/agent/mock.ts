@@ -31,6 +31,8 @@ const override = (() => {
     }
   } catch { return { brandName: undefined, channels: undefined } }
 })()
+/** True when the brand or channels came from the override: they were built at load, so only a reload drops them. */
+export const dataOverrideActive = !!override.brandName || override.channels === false
 const meta = override.brandName ? { ...sampleMeta, brand: { ...sampleMeta.brand, name: override.brandName } } : sampleMeta
 const tools = override.channels === false ? { ...sampleTools, channels: [] } : sampleTools
 

@@ -27,6 +27,9 @@ export function Today() {
   if (byAmount) cards.sort((a, b) => Number(a.handled) - Number(b.handled) || amountOf(b.problem) - amountOf(a.problem))
   const h = handled(ctx)
   const setup = ctx.data.scenarios.firstDay.setup
+  const toolKey = (name: string) => name.toLowerCase().replace(/\s+/g, '-')
+  // The first tool the agent doesn't have yet: the one Today waits for.
+  const next = setup.find(([name]) => !ctx.data.tools.connected.includes(toolKey(name)))?.[0]
   // The header follows the state: what needs you, or how the day ended.
   const settled = ctx.S >= 1 && pendingIds(ctx).length === 0
   const allApproved = settled && cards.length > 0 && cards.length === ctx.data.problems.length && cards.every(c => ctx.agent.approved[c.problem.id])
@@ -49,13 +52,13 @@ export function Today() {
             actions={<button type="button" className={cn('on-page text-sm font-strong whitespace-nowrap text-foreground transition-colors hover:text-foreground-3', tap)} onClick={() => openTeam('tool')}>Message the team →</button>} />
           <div className="rounded-2xl border border-border bg-card px-4.5 py-0.5">
             {setup.map(([name, status], i) => {
-              const k = name.toLowerCase().replace(/\s+/g, '-')
+              const k = toolKey(name)
               return (
-                <button key={name} type="button" onClick={() => openTool(k)} className={`flex min-h-13.25 w-full items-center gap-3 border-t text-left text-base ${i === 0 ? 'border-transparent' : 'border-divider'}`}>
+                <button key={name} type="button" data-setup-row={k} onClick={() => openTool(k)} className={`flex min-h-13.25 w-full items-center gap-3 border-t text-left text-base ${i === 0 ? 'border-transparent' : 'border-divider'}`}>
                   <LogoTile k={k} size="md" />
                   <span className="min-w-0 flex-1 font-medium">{name}</span>
                   <span className="flex items-center gap-1.5 text-sm whitespace-nowrap text-foreground-3">
-                    <i className={`size-1.5 rounded-full ${i === 0 ? 'bg-warning' : 'bg-fill-strong'}`} />{status}
+                    <i className={`size-1.5 rounded-full ${name === next ? 'bg-warning' : 'bg-fill-strong'}`} />{status}
                   </span>
                   <Icon name="chevron_right" size={18} className="text-faint" />
                 </button>
@@ -63,7 +66,7 @@ export function Today() {
             })}
           </div>
           <p className="on-page mx-1 mt-3 mb-0 text-sm text-pretty text-muted-foreground shadow-page-md">
-            Today fills in the day after {setup.find(([, status]) => status.toLowerCase() !== 'connected')?.[0] ?? 'your first tool'} is connected. Until then your Inhouse agent has nothing to read, so it won't guess.
+            Today fills in the day after {next ?? 'your first tool'} is connected. Until then your Inhouse agent has nothing to read, so it won't guess.
           </p>
         </div>
       )}
