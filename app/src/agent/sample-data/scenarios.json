@@ -1,0 +1,46 @@
+{
+  "note": "Demo switches. In production these are real states.",
+  "scenarios": {
+    "Normal": {},
+    "First day": {
+      "today": {
+        "setup": [
+          [
+            "Shopify",
+            "Connecting today"
+          ],
+          [
+            "Amazon",
+            "Tomorrow"
+          ],
+          [
+            "ShipBob",
+            "Tomorrow"
+          ],
+          [
+            "Xero",
+            "This week"
+          ],
+          [
+            "Gorgias",
+            "This week"
+          ],
+          [
+            "Meta Ads",
+            "This week"
+          ]
+        ]
+      }
+    },
+    "Loading": {
+      "today": {
+        "readDone": 4
+      }
+    },
+    "Tool disconnected": {
+      "tool": "gorgias",
+      "at": "5:41 AM"
+    },
+    "Cap reached": {}
+  }
+}

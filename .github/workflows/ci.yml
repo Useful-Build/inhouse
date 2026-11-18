@@ -1,0 +1,88 @@
+# The required check for main and fleet/** (job name "ci"). Runs on PRs, in the merge queue and on dispatch.
+# The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
+# Playwright image so screenshots render the same on every run. Two shards at most: runner slots are shared.
+name: ci
+
+on:
+  pull_request:
+    branches: [main, "fleet/**"]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Only a new commit cancels a running run. A reopen or ready_for_review on the same commit queues behind it.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+
+jobs:
+  e2e:
+    name: e2e (${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # The image's version must match @playwright/test in app/package.json (also in .github/workflows/baselines.yml
+    # and app/package.json's test:visual:linux scripts). Bump the tag and digest together, everywhere.
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      options: --user 1001 --ipc=host
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            parts: 1/4 3/4
+          - shard: 2
+            parts: 2/4 4/4
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: npm ci
+      - if: matrix.shard == 1
+        run: npm run typecheck
+      - if: matrix.shard == 1
+        run: npm run lint
+      - run: npm run build
+      # Playwright balances shards by test count, not time, and the slow desktop specs come first. So the
+      # suite is cut in four by test (--fully-parallel) and each job runs one slow and one fast quarter.
+      # One worker: the tests run one at a time. Every quarter runs even if the one before failed.
+      # E2E_PREBUILT: the web server serves the build above instead of building again for each quarter.
+      - name: Playwright, quarters ${{ matrix.parts }}
+        env:
+          E2E_PREBUILT: "1"
+        run: |
+          rc=0
+          for part in ${{ matrix.parts }}; do
+            VERIFY_DIR="e2e-artifacts/quarter-${part%/*}" npx playwright test --forbid-only --fully-parallel --shard="$part" || rc=1
+          done
+          exit $rc
+      - if: ${{ !success() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-shard-${{ matrix.shard }}
+          path: app/e2e-artifacts
+          retention-days: 7
+
+  ci:
+    needs: e2e
+    # always(): a cancelled or skipped shard makes ci red, never skipped (a skipped check counts as passing).
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Every shard passed
+        env:
+          RESULT: ${{ needs.e2e.result }}
+        run: |
+          echo "e2e: $RESULT"
+          if [ "$RESULT" = cancelled ]; then
+            echo "::error::The e2e legs were cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
+          fi
+          test "$RESULT" = success

@@ -1,0 +1,1391 @@
+{
+ "note": "The Library: every file Inhouse agent made or the team shared, for Northline Outdoor. All invented. Names, people and numbers match problems.json, chats.json and routines.json. Newest first. Images are SVG art in app/public/library/. Dates carry no year on purpose.",
+ "places": [
+  {
+   "id": "chats",
+   "name": "Chats",
+   "icon": "chat_bubble"
+  },
+  {
+   "id": "routines",
+   "name": "Routines",
+   "icon": "event_repeat"
+  },
+  {
+   "id": "approvals",
+   "name": "Approvals",
+   "icon": "task_alt"
+  },
+  {
+   "id": "uploads",
+   "name": "Uploaded by the team",
+   "icon": "upload_file"
+  }
+ ],
+ "files": [
+  {
+   "id": "c-stuck",
+   "name": "stuck-orders-over-3-days.csv",
+   "type": "CSV",
+   "kind": "documents",
+   "place": "chats",
+   "from": "Chat: Stuck orders over 3 days",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "312 B",
+   "date": "7:43 AM",
+   "at": "2026-11-16T07:43",
+   "link": {
+    "to": "chat",
+    "id": "stuck"
+   },
+   "table": {
+    "head": [
+     "Order",
+     "Age",
+     "Why",
+     "Value"
+    ],
+    "rows": [
+     [
+      "#4821",
+      "4 days",
+      "Not picked at ShipBob",
+      "$312"
+     ],
+     [
+      "#4807",
+      "5 days",
+      "Address check failed",
+      "$148"
+     ],
+     [
+      "#4799",
+      "6 days",
+      "Waiting on Summit Fleece",
+      "$96"
+     ]
+    ],
+    "total": "3 rows"
+   }
+  },
+  {
+   "id": "c-refunds-csv",
+   "name": "jacket-refund-requests.csv",
+   "type": "CSV",
+   "kind": "documents",
+   "place": "chats",
+   "from": "Chat: Why did refunds jump?",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "2.4 KB",
+   "date": "7:17 AM",
+   "at": "2026-11-16T07:17",
+   "link": {
+    "to": "chat",
+    "id": "refunds"
+   },
+   "table": {
+    "head": [
+     "Order",
+     "Age",
+     "Why",
+     "Value"
+    ],
+    "rows": [
+     [
+      "#4838",
+      "3 hours",
+      "Runs small, wants a size L",
+      "$238"
+     ],
+     [
+      "#4836",
+      "5 hours",
+      "Too tight in the shoulders",
+      "$238"
+     ],
+     [
+      "#4831",
+      "1 day",
+      "Runs small, returning",
+      "$238"
+     ],
+     [
+      "#4829",
+      "1 day",
+      "Runs small, wants a size L",
+      "$238"
+     ],
+     [
+      "#4824",
+      "2 days",
+      "Too tight in the shoulders",
+      "$238"
+     ]
+    ],
+    "total": "19 rows, $4,522"
+   }
+  },
+  {
+   "id": "c-refunds-chart",
+   "name": "refunds-by-product.png",
+   "type": "PNG",
+   "kind": "images",
+   "place": "chats",
+   "from": "Chat: Why did refunds jump?",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "96 KB",
+   "date": "7:16 AM",
+   "at": "2026-11-16T07:16",
+   "link": {
+    "to": "chat",
+    "id": "refunds"
+   },
+   "src": "/library/refunds-by-product.svg",
+   "ratio": "8/5",
+   "alt": ""
+  },
+  {
+   "id": "r-reorder-1117",
+   "name": "monday-reorder-list.xlsx",
+   "type": "XLSX",
+   "kind": "documents",
+   "place": "routines",
+   "from": "Routine: Monday reorder list",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "21 KB",
+   "date": "7:00 AM",
+   "at": "2026-11-16T07:00",
+   "link": {
+    "to": "routines"
+   },
+   "table": {
+    "head": [
+     "Product",
+     "Days of stock",
+     "Reorder",
+     "Note"
+    ],
+    "rows": [
+     [
+      "Ridge 30L Pack",
+      "9",
+      "600",
+      "Drafted at 6:08 AM, in Approvals"
+     ],
+     [
+      "Summit Fleece",
+      "12",
+      "None",
+      "PO-1187 for 420 is late, 300 more ordered Nov 12"
+     ],
+     [
+      "Trail Shell · M · Olive",
+      "Oversold by 5",
+      "None",
+      "Variant pause waits in Approvals"
+     ]
+    ],
+    "total": "3 rows, under 21 days"
+   }
+  },
+  {
+   "id": "a-po-1188",
+   "name": "PO-1188-ridge-30l-kestrel.pdf",
+   "type": "PDF",
+   "kind": "documents",
+   "place": "approvals",
+   "from": "Approval: Reorder 600 Ridge 30L Packs",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "88 KB",
+   "date": "6:08 AM",
+   "at": "2026-11-16T06:08",
+   "link": {
+    "to": "approval",
+    "id": "stock"
+   },
+   "doc": {
+    "tag": "Purchase order",
+    "title": "PO-1188",
+    "meta": [
+     [
+      "To",
+      "Kestrel Supply"
+     ],
+     [
+      "From",
+      "Northline Outdoor"
+     ],
+     [
+      "Terms",
+      "Net 30"
+     ]
+    ],
+    "table": {
+     "head": [
+      "Item",
+      "Qty",
+      "Price"
+     ],
+     "rows": [
+      [
+       "Ridge 30L · Olive",
+       "400",
+       "$6,400"
+      ],
+      [
+       "Ridge 30L · Black",
+       "200",
+       "$3,200"
+      ]
+     ],
+     "total": [
+      "Total",
+      "600",
+      "$9,600"
+     ]
+    },
+    "note": "Deliver to the ShipBob Reno warehouse. Lead time 14 days."
+   }
+  },
+  {
+   "id": "a-returns-csv",
+   "name": "restock-11-units.csv",
+   "type": "CSV",
+   "kind": "documents",
+   "place": "approvals",
+   "from": "Approval: Restock 11 units on Shopify",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "0.9 KB",
+   "date": "6:08 AM",
+   "at": "2026-11-16T06:08",
+   "link": {
+    "to": "approval",
+    "id": "returns"
+   },
+   "table": {
+    "head": [
+     "Product",
+     "Units"
+    ],
+    "rows": [
+     [
+      "Ridge 30L · Olive",
+      "4"
+     ],
+     [
+      "Trail Shell · M · Black",
+      "3"
+     ],
+     [
+      "Summit Fleece · L",
+      "4"
+     ]
+    ],
+    "total": "3 rows, 11 units"
+   }
+  },
+  {
+   "id": "a-stuck-md",
+   "name": "shipbob-ticket-order-4821.md",
+   "type": "MD",
+   "kind": "documents",
+   "place": "approvals",
+   "from": "Approval: Ask ShipBob why #4821 hasn't shipped",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "0.5 KB",
+   "date": "6:08 AM",
+   "at": "2026-11-16T06:08",
+   "link": {
+    "to": "approval",
+    "id": "stuck"
+   },
+   "text": "Hi,\n\nOrder #4821 was released to you on Nov 12 and still shows as not picked. Can you check what's holding it and ship it today? It's for a repeat customer.\n\nThanks,\nNorthline Outdoor"
+  },
+  {
+   "id": "a-po-1187",
+   "name": "PO-1187-kestrel-summit-fleece.pdf",
+   "type": "PDF",
+   "kind": "documents",
+   "place": "approvals",
+   "from": "Approval: Chase Kestrel for a new ship date",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "74 KB",
+   "date": "6:07 AM",
+   "at": "2026-11-16T06:07",
+   "link": {
+    "to": "approval",
+    "id": "po"
+   },
+   "doc": {
+    "tag": "Purchase order",
+    "title": "PO-1187",
+    "meta": [
+     [
+      "To",
+      "Kestrel Supply"
+     ],
+     [
+      "Promised",
+      "Tue, Nov 10"
+     ],
+     [
+      "Terms",
+      "Net 30"
+     ]
+    ],
+    "table": {
+     "head": [
+      "Item",
+      "Qty",
+      "Price"
+     ],
+     "rows": [
+      [
+       "Summit Fleece · Rust",
+       "220",
+       "$2,640"
+      ],
+      [
+       "Summit Fleece · Sand",
+       "200",
+       "$2,400"
+      ],
+      [
+       "Freight, under 500 units",
+       "",
+       "$60"
+      ]
+     ],
+     "total": [
+      "Total",
+      "420",
+      "$5,100"
+     ]
+    },
+    "note": "6 days late. Your Inhouse agent drafted a note to Mei Chen for a new ship date."
+   }
+  },
+  {
+   "id": "a-oversell-md",
+   "name": "oversold-customer-email.md",
+   "type": "MD",
+   "kind": "documents",
+   "place": "approvals",
+   "from": "Approval: Pause the variant and email 5 customers",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "0.6 KB",
+   "date": "6:07 AM",
+   "at": "2026-11-16T06:07",
+   "link": {
+    "to": "approval",
+    "id": "oversell"
+   },
+   "text": "Hi Jamie,\n\nThanks for your order. The Trail Shell in Olive, size M, sold faster than we expected, so yours will ship on Tue, Dec 8.\n\nIf you'd rather not wait, reply and we'll refund you straight away.\n\nThe Northline team"
+  },
+  {
+   "id": "a-amazon-claim",
+   "name": "amazon-fee-reimbursement-case.pdf",
+   "type": "PDF",
+   "kind": "documents",
+   "place": "approvals",
+   "from": "Approval: Open a reimbursement case",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "102 KB",
+   "date": "6:06 AM",
+   "at": "2026-11-16T06:06",
+   "link": {
+    "to": "approval",
+    "id": "payout"
+   },
+   "doc": {
+    "tag": "Reimbursement case",
+    "title": "Fulfillment fee charged too high",
+    "meta": [
+     [
+      "Settlement",
+      "Oct 30 to Nov 12"
+     ],
+     [
+      "Orders",
+      "18"
+     ],
+     [
+      "Amount",
+      "$1,240"
+     ]
+    ],
+    "table": {
+     "head": [
+      "Order",
+      "Units",
+      "Charged",
+      "Correct fee",
+      "Over"
+     ],
+     "rows": [
+      [
+       "114-2231",
+       "4",
+       "$96.30",
+       "$27.40",
+       "$68.90"
+      ],
+      [
+       "114-2247",
+       "3",
+       "$72.20",
+       "$20.55",
+       "$51.65"
+      ],
+      [
+       "114-2290",
+       "5",
+       "$120.40",
+       "$34.25",
+       "$86.15"
+      ],
+      [
+       "114-2312",
+       "4",
+       "$96.30",
+       "$27.40",
+       "$68.90"
+      ]
+     ],
+     "total": [
+      "18 orders",
+      "",
+      "",
+      "",
+      "$1,240 over"
+     ]
+    },
+    "note": "The orders were charged the large-item fee, though they ship as standard size."
+   }
+  },
+  {
+   "id": "r-restock-py",
+   "name": "restock-returns.py",
+   "type": "PY",
+   "kind": "code",
+   "place": "routines",
+   "from": "Routine: Morning check",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "1.8 KB",
+   "date": "6:03 AM",
+   "at": "2026-11-16T06:03",
+   "link": {
+    "to": "routines"
+   },
+   "text": "from shopify import variants\nfrom shipbob import returns\n\nWAIT_DAYS = 3\n\ndef sellable_returns():\n    \"\"\"Returns ShipBob marked sellable that Shopify still hides.\"\"\"\n    rows = returns.received(min_age_days=WAIT_DAYS, status=\"sellable\")\n    return [r for r in rows if not variants.available(r.sku)]\n\nfor r in sellable_returns():\n    print(\"Restock\", r.units, r.sku)"
+  },
+  {
+   "id": "r-payout-csv",
+   "name": "amazon-payout-check.csv",
+   "type": "CSV",
+   "kind": "documents",
+   "place": "routines",
+   "from": "Routine: Amazon payout check",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "5.2 KB",
+   "date": "6:02 AM",
+   "at": "2026-11-16T06:02",
+   "link": {
+    "to": "routines"
+   },
+   "table": {
+    "head": [
+     "Settlement",
+     "Paid",
+     "Expected",
+     "Gap"
+    ],
+    "rows": [
+     [
+      "Oct 30 to Nov 12",
+      "$18,420",
+      "$19,660",
+      "-$1,240"
+     ],
+     [
+      "Oct 16 to 29",
+      "$17,905",
+      "$17,905",
+      "$0"
+     ],
+     [
+      "Oct 2 to 15",
+      "$16,340",
+      "$16,340",
+      "$0"
+     ]
+    ],
+    "total": "3 rows"
+   }
+  },
+  {
+   "id": "r-forecast-xlsx",
+   "name": "stock-forecast.xlsx",
+   "type": "XLSX",
+   "kind": "documents",
+   "place": "routines",
+   "from": "Routine: Morning check",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "38 KB",
+   "date": "6:01 AM",
+   "at": "2026-11-16T06:01",
+   "link": {
+    "to": "routines"
+   },
+   "table": {
+    "head": [
+     "Product",
+     "On hand",
+     "Per day",
+     "Days left"
+    ],
+    "rows": [
+     [
+      "Ridge 30L Pack",
+      "190",
+      "21",
+      "9"
+     ],
+     [
+      "Summit Fleece",
+      "110",
+      "9",
+      "12"
+     ],
+     [
+      "Trail Shell · M · Olive",
+      "9",
+      "2",
+      "4"
+     ],
+     [
+      "Trail Shell · L · Slate",
+      "240",
+      "8",
+      "30"
+     ]
+    ],
+    "total": "4 of 38 rows"
+   }
+  },
+  {
+   "id": "r-forecast-sql",
+   "name": "stock-forecast.sql",
+   "type": "SQL",
+   "kind": "code",
+   "place": "routines",
+   "from": "Routine: Morning check",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "1.3 KB",
+   "date": "6:01 AM",
+   "at": "2026-11-16T06:01",
+   "link": {
+    "to": "routines"
+   },
+   "text": "-- Days of stock per variant, from the last 14 days of sales\nSELECT v.sku,\n       v.on_hand,\n       ROUND(s.units / 14.0, 1) AS per_day,\n       ROUND(v.on_hand / (s.units / 14.0)) AS days_left\nFROM variants v\nJOIN sales_14d s ON s.sku = v.sku\nWHERE v.on_hand / (s.units / 14.0) < 21\nORDER BY days_left;"
+  },
+  {
+   "id": "r-orders-csv",
+   "name": "shopify-orders-last-7-days.csv",
+   "type": "CSV",
+   "kind": "documents",
+   "place": "routines",
+   "from": "Routine: Morning check",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "412 KB",
+   "date": "6:00 AM",
+   "at": "2026-11-16T06:00",
+   "link": {
+    "to": "routines"
+   },
+   "table": {
+    "head": [
+     "Order",
+     "Date",
+     "Total",
+     "Status"
+    ],
+    "rows": [
+     [
+      "#4838",
+      "Nov 15",
+      "$238",
+      "Paid"
+     ],
+     [
+      "#4837",
+      "Nov 15",
+      "$119",
+      "Fulfilled"
+     ],
+     [
+      "#4836",
+      "Nov 15",
+      "$238",
+      "Paid"
+     ],
+     [
+      "#4835",
+      "Nov 15",
+      "$64",
+      "Fulfilled"
+     ]
+    ],
+    "total": "4 of 1,237 rows"
+   }
+  },
+  {
+   "id": "c-friday-md",
+   "name": "friday-email-draft.md",
+   "type": "MD",
+   "kind": "documents",
+   "place": "chats",
+   "from": "Chat: What to feature in Friday's email",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "1.1 KB",
+   "date": "Sun, Nov 15",
+   "at": "2026-11-15T16:42",
+   "link": {
+    "to": "chat",
+    "id": "friday"
+   },
+   "text": "# Friday email\n\nSubject: The Summit Fleece is back\n\nFeature the Summit Fleece in Rust and the Trail Shell in Slate.\nHold back Olive in size M until Kestrel ships.\n\nSend Friday at 10:00 AM to the full list."
+  },
+  {
+   "id": "c-numbers-xlsx",
+   "name": "weekly-numbers-week-46.xlsx",
+   "type": "XLSX",
+   "kind": "documents",
+   "place": "chats",
+   "from": "Chat: Weekly numbers, Nov 7 to 13",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "24 KB",
+   "date": "Fri, Nov 13",
+   "at": "2026-11-13T16:02",
+   "link": {
+    "to": "chat",
+    "id": "numbers"
+   },
+   "table": {
+    "head": [
+     "Measure",
+     "This week",
+     "Last week",
+     "Change"
+    ],
+    "rows": [
+     [
+      "Revenue",
+      "$61,840",
+      "$58,210",
+      "+6%"
+     ],
+     [
+      "Orders",
+      "1,284",
+      "1,196",
+      "+7%"
+     ],
+     [
+      "Refunds",
+      "31",
+      "14",
+      "+17"
+     ],
+     [
+      "Ad spend",
+      "$9,260",
+      "$9,010",
+      "+3%"
+     ]
+    ],
+    "total": "4 rows"
+   }
+  },
+  {
+   "id": "r-returns",
+   "name": "returns-summary-week-46.pdf",
+   "type": "PDF",
+   "kind": "documents",
+   "place": "routines",
+   "from": "Routine: Weekly numbers report",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "146 KB",
+   "date": "Fri, Nov 13",
+   "at": "2026-11-13T16:01",
+   "link": {
+    "to": "routines"
+   },
+   "doc": {
+    "tag": "Returns",
+    "title": "Returns summary, week 46",
+    "meta": [
+     [
+      "Returns received",
+      "11"
+     ],
+     [
+      "At ShipBob",
+      "3+ days"
+     ]
+    ],
+    "table": {
+     "head": [
+      "Product",
+      "Units"
+     ],
+     "rows": [
+      [
+       "Ridge 30L · Olive",
+       "4"
+      ],
+      [
+       "Trail Shell · M · Black",
+       "3"
+      ],
+      [
+       "Summit Fleece · L",
+       "4"
+      ]
+     ]
+    },
+    "note": "All 11 are sellable at ShipBob. Shopify still shows them as unavailable."
+   }
+  },
+  {
+   "id": "r-weekly-46",
+   "name": "weekly-ops-report-week-46.pdf",
+   "type": "PDF",
+   "kind": "documents",
+   "place": "routines",
+   "from": "Routine: Weekly numbers report",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "212 KB",
+   "date": "Fri, Nov 13",
+   "at": "2026-11-13T16:00",
+   "link": {
+    "to": "routines"
+   },
+   "doc": {
+    "tag": "Weekly report",
+    "title": "Operations, week 46",
+    "meta": [
+     [
+      "Period",
+      "Nov 7 to 13"
+     ],
+     [
+      "Prepared by",
+      "Inhouse agent"
+     ]
+    ],
+    "table": {
+     "head": [
+      "Measure",
+      "Week"
+     ],
+     "rows": [
+      [
+       "Revenue",
+       "$61,840"
+      ],
+      [
+       "Gross margin",
+       "52%"
+      ],
+      [
+       "Stock at risk",
+       "2 products"
+      ],
+      [
+       "Ad spend",
+       "$9,260"
+      ]
+     ]
+    },
+    "note": "Refunds rose to 31, mostly Trail Shell Jacket in size M. Ridge 30L sells out on Wed, Nov 25 without a reorder."
+   }
+  },
+  {
+   "id": "u-shelf",
+   "name": "warehouse-shelf-b3.jpg",
+   "type": "JPG",
+   "kind": "images",
+   "place": "uploads",
+   "from": "Uploaded by Dana Kim",
+   "by": "Dana Kim",
+   "madeByAgent": false,
+   "size": "2.4 MB",
+   "date": "Fri, Nov 13",
+   "at": "2026-11-13T15:38",
+   "src": "/library/warehouse-shelf.svg",
+   "ratio": "4/3",
+   "alt": ""
+  },
+  {
+   "id": "c-payout-csv",
+   "name": "amazon-fee-breakdown.csv",
+   "type": "CSV",
+   "kind": "documents",
+   "place": "chats",
+   "from": "Chat: Amazon payout gap",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "3.8 KB",
+   "date": "Fri, Nov 13",
+   "at": "2026-11-13T16:24",
+   "link": {
+    "to": "chat",
+    "id": "payout"
+   },
+   "table": {
+    "head": [
+     "Order",
+     "Product",
+     "Units",
+     "Fee charged",
+     "Correct fee",
+     "Over"
+    ],
+    "rows": [
+     [
+      "114-2231",
+      "Ridge 30L Pack",
+      "4",
+      "$96.30",
+      "$27.40",
+      "$68.90"
+     ],
+     [
+      "114-2247",
+      "Trail Shell Jacket",
+      "3",
+      "$72.20",
+      "$20.55",
+      "$51.65"
+     ],
+     [
+      "114-2290",
+      "Summit Fleece",
+      "5",
+      "$120.40",
+      "$34.25",
+      "$86.15"
+     ],
+     [
+      "114-2312",
+      "Ridge 30L Pack",
+      "4",
+      "$96.30",
+      "$27.40",
+      "$68.90"
+     ]
+    ],
+    "total": "18 rows, $1,240 over"
+   }
+  },
+  {
+   "id": "u-damaged",
+   "name": "damaged-return-4812.jpg",
+   "type": "JPG",
+   "kind": "images",
+   "place": "uploads",
+   "from": "Uploaded by Leo Park",
+   "by": "Leo Park",
+   "madeByAgent": false,
+   "size": "2.1 MB",
+   "date": "Fri, Nov 13",
+   "at": "2026-11-13T10:12",
+   "src": "/library/damaged-return.svg",
+   "ratio": "4/3",
+   "alt": ""
+  },
+  {
+   "id": "u-fleece",
+   "name": "summit-fleece-rust.png",
+   "type": "PNG",
+   "kind": "images",
+   "place": "uploads",
+   "from": "Uploaded by Priya Shah",
+   "by": "Priya Shah",
+   "madeByAgent": false,
+   "size": "1.5 MB",
+   "date": "Thu, Nov 12",
+   "at": "2026-11-12T14:26",
+   "src": "/library/summit-fleece-rust.svg",
+   "ratio": "4/5",
+   "alt": ""
+  },
+  {
+   "id": "u-pack",
+   "name": "ridge-30l-pack.png",
+   "type": "PNG",
+   "kind": "images",
+   "place": "uploads",
+   "from": "Uploaded by Priya Shah",
+   "by": "Priya Shah",
+   "madeByAgent": false,
+   "size": "1.6 MB",
+   "date": "Thu, Nov 12",
+   "at": "2026-11-12T14:24",
+   "src": "/library/ridge-30l-pack.svg",
+   "ratio": "1/1",
+   "alt": ""
+  },
+  {
+   "id": "u-jacket-slate",
+   "name": "trail-shell-jacket-slate.png",
+   "type": "PNG",
+   "kind": "images",
+   "place": "uploads",
+   "from": "Uploaded by Priya Shah",
+   "by": "Priya Shah",
+   "madeByAgent": false,
+   "size": "1.3 MB",
+   "date": "Thu, Nov 12",
+   "at": "2026-11-12T14:21",
+   "src": "/library/trail-shell-jacket-slate.svg",
+   "ratio": "4/5",
+   "alt": ""
+  },
+  {
+   "id": "u-jacket-olive",
+   "name": "trail-shell-jacket-olive.png",
+   "type": "PNG",
+   "kind": "images",
+   "place": "uploads",
+   "from": "Uploaded by Priya Shah",
+   "by": "Priya Shah",
+   "madeByAgent": false,
+   "size": "1.4 MB",
+   "date": "Thu, Nov 12",
+   "at": "2026-11-12T14:20",
+   "src": "/library/trail-shell-jacket-olive.svg",
+   "ratio": "4/5",
+   "alt": ""
+  },
+  {
+   "id": "c-ridge-xlsx",
+   "name": "ridge-30l-reorder-options.xlsx",
+   "type": "XLSX",
+   "kind": "documents",
+   "place": "chats",
+   "from": "Chat: Ridge 30L reorder quantity",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "18 KB",
+   "date": "Wed, Nov 11",
+   "at": "2026-11-11T12:08",
+   "link": {
+    "to": "chat",
+    "id": "ridge"
+   },
+   "table": {
+    "head": [
+     "Order",
+     "Units",
+     "Cost",
+     "Lands",
+     "Covers until"
+    ],
+    "rows": [
+     [
+      "Small",
+      "400",
+      "$6,400",
+      "Wed, Nov 25",
+      "Mon, Dec 14"
+     ],
+     [
+      "Recommended",
+      "600",
+      "$9,600",
+      "Wed, Nov 25",
+      "Wed, Dec 23"
+     ],
+     [
+      "Large",
+      "800",
+      "$12,800",
+      "Wed, Nov 25",
+      "Sat, Jan 2"
+     ]
+    ],
+    "total": "3 rows, 3 options"
+   }
+  },
+  {
+   "id": "u-video",
+   "name": "packing-bench-walkthrough.mp4",
+   "type": "MP4",
+   "kind": "media",
+   "place": "uploads",
+   "from": "Uploaded by Leo Park",
+   "by": "Leo Park",
+   "madeByAgent": false,
+   "size": "48.2 MB",
+   "date": "Wed, Nov 11",
+   "at": "2026-11-11T11:30",
+   "media": "video",
+   "duration": "1:36",
+   "poster": "/library/packing-poster.svg"
+  },
+  {
+   "id": "c-meta-csv",
+   "name": "meta-ads-low-stock.csv",
+   "type": "CSV",
+   "kind": "documents",
+   "place": "chats",
+   "from": "Chat: Meta Ads on low-stock products",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "2.1 KB",
+   "date": "Fri, Nov 13",
+   "at": "2026-11-13T15:12",
+   "link": {
+    "to": "chat",
+    "id": "meta"
+   },
+   "table": {
+    "head": [
+     "Campaign",
+     "Product",
+     "Days of stock",
+     "Spend last week"
+    ],
+    "rows": [
+     [
+      "Ridge 30L Autumn",
+      "Ridge 30L Pack",
+      "12",
+      "$420"
+     ],
+     [
+      "Summit Fleece Layering",
+      "Summit Fleece",
+      "15",
+      "$260"
+     ]
+    ],
+    "total": "2 rows"
+   }
+  },
+  {
+   "id": "u-ics",
+   "name": "team-calendar-nov.ics",
+   "type": "ICS",
+   "kind": "other",
+   "place": "uploads",
+   "from": "Uploaded by Sam Mercer",
+   "by": "Sam Mercer",
+   "madeByAgent": false,
+   "size": "4 KB",
+   "date": "Nov 9",
+   "at": "2026-11-09T08:30",
+   "lines": [
+    [
+     "Wed, Nov 18",
+     "Kestrel call, 10:00 AM"
+    ],
+    [
+     "Fri, Nov 20",
+     "Klaviyo goes live"
+    ],
+    [
+     "Mon, Nov 23",
+     "Black Friday prep, 9:00 AM"
+    ],
+    [
+     "Tue, Dec 8",
+     "Trail Shell restock lands"
+    ]
+   ]
+  },
+  {
+   "id": "r-reorder-1110",
+   "name": "monday-reorder-list-nov-9.xlsx",
+   "type": "XLSX",
+   "kind": "documents",
+   "place": "routines",
+   "from": "Routine: Monday reorder list",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "20 KB",
+   "date": "Nov 9",
+   "at": "2026-11-09T07:00",
+   "link": {
+    "to": "routines"
+   },
+   "table": {
+    "head": [
+     "Product",
+     "Days of stock",
+     "Suggested",
+     "Supplier"
+    ],
+    "rows": [
+     [
+      "Summit Fleece",
+      "19",
+      "300",
+      "Kestrel Supply"
+     ],
+     [
+      "Ridge 30L Pack",
+      "16",
+      "300",
+      "Kestrel Supply"
+     ]
+    ],
+    "total": "2 rows, under 21 days"
+   }
+  },
+  {
+   "id": "r-weekly-45",
+   "name": "weekly-ops-report-week-45.pdf",
+   "type": "PDF",
+   "kind": "documents",
+   "place": "routines",
+   "from": "Routine: Weekly numbers report",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "204 KB",
+   "date": "Nov 6",
+   "at": "2026-11-06T16:00",
+   "link": {
+    "to": "routines"
+   },
+   "doc": {
+    "tag": "Weekly report",
+    "title": "Operations, week 45",
+    "meta": [
+     [
+      "Period",
+      "Oct 31 to Nov 6"
+     ],
+     [
+      "Prepared by",
+      "Inhouse agent"
+     ]
+    ],
+    "table": {
+     "head": [
+      "Measure",
+      "Week"
+     ],
+     "rows": [
+      [
+       "Revenue",
+       "$58,210"
+      ],
+      [
+       "Gross margin",
+       "51%"
+      ],
+      [
+       "Stock at risk",
+       "1 product"
+      ],
+      [
+       "Ad spend",
+       "$9,010"
+      ]
+     ]
+    },
+    "note": "Refunds were steady at 14. Kestrel deliveries held at about 14 days."
+   }
+  },
+  {
+   "id": "u-call",
+   "name": "kestrel-call-nov-3.m4a",
+   "type": "M4A",
+   "kind": "media",
+   "place": "uploads",
+   "from": "Uploaded by Dana Kim",
+   "by": "Dana Kim",
+   "madeByAgent": false,
+   "size": "7.9 MB",
+   "date": "Nov 3",
+   "at": "2026-11-03T15:02",
+   "media": "audio",
+   "duration": "8:14"
+  },
+  {
+   "id": "u-price",
+   "name": "kestrel-price-list-nov.pdf",
+   "type": "PDF",
+   "kind": "documents",
+   "place": "uploads",
+   "from": "Uploaded by Dana Kim",
+   "by": "Dana Kim",
+   "madeByAgent": false,
+   "size": "236 KB",
+   "date": "Nov 3",
+   "at": "2026-11-03T09:14",
+   "doc": {
+    "tag": "Price list",
+    "title": "Kestrel Supply, November",
+    "meta": [
+     [
+      "Valid to",
+      "Dec 31"
+     ],
+     [
+      "Terms",
+      "Net 30"
+     ]
+    ],
+    "table": {
+     "head": [
+      "Item",
+      "Unit price"
+     ],
+     "rows": [
+      [
+       "Ridge 30L Pack",
+       "$16.00"
+      ],
+      [
+       "Summit Fleece",
+       "$12.00"
+      ],
+      [
+       "Trail Shell Jacket",
+       "$38.00"
+      ],
+      [
+       "Merino Beanie",
+       "$7.50"
+      ]
+     ]
+    },
+    "note": "Lead time 14 days. Orders over 500 units ship free."
+   }
+  },
+  {
+   "id": "u-zip",
+   "name": "supplier-invoices-oct.zip",
+   "type": "ZIP",
+   "kind": "other",
+   "place": "uploads",
+   "from": "Uploaded by Priya Shah",
+   "by": "Priya Shah",
+   "madeByAgent": false,
+   "size": "3.4 MB",
+   "date": "Nov 2",
+   "at": "2026-11-02T17:05",
+   "entries": [
+    "kestrel-invoice-2291.pdf",
+    "kestrel-invoice-2304.pdf",
+    "shipbob-invoice-oct.pdf",
+    "amazon-statement-oct.pdf"
+   ]
+  },
+  {
+   "id": "c-kestrel-chart",
+   "name": "kestrel-delivery-times.png",
+   "type": "PNG",
+   "kind": "images",
+   "place": "chats",
+   "from": "Chat: Kestrel delivery times",
+   "by": "Inhouse agent",
+   "madeByAgent": true,
+   "size": "88 KB",
+   "date": "Nov 2",
+   "at": "2026-11-02T10:31",
+   "link": {
+    "to": "chat",
+    "id": "kestrel"
+   },
+   "src": "/library/kestrel-delivery-times.svg",
+   "ratio": "8/5",
+   "alt": ""
+  },
+  {
+   "id": "u-rule",
+   "name": "reorder-rule.json",
+   "type": "JSON",
+   "kind": "code",
+   "place": "uploads",
+   "from": "Uploaded by Sam Mercer",
+   "by": "Sam Mercer",
+   "madeByAgent": false,
+   "size": "0.4 KB",
+   "date": "Nov 2",
+   "at": "2026-11-02T09:40",
+   "text": "{\n  \"reorderBelowDays\": 21,\n  \"supplier\": \"Kestrel Supply\",\n  \"leadTimeDays\": 14,\n  \"approver\": \"Dana Kim\",\n  \"askAbove\": 5000\n}"
+  },
+  {
+   "id": "u-orders",
+   "name": "shopify-orders-export-oct.csv",
+   "type": "CSV",
+   "kind": "documents",
+   "place": "uploads",
+   "from": "Uploaded by Priya Shah",
+   "by": "Priya Shah",
+   "madeByAgent": false,
+   "size": "1.9 MB",
+   "date": "Oct 31",
+   "at": "2026-10-31T08:12",
+   "table": {
+    "head": [
+     "Order",
+     "Date",
+     "Total",
+     "Status"
+    ],
+    "rows": [
+     [
+      "#4602",
+      "Oct 30",
+      "$164",
+      "Fulfilled"
+     ],
+     [
+      "#4601",
+      "Oct 30",
+      "$89",
+      "Fulfilled"
+     ],
+     [
+      "#4600",
+      "Oct 30",
+      "$238",
+      "Fulfilled"
+     ],
+     [
+      "#4599",
+      "Oct 29",
+      "$54",
+      "Fulfilled"
+     ]
+    ],
+    "total": "4 of 4,118 rows"
+   }
+  }
+ ]
+}

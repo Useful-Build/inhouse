@@ -1,0 +1,380 @@
+/*
+ * Inhouse's CSS file, owned by the app (ui-base's update leaves it alone). The base's role tokens, Tailwind theme,
+ * base styles and helpers come from ui-base.css, which `add update` rewrites: never edit it. This file holds the
+ * app's fonts, its override block and its own --app-* role tokens, classes and helpers (see DESIGN_APP.md).
+ * No hex or rgba values anywhere else in src/ (npm run lint:tokens checks it).
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./ui-base.css";
+
+@font-face { font-family: "Geist"; src: url("/fonts/geist-variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("/fonts/geist-mono-variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+/* Material Symbols Rounded, self-hosted: the Google Fonts cut with the axes the app uses (FILL 0-1, opsz 20-48, wght 100-700, no GRAD). */
+@font-face { font-family: "Material Symbols Rounded"; src: url("/fonts/material-symbols-rounded.woff2") format("woff2"); font-weight: 200 500; font-style: normal; font-display: block; }
+
+/*
+ * The override block: only the tokens whose value differs from ui-base.css. Fonts don't change by theme, so .dark
+ * has nothing to override. Inhouse self-hosts Geist (the @font-face above), so the stacks name it, not the
+ * "Geist Variable" of the @fontsource packages.
+ */
+:root {
+  --font-sans: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+}
+
+/*
+ * Dark, re-decided (not inverted). Dark surfaces sit close together, so a menu or pop-up gets a visible step up from
+ * the card under it, hover and selected rows a step apart, and every floating surface a dark edge plus a deeper
+ * shadow (a shadow alone doesn't show on near-black). The scrim is darker, so a drawer or window reads as in front.
+ * Surfaces climb with height: page #111, card #1a1a1a, window and sheet #1f1f1f (--app-window-surface), menu and pop-up
+ * #242424.
+ * Three row states, one value each: hover, a menu's keyboard cursor and an open trigger are --accent; selected (the nav
+ * row, the open chat, a segmented control's pick) is --fill-hover, and --fill-picked matches it. Muted text keeps
+ * 4.5:1 on hover; on a selected row it steps up to text-foreground-3.
+ */
+.dark {
+  --popover: #242424;
+  --accent: #303030;
+  --fill-hover: #383838;
+  --fill-picked: #383838;
+  --scrim: rgba(0, 0, 0, .7);
+  --elevation-menu: 0 0 0 1px rgba(0, 0, 0, .6), 0 1px 0 rgba(0, 0, 0, .2), 0 24px 48px -20px rgba(0, 0, 0, .8), 0 10px 20px -14px rgba(0, 0, 0, .6);
+  --elevation-window: 0 0 0 1px rgba(0, 0, 0, .6), 0 40px 90px -30px rgba(0, 0, 0, .85);
+}
+
+/* ---------- app role tokens: layout sizes, type steps and effects ----------
+ * Same in both themes (the ones that use a color token follow it, since .dark sits on the same root element).
+ * Named by role, not by value; the @theme inline block below turns each into a class (w-sidebar, leading-prose...).
+ */
+:root {
+  /* the page's side padding */
+  --app-pad-x: clamp(16px, 4vw, 40px);
+
+  /* columns and page widths */
+  --app-sidebar: 252px;
+  --app-sidebar-rail: 62px;       /* the collapsed sidebar: a 40px nav square, its padding and border */
+  --app-settings-nav: 274px;
+  --app-library-nav: 236px;
+  --app-today-column: 720px;      /* Today's column and its composer */
+  --app-chat-column: 780px;       /* a chat and its composer */
+  --app-page-narrow: 800px;       /* a Settings page's column, beside its menu */
+  --app-page-default: 900px;      /* page width steps (Page): every list page shares this one content edge */
+  --app-page-wide: 1000px;        /* Today, Usage, the top banner */
+  --app-screen-below-topbar: calc(100vh - 58px);
+  --app-screen-gutter: calc(100vw - 32px);    /* the widest a floating piece gets */
+  --app-screen-gutter-sm: calc(100vw - 24px);
+
+  /* menus, popovers and panels */
+  --app-menu-message: 250px;
+  --app-menu-attach: 330px;
+  --app-menu-tools: 300px;
+  --app-menu-mode: 380px;
+  --app-menu-mode-phone: 320px;
+  --app-menu-account: min(270px, calc(100vw - 36px));
+  --app-popover-notifications: min(380px, calc(100vw - 36px));
+  --app-select-menu: min(320px, calc(100vw - 32px));
+  --app-problem-panel: min(540px, calc(100vw - 40px));
+
+  /* windows (Window sizes): the width, where the top sits and the tallest it gets */
+  --app-window-sm: min(420px, calc(100vw - 40px));   /* a question (Confirm), a short notice */
+  --app-window-md: min(600px, calc(100vw - 40px));   /* Help, the team window */
+  --app-window-lg: min(960px, calc(100vw - 40px));   /* the Library's file viewer */
+  --app-window-xl: min(1120px, calc(100vw - 40px));  /* the trace */
+  --app-window-top: 6vh;
+  --app-window-top-sm: 22vh;
+  --app-window-top-lg: 5vh;
+  --app-window-max: 88vh;
+  --app-window-max-lg: 90vh;
+
+  /* stacking layers, lowest first. A window's scrim sits one below its window. Windows, sheets, menus and the toast
+   * stack portal to body, so z-toast floats over all of them. The demo switches render inside the app root (an isolated
+   * stacking context), so z-dev only orders inside it: a window's scrim covers them. */
+  --app-z-raised: 1;     /* the top banner over the page */
+  --app-z-sidebar: 2;
+  --app-z-composer: 5;   /* the composer and the chat's bottom dock */
+  --app-z-window: 31;    /* Help, the team window, the file viewer */
+  --app-z-bar: 40;       /* a floating selection bar */
+  --app-z-trace: 41;     /* the trace, over a window */
+  --app-z-confirm: 51;   /* a question, over every window and sheet */
+  --app-z-toast: 60;
+  --app-z-dev: 70;       /* the demo switches */
+
+  /* colors the base roles don't have */
+  --app-text-done: var(--muted-foreground);            /* handled and approved cards: muted, never dimmed */
+  --app-destructive-solid: var(--destructive);         /* a destructive button's fill, and the text on it */
+  --app-on-destructive: var(--primary-foreground);
+  --app-switch-off: #888888;                           /* an off switch's track: 3:1 on a card, the page, a window and a menu's cursor */
+  --app-popup-fill: var(--fill);                       /* soft fills inside a menu or pop-up (the same as on a card in light) */
+  --app-popup-fill-hover: var(--fill-hover);
+  --app-popup-divider: var(--divider);                 /* a separator inside a menu or pop-up */
+  --app-window-surface: var(--dialog);                 /* a window's and a side panel's ground (--dialog stays the inset block) */
+  --app-window-hover: #ededed;                         /* a hovered row on a window's ground: a clear step off #f7f7f7 */
+  --app-window-well: #ececec;                          /* an inset well on a window's ground (the file preview, a text field) */
+  --app-menu-cursor: var(--accent);                    /* hover and the keyboard cursor inside a menu, a select or the palette */
+  --app-menu-muted: var(--muted-foreground);           /* muted text inside them, 4.5:1 on the cursor */
+  --app-tag-edge-strong: var(--border-strong);         /* a stage tag's outline on a selected row */
+  --app-picked-muted: var(--muted-foreground);         /* muted text on a picked segment (Segmented sets it) */
+
+  /* card grids (CardGrid sizes): the narrowest a card gets before the row wraps */
+  --app-grid-cards-sm: repeat(auto-fill, minmax(min(200px, 100%), 1fr));   /* Library */
+  --app-grid-cards: repeat(auto-fill, minmax(min(280px, 100%), 1fr));      /* Today */
+  --app-grid-cards-lg: repeat(auto-fill, minmax(min(360px, 100%), 1fr));   /* Tools, Skills, Usage */
+  --app-grid-library-list: minmax(0, 1.5fr) 52px minmax(0, 1.1fr) 72px 136px;
+  --app-grid-usage-totals: repeat(auto-fit, minmax(130px, 1fr));
+  --app-grid-trace-stats: repeat(auto-fit, minmax(110px, 1fr));
+  --app-library-masonry: 214px;   /* the masonry view's column width */
+
+  /* one-off placements */
+  --app-toast-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px); /* the phone's home bar: the chat composer sits above it */
+  --app-composer-input-pad-y: 6px; /* the composer field's padding above and below its text */
+  /* the composer's field grows to 8 lines (15px text at the body's 1.45 line height) plus its padding, then scrolls */
+  --app-composer-input-max: calc(8 * var(--text-md) * 1.45 + 2 * var(--app-composer-input-pad-y));
+  --app-trace-label: min(330px, 46%);           /* the trace's step-name column */
+  --app-playhead: 9px;                          /* the trace replay's playhead dot */
+  --app-time-column: 8ch;                       /* a list's time column in mono: "10:12 AM" on one line */
+  --app-bar-tick: 3px;                          /* the Usage chart: a $0 day still draws a tick on the baseline */
+  --app-run-when: 21ch;                         /* a routine's last runs: "Fri, Nov 13, 10:42 AM" on one line, every row alike */
+  --app-activity-indent: clamp(0px, 6vw, 72px); /* an opened activity row's detail: past the time column */
+  --app-today-top: clamp(14px, 4vh, 40px);
+  --app-chat-empty-top: 12vh;
+  --app-viewer-image: 64vh;
+  --app-card-name: 2.6em;         /* two lines of a file card's name */
+  --app-cite-raise: 2px;          /* a citation chip sits a little above the baseline */
+
+  /* type: page and window heads, stats, prose */
+  --app-text-hero: clamp(26px, 3.4vw, 34px);  /* Today's greeting */
+  --app-tracking-card: -0.01em;
+  --app-tracking-section: -0.015em;
+  --app-tracking-stat: -0.02em;
+  --app-tracking-heading: -0.03em;
+  --app-tracking-display: -0.04em;
+  --app-tracking-caps: .04em;
+  --app-leading-figure: 1.05;
+  --app-leading-hero: 1.08;
+  --app-leading-title: 1.1;
+  --app-leading-heading: 1.15;
+  --app-leading-icon: 1.2;
+  --app-leading-card: 1.3;
+  --app-leading-note: 1.35;
+  --app-leading-menu: 1.4;
+  --app-leading-prose: 1.55;
+  --app-leading-reading: 1.6;
+
+  /* lines and effects */
+  --app-border-hairline: 1.5px;
+  --app-shadow-page-xs: 0 0 4px 2px var(--background);   /* a page-coloured patch behind text on the dots */
+  --app-shadow-page-sm: 0 0 6px 4px var(--background);
+  --app-shadow-page-md: 0 0 10px 6px var(--background);
+  --app-shadow-page-lg: 0 0 12px 8px var(--background);
+  --app-shadow-page-xl: 0 0 18px 14px var(--background);
+  --app-shadow-composer-focus: var(--elevation-float), var(--focus-halo);
+  --app-shadow-selected: 0 0 0 2px var(--foreground);
+  --app-topbar-fade: linear-gradient(var(--background) 60%, transparent);
+  --app-hatch-wait: repeating-linear-gradient(135deg, var(--fill-strong) 0 2px, var(--card) 2px 5px);
+  --app-hatch-approval: repeating-linear-gradient(135deg, var(--app-hatch-approval-stripe) 0 2px, transparent 2px 5px);
+  --app-hatch-approval-stripe: color-mix(in srgb, var(--warning) 40%, transparent); /* faint stripes, not a dimmed bar */
+  --app-dot-grid: radial-gradient(circle, var(--dots) 1px, transparent 1.6px);
+  --app-dot-grid-live: radial-gradient(circle, var(--dots-live) 1.15px, transparent 1.75px);
+  --app-dot-grid-tool: radial-gradient(circle, var(--border-strong) 1px, transparent 1.6px);
+  --app-dot-grid-size: 22px 22px;
+  --app-dots-mask: radial-gradient(ellipse 85% 75% at 50% 26%, black 0%, transparent 100%);
+  --app-sweep-mask: linear-gradient(112deg, transparent 0%, 35%, black 50%, 65%, transparent 100%);
+  --app-sweep-mask-size: 42% 100%;
+  --app-tool-hero-mask: radial-gradient(ellipse 80% 95% at 50% 50%, black, transparent);
+  --app-toast-dock-gap: 12px; /* toasts above a bottom dock (a chat's composer, a selection bar): read by shell/Toasts.tsx */
+}
+
+/* The app tokens whose dark value isn't just the base token's dark value. */
+.dark {
+  --app-destructive-solid: #c2452c;   /* a deeper red, so light text on it reads (4.8:1); the base's light red needs dark text */
+  --app-on-destructive: #fafafa;
+  --app-switch-off: #808080;          /* 3:1 on a card, a window, a menu (#242424), a hovered row and a menu's cursor (#363636) */
+  --app-popup-fill: #383838;          /* a step off the lifted pop-up, and off its #303030 hover row */
+  --app-popup-fill-hover: #424242;
+  --app-popup-divider: #383838;       /* shows on the #242424 menu (the base's #252525 doesn't) */
+  --app-window-surface: #1f1f1f;      /* a step above the card (#1a1a1a) and below a menu (#242424); the base's #181818 sat under its own cards */
+  --app-window-hover: var(--accent);  /* #303030 on #1f1f1f */
+  --app-window-well: var(--muted);    /* #141414 under #1f1f1f */
+  --app-menu-cursor: #363636;         /* 1.3:1 on the #242424 menu, so the keyboard cursor shows on an unchecked item */
+  --app-menu-muted: #a0a0a0;          /* 4.6:1 on that cursor (the base's #979797 falls to 4.1:1) */
+  --app-tag-edge-strong: #828282;     /* 3.05:1 on the #383838 selected row, so the tag keeps its pill shape */
+  --app-picked-muted: var(--foreground-3); /* muted text on a picked segment: 4.9:1 on #383838 (the base's muted is 4.0:1) */
+}
+
+/* A menu or pop-up (the command palette too) is lifted in dark, so the soft fills inside it (icon tiles, chips, soft
+ * buttons) lift with it. In light the tokens are the card's own, so nothing changes. */
+:is([data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="select-content"],
+    [data-slot="command"]) {
+  --fill: var(--app-popup-fill);
+  --fill-hover: var(--app-popup-fill-hover);
+  --divider: var(--app-popup-divider);
+}
+
+/* A window's and a side panel's ground (data-surface="window", with bg-window-surface): a hovered or picked row and an
+ * inset well (bg-muted) each take a clear step off it. Menus portal out of it, so theirs are unchanged. */
+[data-surface="window"] {
+  --accent: var(--app-window-hover);
+  --muted: var(--app-window-well);
+}
+
+/* A menu's rows (dropdown, select, the command palette) show a keyboard cursor: in dark it lifts further off the menu,
+ * and muted text inside steps up with it so it keeps 4.5:1 on the cursor. Pop-ups that are panels (notifications)
+ * keep the plain hover, so their icon tiles stay a step off a hovered row. In light both are the base's own. */
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="select-content"], [data-slot="command"]) {
+  --accent: var(--app-menu-cursor);
+  --muted-foreground: var(--app-menu-muted);
+}
+
+/* ---------- Tailwind theme: maps the app's tokens to classes (after ui-base.css's) ---------- */
+@theme inline {
+  --radius-2xs: calc(var(--radius) * .2);  /*  2px */
+  --radius-bar: calc(var(--radius) * .5);  /*  5px, the top of a chart bar */
+
+  --shadow-page-xs: var(--app-shadow-page-xs);
+  --shadow-page-sm: var(--app-shadow-page-sm);
+  --shadow-page-md: var(--app-shadow-page-md);
+  --shadow-page-lg: var(--app-shadow-page-lg);
+  --shadow-page-xl: var(--app-shadow-page-xl);
+  --shadow-composer-focus: var(--app-shadow-composer-focus);
+  --shadow-selected: var(--app-shadow-selected);
+
+  /* app role tokens (the :root block above) */
+  --container-sidebar: var(--app-sidebar);
+  --container-sidebar-rail: var(--app-sidebar-rail);
+  --container-settings-nav: var(--app-settings-nav);
+  --container-library-nav: var(--app-library-nav);
+  --container-today-column: var(--app-today-column);
+  --container-chat-column: var(--app-chat-column);
+  --container-page-narrow: var(--app-page-narrow);
+  --container-page-default: var(--app-page-default);
+  --container-page-wide: var(--app-page-wide);
+  --container-screen-gutter: var(--app-screen-gutter);
+  --container-screen-gutter-sm: var(--app-screen-gutter-sm);
+  --container-menu-message: var(--app-menu-message);
+  --container-menu-attach: var(--app-menu-attach);
+  --container-menu-tools: var(--app-menu-tools);
+  --container-menu-mode: var(--app-menu-mode);
+  --container-menu-mode-phone: var(--app-menu-mode-phone);
+  --container-menu-account: var(--app-menu-account);
+  --container-popover-notifications: var(--app-popover-notifications);
+  --container-select-menu: var(--app-select-menu);
+  --container-problem-panel: var(--app-problem-panel);
+  --container-window-sm: var(--app-window-sm);
+  --container-window-md: var(--app-window-md);
+  --container-window-lg: var(--app-window-lg);
+  --container-window-xl: var(--app-window-xl);
+  --inset-window: var(--app-window-top);
+  --inset-window-sm: var(--app-window-top-sm);
+  --inset-window-lg: var(--app-window-top-lg);
+  /* max-h-window-max: not --spacing-window-lg, which w-window-lg would read before --container-window-lg */
+  --spacing-window-max: var(--app-window-max);
+  --spacing-window-max-lg: var(--app-window-max-lg);
+  --z-index-raised: var(--app-z-raised);
+  --z-index-sidebar: var(--app-z-sidebar);
+  --z-index-composer: var(--app-z-composer);
+  --z-index-window-scrim: calc(var(--app-z-window) - 1);
+  --z-index-window: var(--app-z-window);
+  --z-index-bar: var(--app-z-bar);
+  --z-index-trace-scrim: calc(var(--app-z-trace) - 1);
+  --z-index-trace: var(--app-z-trace);
+  --z-index-confirm-scrim: calc(var(--app-z-confirm) - 1);
+  --z-index-confirm: var(--app-z-confirm);
+  --z-index-toast: var(--app-z-toast);
+  --z-index-dev: var(--app-z-dev);
+  --color-done: var(--app-text-done);
+  --color-destructive-solid: var(--app-destructive-solid);
+  --color-on-destructive: var(--app-on-destructive);
+  --color-switch-off: var(--app-switch-off);
+  --color-window-surface: var(--app-window-surface);
+  --color-tag-edge-strong: var(--app-tag-edge-strong);
+  --spacing-select-height: min(288px, var(--radix-select-content-available-height));
+  --spacing-below-topbar: var(--app-screen-below-topbar);
+  --spacing-playhead: var(--app-playhead);
+  --spacing-playhead-offset: calc(var(--app-playhead) / 2);
+  --spacing-activity-indent: var(--app-activity-indent);
+  --spacing-time-column: var(--app-time-column);
+  --spacing-run-when: var(--app-run-when);
+  --spacing-bar-tick: var(--app-bar-tick);
+  --spacing-today-top: var(--app-today-top);
+  --spacing-chat-empty-top: var(--app-chat-empty-top);
+  --spacing-viewer-image: var(--app-viewer-image);
+  --spacing-card-name: var(--app-card-name);
+  --spacing-safe-bottom: var(--app-safe-bottom);
+  --spacing-composer-input: var(--app-composer-input-max);
+  --inset-toast: var(--app-toast-bottom);
+  --inset-trace-label: var(--app-trace-label);
+  --grid-template-columns-cards-sm: var(--app-grid-cards-sm);
+  --grid-template-columns-cards: var(--app-grid-cards);
+  --grid-template-columns-cards-lg: var(--app-grid-cards-lg);
+  --grid-template-columns-library-list: var(--app-grid-library-list);
+  --grid-template-columns-usage-totals: var(--app-grid-usage-totals);
+  --grid-template-columns-trace-stats: var(--app-grid-trace-stats);
+  --grid-template-columns-trace: var(--app-trace-label) 1fr;
+  --columns-library: var(--app-library-masonry);
+  --tracking-card: var(--app-tracking-card);
+  --tracking-section: var(--app-tracking-section);
+  --tracking-stat: var(--app-tracking-stat);
+  --tracking-heading: var(--app-tracking-heading);
+  --tracking-display: var(--app-tracking-display);
+  --tracking-caps: var(--app-tracking-caps);
+  --leading-figure: var(--app-leading-figure);
+  --leading-hero: var(--app-leading-hero);
+  --leading-title: var(--app-leading-title);
+  --leading-heading: var(--app-leading-heading);
+  --leading-icon: var(--app-leading-icon);
+  --leading-card: var(--app-leading-card);
+  --leading-note: var(--app-leading-note);
+  --leading-menu: var(--app-leading-menu);
+  --leading-prose: var(--app-leading-prose);
+  --leading-reading: var(--app-leading-reading);
+  --border-width-hairline: var(--app-border-hairline);
+  --background-image-topbar-fade: var(--app-topbar-fade);
+  --background-image-hatch-wait: var(--app-hatch-wait);
+  --background-image-hatch-approval: var(--app-hatch-approval);
+  --background-image-dot-grid: var(--app-dot-grid);
+  --background-image-dot-grid-live: var(--app-dot-grid-live);
+  --background-image-dot-grid-tool: var(--app-dot-grid-tool);
+}
+
+/* Motion: the agent's marks. */
+@theme static {
+  --animate-ih-wind: ih-wind 14s cubic-bezier(.45, 0, .55, 1) infinite alternate;
+  --animate-mark-1: m1 4.62s var(--ease-in-out) infinite;
+  --animate-mark-2: m2 4.62s var(--ease-in-out) infinite;
+  --animate-mark-3: m3 4.62s var(--ease-in-out) infinite;
+}
+
+/* App font sizes. After the block above, whose --text-*: initial would clear them. */
+@theme inline {
+  --text-hero: var(--app-text-hero);
+  --text-parent: inherit;  /* a component's own text size gives way to its parent's */
+}
+
+/* ---------- helpers ---------- */
+/* A picked segment: muted text inside it steps up so it keeps 4.5:1 on --fill-picked (Segmented puts it on its items). */
+@utility picked-muted { --muted-foreground: var(--app-picked-muted); }
+@utility ms {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal; font-style: normal; line-height: 1;
+  letter-spacing: normal; text-transform: none; white-space: nowrap; overflow-wrap: normal; direction: ltr;
+  display: inline-block; overflow: hidden; flex: none;
+  font-feature-settings: 'liga';
+  user-select: none;
+}
+/* Text sitting straight on the dotted page gets a page-coloured soft patch. */
+@utility on-page { background: var(--background); box-shadow: 0 0 10px 8px var(--background); border-radius: 8px; }
+@utility page { position: relative; margin: 0 auto; padding: 24px var(--app-pad-x) 56px; box-sizing: border-box; }
+
+/* ---------- motion ---------- */
+@keyframes ih-wind { 0% { -webkit-mask-position: -70% 0; mask-position: -70% 0; } 100% { -webkit-mask-position: 170% 0; mask-position: 170% 0; } }
+
+/* The agent's animated mark: its three dots where the drawing puts them, and the goo filter while it moves. */
+@utility agent-dot-1 { top: 9.75px; left: 1.75px; width: 4.5px; height: 4.5px; }
+@utility agent-dot-2 { top: 10.5px; left: 10.5px; width: 3px; height: 3px; }
+@utility agent-dot-3 { top: 9.5px; left: 17.5px; width: 5px; height: 5px; }
+@utility goo { filter: url(#goo); }
+@keyframes m1{0%{transform:translate(8px,0) scale(1.067)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(2.2px,0) scale(1)}16.88%{transform:translate(4.6px,.5px) scale(1.022)}17.53%{transform:translate(2.4px,-.2px) scale(.733)}21%{transform:translate(.1px,.1px) scale(.822)}23.16%{transform:translate(-.2px,1.2px) scale(.956)}29.22%{transform:translate(6.9px,5.6px) scale(1.111)}35.06%{transform:translate(16px,1.1px) scale(1.022)}37.45%{transform:translate(16.4px,.2px) scale(.867)}42.64%{transform:translate(13px,.1px) scale(.756)}46.1%{transform:translate(13px,.1px) scale(.756)}49.78%{transform:translate(8.7px,.1px) scale(.644)}52.16%{transform:translate(8.7px,.1px) scale(.644)}56.06%{transform:translate(7.1px,-.6px) scale(.978)}56.71%{transform:translate(8.2px,-.1px) scale(1.489)}60.17%{transform:translate(8px,0) scale(0)}61.26%{transform:translate(8px,0) scale(0)}62.77%{transform:translate(8px,0) scale(.578)}66.23%{transform:translate(8px,0) scale(1.178)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(4.1px,0) scale(1.022)}80.09%{transform:translate(8.1px,0) scale(1.422)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(3.6px,0) scale(.889)}94.59%{transform:translate(8.1px,0) scale(1.044)}98.27%{transform:translate(8px,0) scale(.267)}100%{transform:translate(8px,0) scale(1.067)}}
+@keyframes m2{0%{transform:translate(0,0) scale(1.6)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(-4.8px,0) scale(1.5)}16.88%{transform:translate(-2.4px,.6px) scale(1.533)}17.53%{transform:translate(-1.1px,1px) scale(1.733)}21%{transform:translate(4.5px,1.3px) scale(1.733)}23.16%{transform:translate(7.6px,2.4px) scale(1.567)}29.22%{transform:translate(7.2px,-1.6px) scale(1.133)}35.06%{transform:translate(.4px,-1.1px) scale(.967)}37.45%{transform:translate(-2.2px,-.6px) scale(.967)}42.64%{transform:translate(-7.4px,.1px) scale(1.167)}46.1%{transform:translate(-7.4px,.1px) scale(1.167)}49.78%{transform:translate(-8.2px,0) scale(1.467)}52.16%{transform:translate(-8.2px,0) scale(1.467)}56.06%{transform:translate(-1.3px,-.6px) scale(1.467)}56.71%{transform:translate(.2px,-.1px) scale(2.233)}60.17%{transform:translate(0,0) scale(0)}61.26%{transform:translate(0,0) scale(0)}62.77%{transform:translate(0,0) scale(.867)}66.23%{transform:translate(0,0) scale(1.767)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(-3.2px,0) scale(1.533)}80.09%{transform:translate(.1px,0) scale(2.133)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(.1px,0) scale(1)}94.59%{transform:translate(.1px,0) scale(1.567)}98.27%{transform:translate(0,0) scale(.4)}100%{transform:translate(0,0) scale(1.6)}}
+@keyframes m3{0%{transform:translate(-8px,0) scale(.96)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(.3px,0) scale(.86)}16.88%{transform:translate(-.6px,-.2px) scale(.7)}17.53%{transform:translate(-1.2px,-.4px) scale(.68)}21%{transform:translate(-3px,1px) scale(.68)}23.16%{transform:translate(-6.7px,-2.5px) scale(.62)}29.22%{transform:translate(-13.5px,-2.4px) scale(.66)}35.06%{transform:translate(-16.1px,.8px) scale(.88)}37.45%{transform:translate(-14.3px,.8px) scale(1)}42.64%{transform:translate(-5px,.1px) scale(1.08)}46.1%{transform:translate(-5px,.1px) scale(1.08)}49.78%{transform:translate(0,0) scale(.92)}52.16%{transform:translate(0,0) scale(.92)}56.06%{transform:translate(-4.9px,.4px) scale(.7)}56.71%{transform:translate(-7.8px,-.1px) scale(1.34)}60.17%{transform:translate(-8px,0) scale(0)}61.26%{transform:translate(-8px,0) scale(0)}62.77%{transform:translate(-8px,0) scale(.52)}66.23%{transform:translate(-8px,0) scale(1.06)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(-1.9px,0) scale(.82)}80.09%{transform:translate(-7.9px,0) scale(1.28)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(-3.4px,0) scale(.84)}94.59%{transform:translate(-7.9px,0) scale(.94)}98.27%{transform:translate(-8px,0) scale(.24)}100%{transform:translate(-8px,0) scale(.96)}}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eceee8"/><stop offset="1" stop-color="#d3d6cc"/></linearGradient><radialGradient id="vg" cx=".5" cy=".42" r=".75"><stop offset=".55" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".1"/></radialGradient></defs><rect width="400" height="400" fill="url(#bg)"/><ellipse cx="200" cy="372" rx="118" ry="11" fill="#000" opacity=".14"/>
+<path d="M140 70 Q200 40 260 70 L256 96 L144 96 Z" fill="#333f29"/>
+<path d="M150 70 Q200 52 250 70" fill="none" stroke="#62794f" stroke-width="4" opacity=".6"/>
+<path d="M118 108 Q200 82 282 108 L296 350 Q200 372 104 350 Z" fill="#566a45"/>
+<path d="M118 108 Q200 82 282 108 L284 160 Q200 142 116 160 Z" fill="#445437"/>
+<rect x="96" y="214" width="34" height="112" rx="14" fill="#445437"/><rect x="270" y="214" width="34" height="112" rx="14" fill="#445437"/>
+<path d="M134 214 Q200 200 266 214 L274 332 Q200 346 126 332 Z" fill="#333f29"/>
+<path d="M144 230 Q200 220 256 230 L260 318 Q200 330 140 318 Z" fill="#3c4a30" stroke="#62794f" stroke-opacity=".35" stroke-width="2"/>
+<path d="M146 242 Q200 234 254 242" fill="none" stroke="#0b0b0b" stroke-width="3" opacity=".55"/><rect x="194" y="236" width="12" height="16" rx="3" fill="#2b2b2b"/>
+<rect x="150" y="164" width="100" height="10" rx="3" fill="#2b2b2b" opacity=".75"/><rect x="190" y="160" width="20" height="18" rx="4" fill="#d9d9d4"/><rect x="195" y="165" width="10" height="8" rx="2" fill="#7a7a74"/>
+<rect x="176" y="288" width="48" height="16" rx="3" fill="#fff" opacity=".9"/><rect x="183" y="294" width="34" height="4" rx="2" fill="#333f29"/>
+<path d="M126 108 Q120 220 132 340" fill="none" stroke="#1d1d1d" stroke-width="12" stroke-linecap="round" opacity=".55"/>
+<path d="M274 108 Q280 220 268 340" fill="none" stroke="#1d1d1d" stroke-width="12" stroke-linecap="round" opacity=".55"/><rect width="400" height="400" fill="url(#vg)"/></svg>

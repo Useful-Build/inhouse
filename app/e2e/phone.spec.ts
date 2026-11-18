@@ -1,0 +1,240 @@
+// Phone (390 px): Today, the problem panel, Approvals and Chats must work with no sideways scroll.
+import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
+
+async function start(page: Page, hash: string) {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('e2e-seeded')) return
+    localStorage.clear()
+    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: true }))
+    sessionStorage.setItem('e2e-seeded', '1')
+  })
+  await page.goto('/?demo' + hash)
+}
+
+async function noSidewaysScroll(page: Page) {
+  const over = await page.evaluate(() => {
+    const els = [document.documentElement, document.querySelector('main')!]
+    return els.map(e => e.scrollWidth - e.clientWidth)
+  })
+  expect(over.every(px => px <= 1), `horizontal overflow: ${over}`).toBe(true)
+}
+
+test('Phone: Today, panel, Approvals and Chats fit 390 px; the drawer closes on navigation', async ({ page }) => {
+  await start(page, '#/today')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
+  await noSidewaysScroll(page)
+  await page.screenshot({ path: test.info().outputPath('phone-today.png'), fullPage: true })
+
+  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
+  const panel = page.getByRole('dialog')
+  await expect(panel.getByRole('button', { name: 'Approve and send to Kestrel' })).toBeVisible()
+  const box = await panel.boundingBox()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: test.info().outputPath('phone-panel.png') })
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ }).click()
+  await expect(page.getByRole('navigation', { name: 'Main' })).toHaveCount(0)
+  await expect(page.getByText(/Waiting for you/)).toBeVisible()
+  await noSidewaysScroll(page)
+  await page.screenshot({ path: test.info().outputPath('phone-approvals.png'), fullPage: true })
+
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Stuck orders over 3 days' }).click()
+  await expect(page.getByText('3 orders · $556')).toBeVisible()
+  await noSidewaysScroll(page)
+  await page.screenshot({ path: test.info().outputPath('phone-chats.png') })
+})
+
+test('Phone: the account menu and the team window open above the drawer', async ({ page }) => {
+  await start(page, '#/today')
+  const side = page.getByRole('complementary', { name: 'Sidebar' })
+
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await side.getByRole('button', { name: /Message the team/ }).click()
+  const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
+  await expect(team).toBeVisible()
+  await expect(side).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('phone-team-window.png') })
+  await team.getByRole('button', { name: 'Close' }).first().click()
+
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await side.getByRole('button', { name: /account and settings/i }).click()
+  const menu = page.getByRole('menu', { name: 'Account' })
+  await expect(menu).toBeVisible()
+  // The menu opens from its trigger inside the drawer, so the drawer stays until an item is picked.
+  await expect(side).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath('phone-account-menu.png') })
+  await menu.getByRole('menuitem', { name: 'Your settings' }).click()
+  // On a phone the settings menu shows first, then the page picked from it.
+  await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
+  await expect(side).toHaveCount(0)
+  await page.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: 'General' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'General' })).toBeVisible()
+})
+
+test('Phone: the drawer has no Chats item; See all, a recent chat and a Settings dropdown fit 390 px', async ({ page }) => {
+  await start(page, '#/today')
+  const side = page.getByRole('complementary', { name: 'Sidebar' })
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await expect(side.getByRole('button', { name: 'Chats', exact: true })).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('phone-drawer.png') })
+  await side.getByRole('button', { name: 'See all' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'All chats' })).toBeVisible()
+  await page.getByRole('searchbox', { name: 'Search chats' }).fill('ridge')
+  await noSidewaysScroll(page)
+  await page.screenshot({ path: test.info().outputPath('phone-chats-list.png'), fullPage: true })
+  await page.getByRole('button', { name: /Ridge 30L reorder quantity/ }).click()
+  await expect(page.getByText('You sell about 21 a day and have 295 left')).toBeVisible()
+  await noSidewaysScroll(page)
+  await page.screenshot({ path: test.info().outputPath('phone-chat-ridge.png') })
+
+  await page.evaluate(() => { location.hash = '#/settings/you-general' })
+  await page.getByRole('combobox', { name: 'Time zone: Eastern Time (New York)' }).click()
+  const list = page.getByRole('listbox', { name: 'Time zone' })
+  const box = await list.boundingBox()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: test.info().outputPath('phone-settings-dropdown.png') })
+  await list.getByRole('option', { name: 'Central European Time (Paris)' }).click()
+  await expect(page.getByRole('combobox', { name: 'Time zone: Central European Time (Paris)' })).toBeVisible()
+  // Search lives on the settings menu, a step back from the page.
+  await page.getByRole('button', { name: 'Back to settings' }).click()
+  await page.getByRole('searchbox', { name: 'Search settings' }).fill('language')
+  await noSidewaysScroll(page)
+  await page.screenshot({ path: test.info().outputPath('phone-settings-search.png'), fullPage: true })
+})
+
+test('Phone: Library shows places as chips, scrolling tabs, two columns, and a viewer that fits 390 px', async ({ page }) => {
+  await start(page, '#/library')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
+  await noSidewaysScroll(page)
+  // Places are a chip row at the top, with the search box above it.
+  const nav = page.getByRole('navigation', { name: 'Library places' })
+  await expect(page.getByRole('searchbox', { name: 'Search library' })).toBeVisible()
+  await expect(nav.getByRole('button', { name: /^All files \d+$/ })).toHaveAttribute('aria-pressed', 'true')
+  const chips = await nav.evaluate(e => ({ sw: e.scrollWidth, cw: e.clientWidth }))
+  expect(chips.sw, 'the chip row scrolls sideways inside itself').toBeGreaterThan(chips.cw)
+  // Tabs scroll inside their own row.
+  const tabs = page.getByRole('radiogroup', { name: 'File type' })
+  const t = await tabs.evaluate(e => ({ sw: e.scrollWidth, cw: e.clientWidth }))
+  expect(t.sw).toBeGreaterThan(t.cw)
+  await expect(tabs.getByRole('radio', { name: /^Other \d+$/ })).toBeAttached()
+  // Two columns of cards.
+  const xs = await page.getByRole('list', { name: 'Files' }).getByRole('listitem').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().left)))
+  expect(new Set(xs).size, `columns at ${[...new Set(xs)]}`).toBe(2)
+  await page.screenshot({ path: test.info().outputPath('phone-library-masonry.png') })
+  // A place from the chips.
+  await nav.getByRole('button', { name: /^Approvals/ }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Approvals')
+  await noSidewaysScroll(page)
+  await nav.getByRole('button', { name: /^All files/ }).click()
+  // Views and Select fit.
+  await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'Grid' }).click()
+  await noSidewaysScroll(page)
+  await page.screenshot({ path: test.info().outputPath('phone-library-grid.png') })
+  await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'List' }).click()
+  await noSidewaysScroll(page)
+  await page.screenshot({ path: test.info().outputPath('phone-library-list.png') })
+  await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'Masonry' }).click()
+  await page.getByRole('button', { name: 'Select', exact: true }).click()
+  await page.getByRole('list', { name: 'Files' }).getByRole('listitem').nth(0).click()
+  await page.getByRole('list', { name: 'Files' }).getByRole('listitem').nth(1).click()
+  const bar = page.getByRole('toolbar', { name: 'Selected files' })
+  await expect(bar).toContainText('2 selected')
+  const b = await bar.boundingBox()
+  expect(b!.x).toBeGreaterThanOrEqual(0)
+  expect(b!.x + b!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: test.info().outputPath('phone-library-select.png') })
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  // The viewer.
+  await page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: 'PO-1188' }).click()
+  const v = page.getByRole('dialog', { name: /^File: PO-1188/ })
+  await expect(v).toBeVisible()
+  const box = await v.boundingBox()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+  await expect(v.getByRole('button', { name: 'Download' })).toBeAttached()
+  await page.screenshot({ path: test.info().outputPath('phone-library-viewer.png') })
+})
+
+// ---------- more phone checks ----------
+
+const outDir = process.env.VERIFY_DIR ?? 'e2e-artifacts'
+const keep = async (page: Page, name: string, fullPage = false) => { await page.waitForTimeout(400); await page.screenshot({ path: `${outDir}/${name}.png`, fullPage }) }
+
+/** No button, link or field overlaps the demo switcher's circle. */
+async function nothingUnderSwitcher(page: Page) {
+  const hits = await page.evaluate(() => {
+    const sw = document.querySelector<HTMLElement>('button[aria-label^="Demo switches"]')
+    if (!sw) return ['the switcher is missing']
+    const r = sw.getBoundingClientRect()
+    const found: string[] = []
+    for (const el of document.querySelectorAll<HTMLElement>('button, a[href], input, textarea, select, [role="button"]')) {
+      if (el === sw || sw.contains(el)) continue
+      const b = el.getBoundingClientRect()
+      if (!b.width || !b.height) continue
+      if (b.left < r.right && b.right > r.left && b.top < r.bottom && b.bottom > r.top) found.push((el.getAttribute('aria-label') ?? el.textContent ?? el.tagName).trim().slice(0, 40))
+    }
+    return found
+  })
+  expect(hits, 'controls under the demo switcher').toEqual([])
+}
+
+test('Phone: with ?demo nothing sits under the switcher, and Library file names wrap to two lines', async ({ page }) => {
+  for (const hash of ['#/library', '#/settings/you-general', '#/today', '#/chats/refunds']) {
+    await start(page, hash)
+    await expect(page.getByRole('button', { name: /^Demo switches/ })).toBeVisible()
+    await nothingUnderSwitcher(page)
+  }
+  await start(page, '#/library')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
+  // 28 characters in a two-column card: the whole name shows, on two lines.
+  const name = page.getByRole('list', { name: 'Files' }).getByText('trail-shell-jacket-olive.png', { exact: true })
+  await name.scrollIntoViewIfNeeded()
+  const m = await name.evaluate(e => ({ clipped: e.scrollHeight > e.clientHeight + 1, lines: Math.round(e.clientHeight / parseFloat(getComputedStyle(e).lineHeight)) }))
+  expect(m.clipped, 'the name is cut off').toBe(false)
+  expect(m.lines).toBe(2)
+  // A file with no picture (a badge instead) gets the same: 28 characters, whole name, two lines.
+  const plain = page.getByRole('list', { name: 'Files' }).getByText('stuck-orders-over-3-days.csv', { exact: true })
+  await plain.scrollIntoViewIfNeeded()
+  const p = await plain.evaluate(e => ({ clipped: e.scrollHeight > e.clientHeight + 1, lines: Math.round(e.clientHeight / parseFloat(getComputedStyle(e).lineHeight)) }))
+  expect(p.clipped, 'the name is cut off').toBe(false)
+  expect(p.lines).toBe(2)
+  await noSidewaysScroll(page)
+  await page.evaluate(() => document.querySelector('main')!.scrollTo({ top: 0 }))
+  await keep(page, 'library-390')
+})
+
+test('Phone: reopening the open chat from See all keeps what was added', async ({ page }) => {
+  await start(page, '#/chats/refunds')
+  await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('And what about last week?')
+  await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
+  await expect(page.getByText('And what about last week?', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'See all' }).click()
+  await page.getByRole('main').getByRole('button', { name: /Why did refunds jump/ }).click()
+  await expect(page.getByText('And what about last week?', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Why did refunds jump?', exact: true }).click()
+  await expect(page.getByText('And what about last week?', { exact: true })).toBeVisible()
+  await noSidewaysScroll(page)
+  await keep(page, 'chat-reopen-390')
+})
+
+test("Phone: Usage shows the capped state for a low saved cap, and there's no month picker", async ({ page }) => {
+  await start(page, '#/settings/team-spend')
+  const cap = page.getByRole('textbox', { name: 'Monthly cap' })
+  await cap.fill('$50')
+  await cap.blur()
+  await page.evaluate(() => { location.hash = '#/usage' })
+  await expect(page.getByText('$78.40 of $50', { exact: true })).toBeVisible()
+  await expect(page.getByText('Cap reached with 14 days of the month left')).toBeVisible()
+  // November is the first month with spend (the first tool was connected on Nov 2), the only one: no month picker.
+  await expect(page.getByRole('combobox', { name: /^Month/ })).toHaveCount(0)
+  await noSidewaysScroll(page)
+  await keep(page, 'usage-390', true)
+})

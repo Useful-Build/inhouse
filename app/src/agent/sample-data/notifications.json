@@ -1,0 +1,50 @@
+{
+  "notifications": [
+    {
+      "text": "Klaviyo is being connected. It goes live by Fri, Nov 20.",
+      "who": "Inhouse team",
+      "when": "7:30 AM",
+      "unread": true,
+      "opens": "tool page: klaviyo"
+    },
+    {
+      "text": {
+        "Watch": "Today has {count} things that need you.",
+        "ActRun": "{pending} drafts are waiting for your approval."
+      },
+      "who": "Inhouse agent",
+      "when": "6:08 AM",
+      "unread": true,
+      "opens": {
+        "Watch": "Today",
+        "ActRun": "Approvals"
+      }
+    },
+    {
+      "text": "Your weekly numbers report is ready.",
+      "who": "Inhouse agent",
+      "when": "Fri, Nov 13",
+      "unread": false,
+      "opens": "chat: numbers"
+    },
+    {
+      "text": "Dana Kim approved the reorder of 300 Summit Fleece.",
+      "who": "Dana Kim",
+      "when": "Thu, Nov 12",
+      "unread": false,
+      "opens": "Activity"
+    }
+  ],
+  "teamRequests": [
+    {
+      "title": "Connect Klaviyo",
+      "sub": "New tool · asked by Priya, Nov 9",
+      "status": "Live by Fri, Nov 20"
+    },
+    {
+      "title": "Weekly wholesale stock report",
+      "sub": "New job · asked by Sam, Wed, Nov 11",
+      "status": "Call on Thu, Nov 19"
+    }
+  ]
+}

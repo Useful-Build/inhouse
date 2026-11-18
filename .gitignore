@@ -1,0 +1,6 @@
+.claude/worktrees/
+verify/
+.DS_Store
+*.zip
+app/e2e/visual.spec.ts-snapshots/*-darwin.png
+app/e2e/visual.spec.ts-snapshots/*-win32.png

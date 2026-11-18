@@ -1,0 +1,6 @@
+{
+  "files": [
+    { "path": "screens/library/Previews.tsx", "reason": "Content art: drawings of file pages (a spreadsheet, a deck), with their own colors and container-relative sizes." }
+  ],
+  "classes": []
+}
