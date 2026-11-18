@@ -1,6 +1,7 @@
 # The required check for main and fleet/** (job name "ci"). Runs on PRs, in the merge queue and on dispatch.
 # The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
 # Playwright image so screenshots render the same on every run. Two shards at most: runner slots are shared.
+# The fleet job runs the agent fleet's guards for fleet/** and its scripts' tests. ci needs both jobs.
 name: ci
 
 on:
@@ -70,19 +71,81 @@ jobs:
           path: app/e2e-artifacts
           retention-days: 7
 
+  # The agent fleet's checks: the gate guards for fleet branches and the fleet scripts' own tests.
+  fleet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The gate on fleet/** is this check, and fleet/** needs no approval, so a change into a fleet branch may not
+      # touch the gate itself: .github/, the Playwright config (which tests run, forbidOnly) and the lint config and
+      # scripts with their allow lists. Those changes go to main through the owner.
+      - name: No CI or workflow changes into fleet branches
+        if: >-
+          (github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) ||
+          (github.event_name == 'merge_group' && startsWith(github.event.merge_group.base_ref, 'refs/heads/fleet/'))
+        env:
+          BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")
+          blocked=$(grep -E '^(\.github/|app/scripts/|app/playwright\.config\.ts$|app/\.oxlintrc\.json$)' <<<"$changed" || true)
+          if [ -n "$blocked" ]; then
+            echo "::error::changes into a fleet branch may not touch .github/, app/scripts/, app/playwright.config.ts or app/.oxlintrc.json:"
+            echo "$blocked"
+            exit 1
+          fi
+          echo "no .github/, app/scripts/, app/playwright.config.ts or app/.oxlintrc.json changes"
+      # A skipped or fixme test passes green, so a change into a fleet branch may not add one. A plain grep over the
+      # changed files under app/e2e as the head commit has them. .only is caught by --forbid-only in e2e.
+      - name: No skipped tests into fleet branches
+        if: >-
+          (github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) ||
+          (github.event_name == 'merge_group' && startsWith(github.event.merge_group.base_ref, 'refs/heads/fleet/'))
+        env:
+          BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          found=""
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            hits=$(git show "$HEAD_SHA:$f" | grep -nE '\.(skip|fixme)\(' || true)
+            if [ -n "$hits" ]; then found="$found$f:"$'\n'"$hits"$'\n'; fi
+          done < <(git diff --name-only --no-renames --diff-filter=d "$BASE_SHA...$HEAD_SHA" -- 'app/e2e/*.ts')
+          if [ -n "$found" ]; then
+            echo "::error::changes into a fleet branch may not skip or fixme a Playwright test:"
+            printf '%s' "$found"
+            exit 1
+          fi
+          echo "no .skip( or .fixme( in the changed e2e files"
+      - name: Router decisions
+        run: bash .github/fleet/router-test.sh
+      - name: Run classifier
+        run: bash .github/fleet/classify-test.sh
+      - name: Router dispatch, live path
+        run: bash .github/fleet/dispatch-test.sh
+
   ci:
-    needs: e2e
-    # always(): a cancelled or skipped shard makes ci red, never skipped (a skipped check counts as passing).
+    needs: [e2e, fleet]
+    # always(): a cancelled or skipped shard or fleet job makes ci red, never skipped (a skipped check counts as
+    # passing).
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Every shard passed
+      - name: Every shard and the fleet checks passed
         env:
           RESULT: ${{ needs.e2e.result }}
+          FLEET: ${{ needs.fleet.result }}
         run: |
           echo "e2e: $RESULT"
-          if [ "$RESULT" = cancelled ]; then
-            echo "::error::The e2e legs were cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
+          echo "fleet: $FLEET"
+          if [ "$RESULT" = cancelled ] || [ "$FLEET" = cancelled ]; then
+            echo "::error::A job was cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
-          test "$RESULT" = success
+          test "$RESULT" = success && test "$FLEET" = success
