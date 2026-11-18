@@ -44,6 +44,16 @@ CI (`.github/workflows/ci.yml`) runs on every pull request into `main` and `flee
 - Before you call a change done: `npm run typecheck` and `npm run lint` pass, and the E2E suite passes for anything that changes behaviour or looks.
 - Keep the sample data invented. No real names, customers, emails, URLs or secrets.
 
+## Agent fleet
+
+`.github/workflows/fleet.yml` runs coding agents as GitHub Actions jobs, one task issue per job. How it can fail and what stops it: `.github/fleet/FAILURES.md`.
+
+- A feature gets its own branch, `fleet/<topic>`, made from `main` with `.github/fleet/new-feature.sh`.
+- A task is an issue with the `fleet` label and a `Base: fleet/<topic>` line. The router starts it on `task/<n>`, and restarts it until its PR merges or it hits a cap.
+- `fleet:stop` on a task issue stops it and cancels its runs. The router adds `fleet:failed` to a task that failed for good.
+- Task PRs go into `fleet/<topic>` through the merge queue, never into `main`. The finished branch comes to `main` in one PR that the owner reviews.
+- The `ci` check refuses a change into a `fleet/` branch that touches `.github/`, `app/scripts/`, `app/playwright.config.ts` or `app/.oxlintrc.json`, or that adds a `.skip(` or `.fixme(` to a test under `app/e2e/`. Those changes go to `main` in their own PR.
+
 ## Design system
 
 The full rules are in `app/DESIGN_SYSTEM.md` (the base's guide, rewritten on every base update) and `app/DESIGN_APP.md` (this app's layer). In short:
