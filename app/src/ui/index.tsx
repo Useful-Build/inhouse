@@ -230,11 +230,13 @@ export function ChoiceChips<T extends string>({ value, options, onChange, label 
   // Same as Segmented: a click focuses first, then clicks, and the focus picks only after an arrow key.
   const pick = (v: T) => { if (v !== value) onChange(v) }
   const focusPick = useFocusPick(v => pick(v as T))
+  // On a phone each 32px chip has a 44px-tall tap area that reaches into the 6px gaps; every gap is 6px, and each chip stays fully tappable.
+  const phone = useUi(s => s.phone)
   return (
     <ToggleGroup type="single" value={value} onValueChange={v => { if (v) pick(v as T) }} aria-label={label} onKeyDown={focusPick.onKeyDown} className="flex flex-wrap gap-1.5 rounded-none bg-transparent p-0">
       {options.map(([k, t, icon]) => (
         <ToggleGroupItem key={k} value={k} onFocus={focusPick.onFocusOf(k)}
-          className="h-8 gap-1.25 rounded-full border border-input bg-card px-3 py-0 text-foreground data-[state=on]:border-foreground data-[state=on]:bg-foreground data-[state=on]:text-primary-foreground data-[state=on]:hover:text-primary-foreground data-[state=on]:shadow-none">
+          className={cn('h-8 gap-1.25 rounded-full border border-input bg-card px-3 py-0 text-foreground data-[state=on]:border-foreground data-[state=on]:bg-foreground data-[state=on]:text-primary-foreground data-[state=on]:hover:text-primary-foreground data-[state=on]:shadow-none', phone && TAP_Y)}>
           <Icon name={icon} size={15} />{t}
         </ToggleGroupItem>
       ))}
