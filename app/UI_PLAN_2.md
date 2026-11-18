@@ -30,7 +30,7 @@ PR 1 ─┬─► PR 2 ─┬─► PR 4 (Today, Approvals, review panel)
 | 4 | Today, Approvals and the review panel | `feat/today-approvals-polish` | Merged |
 | 5 | Conversation and composer | `feat/conversation-polish` | Proposed |
 | 6 | Library | `feat/library-polish` | Merged |
-| 7 | Pages and windows | `feat/pages-polish` | Proposed |
+| 7 | Pages and windows | `feat/pages-polish` | Merged |
 
 ## Decisions
 
@@ -206,15 +206,28 @@ Notes from the build:
 
 ## PR 7: Pages and windows
 
-- [ ] Tools and Skills: descriptions on two lines, no ellipsis; one way to request; the tool page's question rows without the repeated chip; paused and disconnected read as such; no orphan "Suggested" heading (M2, M17, M19, L3, L4)
-- [ ] Routines: a row that fits a phone, an icon that says something or none, a "Last runs" list with results (M24, L1, L2)
-- [ ] Usage: the agent mark on the agent's row, phone columns (L5)
-- [ ] Settings: Models explains each model and why Smart is locked, one "How hard it thinks" label; Audit log rows on one edge; phone edges; phone controls per D4 (M31, M32, L12)
-- [ ] Activity: phone rows and "Open a line" (L15)
-- [ ] Team window: styled resize, no mid-word quote (L10)
-- [ ] First-day and loading states for each of these pages (M16)
-- [ ] Copy sweep (L15)
+- [x] Tools and Skills: descriptions on two lines, no ellipsis; one way to request; the tool page's question rows without the repeated chip; paused and disconnected read as such; no orphan "Suggested" heading (M2, M17, M19, L3, L4)
+- [x] Routines: a row that fits a phone, an icon that says something or none, a "Last runs" list with results (M24, L1, L2)
+- [x] Usage: the agent mark on the agent's row, phone columns (L5)
+- [x] Settings: Models explains each model and why Smart is locked, one "How hard it thinks" label; Audit log rows on one edge; phone edges; phone controls per D4 (M31, M32, L12)
+- [x] Activity: phone rows and "Open a line" (L15)
+- [x] Team window: styled resize, no mid-word quote (L10)
+- [x] First-day and loading states for each of these pages (M16)
+- [x] Copy sweep (L15)
 
 Files: `src/screens/Routines.tsx`, `Tools.tsx`, `Skills.tsx`, `Usage.tsx`, `Activity.tsx`, `Settings.tsx`, `src/screens/settings/content.ts`, `src/overlays/TeamWindow.tsx`, specs.
 Risk: low. Many small fixes over six pages.
 Verify: E2E: pause a tool and see Read and Draft change, open every page on first day and while loading, run a routine and see its result line, on a phone and on desktop.
+
+Notes from the build:
+- **Verified (light checks only).** `npm run typecheck` and `npm run lint` pass. The specs were written without a browser run: new `pages-polish.spec.ts` (1440) and `pages-polish-phone.spec.ts` (390) share `pages-polish-checks.ts`. CI runs E2E, visual and a11y.
+- **Tools and Skills.** Descriptions wrap in full (no `ellipsis`). One way to request: the "Missing a tool?" card is gone, "Request a tool" in the header is the one route (plus "Request" on a catalog row). A tool page's question rows lose the repeated tool chip. The Access row follows the tool's state ("None. A person paused it.", "None until the login is renewed.", and both facts when a tool is paused and disconnected) and a paused tool says so where its questions were. Skills hides "Suggested for Shopify brands" when nothing is suggested.
+- **Routines.** No decorative tile; the last run sits on its own line under the chips; tighter padding on a phone. A Run now line in "Last runs" says what the run found ("Run now · found 6 things") when the agent gives a result (`RoutineRun.result`, new and optional; the mock fills it from the routine's own last-run note, none on day one) and plain "Run now" when it doesn't. The row's last-run line follows the newest run, so the row and the sheet agree. Every run carries a check mark, so the time column has a state. The morning check's lines in "Last runs" fill their {read} and {found} counts like Activity does. Both sheets use `NO_MOTION`.
+- **Usage.** The agent's row on the Person tab wears the agent's mark. An empty breakdown (First day, Loading) says so. Phone rows already stack as one column, left as they were.
+- **Settings.** Models: each row says what the model is for, the default says why it stays on (on a phone just "It stays on while it's the default."), the section has no label (the h1 says it), one "How hard it thinks" caption sits above the rows over the picker column while the card is at least `@xl` wide (rows never wrap then); below that the rows wrap, the top caption hides and the first row's picker carries it directly above (exactly one is visible at any width), each picker is named "How hard it thinks: Smart" so the visible words are in its name, and the switch shows On or Off beside it. The default's switch can't be turned off (`Switch` with a reason ignores the change). Audit log: the paused row has an avatar like the rest, and an empty log is a muted `EmptyState` line, not a row (so settings search can't hit it): "Nothing changed yet. Changes to settings, rules and people show here." (First day) or "Still loading. Changes show here in a moment." (Loading). D4: on a phone every team settings page shows values that change something (switches, selects, inputs, effort pickers) as text with a one-line note (a model reads "Medium · team can use it" or "Medium · turned off", under one "How hard it thinks" caption), and the controls stay on desktop (Your settings keep theirs). A `button` row (Pause Inhouse agent, Open memory, Invite, Book a check-in, Ask the team, Forget, Export, Download CSV) keeps working on a phone. The menu and page share the phone page padding.
+- **Activity.** "Open a line"; on a phone the time and person sit under the line and an opened line has no indent. Empty states say First day and Loading apart.
+- **Team window.** Native resize handle gone (the field grows with its text, to a cap); a request's title is cut at a word and wraps instead of an ellipsis.
+- **Specs changed:** `page-actions` (no second "Ask the team"), `models-and-scroll-phone`, `page-details-phone` and `phone` (team settings are read-only on a phone; the cap test sets it at desktop width first; `menus` opens the Spending cap dropdown at desktop width only and counts the phone's Your settings dropdowns).
+- **Visual QA round 1 fixes.** Phone Models: one caption above the rows, values "<Effort> · team can use it" or "· turned off" (each part unbroken, the dot with the part after it). Audit log: Inhouse team rows wear the Inhouse mark in a round tile the size of a person's avatar. The phone note ("Change these on a computer.") shows only on a page where a control became text. Read-only values all sit at the row's right, level with the title, wrapping inside two fifths of the row. Smart reads "Opus 5.5 · Best for most work · stays on as the default" like the others (the "pick another default" hint is the switch's tooltip). Tools: a single-item section (Channels) spans the full width; wrapping descriptions use `text-pretty`. Skills rows top-align. A number keeps its unit ("3 days", "6 things") through `keepUnitsTogether` in `agent/clock.ts`, applied at display only (Tools questions, Skills, Activity lines, Settings descriptions, Routines last run), so search, copy and CSV still see plain spaces. Routines on a phone: the last run and next run take the card's full width under the switch row.
+- **Visual states expected to change:** every list page (Routines, Tools, a tool page, Skills, Usage person tab, Activity phone), Models, Audit log, and phone shots of team settings pages and the settings menu.
+

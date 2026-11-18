@@ -167,7 +167,7 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
   await expect(badge(page)).toContainText('6')
 })
 
-test('Tools: Request a tool and Ask the team open the team window; a disconnected tool has its own Reconnect; Pause access has Undo', async ({ page }) => {
+test('Tools: Request a tool opens the team window; a disconnected tool has its own Reconnect; Pause access has Undo', async ({ page }) => {
   await start(page, 'Act', 'Tool disconnected', '#/tools')
   await page.getByRole('button', { name: 'Request a tool' }).click()
   const team = page.getByRole('dialog', { name: /Your Inhouse team/ })
@@ -175,9 +175,8 @@ test('Tools: Request a tool and Ask the team open the team window; a disconnecte
   await shot(page, 'tools-request-team-window')
   await page.keyboard.press('Escape')
   await expect(team).toHaveCount(0)
-  await page.getByRole('button', { name: 'Ask the team →' }).click()
-  await expect(team).toBeVisible()
-  await page.keyboard.press('Escape')
+  // One way to ask for a tool: there is no second "Ask the team" button on the page.
+  await expect(page.getByRole('button', { name: /Ask the team/ })).toHaveCount(0)
 
   await page.goto('/?demo#/tools/gorgias')
   // The page's own Reconnect sits beside Pause access, apart from the one in the disconnected banner.

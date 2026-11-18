@@ -3,9 +3,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
+import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
-import { Avatar, Button, IconButton, NavItem, PageHeader, SectionHeader, StageTag, Switch } from '../ui'
+import { Avatar, Button, EmptyState, Icon, IconButton, InhouseMark, NavItem, PageHeader, SectionHeader, StageTag, Switch, SwitchLook } from '../ui'
 import { Confirm, SearchBox, Select, TAP } from '../ui/fields'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -92,7 +93,25 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
   )
 }
 
-function Control({ row, locked, on, onToggle, onAsk }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void }) {
+/** A team setting's value as text, on a phone: on its own line under the row's description, whatever the kind. */
+function ReadValue({ row, on }: { row: Row; on: boolean }) {
+  // A part never breaks inside, and the dot goes with the part after it, so no line starts or ends on a stranded dot.
+  const parts = (...p: string[]) => p.map((t, i) => <span key={t} className="whitespace-nowrap">{i > 0 && '\u00b7 '}{t}</span>).flatMap((e, i) => i > 0 ? [' ', e] : [e])
+  const shown = row.kind === 'mode' ? parts(row.value, row.switchOn ? 'team can use it' : 'turned off')
+    : row.kind === 'toggle' ? (on ? 'On' : 'Off')
+    : row.kind === 'select' ? parts(row.labels?.[row.value] ?? row.value, ...(row.tag ? [row.tag] : []))
+    : row.value
+  return shown ? <div className="mt-1.5 text-base text-pretty text-foreground-2">{shown}</div> : null
+}
+
+/** A description whose every separator dot is held to the word before it, so a line never starts with one. */
+function descNode(desc: string) {
+  return keepUnitsTogether(desc).replaceAll(' \u00b7 ', '\u00a0\u00b7 ')
+}
+
+function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean; caption?: string }) {
+  // A team setting on a phone is read, not changed (D4): its value shows as text under the description (see ReadValue).
+  if (readOnly && row.kind !== 'button' && row.kind !== 'photo') return null
   switch (row.kind) {
     case 'select': {
       const save = (v: string) => { agent.setSetting(row.key!, v); row.onChange?.(v) }
@@ -119,13 +138,17 @@ function Control({ row, locked, on, onToggle, onAsk }: { row: Row; locked: boole
       return <Switch on={on} label={row.title} onChange={locked ? undefined : onToggle} />
     case 'mode':
       return (
-        <div className="flex flex-wrap items-center gap-4.5">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">How hard it thinks</span>
-            <Select label={`How hard ${row.title} thinks`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
+        <div className="flex flex-wrap items-center gap-4.5 @xl:flex-nowrap">
+          {/* The visible words are in the name ("How hard it thinks: Smart"), so a voice command by label works. */}
+          <div className="flex flex-col gap-1.5">
+            {/* Below the card's @xl width the rows wrap and the section's top caption is hidden, so the first picker carries it. */}
+            {caption && <span className="text-xs text-muted-foreground @xl:hidden">{caption}</span>}
+            <Select label={`How hard it thinks: ${row.title}`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
           </div>
-          <span className="inline-flex h-9.5 items-center self-end">
+          {/* The switch's visible label: whether the team can use this model. */}
+          <span className="inline-flex h-9.5 items-center gap-2">
             <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={() => agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null)} />
+            <span aria-hidden="true" className="w-6 text-sm text-foreground-3">{row.switchOn ? 'On' : 'Off'}</span>
           </span>
         </div>
       )
@@ -133,6 +156,10 @@ function Control({ row, locked, on, onToggle, onAsk }: { row: Row; locked: boole
       return <PhotoControl personId={row.avatar!.who} locked={locked} />
   }
 }
+
+/** The Inhouse team's mark, round and the size of a person's avatar, for a line the team wrote. */
+const isTeam = (who: string) => who.includes('Inhouse team')
+const TeamMark = () => <span aria-hidden="true" className="flex size-9 items-center justify-center rounded-full bg-fill"><InhouseMark size={16} /></span>
 
 /** Saves a file from the browser. */
 function download(file: string, text: string, type: string) {
@@ -174,6 +201,7 @@ export function Settings() {
   const env: Env = {
     S, stage, agent: st, data,
     spent: usage.total,
+    phone,
     openTeam: ui.openTeam, openPop: ui.openPop, openSettings: ui.openSettings, newChat: ui.newChat,
     goSkills: () => ui.go('skills'),
     togglePause: ui.togglePause,
@@ -186,6 +214,9 @@ export function Settings() {
     download,
   }
   const page = settingsPage(setTab, env)
+  const readOnly = phone && setTab.startsWith('team-')
+  // The note is for a page where a control became text; a page of buttons and plain facts has nothing to explain.
+  const hidesControls = readOnly && page.sections.some(sec => sec.rows.some(r => r.kind === 'toggle' || r.kind === 'select' || r.kind === 'text' || r.kind === 'mode'))
 
   // Search: a menu page matches by its name, or by the name or text of any row on it.
   const [query, setQuery] = useState('')
@@ -205,8 +236,8 @@ export function Settings() {
   return (
     <div className={phone ? 'relative flex min-h-below-topbar flex-wrap content-start' : 'relative flex min-h-0 grow basis-0'}>
       {(!phone || atMenu) && (
-      <nav aria-label="Settings" className={`box-border flex-none pt-3.5 pr-3.5 pl-6 ${phone ? 'w-full pb-14' : 'w-settings-nav overflow-y-auto pb-7.5'}`}>
-        {phone && <PageHeader title="Settings" className="mb-4 px-3" />}
+      <nav aria-label="Settings" className={`box-border flex-none pt-3.5 ${phone ? 'w-full px-(--app-pad-x) pb-14' : 'w-settings-nav overflow-y-auto pr-3.5 pb-7.5 pl-6'}`}>
+        {phone && <PageHeader title="Settings" className="mb-4" />}
         <SearchBox value={query} onChange={setQuery} placeholder="Search settings" label="Search settings" />
         {MENU.map(g => {
           const items = g.items.filter(([k]) => !found || found.has(k))
@@ -240,28 +271,47 @@ export function Settings() {
               </div>
             )
             : <PageHeader title={page.title} className="mb-1" />}
-          {page.sections.filter(sec => sec.rows.length > 0).map((sec, si) => (
+          {hidesControls && (
+            <p role="note" className="mt-3 flex items-center gap-2 text-sm text-foreground-3">
+              <Icon name="desktop_windows" size={16} className="flex-none" />Change these on a computer.
+            </p>
+          )}
+          {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (
             <section key={`${si}|${sec.label}`} className={sec.label ? undefined : 'mt-4.5'}>
               {sec.label && <SectionHeader title={sec.label} className="mt-6 mb-2.5" />}
-              <div className="rounded-2xl border border-border bg-card px-5.5">
+              {sec.empty && <EmptyState>{sec.empty}</EmptyState>}
+              {sec.rows.length > 0 && (
+              <div className="@container rounded-2xl border border-border bg-card px-5.5">
+                {sec.caption && !readOnly && (
+                  // One label over the pickers: it mirrors a row's right side (picker, then the switch's width) so it sits over them.
+                  <div className="hidden justify-end gap-4.5 pt-4 text-xs text-muted-foreground @xl:flex">
+                    <span className="w-37.5 flex-none">{sec.caption}</span>
+                    <span aria-hidden="true" className="invisible inline-flex items-center gap-2"><SwitchLook on /><span className="w-6" /></span>
+                  </div>
+                )}
+                {readOnly && sec.caption && <div className="pt-4 text-xs text-muted-foreground">{sec.caption}</div>}
                 {sec.rows.map((row, i) => {
                   const locked = S < row.need
                   const on = !locked && (st.toggles[row.key ?? ''] ?? row.def ?? false)
+                  // A value shown as text (a team page on a phone) sits under the description, in the title's column.
+                  const asText = readOnly && row.kind !== 'button' && row.kind !== 'photo'
                   return (
-                    <div key={`${row.title}|${i}`} className={`flex flex-wrap items-center gap-x-6 gap-y-3 py-4 ${i === 0 ? '' : 'border-t border-divider'}`}>
-                      <div className="flex min-w-0 grow basis-65 items-center gap-3.5">
-                        {row.avatar?.at === 'row' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={row.kind === 'photo' ? 48 : 36} /></span>}
+                    <div key={`${row.title}|${i}`} className={cn('flex gap-x-6 gap-y-3 py-4', asText ? 'items-start' : 'flex-wrap items-center', row.kind === 'mode' && '@xl:flex-nowrap', i > 0 && 'border-t border-divider')}>
+                      <div className={cn('flex min-w-0 grow items-center gap-3.5', asText ? 'basis-0' : 'basis-65')}>
+                        {row.avatar?.at === 'row' && (memberFor(data, row.avatar.who, userName(ctx)) || isTeam(row.avatar.who)) && <span className={cn('flex flex-none', locked && 'grayscale')}>{isTeam(row.avatar.who) ? <TeamMark /> : <Avatar who={row.avatar.who} size={row.kind === 'photo' ? 48 : 36} />}</span>}
                         <div className="min-w-0 flex-1">
                           <div className={`flex items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>{row.title}{locked && <StageTag tag={STAGE_TAGS[row.need]} />}</div>
-                          {row.desc && <div className="mt-0.5 text-sm text-pretty text-muted-foreground">{row.desc}</div>}
+                          {row.desc && <div className="mt-0.5 text-sm text-pretty text-muted-foreground">{descNode(row.desc)}</div>}
+                          {asText && <ReadValue row={row} on={on} />}
                         </div>
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
-                      <Control row={row} locked={locked} on={on} onToggle={() => agent.setToggle(row.key!, !on)} onAsk={setAsk} />
+                      <Control readOnly={readOnly} row={row} locked={locked} on={on} onToggle={() => agent.setToggle(row.key!, !on)} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
                     </div>
                   )
                 })}
               </div>
+              )}
             </section>
           ))}
         </div>

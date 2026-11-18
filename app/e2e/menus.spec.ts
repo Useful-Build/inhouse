@@ -65,6 +65,8 @@ for (const width of [1440, 390]) {
         await page.waitForTimeout(150)
         const buttons = page.locator('main [role="combobox"]')
         const n = await buttons.count()
+        // Team settings are read-only text on a phone (D4): not one dropdown there.
+        if (phone && id.startsWith('team-')) expect(n, `${id}: no dropdown on a phone`).toBe(0)
         for (let i = 0; i < n; i++) {
           const b = buttons.nth(i)
           if (await b.isDisabled()) continue
@@ -81,15 +83,23 @@ for (const width of [1440, 390]) {
           void r
         }
       }
-      expect(opened, 'dropdowns opened').toBeGreaterThan(15)
+      // On a phone only Your settings has dropdowns (Theme, Language, Text size, Time zone and the two alert ones).
+      expect(opened, 'dropdowns opened').toBeGreaterThan(phone ? 3 : 15)
       test.info().annotations.push({ type: 'dropdowns opened', description: String(opened) })
       test.info().annotations.push({ type: 'widest', description: `${widestPage} #${widestIdx} ${Math.round(widest)}px` })
 
       // Screenshots: a short one, the longest one with its scrollbar, and the widest.
-      await page.evaluate(() => { location.hash = '#/settings/team-spend' })
-      await page.getByRole('combobox', { name: /^Alert at/ }).click()
-      await shot(page, 'dropdown-short')
-      await page.keyboard.press('Escape')
+      // The short list is on a team page, which has no dropdowns on a phone (D4): desktop only.
+      if (!phone) {
+        await page.evaluate(() => { location.hash = '#/settings/team-spend' })
+        await page.getByRole('combobox', { name: /^Alert at/ }).click()
+        await shot(page, 'dropdown-short')
+        await page.keyboard.press('Escape')
+      } else {
+        await page.evaluate(() => { location.hash = '#/settings/team-spend' })
+        await expect(page.getByRole('combobox')).toHaveCount(0)
+        await expect(page.getByText('Alert at', { exact: true })).toBeVisible()
+      }
       await page.evaluate(() => { location.hash = '#/settings/you-general' })
       await page.getByRole('combobox', { name: /^Time zone/ }).click()
       const tz = await fits(page.getByRole('listbox'), 'time zone')
