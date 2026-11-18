@@ -338,6 +338,16 @@
   --background-image-dot-grid-tool: var(--app-dot-grid-tool);
 }
 
+/* PR 5: conversation and composer. */
+:root {
+  --app-composer-fade: linear-gradient(to bottom, transparent 0, black 18px); /* the composer field's top edge once it scrolls */
+  --app-selection-room: calc(var(--app-toast-bottom) + 88px); /* room under a list in Select mode: the bar, its gap and a phone's home bar */
+  --app-trace-label: min(440px, 48%); /* the trace's step-name column, wider so names read in full on desktop (H6); replaces the value above */
+}
+@theme inline {
+  --spacing-selection-room: var(--app-selection-room);
+}
+
 /* Motion: the agent's marks. */
 @theme static {
   --animate-ih-wind: ih-wind 14s cubic-bezier(.45, 0, .55, 1) infinite alternate;
