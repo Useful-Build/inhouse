@@ -177,15 +177,27 @@ Verify: E2E: search with no results and clear it, switch place and type, open an
 
 ## PR 7: Pages and windows
 
-- [ ] Tools and Skills: descriptions on two lines, no ellipsis; one way to request; the tool page's question rows without the repeated chip; paused and disconnected read as such; no orphan "Suggested" heading (M2, M17, M19, L3, L4)
-- [ ] Routines: a row that fits a phone, an icon that says something or none, a "Last runs" list with results (M24, L1, L2)
-- [ ] Usage: the agent mark on the agent's row, phone columns (L5)
-- [ ] Settings: Models explains each model and why Smart is locked, one "How hard it thinks" label; Audit log rows on one edge; phone edges; phone controls per D4 (M31, M32, L12)
-- [ ] Activity: phone rows and "Open a line" (L15)
-- [ ] Team window: styled resize, no mid-word quote (L10)
-- [ ] First-day and loading states for each of these pages (M16)
-- [ ] Copy sweep (L15)
+- [x] Tools and Skills: descriptions on two lines, no ellipsis; one way to request; the tool page's question rows without the repeated chip; paused and disconnected read as such; no orphan "Suggested" heading (M2, M17, M19, L3, L4)
+- [x] Routines: a row that fits a phone, an icon that says something or none, a "Last runs" list with results (M24, L1, L2)
+- [x] Usage: the agent mark on the agent's row, phone columns (L5)
+- [x] Settings: Models explains each model and why Smart is locked, one "How hard it thinks" label; Audit log rows on one edge; phone edges; phone controls per D4 (M31, M32, L12)
+- [x] Activity: phone rows and "Open a line" (L15)
+- [x] Team window: styled resize, no mid-word quote (L10)
+- [x] First-day and loading states for each of these pages (M16)
+- [x] Copy sweep (L15)
 
 Files: `src/screens/Routines.tsx`, `Tools.tsx`, `Skills.tsx`, `Usage.tsx`, `Activity.tsx`, `Settings.tsx`, `src/screens/settings/content.ts`, `src/overlays/TeamWindow.tsx`, specs.
 Risk: low. Many small fixes over six pages.
 Verify: E2E: pause a tool and see Read and Draft change, open every page on first day and while loading, run a routine and see its result line, on a phone and on desktop.
+
+Notes from the build:
+- **Verified (light checks only).** `npm run typecheck` and `npm run lint` pass. The specs were written without a browser run: new `pages-polish.spec.ts` (1440) and `pages-polish-phone.spec.ts` (390) share `pages-polish-checks.ts`. CI runs E2E, visual and a11y.
+- **Tools and Skills.** Descriptions wrap in full (no `ellipsis`). One way to request: the "Missing a tool?" card is gone, "Request a tool" in the header is the one route (plus "Request" on a catalog row). A tool page's question rows lose the repeated tool chip. The Access row follows the tool's state ("None. A person paused it.", "None until the login is renewed.") and a paused tool says so where its questions were. Skills hides "Suggested for Shopify brands" when nothing is suggested.
+- **Routines.** No decorative tile; the last run sits on its own line under the chips; tighter padding on a phone. A Run now line in "Last runs" says what it found ("Run now · found 6 things", from the routine's last-run note) and every run carries a check mark, so the time column has a state. Both sheets use `NO_MOTION`.
+- **Usage.** The agent's row on the Person tab wears the agent's mark. An empty breakdown (First day, Loading) says so. Phone rows already stack as one column, left as they were.
+- **Settings.** Models: each row says what the model is for, the default says why it stays on, one "How hard it thinks" section label, and the switch shows On or Off beside it. Audit log: the paused row has an avatar like the rest, and an empty log says "Nothing changed yet". D4: on a phone every team settings page shows values as text with a one-line note, and the controls stay on desktop (Your settings keep theirs). The menu and page share the phone page padding.
+- **Activity.** "Open a line"; on a phone the time and person sit under the line and an opened line has no indent. Empty states say First day and Loading apart.
+- **Team window.** Native resize handle gone (the field grows with its text, to a cap); a request's title is cut at a word and wraps instead of an ellipsis.
+- **Specs changed:** `page-actions` (no second "Ask the team"), `models-and-scroll-phone`, `page-details-phone` and `phone` (team settings are read-only on a phone; the cap test sets it at desktop width first).
+- **Visual states expected to change:** every list page (Routines, Tools, a tool page, Skills, Usage person tab, Activity phone), Models, Audit log, and phone shots of team settings pages and the settings menu.
+

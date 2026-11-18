@@ -7,8 +7,9 @@ import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
-import { Button, DetailList, Icon, IconButton, MenuItem, Page, PageHeader, StageTag, Switch } from '../ui'
+import { Button, DetailList, EmptyState, Icon, IconButton, MenuItem, Page, PageHeader, StageTag, Switch } from '../ui'
 import { Confirm, TAP } from '../ui/fields'
+import { NO_MOTION } from '../ui/motion'
 import { claimTrigger, rememberTrigger, restoreFocus, keepForToast } from '../ui/dialogs'
 
 /** A routine as the page lists it: its id (the agent's), whether this stage has it, and whether it is switched on. */
@@ -72,17 +73,16 @@ export function Routines() {
           <span className="flex-1">In Watch only the morning check runs. Scheduled jobs start in Act.</span>
         </div>
       )}
+      {list.length === 0 && (
+        <EmptyState className="mt-6">{data.status === 'loading' ? 'Still reading your tools. Your routines show here in a moment.' : 'No routines yet. Ask for one in a chat.'}</EmptyState>
+      )}
       <ul className="mt-6 flex list-none flex-col gap-2.5 p-0">
         {list.map(it => {
           const { r, locked, on } = it
           const mode = modeOf(r, S, locked)
-          const tile = locked ? 'bg-fill-strong text-foreground-3' : S === 2 && r.need > 0 && !r.money ? 'bg-brand text-primary-foreground' : 'bg-foreground text-primary-foreground'
           const next = !locked && paused ? 'Paused' : String(r.next || '').replace(/^Next run /, '')
           return (
-            <li key={it.id} className="relative flex items-center gap-4 rounded-2xl border border-border bg-card px-5 py-4.5 transition-colors hover:bg-accent">
-              <span aria-hidden="true" className={`flex size-10.5 flex-none items-center justify-center rounded-full ${tile}`}>
-                <Icon name="event_repeat" size={21} />
-              </span>
+            <li key={it.id} className={cn('relative flex items-center rounded-2xl border border-border bg-card transition-colors hover:bg-accent', phone ? 'gap-3 px-4 py-4' : 'gap-4 px-5 py-4.5')}>
               <div className="min-w-0 flex-1">
                 <div className={`flex flex-wrap items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>
                   {/* The name opens the details; its tap area covers the whole row. */}
@@ -94,9 +94,9 @@ export function Routines() {
                   <Badge variant="secondary">
                     <Icon name="schedule" size={16} />{whenOf(r)}
                   </Badge>
-                  <span>{mode}</span>
-                  <span>{locked ? '' : (r.last || 'Not run yet')}</span>
+                  {mode && <span>{mode}</span>}
                 </div>
+                {!locked && <div className="mt-2 text-sm text-muted-foreground">{r.last || 'Not run yet'}</div>}
                 {/* A phone has no room for a next-run column beside the text: the line sits under it. */}
                 {phone && next && <div className="mt-2 text-xs text-muted-foreground">Next run <span className={`text-sm font-medium whitespace-nowrap ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
               </div>
@@ -120,6 +120,9 @@ export function Routines() {
     </Page>
   )
 }
+
+/** What a run found, from the routine's last-run note ("Last run today at 6:00 AM · found 6 things" is "found 6 things"). */
+const resultOf = (last?: string) => last?.split(' · ')[1] ?? 'finished'
 
 const modeOf = (r: RoutineDef, S: number, locked: boolean) =>
   r.need === 0 ? (S === 0 ? 'Read only' : 'Always on') : locked ? '' : S === 2 && !r.money ? 'Runs by itself, within limits' : 'Drafts wait for your approval'
@@ -166,12 +169,12 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
     <Sheet open onOpenChange={o => { if (!o) onClose() }}>
       <SheetContent ref={panel} side={phone ? 'bottom' : 'right'} showCloseButton={false} aria-describedby={undefined}
         onPointerDownOutside={keepForToast} onInteractOutside={keepForToast}
-        overlayProps={{ className: 'data-[state=open]:animate-none data-[state=closed]:animate-none' }}
+        overlayProps={{ className: NO_MOTION }}
         onOpenAutoFocus={e => { before.current = claimTrigger(); e.preventDefault(); panel.current?.focus() }}
         // Unless something the sheet opened (the steps window) has taken focus already.
         onCloseAutoFocus={e => { e.preventDefault(); if (document.activeElement === document.body) restoreFocus(before.current) }}
         data-surface="window"
-        className={cn('gap-0 overflow-hidden rounded-2xl border bg-window-surface shadow-menu data-[state=closed]:animate-none data-[state=open]:animate-none', phone ? 'inset-2.5 h-auto w-auto' : 'inset-y-2.5 right-2.5 h-auto w-problem-panel sm:max-w-none')}>
+        className={cn('gap-0 overflow-hidden rounded-2xl border bg-window-surface shadow-menu', NO_MOTION, phone ? 'inset-2.5 h-auto w-auto' : 'inset-y-2.5 right-2.5 h-auto w-problem-panel sm:max-w-none')}>
         <div className="flex items-center gap-2 pt-3.5 pr-3.5 pl-6 text-xs text-muted-foreground">
           <Icon name="event_repeat" size={16} />Routine
           <div className="flex-1" />
@@ -203,10 +206,13 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
             <ul aria-label="Last runs" className="m-0 mt-1 list-none p-0">
               {runs.map(l => {
                 const trace = l.trace && agent.getTrace(l.trace) ? l.trace : undefined
+                // A run from Run now says what it found, as the routine's own runs do.
+                const text = l.key.startsWith('now|') ? `Run now · ${resultOf(r.last)}` : l.text
                 return (
-                  <li key={l.key} className="flex min-h-11.25 items-center gap-3 border-b border-divider py-1 text-sm">
-                    {l.t && <span className="w-run-when flex-none whitespace-nowrap text-foreground-3 tabular-nums">{l.day === 'Today' ? l.t : `${l.day.replace(/^\w+day /, '')}, ${l.t}`}</span>}
-                    <span className="min-w-0 flex-1">{l.text}</span>
+                  <li key={l.key} data-run-line className="flex min-h-11.25 items-center gap-3 border-b border-divider py-1 text-sm">
+                    <Icon name="check_circle" size={18} className="flex-none text-done" />
+                    {runs.some(x => x.t) && <span className="w-run-when flex-none whitespace-nowrap text-foreground-3 tabular-nums">{l.t ? (l.day === 'Today' ? l.t : `${l.day.replace(/^\w+day /, '')}, ${l.t}`) : ''}</span>}
+                    <span className="min-w-0 flex-1">{text}</span>
                     {trace
                       ? <Button variant="link" className="flex-none text-sm" onClick={() => { onClose(); openTrace(trace) }}>Steps →</Button>
                       : l.inActivity && <Button variant="link" className="flex-none text-sm" onClick={() => { onClose(); go('activity') }}>Activity →</Button>}

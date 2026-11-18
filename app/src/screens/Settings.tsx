@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { agent } from '../agent'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
-import { Avatar, Button, IconButton, NavItem, PageHeader, SectionHeader, StageTag, Switch } from '../ui'
+import { Avatar, Button, Icon, IconButton, NavItem, PageHeader, SectionHeader, StageTag, Switch } from '../ui'
 import { Confirm, SearchBox, Select, TAP } from '../ui/fields'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -92,7 +92,15 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
   )
 }
 
-function Control({ row, locked, on, onToggle, onAsk }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void }) {
+function Control({ row, locked, on, onToggle, onAsk, readOnly }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean }) {
+  // A team setting on a phone is read, not changed (D4): the value as text, no control.
+  if (readOnly) {
+    const shown = row.kind === 'toggle' ? (on ? 'On' : 'Off')
+      : row.kind === 'mode' ? `${row.value} · ${row.switchOn ? 'On' : 'Off'}`
+      : row.kind === 'select' ? `${row.labels?.[row.value] ?? row.value}${row.tag ? ` · ${row.tag}` : ''}`
+      : row.kind === 'button' ? '' : row.value
+    return shown ? <span className="text-right text-base text-foreground-2">{shown}</span> : null
+  }
   switch (row.kind) {
     case 'select': {
       const save = (v: string) => { agent.setSetting(row.key!, v); row.onChange?.(v) }
@@ -120,12 +128,11 @@ function Control({ row, locked, on, onToggle, onAsk }: { row: Row; locked: boole
     case 'mode':
       return (
         <div className="flex flex-wrap items-center gap-4.5">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">How hard it thinks</span>
-            <Select label={`How hard ${row.title} thinks`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
-          </div>
-          <span className="inline-flex h-9.5 items-center self-end">
+          <Select label={`How hard ${row.title} thinks`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
+          {/* The switch's visible label: whether the team can use this model. */}
+          <span className="inline-flex h-9.5 items-center gap-2">
             <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={() => agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null)} />
+            <span aria-hidden="true" className="w-6 text-sm text-foreground-3">{row.switchOn ? 'On' : 'Off'}</span>
           </span>
         </div>
       )
@@ -186,6 +193,7 @@ export function Settings() {
     download,
   }
   const page = settingsPage(setTab, env)
+  const readOnly = phone && setTab.startsWith('team-')
 
   // Search: a menu page matches by its name, or by the name or text of any row on it.
   const [query, setQuery] = useState('')
@@ -205,8 +213,8 @@ export function Settings() {
   return (
     <div className={phone ? 'relative flex min-h-below-topbar flex-wrap content-start' : 'relative flex min-h-0 grow basis-0'}>
       {(!phone || atMenu) && (
-      <nav aria-label="Settings" className={`box-border flex-none pt-3.5 pr-3.5 pl-6 ${phone ? 'w-full pb-14' : 'w-settings-nav overflow-y-auto pb-7.5'}`}>
-        {phone && <PageHeader title="Settings" className="mb-4 px-3" />}
+      <nav aria-label="Settings" className={`box-border flex-none pt-3.5 ${phone ? 'w-full px-(--app-pad-x) pb-14' : 'w-settings-nav overflow-y-auto pr-3.5 pb-7.5 pl-6'}`}>
+        {phone && <PageHeader title="Settings" className="mb-4" />}
         <SearchBox value={query} onChange={setQuery} placeholder="Search settings" label="Search settings" />
         {MENU.map(g => {
           const items = g.items.filter(([k]) => !found || found.has(k))
@@ -240,6 +248,11 @@ export function Settings() {
               </div>
             )
             : <PageHeader title={page.title} className="mb-1" />}
+          {readOnly && (
+            <p role="note" className="mt-3 flex items-center gap-2 text-sm text-foreground-3">
+              <Icon name="desktop_windows" size={16} className="flex-none" />Change team settings on a computer. You can read them here.
+            </p>
+          )}
           {page.sections.filter(sec => sec.rows.length > 0).map((sec, si) => (
             <section key={`${si}|${sec.label}`} className={sec.label ? undefined : 'mt-4.5'}>
               {sec.label && <SectionHeader title={sec.label} className="mt-6 mb-2.5" />}
@@ -257,7 +270,7 @@ export function Settings() {
                         </div>
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
-                      <Control row={row} locked={locked} on={on} onToggle={() => agent.setToggle(row.key!, !on)} onAsk={setAsk} />
+                      <Control readOnly={readOnly} row={row} locked={locked} on={on} onToggle={() => agent.setToggle(row.key!, !on)} onAsk={setAsk} />
                     </div>
                   )
                 })}

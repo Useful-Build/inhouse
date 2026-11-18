@@ -23,6 +23,13 @@ const SEEDED_STYLE: Record<number, { variant: 'muted' | 'secondary' }> = { 0: { 
 const DATE = /((?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), )?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})/
 const wholeDates = (text: string) => text.split(DATE).map((part, i) => (i % 2 ? <span key={i} className="whitespace-nowrap">{part}</span> : part))
 
+/** A request's title: the first 60 characters, cut at a word and never inside one. */
+const titleOf = (text: string) => {
+  if (text.length <= 60) return text
+  const cut = text.slice(0, 57)
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), 20)).trimEnd()}…`
+}
+
 export function TeamWindow() {
   const pop = useUi(s => s.pop)
   const team = useUi(s => s.team)
@@ -56,7 +63,7 @@ export function TeamWindow() {
   const send = () => {
     const txt = team.text.trim()
     if (!txt) return
-    agent.sendTeamRequest({ icon: RT[team.type][0], title: txt.length > 60 ? `${txt.slice(0, 57)}…` : txt, sub: `${RT[team.type][1]} · sent by ${sender}, just now`, status: 'Sent' })
+    agent.sendTeamRequest({ icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}, just now`, status: 'Sent' })
     showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : 'Request sent. Your Inhouse team replies within one working day.')
     patch({ pop: null, team: { ...team, text: '' } })
   }
@@ -73,7 +80,7 @@ export function TeamWindow() {
             <div key={`${q.title}|${q.sub}|${i}`} className={cn('flex min-h-13.5 gap-3 border-t', i === 0 ? 'border-transparent' : 'border-divider', phone ? 'items-start py-2' : 'items-center')}>
               <Icon name={q.icon} size={18} className={cn('text-foreground-3', phone && 'mt-0.75')} />
               <div className="min-w-0 flex-1">
-                <div className="ellipsis text-base font-strong">{q.title}</div>
+                <div className="text-base font-strong">{q.title}</div>
                 <div className="text-xs text-muted-foreground">{wholeDates(q.sub)}</div>
                 {phone && <Badge variant={q.variant} size="lg" className="mt-1">{q.status}</Badge>}
               </div>
@@ -87,7 +94,7 @@ export function TeamWindow() {
           <ChoiceChips label="Request type" value={team.type} options={(Object.keys(RT) as RequestType[]).map(k => [k, RT[k][1], RT[k][0]])}
             onChange={type => patch({ team: { ...team, type } })} />
           <Textarea aria-label="Your request" value={team.text} placeholder={RT[team.type][2]} onChange={e => patch({ team: { ...team, text: e.target.value } })}
-            className={cn('mt-3 resize-y rounded-xl bg-muted px-3.5 py-3 leading-normal', phone ? 'min-h-18' : 'min-h-27.5')} />
+            className={cn('mt-3 max-h-60 resize-none rounded-xl bg-muted px-3.5 py-3 leading-normal', phone ? 'min-h-18' : 'min-h-27.5')} />
           {isBug && (
             <div className="mt-2.5 flex items-center gap-2.5 text-sm text-foreground-2">
               <Checkbox id="team-shot" checked={team.shot} onCheckedChange={v => patch({ team: { ...team, shot: v === true } })} className="size-4.5" />

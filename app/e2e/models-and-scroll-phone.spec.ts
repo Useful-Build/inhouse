@@ -30,10 +30,15 @@ test('Phone: the mode picker fits', async ({ page }) => {
 test('Phone: the Models page fits and scrolls with the page', async ({ page }) => {
   await start(page, '#/settings/team-modes')
   expect(await noSideways(page)).toBe(true)
-  await expect(page.getByRole('switch', { name: 'Instant: the team can use this mode' })).toBeVisible()
+  // Team settings are read on a phone (D4): the values show as text, with no control to change them.
+  await expect(page.getByRole('note')).toContainText('Change team settings on a computer')
+  await expect(page.getByRole('switch')).toHaveCount(0)
+  await expect(page.getByRole('combobox')).toHaveCount(0)
+  await expect(page.locator('main')).toContainText('Instant')
+  await expect(page.locator('main')).toContainText('Low · On')
   const main = page.locator('main')
   // Settings opens on the page alone now (menu first on a phone), so the last row starts in view: scroll the page itself.
-  await page.getByRole('combobox', { name: 'Default model: Smart' }).hover()
+  await page.locator('main').hover()
   await page.mouse.wheel(0, 400)
   await expect.poll(() => main.evaluate(el => el.scrollTop)).toBeGreaterThan(0)
   await keep(page, '390-thinking-modes-page')

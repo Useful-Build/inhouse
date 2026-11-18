@@ -8,7 +8,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Button, CardGrid, DetailList, Dot, EmptyState, Icon, IconTile, LogoTile, Page, PageHeader, SectionHeader, StageTag } from '../ui'
+import { Button, CardGrid, DetailList, Dot, EmptyState, Icon, LogoTile, Page, PageHeader, SectionHeader, StageTag } from '../ui'
 import { SearchBox, TAP } from '../ui/fields'
 
 const AMBER_DOT = 'bg-warning'
@@ -65,7 +65,7 @@ export function Tools() {
       <Separator className="mt-6.5 mb-4.5 bg-border" />
 
       {needle && connected.length + channels.length + beingConnected.length + catalog.length === 0 && (
-        <EmptyState variant="inline">No tools match "{query.trim()}". Ask the team and they'll build the connection.</EmptyState>
+        <EmptyState variant="inline">No tools match "{query.trim()}". Use Request a tool and your Inhouse team builds the connection.</EmptyState>
       )}
       {connected.length > 0 && <>
       <SectionHeader title="Connected" count={connectedCount} className={SECTION_HEAD} />
@@ -77,7 +77,7 @@ export function Tools() {
               <LogoTile k={k} />
               <span className="min-w-0 flex-1">
                 <span className={`block ${NAME}`}>{r.d.name}</span>
-                <span className={`ellipsis block ${DESC}`}>{r.d.desc}</span>
+                <span className={`block ${DESC}`}>{r.d.desc}</span>
               </span>
               <span className={`flex items-center gap-1.5 text-xs whitespace-nowrap ${r.bad ? 'text-warning-text' : 'text-muted-foreground'}`}>
                 <Dot className={r.dot} size={6} />{r.last}
@@ -100,7 +100,7 @@ export function Tools() {
               <LogoTile k={c.key} className={locked ? 'grayscale' : undefined} />
               <span className="min-w-0 flex-1">
                 <span className={`flex items-center gap-2 ${NAME} ${locked ? 'text-foreground-3' : ''}`}>{c.name}{locked && <StageTag tag={STAGE_TAGS[c.need]} />}</span>
-                <span className={`ellipsis block ${DESC}`}>{c.desc}</span>
+                <span className={`block ${DESC}`}>{c.desc}</span>
               </span>
               <span className="flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
                 {locked ? `Included from ${STAGE_TAGS[c.need]}` : <><Dot className={INK_DOT} size={6} />Connected {c.since}</>}
@@ -124,7 +124,7 @@ export function Tools() {
               <LogoTile k={k} />
               <span className="min-w-0 flex-1">
                 <span className={`block ${NAME}`}>{r.d.name}</span>
-                <span className={`ellipsis block ${DESC}`}>{r.d.desc}</span>
+                <span className={`block ${DESC}`}>{r.d.desc}</span>
               </span>
               <Badge variant="muted">{r.last}</Badge>
             </button>
@@ -150,7 +150,7 @@ export function Tools() {
               <LogoTile k={c.k} className={locked ? 'grayscale' : undefined} />
               <div className="min-w-0 flex-1">
                 <div className={`flex items-center gap-2 ${NAME} ${locked ? 'text-foreground-3' : ''}`}>{c.name}{locked && <StageTag tag={STAGE_TAGS[need]} />}</div>
-                <div className={`ellipsis ${DESC}`}>{c.desc}</div>
+                <div className={DESC}>{c.desc}</div>
               </div>
               <Button variant={req ? 'requested' : 'outline'} disabled={req} onClick={ask} className={cn('flex-none', tap)}>
                 {req && <Icon name="check" size={17} />}{req ? 'Requested' : 'Request'}
@@ -161,16 +161,16 @@ export function Tools() {
       </CardGrid>
       </>}
 
-      <div className="mt-5.5 flex flex-wrap items-center gap-3.5 rounded-2xl border border-dashed border-border-strong px-5 py-4.5">
-        <IconTile icon="support_agent" iconSize={20} size="lg" tone="outline" />
-        <div className="grow basis-55">
-          <div className="text-base font-strong">Missing a tool?</div>
-          <div className="text-sm text-foreground-3">Your Inhouse team builds the connection once. After that it's included.</div>
-        </div>
-        <Button variant="link" onClick={requestCustom} className={cn('text-sm', tap)}>Ask the team →</Button>
-      </div>
     </Page>
   )
+}
+
+/** The Access row follows the tool's state: a paused or disconnected tool never claims the stage's access. */
+const accessOf = (state: ToolState, S: number) => {
+  if (state === 'paused') return 'None. A person paused it.'
+  if (state === 'disconnected') return 'None until the login is renewed.'
+  if (state === 'connecting') return 'None yet. Being connected.'
+  return ['Read only', 'Read, plus drafts you approve', 'Read, drafts and agreed jobs within limits'][S]
 }
 
 export function ToolPage() {
@@ -201,7 +201,7 @@ export function ToolPage() {
     tone: ab.locked || ab.tag !== 'On' ? 'bg-fill text-muted-foreground' : ab.need === 0 ? 'bg-secondary text-foreground' : 'bg-brand-tint text-brand' }))
   const info: [string, ReactNode][] = [
     ['Connected', view.connectedRow],
-    ['Access', ['Read only', 'Read, plus drafts you approve', 'Read, drafts, and agreed jobs within limits'][S]],
+    ['Access', accessOf(view.state, S)],
     ['Last read', view.lastRead],
     ['Where the data stays', `In your ${A.name} account. Your Inhouse agent reads what its jobs need.`],
     ['Website', <a key="site" href={`https://${A.site}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-3">{A.site} ↗</a>],
@@ -226,10 +226,7 @@ export function ToolPage() {
         <div aria-hidden="true" className="absolute inset-0 bg-dot-grid-tool bg-size-(--app-dot-grid-size) mask-(--app-tool-hero-mask)" />
         <div className="relative mx-auto flex max-w-160 flex-col gap-2.5">
           {view.examples.map(t => (
-            <button key={t} type="button" data-tool-example onClick={() => { void ask(t) }} className="flex w-full items-center gap-3 rounded-2xl bg-card/90 py-3 pr-3 pl-3.5 text-left shadow-card transition-colors hover:bg-card">
-              <span className="inline-flex h-7 items-center gap-1.5 rounded-md bg-secondary px-2.25 text-sm font-strong whitespace-nowrap">
-                <LogoTile k={key} size="xs" />{A.name}
-              </span>
+            <button key={t} type="button" data-tool-example onClick={() => { void ask(t) }} className="flex w-full items-center gap-3 rounded-2xl bg-card/90 py-3 pr-3 pl-4 text-left shadow-card transition-colors hover:bg-card">
               <span className="min-w-0 flex-1 text-md">{t}</span>
               <span className="flex size-8.5 flex-none items-center justify-center rounded-full bg-fill">
                 <Icon name="arrow_forward" size={18} />
@@ -238,6 +235,7 @@ export function ToolPage() {
           ))}
         </div>
       </div>}
+      {view.state === 'paused' && <EmptyState className="mt-6">Access is paused. Resume it and you can ask about {A.name} again.</EmptyState>}
 
       <SectionHeader title={`What your Inhouse agent can do with ${A.name}`} className={LABEL} />
       <div className={`${CARD} px-5`}>
