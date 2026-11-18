@@ -90,7 +90,7 @@
   /* stacking layers, lowest first. A window's scrim sits one below its window. Windows, sheets, menus and the toast
    * stack portal to body, so z-toast floats over all of them. The demo switches render inside the app root (an isolated
    * stacking context), so z-dev only orders inside it: a window's scrim covers them. */
-  --app-z-raised: 1;     /* the top banner over the page */
+  --app-z-raised: 1;     /* a raised layer inside a surface, like a card's buttons over its stretched link */
   --app-z-sidebar: 2;
   --app-z-composer: 5;   /* the composer and the chat's bottom dock */
   --app-z-window: 31;    /* Help, the team window, the file viewer */
@@ -144,6 +144,7 @@
   /* PR 6: Library */
   --app-card-meta: 2lh;           /* two lines of a file card's "from" line (read off the line's own height) */
   --app-preview-dim: 1;           /* a file preview's brightness: a white page or poster is dimmed in dark */
+  --app-today-status: 2lh;        /* two lines of a Today card's status, so footers line up across a row */
   --app-cite-raise: 2px;          /* a citation chip sits a little above the baseline */
 
   /* type: page and window heads, stats, prose */
@@ -306,6 +307,7 @@
   --spacing-viewer-image: var(--app-viewer-image);
   --spacing-card-name: var(--app-card-name);
   --spacing-card-meta: var(--app-card-meta);
+  --spacing-today-status: var(--app-today-status);
   --spacing-safe-bottom: var(--app-safe-bottom);
   --spacing-composer-input: var(--app-composer-input-max);
   --inset-toast: var(--app-toast-bottom);

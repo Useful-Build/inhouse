@@ -47,7 +47,9 @@ function ApprovalCard({ problemId }: { problemId: string }) {
     <div className="box-border w-130 max-w-full self-start rounded-3xl border border-border bg-card px-4.5 py-4">
       <CardHead icon="edit_note" kicker="Drafted for your approval" title={dv.draftTitle} openLabel="Open draft" onOpen={() => openProblem(problemId)} />
       {dv.body && (
-        <div className="mt-3 rounded-xl bg-muted px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">{dv.body}</div>
+        <div className="mt-3 rounded-xl bg-muted px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">
+          <div className="mono-label mb-1.5 tracking-caps">{dv.bodyLabel ?? 'Your note'}</div>{dv.body}
+        </div>
       )}
       {!done && (
         <div className="mt-3 flex flex-wrap gap-2">

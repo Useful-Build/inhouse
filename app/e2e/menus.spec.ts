@@ -114,9 +114,15 @@ for (const width of [1440, 390]) {
     test('Today picker, account menu, composer menus and message menu fit', async ({ page }) => {
       test.setTimeout(120_000)
       await start(page, '#/today')
-      await page.getByRole('combobox', { name: /^Sort cards/ }).click()
-      await fits(page.getByRole('listbox', { name: 'Sort cards' }), 'Today sort')
-      await page.keyboard.press('Escape')
+      // A phone has no sort on Today (one list, most urgent first): the picker is checked at desktop width.
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+      if (phone) {
+        await expect(page.getByRole('combobox', { name: /^Sort cards/ })).toHaveCount(0)
+      } else {
+        await page.getByRole('combobox', { name: /^Sort cards/ }).click()
+        await fits(page.getByRole('listbox', { name: 'Sort cards' }), 'Today sort')
+        await page.keyboard.press('Escape')
+      }
 
       for (const [label, name] of [['Attach', 'attach'], ['Tools read', 'tools'], ['Model', 'model']] as const) {
         await page.getByRole('button', { name: new RegExp(`^${label}`) }).click()

@@ -197,7 +197,8 @@ export function handled(ctx: Ctx) {
   const list = ctx.data.problems.filter(p => ranByAgent(ctx, p))
   return {
     count: list.length,
-    summary: list.map(p => doneLine(p)).join(' · '),
+    // A no-break space after a number keeps "11 units" from splitting across lines.
+    summary: list.map(p => doneLine(p)).join(' · ').replace(/(\d) (?=[a-z])/g, '$1\u00a0'),
   }
 }
 
@@ -278,7 +279,7 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     const part = ranByAgent(ctx, p) && p.partial
     return {
       problem: p,
-      status: part ? p.partialShort! : S === 2 ? `Waits for you: ${p.wait}` : sens ? `Drafted · ${p.wait}` : 'Drafted, ready to approve',
+      status: part ? p.partialShort! : (S === 2 || sens) && p.wait ? `Drafted · ${p.wait}` : 'Drafted · ready to approve',
       statusIcon: S === 2 || sens ? 'front_hand' : 'edit_note',
       tone: S === 2 || sens ? 'amber' : 'blue',
       primary: sens ? 'Review' : 'Approve', quiet: null, handled: false, dimmed: false,
@@ -335,8 +336,9 @@ export function draftView(ctx: Ctx, id: string): DraftView {
     mode: S === 0 ? 'watch' : at ? 'approved' : isHandled(ctx, p) ? 'handled' : 'waiting',
     draftTitle: title,
     lines: part && dr.runLines ? dr.runLines : dr.lines,
-    body: dr.body ? (agent.edits[id] ?? dr.body) : null,
-    bodyLabel: dr.bodyLabel ?? null,
+    // A draft with no text of its own takes a note once a person writes one.
+    body: agent.edits[id] ?? dr.body ?? null,
+    bodyLabel: dr.bodyLabel ?? (agent.edits[id] !== undefined ? 'Your note' : null),
     waitsLabel: dr.money ? 'Spends money' : dr.customer ? 'Goes to customers' : null,
     cta: dr.cta || 'Approve',
     memory: S >= 1 && dr.memory ? dr.memory : null,
