@@ -95,6 +95,8 @@ export function ChatTitleInput({ title, size, className, onDone }: {
     onDone(save ? ref.current?.value ?? null : null, byKey)
   }
   return (
+    // Room for the 3px focus halo inside the field's own box, so a parent that clips (the top bar's title) shows all of it (M13).
+    <span className="-m-1 flex min-w-0 flex-1 p-1">
     <Input ref={ref} data-chat-rename size={size} aria-label="Chat title" defaultValue={title} maxLength={CHAT_TITLE_MAX} autoComplete="off" spellCheck={false} className={className}
       onKeyDown={e => {
         if (e.key === 'Enter') { e.preventDefault(); finish(true, true) }
@@ -102,6 +104,7 @@ export function ChatTitleInput({ title, size, className, onDone }: {
         else if (e.key === 'Escape') { e.stopPropagation(); finish(false, true) }
       }}
       onBlur={() => finish(true, false)} />
+    </span>
   )
 }
 

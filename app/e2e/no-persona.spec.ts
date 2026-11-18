@@ -259,15 +259,20 @@ for (const size of SIZES) {
           await expect(page.getByRole('banner').getByText('Why did refunds jump?')).toBeVisible()
           const answer = main.locator('[data-chat-msg]').filter({ hasText: 'Refund requests rose' }).last()
           await answer.hover()
-          await expect(answer.getByRole('button', { name: 'Reply', exact: true })).toBeVisible()
+          await expect(answer.getByRole('button', { name: 'Copy message', exact: true })).toBeVisible()
           await check(page, `${label} chat hover actions`)
           await answer.getByRole('button', { name: 'More', exact: true }).click()
           await expect(page.getByRole('menu', { name: 'Message actions' })).toBeVisible()
           await check(page, `${label} chat More menu`)
           await page.keyboard.press('Escape')
           await expect(page.getByRole('menu', { name: 'Message actions' })).toHaveCount(0)
-          await answer.hover()
-          await answer.getByRole('button', { name: 'Reply', exact: true }).click()
+          // A phone keeps Reply in "···" (D3).
+          const reply = answer.getByRole('button', { name: 'Reply', exact: true })
+          if (await reply.count()) { await answer.hover(); await reply.click() }
+          else {
+            await answer.getByRole('button', { name: 'More', exact: true }).click()
+            await page.getByRole('menu', { name: 'Message actions' }).getByRole('menuitem', { name: 'Reply' }).click()
+          }
           await expect(page.getByRole('button', { name: 'Stop replying' })).toBeVisible()
           await check(page, `${label} chat reply bar`)
           await page.getByRole('button', { name: 'Stop replying' }).click()
@@ -307,6 +312,8 @@ for (const size of SIZES) {
 /** Open the three composer menus (+, tools, model) and check each. */
 async function composerMenus(page: Page, where: string) {
   for (const name of [/^Attach/, /^Tools read/, /^Model/]) {
+    // A phone's chat box has no tools stack and keeps the model in "+" (M27).
+    if (!(await page.getByRole('button', { name }).count())) continue
     await page.getByRole('button', { name }).click()
     const menu = page.getByRole('menu')
     await expect(menu).toHaveCount(1)
