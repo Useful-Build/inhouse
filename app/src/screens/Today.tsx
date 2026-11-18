@@ -1,4 +1,5 @@
 // Today: greeting, composer, then the problem cards (or the first-day and loading states).
+import { Fragment } from 'react'
 import { Composer } from '../components/Composer'
 import { amountOf, flags, handled, issueCards, pendingIds, todayCopy, TONE_TEXT } from '../state/derive'
 import { sevClass } from '../ui/severity'
@@ -99,7 +100,7 @@ export function Today() {
               <Icon name="check_circle" size={18} weight={400} />
               <b className="font-semibold whitespace-nowrap">{h.count} handled before you woke up</b>
               {/* On a phone the list gets its own full-width lines under the title. */}
-              <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{phone ? h.summary.split(' · ').map((item, i, all) => <span key={item} className="whitespace-nowrap">{item}{i < all.length - 1 && ' ·'}{' '}</span>) : h.summary}</span>
+              <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{phone ? h.summary.split(' · ').map((item, i, all) => <Fragment key={item}><span className="whitespace-nowrap">{item}{i < all.length - 1 && ' ·'}</span>{' '}</Fragment>) : h.summary}</span>
               <span className={`font-semibold whitespace-nowrap ${phone ? 'order-2 ml-auto' : ''}`}>See activity</span>
             </button>
           )}
@@ -124,7 +125,7 @@ export function Today() {
                     {p.logos.map(l => <LogoTile key={l} k={l} size="sm" className="-my-1" />)}
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
-                        <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant="card" box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1.5', tap)} />
+                        <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant={c.dimmed ? 'ghost' : 'card'} box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1.5', c.dimmed && done, tap)} />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                         <MenuItem onSelect={askAbout}>
@@ -152,7 +153,8 @@ export function Today() {
                         <span className="text-xl font-semibold tracking-stat tabular-nums">{p.cost}</span>
                         <span className="text-xs text-pretty text-muted-foreground">{p.costNote}</span>
                       </div>
-                      <div className={`mt-0.5 flex items-start gap-1 text-xs ${c.dimmed ? done : TONE_TEXT[c.tone]}`}>
+                      {/* Two lines tall on desktop, so every footer in a grid row lines up whether the status wraps or not. */}
+                      <div className={`mt-0.5 flex items-start gap-1 text-xs ${phone ? '' : 'min-h-8'} ${c.dimmed ? done : TONE_TEXT[c.tone]}`}>
                         <Icon name={c.statusIcon} size={13} weight={400} className="mt-px" />
                         <span className="min-w-0 flex-1 text-pretty">{c.status}</span>
                       </div>
