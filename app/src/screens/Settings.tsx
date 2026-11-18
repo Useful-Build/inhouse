@@ -104,11 +104,9 @@ function ReadValue({ row, on }: { row: Row; on: boolean }) {
   return shown ? <div className="mt-1.5 text-base text-pretty text-foreground-2">{shown}</div> : null
 }
 
-/** A description with its last " · " part kept together with its dot, so no line ends on the separator. */
+/** A description whose every separator dot is held to the word before it, so a line never starts with one. */
 function descNode(desc: string) {
-  const s = keepUnitsTogether(desc)
-  const i = s.lastIndexOf(' \u00b7 ')
-  return i < 0 ? s : <>{s.slice(0, i)} <span className="whitespace-nowrap">{'\u00b7 '}{s.slice(i + 3)}</span></>
+  return keepUnitsTogether(desc).replaceAll(' \u00b7 ', '\u00a0\u00b7 ')
 }
 
 function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean; caption?: string }) {
