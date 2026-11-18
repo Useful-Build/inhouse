@@ -1,12 +1,12 @@
-// "What your Inhouse agent did": the trace window with a Plain / Technical switch, a timeline and a replay.
+// "What your Inhouse agent did": the trace window with a Plain / Technical switch, a timeline and a replay. On a phone
+// the timeline is a plain list of the steps, each name in full with its time under it (H6, L9).
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
 import type { Trace, TraceStep, TraceStepKind } from '../agent/types'
 import { fmtSeconds } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
-import { Icon, IconButton, Segmented, Window } from '../ui'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Button, Icon, IconButton, Segmented, Window } from '../ui'
 import { Badge } from '@/components/ui/badge'
 
 // The hatches (bg-hatch-wait, bg-hatch-approval) are tokens in src/index.css. The approval one's stripes are a faint
@@ -65,6 +65,7 @@ function TraceBody({ id }: { id: string }) {
 
 function TraceSteps({ trace }: { trace: Trace }) {
   const close = useUi(s => s.closeOverlays)
+  const phone = useUi(s => s.phone)
   const [tech, setTech] = useState(false)
   const [sel, setSel] = useState<number | null>(null)
   const [t, setT] = useState<number | null>(null)
@@ -115,15 +116,16 @@ function TraceSteps({ trace }: { trace: Trace }) {
 
   return (
     <Window onClose={close} label="What your Inhouse agent did" size="xl" layer="trace">
-      <div className="flex items-center gap-3.5 py-3.5 pr-3.5 pl-6">
+      {/* On a phone the view switch takes its own row under the title. */}
+      <div className={cn('flex flex-wrap items-center gap-x-3.5 gap-y-2 py-3.5 pr-3.5', phone ? 'pl-4' : 'pl-6')}>
         <div className="min-w-0 flex-1">
           <div className="text-lg font-semibold">What your Inhouse agent did</div>
-          <div className="ellipsis text-sm text-muted-foreground">{trace.title}</div>
+          <div className={cn('text-sm text-muted-foreground', phone ? 'wrap-anywhere' : 'ellipsis')}>{trace.title}</div>
         </div>
-        <div className="flex-none">
+        <div className={cn('flex-none', phone && 'order-last w-full')}>
           <Segmented label="View" value={tech ? 'tech' : 'plain'} options={[['plain', 'Plain'], ['tech', 'Technical']]} onChange={v => setTech(v === 'tech')} />
         </div>
-        <IconButton icon="close" label="Close" size={21} box="icon-lg" onClick={close} className="text-foreground-2" />
+        <IconButton icon="close" label="Close" size={21} box="icon-lg" onClick={close} className="self-start text-foreground-2" />
       </div>
 
       <div className="grid grid-cols-trace-stats border-y border-divider">
@@ -135,6 +137,34 @@ function TraceSteps({ trace }: { trace: Trace }) {
         ))}
       </div>
 
+      {phone ? (
+        <ol aria-label="Steps" className="min-h-0 flex-1 overflow-auto">
+          {steps.map((s, i) => {
+            const vis = started(s)
+            const endT = t == null ? s.end : Math.min(s.end, t)
+            const running = t != null && s.start <= t && t < s.end
+            const ifg = !vis ? 'text-muted-foreground' : s.kind === 'agent' ? 'text-brand' : s.kind === 'fail' ? 'text-destructive' : s.kind === 'approval' ? 'text-warning-text' : 'text-foreground-2'
+            const dur = s.kind === 'approval' ? 'Waits for a person' : s.kind === 'fail' ? 'Failed after ' + fmtSeconds(Math.max(0, endT - s.start)) : fmtSeconds(Math.max(0, endT - s.start))
+            return (
+              <li key={i} className="border-b border-divider">
+                <button type="button" data-testid="trace-row" aria-pressed={sel === i} onClick={() => setSel(sel === i ? null : i)}
+                  className={cn('flex w-full items-start gap-3 py-2.5 pr-4 text-left', sel === i ? 'bg-accent' : 'hover:bg-accent', !vis && 'text-muted-foreground')}
+                  style={{ paddingLeft: 16 + s.depth * 16 }}>
+                  <span aria-hidden="true" className={`flex size-7 flex-none items-center justify-center rounded-md border border-input ${ifg}`}><Icon name={KINDS[s.kind][0]} size={16} /></span>
+                  <span className="min-w-0 flex-1">
+                    <span data-step-name className={cn('block text-base wrap-anywhere', s.kind === 'root' && 'font-semibold')}>{s.label}</span>
+                    <span className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-muted-foreground tabular-nums">
+                      {running && <Icon name="progress_activity" size={15} />}
+                      {vis ? dur : 'Not reached yet'}
+                      {s === slow && t == null && <Badge variant="warning" size="lg">Slowest</Badge>}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ol>
+      ) : (
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="relative">
           <div className={`grid ${COL} h-11 border-b border-divider text-sm text-muted-foreground`}>
@@ -187,6 +217,7 @@ function TraceSteps({ trace }: { trace: Trace }) {
           </div>
         </div>
       </div>
+      )}
 
       {picked && (
         <div className="flex flex-wrap gap-x-3.5 gap-y-1 border-t border-divider bg-muted px-6 py-3 text-sm">
@@ -197,31 +228,24 @@ function TraceSteps({ trace }: { trace: Trace }) {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2.5 border-t border-divider px-5 py-3">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button type="button" aria-label={playing ? 'Pause replay' : 'Replay'} onClick={() => onPlay(false)}
-              className="flex size-11.5 flex-none items-center justify-center rounded-full border border-border-strong hover:bg-accent">
-              <Icon name={playing ? 'pause' : 'play_arrow'} size={24} weight={400} fill />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Replay</TooltipContent>
-        </Tooltip>
+      <div className={cn('flex flex-wrap items-center gap-2.5 border-t border-divider py-3', phone ? 'px-4' : 'px-5')}>
+        <IconButton icon={playing ? 'pause' : 'play_arrow'} label={playing ? 'Pause replay' : 'Replay'} size={24} box="icon-lg" filled onClick={() => onPlay(false)}
+          className="flex-none rounded-full border border-border-strong hover:bg-accent" />
         <IconButton icon="replay" label="Restart" size={22} box="icon-lg" onClick={() => onPlay(true)} className="flex-none hover:bg-accent" />
         {t != null && <IconButton icon="stop" label="Stop and show everything" size={22} box="icon-lg" onClick={onStop} className="flex-none hover:bg-accent" />}
-        <button type="button" aria-label={`Replay speed ${speed}×. Change speed`} onClick={() => setSpeed(NEXT_SPEED[speed])}
-          className="flex h-9 flex-none items-center gap-1.5 rounded-lg border border-input pr-2.5 pl-3.5 text-base">
+        <Button variant="outline" aria-label={`Replay speed ${speed}×. Change speed`} onClick={() => setSpeed(NEXT_SPEED[speed])} className="flex-none gap-1.5 tabular-nums">
           {speed}×<Icon name="unfold_more" size={17} className="text-muted-foreground" />
-        </button>
+        </Button>
         <span className="ml-1.5 min-w-0 text-xs leading-note text-muted-foreground">Replays the recorded steps.<br />Nothing runs again.</span>
         <div className="flex-1" />
-        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1.5 text-sm whitespace-nowrap text-foreground-2">
+        {/* The legend reads the timeline's bars: a phone's list has none. */}
+        {!phone && <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1.5 text-sm whitespace-nowrap text-foreground-2">
           {LEGEND.map(l => (
             <span key={l.label} className="flex items-center gap-1.75">
               <i aria-hidden="true" className={`w-5 ${l.className}`} />{l.label}
             </span>
           ))}
-        </div>
+        </div>}
       </div>
     </Window>
   )
