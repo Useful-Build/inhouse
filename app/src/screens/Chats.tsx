@@ -371,7 +371,9 @@ function Thread() {
     if (phone) {
       return (
         <div data-on="1" className={cn('relative mt-1.5 flex max-w-full items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3', BAR_GROUND)}>
-          {copyBtn}{steps}{more}
+          {copyBtn}{steps}
+          {/* Set apart from the steps link, so "···" reads as its own control. */}
+          <span className="ml-3 flex flex-none">{more}</span>
         </div>
       )
     }
@@ -425,7 +427,7 @@ function Thread() {
                   {/* Desktop: the actions sit beside the bubble, out of the flow, so they cost no space at rest.
                       Phone and touch: in the flow under the bubble, always visible. */}
                   <div className={`relative flex flex-col items-end self-end ${bubbleMax}`}>
-                    <div className={cn('rounded-3xl bg-fill-hover px-4.5 py-3 text-md leading-prose whitespace-pre-wrap wrap-anywhere', editingId === m.id && 'shadow-selected')}>
+                    <div className={cn('max-w-prose-measure rounded-3xl bg-bubble px-4.5 py-3 text-md leading-prose text-pretty whitespace-pre-wrap wrap-anywhere', editingId === m.id && 'shadow-selected')}>
                       {m.quote && (
                         <div className="mb-2 flex gap-2 overflow-hidden rounded-lg bg-fill px-2.5 py-1.5 text-sm whitespace-nowrap text-foreground-3">
                           <Icon name="reply" size={15} />

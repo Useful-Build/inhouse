@@ -132,8 +132,9 @@ const chatButtonVariants = cva('flex h-full min-w-0 flex-1 items-center text-lef
   compoundVariants: [
     { place: 'sidebar', reserve: true, class: 'pr-9' },
     { place: 'sidebar', reserve: false, class: 'pr-2.5 pointer-coarse:pr-9' },
-    // See all: the time ends on the card's edge, 12px in; a phone or touch screen keeps the trigger's room after it,
-    // in Select mode too, so the time never jumps when Select is toggled.
+    // See all: the time ends on the card's edge, 12px in; a phone or touch screen keeps the trigger's room after it.
+    // A phone in Select mode shows no trigger, so the row gives that room back to the title (the time moves right);
+    // a desktop keeps the time on one column in both views.
     { place: 'list', reserve: true, class: 'pr-12' },
     { place: 'list', reserve: false, class: 'pr-3 pointer-coarse:pr-12' },
   ],
@@ -211,7 +212,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
         <Tooltip open={tip} onOpenChange={o => setTip(o && cut())}>
           <TooltipTrigger asChild>
             <button ref={row} data-chat-open type="button" onClick={onClick} aria-current={open ? 'page' : undefined} aria-pressed={selecting ? picked : undefined}
-              aria-describedby={running ? runningId : undefined} className={chatButtonVariants({ place, reserve: phone })}>
+              aria-describedby={running ? runningId : undefined} className={cn(chatButtonVariants({ place, reserve: phone }), place === 'list' && phone && selecting && 'pr-3')}>
               {selecting && (
                 <span aria-hidden="true" className={cn('box-border flex size-5 flex-none items-center justify-center rounded-full text-primary-foreground', picked ? 'bg-primary' : 'border-hairline border-border-strong bg-card')}>
                   {picked && <Icon name="check" size={14} weight={500} />}

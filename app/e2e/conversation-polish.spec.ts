@@ -643,7 +643,7 @@ test.describe('phone', () => {
     const answer = log(page).locator('[data-answer]').first()
     await expect(answer).toBeVisible()
     const bar = answer.getByRole('button', { name: 'Copy message' }).locator('xpath=..')
-    const names = await bar.locator(':scope > button').evaluateAll(els => els.map(el => el.getAttribute('aria-label') ?? (el.textContent?.includes('steps') ? 'steps' : '')))
+    const names = await bar.locator('button').evaluateAll(els => els.map(el => el.getAttribute('aria-label') ?? (el.textContent?.includes('steps') ? 'steps' : '')))
     expect(names).toEqual(['Copy message', 'steps', 'More'])
     await answer.getByRole('button', { name: 'More', exact: true }).click()
     const menu = page.getByRole('menu', { name: 'Message actions' })

@@ -48,10 +48,10 @@ function ApprovalCard({ problemId }: { problemId: string }) {
   // Money and customer messages are approved from the panel, never with one tap.
   const sensitive = !!(dv.problem.draft.money || dv.problem.draft.customer)
   return (
-    <div className={cn(INSET, 'w-130')}>
+    <div className={cn(INSET, 'w-prose-measure')}>
       <CardHead icon="edit_note" kicker="Drafted for your approval" title={dv.draftTitle} openLabel="Open draft" onOpen={() => openProblem(problemId)} />
       {dv.body && (
-        <div className="mt-3 rounded-xl bg-card px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">{dv.body}</div>
+        <div className="mt-3 rounded-xl border-hairline border-border px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">{dv.body}</div>
       )}
       {!done && (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -84,12 +84,12 @@ export function AgentPart({ part, trace }: { part: MessagePart; trace: string })
 
   switch (part.type) {
     case 'text':
-      return <div className="max-w-prose min-w-0 text-md leading-reading wrap-anywhere"><Markdown text={part.text} /></div>
+      return <div className="max-w-prose-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={part.text} /></div>
 
     case 'table': {
       const t = part.table
       return (
-        <div className="box-border w-140 max-w-full tabular-nums">
+        <div className="box-border w-prose-measure max-w-full tabular-nums">
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <Icon name={t.icon ?? 'local_shipping'} size={16} className="text-foreground" />
             <b className="font-semibold text-foreground">{t.title}</b>· {t.summary}
@@ -125,7 +125,7 @@ export function AgentPart({ part, trace }: { part: MessagePart; trace: string })
 
     case 'skill':
       return (
-        <div className={cn(INSET, 'w-110')}>
+        <div className={cn(INSET, 'w-prose-measure')}>
           <CardHead icon="menu_book" iconSize={20} kicker="Created skill" title={part.skill.name} openLabel="Open skill" onOpen={() => go('skills')} />
           <div className="mt-3 text-base leading-normal text-foreground-2">{part.skill.desc}</div>
           <div className="mt-3 flex flex-wrap gap-1.5">
@@ -138,7 +138,7 @@ export function AgentPart({ part, trace }: { part: MessagePart; trace: string })
 
     case 'routine':
       return (
-        <div className={cn(INSET, 'w-105')}>
+        <div className={cn(INSET, 'w-prose-measure')}>
           <CardHead icon="event_repeat" tile={S === 2 ? 'bg-brand' : 'bg-primary'} kicker="Created routine" title={part.routine.name} openLabel="Open routine" onOpen={() => go('routines')} />
           <div className="mt-3.5 flex items-center gap-2">
             <span className="inline-flex h-7.5 items-center gap-1.5 rounded-lg bg-fill px-2.75 text-sm font-medium">
@@ -176,7 +176,7 @@ export function AgentPart({ part, trace }: { part: MessagePart; trace: string })
     // Try again replaces the failed run, so a routine or skill it carried on is updated, not made a second time.
     case 'error':
       return (
-        <div className="box-border flex max-w-prose items-center gap-3 text-base leading-normal">
+        <div className="box-border flex max-w-prose-measure items-center gap-3 text-base leading-normal">
           <Icon name="error" size={19} className="text-destructive" />
           <span className="min-w-0 flex-1">{part.text}</span>
           <Button variant="soft" onClick={() => { void ask(part.retryQuestion, { replacesRun: trace }) }}>Try again</Button>

@@ -135,7 +135,7 @@ function TraceSteps({ trace }: { trace: Trace }) {
 
       <div className="grid grid-cols-trace-stats border-y border-divider">
         {stats.map(([a, b], i) => (
-          <div key={a} className={`border-l px-5 py-3 ${i === 0 ? 'border-transparent' : 'border-divider'}`}>
+          <div key={a} className={`border-l py-3 ${phone ? 'px-4' : 'px-5'} ${i === 0 ? 'border-transparent' : 'border-divider'}`}>
             <div className="text-sm text-muted-foreground">{a}</div>
             <div className="mt-0.5 text-2xl tracking-stat tabular-nums">{b}</div>
           </div>
@@ -144,6 +144,7 @@ function TraceSteps({ trace }: { trace: Trace }) {
 
       {phone ? (
         // A list for screen readers too (Safari drops it without the role), each step at its depth.
+        <div className="relative flex min-h-0 flex-1 flex-col">
         <ol role="list" aria-label="Steps" className="min-h-0 flex-1 overflow-auto">
           {steps.map((s, i) => {
             const vis = started(s)
@@ -171,6 +172,9 @@ function TraceSteps({ trace }: { trace: Trace }) {
             )
           })}
         </ol>
+        {/* The list scrolls under the footer: a fade at its foot says there is more, instead of a cut line. */}
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-sheet-fade" />
+        </div>
       ) : (
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="relative">

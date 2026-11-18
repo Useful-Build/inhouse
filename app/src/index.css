@@ -342,9 +342,18 @@
 :root {
   --app-composer-fade: linear-gradient(to bottom, transparent 0, black 18px); /* the composer field's top edge once it scrolls */
   --app-selection-room: calc(var(--app-toast-bottom) + 88px); /* room under a list in Select mode: the bar, its gap and a phone's home bar */
+  --app-prose-measure: 30rem;   /* an answer's text, tables and insets, and your bubble: about 75 characters a line at 15px Geist */
+  --app-sheet-fade: linear-gradient(to bottom, transparent, var(--app-window-surface)); /* the foot of a window's scrolling list on a phone */
+  --app-bubble: var(--fill-hover); /* your message's bubble: the soft grey (#e9e9e9) in light */
+}
+.dark {
+  --app-bubble: #1a1a1a;        /* level with the answer card, never above it, so the card leads; 1.1:1 off the #111 page like the card, 14.4:1 for text (#ededed) */
 }
 @theme inline {
   --spacing-selection-room: var(--app-selection-room);
+  --container-prose-measure: var(--app-prose-measure);
+  --color-bubble: var(--app-bubble);
+  --background-image-sheet-fade: var(--app-sheet-fade);
 }
 
 /* Motion: the agent's marks. */
