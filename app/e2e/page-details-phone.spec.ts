@@ -36,7 +36,10 @@ test('Phone: Settings opens on its menu, a page replaces it, and Back returns to
   await nav.getByRole('button', { name: 'Spending cap' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Spending cap' })).toBeVisible()
   await expect(nav).toHaveCount(0)
-  await expect(page.getByRole('textbox', { name: 'Monthly cap' })).toBeVisible()
+  // Team settings are read on a phone: the cap shows as text.
+  await expect(page.getByRole('textbox', { name: 'Monthly cap' })).toHaveCount(0)
+  await expect(page.getByRole('note')).toContainText('Change these on a computer.')
+  await expect(page.locator('main')).toContainText('$250')
   expect(await page.locator('main').evaluate(e => e.scrollTop)).toBe(0)
   expect(await noSideways(page)).toBe(true)
   await shot(page, '390-settings-page')

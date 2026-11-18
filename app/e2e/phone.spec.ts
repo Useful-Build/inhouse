@@ -218,10 +218,14 @@ test('Phone: reopening the open chat from See all keeps what was added', async (
 })
 
 test("Phone: Usage shows the capped state for a low saved cap, and there's no month picker", async ({ page }) => {
+  // Team settings are read on a phone, so the cap is set at a desktop width first.
+  await page.setViewportSize({ width: 1440, height: 900 })
   await start(page, '#/settings/team-spend')
   const cap = page.getByRole('textbox', { name: 'Monthly cap' })
   await cap.fill('$50')
   await cap.blur()
+  await expect(page.locator('[data-toast]').filter({ hasText: 'Saved' })).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(() => { location.hash = '#/usage' })
   await expect(page.getByText('$78.40 of $50', { exact: true })).toBeVisible()
   await expect(page.getByText('Cap reached with 14 days of the month left')).toBeVisible()

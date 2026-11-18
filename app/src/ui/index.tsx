@@ -151,7 +151,7 @@ export function Switch({ on, onChange, label, small, disabled, reason }: { on: b
         {/* A click or tap opens the reason: preventing the default keeps the trigger's own click from closing it. A tap
             elsewhere closes it. */}
         <TooltipTrigger asChild ref={trigger} onClick={e => { e.preventDefault(); setTip(true) }}>{sw}</TooltipTrigger>
-        <TooltipContent className="max-w-64">{reason}</TooltipContent>
+        <TooltipContent className="max-w-64" collisionPadding={16}>{reason}</TooltipContent>
       </Tooltip>
       <span id={reasonId} hidden>{reason}</span>
     </>
