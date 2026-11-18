@@ -14,7 +14,13 @@
       "site": "slack.com",
       "desc": "Alerts and approvals reach your team in #ops, and anyone can ask your Inhouse agent there.",
       "need": 1,
-      "since": "Nov 2"
+      "since": "Nov 2",
+      "channel": "#ops",
+      "sends": [
+        "Approvals waiting for you",
+        "Problems it finds, like a tool that needs its login renewed"
+      ],
+      "ask": "Anyone in #ops"
     }
   ],
   "beingConnected": [

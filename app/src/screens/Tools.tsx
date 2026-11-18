@@ -7,6 +7,7 @@ import type { ToolState } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
+import type { ToolChannel } from '../agent/types'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Button, CardGrid, DetailList, Dot, EmptyState, Icon, LogoTile, Page, PageHeader, SectionHeader, StageTag } from '../ui'
@@ -99,7 +100,7 @@ export function Tools() {
         {channels.map(c => {
           const locked = S < c.need
           return (
-            <div key={c.key} data-channel-row className="flex items-center gap-3.5 rounded-xl p-3">
+            <button key={c.key} type="button" data-channel-row onClick={() => openTool(c.key)} className={ROW}>
               <LogoTile k={c.key} className={locked ? 'grayscale' : undefined} />
               <span className="min-w-0 flex-1">
                 <span className={`flex items-center gap-2 ${NAME} ${locked ? 'text-foreground-3' : ''}`}>{c.name}{locked && <StageTag tag={STAGE_TAGS[c.need]} />}</span>
@@ -108,9 +109,8 @@ export function Tools() {
               <span className="flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
                 {locked ? `Included from ${STAGE_TAGS[c.need]}` : <><Dot className={INK_DOT} size={6} />Connected {c.since}</>}
               </span>
-              {/* No page, so no chevron: the space it takes keeps the status lined up with the rows above. */}
-              <span aria-hidden="true" className="size-4.5 flex-none" />
-            </div>
+              <Icon name="chevron_right" size={18} className="text-faint" />
+            </button>
           )
         })}
       </CardGrid>
@@ -177,6 +177,44 @@ const accessOf = (state: ToolState, S: number, paused: boolean) => {
 }
 
 export function ToolPage() {
+  const key = useUi(s => s.appKey)
+  const channel = useCtx().data.tools.channels.find(c => c.key === key)
+  return channel ? <ChannelPage channel={channel} /> : <ToolDetailPage />
+}
+
+/** A channel's page (Slack): where the team hears from the agent. Not a tool it reads, so no abilities or questions (D6). */
+function ChannelPage({ channel: c }: { channel: ToolChannel }) {
+  const { S } = useCtx()
+  const go = useUi(s => s.go)
+  const openSettings = useUi(s => s.openSettings)
+  const locked = S < c.need
+  const status = locked ? `Included from ${STAGE_TAGS[c.need]}` : `Connected · ${c.since}`
+  const info: [string, ReactNode][] = [
+    ...(c.channel ? [['Channel', c.channel] as [string, ReactNode]] : []),
+    ...(c.sends?.length ? [['What reaches it', c.sends.join('. ')] as [string, ReactNode]] : []),
+    ...(c.ask ? [['Who can ask', c.ask] as [string, ReactNode]] : []),
+    ['Website', <a key="site" href={`https://${c.site}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-3">{c.site} ↗</a>],
+  ]
+  return (
+    <Page className="pt-4.5">
+      <Button variant="quiet" onClick={() => go('apps')} className="gap-1">
+        <Icon name="arrow_back" size={17} />Tools
+      </Button>
+      <PageHeader className="mt-4" title={c.name} description={c.desc}
+        leading={<LogoTile k={c.key} size="xl" className={cn('shadow-card', locked && 'grayscale')} />}
+        tag={<Badge variant="status" size="md">{!locked && <Dot className={INK_DOT} size={6} />}{status}</Badge>}
+        actions={!locked && (
+          <Button variant="outline" size="lg" onClick={() => openSettings('you-notif')}>
+            <Icon name="notifications" size={17} />Notification settings
+          </Button>
+        )} />
+      <SectionHeader title="Details" className={LABEL} />
+      <DetailList variant="relaxed" items={info} className={`${CARD} px-5 py-2.5 text-base`} />
+    </Page>
+  )
+}
+
+function ToolDetailPage() {
   const ctx = useCtx()
   const { S, agent: st, data } = ctx
   const key = useUi(s => s.appKey)

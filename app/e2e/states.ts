@@ -219,6 +219,8 @@ export const STATES: UiState[] = [
       await expect(page.getByRole('listbox')).toBeVisible()
     },
   },
+  page_('act-channel-slack', 'Act', 'Normal', '#/tools/slack', 'Connected · Nov 2', true),
+  page_('watch-channel-slack', 'Watch', 'Normal', '#/tools/slack', 'Included from Act'),
 ]
 
 /** Opens a state from a clean demo: a fixed theme, no agent-mark animation, no dot sweep. */
