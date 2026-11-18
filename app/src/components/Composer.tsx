@@ -1,7 +1,7 @@
 // The ask box on Today and in Chats: attach (also by paste and drop), tools chip, model picker, dictate, send or stop.
 // In a chat it also queues a message while the answer streams, and shows "Editing" while a sent question is changed.
-// On a phone the chat's box keeps attach and send: the model moves into "+", the tools stack and dictate leave (M27).
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+// On a phone both boxes keep attach and send: the tools and the model move into "+", the logo stack and dictate leave (M27).
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, DragEvent, ReactElement } from 'react'
 import type { Attachment } from '../agent/types'
 import { activeMode, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
@@ -83,8 +83,9 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const touch = useTouchOnly()
   const page = useUi(s => s.page)
   const { patch, ask, go, stopRun, queueMessage, cancelEdit, sendEdit } = useUi.getState()
-  // The phone's chat box: the model sits in "+", no tools stack or dictate.
-  const slim = phone && variant === 'chat'
+  // A phone's box, Today's and a chat's: the tools and the model sit in "+", no logo stack or dictate (M27).
+  const slim = phone
+  const editNote = useId()
   // The field's top edge fades once it scrolls (over 8 lines), so a cut line reads as more above (M12).
   const [scrolled, setScrolled] = useState(false)
   const [pop, setPop] = useState<Pop>(null)
@@ -200,6 +201,29 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const sel = activeMode(data, ctx.agent.settings, modelSel).id
   const modelLabel = modes.find(m => m.id === sel)?.label ?? ''
 
+  // The tools switches for this chat and Manage tools: the tools menu, or "+" on a phone.
+  const toolItems = (
+    <>
+      <DropdownMenuLabel className={cn('text-sm font-normal', slim ? 'px-2.5 pt-2 pb-1 text-muted-foreground' : 'pt-2 pb-1.5')}>Tools read in this chat</DropdownMenuLabel>
+      {TOOL_KEYS.length === 0 && (
+        <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{counts.connected === 0 ? 'No tools are connected yet.' : "Your Inhouse agent can't read any of your tools right now."}</DropdownMenuLabel>
+      )}
+      {TOOL_KEYS.map(k => {
+        const on = !toolOff[k]
+        return (
+          <DropdownMenuCheckboxItem key={k} checked={on} className={OWN_MARK}
+            onSelect={e => e.preventDefault()} onCheckedChange={() => patch({ toolOff: { ...toolOff, [k]: on } })}>
+            <LogoTile k={k} size="sm" />
+            <span className="flex-1 text-base">{toolDetail(data, k).name}</span>
+            <SwitchLook on={on} small />
+          </DropdownMenuCheckboxItem>
+        )
+      })}
+      <DropdownMenuSeparator className="mx-1.5 my-1" />
+      <DropdownMenuItem className="px-2.5 py-2 text-sm font-strong" onSelect={() => go('apps')}>Manage tools →</DropdownMenuItem>
+    </>
+  )
+
   const side = below ? 'bottom' : 'top'
   const menuProps = { side, sideOffset: 8, collisionPadding: 16 } as const
   const onOpen = (name: Exclude<Pop, null>) => (open: boolean) => setPop(open ? name : p => (p === name ? null : p))
@@ -214,7 +238,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
       onDragLeave={e => { if (!hasFiles(e)) return; dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragging(false) }}
       onDrop={e => { if (!hasFiles(e)) return; e.preventDefault(); endDrag(); takeFiles(Array.from(e.dataTransfer.files)) }}>
       {editing && (
-        <div className={NOTE_BAR}>
+        <div id={editNote} className={NOTE_BAR}>
           <Icon name="edit" size={15} />
           <b className="min-w-0 flex-1 font-semibold text-foreground">Editing your message</b>
           <Button variant="ghost" size="sm" onClick={cancelEdit} className={cn('-my-1.5 flex-none', phone && TAP)}>Cancel</Button>
@@ -244,6 +268,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
         </div>
       )}
       <Textarea ref={inputRef} rows={1} value={draft} onChange={e => setDraft(e.target.value)} onPaste={onPaste} enterKeyHint={touch ? 'enter' : 'send'}
+        aria-describedby={editing ? editNote : undefined}
         data-scrolled={scrolled || undefined} onScroll={e => setScrolled(e.currentTarget.scrollTop > 0)}
         onKeyDown={e => {
           // Escape leaves editing, the old question untouched.
@@ -285,6 +310,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             {slim && (
               <>
                 <DropdownMenuSeparator className="mx-1.5 my-1" />
+                {toolItems}
+                <DropdownMenuSeparator className="mx-1.5 my-1" />
                 <DropdownMenuLabel className="px-2.5 pt-2 pb-1 text-sm font-normal text-muted-foreground">Model</DropdownMenuLabel>
                 <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
               </>
@@ -310,23 +337,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             </DropdownMenuTrigger>
           </Tip>
           <DropdownMenuContent {...menuProps} align="start" alignOffset={-12} className={cn(MENU, 'w-menu-tools')}>
-            <DropdownMenuLabel className="pt-2 pb-1.5 text-sm font-normal">Tools read in this chat</DropdownMenuLabel>
-            {TOOL_KEYS.length === 0 && (
-              <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{counts.connected === 0 ? 'No tools are connected yet.' : "Your Inhouse agent can't read any of your tools right now."}</DropdownMenuLabel>
-            )}
-            {TOOL_KEYS.map(k => {
-              const on = !toolOff[k]
-              return (
-                <DropdownMenuCheckboxItem key={k} checked={on} className={OWN_MARK}
-                  onSelect={e => e.preventDefault()} onCheckedChange={() => patch({ toolOff: { ...toolOff, [k]: on } })}>
-                  <LogoTile k={k} size="sm" />
-                  <span className="flex-1 text-base">{toolDetail(data, k).name}</span>
-                  <SwitchLook on={on} small />
-                </DropdownMenuCheckboxItem>
-              )
-            })}
-            <DropdownMenuSeparator className="mx-1.5 my-1" />
-            <DropdownMenuItem className="px-2.5 py-2 text-sm font-strong" onSelect={() => go('apps')}>Manage tools →</DropdownMenuItem>
+            {toolItems}
           </DropdownMenuContent>
         </DropdownMenu>}
         <div className="min-w-0 flex-1" />
@@ -379,7 +390,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   )
 }
 
-/** The model choices, in the model menu and, on a phone's chat box, in "+". */
+/** The model choices, in the model menu and, on a phone, in "+". */
 function ModelItems({ modes, sel, onPick }: { modes: { id: string; label: string; model: string; sub: string }[]; sel: string; onPick: (id: string) => void }) {
   return (
     <DropdownMenuRadioGroup aria-label="Model" value={sel} onValueChange={onPick}>

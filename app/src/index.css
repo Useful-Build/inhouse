@@ -131,7 +131,7 @@
   --app-composer-input-pad-y: 6px; /* the composer field's padding above and below its text */
   /* the composer's field grows to 8 lines (15px text at the body's 1.45 line height) plus its padding, then scrolls */
   --app-composer-input-max: calc(8 * var(--text-md) * 1.45 + 2 * var(--app-composer-input-pad-y));
-  --app-trace-label: min(330px, 46%);           /* the trace's step-name column */
+  --app-trace-label: min(440px, 48%);           /* the trace's step-name column, wide enough that names read in full on desktop (H6) */
   --app-playhead: 9px;                          /* the trace replay's playhead dot */
   --app-time-column: 8ch;                       /* a list's time column in mono: "10:12 AM" on one line */
   --app-bar-tick: 3px;                          /* the Usage chart: a $0 day still draws a tick on the baseline */
@@ -342,7 +342,6 @@
 :root {
   --app-composer-fade: linear-gradient(to bottom, transparent 0, black 18px); /* the composer field's top edge once it scrolls */
   --app-selection-room: calc(var(--app-toast-bottom) + 88px); /* room under a list in Select mode: the bar, its gap and a phone's home bar */
-  --app-trace-label: min(440px, 48%); /* the trace's step-name column, wider so names read in full on desktop (H6); replaces the value above */
 }
 @theme inline {
   --spacing-selection-room: var(--app-selection-room);

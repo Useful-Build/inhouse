@@ -32,6 +32,11 @@ const LEGEND: { label: string; className: string }[] = [
   { label: 'Waits for approval', className: 'box-border h-2.25 rounded-sm border border-warning bg-hatch-approval' },
   { label: 'Failed', className: 'h-2.25 rounded-sm bg-destructive' },
 ]
+/** What kind of step it is, in words, for the phone list (its tile's colour and icon say it to the eye). */
+const KIND_LABEL: Record<TraceStepKind, string> = {
+  root: 'All steps', model: 'Thinking', tool: 'Using a tool', agent: 'Helper', wait: 'Waiting', handoff: 'Passed on',
+  answer: 'Answer', fail: 'Failed', approval: 'Waits for approval',
+}
 const COL = 'grid-cols-trace'
 const TICK_CANDIDATES = [0.5, 1, 2, 5, 10, 15, 20, 30, 50, 60, 100, 120]
 const NEXT_SPEED: Record<number, number> = { 1: 2, 2: 5, 5: 1 }
@@ -138,7 +143,8 @@ function TraceSteps({ trace }: { trace: Trace }) {
       </div>
 
       {phone ? (
-        <ol aria-label="Steps" className="min-h-0 flex-1 overflow-auto">
+        // A list for screen readers too (Safari drops it without the role), each step at its depth.
+        <ol role="list" aria-label="Steps" className="min-h-0 flex-1 overflow-auto">
           {steps.map((s, i) => {
             const vis = started(s)
             const endT = t == null ? s.end : Math.min(s.end, t)
@@ -146,12 +152,13 @@ function TraceSteps({ trace }: { trace: Trace }) {
             const ifg = !vis ? 'text-muted-foreground' : s.kind === 'agent' ? 'text-brand' : s.kind === 'fail' ? 'text-destructive' : s.kind === 'approval' ? 'text-warning-text' : 'text-foreground-2'
             const dur = s.kind === 'approval' ? 'Waits for a person' : s.kind === 'fail' ? 'Failed after ' + fmtSeconds(Math.max(0, endT - s.start)) : fmtSeconds(Math.max(0, endT - s.start))
             return (
-              <li key={i} className="border-b border-divider">
+              <li key={i} aria-level={s.depth + 1} className="border-b border-divider">
                 <button type="button" data-testid="trace-row" aria-pressed={sel === i} onClick={() => setSel(sel === i ? null : i)}
                   className={cn('flex w-full items-start gap-3 py-2.5 pr-4 text-left', sel === i ? 'bg-accent' : 'hover:bg-accent', !vis && 'text-muted-foreground')}
                   style={{ paddingLeft: 16 + s.depth * 16 }}>
                   <span aria-hidden="true" className={`flex size-7 flex-none items-center justify-center rounded-md border border-input ${ifg}`}><Icon name={KINDS[s.kind][0]} size={16} /></span>
                   <span className="min-w-0 flex-1">
+                    <span className="sr-only">{KIND_LABEL[s.kind]}: </span>
                     <span data-step-name className={cn('block text-base wrap-anywhere', s.kind === 'root' && 'font-semibold')}>{s.label}</span>
                     <span className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-muted-foreground tabular-nums">
                       {running && <Icon name="progress_activity" size={15} />}

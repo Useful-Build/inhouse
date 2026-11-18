@@ -12,7 +12,7 @@ import type { QueuedMsg } from '../state/store'
 import { Confirm, TAP } from '../ui/fields'
 import { AgentMark, AttachmentChip, Button, Icon, IconButton, MenuItem, StageTag } from '../ui'
 import { Button as UiButton } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentPart } from './chat/Parts'
 import { ChatList } from './chat/ChatList'
@@ -28,6 +28,9 @@ const NEAR_BOTTOM = 80
 const REVEAL = 'opacity-0 transition-opacity duration-120 group-focus-within/msg:opacity-100 group-hover/msg:opacity-100 pointer-coarse:opacity-100 data-[on=1]:opacity-100'
 /** An answer's action bar: its ground shows with the actions (REVEAL); its steps line shows on every answer. */
 const BAR_GROUND = 'transition-shadow duration-120 data-[on=1]:bg-background data-[on=1]:shadow-page-xs group-hover/msg:bg-background group-hover/msg:shadow-page-xs group-focus-within/msg:bg-background group-focus-within/msg:shadow-page-xs pointer-coarse:bg-background pointer-coarse:shadow-page-xs'
+
+/** A phone menu's thumbs: a radio item that looks like the menu's other rows (MenuItem), its own check at the right. */
+const RATE_ITEM = 'h-9.5 pl-2.5 text-base text-foreground [&>span:first-child]:hidden'
 
 /** Thumbs up or down on an answer: a pressed toggle, filled while on. */
 function Rate({ icon, label, on, onClick }: { icon: string; label: string; on: boolean; onClick: () => void }) {
@@ -77,7 +80,8 @@ function LongText({ text, onToggle }: { text: string; onToggle: () => void }) {
     <>
       <div ref={ref} id={id} data-long-text className={cn(!open && 'line-clamp-8')}>{text}</div>
       {(long || open) && (
-        <button type="button" aria-expanded={open} aria-controls={id} onClick={() => { onToggle(); setOpen(o => !o) }}
+        // One name, its state in aria-expanded: the words on it change, what it does doesn't.
+        <button type="button" aria-label="Show full message" aria-expanded={open} aria-controls={id} onClick={() => { onToggle(); setOpen(o => !o) }}
           className="-ml-1 mt-1.5 flex h-7 items-center gap-0.5 rounded-md pr-1.5 pl-1 text-sm font-medium text-foreground-3 hover:bg-fill-strong hover:text-foreground">
           {open ? 'Show less' : 'Show more'}<Icon name={open ? 'expand_less' : 'expand_more'} size={17} />
         </button>
@@ -86,23 +90,42 @@ function LongText({ text, onToggle }: { text: string; onToggle: () => void }) {
   )
 }
 
-/** A message typed while the answer streams: it waits above the composer. Send now stops the answer and sends it (H8). */
-function QueuedChip({ q, onEdit }: { q: QueuedMsg; onEdit: (q: QueuedMsg) => void }) {
+/** A message's first words, to tell its buttons apart from the next message's. */
+const firstWords = (text: string): string => {
+  const t = text.trim().replace(/\s+/g, ' ')
+  return t.length <= 40 ? t : t.slice(0, 40).replace(/\s+\S*$/, '') + '…'
+}
+
+/** A message typed while the answer streams: it waits above the composer. Send now stops the answer and sends it (H8).
+ *  After Stop it waits paused: only Send now sends it (D). Edit waits while another message is being edited (F). */
+function QueuedChip({ q, editing, onEdit, onSendNow, onRemove }: { q: QueuedMsg; editing: boolean; onEdit: (q: QueuedMsg) => void; onSendNow: (q: QueuedMsg) => void; onRemove: (q: QueuedMsg) => void }) {
   const phone = useUi(s => s.phone)
-  const { sendQueuedNow, unqueue } = useUi.getState()
+  const words = firstWords(q.text)
   return (
-    <div data-queued className="flex min-w-0 items-center gap-1.5 rounded-2xl border border-border bg-card py-1.5 pr-1.5 pl-3 text-sm shadow-float">
-      <Icon name="schedule_send" size={16} className="flex-none text-muted-foreground" />
-      <span className="flex-none text-muted-foreground">Queued</span>
+    <div data-queued data-paused={q.paused || undefined} className="flex min-w-0 items-center gap-1.5 rounded-2xl border border-border bg-card py-1.5 pr-1.5 pl-3 text-sm shadow-float">
+      <Icon name={q.paused ? 'pause' : 'schedule_send'} size={16} className="flex-none text-muted-foreground" />
+      <span className="flex-none text-muted-foreground">{q.paused ? 'Paused' : 'Queued'}</span>
       <span className="ellipsis min-w-0 flex-1 text-foreground-2">{q.text}</span>
-      <IconButton icon="edit" label="Edit queued message" size={17} box="icon-sm" onClick={() => onEdit(q)} className={cn('flex-none', phone && TAP)} />
-      <Button variant="soft" size="sm" onClick={() => sendQueuedNow(q.id)} className="flex-none">Send now</Button>
-      <IconButton icon="close" label="Remove queued message" size={17} box="icon-sm" onClick={() => unqueue(q.id)} className={cn('flex-none', phone && TAP)} />
+      <IconButton icon="edit" label={`Edit queued message: ${words}`} tip="Edit" size={17} box="icon-sm" disabled={editing} onClick={() => onEdit(q)} className={cn('flex-none', phone && TAP)} />
+      <Button data-queued-send variant="soft" size="sm" aria-label={`Send now: ${words}`} onClick={() => onSendNow(q)} className={cn('flex-none', phone && TAP)}>Send now</Button>
+      <IconButton data-queued-remove icon="close" label={`Remove queued message: ${words}`} tip="Remove" size={17} box="icon-sm" onClick={() => onRemove(q)} className={cn('flex-none', phone && TAP)} />
     </div>
   )
 }
 
 const NO_QUEUE: QueuedMsg[] = []
+/** An answer turn's card (D2). */
+const CARD = 'box-border flex max-w-full min-w-0 flex-col gap-3.5 self-start rounded-3xl bg-card py-4'
+
+/** The thinking line while an answer streams. Hidden from the log: the status line reads it out. */
+function Thinking({ text }: { text: string }) {
+  return (
+    <div data-thinking aria-hidden="true" className="flex items-center gap-3">
+      <AgentMark />
+      <span className="min-w-0 text-base text-foreground-3">{text}</span>
+    </div>
+  )
+}
 
 function Thread() {
   const ctx = useCtx()
@@ -111,7 +134,7 @@ function Thread() {
   const thinking = !!run
   const thinkingText = run?.text ?? ''
   const editingId = useUi(s => s.editMsg?.id)
-  const { ask, openTrace, patch, showToast, openTeam, branchChat, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue } = useUi.getState()
+  const { ask, openTrace, patch, showToast, openTeam, branchChat, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue, sendQueuedNow } = useUi.getState()
   const [menuId, setMenuId] = useState<string | null>(null)
   // Edit of a queued message over a draft asks first.
   const [replacing, setReplacing] = useState<QueuedMsg | null>(null)
@@ -123,6 +146,25 @@ function Thread() {
   // Null for a new chat, and when there are no chats at all (day one): the thread then starts empty.
   const openId = openChatKey({ fresh, chatId }, ctx.data)
   const queue = useUi(s => (openId === null ? NO_QUEUE : s.queued[openId] ?? NO_QUEUE))
+  // After Send now or Remove, focus goes to the chip that takes that one's place (the same button), else to the field.
+  const queueList = useRef<HTMLDivElement>(null)
+  const focusAfter = useRef<{ at: number; button: 'send' | 'remove' } | null>(null)
+  useLayoutEffect(() => {
+    const f = focusAfter.current
+    if (!f) return
+    focusAfter.current = null
+    const chips = queueList.current?.querySelectorAll<HTMLElement>('[data-queued]') ?? []
+    const chip = chips.length ? chips[Math.min(f.at, chips.length - 1)] : undefined
+    const target = chip?.querySelector<HTMLElement>(`[data-queued-${f.button}]`) ?? document.querySelector<HTMLElement>('[data-composer] textarea')
+    target?.focus()
+  }, [queue])
+  const chipAction = (q: QueuedMsg, button: 'send' | 'remove') => {
+    focusAfter.current = { at: queue.indexOf(q), button }
+    if (button === 'send') sendQueuedNow(q.id); else unqueue(q.id)
+    // Nothing changed (it had already gone): no focus move waits for a later change.
+    if (openId === null || useUi.getState().queued[openId] === queue) focusAfter.current = null
+  }
+  const queueStatus = queue.length === 0 ? '' : `${queue.length} ${queue.length === 1 ? 'message' : 'messages'} ${queue.every(q => q.paused) ? 'paused' : 'queued'}`
   const all = useMemo(() => (openId === null ? [] : chatMessages(ctx, openId)).concat(extras), [ctx, openId, extras])
   const msgs = all.filter(m => !hidden[m.id])
 
@@ -273,13 +315,12 @@ function Thread() {
     const turnIds = b.ms.map(x => x.id)
     const again = question && (() => regenerate([question.id, ...(ask0?.between ?? []), ...turnIds, ...tail], { text: question.text, quote: question.quote, atts: question.atts }))
     const S = ctx.S
-    const items: { icon: string; t: string; go: () => void; destructive?: boolean; sep?: boolean; locked?: boolean; disabled?: boolean; on?: boolean }[] = [
-      // A phone's row keeps Copy, the steps and "···": the rest of the row moves into the menu (D3).
+    const items: { icon: string; t: string; go: () => void; destructive?: boolean; sep?: boolean; locked?: boolean; disabled?: boolean }[] = [
+      // A phone's row keeps Copy, the steps and "···": the rest of the row moves into the menu (D3), the thumbs as a
+      // radio pair after these.
       ...(phone ? [
         { icon: 'reply', t: 'Reply', go: () => patch({ replyTo: txt.slice(0, 140) }) },
         ...(again ? [{ icon: 'refresh', t: 'Regenerate', go: again, disabled: thinking }] : []),
-        { icon: 'thumb_up', t: 'Good answer', on: feedback[turnId] === 'up', go: () => rateAnswer(turnId, 'up', txt) },
-        { icon: 'thumb_down', t: 'Bad answer', on: feedback[turnId] === 'down', go: () => rateAnswer(turnId, 'down', txt) },
       ] : []),
       { icon: 'graphic_eq', t: 'Read aloud', sep: phone, go: () => readAloud(txt) },
       { icon: 'tag', t: 'Send to Slack', go: () => { if (S >= 1) showToast("Send to Slack isn't connected in this demo.", { icon: 'info', ms: 4000 }) }, locked: S < 1 },
@@ -296,15 +337,26 @@ function Thread() {
         <DropdownMenuContent align="start" alignOffset={-4} collisionPadding={16} aria-label="Message actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
           // A window opened by an item ("Report a wrong answer") takes focus itself.
           onCloseAutoFocus={e => { if (useUi.getState().pop === 'team') e.preventDefault() }}>
-          {items.map(it => (
+          {items.map((it, j) => (
             <Fragment key={it.t}>
               {it.sep && <DropdownMenuSeparator className="mx-0 my-1" />}
               <MenuItem variant={it.destructive ? 'destructive' : 'default'} locked={it.locked} disabled={it.disabled} onSelect={it.go}>
-                <Icon name={it.icon} size={18} fill={it.on} />
+                <Icon name={it.icon} size={18} />
                 <span className="flex-1">{it.t}</span>
-                {it.on && <Icon name="check" size={18} />}
                 {it.locked && <StageTag tag="Act" icon={false} />}
               </MenuItem>
+              {/* A phone's thumbs: one pick or none, announced as checked. Picking the one that's on takes it back. */}
+              {phone && j === (again ? 1 : 0) && (
+                <DropdownMenuRadioGroup aria-label="Rate this answer" value={feedback[turnId] ?? ''}>
+                  {([['up', 'thumb_up', 'Good answer'], ['down', 'thumb_down', 'Bad answer']] as const).map(([v, icon, t]) => (
+                    <DropdownMenuRadioItem key={v} value={v} onSelect={() => rateAnswer(turnId, v, txt)} className={RATE_ITEM}>
+                      <Icon name={icon} size={18} fill={feedback[turnId] === v} />
+                      <span className="flex-1">{t}</span>
+                      {feedback[turnId] === v && <Icon name="check" size={18} />}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              )}
             </Fragment>
           ))}
         </DropdownMenuContent>
@@ -411,12 +463,15 @@ function Thread() {
                 </div>
               )
             }
-            const endsTurn = b.at + b.ms.length === msgs.length ? !thinking : true
+            const streaming = thinking && b.at + b.ms.length === msgs.length
+            const endsTurn = !streaming
             return (
               <div key={b.ms[0].id} data-chat-msg data-answer className={`group/msg relative flex flex-col ${mt}`}>
-                {/* One white card per answer (D2): its text, tables, drafts and routines inside. */}
-                <div className={cn('box-border flex max-w-full min-w-0 flex-col gap-3.5 self-start rounded-3xl bg-card py-4', phone ? 'px-4' : 'px-5')}>
+                {/* One white card per answer (D2): its text, tables, drafts and routines inside, and while it streams
+                    the thinking line at its foot, so no second card shows. */}
+                <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
                   {b.ms.map(x => <AgentPart key={x.id} part={x.part} trace={x.trace} />)}
+                  {streaming && <Thinking text={thinkingText} />}
                 </div>
                 {/* The actions show once the turn is done, so the live log announces them once, not with every streamed part. */}
                 {endsTurn && answerBar(b)}
@@ -425,21 +480,21 @@ function Thread() {
           })}
           </div>
 
-          {thinking && (
-            <div role="status" className="mt-4.5 box-border flex max-w-full items-center gap-3 self-start rounded-3xl bg-card px-4 py-2.5">
-              <AgentMark />
-              <span className="min-w-0 text-base text-foreground-3">{thinkingText}</span>
-            </div>
+          {/* Before the answer's first part, its card holds the thinking line: the parts then fill that same card. */}
+          {thinking && blocks.at(-1)?.kind !== 'turn' && (
+            <div className={cn(CARD, 'mt-5.5', phone ? 'px-4' : 'px-5')}><Thinking text={thinkingText} /></div>
           )}
+          {/* What the agent is doing, read out once per step (the visible line is in the card, hidden from the log). */}
+          <div role="status" className="sr-only">{thinkingText}</div>
         </div>
       </div>
 
       {/* The bottom dock: toasts stack above it (data-bottom-dock). */}
       <div data-bottom-dock className="relative z-composer px-(--app-pad-x) pb-5">
         <div className="relative mx-auto max-w-chat-column">
-          {/* At the column's right edge, clear of an answer's sources and tables at its left (M12). */}
+          {/* Centred above the box: clear of an answer's sources at the left and your messages at the right (M12). */}
           {away && (
-            <div className="absolute right-0 bottom-full mb-2">
+            <div className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <UiButton type="button" variant="outline" size="icon-round" aria-label="Jump to latest" onClick={toBottom}>
@@ -451,10 +506,16 @@ function Thread() {
             </div>
           )}
           {queue.length > 0 && (
-            <div role="list" aria-label="Queued messages" className="mb-2 flex flex-col gap-1.5">
-              {queue.map(q => <div key={q.id} role="listitem" className="min-w-0"><QueuedChip q={q} onEdit={editQueued} /></div>)}
+            <div ref={queueList} role="list" aria-label="Queued messages" className="mb-2 flex flex-col gap-1.5">
+              {queue.map(q => (
+                <div key={q.id} role="listitem" className="min-w-0">
+                  <QueuedChip q={q} editing={editingId !== undefined} onEdit={editQueued} onSendNow={x => chipAction(x, 'send')} onRemove={x => chipAction(x, 'remove')} />
+                </div>
+              ))}
             </div>
           )}
+          {/* Always there, so a screen reader hears each change to the queue. */}
+          <div role="status" className="sr-only">{queueStatus}</div>
         </div>
         <Composer variant="chat" showToolsLabel={!phone && msgs.length === 0} />
       </div>

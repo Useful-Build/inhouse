@@ -85,7 +85,8 @@ export function ChatList() {
             {needle ? (
               <>
                 <EmptyState variant="inline" className="mb-3">No chats match "{q.trim()}".</EmptyState>
-                <Button variant="outline" onClick={() => search('')}>Clear search</Button>
+                {/* The button goes with the empty state: focus goes back to the search box. */}
+                <Button variant="outline" onClick={() => { search(''); content.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus() }}>Clear search</Button>
               </>
             ) : (
               <EmptyState className="mt-6 flex w-full flex-col items-center gap-3 py-8">
