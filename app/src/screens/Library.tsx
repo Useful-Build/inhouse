@@ -361,7 +361,7 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
       {visual}
       {head}
       {!visual && f.text && !grid && <div className="px-3.5 pt-3"><CodeBlock text={f.text} lines={6} /></div>}
-      <div className={cn(visual ? 'px-3 pt-2.5 pb-3' : 'px-3.5 pt-2 pb-3.25', menu && 'pr-10')}>
+      <div className={cn(visual ? 'px-3 pt-2.5 pb-3' : 'px-3.5 pt-2 pb-3.25')}>
         {visual && (
           <div className="flex items-center gap-2">
             <span className={`min-w-0 flex-1 text-sm leading-card font-strong wrap-anywhere ${grid ? 'min-h-card-name' : ''}`}>{f.name}</span>
@@ -370,7 +370,7 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
         )}
         {/* Two lines, so a chat's name isn't cut. A grid tile keeps both lines' room, so its tiles stay even. */}
         <div className={`flex items-start gap-1.25 text-xs text-muted-foreground ${visual ? 'mt-0.5' : ''} ${grid ? 'min-h-card-meta' : ''}`}>
-          {place && <span className="mt-px flex flex-none"><Icon name={place.icon} size={13} /></span>}<span className="min-w-0 text-pretty wrap-anywhere">{f.from}</span>
+          {place && <span className="mt-px flex flex-none"><Icon name={place.icon} size={13} /></span>}<span className="min-w-0 text-pretty">{f.from}{/* Room for the menu on the last line only, so the lines above use the full width. */}{menu && <span aria-hidden="true" className="inline-block w-8" />}</span>
         </div>
       </div>
       {selecting && <Check on={on} />}
@@ -396,7 +396,7 @@ function Row({ file: f, phone, selecting, on, onClick, menu }: { file: LibraryFi
         {thumb}
         <span className="min-w-0">
           <span className="block text-base font-strong wrap-anywhere">{f.name}</span>
-          <span className="block text-xs text-muted-foreground wrap-anywhere @2xl:hidden">{picture && `${f.type} · `}{f.size} · {f.from}</span>
+          <span className="block text-xs text-pretty text-muted-foreground wrap-anywhere @2xl:hidden">{picture && `${f.type} · `}{f.size} · {f.from}</span>
         </span>
       </span>
       <span className="hidden font-mono text-xs text-foreground-3 @2xl:block">{f.type}</span>
@@ -457,7 +457,7 @@ function EdgeFade({ on, className, children }: { on: boolean; className?: string
   return (
     <div ref={box} className={cn('relative', className)}>
       {children}
-      {more && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-linear-to-l from-background" />}
+      {more && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-4 bg-linear-to-l from-background" />}
     </div>
   )
 }
