@@ -189,12 +189,11 @@ function ChannelPage({ channel: c }: { channel: ToolChannel }) {
   const openSettings = useUi(s => s.openSettings)
   const locked = S < c.need
   const status = locked ? `Included from ${STAGE_TAGS[c.need]}` : `Connected · ${c.since}`
-  const info: [string, ReactNode][] = [
-    ...(c.channel ? [['Channel', c.channel] as [string, ReactNode]] : []),
-    ...(c.sends?.length ? [['What reaches it', c.sends.join('. ')] as [string, ReactNode]] : []),
-    ...(c.ask ? [['Who can ask', c.ask] as [string, ReactNode]] : []),
-    ['Website', <a key="site" href={`https://${c.site}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-3">{c.site} ↗</a>],
-  ]
+  // Before Act the channel isn't live, so only the website shows.
+  const info: [string, ReactNode][] = []
+  if (!locked && c.channel) info.push(['Channel', c.channel])
+  if (!locked && c.sends?.length) info.push(['What it sends', <ul key="sends">{c.sends.map(x => <li key={x}>{x}</li>)}</ul>])
+  info.push(['Website', <a key="site" href={`https://${c.site}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-3">{c.site} ↗</a>])
   return (
     <Page className="pt-4.5">
       <Button variant="quiet" onClick={() => go('apps')} className="gap-1">

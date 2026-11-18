@@ -33,7 +33,7 @@ const SCREENS: Record<Page, () => React.JSX.Element> = {
 }
 
 /** A tool's or channel's name, or undefined for a key that is neither (a stale or typed link). */
-const toolName = (t: ToolsData, k: string) => Object.hasOwn(t.details, k) ? t.details[k].name : t.channels.find(c => c.key === k)?.name
+const toolName = (t: ToolsData, k: string) => t.channels.find(c => c.key === k)?.name ?? (Object.hasOwn(t.details, k) ? t.details[k].name : undefined)
 
 // ---------- hash routes: #/today, #/tools/shopify, #/settings/team-memory, #/chats/all, #/chats/<id> ----------
 // On a phone, #/settings alone is the settings menu, so Back from a settings page returns to it.
