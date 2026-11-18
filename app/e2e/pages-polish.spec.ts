@@ -14,12 +14,10 @@ for (const width of [1440, 1024]) {
       localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
     })
     await page.goto('/?demo#/settings/team-modes')
-    const captions = page.getByText('How hard it thinks', { exact: true })
-    await expect(captions.first()).toBeVisible()
-    const visible = []
-    for (const c of await captions.all()) if (await c.isVisible()) visible.push(c)
-    expect(visible).toHaveLength(1)
-    const cap = (await visible[0].boundingBox())!
+    // One caption shows: above the picker column on a wide card, above the first picker when rows wrap.
+    const visible = page.getByText('How hard it thinks', { exact: true }).filter({ visible: true })
+    await expect(visible).toHaveCount(1)
+    const cap = (await visible.boundingBox())!
     const picker = (await page.getByRole('combobox', { name: /^How hard it thinks: / }).first().boundingBox())!
     expect(cap.x < picker.x + picker.width && picker.x < cap.x + cap.width).toBe(true)
     expect(cap.y + cap.height).toBeLessThanOrEqual(picker.y)
