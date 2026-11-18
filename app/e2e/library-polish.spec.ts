@@ -194,6 +194,8 @@ async function nothingCut(page: Page, label: string, room: boolean) {
     const out: string[] = []
     for (const el of list.querySelectorAll<HTMLElement>('.font-strong, .text-xs, [class*=line-clamp], .ellipsis')) {
       if (!el.offsetParent || !el.textContent?.trim()) continue
+      // Preview art (a document page drawn small) and icon glyphs are decoration, cut on purpose.
+      if (el.closest('[aria-hidden="true"]')) continue
       if (el.classList.contains('ellipsis') && !room) continue
       if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) out.push(el.textContent.trim())
     }
