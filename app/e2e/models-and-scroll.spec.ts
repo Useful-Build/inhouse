@@ -49,7 +49,7 @@ test('Models: Max, Smart, Fast and Instant with Smart default and no add-on; swi
   for (const m of ['Max', 'Smart', 'Fast', 'Instant']) await expect(modeSwitch(page, m)).toHaveAttribute('aria-checked', 'true')
   await expect(modeSwitch(page, 'Smart')).toBeDisabled()
   // The reason a locked switch can't be turned off is its description (and its tooltip), not a native title.
-  await expect(modeSwitch(page, 'Smart')).toHaveAccessibleDescription('This is the default model')
+  await expect(modeSwitch(page, 'Smart')).toHaveAccessibleDescription('This is the default model. Pick another default to turn it off.')
   await expect(page.getByRole('combobox', { name: 'Default model: Smart' })).toBeVisible()
   await keep(page, '1440-thinking-modes-page')
 
