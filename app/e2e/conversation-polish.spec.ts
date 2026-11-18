@@ -5,10 +5,12 @@
 // before it replaces a draft, and focus follows Send now; a chat left mid-answer asks its queued message in the
 // background (D9); queued messages wait, paused, across a reload; Edit shows "Editing", Escape puts the draft and its
 // file back, a sent edit replaces the question and Undo brings the old one back; leaving the chat mid-edit ends it and
-// gives back the draft, its file and its quote; deleting a chat mid-answer pauses its queue (Undo brings it back paused);
+// gives back the draft, its file and its quote, and another chat or a new one never shows the quote from before the
+// edit; a suggestion asks without the composer's file or quote and leaves them there, in an edit or not; deleting a chat mid-answer pauses its queue (Undo brings it back paused);
 // a queued message's Edit waits while another is edited; All chats keeps its time column on the
 // card's edge through Select. On a phone: the answer row is Copy, steps and "···" (D3) with the thumbs as radio items,
-// every step name in the trace reads in full, and Select mode's bar never covers the last chat.
+// every step name in the trace reads in full, Send now on the last queued message puts focus on "+" (never Stop), and
+// Select mode's bar never covers the last chat.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
@@ -282,6 +284,118 @@ test.describe('desktop', () => {
     await expect(msg(page, 'on Amazon')).toHaveCount(0)
     await expect(stop(page)).toHaveCount(0)
     await shot(page, 'edit-left')
+  })
+
+  test('Conversation polish: another chat or a new one mid-edit never shows the quote from before the edit', async ({ page }) => {
+    await start(page, '#/chats/new')
+    await field(page).fill(REFUNDS_Q)
+    await page.keyboard.press('Enter')
+    await expect(stepsButtons(page)).toHaveCount(1, { timeout: 15_000 })
+    await expect(stop(page)).toHaveCount(0)
+    const mine = await page.evaluate(() => location.hash)
+    const replying = dock(page).getByText('Replying to Inhouse agent')
+    const editing = dock(page).getByText('Editing your message')
+    const question = msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-answer]') })
+    /** Reply on the answer, then Edit the question, which has no quote: the reply bar goes. */
+    const replyThenEdit = async () => {
+      const answer = log(page).locator('[data-answer]').first()
+      await answer.hover()
+      await answer.getByRole('button', { name: 'Reply', exact: true }).click()
+      await expect(replying).toBeVisible()
+      await question.hover()
+      await question.getByRole('button', { name: 'Edit message' }).click()
+      await expect(editing).toBeVisible()
+      await expect(replying).toHaveCount(0)
+    }
+
+    // Another chat: no reply bar, and nothing of this chat's answer in its composer.
+    await replyThenEdit()
+    await page.evaluate(() => { location.hash = '#/chats/stuck' })
+    await expect(field(page)).toHaveValue('')
+    await expect(editing).toHaveCount(0)
+    await expect(replying).toHaveCount(0)
+    await expect(dock(page)).not.toContainText('Refund requests rose')
+    await shot(page, 'edit-left-other-chat')
+
+    // Back in the first chat: the edit is over and nothing was asked. A quote never follows a chat switch (opening
+    // another chat drops it, edit or not), so there's no reply bar here either.
+    await page.evaluate(h => { location.hash = h }, mine)
+    await expect(question).toHaveCount(1)
+    await expect(editing).toHaveCount(0)
+    await expect(replying).toHaveCount(0)
+    await expect(field(page)).toHaveValue('')
+
+    // A new chat mid-edit: no reply bar either.
+    await replyThenEdit()
+    await page.getByRole('button', { name: 'New chat' }).click()
+    await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+    await expect(editing).toHaveCount(0)
+    await expect(replying).toHaveCount(0)
+    await expect(dock(page)).not.toContainText('Refund requests rose')
+
+    // Off a chat (Today) and back, the quote from before the edit comes back: here the one Reply set.
+    await page.evaluate(h => { location.hash = h }, mine)
+    await replyThenEdit()
+    await page.evaluate(() => { location.hash = '#/today' })
+    await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+    await page.evaluate(h => { location.hash = h }, mine)
+    await expect(editing).toHaveCount(0)
+    await expect(replying).toBeVisible()
+    await expect(dock(page)).toContainText('Refund requests rose')
+  })
+
+  test("Conversation polish: a suggestion asks without the composer's file or quote, in an edit or not, and leaves them there", async ({ page }) => {
+    await start(page, '#/chats/new')
+    await field(page).fill('What is the weather like in Lisbon?')
+    await page.keyboard.press('Enter')
+    const suggestion = log(page).locator('[data-answer]').getByRole('button', { name: STUCK_Q, exact: true })
+    await expect(suggestion).toBeVisible({ timeout: 15_000 })
+    await expect(stop(page)).toHaveCount(0)
+
+    // A draft with a file, replying to the off-script answer.
+    const answer = log(page).locator('[data-answer]').first()
+    await answer.hover()
+    await answer.getByRole('button', { name: 'Reply', exact: true }).click()
+    const replying = dock(page).getByText('Replying to Inhouse agent')
+    await expect(replying).toBeVisible()
+    const quote = ((await replying.locator('xpath=following-sibling::span[1]').textContent()) ?? '').slice(0, 40)
+    expect(quote.length).toBeGreaterThan(0)
+    await dock(page).getByRole('button', { name: 'Attach' }).click()
+    await page.getByRole('menuitem', { name: /An order, product or customer/ }).click()
+    const file = dock(page).getByText('Order #4821')
+    await expect(file).toBeVisible()
+    await field(page).fill('Draft I keep')
+    const asked = msg(page, STUCK_Q).filter({ hasNot: page.locator('[data-answer]') })
+    /** The composer still holds the draft, its file and its quote. */
+    const kept = async () => {
+      await expect(field(page)).toHaveValue('Draft I keep')
+      await expect(file).toBeVisible()
+      await expect(replying).toBeVisible()
+      await expect(dock(page)).toContainText(quote)
+    }
+
+    // Outside an edit: the chip asks just its question.
+    await suggestion.click()
+    await expect(asked).toHaveCount(1)
+    await expect(asked).not.toContainText('Order #4821')
+    await expect(asked).not.toContainText(quote)
+    await kept()
+    await expect(log(page).getByText('3 orders · $556')).toBeVisible({ timeout: 15_000 })
+    await expect(stop(page)).toHaveCount(0)
+
+    // During an edit: the edit ends, the chip asks just its question, and the composer gets back what it held before.
+    await asked.hover()
+    await asked.getByRole('button', { name: 'Edit message' }).click()
+    const editing = dock(page).getByText('Editing your message')
+    await expect(editing).toBeVisible()
+    await expect(field(page)).toHaveValue(STUCK_Q)
+    await suggestion.click()
+    await expect(editing).toHaveCount(0)
+    await expect(asked).toHaveCount(2)
+    await expect(asked.last()).not.toContainText('Order #4821')
+    await expect(asked.last()).not.toContainText(quote)
+    await kept()
+    await shot(page, 'suggestion-keeps-draft')
   })
 
   test('Conversation polish: deleting a chat mid-answer pauses its queue, and Undo brings it back paused', async ({ page }) => {
@@ -568,6 +682,24 @@ test.describe('phone', () => {
     }
     expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     await shot(page, 'phone-trace-steps')
+  })
+
+  test('Phone: after Send now on the last queued message, focus goes to "+", never to Stop', async ({ page }) => {
+    await start(page, '#/chats/new')
+    await field(page).fill(REFUNDS_Q)
+    await dock(page).getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(stop(page)).toBeVisible()
+    await field(page).fill(MD_Q)
+    await dock(page).getByRole('button', { name: 'Queue message' }).click()
+    await expect(queued(page)).toHaveCount(1)
+    await expect(stop(page)).toBeVisible()
+    await chip(page, MD_Q).getByRole('button', { name: /^Send now: Give me the query/ }).click()
+    await expect(queued(page)).toHaveCount(0)
+    // Its answer runs, so Stop holds Send's place: focus skips it for "+".
+    await expect(stop(page)).toBeVisible()
+    await expect(dock(page).getByRole('button', { name: /^Attach/ })).toBeFocused()
+    await expect(stop(page)).not.toBeFocused()
+    await shot(page, 'phone-send-now-focus')
   })
 
   test("Phone: in All chats' Select mode the bar never covers the last chat", async ({ page }) => {

@@ -147,7 +147,8 @@ function Thread() {
   const openId = openChatKey({ fresh, chatId }, ctx.data)
   const queue = useUi(s => (openId === null ? NO_QUEUE : s.queued[openId] ?? NO_QUEUE))
   // After Send now or Remove, focus goes to the chip that takes that one's place (the same button), else to the field;
-  // on a phone to Send or Stop instead (the field would pop the keyboard), or to "+" while Send is off.
+  // on a phone to Send instead (the field would pop the keyboard), or to "+" while Send is off or Stop holds its place
+  // (a tap or Enter there would stop the answer just asked).
   const queueList = useRef<HTMLDivElement>(null)
   const focusAfter = useRef<{ at: number; button: 'send' | 'remove' } | null>(null)
   useLayoutEffect(() => {
@@ -156,7 +157,7 @@ function Thread() {
     focusAfter.current = null
     const chips = queueList.current?.querySelectorAll<HTMLElement>('[data-queued]') ?? []
     const chip = chips.length ? chips[Math.min(f.at, chips.length - 1)] : undefined
-    const send = document.querySelector<HTMLButtonElement>('[data-composer] [data-composer-send]')
+    const send = document.querySelector<HTMLButtonElement>('[data-composer] [data-composer-send][aria-label="Send"]')
     const away = !window.matchMedia(PHONE_QUERY).matches ? document.querySelector<HTMLElement>('[data-composer] textarea')
       : send && !send.disabled ? send : document.querySelector<HTMLElement>('[data-composer] button[aria-label^="Attach"]')
     const target = chip?.querySelector<HTMLElement>(`[data-queued-${f.button}]`) ?? away

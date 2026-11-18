@@ -179,8 +179,10 @@ export interface UiActions {
   openChatList(): void
   /** Start a new chat holding copies of these messages. */
   branchChat(messages: ChatMessage[]): void
-  /** `replacesRun`: the run whose answer this replaces (Regenerate, Try again), so the agent doesn't make its routine or skill twice. */
-  ask(question: string, opts?: { replacesRun?: string }): Promise<void>
+  /** `replacesRun`: the run whose answer this replaces (Regenerate, Try again), so the agent doesn't make its routine or skill twice.
+   *  `fromComposer`: the open composer's Send, which sends its quote and files and clears it. Any other ask (a suggestion,
+   *  Try again) sends only its own `quote` and `atts` and leaves the composer's draft, files and quote as they are. */
+  ask(question: string, opts?: { replacesRun?: string; fromComposer?: boolean; quote?: string; atts?: Attachment[] }): Promise<void>
   /** Stops one chat's answer (the open chat's by default) and notes it in that chat. */
   stopRun(chatId?: string): void
   /** The open composer's message waits for the open chat's answer to end (H8). */
@@ -830,13 +832,12 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     ask: async (question, askOpts = {}) => {
       const q = question.trim()
       if (!q) return
-      // An edit open in this chat ends first, so the question doesn't take the edited one's quote and files (F).
+      // An edit open in this chat ends first: the composer gets back what it held before it (F).
       const s0 = get()
       const here = s0.page === 'chats' && !s0.chatList ? openChatKey(s0, agent.read()) : null
-      // While editing, the composer's Send is sendEdit: an ask now comes from elsewhere (a suggestion, Try again), so
-      // the draft the edit gives back stays in the composer, its text, files and quote untouched.
-      const fromElsewhere = here !== null && s0.editMsg?.chatId === here
       if (here !== null) dropEdit(here)
+      // Only the composer's own Send takes its quote and files and clears it (while editing, that Send is sendEdit).
+      const fromComposer = askOpts.fromComposer === true
       // A question from Today, a tool page or the list of chats starts a chat of its own.
       const before = get()
       if (before.page !== 'chats' || before.chatList) {
@@ -858,13 +859,14 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set(s => ({
         page: 'chats', openId: null, pop: null, sideOpen: false,
         // Only the composer the question came from is cleared: asking in a chat leaves Today's draft alone.
-        ...(fromElsewhere ? {} : {
+        ...(fromComposer ? {
           replyTo: null, atts: [], chatDraft: '',
           ...(before.page === 'today' ? { todayDraft: '' } : {}),
           drafts: dropDraft(s.drafts, composerKey(before)),
-        }),
+        } : {}),
       }))
-      return runAsk(chatId, q, { quote: fromElsewhere ? undefined : replyTo ?? undefined, atts: fromElsewhere ? [] : before.atts, model: modelSel, replacesRun: askOpts.replacesRun })
+      const quote = fromComposer ? replyTo ?? undefined : askOpts.quote
+      return runAsk(chatId, q, { quote, atts: fromComposer ? before.atts : askOpts.atts ?? [], model: modelSel, replacesRun: askOpts.replacesRun })
     },
     stopRun: chatId => {
       const id = chatId ?? openChatKey(get(), agent.read())
@@ -1111,14 +1113,11 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       // hidden with the tail but stays live, so the person can delete it themselves, and Undo mustn't bring that back.
       const was = agent.getSnapshot().routinesDeleted
       const routines = s0.extras.flatMap(m => (m.role === 'agent' && replacesRun !== undefined && m.trace === replacesRun && hideIdList.includes(m.id) && m.part.type === 'routine' && !was[m.part.routine.id] ? [m.part.routine.id] : []))
-      // ask() takes the reply and attachments from the composer and clears its drafts, so lend it the question's own
-      // and put the composer back once it has read them (it reads everything before its first await).
-      const keep = (({ replyTo, atts, chatDraft, todayDraft }) => ({ replyTo, atts, chatDraft, todayDraft }))(s0)
-      set(s => ({ hidden: hideIds(s.hidden, hideIdList), replyTo: question.quote ?? null, atts: question.atts ?? [] }))
-      void get().ask(question.text, { replacesRun })
+      // The question goes with its own quote and files; the composer's draft stays as it is.
+      set(s => ({ hidden: hideIds(s.hidden, hideIdList) }))
+      void get().ask(question.text, { replacesRun, quote: question.quote, atts: question.atts })
       // ask() has added the question before its first await: it is the newest message of the open chat.
       const asked = get().extras.at(-1)?.id
-      set(keep)
       // Undo brings the old turn back and drops the new question with whatever it answered so far, wherever the chat is now.
       const undo = () => {
         const deleted = agent.getSnapshot().routinesDeleted
@@ -1188,8 +1187,9 @@ useUi.subscribe((s, prev) => {
   if (from !== null && !drafts[from]?.text && !drafts[from]?.atts.length) drafts = dropDraft(drafts, from)
   const next = to === null ? undefined : own(drafts, to)
   useUi.setState({
-    // The quote goes back to the one from before the edit too, unless the change set its own (openChat clears it).
-    ...(edit && s.editMsg === prev.editMsg ? { editMsg: null, ...(s.replyTo === prev.replyTo ? { replyTo: edit.replyTo } : {}) } : {}),
+    // The quote goes back to the one from before the edit too, unless the change set its own. Only off a chat (Today,
+    // the chat list, another page): a quote never follows a person into another chat or a new one, so there it's dropped.
+    ...(edit && s.editMsg === prev.editMsg ? { editMsg: null, ...(s.replyTo === prev.replyTo ? { replyTo: s.page === 'chats' && !s.chatList ? null : edit.replyTo } : {}) } : {}),
     drafts: dropDraft(drafts, to),
     atts: next?.atts ?? [],
     // Today keeps its text in todayDraft; a new chat keeps what newChat() put there (its prefill).

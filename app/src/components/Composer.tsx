@@ -180,7 +180,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
     // waits above the box for its turn.
     if (editing) sendEdit()
     else if (running) queueMessage()
-    else void ask(draft)
+    else void ask(draft, { fromComposer: true })
   }
 
   // What the agent can read now (not paused, not disconnected, none on day one), less what's switched off for this chat.
