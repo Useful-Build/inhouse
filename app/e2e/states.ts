@@ -221,6 +221,8 @@ export const STATES: UiState[] = [
       await expect(page.getByRole('listbox')).toBeVisible()
     },
   },
+  page_('act-approvals-first-day', 'Act', 'First day', '#/approvals', 'Nothing to approve yet.', true),
+  page_('act-approvals-loading', 'Act', 'Loading', '#/approvals', 'Waiting for you', true),
 ]
 
 /** Opens a state from a clean demo: a fixed theme, no agent-mark animation, no dot sweep. */

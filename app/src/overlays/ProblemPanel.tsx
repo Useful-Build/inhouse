@@ -105,7 +105,7 @@ export function ProblemPanel() {
                 <div className="mx-4.5 mt-2.5 rounded-lg bg-dialog px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">
                   <div className="mono-label mb-1.5 tracking-caps">{dv.bodyLabel ?? 'Your note'}</div>
                   {isEditing
-                    ? <textarea aria-label={dv.bodyLabel ?? 'Your note'} value={dv.body ?? ''} placeholder={dv.body === null ? 'Add a note to this draft' : undefined} onChange={e => agent.editDraft(openId, e.target.value)}
+                    ? <textarea aria-label={dv.bodyLabel ?? 'Your note'} value={dv.body ?? ''} placeholder={dv.body === null ? 'Add a note to this draft' : undefined} onChange={e => agent.editDraft(openId, e.target.value).catch((err: unknown) => { console.warn('Inhouse: could not save the note.', err) })}
                         className="block min-h-37.5 w-full resize-y rounded-md border border-border-strong bg-card px-3 py-2.5 text-sm leading-prose text-foreground focus:border-foreground/45 focus:shadow-halo" />
                     : dv.body}
                 </div>
@@ -162,7 +162,8 @@ export function ProblemPanel() {
             <div className="flex items-center gap-2">
               <Button variant="primary" size="lg" className="h-auto min-h-9.5 min-w-0 flex-1 py-1.5 text-left whitespace-normal sm:flex-none" onClick={() => approve(openId)}>{dv.cta}</Button>
               <Button variant="secondary" size="lg" className="flex-none" onClick={() => patch({ editing: isEditing ? null : openId })}>{isEditing ? 'Done' : 'Edit'}</Button>
-              <Button variant="ghost" size="lg" className="flex-none" onClick={() => { setAside(openId, 'declined'); closeProblem() }}>Don't send</Button>
+              {/* A problem already set aside keeps its reason: Undo would otherwise restore it as declined. */}
+              {!ctx.agent.setAside[openId] && <Button variant="ghost" size="lg" className="flex-none" onClick={() => { setAside(openId, 'declined'); closeProblem() }}>Don't send</Button>}
             </div>
           )}
           <button type="button" onClick={askTitle}

@@ -64,14 +64,15 @@ test('Phone: Usage breakdown rows stack inside 390 px in every tab, with cost, s
 
 test('Phone: Approvals and Today small controls have a 44px hit area', async ({ page }) => {
   await start(page, '#/approvals')
+  await expect(page.getByRole('heading', { level: 2, name: /^Waiting for you/ })).toBeVisible()
   // A phone has no sort: the header holds Approve all low-risk alone, and each card's "···" is a full tap area.
   await expect(page.getByRole('combobox', { name: /^Sort drafts/ })).toHaveCount(0)
-  for (const el of [page.getByRole('button', { name: 'Approve all low-risk' }), page.getByRole('button', { name: 'More' }).first()]) await atLeast44(el)
+  for (const el of [page.getByRole('button', { name: 'Approve all low-risk' }), page.getByRole('button', { name: /^More actions for/ }).first()]) await atLeast44(el)
   await noSidewaysScroll(page)
   await page.screenshot({ path: test.info().outputPath('phone-approvals-actions.png'), fullPage: true })
 
   await page.goto('/?demo#/today')
-  const more = page.getByRole('article').first().getByRole('button', { name: 'More' })
+  const more = page.getByRole('article').first().getByRole('button', { name: /^More actions for/ })
   await atLeast44(more)
   await more.click()
   await expect(page.getByRole('menu', { name: 'Card actions' })).toBeVisible()

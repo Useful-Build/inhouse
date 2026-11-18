@@ -20,7 +20,7 @@ export function Today() {
   const f = flags(ctx)
   const copy = todayCopy(ctx)
   const todaySort = useUi(s => s.todaySort)
-  const byAmount = todaySort === 'amount'
+  const byAmount = todaySort === 'amount' && !phone
   const cards = issueCards(ctx)
   // Handled cards stay after the ones that need the person, in every sort.
   if (byAmount) cards.sort((a, b) => Number(a.handled) - Number(b.handled) || amountOf(b.problem) - amountOf(a.problem))
@@ -99,7 +99,7 @@ export function Today() {
               <Icon name="check_circle" size={18} weight={400} />
               <b className="font-semibold whitespace-nowrap">{h.count} handled before you woke up</b>
               {/* On a phone the list gets its own full-width lines under the title. */}
-              <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{h.summary.replace(/(\d) (?=[a-z])/g, '$1\u00a0')}</span>
+              <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{h.summary}</span>
               <span className={`font-semibold whitespace-nowrap ${phone ? 'order-2 ml-auto' : ''}`}>See activity</span>
             </button>
           )}
@@ -124,7 +124,7 @@ export function Today() {
                     {p.logos.map(l => <LogoTile key={l} k={l} size="sm" className="-my-1" />)}
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
-                        <IconButton icon="more_horiz" label="More" size={18} className={cn('relative z-raised -my-1.5 -mr-1.5', tap)} />
+                        <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} className={cn('relative z-raised -my-1.5 -mr-1.5', tap)} />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                         <MenuItem onSelect={askAbout}>

@@ -23,9 +23,11 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   await start(page, 'Act', '#/today')
   await expect(page.getByRole('article').first()).toBeVisible()
   await expect(page.getByRole('combobox', { name: /^Sort cards/ })).toHaveCount(0)
-  // A card is as tall as its content, so the shortest one is under the desktop's 224px floor.
-  const heights = await page.getByRole('article').evaluateAll(els => els.map(e => e.getBoundingClientRect().height))
-  expect(Math.min(...heights), 'no card has the desktop minimum height').toBeLessThan(224)
+  // No fixed card height: the cards have no minimum height at all (the desktop's is 224px).
+  const minHeights = await page.getByRole('article').evaluateAll(els => els.map(e => getComputedStyle(e).minHeight))
+  expect(minHeights.every(h => h === '0px' || h === 'auto'), `min-height of each card: ${minHeights}`).toBe(true)
+  // The card has no click handler of its own: its title is the one button that opens it.
+  expect(await page.getByRole('article').first().evaluate(e => e.onclick)).toBeNull()
 
   await page.getByRole('button', { name: 'Menu' }).click()
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /Approvals/ }).click()
@@ -39,7 +41,7 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   // A card's footer: the primary action and "···" share a row.
   const stuck = draft(page, "Ask ShipBob why #4821 hasn't shipped")
   const primary = await stuck.getByRole('button', { name: 'Approve and send to ShipBob' }).boundingBox()
-  const more = await stuck.getByRole('button', { name: 'More' }).boundingBox()
+  const more = await stuck.getByRole('button', { name: /^More actions for/ }).boundingBox()
   expect(Math.abs(primary!.y - more!.y)).toBeLessThanOrEqual(8)
   await stuck.getByRole('button', { name: 'Approve and send to ShipBob' }).click()
 
@@ -48,7 +50,7 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   await expect(approved).toBeVisible()
   const row = approved.locator('div.border-b').first()
   expect(await row.evaluate(e => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(1)
-  const text = await row.locator('span').first().boundingBox()
+  const text = await row.locator('span.basis-40').boundingBox()
   const meta = await row.getByText(/Sam/).first().boundingBox()
   expect(meta!.y, 'the time wraps under the text').toBeGreaterThan(text!.y)
   await shot(page, 'approvals-approved-row-390')

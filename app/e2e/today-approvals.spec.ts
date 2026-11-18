@@ -3,7 +3,7 @@
 // one Undo from the toast. The 390 px twin is today-approvals-phone.spec.ts.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { expectNothingCut, start, STAGES } from './today-approvals-helpers.js'
+import { cutText, expectNothingCut, start, STAGES } from './today-approvals-helpers.js'
 
 const shot = async (page: Page, name: string) => {
   await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
@@ -29,7 +29,7 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   const card = draft(page, RETURNS)
   await expect(card.getByRole('button', { name: 'Approve and restock' })).toBeVisible()
   await expect(card.getByText('Low risk', { exact: true })).toBeVisible()
-  await card.getByRole('button', { name: 'More' }).click()
+  await card.getByRole('button', { name: `More actions for ${RETURNS}` }).click()
   await page.getByRole('menu', { name: 'Draft actions' }).getByRole('menuitem', { name: 'Edit', exact: true }).click()
   const panel = page.getByRole('dialog')
   const note = panel.getByRole('textbox', { name: 'Your note' })
@@ -94,7 +94,19 @@ test('Today: the whole card opens the panel from one real button, and the "··�
   await expect(page.getByRole('dialog')).toContainText('What your Inhouse agent found')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await card.getByRole('button', { name: 'More' }).click()
+  await card.getByRole('button', { name: 'More actions for Ridge 30L Pack runs out in 9 days' }).click()
   await expect(page.getByRole('menu', { name: 'Card actions' })).toBeVisible()
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
+
+for (const [scenario, text] of [['First day', 'Nothing to approve yet.'], ['Loading', 'Reading your tools']] as const) {
+  test(`Approvals, ${scenario}: no sort, no approve-all, no cut text${scenario === 'Loading' ? ', and a loading status' : ''}`, async ({ page }) => {
+    await start(page, 'Act', '#/approvals', scenario)
+    await expect(waiting(page)).toBeVisible()
+    await expect(page.getByRole('main')).toContainText(text)
+    await expect(page.getByRole('combobox', { name: /^Sort drafts/ })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Approve all low-risk' })).toHaveCount(0)
+    if (scenario === 'Loading') await expect(page.getByRole('status').filter({ hasText: 'Reading your tools' })).toHaveCount(1)
+    expect(await cutText(page)).toEqual([])
+  })
+}

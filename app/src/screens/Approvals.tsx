@@ -61,7 +61,7 @@ export function Approvals() {
       <PageHeader title="Approvals" description="Work your Inhouse agent drafted. Nothing goes out until someone approves it." />
 
       {S === 0 && (
-        <div className="mt-7 flex items-start gap-4 rounded-2xl border border-dashed border-border-strong p-7 text-foreground-3">
+        <div data-watch-block className="mt-7 flex items-start gap-4 rounded-2xl border border-dashed border-border-strong p-7 text-foreground-3">
           <IconTile icon="task_alt" iconSize={20} size="lg" tone="outline" />
           <div className="min-w-0 flex-1">
             <div className="text-md font-semibold text-foreground">{noData || nProblems === 0 ? 'In Act, drafted fixes would be waiting here' : `In Act, today's ${nProblems} ${nProblems === 1 ? 'fix' : 'fixes'} would be waiting here`}</div>
@@ -84,12 +84,13 @@ export function Approvals() {
         <>
           {/* On a phone the header keeps one line: no sort, only Approve all low-risk. */}
           <SectionHeader title="Waiting for you" count={noData ? undefined : pending.length} className="mt-7.5 mb-3"
-            actions={phone ? approveAll || undefined : waitingActions} />
+            actions={noData ? undefined : phone ? approveAll || undefined : waitingActions} />
           {isFirst && <EmptyState>Nothing to approve yet. Drafts wait here once your tools are connected.</EmptyState>}
           {isLoading && (
-            <div className="flex flex-col gap-3" aria-hidden="true">
+            <div className="flex flex-col gap-3">
+              <p role="status" className="sr-only">Reading your tools</p>
               {[0, 1].map(i => (
-                <div key={i} className="box-border flex flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">
+                <div key={i} aria-hidden="true" className="box-border flex flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">
                   <Skeleton className="h-3.5 w-3/5 animate-none rounded-sm bg-fill-hover" />
                   <Skeleton className="h-2.5 w-4/5 animate-none rounded-sm" />
                   <Skeleton className="h-2.5 w-7/10 animate-none rounded-sm" />
@@ -109,7 +110,7 @@ export function Approvals() {
                   <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-divider px-4.5 py-3.5">
                     <Dot className={sevClass(dv.problem.sev)} />
                     <h2 className="min-w-40 flex-1 text-base font-semibold">{dv.draftTitle}</h2>
-                    <Badge variant={dv.waitsLabel ? 'warning' : 'muted'}>{dv.waitsLabel ?? 'Low risk'}</Badge>
+                    <Badge variant={low ? 'muted' : 'warning'}>{low ? 'Low risk' : dv.waitsLabel ?? 'Needs review'}</Badge>
                     <span className="text-xs text-muted-foreground">{dv.problem.area} · {dv.problem.draftedAt}</span>
                   </div>
                   <DetailList variant="ruled" strong items={dv.lines} className="px-4.5 py-1 text-sm" />
@@ -124,7 +125,7 @@ export function Approvals() {
                     <Button size="lg" className={tap} onClick={low ? () => approve(id) : () => openProblem(id)}>{low ? dv.cta : 'Review'}</Button>
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
-                        <IconButton icon="more_horiz" label="More" size={18} box="icon-lg" className={tap} />
+                        <IconButton icon="more_horiz" label={`More actions for ${dv.draftTitle}`} size={18} box="icon-lg" className={tap} />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" collisionPadding={16} aria-label="Draft actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                         {low && (

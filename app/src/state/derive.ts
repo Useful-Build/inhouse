@@ -197,7 +197,8 @@ export function handled(ctx: Ctx) {
   const list = ctx.data.problems.filter(p => ranByAgent(ctx, p))
   return {
     count: list.length,
-    summary: list.map(p => doneLine(p)).join(' · '),
+    // A no-break space after a number keeps "11 units" from splitting across lines.
+    summary: list.map(p => doneLine(p)).join(' · ').replace(/(\d) (?=[a-z])/g, '$1\u00a0'),
   }
 }
 
