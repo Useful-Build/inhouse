@@ -15,8 +15,8 @@ async function start(page: Page, hash = '#/today') {
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
 const keep = async (page: Page, name: string, fullPage = false) => { await page.waitForTimeout(400); await page.screenshot({ path: `${out}/${name}.png`, fullPage }) }
 const picker = (page: Page, label: string) => page.getByRole('button', { name: `Model: ${label}` })
-const effort = (page: Page, mode: string, value: string) => page.getByRole('combobox', { name: `How hard ${mode} thinks: ${value}` })
-const modeSwitch = (page: Page, mode: string) => page.getByRole('switch', { name: `${mode}: the team can use this mode` })
+const effort = (page: Page, mode: string, value: string) => page.getByRole('combobox', { name: `How hard it thinks: ${mode}: ${value}` })
+const modeSwitch = (page: Page, mode: string) => page.getByRole('switch', { name: `${mode}: the team can use this model` })
 const box = async (loc: ReturnType<Page['locator']>) => { const b = await loc.boundingBox(); expect(b).not.toBeNull(); return b! }
 
 test('Models: Max, Smart, Fast and Instant with Smart default and no add-on; switching one off hides it; effort persists and Reset demo clears it', async ({ page }) => {

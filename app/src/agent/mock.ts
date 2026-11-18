@@ -269,7 +269,7 @@ const sanitize = (raw: unknown): AgentState => {
     libraryDeleted: flagsOf(raw.libraryDeleted),
     setAside: recOf(raw.setAside, (x): x is SetAsideRecord => isRec(x) && isStamp(x) && SET_ASIDE.includes(x.reason as SetAsideReason) && typeof x.ms === 'number'),
     routinesDeleted: Object.fromEntries(Object.keys(flagsOf(raw.routinesDeleted)).filter(known).map(id => [id, true as const])),
-    routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).filter((r): r is RoutineRun => hasStrs(r, ['routine', 'at']) && typeof r.atMin === 'number' && known(r.routine as string) && (r.trace === undefined || str(r.trace))),
+    routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).filter((r): r is RoutineRun => hasStrs(r, ['routine', 'at']) && typeof r.atMin === 'number' && known(r.routine as string) && (r.trace === undefined || str(r.trace)) && (r.result === undefined || str(r.result))),
     // managing chats. A started chat's title, pin and delete are kept until Reset demo: its id is unique per page load
     // (chatIds.ts), so it can't be taken by a newer chat, and the app keeps the chat itself across a reload.
     chatTitles: Object.fromEntries(Object.entries(recOf(raw.chatTitles, (x): x is string => str(x) && x.trim() !== '')).map(([k, t]) => [k, t.slice(0, CHAT_TITLE_MAX)])),

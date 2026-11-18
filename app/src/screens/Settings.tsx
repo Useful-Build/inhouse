@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { agent } from '../agent'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
-import { Avatar, Button, Icon, IconButton, NavItem, PageHeader, SectionHeader, StageTag, Switch } from '../ui'
+import { Avatar, Button, EmptyState, Icon, IconButton, NavItem, PageHeader, SectionHeader, StageTag, Switch, SwitchLook } from '../ui'
 import { Confirm, SearchBox, Select, TAP } from '../ui/fields'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -97,7 +97,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly }: { row: Row; loc
   // (the team window, a page) or does a job (pause, forget, export), so it keeps working.
   if (readOnly && row.kind !== 'button' && row.kind !== 'photo') {
     const shown = row.kind === 'toggle' ? (on ? 'On' : 'Off')
-      : row.kind === 'mode' ? `Thinks ${row.value.toLowerCase()} · ${row.switchOn ? 'team can use it' : 'team can\'t use it'}`
+      : row.kind === 'mode' ? `Effort: ${row.value} · ${row.switchOn ? 'team can use it' : 'team can\'t use it'}`
       : row.kind === 'select' ? `${row.labels?.[row.value] ?? row.value}${row.tag ? ` · ${row.tag}` : ''}`
       : row.value
     return shown ? <span className="text-right text-base text-foreground-2">{shown}</span> : null
@@ -129,11 +129,8 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly }: { row: Row; loc
     case 'mode':
       return (
         <div className="flex flex-wrap items-center gap-4.5">
-          {/* The one visible label for the effort pickers, on the first row only. */}
-          <div className="flex flex-col gap-1">
-            {row.caption && <span className="text-xs text-muted-foreground">{row.caption}</span>}
-            <Select label={`How hard ${row.title} thinks`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
-          </div>
+          {/* The visible words are in the name ("How hard it thinks: Smart"), so a voice command by label works. */}
+          <Select label={`How hard it thinks: ${row.title}`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
           {/* The switch's visible label: whether the team can use this model. */}
           <span className="inline-flex h-9.5 items-center gap-2">
             <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={() => agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null)} />
@@ -186,6 +183,7 @@ export function Settings() {
   const env: Env = {
     S, stage, agent: st, data,
     spent: usage.total,
+    phone,
     openTeam: ui.openTeam, openPop: ui.openPop, openSettings: ui.openSettings, newChat: ui.newChat,
     goSkills: () => ui.go('skills'),
     togglePause: ui.togglePause,
@@ -258,10 +256,19 @@ export function Settings() {
               <Icon name="desktop_windows" size={16} className="flex-none" />Change team settings on a computer. You can read them here.
             </p>
           )}
-          {page.sections.filter(sec => sec.rows.length > 0).map((sec, si) => (
+          {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (
             <section key={`${si}|${sec.label}`} className={sec.label ? undefined : 'mt-4.5'}>
               {sec.label && <SectionHeader title={sec.label} className="mt-6 mb-2.5" />}
+              {sec.empty && <EmptyState className="mt-6">{sec.empty}</EmptyState>}
+              {sec.rows.length > 0 && (
               <div className="rounded-2xl border border-border bg-card px-5.5">
+                {sec.caption && !readOnly && (
+                  // One label over the pickers: it mirrors a row's right side (picker, then the switch's width) so it sits over them.
+                  <div className="flex justify-end gap-4.5 pt-4 text-xs text-muted-foreground">
+                    <span className="w-37.5 flex-none">{sec.caption}</span>
+                    <span aria-hidden="true" className="invisible inline-flex items-center gap-2"><SwitchLook on /><span className="w-6" /></span>
+                  </div>
+                )}
                 {sec.rows.map((row, i) => {
                   const locked = S < row.need
                   const on = !locked && (st.toggles[row.key ?? ''] ?? row.def ?? false)
@@ -280,6 +287,7 @@ export function Settings() {
                   )
                 })}
               </div>
+              )}
             </section>
           ))}
         </div>

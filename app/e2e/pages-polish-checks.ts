@@ -97,7 +97,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
       // The audit log.
       await go(page, '#/settings/team-audit')
       await expect(page.getByRole('heading', { level: 1, name: 'Audit log' })).toBeVisible()
-      await expect(page.locator('main')).toContainText(firstDay ? 'Nothing changed yet. Changes to settings, rules and people show here.' : 'Still reading your tools. Changes show here in a moment.')
+      await expect(page.locator('main')).toContainText(firstDay ? 'Nothing changed yet. Changes to settings, rules and people show here.' : 'Still loading. Changes show here in a moment.')
       expect(await noSideways(page)).toBe(true)
       expect(errors, errors.join('\n')).toEqual([])
     })
@@ -145,7 +145,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
     await expect(first).toContainText('Run now')
     await expect(first).not.toContainText('Run now ·')
     await page.keyboard.press('Escape')
-    await expect(row).toContainText(/Last run today at \d:\d\d\s?[AP]M$/)
+    await expect(row).toContainText(/Last run today at \d:\d\d\s?[AP]M/)
     await expect(row).not.toContainText('Not run yet')
   })
 

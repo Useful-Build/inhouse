@@ -26,8 +26,6 @@ export interface Row {
   switchKey?: string
   switchOn?: boolean
   switchTip?: string
-  /** A `mode` row: the visible label over its effort picker (set on the first row only). */
-  caption?: string
   /** A small tag shown beside the control (for example "Not an approver"). */
   tag?: string
   /** Runs after a `select` row's value was saved. */
@@ -57,7 +55,8 @@ export function checkField(type: FieldType, raw: string): { error: string } | { 
 }
 /** The largest amount a money field takes: far above any monthly cap a brand this size would set. */
 const MONEY_MAX = 100_000
-export interface Section { label: string; rows: Row[] }
+/** `caption` is one visible label over a column of controls (the effort pickers); `empty` is the muted line a section with no rows shows. */
+export interface Section { label: string; rows: Row[]; caption?: string; empty?: string }
 export interface Page { title: string; sections: Section[] }
 
 /** The time zones, saved as their ids and shown by name. */
@@ -82,6 +81,8 @@ export interface Env {
   data: AgentData
   /** Spent so far this month, from the agent's data (a cap never rescales it). */
   spent: number
+  /** On a phone the page is read-only, so a hint about changing a setting is left out. */
+  phone: boolean
   openTeam: (type: RequestType, text?: string) => void
   openPop: (pop: Pop) => void
   openSettings: (tab: string) => void
@@ -136,9 +137,9 @@ export function settingsPage(tab: string, env: Env): Page {
   const modeLabels = modes.filter(m => m.on).map(m => m.label)
   const defaultMode = modes.find(m => m.id === defaultModeId(data, saved))?.label ?? modeLabels[0]
   const modeRows = modes.map((m): Row => ({
-    title: m.label, desc: `${m.model} · ${m.sub}${m.label === defaultMode ? '. It stays on while it is the default. Pick another default to turn it off.' : ''}`, kind: 'mode', need: 0, key: modeEffortKey(m.id), value: EFFORTS.find(([e]) => e === m.effort)![1], options: EFFORTS.map(([, label]) => label),
+    title: m.label, desc: `${m.model} · ${m.sub}${m.label === defaultMode ? (env.phone ? ". It stays on while it's the default." : ". It stays on while it's the default. Pick another default to turn it off.") : ''}`, kind: 'mode', need: 0, key: modeEffortKey(m.id), value: EFFORTS.find(([e]) => e === m.effort)![1], options: EFFORTS.map(([, label]) => label),
     switchKey: modeOnKey(m.id), switchOn: m.on, switchTip: m.label === defaultMode ? 'This is the default model' : undefined, keywords: 'effort how hard it thinks',
-  })).map((r, i) => (i === 0 ? { ...r, caption: 'How hard it thinks' } : r))
+  }))
   const approvers = [...people.members.filter(m => (saved[`p:${m.id}`] ?? m.role) !== 'Member').map(m => m.name), 'Anyone who approves']
   const ruleApprover = (r: { approver: string }, i: number) => saved[`a:${i}`] ?? r.approver
   // Demoting an approver leaves the rules that name them as they are, so say so.
@@ -179,7 +180,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 1, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },
     'team-modes': { title: 'Models', sections: [
-      { label: 'Models', rows: modeRows },
+      { label: '', caption: 'How hard it thinks', rows: modeRows },
       { label: '', rows: [sel('Default model', '', 'g:mode', defaultMode, modeLabels)] },
     ] },
     'team-memory': { title: 'Team memory', sections: [
@@ -211,7 +212,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Today', rows: [...pausedRow, ...auditLog.filter(e => e.day === 'Today').map(auditRow)] },
       { label: 'Earlier', rows: auditLog.filter(e => e.day === 'Earlier').map(auditRow) },
       // Day one and while loading: nothing was changed yet.
-      { label: '', rows: auditLog.length === 0 && pausedRow.length === 0 ? [R(env.data.status === 'loading' ? 'Still reading your tools. Changes show here in a moment.' : 'Nothing changed yet. Changes to settings, rules and people show here.', '', 'value')] : [] },
+      { label: '', rows: [], empty: auditLog.length === 0 && pausedRow.length === 0 ? (env.data.status === 'loading' ? 'Still loading. Changes show here in a moment.' : 'Nothing changed yet. Changes to settings, rules and people show here.') : undefined },
       { label: 'Keep a copy', rows: [R('Download the log', 'Every change to settings, rules, people, tools and memory. Kept for 12 months. Nobody can edit it.', 'button', 'Download CSV', 0, undefined, undefined, () => {
         const q = (v: string) => `"${v.replaceAll('"', '""')}"`
         // A plain space in every cell: the no-break space before AM or PM is for the screen, not a spreadsheet.

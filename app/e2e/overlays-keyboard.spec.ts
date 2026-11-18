@@ -187,7 +187,7 @@ test('Dark, by keyboard: a Settings dropdown gives focus back, and a locked swit
   // shows in a tooltip, and Space doesn't turn it off.
   await open(page, '#/settings/team-modes', 'Models')
   const locked = page.getByRole('switch', { name: 'Smart: the team can use this model' })
-  await press(page.getByRole('combobox', { name: /^How hard Smart thinks/ }), 'Tab')
+  await press(page.getByRole('combobox', { name: /^How hard it thinks: Smart/ }), 'Tab')
   await expect(locked).toBeFocused()
   await expect(locked).toHaveAttribute('aria-disabled', 'true')
   await expect(locked).toHaveAttribute('aria-checked', 'true')

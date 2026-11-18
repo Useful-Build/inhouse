@@ -143,7 +143,7 @@ export const STATES: UiState[] = [
       await other.click()
       await expect(other).toHaveAttribute('aria-checked', 'false')
       await page.mouse.move(0, 0)
-      await page.getByRole('combobox', { name: /^How hard Smart thinks/ }).focus()
+      await page.getByRole('combobox', { name: /^How hard it thinks: Smart/ }).focus()
       await page.keyboard.press('Tab')
       await expect(page.getByRole('switch', { name: 'Smart: the team can use this model' })).toBeFocused()
       await expect(page.getByRole('tooltip').filter({ hasText: 'This is the default model' }).first()).toBeVisible()
