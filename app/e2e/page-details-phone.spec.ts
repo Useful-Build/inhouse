@@ -1,5 +1,5 @@
-// Page actions at 390 px: Settings shows its menu, then a page with Back (the app's and the browser's); the Library's type tabs
-// scroll inside their row and any type can be picked.
+// Page actions at 390 px: Settings shows its menu, then a page with Back (the app's and the browser's); the Library's filter sheet
+// holds the sort and the type.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
@@ -74,31 +74,36 @@ test('Phone: Settings opens on its menu, a page replaces it, and Back returns to
   await expect(page.getByRole('button', { name: 'Back to settings' })).toBeVisible()
 })
 
-test('Phone: Library type tabs scroll in their row with a fade, and the last type can be picked', async ({ page }) => {
+test('Phone: the Library filter sheet sorts and picks a type, and any type can be picked', async ({ page }) => {
   await start(page, '#/library')
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
-  const tabs = page.getByRole('radiogroup', { name: 'File type' })
-  const t = await tabs.evaluate(e => ({ sw: e.scrollWidth, cw: e.clientWidth }))
-  expect(t.sw, 'the tabs scroll inside their row').toBeGreaterThan(t.cw)
-  // The fade sits at the right edge while more tabs are hidden there.
-  const fade = tabs.locator('xpath=following-sibling::span[@aria-hidden="true"]')
-  await expect(fade).toHaveCount(1)
-  await shot(page, '390-library-tabs-fade')
-
-  const other = tabs.getByRole('radio', { name: /^Other \d+$/ })
+  await expect(page.getByRole('heading', { level: 1, name: 'All files' })).toBeVisible()
+  const rows = page.getByRole('list', { name: 'Files' }).getByRole('listitem')
+  const total = await rows.count()
+  const filters = page.getByRole('button', { name: /^Filters/ })
+  await filters.click()
+  const sheet = page.getByRole('dialog', { name: 'Filter files' })
+  await expect(sheet).toBeVisible()
+  expect(await noSideways(page)).toBe(true)
+  await shot(page, '390-library-filters')
+  // Sort by name, and the last type.
+  await sheet.getByRole('radio', { name: 'Name' }).click()
+  const other = sheet.getByRole('radio', { name: /^Other \d+$/ })
   const n = Number((await other.innerText()).replace(/\D/g, ''))
   await other.click()
   await expect(other).toHaveAttribute('aria-checked', 'true')
-  await expect(page.getByRole('list', { name: 'Files' }).getByRole('listitem')).toHaveCount(n)
-  // Scrolled to the end, the fade goes.
-  await tabs.evaluate(e => { e.scrollLeft = e.scrollWidth })
-  await expect(fade).toHaveCount(0)
-  // Tabs are at least 44 px tall to tap.
-  expect(await other.evaluate(e => e.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
+  await sheet.getByRole('button', { name: 'Done' }).click()
+  await expect(sheet).toHaveCount(0)
+  await expect(rows).toHaveCount(n)
+  expect(n).toBeLessThan(total)
+  // The button counts what is set, and focus came back to it.
+  await expect(filters).toContainText('2')
+  await expect(filters).toBeFocused()
+  const names = (await rows.locator('xpath=.//span[contains(@class,"font-strong")]').allInnerTexts()).map(t => t.toLowerCase())
+  expect(names, 'sorted by name').toEqual([...names].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })))
   expect(await noSideways(page)).toBe(true)
   await shot(page, '390-library-other-tab')
 
-  // Each card's menu shows without hover on a phone.
-  const first = page.getByRole('list', { name: 'Files' }).getByRole('listitem').first()
+  // Each row's menu shows without hover on a phone.
+  const first = rows.first()
   await expect(first.getByRole('button', { name: /^Actions for / })).toHaveCSS('opacity', '1')
 })

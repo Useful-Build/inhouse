@@ -13,8 +13,8 @@ import { TAP } from './fields'
 
 const navItemVariants = cva('flex w-full flex-none items-center gap-2.75 rounded-lg text-left', {
   variants: {
-    /** `fit` grows with a `detail` line (the Settings menu); `tap` is `fit` at a phone's 44px. */
-    size: { default: 'h-9', sm: 'h-8', fit: 'min-h-9 py-1.75', tap: 'min-h-11 py-1.75' },
+    /** `fit` grows with a `detail` line (the Settings menu); `tap` is `fit` at a phone's 44px; `chip` is a pill in a row (the Library's places on a narrow screen). */
+    size: { default: 'h-9', sm: 'h-8', fit: 'min-h-9 py-1.75', tap: 'min-h-11 py-1.75', chip: 'h-8.5 w-auto gap-1.75 rounded-full border border-border bg-card px-3 py-0 whitespace-nowrap' },
     /** `default` is the main nav (bigger, strong when open); `quiet` is the secondary nav and the account row. */
     tone: { default: 'text-base', quiet: 'text-sm' },
     /** The row leads with an avatar, which sits closer to the edge than an icon. */

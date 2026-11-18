@@ -56,6 +56,9 @@ export const STATES: UiState[] = [
   page_('act-today', 'Act', 'Normal', '#/today', '6 things need you. A fix is drafted for each.', true),
   page_('act-approvals', 'Act', 'Normal', '#/approvals', 'Waiting for you', true),
   page_('act-library', 'Act', 'Normal', '#/library', 'All files', true),
+  // PR 6: the Library with nothing in it yet, and while it loads.
+  page_('act-library-first-day', 'Act', 'First day', '#/library', 'No files yet.', true),
+  page_('act-library-loading', 'Act', 'Loading', '#/library', 'All files', true),
   page_('act-chat-stuck', 'Act', 'Normal', '#/chats/stuck', '3 orders · $556', true),
   page_('act-chats-all', 'Act', 'Normal', '#/chats/all', 'Kestrel delivery times', true),
   {

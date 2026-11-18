@@ -154,7 +154,8 @@ function useHashRoute() {
     }
     if (chatUnknown) return // replaced above
     const h = toHash(page, appKey, setTab, chatKey, menu)
-    if (location.hash === h) return
+    // An open Library file keeps its own link (#/library/<id>, see screens/library/route.ts).
+    if (location.hash === h || (page === 'library' && location.hash.startsWith(`${h}/`))) return
     // A hash that only needs tidying (none, unknown, no tab) replaces the entry. A real move adds one.
     // So does a new chat getting its id when the first question is asked: Back skips the empty chat.
     const cur = fromHash(location.hash)

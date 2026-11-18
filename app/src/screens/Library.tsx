@@ -7,15 +7,18 @@ import type { LibraryFile, LibraryKind, LibraryPlace } from '../agent'
 import type { LibraryView } from '../state/store'
 import { useAgentData, useLibraryFiles, useUi } from '../state/store'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { Button, CardGrid, EmptyState, Icon, IconButton, MenuItem, NavItem, PageHeader, Segmented, SelectionBar } from '../ui'
 import { Confirm, SearchBox, Select, TAP, TAP_ROW } from '../ui/fields'
 import { CodeBlock, DocPage, MediaFace, TypeBadge, TypeChip } from './library/Previews'
+import { FilterSheet } from './library/FilterSheet'
+import { closeFile, dropFileEntry, pushFile, replaceFile, useOpenFileId, useWide } from './library/route'
 import { OPEN, openSource } from './library/source'
 import { Viewer } from './library/Viewer'
 
 type Tab = 'all' | LibraryKind
-const TABS: [Tab, string][] = [['all', 'All'], ['images', 'Images'], ['documents', 'Documents'], ['code', 'Code'], ['media', 'Audio and video'], ['other', 'Other']]
+const TABS: [Tab, string, string][] = [['all', 'All', 'stacks'], ['images', 'Images', 'image'], ['documents', 'Documents', 'description'], ['code', 'Code', 'code'], ['media', 'Audio and video', 'play_circle'], ['other', 'Other', 'attach_file']]
 const VIEWS: [LibraryView, string, string][] = [['masonry', 'Masonry', 'view_quilt'], ['grid', 'Grid', 'grid_view'], ['list', 'List', 'view_list']]
 type Sort = 'Newest' | 'Oldest' | 'Name' | 'Size'
 const SORTS: Sort[] = ['Newest', 'Oldest', 'Name', 'Size']
@@ -38,11 +41,17 @@ const FILE_DELETE = 'library-delete'
 /** The last delete and its Undo, so the next delete can join it while its toast is still showing. */
 let lastDelete: { ids: string[]; undo: () => void } | null = null
 const plural = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`
+/** Loading: the widths of the placeholder cards' name lines. */
+const SKELETON_WIDTHS = ['w-3/4', 'w-3/5', 'w-4/5', 'w-1/2', 'w-2/3', 'w-3/5']
 
 export function Library() {
   const files = useLibraryFiles()
-  const places = useAgentData().library.places
+  const data = useAgentData()
+  const places = data.library.places
   const phone = useUi(s => s.phone)
+  // Below 1024px the places become chips above the files, before the files column gets squeezed.
+  const wide = useWide()
+  const chips = phone || !wide
   const { showToast, clearToast } = useUi.getState()
   const [place, setPlace] = useState('all')
   const [tab, setTab] = useState<Tab>('all')
@@ -53,13 +62,17 @@ export function Library() {
   const [q, setQ] = useState('')
   const [selecting, setSelecting] = useState(false)
   const [picked, setPicked] = useState<Record<string, true>>({})
-  const [openId, setOpenId] = useState<string | null>(null)
+  // An open file has its own link, so Back closes it and a link opens it (see library/route.ts).
+  const openId = useOpenFileId()
   const [confirm, setConfirm] = useState(false)
+  const [filters, setFilters] = useState(false)
 
-  const matching = useMemo(() => {
+  // The search narrows every count: the places, the types and the list.
+  const searched = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    return files.filter(f => (place === 'all' || f.place === place) && f.name.toLowerCase().includes(needle))
-  }, [files, place, q])
+    return files.filter(f => f.name.toLowerCase().includes(needle))
+  }, [files, q])
+  const matching = useMemo(() => searched.filter(f => place === 'all' || f.place === place), [searched, place])
   const shown = useMemo(() => matching.filter(f => tab === 'all' || f.kind === tab).sort(SORT_BY[sort]), [matching, tab, sort])
   const count = (k: Tab) => (k === 'all' ? matching.length : matching.filter(f => f.kind === k).length)
   const placeOf = (id: string): LibraryPlace => {
@@ -74,6 +87,12 @@ export function Library() {
   const at = open ? shown.indexOf(open) : -1
   const prevId = at > 0 ? shown[at - 1].id : null
   const nextId = at >= 0 && at < shown.length - 1 ? shown[at + 1].id : null
+  // A link to a file that doesn't exist (typed, or deleted since) falls back to the list and says so.
+  useEffect(() => {
+    if (!openId || open || data.status === 'loading') return
+    dropFileEntry()
+    useUi.getState().showToast("That file isn't available. It may have been deleted.", { icon: 'info', key: 'route-notice' })
+  }, [openId, open, data.status])
 
   // Esc closes the delete question first, then the viewer, then leaves Select mode. Left and Right step the viewer.
   useEffect(() => {
@@ -82,18 +101,18 @@ export function Library() {
       const inControl = e.target instanceof Element && !!e.target.closest('input, textarea, select, video, audio, [contenteditable]:not([contenteditable="false"])')
       if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && openId && !confirm && !inControl && !e.altKey && !e.metaKey && !e.ctrlKey) {
         const to = e.key === 'ArrowLeft' ? prevId : nextId
-        if (to) { e.preventDefault(); setOpenId(to) }
+        if (to) { e.preventDefault(); replaceFile(to) }
         return
       }
       if (e.key !== 'Escape') return
-      // The delete question listens for its own Escape (Confirm).
-      if (confirm) return
-      if (openId) setOpenId(null)
+      // The delete question listens for its own Escape (Confirm), and so does the filter sheet.
+      if (confirm || filters) return
+      if (openId) closeFile()
       else if (selecting) { setSelecting(false); setPicked({}) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [confirm, openId, selecting, prevId, nextId])
+  }, [confirm, filters, openId, selecting, prevId, nextId])
 
   const endSelect = () => { setSelecting(false); setPicked({}) }
   // A pick only makes sense for what is on screen, so changing the tab, place or search clears it.
@@ -101,7 +120,7 @@ export function Library() {
   const pickPlace = (id: string) => { setPlace(id); setPicked({}) }
   const search = (v: string) => { setQ(v); setPicked({}) }
   const click = (f: LibraryFile) => {
-    if (!selecting) { setOpenId(f.id); return }
+    if (!selecting) { pushFile(f.id); return }
     setPicked(p => { const n = { ...p }; if (n[f.id]) delete n[f.id]; else n[f.id] = true; return n })
   }
   const download = () => showToast("Download isn't connected in this demo.", { icon: 'info', ms: 4000 })
@@ -142,73 +161,102 @@ export function Library() {
 
   // Each file's menu. None in Select mode, where a click picks.
   const menuFor = (f: LibraryFile) => selecting ? null : (
-    <FileMenu file={f} phone={phone} onOpen={() => setOpenId(f.id)} onDownload={download}
+    <FileMenu file={f} phone={phone} onOpen={() => pushFile(f.id)} onDownload={download}
       onSource={f.link ? () => openSource(f) : undefined} onDelete={() => removeOne(f)} />
   )
 
   const panelItem = (id: string, name: string, icon: string, n: number) => {
     const active = place === id
-    return phone ? (
-      <button key={id} type="button" aria-pressed={active} onClick={() => pickPlace(id)}
-        className={`${TAP_ROW} inline-flex h-8.5 flex-none items-center gap-1.75 rounded-full border py-0 pr-3.25 pl-2.75 text-sm font-strong whitespace-nowrap ${active ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-foreground-2'}`}>
-        <Icon name={icon} size={16} />{name}<span className={cn('font-book tabular-nums', !active && 'text-muted-foreground')}>{n}</span>
-      </button>
+    return chips ? (
+      // A place filters the files, so it's pressed, not the current page. The same selected look as the side menus.
+      <NavItem key={id} size="chip" icon={icon} label={name} meta={n} active={active} aria-pressed={active} aria-current={undefined}
+        className={cn('text-sm', phone && TAP_ROW)} onClick={() => pickPlace(id)} />
     ) : (
-      // A place filters the files, so it's pressed, not the current page.
       <NavItem key={id} icon={icon} label={name} meta={n} active={active} aria-pressed={active} aria-current={undefined} onClick={() => pickPlace(id)} />
     )
   }
 
+  const filterCount = Number(sort !== 'Newest') + Number(tab !== 'all')
+  const loading = data.status === 'loading'
+  // A phone shows one list, whatever view was picked on a desktop.
+  const shownView = phone ? 'list' : view
+
   return (
     // Desktop: the places panel and the title row stay put, and only the files scroll (App gives this page the height under the top bar). Phone: the page scrolls.
-    <div className={phone ? 'flex flex-col gap-3 px-(--app-pad-x) pt-2 pb-24' : 'box-border flex min-h-0 grow basis-0 items-stretch gap-7 px-(--app-pad-x) pt-2'}>
-      <aside aria-label="Places" className={phone ? 'flex min-w-0 flex-col gap-2.5' : 'flex w-library-nav flex-none flex-col gap-3.5 overflow-y-auto pb-6'}>
+    <div className={phone ? 'flex flex-col gap-3 px-(--app-pad-x) pt-2 pb-24' : cn('box-border flex min-h-0 grow basis-0 px-(--app-pad-x) pt-2', chips ? 'flex-col gap-3' : 'items-stretch gap-7')}>
+      <aside aria-label="Places" className={chips ? 'flex min-w-0 flex-none flex-col gap-2.5' : 'flex w-library-nav flex-none flex-col gap-3.5 overflow-y-auto pb-6'}>
         <SearchBox value={q} onChange={search} placeholder="Search library" label="Search library" className="flex-none" />
-        <nav aria-label="Library places" className={phone ? '-mx-(--app-pad-x) -my-1.5 flex gap-2 overflow-x-auto px-(--app-pad-x) py-1.5' : 'flex flex-col gap-px'}>
-          {panelItem('all', 'All files', 'stacks', files.length)}
-          {places.map(p => panelItem(p.id, p.name, p.icon, files.filter(f => f.place === p.id).length))}
+        <nav aria-label="Library places" className={phone ? '-mx-(--app-pad-x) -my-1.5 flex gap-2 overflow-x-auto px-(--app-pad-x) py-1.5' : chips ? 'flex flex-wrap gap-2' : 'flex flex-col gap-px'}>
+          {panelItem('all', 'All files', 'stacks', searched.length)}
+          {places.map(p => panelItem(p.id, p.name, p.icon, searched.filter(f => f.place === p.id).length))}
         </nav>
       </aside>
 
       <section ref={filesArea} aria-label={title} className={phone ? 'min-w-0 flex-1' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>
         <PageHeader title={title} truncate actions={<>
-          <Select label="Sort" value={sort} options={SORTS} onChange={v => setSort(v as Sort)} minWidth={120} />
-          <Segmented label="View" value={view} options={VIEWS} onChange={setView} className={cn(phone && '*:min-h-11')} />
-          <Button variant="outline" size="lg" aria-pressed={selecting} onClick={() => (selecting ? endSelect() : setSelecting(true))}>
+          {phone ? (
+            <Button variant="outline" size="lg" className={TAP_ROW} onClick={() => setFilters(true)}>
+              <Icon name="tune" size={18} />Filters{filterCount > 0 && <span className="font-book text-muted-foreground tabular-nums">{filterCount}</span>}
+            </Button>
+          ) : (
+            <>
+              <Select label="Sort" value={sort} options={SORTS} onChange={v => setSort(v as Sort)} minWidth={120} />
+              <Segmented label="View" value={view} options={VIEWS} onChange={setView} />
+            </>
+          )}
+          <Button variant="outline" size="lg" aria-pressed={selecting} className={cn(phone && TAP_ROW)} onClick={() => (selecting ? endSelect() : setSelecting(true))}>
             {selecting ? 'Done' : 'Select'}
           </Button>
         </>} />
-        <EdgeFade on={phone} className="mt-3.5 w-fit max-w-full self-start">
-          {/* On desktop the tab bar is a nav row's 36px, level with the selected place beside it. */}
-          <Segmented label="File type" value={tab} onChange={pickTab} className={cn(phone ? '*:min-h-11' : 'h-9')}
+        {!phone && (
+          // On desktop the tab bar is a nav row's 36px, level with the selected place beside it.
+          <Segmented label="File type" value={tab} onChange={pickTab} className="mt-3.5 h-9 w-fit max-w-full self-start"
             options={TABS.map(([k, t]) => [k, <>{t} <span className="font-book text-muted-foreground tabular-nums">{count(k)}</span></>] as [Tab, ReactNode])} />
-        </EdgeFade>
+        )}
 
         <div className={phone ? undefined : '-mx-1 mt-3 min-h-0 flex-1 overflow-y-auto px-1 pb-24'}>
-        {shown.length === 0 ? (
-          <EmptyState variant="inline">
-            {q.trim() ? `No files match "${q.trim()}".` : 'No files here yet.'}
-          </EmptyState>
-        ) : view === 'list' ? (
-          <div ref={list} tabIndex={-1} role="list" aria-label="Files" className="mt-4 rounded-2xl border border-border bg-card px-2 py-1">
-            {!phone && (
-              <div className="flex items-center gap-1 border-b border-divider">
-                <div className={`mono-label grid flex-1 ${LIST_COLS} gap-3.5 px-3 py-2.5`}>
-                  <span>Name</span><span>Type</span><span>Place</span><span className="text-right">Size</span><span>Date</span>
+        {loading ? (
+          <div role="status" aria-busy="true" className="mt-4">
+            <span className="sr-only">Loading files</span>
+            <CardGrid aria-hidden="true" size="sm" className={phone ? 'grid-cols-2 gap-2.5' : undefined}>
+              {SKELETON_WIDTHS.map(w => (
+                <div key={w} className="box-border flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+                  <Skeleton className="aspect-4/3 animate-none rounded-none" />
+                  <div className="flex flex-col gap-2 px-3 pt-2.5 pb-3">
+                    <Skeleton className={`h-3.5 animate-none rounded-sm bg-fill-hover ${w}`} />
+                    <Skeleton className="h-2.5 w-1/2 animate-none rounded-sm" />
+                  </div>
                 </div>
-                {/* Room for each row's menu button. */}
-                <span aria-hidden="true" className="size-8 flex-none" />
+              ))}
+            </CardGrid>
+          </div>
+        ) : files.length === 0 ? (
+          <EmptyState className="mt-4">No files yet. The files your Inhouse agent makes and your team shares will show up here.</EmptyState>
+        ) : shown.length === 0 ? (
+          <div className="my-10 flex flex-col items-center gap-3">
+            <EmptyState variant="inline" className="my-0">
+              {q.trim() ? `No files match "${q.trim()}".` : 'No files here yet.'}
+            </EmptyState>
+            {q.trim() && <Button variant="outline" className={cn(phone && TAP_ROW)} onClick={() => search('')}>Clear</Button>}
+          </div>
+        ) : shownView === 'list' ? (
+          <div ref={list} tabIndex={-1} role="list" aria-label="Files" className="@container mt-4 rounded-2xl border border-border bg-card px-2 py-1">
+            {/* The columns need room: in a narrow list (the container, not the window) each row is a name over its details. */}
+            <div className="hidden items-center gap-1 border-b border-divider @2xl:flex">
+              <div className={`mono-label grid flex-1 ${LIST_COLS} gap-3.5 px-3 py-2.5`}>
+                <span>Name</span><span>Type</span><span>Place</span><span className="text-right">Size</span><span>Date</span>
               </div>
-            )}
+              {/* Room for each row's menu button. */}
+              <span aria-hidden="true" className="size-8 flex-none" />
+            </div>
             {shown.map(f => <Row key={f.id} file={f} phone={phone} selecting={selecting} on={!!picked[f.id]} onClick={() => click(f)} menu={menuFor(f)} />)}
           </div>
-        ) : view === 'grid' ? (
-          // On a phone two columns, whatever the width.
-          <CardGrid ref={list} tabIndex={-1} role="list" aria-label="Files" size="sm" className={phone ? 'mt-4 grid-cols-2 gap-2.5' : 'mt-4'}>
+        ) : shownView === 'grid' ? (
+          <CardGrid ref={list} tabIndex={-1} role="list" aria-label="Files" size="sm" className="mt-4">
             {shown.map(f => <Card key={f.id} file={f} grid selecting={selecting} on={!!picked[f.id]} onClick={() => click(f)} menu={menuFor(f)} />)}
           </CardGrid>
         ) : (
-          <div ref={list} tabIndex={-1} role="list" aria-label="Files" className={`mt-4 ${phone ? 'columns-2 gap-2.5' : 'columns-library gap-3.5'}`}>
+          <div ref={list} tabIndex={-1} role="list" aria-label="Files" className="mt-4 columns-library gap-3.5">
             {shown.map(f => <Card key={f.id} file={f} grid={false} selecting={selecting} on={!!picked[f.id]} onClick={() => click(f)} menu={menuFor(f)} />)}
           </div>
         )}
@@ -223,8 +271,11 @@ export function Library() {
         </SelectionBar>
       )}
 
-      {open && <Viewer file={open} place={placeOf(open.place)} onClose={() => setOpenId(null)} onDownload={download}
-        onPrev={prevId ? () => setOpenId(prevId) : undefined} onNext={nextId ? () => setOpenId(nextId) : undefined} />}
+      {open && <Viewer file={open} place={placeOf(open.place)} onClose={closeFile} onLeave={dropFileEntry} onDownload={download}
+        onPrev={prevId ? () => replaceFile(prevId) : undefined} onNext={nextId ? () => replaceFile(nextId) : undefined} />}
+      {phone && filters && (
+        <FilterSheet sort={sort} sorts={SORTS} onSort={setSort} tab={tab} tabs={TABS.map(([k, t, icon]) => [k, t, count(k), icon])} onTab={pickTab} onClose={() => setFilters(false)} />
+      )}
       {confirm && (
         <Confirm label="Delete files" title={`Delete ${plural(pickedIds.length)}?`} action="Delete" onCancel={() => setConfirm(false)}
           onConfirm={() => { remove(pickedIds); setConfirm(false); endSelect() }}>
@@ -236,6 +287,8 @@ export function Library() {
 }
 
 const LIST_COLS = 'grid-cols-library-list'
+/** The same columns, from a list 42rem wide. */
+const LIST_COLS_AT = '@2xl:grid-cols-library-list'
 
 function Check({ on }: { on: boolean }) {
   return (
@@ -248,8 +301,9 @@ function Check({ on }: { on: boolean }) {
 function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFile; grid: boolean; selecting: boolean; on: boolean; onClick: () => void; menu: ReactNode }) {
   const place = useAgentData().library.places.find(p => p.id === f.place)
   const phone = useUi(s => s.phone)
-  const frame = (child: React.ReactNode, bg = 'bg-muted') => (
-    <div className={`relative overflow-hidden ${bg} ${grid ? 'aspect-4/3' : ''}`}>{child}</div>
+  // A picture, page or poster steps down in dark (preview-dim); code and badges follow the theme already.
+  const frame = (child: React.ReactNode, bg = 'bg-muted', dim = true) => (
+    <div className={`relative overflow-hidden ${bg} ${dim ? 'preview-dim' : ''} ${grid ? 'aspect-4/3' : ''}`}>{child}</div>
   )
   // The picture part of the card. Plain files (no preview of their own) get a badge instead.
   let visual: React.ReactNode = null
@@ -259,7 +313,7 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
   else if (grid) {
     visual = frame(f.text
       ? <CodeBlock text={f.text} lines={9} className="box-border h-full rounded-none" />
-      : <div className="absolute inset-0 flex items-center justify-center"><TypeBadge type={f.type} size={64} /></div>)
+      : <div className="absolute inset-0 flex items-center justify-center"><TypeBadge type={f.type} size={64} /></div>, 'bg-muted', false)
   }
   const head = !visual && (
     // On a phone the badge sits above the name, so the name gets the full card width for its two lines.
@@ -284,8 +338,9 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
             {!f.src && <TypeChip type={f.type} />}
           </div>
         )}
-        <div className={`flex items-center gap-1.25 text-xs text-muted-foreground ${visual ? 'mt-0.5' : ''}`}>
-          {place && <Icon name={place.icon} size={13} />}<span className="ellipsis">{f.from}</span>
+        {/* Two lines, so a chat's name isn't cut. A grid tile keeps both lines' room, so its tiles stay even. */}
+        <div className={`flex items-start gap-1.25 text-xs text-muted-foreground ${visual ? 'mt-0.5' : ''} ${grid ? 'min-h-card-meta' : ''}`}>
+          {place && <span className="mt-px flex flex-none"><Icon name={place.icon} size={13} /></span>}<span className="line-clamp-2 min-w-0 wrap-anywhere">{f.from}</span>
         </div>
       </div>
       {selecting && <Check on={on} />}
@@ -296,22 +351,27 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
 }
 
 function Row({ file: f, phone, selecting, on, onClick, menu }: { file: LibraryFile; phone: boolean; selecting: boolean; on: boolean; onClick: () => void; menu: ReactNode }) {
-  const thumb = f.src
-    ? <img src={f.src} alt="" loading="lazy" className="block size-9 flex-none rounded-lg object-cover" />
+  // No previews in a phone's rows: the type badge only.
+  const thumb = f.src && !phone
+    ? <img src={f.src} alt="" loading="lazy" className="block size-9 flex-none rounded-lg object-cover preview-dim" />
     : <TypeBadge type={f.type} size={36} />
   return (
     <div role="listitem" className={`group flex items-center gap-1 rounded-lg transition ${on ? 'bg-fill' : 'hover:bg-accent'}`}>
-    <button type="button" data-file-id={f.id} aria-pressed={selecting ? on : undefined} onClick={onClick}
-      className={`box-border min-h-13.5 min-w-0 flex-1 items-center gap-3.5 rounded-lg px-3 py-2 text-left text-sm ${phone ? 'flex' : `grid ${LIST_COLS}`}`}>
-      <span className={`flex min-w-0 items-center gap-3 ${phone ? 'flex-1' : ''}`}>
+    {/* The list is a container: from 42rem wide the row is columns, below it a name over its details. */}
+    <button type="button" data-file data-file-id={f.id} aria-pressed={selecting ? on : undefined} onClick={onClick}
+      className={`box-border flex min-h-13.5 min-w-0 flex-1 items-center gap-3.5 rounded-lg px-3 py-2 text-left text-sm @2xl:grid ${LIST_COLS_AT}`}>
+      <span className="flex min-w-0 flex-1 items-center gap-3">
         {selecting && <span aria-hidden="true" className={`box-border flex size-5 flex-none items-center justify-center rounded-full text-primary-foreground ${on ? 'bg-primary' : 'border-hairline border-border-strong bg-card'}`}>{on && <Icon name="check" size={14} weight={500} />}</span>}
         {thumb}
         <span className="min-w-0">
-          <span className="ellipsis block text-base font-strong">{f.name}</span>
-          {phone && <span className="ellipsis block text-xs text-muted-foreground">{f.type} · {f.size} · {f.from}</span>}
+          <span className="line-clamp-2 block text-base font-strong wrap-anywhere">{f.name}</span>
+          <span className="line-clamp-2 block text-xs text-muted-foreground wrap-anywhere @2xl:hidden">{f.type} · {f.size} · {f.from}</span>
         </span>
       </span>
-      {!phone && <><span className="font-mono text-xs text-foreground-3">{f.type}</span><span className="ellipsis text-foreground-3">{f.from}</span><span className="text-right text-foreground-3 tabular-nums">{f.size}</span><span className="text-foreground-3 tabular-nums">{f.date}</span></>}
+      <span className="hidden font-mono text-xs text-foreground-3 @2xl:block">{f.type}</span>
+      <span className="ellipsis hidden text-foreground-3 @2xl:block">{f.from}</span>
+      <span className="hidden text-right text-foreground-3 tabular-nums @2xl:block">{f.size}</span>
+      <span className="hidden text-foreground-3 tabular-nums @2xl:block">{f.date}</span>
     </button>
     {menu ?? (!phone && <span aria-hidden="true" className="size-8 flex-none" />)}
     </div>
@@ -345,28 +405,5 @@ function FileMenu({ file, phone, onOpen, onDownload, onSource, onDelete }: {
         </MenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-/** Phone: a row that scrolls sideways inside itself, with a fade at the right edge while more is hidden there. */
-function EdgeFade({ on, className, children }: { on: boolean; className?: string; children: ReactNode }) {
-  const box = useRef<HTMLDivElement>(null)
-  const [more, setMore] = useState(false)
-  useEffect(() => {
-    // The scrolling element is the control inside (a segmented control scrolls itself).
-    const el = box.current?.firstElementChild
-    if (!on || !(el instanceof HTMLElement)) { setMore(false); return }
-    const check = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
-    check()
-    el.addEventListener('scroll', check, { passive: true })
-    const ro = new ResizeObserver(check)
-    ro.observe(el)
-    return () => { el.removeEventListener('scroll', check); ro.disconnect() }
-  }, [on])
-  return (
-    <div ref={box} className={cn('relative', className)}>
-      {children}
-      {more && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-10 rounded-r-lg bg-linear-to-l from-background" />}
-    </div>
   )
 }
