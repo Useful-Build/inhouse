@@ -21,7 +21,9 @@ async function start(page: Page, hash: string) {
 async function fits(list: Locator, what: string) {
   const r = await list.evaluate(el => {
     const b = el.getBoundingClientRect()
-    const marks = [...el.querySelectorAll('.ms')].filter(m => m.textContent === 'check').map(m => m.getBoundingClientRect()).filter(r => r.width > 0)
+    const marks = [...el.querySelectorAll('.ms')].filter(m => m.textContent === 'check')
+      // A long menu scrolls: bring each mark into view first, so only a mark that overflows its row counts.
+      .map(m => { m.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return m.getBoundingClientRect() }).filter(r => r.width > 0)
     return {
       over: el.scrollWidth - el.clientWidth, left: b.left, right: b.right, vw: document.documentElement.clientWidth,
       marksOut: marks.filter(m => m.left < b.left || m.right > b.right || m.top < b.top || m.bottom > b.bottom).length,

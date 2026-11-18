@@ -70,7 +70,7 @@ test.describe('desktop', () => {
     expect(Math.round(fold.h / fold.line)).toBe(8)
     // One name, its state in aria-expanded.
     const more = bubble.getByRole('button', { name: /^Show (more|less)$/ })
-    await expect(more).toHaveText('Show more')
+    await expect(more).toHaveAccessibleName('Show more')
     await expect(more).toHaveAttribute('aria-expanded', 'false')
     await shot(page, 'long-message-folded')
 
@@ -78,7 +78,7 @@ test.describe('desktop', () => {
     await more.scrollIntoViewIfNeeded()
     const top = await scroller(page).evaluate(el => el.scrollTop)
     await more.click()
-    await expect(more).toHaveText('Show less')
+    await expect(more).toHaveAccessibleName('Show less')
     await expect(more).toHaveAttribute('aria-expanded', 'true')
     const open = await text.evaluate(el => ({ h: el.clientHeight, full: el.scrollHeight }))
     expect(open.full - open.h).toBeLessThanOrEqual(1)
