@@ -70,7 +70,11 @@ const loadChannels = (): ToolChannel[] => {
       if (typeof c[k] !== 'string' || !c[k]) throw new Error(`Tools data: channel "${String(c.key)}" is missing "${k}".`)
     }
     if (![0, 1, 2].includes(c.need)) throw new Error(`Tools data: channel "${c.key}" has an unknown stage "${String(c.need)}".`)
-    if (toolsJson.connected.includes(c.key) || toolsJson.catalog.some(t => t.k === c.key)) throw new Error(`Tools data: "${c.key}" is a channel, so it can't also be a tool.`)
+    for (const k of ['channel', 'ask'] as const) {
+      if (c[k] !== undefined && (typeof c[k] !== 'string' || !c[k])) throw new Error(`Tools data: channel "${c.key}" has an empty or non-text "${k}".`)
+    }
+    if (c.sends !== undefined && (!Array.isArray(c.sends) || c.sends.some(x => typeof x !== 'string' || !x))) throw new Error(`Tools data: channel "${c.key}" needs "sends" to be a list of non-empty text.`)
+    if (toolsJson.connected.includes(c.key) || toolsJson.beingConnected.includes(c.key) || Object.hasOwn(toolsJson.details, c.key) || toolsJson.catalog.some(t => t.k === c.key)) throw new Error(`Tools data: "${c.key}" is a channel, so it can't also be a tool.`)
   }
   return out
 }

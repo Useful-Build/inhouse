@@ -411,6 +411,12 @@ export interface ToolChannel {
   /** When it was connected, as shown ("Nov 2"). */
   since: string
   site: string
+  /** Where it reaches the team ("#ops"). */
+  channel?: string
+  /** What reaches that channel, as short phrases. */
+  sends?: string[]
+  /** Who can ask the agent there. */
+  ask?: string
 }
 
 export interface ToolsData {
