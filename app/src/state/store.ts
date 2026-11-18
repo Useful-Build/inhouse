@@ -833,6 +833,9 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       // An edit open in this chat ends first, so the question doesn't take the edited one's quote and files (F).
       const s0 = get()
       const here = s0.page === 'chats' && !s0.chatList ? openChatKey(s0, agent.read()) : null
+      // While editing, the composer's Send is sendEdit: an ask now comes from elsewhere (a suggestion, Try again), so
+      // the draft the edit gives back stays in the composer, its text, files and quote untouched.
+      const fromElsewhere = here !== null && s0.editMsg?.chatId === here
       if (here !== null) dropEdit(here)
       // A question from Today, a tool page or the list of chats starts a chat of its own.
       const before = get()
@@ -855,11 +858,13 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set(s => ({
         page: 'chats', openId: null, pop: null, sideOpen: false,
         // Only the composer the question came from is cleared: asking in a chat leaves Today's draft alone.
-        replyTo: null, atts: [], chatDraft: '',
-        ...(before.page === 'today' ? { todayDraft: '' } : {}),
-        drafts: dropDraft(s.drafts, composerKey(before)),
+        ...(fromElsewhere ? {} : {
+          replyTo: null, atts: [], chatDraft: '',
+          ...(before.page === 'today' ? { todayDraft: '' } : {}),
+          drafts: dropDraft(s.drafts, composerKey(before)),
+        }),
       }))
-      return runAsk(chatId, q, { quote: replyTo ?? undefined, atts: before.atts, model: modelSel, replacesRun: askOpts.replacesRun })
+      return runAsk(chatId, q, { quote: fromElsewhere ? undefined : replyTo ?? undefined, atts: fromElsewhere ? [] : before.atts, model: modelSel, replacesRun: askOpts.replacesRun })
     },
     stopRun: chatId => {
       const id = chatId ?? openChatKey(get(), agent.read())
@@ -916,8 +921,9 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set(s => { const cur = mine(s); return cur ? { runs: { ...s.runs, [cid]: { ...cur, sent: [...cur.sent, item] } } } : {} })
       agent.send(runId, item.text, { priority: 'now', attachments: item.atts }).catch(e => {
         // The run ended before the agent took it (its notice already showed), so nothing was stopped: the note goes.
+        // Only while this run is still the chat's: after Stop, a newer ask or a delete, the note stands for that.
         console.warn('Inhouse: the agent did not take the message.', e)
-        updateChat(cid, c => ({ ...c, extras: c.extras.filter(m => m.id !== note.id) }))
+        if (mine(get())) updateChat(cid, c => ({ ...c, extras: c.extras.filter(m => m.id !== note.id) }))
         // Still in the run's list: it waits at the front again and goes as soon as nothing answers in the chat. Gone from
         // it: Stop or the run's end already put it back in the queue.
         set(s => {
@@ -1182,7 +1188,8 @@ useUi.subscribe((s, prev) => {
   if (from !== null && !drafts[from]?.text && !drafts[from]?.atts.length) drafts = dropDraft(drafts, from)
   const next = to === null ? undefined : own(drafts, to)
   useUi.setState({
-    ...(edit && s.editMsg === prev.editMsg ? { editMsg: null } : {}),
+    // The quote goes back to the one from before the edit too, unless the change set its own (openChat clears it).
+    ...(edit && s.editMsg === prev.editMsg ? { editMsg: null, ...(s.replyTo === prev.replyTo ? { replyTo: edit.replyTo } : {}) } : {}),
     drafts: dropDraft(drafts, to),
     atts: next?.atts ?? [],
     // Today keeps its text in todayDraft; a new chat keeps what newChat() put there (its prefill).

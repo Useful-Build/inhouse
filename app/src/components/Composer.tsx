@@ -9,7 +9,7 @@ import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AttachmentChip, Button, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
 import { TAP } from '../ui/fields'
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -40,7 +40,7 @@ const NOTE_BAR = 'mb-2 -ml-1.5 flex items-center gap-2 rounded-lg bg-accent py-1
 const MAX_FILES = 10
 const MAX_MB = 20
 /** The phone layout's breakpoint (App.tsx), read directly: the store's `phone` is set after the first render. */
-const PHONE_QUERY = '(max-width: 760px)'
+export const PHONE_QUERY = '(max-width: 760px)'
 /** A touch-only screen (no mouse, no hover): no Shift+Enter there, so Enter makes a new line and only Send sends.
  *  A narrow desktop window, or an iPad with a keyboard (it can hover), still sends on Enter. */
 const TOUCH_QUERY = '(pointer: coarse) and (hover: none)'
@@ -86,6 +86,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // A phone's box, Today's and a chat's: the tools and the model sit in "+", no logo stack or dictate (M27).
   const slim = phone
   const editNote = useId()
+  const toolsHead = useId()
   // The field's top edge fades once it scrolls (over 8 lines), so a cut line reads as more above (M12).
   const [scrolled, setScrolled] = useState(false)
   const [pop, setPop] = useState<Pop>(null)
@@ -204,7 +205,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // The tools switches for this chat and Manage tools: the tools menu, or "+" on a phone.
   const toolItems = (
     <>
-      <DropdownMenuLabel className={cn('text-sm font-normal', slim ? 'px-2.5 pt-2 pb-1 text-muted-foreground' : 'pt-2 pb-1.5')}>Tools read in this chat</DropdownMenuLabel>
+      <DropdownMenuLabel id={toolsHead} className={cn('text-sm font-normal', slim ? 'px-2.5 pt-2 pb-1 text-muted-foreground' : 'pt-2 pb-1.5')}>Tools read in this chat</DropdownMenuLabel>
+      <DropdownMenuGroup aria-labelledby={toolsHead}>
       {TOOL_KEYS.length === 0 && (
         <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{counts.connected === 0 ? 'No tools are connected yet.' : "Your Inhouse agent can't read any of your tools right now."}</DropdownMenuLabel>
       )}
@@ -219,6 +221,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
           </DropdownMenuCheckboxItem>
         )
       })}
+      </DropdownMenuGroup>
       <DropdownMenuSeparator className="mx-1.5 my-1" />
       <DropdownMenuItem className="px-2.5 py-2 text-sm font-strong" onSelect={() => go('apps')}>Manage tools →</DropdownMenuItem>
     </>
@@ -238,9 +241,9 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
       onDragLeave={e => { if (!hasFiles(e)) return; dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragging(false) }}
       onDrop={e => { if (!hasFiles(e)) return; e.preventDefault(); endDrag(); takeFiles(Array.from(e.dataTransfer.files)) }}>
       {editing && (
-        <div id={editNote} className={NOTE_BAR}>
+        <div className={NOTE_BAR}>
           <Icon name="edit" size={15} />
-          <b className="min-w-0 flex-1 font-semibold text-foreground">Editing your message</b>
+          <b id={editNote} className="min-w-0 flex-1 font-semibold text-foreground">Editing your message</b>
           <Button variant="ghost" size="sm" onClick={cancelEdit} className={cn('-my-1.5 flex-none', phone && TAP)}>Cancel</Button>
         </div>
       )}
@@ -288,7 +291,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
         <DropdownMenu modal={false} open={pop === 'attach'} onOpenChange={onOpen('attach')}>
           <Tip label="Attach">
             <DropdownMenuTrigger asChild>
-              <button type="button" aria-label="Attach" className={cn(ROUND, 'text-foreground-2', pop === 'attach' ? 'bg-fill-hover' : 'bg-secondary hover:bg-fill-hover')}>
+              <button type="button" aria-label={slim ? 'Attach, tools and model' : 'Attach'} className={cn(ROUND, 'text-foreground-2', pop === 'attach' ? 'bg-fill-hover' : 'bg-secondary hover:bg-fill-hover')}>
                 <Icon name="add" size={20} />
               </button>
             </DropdownMenuTrigger>
@@ -374,13 +377,13 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
         )}
         {running ? (
           <Tip label="Stop">
-            <button type="button" aria-label="Stop" onClick={() => stopRun()} className={SEND}>
+            <button type="button" data-composer-send aria-label="Stop" onClick={() => stopRun()} className={SEND}>
               <Icon name="stop" size={19} weight={400} fill />
             </button>
           </Tip>
         ) : (
           <Tip label="Send">
-            <button type="button" aria-label="Send" onClick={send} disabled={!canSend} className={SEND}>
+            <button type="button" data-composer-send aria-label="Send" onClick={send} disabled={!canSend} className={SEND}>
               <Icon name="arrow_upward" size={19} weight={400} />
             </button>
           </Tip>

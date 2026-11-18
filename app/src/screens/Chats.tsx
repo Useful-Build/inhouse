@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agent } from '../agent'
 import type { ChatMessage } from '../agent/types'
-import { Composer } from '../components/Composer'
+import { Composer, PHONE_QUERY } from '../components/Composer'
 import { chatMessages, fmtSeconds, listNames, readingTools, toolDetail } from '../state/derive'
 import { fmtTime } from '../agent/clock'
 import { cn } from '@/lib/utils'
@@ -80,8 +80,8 @@ function LongText({ text, onToggle }: { text: string; onToggle: () => void }) {
     <>
       <div ref={ref} id={id} data-long-text className={cn(!open && 'line-clamp-8')}>{text}</div>
       {(long || open) && (
-        // One name, its state in aria-expanded: the words on it change, what it does doesn't.
-        <button type="button" aria-label="Show full message" aria-expanded={open} aria-controls={id} onClick={() => { onToggle(); setOpen(o => !o) }}
+        // Its visible words are its name (label in name); aria-expanded carries the state.
+        <button type="button" aria-expanded={open} aria-controls={id} onClick={() => { onToggle(); setOpen(o => !o) }}
           className="-ml-1 mt-1.5 flex h-7 items-center gap-0.5 rounded-md pr-1.5 pl-1 text-sm font-medium text-foreground-3 hover:bg-fill-strong hover:text-foreground">
           {open ? 'Show less' : 'Show more'}<Icon name={open ? 'expand_less' : 'expand_more'} size={17} />
         </button>
@@ -146,7 +146,8 @@ function Thread() {
   // Null for a new chat, and when there are no chats at all (day one): the thread then starts empty.
   const openId = openChatKey({ fresh, chatId }, ctx.data)
   const queue = useUi(s => (openId === null ? NO_QUEUE : s.queued[openId] ?? NO_QUEUE))
-  // After Send now or Remove, focus goes to the chip that takes that one's place (the same button), else to the field.
+  // After Send now or Remove, focus goes to the chip that takes that one's place (the same button), else to the field;
+  // on a phone to Send or Stop instead (the field would pop the keyboard), or to "+" while Send is off.
   const queueList = useRef<HTMLDivElement>(null)
   const focusAfter = useRef<{ at: number; button: 'send' | 'remove' } | null>(null)
   useLayoutEffect(() => {
@@ -155,7 +156,10 @@ function Thread() {
     focusAfter.current = null
     const chips = queueList.current?.querySelectorAll<HTMLElement>('[data-queued]') ?? []
     const chip = chips.length ? chips[Math.min(f.at, chips.length - 1)] : undefined
-    const target = chip?.querySelector<HTMLElement>(`[data-queued-${f.button}]`) ?? document.querySelector<HTMLElement>('[data-composer] textarea')
+    const send = document.querySelector<HTMLButtonElement>('[data-composer] [data-composer-send]')
+    const away = !window.matchMedia(PHONE_QUERY).matches ? document.querySelector<HTMLElement>('[data-composer] textarea')
+      : send && !send.disabled ? send : document.querySelector<HTMLElement>('[data-composer] button[aria-label^="Attach"]')
+    const target = chip?.querySelector<HTMLElement>(`[data-queued-${f.button}]`) ?? away
     target?.focus()
   }, [queue])
   const chipAction = (q: QueuedMsg, button: 'send' | 'remove') => {

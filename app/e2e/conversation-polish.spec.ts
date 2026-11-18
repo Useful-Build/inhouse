@@ -4,7 +4,9 @@
 // stopped note; Stop pauses the queue (no message goes on its own after a later answer), Edit on a queued message asks
 // before it replaces a draft, and focus follows Send now; a chat left mid-answer asks its queued message in the
 // background (D9); queued messages wait, paused, across a reload; Edit shows "Editing", Escape puts the draft and its
-// file back, a sent edit replaces the question and Undo brings the old one back; All chats keeps its time column on the
+// file back, a sent edit replaces the question and Undo brings the old one back; leaving the chat mid-edit ends it and
+// gives back the draft, its file and its quote; deleting a chat mid-answer pauses its queue (Undo brings it back paused);
+// a queued message's Edit waits while another is edited; All chats keeps its time column on the
 // card's edge through Select. On a phone: the answer row is Copy, steps and "···" (D3) with the thumbs as radio items,
 // every step name in the trace reads in full, and Select mode's bar never covers the last chat.
 import { expect, test } from '@playwright/test'
@@ -37,7 +39,8 @@ const MD_Q = "Give me the query for last week's orders by SKU"
 const STUCK_Q = 'Which orders are stuck over 3 days?'
 const STOPPED = 'You stopped your Inhouse agent. Nothing was changed.'
 const RELOADED = 'Your Inhouse agent stopped when the page reloaded. Nothing was changed.'
-const OTHER_Q = 'How are sales today?'
+// Scripted (the Friday answer): plain text, no suggestion chips, so no other question's text shows in its card.
+const OTHER_Q = 'What should we skip this Friday?'
 const SESSION = 'inhouse.ui.session.v1'
 /** Waits out the session save (debounced 300 ms). */
 const saved = (page: Page) => page.waitForTimeout(500)
@@ -66,7 +69,7 @@ test.describe('desktop', () => {
     expect(fold.full).toBeGreaterThan(fold.h * 3)
     expect(Math.round(fold.h / fold.line)).toBe(8)
     // One name, its state in aria-expanded.
-    const more = bubble.getByRole('button', { name: 'Show full message' })
+    const more = bubble.getByRole('button', { name: /^Show (more|less)$/ })
     await expect(more).toHaveText('Show more')
     await expect(more).toHaveAttribute('aria-expanded', 'false')
     await shot(page, 'long-message-folded')
@@ -102,6 +105,7 @@ test.describe('desktop', () => {
     // Two messages typed while it answers wait above the box, in order, not in the thread. Stop keeps its own button.
     for (const q of [MD_Q, STUCK_Q]) {
       await field(page).fill(q)
+      await expect(stop(page)).toBeVisible()
       await expect(dock(page).getByRole('button', { name: 'Queue message' })).toBeVisible()
       await page.keyboard.press('Enter')
       await expect(field(page)).toHaveValue('')
@@ -114,6 +118,7 @@ test.describe('desktop', () => {
     // Send now (each chip's buttons name its message): the running answer stops (a note says so, its Retry waits while
     // an answer runs), the first queued message joins the thread and is answered. The refunds answer never comes. Right
     // away, before the refunds answer could end on its own; the shot comes after.
+    await expect(stop(page)).toBeVisible()
     await queued(page).nth(0).getByRole('button', { name: /^Send now: Give me the query/ }).click()
     await expect(log(page).getByText(STOPPED)).toBeVisible()
     // Focus moves to the chip that took its place.
@@ -236,6 +241,107 @@ test.describe('desktop', () => {
     await shot(page, 'edit-undone')
   })
 
+  test('Conversation polish: leaving the chat mid-edit ends the edit and gives back the draft, its file and its quote', async ({ page }) => {
+    await start(page, '#/chats/new')
+    await field(page).fill(REFUNDS_Q)
+    await page.keyboard.press('Enter')
+    await expect(stepsButtons(page)).toHaveCount(1, { timeout: 15_000 })
+    await expect(stop(page)).toHaveCount(0)
+    const mine = await page.evaluate(() => location.hash)
+
+    // A draft with a file, replying to the answer.
+    const answer = log(page).locator('[data-answer]').first()
+    await answer.hover()
+    await answer.getByRole('button', { name: 'Reply', exact: true }).click()
+    const replying = dock(page).getByText('Replying to Inhouse agent')
+    await expect(replying).toBeVisible()
+    await dock(page).getByRole('button', { name: 'Attach' }).click()
+    await page.getByRole('menuitem', { name: /An order, product or customer/ }).click()
+    await expect(dock(page).getByText('Order #4821')).toBeVisible()
+    await field(page).fill('Draft I keep')
+
+    // Edit the question: the box holds it, with no file and no quote.
+    const question = msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-answer]') })
+    await question.hover()
+    await question.getByRole('button', { name: 'Edit message' }).click()
+    const editing = dock(page).getByText('Editing your message')
+    await expect(editing).toBeVisible()
+    await expect(replying).toHaveCount(0)
+    await expect(dock(page).getByText('Order #4821')).toHaveCount(0)
+    await field(page).fill('Why did refunds jump on Amazon?')
+
+    // Today and back: the edit is over, nothing was asked, and the box holds the draft, its file and its quote again.
+    await page.evaluate(() => { location.hash = '#/today' })
+    await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+    await page.evaluate(h => { location.hash = h }, mine)
+    await expect(field(page)).toHaveValue('Draft I keep')
+    await expect(editing).toHaveCount(0)
+    await expect(dock(page).getByText('Order #4821')).toBeVisible()
+    await expect(replying).toBeVisible()
+    await expect(dock(page)).toContainText('Refund requests rose')
+    await expect(msg(page, 'on Amazon')).toHaveCount(0)
+    await expect(stop(page)).toHaveCount(0)
+    await shot(page, 'edit-left')
+  })
+
+  test('Conversation polish: deleting a chat mid-answer pauses its queue, and Undo brings it back paused', async ({ page }) => {
+    await start(page, '#/chats/new')
+    await field(page).fill(REFUNDS_Q)
+    await page.keyboard.press('Enter')
+    await field(page).fill(MD_Q)
+    await expect(stop(page)).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(queued(page)).toHaveCount(1)
+    await expect(chip(page, MD_Q)).not.toContainText('Paused')
+    const mine = await page.evaluate(() => location.hash)
+
+    // Deleted while it answers: the app moves to another chat.
+    await expect(stop(page)).toBeVisible()
+    await page.getByRole('banner').getByRole('button', { name: 'Chat actions' }).click()
+    await page.getByRole('menu', { name: 'Chat actions' }).getByRole('menuitem', { name: 'Delete' }).click()
+    const toast = page.locator('[data-toast]').filter({ hasText: 'Deleted 1 chat' })
+    await expect(toast).toBeVisible()
+    await expect.poll(() => page.evaluate(() => location.hash)).not.toBe(mine)
+    await expect(queued(page)).toHaveCount(0)
+
+    // Undo: back in the chat, the answer stopped and says so, and the message waits, paused. Nothing goes on its own.
+    await toast.getByRole('button', { name: 'Undo', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => location.hash)).toBe(mine)
+    await expect(log(page).getByText(STOPPED)).toBeVisible()
+    await expect(queued(page)).toHaveCount(1)
+    await expect(chip(page, MD_Q)).toContainText('Paused')
+    await page.waitForTimeout(3500)
+    await expect(msg(page, MD_Q)).toHaveCount(0)
+    await expect(stop(page)).toHaveCount(0)
+    await shot(page, 'queue-delete-undo')
+  })
+
+  test("Conversation polish: a queued message's Edit waits while a question is being edited", async ({ page }) => {
+    await start(page, '#/chats/new')
+    await field(page).fill(REFUNDS_Q)
+    await page.keyboard.press('Enter')
+    await field(page).fill(MD_Q)
+    await expect(stop(page)).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(queued(page)).toHaveCount(1)
+    // Stopped, so the message waits (paused) however long this takes.
+    await stop(page).click()
+    await expect(chip(page, MD_Q)).toContainText('Paused')
+    const edit = chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ })
+    await expect(edit).toBeEnabled()
+
+    const question = msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-answer]') })
+    await question.hover()
+    await question.getByRole('button', { name: 'Edit message' }).click()
+    const editing = dock(page).getByText('Editing your message')
+    await expect(editing).toBeVisible()
+    await expect(edit).toBeDisabled()
+    await shot(page, 'queue-edit-waits')
+    await page.keyboard.press('Escape')
+    await expect(editing).toHaveCount(0)
+    await expect(edit).toBeEnabled()
+  })
+
   test('Conversation polish: Stop pauses the queue, a later answer leaves it be, and Edit on a queued message asks before it replaces a draft', async ({ page }) => {
     test.setTimeout(90_000)
     await start(page, '#/chats/new')
@@ -244,6 +350,7 @@ test.describe('desktop', () => {
     await expect(stop(page)).toBeVisible()
     for (const q of [MD_Q, STUCK_Q]) {
       await field(page).fill(q)
+      await expect(stop(page)).toBeVisible()
       await page.keyboard.press('Enter')
       await expect(field(page)).toHaveValue('')
     }
@@ -307,11 +414,14 @@ test.describe('desktop', () => {
     await page.keyboard.press('Enter')
     await expect(stop(page)).toBeVisible()
     await field(page).fill(MD_Q)
+    await expect(stop(page)).toBeVisible()
     await page.keyboard.press('Enter')
     await expect(queued(page)).toHaveCount(1)
     const mine = await page.evaluate(() => location.hash)
     expect(mine).toMatch(/^#\/chats\/chat-new-/)
 
+    // Still answering as it's left, so the queued message can only go in the background.
+    await expect(stop(page)).toBeVisible()
     // Another chat: its own thread, no queue, nothing answering.
     await page.evaluate(() => { location.hash = '#/chats/stuck' })
     await expect(msg(page, 'Which orders are stuck')).not.toHaveCount(0)
@@ -346,10 +456,13 @@ test.describe('desktop', () => {
     await expect(stop(page)).toBeVisible()
     for (const q of [MD_Q, STUCK_Q]) {
       await field(page).fill(q)
+      await expect(stop(page)).toBeVisible()
       await page.keyboard.press('Enter')
       await expect(field(page)).toHaveValue('')
     }
     await expect(queued(page)).toHaveCount(2)
+    // Still answering when the page reloads.
+    await expect(stop(page)).toBeVisible()
     await page.reload()
 
     // The reload stopped the answer: the note says so, and both messages wait above the box, paused, in order.

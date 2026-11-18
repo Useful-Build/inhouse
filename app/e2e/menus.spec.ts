@@ -108,7 +108,9 @@ for (const width of [1440, 390]) {
       await fits(page.getByRole('listbox', { name: 'Sort cards' }), 'Today sort')
       await page.keyboard.press('Escape')
 
-      for (const [label, name] of [['Attach', 'attach'], ['Tools read', 'tools'], ['Model', 'model']] as const) {
+      // On a phone the composer is slim: Tools read and Model live inside "+" (Attach), so only that one opens.
+      const composerMenus = phone ? [['Attach', 'attach']] as const : [['Attach', 'attach'], ['Tools read', 'tools'], ['Model', 'model']] as const
+      for (const [label, name] of composerMenus) {
         await page.getByRole('button', { name: new RegExp(`^${label}`) }).click()
         const menu = page.getByRole('menu')
         await expect(menu).toHaveCount(1)
