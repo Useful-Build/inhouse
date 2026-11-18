@@ -55,3 +55,16 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   expect(meta!.y, 'the time wraps under the text').toBeGreaterThan(text!.y)
   await shot(page, 'approvals-approved-row-390')
 })
+
+test('Phone 390: the review panel gives its main action a row of its own, on one line, with Edit and Don\'t send below', async ({ page }) => {
+  await start(page, 'Act', '#/today')
+  await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
+  const panel = page.getByRole('dialog')
+  const primary = await panel.getByRole('button', { name: /^Approve and/ }).boundingBox()
+  const edit = await panel.getByRole('button', { name: 'Edit', exact: true }).boundingBox()
+  const dont = await panel.getByRole('button', { name: "Don't send", exact: true }).boundingBox()
+  expect(primary!.height, 'the main label is on one line').toBeLessThan(44)
+  expect(edit!.y, 'Edit sits below the main action').toBeGreaterThan(primary!.y + primary!.height - 1)
+  expect(Math.abs(dont!.y - edit!.y), 'Edit and Don\'t send share a row').toBeLessThanOrEqual(4)
+  await shot(page, 'panel-actions-390')
+})

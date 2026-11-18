@@ -87,7 +87,7 @@ export function Today() {
       {!f.noData && (
         <div className="mt-7">
           <SectionHeader onDots title={headTitle} count={allApproved ? undefined : copy.countLabel} className="mb-3"
-            actions={phone ? undefined : (
+            actions={phone || settled ? undefined : (
               <Select label="Sort cards" value={byAmount ? SORT_AMOUNT : copy.sortLabel} options={[copy.sortLabel, SORT_AMOUNT]} minWidth={0}
                 onChange={v => useUi.getState().patch({ todaySort: v === SORT_AMOUNT ? 'amount' : 'default' })}
                 className={cn('rounded-lg border-transparent bg-transparent pr-1.5 pl-2.5 text-sm text-foreground-3 data-[size=default]:h-7.5', tap)} />
@@ -99,7 +99,7 @@ export function Today() {
               <Icon name="check_circle" size={18} weight={400} />
               <b className="font-semibold whitespace-nowrap">{h.count} handled before you woke up</b>
               {/* On a phone the list gets its own full-width lines under the title. */}
-              <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{h.summary}</span>
+              <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{phone ? h.summary.split(' · ').map((item, i, all) => <span key={item} className="whitespace-nowrap">{item}{i < all.length - 1 && ' ·'}{' '}</span>) : h.summary}</span>
               <span className={`font-semibold whitespace-nowrap ${phone ? 'order-2 ml-auto' : ''}`}>See activity</span>
             </button>
           )}
@@ -124,7 +124,7 @@ export function Today() {
                     {p.logos.map(l => <LogoTile key={l} k={l} size="sm" className="-my-1" />)}
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
-                        <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} className={cn('relative z-raised -my-1.5 -mr-1.5', tap)} />
+                        <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant="card" box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1.5', tap)} />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                         <MenuItem onSelect={askAbout}>
@@ -146,22 +146,22 @@ export function Today() {
                   <div className="mt-1 text-sm text-foreground-3">{p.sub}</div>
                   <div className="flex-1" />
                   {/* Nothing here is cut: the amount line and the status line wrap. */}
-                  <div className="mt-3 flex items-end gap-2.5 border-t border-divider pt-3">
-                    <div className="min-w-0 flex-1">
+                  <div className="mt-3 flex flex-col gap-3 border-t border-divider pt-3">
+                    <div>
                       <div className={`flex flex-wrap items-baseline gap-x-1.5 ${done}`}>
                         <span className="text-xl font-semibold tracking-stat tabular-nums">{p.cost}</span>
-                        <span className="text-xs text-muted-foreground">{p.costNote}</span>
+                        <span className="text-xs text-pretty text-muted-foreground">{p.costNote}</span>
                       </div>
                       <div className={`mt-0.5 flex items-start gap-1 text-xs ${c.dimmed ? done : TONE_TEXT[c.tone]}`}>
                         <Icon name={c.statusIcon} size={13} weight={400} className="mt-px" />
-                        <span className="min-w-0 flex-1">{c.status}</span>
+                        <span className="min-w-0 flex-1 text-pretty">{c.status}</span>
                       </div>
                     </div>
                     {c.primary && (
-                      <Button className={cn('relative z-raised', tap)} onClick={c.primary === 'Approve' ? () => approve(p.id) : open}>{c.primary}</Button>
+                      <Button className={cn('relative z-raised self-start', tap)} onClick={c.primary === 'Approve' ? () => approve(p.id) : open}>{c.primary}</Button>
                     )}
                     {!c.primary && c.quiet && (
-                      <Button variant="secondary" className={cn('relative z-raised', tap)} onClick={c.quiet === 'Ask about this' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
+                      <Button variant="secondary" className={cn('relative z-raised self-start', tap)} onClick={c.quiet === 'Ask about this' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
                     )}
                   </div>
                 </article>

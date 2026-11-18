@@ -125,7 +125,7 @@ export function Approvals() {
                     <Button size="lg" className={tap} onClick={low ? () => approve(id) : () => openProblem(id)}>{low ? dv.cta : 'Review'}</Button>
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
-                        <IconButton icon="more_horiz" label={`More actions for ${dv.draftTitle}`} size={18} box="icon-lg" className={tap} />
+                        <IconButton icon="more_horiz" label={`More actions for ${dv.draftTitle}`} size={18} variant="card" box="icon-lg" className={tap} />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" collisionPadding={16} aria-label="Draft actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                         {low && (

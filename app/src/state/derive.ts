@@ -279,7 +279,7 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     const part = ranByAgent(ctx, p) && p.partial
     return {
       problem: p,
-      status: part ? p.partialShort! : S === 2 ? `Waits for you: ${p.wait}` : sens ? `Drafted · ${p.wait}` : 'Drafted · ready to approve',
+      status: part ? p.partialShort! : (S === 2 || sens) && p.wait ? `Drafted · ${p.wait}` : 'Drafted · ready to approve',
       statusIcon: S === 2 || sens ? 'front_hand' : 'edit_note',
       tone: S === 2 || sens ? 'amber' : 'blue',
       primary: sens ? 'Review' : 'Approve', quiet: null, handled: false, dimmed: false,

@@ -159,8 +159,9 @@ export function ProblemPanel() {
         <div className="flex flex-col gap-2.5 border-t border-border px-6 pt-3 pb-4">
           {/* The actions live here, on one row above the ask bar, so nothing scrolls out of reach or hides under it. */}
           {dv.mode === 'waiting' && (
-            <div className="flex items-center gap-2">
-              <Button variant="primary" size="lg" className="h-auto min-h-9.5 min-w-0 flex-1 py-1.5 text-left whitespace-normal sm:flex-none" onClick={() => approve(openId)}>{dv.cta}</Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* On a phone the main action has its own row, so its label stays on one line. */}
+              <Button variant="primary" size="lg" className="h-auto min-h-9.5 w-full min-w-0 py-1.5 whitespace-normal sm:w-auto sm:flex-none sm:text-left" onClick={() => approve(openId)}>{dv.cta}</Button>
               <Button variant="secondary" size="lg" className="flex-none" onClick={() => patch({ editing: isEditing ? null : openId })}>{isEditing ? 'Done' : 'Edit'}</Button>
               {/* A problem already set aside keeps its reason: Undo would otherwise restore it as declined. */}
               {!ctx.agent.setAside[openId] && <Button variant="ghost" size="lg" className="flex-none" onClick={() => { setAside(openId, 'declined'); closeProblem() }}>Don't send</Button>}
