@@ -19,6 +19,8 @@ const INK_DOT = 'bg-foreground'
 const DOT_OF: Record<ToolState, string> = { connecting: AMBER_DOT, disconnected: AMBER_DOT, paused: GREY_DOT, connected: INK_DOT }
 
 const SECTION_HEAD = 'mb-1.5'
+// A section with one item gives it the full width, so its status sits at the right edge like the rows above and below.
+const ONE = (n: number) => n === 1 ? 'grid-cols-1' : undefined
 const rule = <Separator className="my-4.5 bg-border" />
 const NAME = 'text-md font-strong'
 const DESC = 'text-sm text-pretty text-muted-foreground'
@@ -70,7 +72,7 @@ export function Tools() {
       )}
       {connected.length > 0 && <>
       <SectionHeader title="Connected" count={connectedCount} className={SECTION_HEAD} />
-      <CardGrid size="lg" variant="rows">
+      <CardGrid size="lg" variant="rows" className={ONE(connected.length)}>
         {connected.map(k => {
           const r = row(k)
           return (
@@ -93,7 +95,7 @@ export function Tools() {
 
       {channels.length > 0 && <>
       <SectionHeader title="Channels" count={channels.length} className={SECTION_HEAD} />
-      <CardGrid size="lg" variant="rows" className={channels.length === 1 ? 'grid-cols-1' : undefined}>
+      <CardGrid size="lg" variant="rows" className={ONE(channels.length)}>
         {channels.map(c => {
           const locked = S < c.need
           return (
@@ -117,7 +119,7 @@ export function Tools() {
 
       {beingConnected.length > 0 && <>
       <SectionHeader title="Being connected" count={beingConnected.length} className={SECTION_HEAD} />
-      <CardGrid size="lg" variant="rows">
+      <CardGrid size="lg" variant="rows" className={ONE(beingConnected.length)}>
         {beingConnected.map(k => {
           const r = row(k)
           return (
@@ -137,7 +139,7 @@ export function Tools() {
 
       {catalog.length > 0 && <>
       <SectionHeader title="Add a tool" className={SECTION_HEAD} />
-      <CardGrid size="lg" variant="rows">
+      <CardGrid size="lg" variant="rows" className={ONE(catalog.length)}>
         {catalog.map(c => {
           const need = c.need ?? 0
           const locked = S < need

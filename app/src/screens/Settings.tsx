@@ -93,20 +93,27 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
   )
 }
 
+/** A team setting's value as text, on a phone: on its own line under the row's description, whatever the kind. */
+function ReadValue({ row, on }: { row: Row; on: boolean }) {
+  // A part never breaks inside, and the dot goes with the part after it, so no line starts or ends on a stranded dot.
+  const parts = (...p: string[]) => p.map((t, i) => <span key={t} className="whitespace-nowrap">{i > 0 && '\u00b7 '}{t}</span>).flatMap((e, i) => i > 0 ? [' ', e] : [e])
+  const shown = row.kind === 'mode' ? parts(row.value, row.switchOn ? 'team can use it' : 'turned off')
+    : row.kind === 'toggle' ? (on ? 'On' : 'Off')
+    : row.kind === 'select' ? parts(row.labels?.[row.value] ?? row.value, ...(row.tag ? [row.tag] : []))
+    : row.value
+  return shown ? <div className="mt-1.5 text-base text-pretty text-foreground-2">{shown}</div> : null
+}
+
+/** A description with its last " · " part kept together with its dot, so no line ends on the separator. */
+function descNode(desc: string) {
+  const s = keepUnitsTogether(desc)
+  const i = s.lastIndexOf(' \u00b7 ')
+  return i < 0 ? s : <>{s.slice(0, i)} <span className="whitespace-nowrap">{'\u00b7 '}{s.slice(i + 3)}</span></>
+}
+
 function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean; caption?: string }) {
-  // A team setting on a phone is read, not changed (D4): the value as text, no control. A button only opens something
-  // (the team window, a page) or does a job (pause, forget, export), so it keeps working.
-  if (readOnly && row.kind !== 'button' && row.kind !== 'photo') {
-    // One placement for every kind: at the row's right edge, level with the title, wrapping inside a share of the row.
-    const VALUE = 'max-w-2/5 flex-none text-right text-base text-pretty text-foreground-2'
-    // A part never breaks inside, and the dot goes with the part after it, so no line ends on a stranded dot.
-    const parts = (...p: string[]) => p.map((t, i) => <span key={t} className="whitespace-nowrap">{i > 0 && '· '}{t}</span>).flatMap((e, i) => i > 0 ? [' ', e] : [e])
-    if (row.kind === 'mode') return <span className={VALUE}>{parts(row.value, row.switchOn ? 'team can use it' : 'turned off')}</span>
-    const shown = row.kind === 'toggle' ? (on ? 'On' : 'Off')
-      : row.kind === 'select' ? `${row.labels?.[row.value] ?? row.value}${row.tag ? ` · ${row.tag}` : ''}`
-      : row.value
-    return shown ? <span className={VALUE}>{shown}</span> : null
-  }
+  // A team setting on a phone is read, not changed (D4): its value shows as text under the description (see ReadValue).
+  if (readOnly && row.kind !== 'button' && row.kind !== 'photo') return null
   switch (row.kind) {
     case 'select': {
       const save = (v: string) => { agent.setSetting(row.key!, v); row.onChange?.(v) }
@@ -288,15 +295,16 @@ export function Settings() {
                 {sec.rows.map((row, i) => {
                   const locked = S < row.need
                   const on = !locked && (st.toggles[row.key ?? ''] ?? row.def ?? false)
-                  // A value shown as text (a team page on a phone) sits level with the title, never under the description.
+                  // A value shown as text (a team page on a phone) sits under the description, in the title's column.
                   const asText = readOnly && row.kind !== 'button' && row.kind !== 'photo'
                   return (
-                    <div key={`${row.title}|${i}`} className={cn('flex gap-x-6 gap-y-3 py-4', asText ? 'items-start gap-x-4' : 'flex-wrap items-center', row.kind === 'mode' && '@xl:flex-nowrap', i > 0 && 'border-t border-divider')}>
+                    <div key={`${row.title}|${i}`} className={cn('flex gap-x-6 gap-y-3 py-4', asText ? 'items-start' : 'flex-wrap items-center', row.kind === 'mode' && '@xl:flex-nowrap', i > 0 && 'border-t border-divider')}>
                       <div className={cn('flex min-w-0 grow items-center gap-3.5', asText ? 'basis-0' : 'basis-65')}>
                         {row.avatar?.at === 'row' && (memberFor(data, row.avatar.who, userName(ctx)) || isTeam(row.avatar.who)) && <span className={cn('flex flex-none', locked && 'grayscale')}>{isTeam(row.avatar.who) ? <TeamMark /> : <Avatar who={row.avatar.who} size={row.kind === 'photo' ? 48 : 36} />}</span>}
                         <div className="min-w-0 flex-1">
                           <div className={`flex items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>{row.title}{locked && <StageTag tag={STAGE_TAGS[row.need]} />}</div>
-                          {row.desc && <div className="mt-0.5 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(row.desc)}</div>}
+                          {row.desc && <div className="mt-0.5 text-sm text-pretty text-muted-foreground">{descNode(row.desc)}</div>}
+                          {asText && <ReadValue row={row} on={on} />}
                         </div>
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}

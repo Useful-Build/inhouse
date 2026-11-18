@@ -65,7 +65,7 @@ export function Activity() {
                       <Icon name={r.icon} size={17} />
                     </span>
                     <span className="min-w-0 flex-1">
-                      {keepUnitsTogether(r.text)}
+                      <span className="block text-pretty">{keepUnitsTogether(r.text)}</span>
                       {/* A phone has no room for the time and the person beside the line: they sit under it. */}
                       {phone && <span className="mt-0.5 block text-xs text-pretty text-muted-foreground"><span className="font-mono whitespace-nowrap">{r.t}</span> · {r.who}</span>}
                     </span>

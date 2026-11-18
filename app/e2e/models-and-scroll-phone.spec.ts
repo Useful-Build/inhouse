@@ -45,6 +45,18 @@ test('Phone: the Models page fits and reads as text', async ({ page }) => {
   await keep(page, '390-thinking-modes-page')
 })
 
+test('Phone: a model turned off on a computer reads "<Effort> · turned off" on its own line', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await start(page, '#/settings/team-modes')
+  const sw = page.getByRole('switch', { name: 'Instant: the team can use this model' })
+  await sw.click()
+  await expect(sw).toHaveAttribute('aria-checked', 'false')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('switch')).toHaveCount(0)
+  await expect(page.locator('main')).toContainText('Low · turned off')
+  expect(await noSideways(page)).toBe(true)
+})
+
 test('Phone: a long settings page scrolls with the page (main moves, nothing nested)', async ({ page }) => {
   await start(page, '#/settings/team-data')
   const main = page.locator('main')
