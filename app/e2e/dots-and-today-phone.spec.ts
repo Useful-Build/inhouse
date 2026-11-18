@@ -1,4 +1,4 @@
-// UI polish A at 390 px: dots behind the cards, a clean Today, and the capped logo row.
+// UI polish A at 390 px: dots behind the cards, a clean Today, and no logo row in its box (the tools are in "+").
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
@@ -40,7 +40,7 @@ async function dotsBehind(page: Page, selectors: string[]) {
   expect(tops).toEqual(selectors.map(() => 'ok'))
 }
 
-test('Phone: All chats has the plain background, Today has no sub line, logo row stops at 3 with +3', async ({ page }) => {
+test('Phone: All chats has the plain background, Today has no sub line and no logo row', async ({ page }) => {
   await start(page, '#/chats/all')
   await expect(page.getByRole('heading', { name: 'All chats' })).toBeVisible()
   await expect(page.locator('div:has(> main) > div[aria-hidden="true"]')).toHaveCount(0)
@@ -51,9 +51,8 @@ test('Phone: All chats has the plain background, Today has no sub line, logo row
   await expect(page.getByText(/Nothing goes out until you approve it/)).toHaveCount(0)
   await expect(page.getByText(/Inhouse agent checked your 6 tools/)).toHaveCount(0)
   await dotsBehind(page, ['.today-card', '[data-composer]'])
-  const chip = page.getByRole('button', { name: /Tools read in this chat/ })
-  await expect(chip.locator('img')).toHaveCount(3)
-  await expect(chip.getByTestId('tools-more')).toHaveText('+3')
+  // A phone's box has no logo stack: the tools are in "+" (M27).
+  await expect(page.getByRole('button', { name: /Tools read in this chat/ })).toHaveCount(0)
   await shot(page, 'today-390')
 
   await page.goto('/?demo#/chats')

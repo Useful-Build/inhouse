@@ -192,7 +192,7 @@ for (const size of SIZES) {
           await page.keyboard.press('Escape')
           await expect(page.getByRole('dialog')).toHaveCount(0)
         }
-        await composerMenus(page, `${label} today`)
+        await composerMenus(page, `${label} today`, phone)
 
         // Activity: every row expanded, and every trace a row opens.
         await go(page, '#/activity')
@@ -276,7 +276,7 @@ for (const size of SIZES) {
           await expect(page.getByRole('button', { name: 'Stop replying' })).toBeVisible()
           await check(page, `${label} chat reply bar`)
           await page.getByRole('button', { name: 'Stop replying' }).click()
-          await composerMenus(page, `${label} chat`)
+          await composerMenus(page, `${label} chat`, phone)
           const generic = main.getByRole('button', { name: /\d+ steps/ })
           if (await generic.count()) {
             await generic.last().click()
@@ -287,7 +287,7 @@ for (const size of SIZES) {
           await go(page, '#/chats/new')
           await expect(main.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
           await check(page, `${label} new chat`)
-          await composerMenus(page, `${label} new chat`)
+          await composerMenus(page, `${label} new chat`, phone)
         }
 
         // The routine trace is reached by asking for a routine. On the first day the agent answers with the setup note instead.
@@ -309,14 +309,20 @@ for (const size of SIZES) {
   }
 }
 
-/** Open the three composer menus (+, tools, model) and check each. */
-async function composerMenus(page: Page, where: string) {
-  for (const name of [/^Attach/, /^Tools read/, /^Model/]) {
-    // A phone's chat box has no tools stack and keeps the model in "+" (M27).
-    if (!(await page.getByRole('button', { name }).count())) continue
-    await page.getByRole('button', { name }).click()
+/** Open the three composer menus (+, tools, model) and check each. A phone's box, Today's and a chat's, has only "+":
+ *  the tools and the model are in it, and their buttons aren't in the row (M27). */
+async function composerMenus(page: Page, where: string, phone: boolean) {
+  const box = page.locator('[data-composer]')
+  for (const name of [/^Tools read/, /^Model/, /^Dictate/]) await expect(box.getByRole('button', { name })).toHaveCount(phone ? 0 : 1)
+  for (const name of phone ? [/^Attach/] : [/^Attach/, /^Tools read/, /^Model/]) {
+    await box.getByRole('button', { name }).click()
     const menu = page.getByRole('menu')
     await expect(menu).toHaveCount(1)
+    if (phone) {
+      await expect(menu.getByText('Tools read in this chat')).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: /Manage tools/ })).toBeAttached()
+      await expect(menu.getByRole('group', { name: 'Model' }).getByRole('menuitemradio')).not.toHaveCount(0)
+    }
     await check(page, `${where} composer menu ${name}`)
     await page.keyboard.press('Escape')
     await page.mouse.click(5, 5)

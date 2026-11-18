@@ -18,9 +18,10 @@ const noSideways = (page: Page) => page.evaluate(() => document.documentElement.
 
 test('Phone: the mode picker fits', async ({ page }) => {
   await start(page, '#/today')
-  await page.getByRole('button', { name: 'Model: Smart' }).click()
+  // A phone keeps the model in "+" (M27).
+  await page.locator('[data-composer]').getByRole('button', { name: 'Attach' }).click()
   const menu = page.getByRole('menu')
-  await expect(menu.getByRole('menuitemradio')).toHaveCount(4)
+  await expect(menu.getByRole('group', { name: 'Model' }).getByRole('menuitemradio')).toHaveCount(4)
   const b = (await menu.boundingBox())!
   expect(b.x).toBeGreaterThanOrEqual(0)
   expect(b.x + b.width).toBeLessThanOrEqual(390)
