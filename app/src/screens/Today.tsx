@@ -154,7 +154,7 @@ export function Today() {
                         <span className="text-xs text-pretty text-muted-foreground">{p.costNote}</span>
                       </div>
                       {/* Two lines tall on desktop, so every footer in a grid row lines up whether the status wraps or not. */}
-                      <div className={`mt-0.5 flex items-start gap-1 text-xs ${phone ? '' : 'min-h-8'} ${c.dimmed ? done : TONE_TEXT[c.tone]}`}>
+                      <div className={`mt-0.5 flex items-start gap-1 text-xs ${phone ? '' : 'min-h-today-status'} ${c.dimmed ? done : TONE_TEXT[c.tone]}`}>
                         <Icon name={c.statusIcon} size={13} weight={400} className="mt-px" />
                         <span className="min-w-0 flex-1 text-pretty">{c.status}</span>
                       </div>

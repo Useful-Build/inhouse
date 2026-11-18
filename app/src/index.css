@@ -141,6 +141,7 @@
   --app-chat-empty-top: 12vh;
   --app-viewer-image: 64vh;
   --app-card-name: 2.6em;         /* two lines of a file card's name */
+  --app-today-status: 2lh;        /* two lines of a Today card's status, so footers line up across a row */
   --app-cite-raise: 2px;          /* a citation chip sits a little above the baseline */
 
   /* type: page and window heads, stats, prose */
@@ -301,6 +302,7 @@
   --spacing-chat-empty-top: var(--app-chat-empty-top);
   --spacing-viewer-image: var(--app-viewer-image);
   --spacing-card-name: var(--app-card-name);
+  --spacing-today-status: var(--app-today-status);
   --spacing-safe-bottom: var(--app-safe-bottom);
   --spacing-composer-input: var(--app-composer-input-max);
   --inset-toast: var(--app-toast-bottom);

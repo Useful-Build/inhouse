@@ -18,7 +18,7 @@ export const appMergeConfig: ConfigExtension<string, string> = {
         'screen-gutter', 'screen-gutter-sm', 'menu-message', 'menu-attach', 'menu-tools', 'menu-mode', 'menu-mode-phone', 'menu-account', 'popover-notifications', 'select-menu', 'problem-panel', 'library',
         'window-sm', 'window-md', 'window-lg', 'window-xl'],
       spacing: ['select-height', 'below-topbar', 'playhead', 'playhead-offset', 'activity-indent', 'time-column', 'run-when', 'bar-tick', 'today-top', 'chat-empty-top',
-        'viewer-image', 'card-name', 'toast', 'trace-label', 'safe-bottom', 'composer-input', 'window', 'window-sm', 'window-lg',
+        'viewer-image', 'card-name', 'today-status', 'toast', 'trace-label', 'safe-bottom', 'composer-input', 'window', 'window-sm', 'window-lg',
         'window-max', 'window-max-lg'],
       // Documentation only: tailwind-merge v3 already reads any text-, bg- or border- name as a colour.
       color: ['done', 'destructive-solid', 'on-destructive', 'switch-off', 'window-surface', 'tag-edge-strong'],

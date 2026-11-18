@@ -156,10 +156,10 @@ export function ProblemPanel() {
           )}
         </div>
 
-        <div className="flex flex-col gap-1.5 border-t border-border px-6 pt-2.5 pb-3">
+        <div className="flex flex-col gap-2 border-t border-border px-6 pt-2.5 pb-3">
           {/* The actions live here, on one row above the ask bar, so nothing scrolls out of reach or hides under it. */}
           {dv.mode === 'waiting' && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
               {/* On a phone the main action has its own row, so its label stays on one line. */}
               <Button variant="primary" size="lg" className="h-auto min-h-9.5 w-full min-w-0 py-1.5 whitespace-normal sm:w-auto sm:flex-none sm:text-left" onClick={() => approve(openId)}>{dv.cta}</Button>
               <Button variant="secondary" size="lg" className="flex-none" onClick={() => patch({ editing: isEditing ? null : openId })}>{isEditing ? 'Done' : 'Edit'}</Button>
