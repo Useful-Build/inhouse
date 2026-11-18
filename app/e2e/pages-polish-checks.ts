@@ -51,6 +51,9 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
     await start(page, 'Act', 'Tool disconnected', '#/tools/gorgias')
     await expect(ability(page, 'read')).toContainText('Off')
     await expect(detail(page, 'Access')).toContainText('None until the login is renewed.')
+    // A person's pause on top of the broken login shows both facts.
+    await page.getByRole('button', { name: 'Pause access' }).click()
+    await expect(detail(page, 'Access')).toContainText('A person paused it, and the login needs renewing.')
     await expect(detail(page, 'Access')).not.toContainText('Read, plus drafts')
   })
 
@@ -94,7 +97,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
       // The audit log.
       await go(page, '#/settings/team-audit')
       await expect(page.getByRole('heading', { level: 1, name: 'Audit log' })).toBeVisible()
-      await expect(page.locator('main')).toContainText('Nothing changed yet')
+      await expect(page.locator('main')).toContainText(firstDay ? 'Nothing changed yet. Changes to settings, rules and people show here.' : 'Still reading your tools. Changes show here in a moment.')
       expect(await noSideways(page)).toBe(true)
       expect(errors, errors.join('\n')).toEqual([])
     })
@@ -118,13 +121,39 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
       const before = await runs.getByRole('listitem').count()
       await sheet.getByRole('button', { name: 'Run now' }).click()
       await expect(runs.getByRole('listitem')).toHaveCount(before + 1)
+      const runAt = (await runs.getByRole('listitem').first().locator('span.tabular-nums').innerText()).trim()
       await expect(runs.getByRole('listitem').first()).toContainText(`Run now · ${result}`)
+      // The row agrees with the sheet once it closes.
       await shot(page, `pages-polish-${size}-routine-run-${name.split(' ')[0].toLowerCase()}`)
       await page.keyboard.press('Escape')
       await expect(sheet).toHaveCount(0)
+      await expect(page.getByRole('listitem').filter({ has: page.getByRole('button', { name, exact: true }) })).toContainText(`Last run today at ${runAt} · ${result}`)
     }
     await page.reload()
     await page.getByRole('button', { name: 'Amazon payout check', exact: true }).click()
     await expect(page.getByRole('dialog', { name: 'Amazon payout check' }).getByRole('list', { name: 'Last runs' }).getByRole('listitem').first()).toContainText('Run now · found a $1,240 gap')
+  })
+
+  test(`Routines (${size}): with no last-run note a run says plain "Run now", on the row and in the sheet`, async ({ page }) => {
+    await start(page, 'Act', 'First day', '#/routines')
+    const row = page.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Morning check', exact: true }) })
+    await expect(row).toContainText('Not run yet')
+    await page.getByRole('button', { name: 'Morning check', exact: true }).click()
+    const sheet = page.getByRole('dialog', { name: 'Morning check' })
+    await sheet.getByRole('button', { name: 'Run now' }).click()
+    const first = sheet.getByRole('list', { name: 'Last runs' }).getByRole('listitem').first()
+    await expect(first).toContainText('Run now')
+    await expect(first).not.toContainText('Run now ·')
+    await page.keyboard.press('Escape')
+    await expect(row).toContainText(/Last run today at \d:\d\d\s?[AP]M$/)
+    await expect(row).not.toContainText('Not run yet')
+  })
+
+  test(`Morning check (${size}): Last runs shows filled counts, not placeholders`, async ({ page }) => {
+    await start(page, 'Act', 'Normal', '#/routines')
+    await page.getByRole('button', { name: 'Morning check', exact: true }).click()
+    const runs = page.getByRole('dialog', { name: 'Morning check' }).getByRole('list', { name: 'Last runs' })
+    await expect(runs.getByRole('listitem').first()).toBeVisible()
+    await expect(runs).not.toContainText(/[{}]/)
   })
 }

@@ -166,9 +166,9 @@ export function Tools() {
 }
 
 /** The Access row follows the tool's state: a paused or disconnected tool never claims the stage's access. */
-const accessOf = (state: ToolState, S: number) => {
+const accessOf = (state: ToolState, S: number, paused: boolean) => {
+  if (state === 'disconnected') return paused ? 'None. A person paused it, and the login needs renewing.' : 'None until the login is renewed.'
   if (state === 'paused') return 'None. A person paused it.'
-  if (state === 'disconnected') return 'None until the login is renewed.'
   if (state === 'connecting') return 'None yet. Being connected.'
   return ['Read only', 'Read, plus drafts you approve', 'Read, drafts and agreed jobs within limits'][S]
 }
@@ -192,16 +192,17 @@ export function ToolPage() {
   const pauseLabel = off ? 'Resume access' : 'Pause access'
   const reconnect = () => showToast("Reconnect isn't connected in this demo.", { icon: 'info', ms: 4000 })
   const onPause = () => {
-    agent.setToolPaused(key, !off)
+    // The agent has already sent the person a notice if the save failed; this only keeps the rejection from going unhandled.
+    agent.setToolPaused(key, !off).catch(() => {})
     if (off) { showToast(`Your Inhouse agent can read ${A.name} again`); return }
-    showToast(`Access paused. Your Inhouse agent has stopped reading ${A.name}.`, { undo: () => { agent.setToolPaused(key, false); clearToast() } })
+    showToast(`Access paused. Your Inhouse agent has stopped reading ${A.name}.`, { undo: () => { agent.setToolPaused(key, false).catch(() => {}); clearToast() } })
   }
   // An ability that is on keeps its tint; one the stage hasn't reached, or that can't run now (paused, off), is muted.
   const abilities = view.abilities.map(ab => ({ ...ab, on: !ab.locked && ab.tag === 'On',
     tone: ab.locked || ab.tag !== 'On' ? 'bg-fill text-muted-foreground' : ab.need === 0 ? 'bg-secondary text-foreground' : 'bg-brand-tint text-brand' }))
   const info: [string, ReactNode][] = [
     ['Connected', view.connectedRow],
-    ['Access', accessOf(view.state, S)],
+    ['Access', accessOf(view.state, S, off)],
     ['Last read', view.lastRead],
     ['Where the data stays', `In your ${A.name} account. Your Inhouse agent reads what its jobs need.`],
     ['Website', <a key="site" href={`https://${A.site}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-3">{A.site} ↗</a>],

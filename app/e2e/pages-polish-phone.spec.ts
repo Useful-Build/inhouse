@@ -19,7 +19,10 @@ test('Phone: team settings read as text with a note, your own settings keep thei
   await expect(page.locator('main')).toContainText('$250')
   await page.evaluate(() => { location.hash = '#/settings/team-members' })
   await expect(page.getByRole('heading', { level: 1, name: 'Members' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Invite' })).toHaveCount(0)
+  // A button opens something, so it keeps working on a phone (D4 is for controls that change a value).
+  await expect(page.getByRole('button', { name: 'Invite' })).toBeVisible()
+  await page.evaluate(() => { location.hash = '#/settings/team-approvals' })
+  await expect(page.getByRole('button', { name: /^(Pause|Resume) Inhouse agent$/ })).toBeVisible()
   // Your own settings keep their controls.
   await page.evaluate(() => { location.hash = '#/settings/you-general' })
   await expect(page.getByRole('textbox', { name: 'Name' })).toBeVisible()
@@ -29,7 +32,7 @@ test('Phone: team settings read as text with a note, your own settings keep thei
   await expect(row).toContainText(/\d:\d\d\s?[AP]M · /)
   await row.click()
   const box = await row.boundingBox()
-  const fb = await page.locator('main dl').first().boundingBox()
-  expect(box && fb && fb.x - box.x < 40).toBe(true)
+  const fb = await row.locator('xpath=..').locator('dl').boundingBox()
+  expect(box && fb && Math.abs(fb.x - box.x) < 40).toBe(true)
   expect(await page.evaluate(() => [document.documentElement, document.querySelector('main')!].every(e => e.scrollWidth - e.clientWidth <= 1))).toBe(true)
 })

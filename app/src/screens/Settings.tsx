@@ -93,12 +93,13 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
 }
 
 function Control({ row, locked, on, onToggle, onAsk, readOnly }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean }) {
-  // A team setting on a phone is read, not changed (D4): the value as text, no control.
-  if (readOnly) {
+  // A team setting on a phone is read, not changed (D4): the value as text, no control. A button only opens something
+  // (the team window, a page) or does a job (pause, forget, export), so it keeps working.
+  if (readOnly && row.kind !== 'button' && row.kind !== 'photo') {
     const shown = row.kind === 'toggle' ? (on ? 'On' : 'Off')
-      : row.kind === 'mode' ? `${row.value} · ${row.switchOn ? 'On' : 'Off'}`
+      : row.kind === 'mode' ? `Thinks ${row.value.toLowerCase()} · ${row.switchOn ? 'team can use it' : 'team can\'t use it'}`
       : row.kind === 'select' ? `${row.labels?.[row.value] ?? row.value}${row.tag ? ` · ${row.tag}` : ''}`
-      : row.kind === 'button' ? '' : row.value
+      : row.value
     return shown ? <span className="text-right text-base text-foreground-2">{shown}</span> : null
   }
   switch (row.kind) {
@@ -128,7 +129,11 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly }: { row: Row; loc
     case 'mode':
       return (
         <div className="flex flex-wrap items-center gap-4.5">
-          <Select label={`How hard ${row.title} thinks`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
+          {/* The one visible label for the effort pickers, on the first row only. */}
+          <div className="flex flex-col gap-1">
+            {row.caption && <span className="text-xs text-muted-foreground">{row.caption}</span>}
+            <Select label={`How hard ${row.title} thinks`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
+          </div>
           {/* The switch's visible label: whether the team can use this model. */}
           <span className="inline-flex h-9.5 items-center gap-2">
             <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={() => agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null)} />

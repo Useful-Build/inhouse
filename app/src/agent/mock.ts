@@ -837,7 +837,9 @@ export class MockAgent implements AgentClient {
     if (!DATA.routines.some(r => r.id === id) && !this.state.routinesExtra.some(r => r.id === id)) throw new Error(`Unknown routine id: ${id}`)
     const { at, atMin } = this.stamp()
     // The morning check replays its recorded steps; other routines have none recorded.
-    const run: RoutineRun = { routine: id, at, atMin, ...(id === routineIdOf('Morning check') ? { trace: 'morning' } : {}) }
+    // The demo's result is the routine's own last-run note ("Last run today at 6:00 AM · found 6 things"); none if it has no note (day one has none).
+    const note = DATA_FOR[this.demo.scenario].routines.find(r => r.id === id)?.last?.split(' · ')[1]
+    const run: RoutineRun = { routine: id, at, atMin, ...(note ? { result: note } : {}), ...(id === routineIdOf('Morning check') ? { trace: 'morning' } : {}) }
     return this.writeThen({ routineRuns: [run, ...this.state.routineRuns] }, run)
   }
   deleteRoutine(id: string) { return this.write({ routinesDeleted: { ...this.state.routinesDeleted, [id]: true } }) }

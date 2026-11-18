@@ -456,8 +456,7 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
     const read = morningReadTools(ctx)
     // With no tool connected yet (day one), the morning check read nothing, so it has no line.
     if (read.length) {
-      const fill = (t: string) => t.replace('{read}', String(read.length)).replace('{found}', String(ctx.data.problems.length))
-        .replace('{readNames}', listNames(read.map(k => toolDetail(ctx.data, k).name)))
+      const fill = fillActivity(ctx)
       rows.push({ ...base, t: morning.t, atMin: morning.atMin, icon: 'visibility', kind: 'read', trace: morning.trace, who: morning.who, why: morning.why, by: morning.by,
         text: fill(morning.text), result: fill(morning.result) })
       // The routines that ran today, after the morning check (none on day one: nothing was connected to read).
@@ -572,6 +571,13 @@ export const activeMode = (data: AgentData, saved: Record<string, string>, picke
 }
 
 
+/** Fills the {read}, {found} and {readNames} placeholders in the sample morning-check text. */
+export function fillActivity(ctx: Ctx) {
+  const read = morningReadTools(ctx)
+  return (t: string) => t.replace('{read}', String(read.length)).replace('{found}', String(ctx.data.problems.length))
+    .replace('{readNames}', listNames(read.map(k => toolDetail(ctx.data, k).name)))
+}
+
 /** One line in a routine's last runs. `trace` is set only when the agent has the run's steps. */
 export interface RoutineRunLine { key: string; day: string; t: string; text: string; trace?: string; inActivity: boolean }
 
@@ -582,11 +588,12 @@ export interface RoutineRunLine { key: string; day: string; t: string; text: str
 export function routineRuns(ctx: Ctx, r: { id: string; name: string; last?: string }): RoutineRunLine[] {
   const { S, agent, data } = ctx
   const now = agent.routineRuns.filter(x => x.routine === r.id)
-    .map((x, i): RoutineRunLine => ({ key: `now|${i}|${x.at}`, day: 'Today', t: x.at, text: 'Run now', trace: x.trace, inActivity: false }))
+    .map((x, i): RoutineRunLine => ({ key: `now|${i}|${x.at}`, day: 'Today', t: x.at, text: x.result ? `Run now · ${x.result}` : 'Run now', trace: x.trace, inActivity: false }))
   const name = r.name.toLowerCase()
+  const fill = fillActivity(ctx)
   const lines = [...data.activity.today.map(l => ({ ...l, day: 'Today' })), ...data.activity.earlier]
     .filter(l => !(l.minStage === 'Act' && S < 1) && l.text.toLowerCase().includes(name))
-    .map((l): RoutineRunLine => ({ key: `${l.day}|${l.t}|${l.text}`, day: l.day ?? 'Today', t: l.t, text: l.text, trace: l.trace, inActivity: true }))
+    .map((l): RoutineRunLine => ({ key: `${l.day}|${l.t}|${l.text}`, day: l.day ?? 'Today', t: l.t, text: fill(l.text), trace: l.trace, inActivity: true }))
   if (lines.length === 0 && r.last) lines.push({ key: 'last', day: '', t: '', text: r.last, inActivity: false })
   return [...now, ...lines]
 }

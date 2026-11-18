@@ -36,7 +36,8 @@ export function Routines() {
 
   const actions = {
     run: (it: Item) => {
-      agent.runRoutine(it.id)
+      // The agent has already sent the person a notice if the run failed; this only keeps the rejection from going unhandled.
+      agent.runRoutine(it.id).catch(() => {})
       showToast(`${it.r.name} is running now`, { icon: 'play_arrow', ms: 4000 })
     },
     pause: (it: Item) => {
@@ -96,7 +97,7 @@ export function Routines() {
                   </Badge>
                   {mode && <span>{mode}</span>}
                 </div>
-                {!locked && <div className="mt-2 text-sm text-muted-foreground">{r.last || 'Not run yet'}</div>}
+                {!locked && <div className="mt-2 text-sm text-muted-foreground">{lastOf(st.routineRuns, r) || 'Not run yet'}</div>}
                 {/* A phone has no room for a next-run column beside the text: the line sits under it. */}
                 {phone && next && <div className="mt-2 text-xs text-muted-foreground">Next run <span className={`text-sm font-medium whitespace-nowrap ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
               </div>
@@ -121,8 +122,11 @@ export function Routines() {
   )
 }
 
-/** What a run found, from the routine's last-run note ("Last run today at 6:00 AM · found 6 things" is "found 6 things"). */
-const resultOf = (last?: string) => last?.split(' · ')[1] ?? 'finished'
+/** The routine's last-run line: the newest Run now from this session (the sheet's first line), else the sample data's note. */
+const lastOf = (runs: { routine: string; at: string; result?: string }[], r: RoutineDef) => {
+  const now = runs.find(x => x.routine === r.id)
+  return now ? `Last run today at ${now.at}${now.result ? ` · ${now.result}` : ''}` : r.last
+}
 
 const modeOf = (r: RoutineDef, S: number, locked: boolean) =>
   r.need === 0 ? (S === 0 ? 'Read only' : 'Always on') : locked ? '' : S === 2 && !r.money ? 'Runs by itself, within limits' : 'Drafts wait for your approval'
@@ -206,13 +210,11 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
             <ul aria-label="Last runs" className="m-0 mt-1 list-none p-0">
               {runs.map(l => {
                 const trace = l.trace && agent.getTrace(l.trace) ? l.trace : undefined
-                // A run from Run now says what it found, as the routine's own runs do.
-                const text = l.key.startsWith('now|') ? `Run now · ${resultOf(r.last)}` : l.text
                 return (
                   <li key={l.key} data-run-line className="flex min-h-11.25 items-center gap-3 border-b border-divider py-1 text-sm">
                     <Icon name="check_circle" size={18} className="flex-none text-done" />
                     {runs.some(x => x.t) && <span className="w-run-when flex-none whitespace-nowrap text-foreground-3 tabular-nums">{l.t ? (l.day === 'Today' ? l.t : `${l.day.replace(/^\w+day /, '')}, ${l.t}`) : ''}</span>}
-                    <span className="min-w-0 flex-1">{text}</span>
+                    <span className="min-w-0 flex-1">{l.text}</span>
                     {trace
                       ? <Button variant="link" className="flex-none text-sm" onClick={() => { onClose(); openTrace(trace) }}>Steps →</Button>
                       : l.inActivity && <Button variant="link" className="flex-none text-sm" onClick={() => { onClose(); go('activity') }}>Activity →</Button>}
