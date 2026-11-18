@@ -119,10 +119,17 @@ export const STATES: UiState[] = [
       expect(typeof started).toBe('number')
       await page.clock.install({ time: started })
       await page.clock.pauseAt(started + 20_000)
-      const approve = page.locator('main').getByRole('button', { name: /^Approve( and |$)/ })
-      for (let n = await approve.count(); n > 0; n--) {
-        await approve.first().click()
-        await expect(approve).toHaveCount(n - 1)
+      // Low-risk drafts approve in one tap; the others (money, customers) through Review in the panel.
+      const drafts = page.locator('main [data-slot=card]').filter({ has: page.getByRole('heading', { level: 2 }) })
+      for (let n = await drafts.count(); n > 0; n--) {
+        const review = drafts.first().getByRole('button', { name: 'Review', exact: true })
+        if (await review.count()) {
+          await review.click()
+          await page.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click()
+          await page.keyboard.press('Escape')
+          await expect(page.getByRole('dialog')).toHaveCount(0)
+        } else await drafts.first().getByRole('button', { name: /^Approve/ }).click()
+        await expect(drafts).toHaveCount(n - 1)
       }
       await page.clock.runFor(30_000)
       await page.evaluate(() => { location.hash = '#/today' })
@@ -219,6 +226,8 @@ export const STATES: UiState[] = [
       await expect(page.getByRole('listbox')).toBeVisible()
     },
   },
+  page_('act-approvals-first-day', 'Act', 'First day', '#/approvals', 'Nothing to approve yet.', true),
+  page_('act-approvals-loading', 'Act', 'Loading', '#/approvals', 'Waiting for you', true),
 ]
 
 /** Opens a state from a clean demo: a fixed theme, no agent-mark animation, no dot sweep. */

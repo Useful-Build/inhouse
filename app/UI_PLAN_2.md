@@ -27,7 +27,7 @@ PR 1 ─┬─► PR 2 ─┬─► PR 4 (Today, Approvals, review panel)
 | 1 | Onto ui-base | `refactor/onto-ui-base` | Merged |
 | 2 | One system, both themes | `refactor/one-system` | Merged |
 | 3 | State, Undo and believable data | `fix/state-undo-data` | Merged |
-| 4 | Today, Approvals and the review panel | `feat/today-approvals-polish` | Proposed |
+| 4 | Today, Approvals and the review panel | `feat/today-approvals-polish` | Merged |
 | 5 | Conversation and composer | `feat/conversation-polish` | Proposed |
 | 6 | Library | `feat/library-polish` | Merged |
 | 7 | Pages and windows | `feat/pages-polish` | Merged |
@@ -132,18 +132,31 @@ Notes from the build:
 
 ## PR 4: Today, Approvals and the review panel
 
-- [ ] Card footers never cut: the amount line and the draft or suggestion line wrap (H1, M1)
-- [ ] One "Drafted" style; the header follows the state ("All approved"); handled cards use the muted token (M21, L15)
-- [ ] Approvals: one primary action, Review, and "···" (Edit, Don't send); Edit always opens the panel with the draft in view; low-risk cards are marked; one footer pattern; one dismiss verb (M6, M7)
-- [ ] "Approved today" rows reflow on a phone (H7)
-- [ ] Panel: actions on one row, nothing hidden under the ask bar (M28)
-- [ ] Today card: a stretched button, not a click handler on a `div` (M38)
-- [ ] First-day and loading states for Approvals
-- [ ] Phone: no fixed card height, header on one line, no sort control, Approve plus "···" (M25, M27)
+- [x] Card footers never cut: the amount line and the draft or suggestion line wrap (H1, M1)
+- [x] One "Drafted" style; the header follows the state ("All approved"); handled cards use the muted token (M21, L15)
+- [x] Approvals: one primary action, Review, and "···" (Edit, Don't send); Edit always opens the panel with the draft in view; low-risk cards are marked; one footer pattern; one dismiss verb (M6, M7)
+- [x] "Approved today" rows reflow on a phone (H7)
+- [x] Panel: actions on one row, nothing hidden under the ask bar (M28)
+- [x] Today card: a stretched button, not a click handler on a `div` (M38)
+- [x] First-day and loading states for Approvals
+- [x] Phone: no fixed card height, header on one line, no sort control, Approve plus "···" (M25, M27)
 
 Files: `src/screens/Today.tsx`, `src/screens/Approvals.tsx`, `src/overlays/ProblemPanel.tsx`, specs.
 Risk: medium. The demo's first screen.
 Verify: E2E at Watch, Act and Run: every card's text fully visible at 390 and 1440 (no element with `scrollWidth > clientWidth`), edit a no-text draft in the panel and approve it, approve all low-risk and undo.
+
+Notes from the build:
+- **Not run here.** Built by a worker that can't start a browser: typecheck and lint pass; the E2E, visual and a11y suites and the screenshot check are the orchestrator's. New specs: `today-approvals.spec.ts` (1440: no text cut on Today and Approvals at Watch, Act and Run; Edit on a no-text draft in the panel, approve, Undo keeps the note; Approve all low-risk and its toast Undo; the Today card opens from its title and its menu doesn't) and `today-approvals-phone.spec.ts` (390: the same no-cut check, no sort, one header line, Approve plus "···", an approved row that reflows). Shared helpers in `e2e/today-approvals-helpers.ts`.
+- **Approvals cards** mirror Today: low-risk drafts (no money, no customers) get one-tap Approve and a "Low risk" badge; the rest get Review, which opens the panel where the Approve button is. "···" holds Edit and Don't send (and Review on a low-risk card). The note about who usually signs off moved above the buttons. Specs that approved a money or customer draft from its card now go through the panel (`page-actions.spec.ts`, the `act-today-approved` state in `states.ts`).
+- **Edit** always opens the panel. A draft with no text of its own shows a "Your note" field (stored through `editDraft`, shown on the card after, and kept through Undo). `draftView` now returns `agent.edits[id] ?? dr.body ?? null` and labels such a note "Your note" (`src/state/derive.ts`, additive).
+- **The panel's actions** (Approve, Edit or Done, Don't send) sit on one row in the footer above the ask bar, so they never scroll out of reach. "Not now" is gone; Don't send is the one dismiss verb (Today's "Not a problem" stays: it means the problem isn't one, not the draft).
+- **Today's header follows the state:** "Needs you", then "All approved" or "Nothing waiting" (with the set-aside count) once nothing waits. Handled and approved cards use `text-done` for the status line too. One Drafted style: "Drafted · ready to approve", "Drafted · <what waits>", and the panel's "Drafted · title". On a phone the sort control is gone, cards have no min height, and the Approvals header keeps one line.
+- **Leftovers settled:** "Restocked 11 units" keeps a no-break space after the number in the handled banner; "usually approves" became "Dana Kim usually signs off orders over $5,000. As an admin, you can approve it in Dana's place." (and the same for Leo's customer emails) so "Approved by Sam" reads right (`problems.json`); the 6:08 AM and 7:42 AM drafts stay as accepted.
+- **Review fixes:** Approvals first-day and loading are now states (`act-approvals-first-day`, `act-approvals-loading`, appended to `states.ts`, so the visual and a11y suites take them); loading has a screen-reader status and no sort or approve-all shows without data. The "Low risk" badge follows the low-risk list, not `waitsLabel`. Each "···" is named for its card ("More actions for <title>"). On a phone the amount sort no longer applies. The no-break-space fix moved to `handled()`. `z-raised` now means a raised layer inside a surface. "Don't send" in the panel hides for a problem already set aside (the simpler option; Undo then never overwrites an earlier snooze or dismiss). The chat draft card labels a person's note ("Your note"). The no-cut helper measures every descendant against its card and any clipping parent, and covers Approvals' Watch block. Not done: asserting the note "with the approved card", because an approved draft shows no body anywhere (card, row or panel); the note is asserted after Undo.
+- **Expected visual changes:** Today (Watch, Act, Run, first day, loading, cap, all approved), Approvals (Watch unchanged), the problem panel, and their phone shots; Approvals first-day and loading are new visual states (baselines to generate).
+- **Visual QA round 1 fixes:** the Today card footer gives the amount and status lines the full card width, with the button on its own row under them (left-aligned, `text-pretty` on wrapping lines). The review panel's main action takes its own row on a phone (Edit and Don't send below); desktop keeps one row. Run's waiting drafts use "Drafted · <what waits>" like Act (`issueCards`); the paused-tool line keeps its words. The "···" on Today and Approvals is the new `IconButton` `card` variant (resting border and fill, hover fill). "All approved" and "Nothing waiting" hide the sort. On a phone the handled banner's separators trail the item before them, so none starts a line. Not fixed here: footer dividers can still differ by a line across a grid row when one card's text wraps; the trace pop-up's jump-to-latest overlap and the notifications popover over the page (PR 5).
+- **Visual QA round 2 fixes:** the handled banner's list wrapped no more on a phone because the space after each item sat inside its `whitespace-nowrap` span; the space is now outside, so the list wraps at item boundaries with each " ·" trailing its item. Today's status line is two lines tall on desktop, so footers line up across a grid row. The "···" on handled and approved cards uses the ghost look in the done colour. The review panel's pinned footer has tighter gaps (tap sizes unchanged). Left for PR 5: the trace pop-up and notifications popover findings.
+
 
 ## PR 5: Conversation and composer
 
