@@ -349,7 +349,7 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
     // On a phone the badge sits above the name, so the name gets the full card width for its two lines.
     <div className={`flex pt-3.5 pl-3.5 ${selecting ? 'pr-11' : 'pr-3.5'} ${phone ? 'flex-col items-start gap-2' : 'flex-row items-center gap-3'}`}>
       <TypeBadge type={f.type} size={40} />
-      <span className="line-clamp-2 min-w-0 max-w-full flex-1 text-sm leading-card font-strong wrap-anywhere">{f.name}</span>
+      <span className="min-w-0 max-w-full flex-1 text-sm leading-card font-strong wrap-anywhere">{f.name}</span>
     </div>
   )
   return (
@@ -364,13 +364,13 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
       <div className={cn(visual ? 'px-3 pt-2.5 pb-3' : 'px-3.5 pt-2 pb-3.25', menu && 'pr-10')}>
         {visual && (
           <div className="flex items-center gap-2">
-            <span className={`line-clamp-2 min-w-0 flex-1 text-sm leading-card font-strong wrap-anywhere ${grid ? 'min-h-card-name' : ''}`}>{f.name}</span>
+            <span className={`min-w-0 flex-1 text-sm leading-card font-strong wrap-anywhere ${grid ? 'min-h-card-name' : ''}`}>{f.name}</span>
             {!f.src && <TypeChip type={f.type} />}
           </div>
         )}
         {/* Two lines, so a chat's name isn't cut. A grid tile keeps both lines' room, so its tiles stay even. */}
         <div className={`flex items-start gap-1.25 text-xs text-muted-foreground ${visual ? 'mt-0.5' : ''} ${grid ? 'min-h-card-meta' : ''}`}>
-          {place && <span className="mt-px flex flex-none"><Icon name={place.icon} size={13} /></span>}<span className="line-clamp-2 min-w-0 text-pretty wrap-anywhere">{f.from}</span>
+          {place && <span className="mt-px flex flex-none"><Icon name={place.icon} size={13} /></span>}<span className="min-w-0 text-pretty wrap-anywhere">{f.from}</span>
         </div>
       </div>
       {selecting && <Check on={on} />}
@@ -395,12 +395,12 @@ function Row({ file: f, phone, selecting, on, onClick, menu }: { file: LibraryFi
         {selecting && <span aria-hidden="true" className={`box-border flex size-5 flex-none items-center justify-center rounded-full text-primary-foreground ${on ? 'bg-primary' : 'border-hairline border-border-strong bg-card'}`}>{on && <Icon name="check" size={14} weight={500} />}</span>}
         {thumb}
         <span className="min-w-0">
-          <span className="line-clamp-2 block text-base font-strong wrap-anywhere">{f.name}</span>
-          <span className="line-clamp-2 block text-xs text-muted-foreground wrap-anywhere @2xl:hidden">{picture && `${f.type} · `}{f.size} · {f.from}</span>
+          <span className="block text-base font-strong wrap-anywhere">{f.name}</span>
+          <span className="block text-xs text-muted-foreground wrap-anywhere @2xl:hidden">{picture && `${f.type} · `}{f.size} · {f.from}</span>
         </span>
       </span>
       <span className="hidden font-mono text-xs text-foreground-3 @2xl:block">{f.type}</span>
-      <span className="ellipsis hidden text-foreground-3 @2xl:block">{f.from}</span>
+      <span className="hidden min-w-0 text-foreground-3 text-pretty wrap-anywhere @2xl:block">{f.from}</span>
       <span className="hidden text-right text-foreground-3 tabular-nums @2xl:block">{f.size}</span>
       <span className="hidden text-foreground-3 tabular-nums @2xl:block">{f.date}</span>
     </button>

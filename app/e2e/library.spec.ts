@@ -79,7 +79,7 @@ test('Places filter the files, the title follows and the counts add up', async (
   // Approvals are all documents: the other tabs stay, empty.
   await places(page).getByRole('button', { name: /^Approvals/ }).click()
   await tab(page, 'Images').click()
-  await expect(page.getByText('No files here yet.')).toBeVisible()
+  await expect(page.getByText('No files under Images here yet.')).toBeVisible()
   await places(page).getByRole('button', { name: /^All files/ }).click()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
 })

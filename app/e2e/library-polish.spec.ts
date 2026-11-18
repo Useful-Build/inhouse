@@ -185,22 +185,26 @@ test('The viewer\'s link to a chat, Routines or an approval leaves no dead histo
 })
 
 /**
- * Every file name and details line shows whole: nothing is cut sideways (an ellipsis) or vertically (a line clamp, the
- * "from" line of a card included). The wide list's place column is meant to ellipsize when its row is narrow, so it's
- * held to this only where there's room (`room`, a window of 1024px or more).
+ * Every file name and details line shows whole: nothing is cut sideways (an ellipsis) or vertically (a clamp), the
+ * list's place column included (it wraps to a second line rather than cutting).
  */
-async function nothingCut(page: Page, label: string, room: boolean) {
-  const cut = await page.getByRole('list', { name: 'Files' }).evaluate((list, room) => {
+async function nothingCut(page: Page, label: string) {
+  await page.evaluate(() => document.fonts.ready)
+  const cut = await page.getByRole('list', { name: 'Files' }).evaluate(list => {
     const out: string[] = []
-    for (const el of list.querySelectorAll<HTMLElement>('.font-strong, .text-xs, [class*=line-clamp], .ellipsis')) {
-      if (!el.offsetParent || !el.textContent?.trim()) continue
+    for (const el of list.querySelectorAll<HTMLElement>('.font-strong, .text-xs, .ellipsis')) {
+      if (!el.offsetParent) continue
       // Preview art (a document page drawn small) and icon glyphs are decoration, cut on purpose.
       if (el.closest('[aria-hidden="true"]')) continue
-      if (el.classList.contains('ellipsis') && !room) continue
-      if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) out.push(el.textContent.trim())
+      // Visible text: the element's text without its aria-hidden icons.
+      const copy = el.cloneNode(true) as HTMLElement
+      copy.querySelectorAll('[aria-hidden="true"]').forEach(n => n.remove())
+      const text = copy.textContent?.trim()
+      if (!text) continue
+      if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) out.push(text)
     }
     return out
-  }, room)
+  })
   expect(cut, `${label}: cut text`).toEqual([])
 }
 
@@ -227,7 +231,7 @@ for (const width of [1440, 768, 390]) {
     // A list: whole names, however narrow. Phone: one list, no pictures.
     if (!phone) await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'List' }).click()
     await expect(items(page).first()).toBeVisible()
-    await nothingCut(page, `list at ${width}`, width >= 1024)
+    await nothingCut(page, `list at ${width}`)
     if (phone) await expect(items(page).locator('img')).toHaveCount(0)
     // The longest names, by name.
     for (const name of ['amazon-fee-reimbursement-case.pdf', 'PO-1187-kestrel-summit-fleece.pdf']) {
@@ -242,10 +246,10 @@ for (const width of [1440, 768, 390]) {
       for (const v of ['Grid', 'Masonry']) {
         await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: v }).click()
         await expect(items(page).first()).toBeVisible()
-        await nothingCut(page, `${v} at ${width}`, width >= 1024)
+        await nothingCut(page, `${v} at ${width}`)
         const x = items(page).filter({ hasText: 'ridge-30l-reorder-options.xlsx' }).first()
         // The "from" line shows whole: its text is all there and none of it is clamped away.
-        const from = x.locator('[class*=line-clamp]').last()
+        const from = x.getByText('Chat: Ridge 30L reorder quantity', { exact: true })
         await expect(from).toHaveText('Chat: Ridge 30L reorder quantity')
         expect(await from.evaluate(e => e.scrollHeight <= e.clientHeight + 1 && e.scrollWidth <= e.clientWidth + 1), `from line in ${v} at ${width}`).toBe(true)
         await x.scrollIntoViewIfNeeded()
