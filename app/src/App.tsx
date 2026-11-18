@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { agent } from './agent'
+import type { ToolsData } from './agent/types'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
 import { Sidebar } from './shell/Sidebar'
@@ -30,6 +31,9 @@ const SCREENS: Record<Page, () => React.JSX.Element> = {
   today: Today, library: Library, chats: Chats, approvals: Approvals, routines: Routines, activity: Activity,
   apps: Tools, app: ToolPage, skills: Skills, usage: Usage, settings: Settings,
 }
+
+/** A tool's or channel's name, or undefined for a key that is neither (a stale or typed link). */
+const toolName = (t: ToolsData, k: string) => t.channels.find(c => c.key === k)?.name ?? (Object.hasOwn(t.details, k) ? t.details[k].name : undefined)
 
 // ---------- hash routes: #/today, #/tools/shopify, #/settings/team-memory, #/chats/all, #/chats/<id> ----------
 // On a phone, #/settings alone is the settings menu, so Back from a settings page returns to it.
@@ -106,7 +110,6 @@ function useHashRoute() {
   const menu = phone && setMenu
   const data = useAgentData()
   const agentState = useAgentState()
-  const tools = data.tools.details
   const openKey = openChatKey({ fresh, chatId }, data)
   const chatKey = chatList ? 'all' : openKey ?? 'new'
   // Unknown also covers a deleted chat, and the newest sample chat (`#/chats`) once it was deleted.
@@ -120,7 +123,7 @@ function useHashRoute() {
       if (r) { applyRoute(r, false); return }
       const named = hasSlug(location.hash)
       history.replaceState(null, '', toHash(ui.page, ui.appKey, ui.setTab, ui.chatList ? 'all' : openChatKey(ui, agent.read()) ?? 'new', ui.phone && ui.setMenu))
-      if (named) notFound(ui.page === 'app' ? agent.read().tools.details[ui.appKey]?.name ?? 'Tools' : ui.page === 'settings' ? settingsLabel(ui.setTab) : PAGE_LABEL[ui.page])
+      if (named) notFound(ui.page === 'app' ? toolName(agent.read().tools, ui.appKey) ?? 'Tools' : ui.page === 'settings' ? settingsLabel(ui.setTab) : PAGE_LABEL[ui.page])
     }
     window.addEventListener('hashchange', apply)
     return () => window.removeEventListener('hashchange', apply)
@@ -140,7 +143,7 @@ function useHashRoute() {
   }, [chatUnknown, appKey, setTab, fallbackChat])
   useEffect(() => {
     // An unknown tool or settings tab (a stale or typed link) is replaced in place, so it adds no history entry.
-    if (page === 'app' && !Object.hasOwn(tools, appKey)) {
+    if (page === 'app' && !toolName(data.tools, appKey)) {
       history.replaceState(null, '', toHash('apps', appKey, setTab, chatKey))
       useUi.getState().patch({ page: 'apps' })
       notFound('Tools')
@@ -166,13 +169,13 @@ function useHashRoute() {
     // A settings page opened from the phone menu remembers it, so its Back button can step back instead of adding an entry.
     if (takeReplaceEntry() || tidy) history.replaceState(history.state, '', h)
     else history.pushState(phone && page === 'settings' && !menu && cur?.page === 'settings' && cur.setMenu ? FROM_SETTINGS_MENU : null, '', h)
-  }, [page, appKey, setTab, tools, chatKey, chatUnknown, chatIsNew, menu, phone])
+  }, [page, appKey, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
 }
 
 export default function App() {
   const page = useUi(s => s.page)
   const appKey = useUi(s => s.appKey)
-  const toolKnown = Object.hasOwn(useAgentData().tools.details, appKey)
+  const toolKnown = !!toolName(useAgentData().tools, appKey)
   const phone = useUi(s => s.phone)
   const chatList = useUi(s => s.chatList)
   const mainRef = useRef<HTMLElement>(null)
