@@ -46,7 +46,7 @@ for (const scenario of ['First day', 'Loading']) {
         if (hash === '#/library') await expect(page.locator('[data-file-id]')).toHaveCount(0)
         if (hash === '#/usage') await expect(page.locator('main')).toContainText('$0.00')
         if (hash === '#/chats') await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
-        if (hash === '#/chats/all') await expect(page.getByText('No chats yet.')).toBeVisible()
+        if (hash === '#/chats/all') await expect(page.getByText('No chats yet', { exact: true })).toBeVisible()
         if (hash === '#/activity') await expect(page.locator('button[data-activity-row]')).toHaveCount(0)
       }
       await go(page, '#/today')
