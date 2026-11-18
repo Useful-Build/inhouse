@@ -173,69 +173,95 @@ export function Library() {
     const active = place === id
     return chips ? (
       // A place filters the files, so it's pressed, not the current page. The same selected look as the side menus.
-      <NavItem key={id} size="chip" icon={icon} label={name} meta={n} active={active} aria-pressed={active} aria-current={undefined}
+      <NavItem key={id} size="chip" icon={icon} label={name} meta={loading ? undefined : n} active={active} aria-pressed={active} aria-current={undefined}
         className={cn('text-sm', phone && TAP_ROW)} onClick={() => pickPlace(id)} />
     ) : (
-      <NavItem key={id} icon={icon} label={name} meta={n} active={active} aria-pressed={active} aria-current={undefined} onClick={() => pickPlace(id)} />
+      <NavItem key={id} icon={icon} label={name} meta={loading ? undefined : n} active={active} aria-pressed={active} aria-current={undefined} onClick={() => pickPlace(id)} />
     )
   }
 
   const filterCount = Number(sort !== 'Newest') + Number(tab !== 'all')
   const loading = data.status === 'loading'
+  // No files at all (first day): the controls have nothing to act on, so they aren't shown.
+  const empty = !loading && files.length === 0
   // A phone shows one list, whatever view was picked on a desktop.
   const shownView = phone ? 'list' : view
+  const selectButton = (
+    <Button variant="outline" size="lg" aria-pressed={selecting} className={cn(phone && TAP_ROW)} onClick={() => (selecting ? endSelect() : setSelecting(true))}>
+      {selecting ? 'Done' : 'Select'}
+    </Button>
+  )
 
   return (
     // Desktop: the places panel and the title row stay put, and only the files scroll (App gives this page the height under the top bar). Phone: the page scrolls.
     <div className={phone ? 'flex flex-col gap-3 px-(--app-pad-x) pt-2 pb-24' : cn('box-border flex min-h-0 grow basis-0 px-(--app-pad-x) pt-2', chips ? 'flex-col gap-3' : 'items-stretch gap-7')}>
       <aside aria-label="Places" className={chips ? 'flex min-w-0 flex-none flex-col gap-2.5' : 'flex w-library-nav flex-none flex-col gap-3.5 overflow-y-auto pb-6'}>
         <SearchBox value={q} onChange={search} placeholder="Search library" label="Search library" className="flex-none" />
-        <nav aria-label="Library places" className={phone ? '-mx-(--app-pad-x) -my-1.5 flex gap-2 overflow-x-auto px-(--app-pad-x) py-1.5' : chips ? 'flex flex-wrap gap-2' : 'flex flex-col gap-px'}>
-          {panelItem('all', 'All files', 'stacks', searched.length)}
-          {places.map(p => panelItem(p.id, p.name, p.icon, searched.filter(f => f.place === p.id).length))}
-        </nav>
+        <EdgeFade on={phone} className={phone ? '-mx-(--app-pad-x) -my-1.5' : undefined}>
+          <nav aria-label="Library places" className={phone ? 'flex gap-2 overflow-x-auto px-(--app-pad-x) py-1.5' : chips ? 'flex flex-wrap gap-2' : 'flex flex-col gap-px'}>
+            {panelItem('all', 'All files', 'stacks', searched.length)}
+            {places.map(p => panelItem(p.id, p.name, p.icon, searched.filter(f => f.place === p.id).length))}
+          </nav>
+        </EdgeFade>
       </aside>
 
       <section ref={filesArea} aria-label={title} className={phone ? 'min-w-0 flex-1' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>
-        <PageHeader title={title} truncate actions={<>
-          {phone ? (
+        <PageHeader title={title} truncate actions={phone || empty ? undefined : <>
+          <Select label="Sort" value={sort} options={SORTS} onChange={v => setSort(v as Sort)} minWidth={120} />
+          <Segmented label="View" value={view} options={VIEWS} onChange={setView} />
+          {selectButton}
+        </>} />
+        {phone && !empty && (
+          // Its own row in both modes, so Select and Done swap in place and the list doesn't move.
+          <div className="mt-3.5 flex items-center gap-2.5">
             <Button variant="outline" size="lg" className={TAP_ROW} onClick={() => setFilters(true)}>
               <Icon name="tune" size={18} />Filters{filterCount > 0 && <span className="font-book text-muted-foreground tabular-nums">{filterCount}</span>}
             </Button>
-          ) : (
-            <>
-              <Select label="Sort" value={sort} options={SORTS} onChange={v => setSort(v as Sort)} minWidth={120} />
-              <Segmented label="View" value={view} options={VIEWS} onChange={setView} />
-            </>
-          )}
-          <Button variant="outline" size="lg" aria-pressed={selecting} className={cn(phone && TAP_ROW)} onClick={() => (selecting ? endSelect() : setSelecting(true))}>
-            {selecting ? 'Done' : 'Select'}
-          </Button>
-        </>} />
-        {!phone && (
+            {selectButton}
+          </div>
+        )}
+        {!phone && !empty && (
           // On desktop the tab bar is a nav row's 36px, level with the selected place beside it.
           <Segmented label="File type" value={tab} onChange={pickTab} className="mt-3.5 h-9 w-fit max-w-full self-start"
-            options={TABS.map(([k, t]) => [k, <>{t} <span className="font-book text-muted-foreground tabular-nums">{count(k)}</span></>] as [Tab, ReactNode])} />
+            options={TABS.map(([k, t]) => [k, <>{t}{!loading && <> <span className="font-book text-muted-foreground tabular-nums">{count(k)}</span></>}</>] as [Tab, ReactNode])} />
         )}
 
         <div className={phone ? undefined : '-mx-1 mt-3 min-h-0 flex-1 overflow-y-auto px-1 pb-24'}>
         {loading ? (
           <div role="status" aria-busy="true" className="mt-4">
             <span className="sr-only">Loading files</span>
-            <CardGrid aria-hidden="true" size="sm" className={phone ? 'grid-cols-2 gap-2.5' : undefined}>
-              {SKELETON_WIDTHS.map((w, i) => (
-                <div key={i} className="box-border flex flex-col overflow-hidden rounded-xl border border-border bg-card">
-                  <Skeleton className="aspect-4/3 animate-none rounded-none" />
-                  <div className="flex flex-col gap-2 px-3 pt-2.5 pb-3">
-                    <Skeleton className={`h-3.5 animate-none rounded-sm bg-fill-hover ${w}`} />
-                    <Skeleton className="h-2.5 w-1/2 animate-none rounded-sm" />
+            {phone ? (
+              // The same rows as the loaded list: a badge, a name and a details line, so nothing moves when the files arrive.
+              <div className="rounded-2xl border border-border bg-card px-2 py-1">
+                {SKELETON_WIDTHS.map((w, i) => (
+                  <div key={i} className="box-border flex min-h-13.5 items-center gap-3.5 px-3 py-2">
+                    <Skeleton className="size-9 flex-none animate-none rounded-lg" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex h-6 items-center"><Skeleton className={`h-3.5 animate-none rounded-sm bg-fill-hover ${w}`} /></div>
+                      <div className="flex h-4 items-center"><Skeleton className="h-2.5 w-1/2 animate-none rounded-sm" /></div>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </CardGrid>
+                ))}
+              </div>
+            ) : (
+              <CardGrid size="sm">
+                {SKELETON_WIDTHS.map((w, i) => (
+                  <div key={i} className="box-border flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+                    <Skeleton className="aspect-4/3 animate-none rounded-none" />
+                    <div className="flex flex-col gap-2 px-3 pt-2.5 pb-3">
+                      <Skeleton className={`h-3.5 animate-none rounded-sm bg-fill-hover ${w}`} />
+                      <Skeleton className="h-2.5 w-1/2 animate-none rounded-sm" />
+                    </div>
+                  </div>
+                ))}
+              </CardGrid>
+            )}
           </div>
         ) : files.length === 0 ? (
-          <EmptyState className="mt-4">No files yet. The files your Inhouse agent makes and your team shares will show up here.</EmptyState>
+          <EmptyState className="mt-4">
+            <span className="block text-md font-strong text-foreground">No files yet</span>
+            <span className="mt-1 block text-pretty">The files your Inhouse agent makes and your team shares will show up here.</span>
+          </EmptyState>
         ) : shown.length === 0 ? (
           <div className="my-10 flex flex-col items-center gap-3">
             <EmptyState variant="inline" className="my-0">
@@ -335,7 +361,7 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
       {visual}
       {head}
       {!visual && f.text && !grid && <div className="px-3.5 pt-3"><CodeBlock text={f.text} lines={6} /></div>}
-      <div className={cn(visual ? 'px-3 pt-2.5 pb-3' : 'px-3.5 pt-2 pb-3.25', menu && 'pr-12')}>
+      <div className={cn(visual ? 'px-3 pt-2.5 pb-3' : 'px-3.5 pt-2 pb-3.25', menu && 'pr-10')}>
         {visual && (
           <div className="flex items-center gap-2">
             <span className={`line-clamp-2 min-w-0 flex-1 text-sm leading-card font-strong wrap-anywhere ${grid ? 'min-h-card-name' : ''}`}>{f.name}</span>
@@ -344,7 +370,7 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
         )}
         {/* Two lines, so a chat's name isn't cut. A grid tile keeps both lines' room, so its tiles stay even. */}
         <div className={`flex items-start gap-1.25 text-xs text-muted-foreground ${visual ? 'mt-0.5' : ''} ${grid ? 'min-h-card-meta' : ''}`}>
-          {place && <span className="mt-px flex flex-none"><Icon name={place.icon} size={13} /></span>}<span className="line-clamp-2 min-w-0 wrap-anywhere">{f.from}</span>
+          {place && <span className="mt-px flex flex-none"><Icon name={place.icon} size={13} /></span>}<span className="line-clamp-2 min-w-0 text-pretty wrap-anywhere">{f.from}</span>
         </div>
       </div>
       {selecting && <Check on={on} />}
@@ -356,7 +382,8 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
 
 function Row({ file: f, phone, selecting, on, onClick, menu }: { file: LibraryFile; phone: boolean; selecting: boolean; on: boolean; onClick: () => void; menu: ReactNode }) {
   // No previews in a phone's rows: the type badge only.
-  const thumb = f.src && !phone
+  const picture = !!f.src && !phone
+  const thumb = picture
     ? <img src={f.src} alt="" loading="lazy" className="block size-9 flex-none rounded-lg object-cover preview-dim" />
     : <TypeBadge type={f.type} size={36} />
   return (
@@ -369,7 +396,7 @@ function Row({ file: f, phone, selecting, on, onClick, menu }: { file: LibraryFi
         {thumb}
         <span className="min-w-0">
           <span className="line-clamp-2 block text-base font-strong wrap-anywhere">{f.name}</span>
-          <span className="line-clamp-2 block text-xs text-muted-foreground wrap-anywhere @2xl:hidden">{f.type} · {f.size} · {f.from}</span>
+          <span className="line-clamp-2 block text-xs text-muted-foreground wrap-anywhere @2xl:hidden">{picture && `${f.type} · `}{f.size} · {f.from}</span>
         </span>
       </span>
       <span className="hidden font-mono text-xs text-foreground-3 @2xl:block">{f.type}</span>
@@ -409,5 +436,28 @@ function FileMenu({ file, phone, onOpen, onDownload, onSource, onDelete }: {
         </MenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+/** Phone: a row that scrolls sideways inside itself, with a fade at the right edge while more is hidden there. */
+function EdgeFade({ on, className, children }: { on: boolean; className?: string; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null)
+  const [more, setMore] = useState(false)
+  useEffect(() => {
+    // The scrolling element is the control inside.
+    const el = box.current?.firstElementChild
+    if (!on || !(el instanceof HTMLElement)) { setMore(false); return }
+    const check = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
+    check()
+    el.addEventListener('scroll', check, { passive: true })
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', check); ro.disconnect() }
+  }, [on])
+  return (
+    <div ref={box} className={cn('relative', className)}>
+      {children}
+      {more && <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-linear-to-l from-background" />}
+    </div>
   )
 }

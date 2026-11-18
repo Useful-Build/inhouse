@@ -319,7 +319,7 @@ test('Dark: previews are dimmed, and light keeps them as they are', async ({ pag
 
 test('First day shows what the Library is for', async ({ page }) => {
   await start(page, '#/library', 1440, 'First day')
-  await expect(page.getByText(/^No files yet\./)).toBeVisible()
+  await expect(page.getByText('No files yet', { exact: true })).toBeVisible()
   await expect(page.locator('[data-file-id]')).toHaveCount(0)
   expect(await num(place(page, 'All files'))).toBe(0)
   await shot(page, 'library-first-day')
@@ -328,7 +328,7 @@ test('First day shows what the Library is for', async ({ page }) => {
 test('Loading shows placeholders where the files will be, at 1440 and 390', async ({ page }) => {
   await start(page, '#/library', 1440, 'Loading')
   await expect(page.getByRole('status').filter({ hasText: 'Loading files' })).toBeAttached()
-  await expect(page.getByText(/^No files yet\./)).toHaveCount(0)
+  await expect(page.getByText('No files yet', { exact: true })).toHaveCount(0)
   await expect(page.locator('[data-file-id]')).toHaveCount(0)
   await shot(page, 'library-loading')
   await page.setViewportSize({ width: 390, height: 844 })
