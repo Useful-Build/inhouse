@@ -92,7 +92,7 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
   )
 }
 
-function Control({ row, locked, on, onToggle, onAsk, readOnly }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean }) {
+function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean; caption?: string }) {
   // A team setting on a phone is read, not changed (D4): the value as text, no control. A button only opens something
   // (the team window, a page) or does a job (pause, forget, export), so it keeps working.
   if (readOnly && row.kind !== 'button' && row.kind !== 'photo') {
@@ -128,9 +128,13 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly }: { row: Row; loc
       return <Switch on={on} label={row.title} onChange={locked ? undefined : onToggle} />
     case 'mode':
       return (
-        <div className="flex flex-wrap items-center gap-4.5">
+        <div className="flex flex-wrap items-center gap-4.5 @xl:flex-nowrap">
           {/* The visible words are in the name ("How hard it thinks: Smart"), so a voice command by label works. */}
-          <Select label={`How hard it thinks: ${row.title}`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
+          <div className="flex flex-col gap-1.5">
+            {/* Below the card's @xl width the rows wrap and the section's top caption is hidden, so the first picker carries it. */}
+            {caption && <span className="text-xs text-muted-foreground @xl:hidden">{caption}</span>}
+            <Select label={`How hard it thinks: ${row.title}`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
+          </div>
           {/* The switch's visible label: whether the team can use this model. */}
           <span className="inline-flex h-9.5 items-center gap-2">
             <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={() => agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null)} />
@@ -259,12 +263,12 @@ export function Settings() {
           {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (
             <section key={`${si}|${sec.label}`} className={sec.label ? undefined : 'mt-4.5'}>
               {sec.label && <SectionHeader title={sec.label} className="mt-6 mb-2.5" />}
-              {sec.empty && <EmptyState className="mt-6">{sec.empty}</EmptyState>}
+              {sec.empty && <EmptyState>{sec.empty}</EmptyState>}
               {sec.rows.length > 0 && (
-              <div className="rounded-2xl border border-border bg-card px-5.5">
+              <div className="@container rounded-2xl border border-border bg-card px-5.5">
                 {sec.caption && !readOnly && (
                   // One label over the pickers: it mirrors a row's right side (picker, then the switch's width) so it sits over them.
-                  <div className="flex justify-end gap-4.5 pt-4 text-xs text-muted-foreground">
+                  <div className="hidden justify-end gap-4.5 pt-4 text-xs text-muted-foreground @xl:flex">
                     <span className="w-37.5 flex-none">{sec.caption}</span>
                     <span aria-hidden="true" className="invisible inline-flex items-center gap-2"><SwitchLook on /><span className="w-6" /></span>
                   </div>
@@ -273,7 +277,7 @@ export function Settings() {
                   const locked = S < row.need
                   const on = !locked && (st.toggles[row.key ?? ''] ?? row.def ?? false)
                   return (
-                    <div key={`${row.title}|${i}`} className={`flex flex-wrap items-center gap-x-6 gap-y-3 py-4 ${i === 0 ? '' : 'border-t border-divider'}`}>
+                    <div key={`${row.title}|${i}`} className={`flex flex-wrap items-center gap-x-6 gap-y-3 py-4 ${row.kind === 'mode' ? '@xl:flex-nowrap' : ''} ${i === 0 ? '' : 'border-t border-divider'}`}>
                       <div className="flex min-w-0 grow basis-65 items-center gap-3.5">
                         {row.avatar?.at === 'row' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={row.kind === 'photo' ? 48 : 36} /></span>}
                         <div className="min-w-0 flex-1">
@@ -282,7 +286,7 @@ export function Settings() {
                         </div>
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
-                      <Control readOnly={readOnly} row={row} locked={locked} on={on} onToggle={() => agent.setToggle(row.key!, !on)} onAsk={setAsk} />
+                      <Control readOnly={readOnly} row={row} locked={locked} on={on} onToggle={() => agent.setToggle(row.key!, !on)} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
                     </div>
                   )
                 })}

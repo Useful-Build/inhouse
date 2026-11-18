@@ -145,7 +145,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
     await expect(first).toContainText('Run now')
     await expect(first).not.toContainText('Run now ·')
     await page.keyboard.press('Escape')
-    await expect(row).toContainText(/Last run today at \d:\d\d\s?[AP]M/)
+    await expect(row.getByText(/^Last run today at \d{1,2}:\d\d\s?[AP]M$/)).toBeVisible()
     await expect(row).not.toContainText('Not run yet')
   })
 
