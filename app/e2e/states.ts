@@ -137,6 +137,8 @@ export const STATES: UiState[] = [
     // tooltip, reached by keyboard and fully shown.
     name: 'act-settings-models', stage: 'Act', scenario: 'Normal', hash: '#/settings/team-modes', ready: 'Models', a11y: true,
     act: async page => {
+      // On a phone team settings are read-only text (D4): the shot is the page as it opens.
+      if (await page.getByRole('button', { name: 'Menu' }).isVisible()) return
       const other = page.getByRole('switch', { name: /^(?!Smart:).+: the team can use this model$/ }).last()
       await other.click()
       await expect(other).toHaveAttribute('aria-checked', 'false')
