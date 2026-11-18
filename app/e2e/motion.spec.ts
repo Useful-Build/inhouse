@@ -67,7 +67,8 @@ async function ask(page: Page, q: string) {
 
 for (const [name, viewport] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844 }]] as const) {
   test.describe(name, () => {
-    test.use({ viewport, video: { mode: 'on', size: viewport } })
+    // Video is on for the whole motion project (playwright.config.ts); a describe can only change the viewport.
+    test.use({ viewport })
 
     for (const run of [1, 2, 3]) {
       test(`${name} run ${run}${run === 1 ? ' (cold start)' : ''}: sending, streaming and finishing don't jump the view`, async ({ page }) => {

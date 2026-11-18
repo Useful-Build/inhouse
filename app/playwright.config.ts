@@ -18,7 +18,7 @@ if (noVisual && process.env.TEST_WORKER_INDEX === undefined) {
 const visualMatch = noVisual ? { testIgnore: /.*/ } : { testMatch: /visual\.spec/ }
 const ci = !!process.env.CI
 const motionProject: PlaywrightTestProject[] = process.env.MOTION
-  ? [{ name: 'motion', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, trace: 'off', screenshot: 'off', video: { mode: 'on', size: { width: 1440, height: 900 } } }, testMatch: motion }]
+  ? [{ name: 'motion', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, trace: 'off', screenshot: 'off', video: 'on' }, testMatch: motion }]
   : []
 
 export default defineConfig({
