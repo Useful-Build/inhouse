@@ -86,6 +86,10 @@ test('Phone: the Library filter sheet sorts and picks a type, and any type can b
   expect(await noSideways(page)).toBe(true)
   await shot(page, '390-library-filters')
   // Sort by name, and the last type.
+  // The chips are drawn at 32px, each with a tap area at least 44px tall.
+  for (const chip of [sheet.getByRole('radio', { name: 'Name' }), sheet.getByRole('radio', { name: /^Other \d+$/ })]) {
+    expect(await chip.evaluate(e => parseFloat(getComputedStyle(e, '::after').height)), 'tap area height').toBeGreaterThanOrEqual(44)
+  }
   await sheet.getByRole('radio', { name: 'Name' }).click()
   const other = sheet.getByRole('radio', { name: /^Other \d+$/ })
   const n = Number((await other.innerText()).replace(/\D/g, ''))

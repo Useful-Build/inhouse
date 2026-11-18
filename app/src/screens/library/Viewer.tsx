@@ -1,6 +1,6 @@
 // The file viewer: a preview on the left, what it is and where it came from on the right.
 import type { ReactNode } from 'react'
-import type { LibraryFile, LibraryPlace } from '../../agent'
+import type { LibraryFile, LibraryLink, LibraryPlace } from '../../agent'
 import { memberFor, userName } from '../../state/derive'
 import { fmtTime, fmtWeekday, parseLocal } from '../../agent/clock'
 import { useAgentData, useAgentState, useUi } from '../../state/store'
@@ -60,7 +60,7 @@ function Preview({ file, phone }: { file: LibraryFile; phone: boolean }) {
 export function Viewer({ file, place, onClose, onLeave, onDownload, onPrev, onNext }: {
   file: LibraryFile; place: LibraryPlace; onClose: () => void; onDownload: () => void
   /** The viewer closes because the person went to where the file came from (the chat, Routines or the approval). */
-  onLeave: () => void
+  onLeave: (link: LibraryLink) => void
   /** The file before and after this one in the Library's current list; missing at either end. */
   onPrev?: () => void; onNext?: () => void
 }) {
@@ -68,7 +68,7 @@ export function Viewer({ file, place, onClose, onLeave, onDownload, onPrev, onNe
   const data = useAgentData()
   const st = useAgentState()
   const me = userName({ agent: st, data })
-  const open = () => { if (!file.link) return; if (openSource(file)) onLeave() }
+  const open = () => { if (!file.link) return; if (openSource(file)) onLeave(file.link) }
   const rows: [string, string][] = [
     ['Type', TYPE_LABEL[file.type] ?? file.type], ['Size', file.size], // A details field gives the day too, today's included (a list shows today's as a time only).
     ['Date', `${fmtWeekday(parseLocal(file.at))}, ${fmtTime(parseLocal(file.at))}`],

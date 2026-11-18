@@ -13,7 +13,7 @@ import { Button, CardGrid, EmptyState, Icon, IconButton, MenuItem, NavItem, Page
 import { Confirm, SearchBox, Select, TAP, TAP_ROW } from '../ui/fields'
 import { CodeBlock, DocPage, MediaFace, TypeBadge, TypeChip } from './library/Previews'
 import { FilterSheet } from './library/FilterSheet'
-import { closeFile, dropFileEntry, pushFile, replaceFile, useOpenFileId, useWide } from './library/route'
+import { closeFile, leaveFile, pushFile, replaceFile, useOpenFileId, useWide } from './library/route'
 import { OPEN, openSource } from './library/source'
 import { Viewer } from './library/Viewer'
 
@@ -66,6 +66,8 @@ export function Library() {
   const openId = useOpenFileId()
   const [confirm, setConfirm] = useState(false)
   const [filters, setFilters] = useState(false)
+  // The filter sheet is a phone's; leaving the phone layout closes it, so it doesn't reopen on the next shrink.
+  if (!phone && filters) setFilters(false)
 
   // The search narrows every count: the places, the types and the list.
   const searched = useMemo(() => {
@@ -87,12 +89,14 @@ export function Library() {
   const at = open ? shown.indexOf(open) : -1
   const prevId = at > 0 ? shown[at - 1].id : null
   const nextId = at >= 0 && at < shown.length - 1 ? shown[at + 1].id : null
-  // A link to a file that doesn't exist (typed, or deleted since) falls back to the list and says so.
+  // A link to a file that doesn't exist (typed, or deleted since) falls back to the list and says so. A scenario with no
+  // files at all (First day) just closes the viewer: the file was never there to lose.
   useEffect(() => {
     if (!openId || open || data.status === 'loading') return
-    dropFileEntry()
+    closeFile()
+    if (files.length === 0) return
     useUi.getState().showToast("That file isn't available. It may have been deleted.", { icon: 'info', key: 'route-notice' })
-  }, [openId, open, data.status])
+  }, [openId, open, data.status, files.length])
 
   // Esc closes the delete question first, then the viewer, then leaves Select mode. Left and Right step the viewer.
   useEffect(() => {
@@ -219,8 +223,8 @@ export function Library() {
           <div role="status" aria-busy="true" className="mt-4">
             <span className="sr-only">Loading files</span>
             <CardGrid aria-hidden="true" size="sm" className={phone ? 'grid-cols-2 gap-2.5' : undefined}>
-              {SKELETON_WIDTHS.map(w => (
-                <div key={w} className="box-border flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+              {SKELETON_WIDTHS.map((w, i) => (
+                <div key={i} className="box-border flex flex-col overflow-hidden rounded-xl border border-border bg-card">
                   <Skeleton className="aspect-4/3 animate-none rounded-none" />
                   <div className="flex flex-col gap-2 px-3 pt-2.5 pb-3">
                     <Skeleton className={`h-3.5 animate-none rounded-sm bg-fill-hover ${w}`} />
@@ -235,9 +239,9 @@ export function Library() {
         ) : shown.length === 0 ? (
           <div className="my-10 flex flex-col items-center gap-3">
             <EmptyState variant="inline" className="my-0">
-              {q.trim() ? `No files match "${q.trim()}".` : 'No files here yet.'}
+              {q.trim() ? `No files match "${q.trim()}".` : tab !== 'all' ? `No files under ${TABS.find(t => t[0] === tab)![1]} here yet.` : 'No files here yet.'}
             </EmptyState>
-            {q.trim() && <Button variant="outline" className={cn(phone && TAP_ROW)} onClick={() => search('')}>Clear</Button>}
+            {(q.trim() || tab !== 'all') && <Button variant="outline" className={cn(phone && TAP_ROW)} onClick={() => { search(''); pickTab('all') }}>Clear</Button>}
           </div>
         ) : shownView === 'list' ? (
           <div ref={list} tabIndex={-1} role="list" aria-label="Files" className="@container mt-4 rounded-2xl border border-border bg-card px-2 py-1">
@@ -271,7 +275,7 @@ export function Library() {
         </SelectionBar>
       )}
 
-      {open && <Viewer file={open} place={placeOf(open.place)} onClose={closeFile} onLeave={dropFileEntry} onDownload={download}
+      {open && <Viewer file={open} place={placeOf(open.place)} onClose={closeFile} onLeave={leaveFile} onDownload={download}
         onPrev={prevId ? () => replaceFile(prevId) : undefined} onNext={nextId ? () => replaceFile(nextId) : undefined} />}
       {phone && filters && (
         <FilterSheet sort={sort} sorts={SORTS} onSort={setSort} tab={tab} tabs={TABS.map(([k, t, icon]) => [k, t, count(k), icon])} onTab={pickTab} onClose={() => setFilters(false)} />

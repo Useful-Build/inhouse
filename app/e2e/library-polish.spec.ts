@@ -109,9 +109,14 @@ test('An open file has its own link: Back closes it, stepping adds no entries, a
   await expect(viewer).toHaveCount(0)
   expect(hash(page)).toBe('#/library')
 
-  // A link opens the file straight away. Close on it lands on the list, and the page stays put.
-  await page.goto(`/?demo${opened}`)
+  // A link opens the file straight away, on a fresh load (a different query makes it a real navigation, not a hash move).
+  // Close on it lands on the list, and the page stays put.
+  await page.goto(`/?demo&fresh=1${opened}`)
   await expect(page.getByRole('dialog', { name: 'File: weekly-ops-report-week-46.pdf' })).toBeVisible()
+  // A reload on the file's link opens it again.
+  await page.reload()
+  await expect(page.getByRole('dialog', { name: 'File: weekly-ops-report-week-46.pdf' })).toBeVisible()
+  expect(hash(page)).toBe(opened)
   await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   expect(hash(page)).toBe('#/library')
@@ -123,7 +128,24 @@ test('An open file has its own link: Back closes it, stepping adds no entries, a
   await expect(page.getByRole('dialog')).toHaveCount(0)
   expect(hash(page)).toBe('#/library')
 
-  // The viewer's link to a chat leaves cleanly: the chat opens, and Back from it returns to the Library.
+  // Pressing Close twice at once (a double click, a held Escape) closes the viewer and goes back only one step.
+  await page.evaluate(() => { location.hash = '#/today' })
+  await page.evaluate(() => { location.hash = '#/library' })
+  await items(page).first().click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
+  expect(hash(page)).toBe('#/library')
+})
+
+test('The viewer\'s link to a chat, Routines or an approval leaves no dead history entry', async ({ page }) => {
+  await start(page)
+  const today = async () => { await page.evaluate(() => { location.hash = '#/today' }); await page.evaluate(() => { location.hash = '#/library' }) }
+  await today()
+
+  // A chat: the chat opens, the first Back lands on the Library's list, the second on the page before it.
   await items(page).filter({ hasText: 'stuck-orders-over-3-days.csv' }).first().click()
   await page.getByRole('dialog').getByRole('button', { name: 'Open the chat →' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -131,18 +153,52 @@ test('An open file has its own link: Back closes it, stepping adds no entries, a
   expect(hash(page)).toMatch(/^#\/chats\//)
   await page.goBack()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
+  expect(hash(page)).toBe('#/library')
+  await page.goBack()
+  await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('All files')
+  expect(hash(page)).toBe('#/today')
+
+  // Routines: the same two steps.
+  await page.goForward()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
+  await items(page).filter({ hasText: 'weekly-ops-report-week-46.pdf' }).first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Open Routines →' }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Routines')
+  expect(hash(page)).toBe('#/routines')
+  await page.goBack()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
+  expect(hash(page)).toBe('#/library')
+  await page.goBack()
+  expect(hash(page)).toBe('#/today')
+
+  // An approval opens over the list: the viewer closes, the approval panel is up, and the first Back leaves the Library.
+  await page.evaluate(() => { location.hash = '#/library' })
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
+  await items(page).filter({ hasText: 'PO-1188-ridge-30l-kestrel.pdf' }).first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Open the approval →' }).click()
+  await expect(page.getByRole('button', { name: 'Approve and send to Kestrel' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: /^File: / })).toHaveCount(0)
+  expect(hash(page)).toBe('#/library')
+  await page.keyboard.press('Escape')
+  await page.goBack()
+  expect(hash(page)).toBe('#/today')
 })
 
-/** Every file name (and details line) shows whole: nothing is cut by an ellipsis or a line clamp. */
-async function nothingCut(page: Page, label: string) {
-  const cut = await page.getByRole('list', { name: 'Files' }).evaluate(list => {
+/**
+ * Every file name and details line shows whole: nothing is cut sideways (an ellipsis) or vertically (a line clamp, the
+ * "from" line of a card included). The wide list's place column is meant to ellipsize when its row is narrow, so it's
+ * held to this only where there's room (`room`, a window of 1024px or more).
+ */
+async function nothingCut(page: Page, label: string, room: boolean) {
+  const cut = await page.getByRole('list', { name: 'Files' }).evaluate((list, room) => {
     const out: string[] = []
-    for (const el of list.querySelectorAll<HTMLElement>('.font-strong, .text-xs')) {
+    for (const el of list.querySelectorAll<HTMLElement>('.font-strong, .text-xs, [class*=line-clamp], .ellipsis')) {
       if (!el.offsetParent || !el.textContent?.trim()) continue
+      if (el.classList.contains('ellipsis') && !room) continue
       if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) out.push(el.textContent.trim())
     }
     return out
-  })
+  }, room)
   expect(cut, `${label}: cut text`).toEqual([])
 }
 
@@ -169,7 +225,7 @@ for (const width of [1440, 768, 390]) {
     // A list: whole names, however narrow. Phone: one list, no pictures.
     if (!phone) await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'List' }).click()
     await expect(items(page).first()).toBeVisible()
-    await nothingCut(page, `list at ${width}`)
+    await nothingCut(page, `list at ${width}`, width >= 1024)
     if (phone) await expect(items(page).locator('img')).toHaveCount(0)
     // The longest names, by name.
     for (const name of ['amazon-fee-reimbursement-case.pdf', 'PO-1187-kestrel-summit-fleece.pdf']) {
@@ -184,9 +240,12 @@ for (const width of [1440, 768, 390]) {
       for (const v of ['Grid', 'Masonry']) {
         await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: v }).click()
         await expect(items(page).first()).toBeVisible()
-        await nothingCut(page, `${v} at ${width}`)
+        await nothingCut(page, `${v} at ${width}`, width >= 1024)
         const x = items(page).filter({ hasText: 'ridge-30l-reorder-options.xlsx' }).first()
-        await expect(x).toContainText('Chat: Ridge 30L reorder quantity')
+        // The "from" line shows whole: its text is all there and none of it is clamped away.
+        const from = x.locator('[class*=line-clamp]').last()
+        await expect(from).toHaveText('Chat: Ridge 30L reorder quantity')
+        expect(await from.evaluate(e => e.scrollHeight <= e.clientHeight + 1 && e.scrollWidth <= e.clientWidth + 1), `from line in ${v} at ${width}`).toBe(true)
         await x.scrollIntoViewIfNeeded()
         await shot(page, `library-${v.toLowerCase()}-${width}`)
       }
@@ -230,14 +289,15 @@ test('Phone: a long file name shows whole in the viewer, and a code file scrolls
   await expect(viewer).toHaveCount(0)
 
   // Code keeps its lines: the block scrolls sideways inside itself, the page doesn't.
-  await page.getByRole('button', { name: /^Filters/ }).click()
-  await page.getByRole('dialog', { name: 'Filter files' }).getByRole('radio', { name: /^Code \d+$/ }).click()
-  await page.getByRole('dialog', { name: 'Filter files' }).getByRole('button', { name: 'Done' }).click()
-  await items(page).filter({ hasText: 'restock-returns.py' }).first().click()
+  await box(page).fill('shipbob-ticket') // a file with a 150 character line
+  await items(page).filter({ hasText: 'shipbob-ticket-order-4821.md' }).first().click()
   const code = page.getByRole('dialog', { name: /^File: / }).locator('pre')
   await expect(code).toBeVisible()
   const c = await code.evaluate(e => ({ ws: getComputedStyle(e).whiteSpace, ox: getComputedStyle(e).overflowX }))
   expect(c).toEqual({ ws: 'pre', ox: 'auto' })
+  // The long line is wider than the block, and the block scrolls to it.
+  expect(await code.evaluate(e => e.scrollWidth > e.clientWidth + 1), 'a long line overflows the block').toBe(true)
+  expect(await code.evaluate(e => { e.scrollLeft = 40; return e.scrollLeft }), 'the block scrolls sideways').toBeGreaterThan(0)
   expect(await noSideways(page)).toBe(true)
   await shot(page, 'library-viewer-code-390')
 })

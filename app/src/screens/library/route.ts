@@ -1,6 +1,8 @@
 // An open file has its own link (#/library/<file id>), so Back closes it and a link opens it. The Library keeps `openId`
 // in step with the hash; App only leaves a #/library/... hash alone.
 import { useSyncExternalStore } from 'react'
+import type { LibraryLink } from '../../agent'
+import { useUi } from '../../state/store'
 
 /** The file the hash names, or null. */
 export function fileIdFromHash(): string | null {
@@ -34,17 +36,45 @@ export function replaceFile(id: string) { history.replaceState(history.state, ''
  * (a link opened straight on the file) the entry becomes the list's.
  */
 export function closeFile() {
-  if (pushed()) history.back()
-  else dropFileEntry()
+  if (pushed()) {
+    // A double click or a held Escape closes twice before the hashchange arrives, and a second Back would leave the Library.
+    if (closing) return
+    closing = true
+    history.back()
+  } else dropFileEntry()
 }
-/** Replaces the file's entry with the list's, for a file that can't open or a viewer that leaves for a chat. */
+/** Set from Back until the browser reports the move, so Close steps back once. */
+let closing = false
+window.addEventListener('popstate', () => { closing = false })
+window.addEventListener('hashchange', () => { closing = false })
+/** Replaces the file's entry with the list's, for a file that can't open. */
 export function dropFileEntry() { history.replaceState(null, '', LIST_HASH); changed() }
+/**
+ * The viewer's link to where a file came from. A chat or Routines takes the file's entry (replaced with the page's own
+ * hash, so App's route effect finds it already there and adds nothing), leaving [list, chat]: Back lands on the list.
+ * An approval opens over the list, so the file closes like any Close. Going Back makes App's hashchange handler close
+ * every open panel, so the approval opens again once that has run (this listener is added after App's).
+ */
+export function leaveFile(link: LibraryLink) {
+  if (link.to === 'chat') history.replaceState(null, '', `#/chats/${encodeURIComponent(link.id)}`)
+  else if (link.to === 'routines') history.replaceState(null, '', '#/routines')
+  else {
+    if (pushed()) window.addEventListener('hashchange', () => useUi.getState().openProblem(link.id), { once: true })
+    closeFile()
+    return
+  }
+  changed()
+}
 
-/** Whether the window is at least 1024px wide: below it the Library's places become chips above the files. */
+/**
+ * The Library's own breakpoint: from this width the places sit in a panel beside the files, below it they become chips
+ * above them (before the files column gets squeezed). A window width, separate from App's 760px phone flag.
+ */
+const WIDE_QUERY = '(min-width: 1024px)'
+/** Whether the window is at least 1024px wide. */
 export function useWide(): boolean {
-  const mq = '(min-width: 1024px)'
   return useSyncExternalStore(
-    cb => { const m = matchMedia(mq); m.addEventListener('change', cb); return () => m.removeEventListener('change', cb) },
-    () => matchMedia(mq).matches,
+    cb => { const m = matchMedia(WIDE_QUERY); m.addEventListener('change', cb); return () => m.removeEventListener('change', cb) },
+    () => matchMedia(WIDE_QUERY).matches,
   )
 }

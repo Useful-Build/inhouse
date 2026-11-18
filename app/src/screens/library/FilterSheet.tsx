@@ -1,5 +1,5 @@
 // Phone: sort and file type live in one sheet, so the page keeps the search, the places and one list.
-import { useRef } from 'react'
+import { useId, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Button, ChoiceChips, IconButton } from '../../ui'
@@ -17,9 +17,10 @@ export function FilterSheet<T extends string, S extends string>({ sort, sorts, o
 }) {
   const content = useRef<HTMLDivElement>(null)
   const before = useRef<HTMLElement | null>(null)
+  const ids = useId()
   const group = (title: string, body: ReactNode) => (
-    <section aria-label={title} className="flex flex-col gap-2.5">
-      <h3 className="mono-label">{title}</h3>
+    <section aria-labelledby={`${ids}-${title}`} className="flex flex-col gap-2.5">
+      <h3 id={`${ids}-${title}`} className="mono-label">{title}</h3>
       {body}
     </section>
   )
