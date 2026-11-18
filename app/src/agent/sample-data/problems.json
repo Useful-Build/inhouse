@@ -88,7 +88,7 @@
         "customer": true,
         "memory": "Remembered: you offer a refund before a discount, and sign emails \"The Northline team\".",
         "cta": "Approve and send 5 emails",
-        "approver": "Leo Park usually approves customer emails. As an admin, you can too.",
+        "approver": "Leo Park usually signs off customer emails. As an admin, you can approve them in Leo's place.",
         "ask": "Ask Leo",
         "runTitle": "Email 5 customers about the delay",
         "runLines": [
@@ -180,7 +180,7 @@
         "money": true,
         "memory": "Remembered: Kestrel ships in 14 days and wants the PO as a PDF. Dana approves orders over $5,000.",
         "cta": "Approve and send to Kestrel",
-        "approver": "Dana Kim usually approves orders over $5,000. As an admin, you can too.",
+        "approver": "Dana Kim usually signs off orders over $5,000. As an admin, you can approve it in Dana's place.",
         "ask": "Ask Dana"
       }
     },

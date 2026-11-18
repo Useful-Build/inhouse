@@ -90,7 +90,7 @@
   /* stacking layers, lowest first. A window's scrim sits one below its window. Windows, sheets, menus and the toast
    * stack portal to body, so z-toast floats over all of them. The demo switches render inside the app root (an isolated
    * stacking context), so z-dev only orders inside it: a window's scrim covers them. */
-  --app-z-raised: 1;     /* the top banner over the page */
+  --app-z-raised: 1;     /* a raised layer inside a surface, like a card's buttons over its stretched link */
   --app-z-sidebar: 2;
   --app-z-composer: 5;   /* the composer and the chat's bottom dock */
   --app-z-window: 31;    /* Help, the team window, the file viewer */
@@ -120,7 +120,7 @@
   --app-grid-cards-sm: repeat(auto-fill, minmax(min(200px, 100%), 1fr));   /* Library */
   --app-grid-cards: repeat(auto-fill, minmax(min(280px, 100%), 1fr));      /* Today */
   --app-grid-cards-lg: repeat(auto-fill, minmax(min(360px, 100%), 1fr));   /* Tools, Skills, Usage */
-  --app-grid-library-list: minmax(0, 1.5fr) 52px minmax(0, 1.1fr) 72px 136px;
+  --app-grid-library-list: minmax(0, 2.6fr) 52px minmax(0, 1fr) 72px 136px;
   --app-grid-usage-totals: repeat(auto-fit, minmax(130px, 1fr));
   --app-grid-trace-stats: repeat(auto-fit, minmax(110px, 1fr));
   --app-library-masonry: 214px;   /* the masonry view's column width */
@@ -141,6 +141,10 @@
   --app-chat-empty-top: 12vh;
   --app-viewer-image: 64vh;
   --app-card-name: 2.6em;         /* two lines of a file card's name */
+  /* PR 6: Library */
+  --app-card-meta: 2lh;           /* two lines of a file card's "from" line (read off the line's own height) */
+  --app-preview-dim: 1;           /* a file preview's brightness: a white page or poster is dimmed in dark */
+  --app-today-status: 2lh;        /* two lines of a Today card's status, so footers line up across a row */
   --app-cite-raise: 2px;          /* a citation chip sits a little above the baseline */
 
   /* type: page and window heads, stats, prose */
@@ -200,6 +204,7 @@
   --app-menu-cursor: #363636;         /* 1.3:1 on the #242424 menu, so the keyboard cursor shows on an unchecked item */
   --app-menu-muted: #a0a0a0;          /* 4.6:1 on that cursor (the base's #979797 falls to 4.1:1) */
   --app-tag-edge-strong: #828282;     /* 3.05:1 on the #383838 selected row, so the tag keeps its pill shape */
+  --app-preview-dim: 0.82;            /* PR 6: a white page or poster no longer glares on the #1a1a1a card */
   --app-picked-muted: var(--foreground-3); /* muted text on a picked segment: 4.9:1 on #383838 (the base's muted is 4.0:1) */
 }
 
@@ -301,6 +306,8 @@
   --spacing-chat-empty-top: var(--app-chat-empty-top);
   --spacing-viewer-image: var(--app-viewer-image);
   --spacing-card-name: var(--app-card-name);
+  --spacing-card-meta: var(--app-card-meta);
+  --spacing-today-status: var(--app-today-status);
   --spacing-safe-bottom: var(--app-safe-bottom);
   --spacing-composer-input: var(--app-composer-input-max);
   --inset-toast: var(--app-toast-bottom);
@@ -373,6 +380,8 @@
 /* ---------- helpers ---------- */
 /* A picked segment: muted text inside it steps up so it keeps 4.5:1 on --fill-picked (Segmented puts it on its items). */
 @utility picked-muted { --muted-foreground: var(--app-picked-muted); }
+/* PR 6: a file preview (picture, page, poster) in dark steps down so it doesn't glare. */
+@utility preview-dim { filter: brightness(var(--app-preview-dim)); }
 @utility ms {
   font-family: 'Material Symbols Rounded';
   font-weight: normal; font-style: normal; line-height: 1;

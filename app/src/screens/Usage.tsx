@@ -5,7 +5,7 @@ import { capStatus } from '../state/derive'
 import { DEMO_START, fmtCount } from '../agent/clock'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
-import { Avatar, CardGrid, Page, PageHeader, Segmented } from '../ui'
+import { AgentMark, Avatar, CardGrid, EmptyState, Page, PageHeader, Segmented } from '../ui'
 import { Select, TAP } from '../ui/fields'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -13,6 +13,12 @@ import { cn } from '@/lib/utils'
 const TABS: [UsageTab, string][] = [['person', 'Person'], ['job', 'Job'], ['model', 'Model'], ['tool', 'Tool']]
 const COL: Record<UsageTab, string> = { person: 'Person', job: 'Job', model: 'Model', tool: 'Tool read' }
 const money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/** A person's avatar on the Person tab; the agent's own row wears the agent's mark. */
+function RowMark({ who }: { who: string }) {
+  if (who.startsWith('Inhouse agent')) return <span aria-hidden="true" className="flex size-7.5 flex-none items-center justify-center rounded-full bg-fill"><AgentMark /></span>
+  return <Avatar who={who} size={30} fontSize={11} />
+}
 
 export function Usage() {
   const ctx = useCtx()
@@ -139,14 +145,16 @@ export function Usage() {
         <h2 className="flex-1 text-xl font-semibold tracking-section">Breakdown</h2>
         <Segmented label="Break down by" value={tab} options={TABS} onChange={v => patch({ usageTab: v })} />
       </div>
-      {phone ? (
+      {rows.length === 0 ? (
+        <EmptyState className="mt-3">{ctx.data.status === 'loading' ? 'Still reading your tools. Costs show here once your Inhouse agent has worked.' : 'Nothing spent yet. Costs show here once your Inhouse agent starts working.'}</EmptyState>
+      ) : phone ? (
         <div className="mt-3 border-t border-border">
           {rows.map(r => {
             const cost = r.dollars
             const share = Math.round(cost / total * 100) + '%'
             return (
               <div key={r.name} className="flex items-start gap-3 border-b border-border py-3 text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
-                {tab === 'person' && <span className="inline-flex"><Avatar who={r.name} size={30} fontSize={11} /></span>}
+                {tab === 'person' && <span className="inline-flex"><RowMark who={r.name} /></span>}
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{r.name}</div>
                   <div className="text-xs text-muted-foreground">{r.sub}</div>
@@ -177,7 +185,7 @@ export function Usage() {
             const share = Math.round(cost / total * 100) + '%'
             return (
               <div key={r.name} className="flex min-h-13.5 items-center border-b border-border text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
-                {tab === 'person' && <span className="mr-3 inline-flex"><Avatar who={r.name} size={30} fontSize={11} /></span>}
+                {tab === 'person' && <span className="mr-3 inline-flex"><RowMark who={r.name} /></span>}
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium">{r.name}</span>
                   <span className="text-xs text-muted-foreground">{r.sub}</span>

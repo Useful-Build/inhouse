@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { agent } from '../agent'
-import { plainSpaces } from '../agent/clock'
+import { keepUnitsTogether, plainSpaces } from '../agent/clock'
 import { activityRows, groupByDay, memberFor, userName } from '../state/derive'
 import type { ActivityRow } from '../state/derive'
 import type { ActivityFilter } from '../state/store'
@@ -33,7 +33,7 @@ export function Activity() {
   const rows = activityRows(ctx).filter(r => (filter === 'all' || r.kind === filter) && (!needle || plainSpaces(`${r.text} ${r.who} ${r.why} ${r.result}`.toLowerCase()).includes(needle)))
   const days = groupByDay(rows)
   const empty = {
-    all: 'Nothing yet.',
+    all: ctx.data.status === 'loading' ? 'Still reading your tools. What your Inhouse agent does shows here.' : 'Nothing yet. Lines show here once your Inhouse agent starts working.',
     change: S === 0 ? 'Nothing was changed. In Watch, your Inhouse agent only reads.' : 'Nothing has been changed yet.',
     needs: S === 0 ? 'Nothing waits for approval in Watch. Today lists what needs you.' : 'Nothing is waiting on you.',
     problem: 'No problems. Every tool was read and every job finished.',
@@ -41,7 +41,7 @@ export function Activity() {
 
   return (
     <Page>
-      <PageHeader title="Activity" description="What your Inhouse agent did, and what it left for a person. Click a line for the short version." />
+      <PageHeader title="Activity" description="What your Inhouse agent did, and what it left for a person. Open a line for the short version." />
       <div className="mt-5.5 flex flex-wrap items-center gap-2.5">
         <SearchBox value={query} onChange={setQuery} placeholder="Search activity" label="Search activity" className="basis-55" />
         <Segmented label="Filter activity" value={filter} options={TABS} onChange={v => patch({ actFilter: v, actOpen: null })} />
@@ -60,16 +60,20 @@ export function Activity() {
               return (
                 <div key={r.key} className={i === 0 ? '' : 'border-t border-divider'}>
                   <button type="button" data-activity-row className="-mx-2.5 box-border flex min-h-13 w-full items-center gap-3.5 rounded-lg px-2.5 py-1.5 text-left text-base transition-colors hover:bg-accent" aria-expanded={isOpen} onClick={() => patch({ actOpen: isOpen ? null : r.key })}>
-                    <span className="w-time-column flex-none font-mono text-xs font-medium whitespace-nowrap text-muted-foreground">{r.t}</span>
+                    {!phone && <span className="w-time-column flex-none font-mono text-xs font-medium whitespace-nowrap text-muted-foreground">{r.t}</span>}
                     <span aria-hidden="true" className={`flex size-7.5 flex-none items-center justify-center rounded-md ${r.iconTone}`}>
                       <Icon name={r.icon} size={17} />
                     </span>
-                    <span className="min-w-0 flex-1">{r.text}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-pretty">{keepUnitsTogether(r.text)}</span>
+                      {/* A phone has no room for the time and the person beside the line: they sit under it. */}
+                      {phone && <span className="mt-0.5 block text-xs text-pretty text-muted-foreground"><span className="font-mono whitespace-nowrap">{r.t}</span> · {r.who}</span>}
+                    </span>
                     {!phone && <span className="inline-flex items-center gap-1.75 text-xs whitespace-nowrap text-muted-foreground">{memberFor(ctx.data, r.whoBy ?? r.who, userName(ctx)) && <Avatar who={r.whoBy ?? r.who} size={20} fontSize={9} />}{r.who}</span>}
                     <Icon name={isOpen ? 'expand_less' : 'expand_more'} size={18} className="text-muted-foreground" />
                   </button>
                   {isOpen && (
-                    <div className="mb-3.5 ml-activity-indent rounded-xl bg-muted px-4 py-3.5 text-sm leading-normal">
+                    <div className={cn('mb-3.5 rounded-xl bg-muted px-4 py-3.5 text-sm leading-normal', !phone && 'ml-activity-indent')}>
                       <DetailList items={facts} />
                       <div className="mt-3 flex flex-wrap items-center gap-x-3.5 gap-y-2">
                         {r.review && <Button className={tap} onClick={() => openProblem(r.review!)}>Review</Button>}

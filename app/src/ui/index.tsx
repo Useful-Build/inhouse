@@ -58,6 +58,8 @@ export function Button({ variant = 'primary', size, className, type = 'button', 
 const CHROME = 'flex-none text-foreground-3 hover:bg-foreground/5 hover:text-foreground-2 data-[state=open]:bg-foreground/5'
 // The small actions under a message (Copy, Reply, Rate...): a tighter corner and a stronger fill on hover and while open.
 const ACTION = 'rounded-md hover:bg-fill-hover aria-expanded:bg-fill-hover'
+// A card's own menu button: a resting border and fill so it reads as a button, a stronger fill on hover and while open.
+const CARD = 'border border-border bg-card shadow-xs hover:bg-fill-hover aria-expanded:bg-fill-hover'
 // On the dark toast: light glyph, a faint light fill on hover (the inverse Button's fill).
 const INVERSE = 'text-primary-foreground/70 hover:bg-primary-foreground/15 hover:text-primary-foreground'
 
@@ -67,8 +69,8 @@ const INVERSE = 'text-primary-foreground/70 hover:bg-primary-foreground/15 hover
  */
 export function IconButton({ icon, label, tip = label, size = 20, box = 'icon', variant = 'ghost', filled, shortcut, className, onFocus, ...rest }: ComponentProps<'button'> & {
   icon: string; label: string; /** The tooltip's text when it says more than the name (the action a toggle will do). */ tip?: string; size?: number; box?: 'icon' | 'icon-sm' | 'icon-lg'; shortcut?: { label: string; aria: string }
-  /** `chrome` for the app's frame: the top bar and the sidebar header. `action` for the small actions under a message (with `box="icon-sm"`). `inverse` on the dark toast. */
-  variant?: 'ghost' | 'chrome' | 'action' | 'inverse'
+  /** `chrome` for the app's frame: the top bar and the sidebar header. `action` for the small actions under a message (with `box="icon-sm"`). `card` for a card's own menu button. `inverse` on the dark toast. */
+  variant?: 'ghost' | 'chrome' | 'action' | 'card' | 'inverse'
   /** The filled glyph (a picked rating). */
   filled?: boolean
 }) {
@@ -79,7 +81,7 @@ export function IconButton({ icon, label, tip = label, size = 20, box = 'icon', 
     <Tooltip>
       <TooltipTrigger asChild>
         <UiButton type="button" variant={variant === 'chrome' || variant === 'inverse' ? null : 'ghost'} size={box} aria-label={label} aria-keyshortcuts={shortcut?.aria}
-          className={cn(variant === 'chrome' && CHROME, variant === 'action' && ACTION, variant === 'inverse' && INVERSE, variant === 'action' && phone && TAP_Y, NO_DISABLED_FADE, className)} {...rest}
+          className={cn(variant === 'chrome' && CHROME, variant === 'action' && ACTION, variant === 'card' && CARD, variant === 'inverse' && INVERSE, variant === 'action' && phone && TAP_Y, NO_DISABLED_FADE, className)} {...rest}
           // The tooltip shows for keyboard focus only, not when a window opens and puts focus here after a click.
           onFocus={e => { onFocus?.(e); if (!e.currentTarget.matches(':focus-visible')) e.preventDefault() }}>
           <Icon name={icon} size={size} fill={filled} />
@@ -151,7 +153,7 @@ export function Switch({ on, onChange, label, small, disabled, reason }: { on: b
         {/* A click or tap opens the reason: preventing the default keeps the trigger's own click from closing it. A tap
             elsewhere closes it. */}
         <TooltipTrigger asChild ref={trigger} onClick={e => { e.preventDefault(); setTip(true) }}>{sw}</TooltipTrigger>
-        <TooltipContent className="max-w-64">{reason}</TooltipContent>
+        <TooltipContent className="max-w-64" collisionPadding={16}>{reason}</TooltipContent>
       </Tooltip>
       <span id={reasonId} hidden>{reason}</span>
     </>
@@ -230,11 +232,13 @@ export function ChoiceChips<T extends string>({ value, options, onChange, label 
   // Same as Segmented: a click focuses first, then clicks, and the focus picks only after an arrow key.
   const pick = (v: T) => { if (v !== value) onChange(v) }
   const focusPick = useFocusPick(v => pick(v as T))
+  // On a phone each 32px chip has a 44px-tall tap area that reaches into the 6px gaps; every gap is 6px, and each chip stays fully tappable.
+  const phone = useUi(s => s.phone)
   return (
     <ToggleGroup type="single" value={value} onValueChange={v => { if (v) pick(v as T) }} aria-label={label} onKeyDown={focusPick.onKeyDown} className="flex flex-wrap gap-1.5 rounded-none bg-transparent p-0">
       {options.map(([k, t, icon]) => (
         <ToggleGroupItem key={k} value={k} onFocus={focusPick.onFocusOf(k)}
-          className="h-8 gap-1.25 rounded-full border border-input bg-card px-3 py-0 text-foreground data-[state=on]:border-foreground data-[state=on]:bg-foreground data-[state=on]:text-primary-foreground data-[state=on]:hover:text-primary-foreground data-[state=on]:shadow-none">
+          className={cn('h-8 gap-1.25 rounded-full border border-input bg-card px-3 py-0 text-foreground data-[state=on]:border-foreground data-[state=on]:bg-foreground data-[state=on]:text-primary-foreground data-[state=on]:hover:text-primary-foreground data-[state=on]:shadow-none', phone && TAP_Y)}>
           <Icon name={icon} size={15} />{t}
         </ToggleGroupItem>
       ))}

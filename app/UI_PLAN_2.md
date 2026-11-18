@@ -27,10 +27,10 @@ PR 1 ─┬─► PR 2 ─┬─► PR 4 (Today, Approvals, review panel)
 | 1 | Onto ui-base | `refactor/onto-ui-base` | Merged |
 | 2 | One system, both themes | `refactor/one-system` | Merged |
 | 3 | State, Undo and believable data | `fix/state-undo-data` | Merged |
-| 4 | Today, Approvals and the review panel | `feat/today-approvals-polish` | Proposed |
+| 4 | Today, Approvals and the review panel | `feat/today-approvals-polish` | Merged |
 | 5 | Conversation and composer | `feat/conversation-polish` | In review |
-| 6 | Library | `feat/library-polish` | Proposed |
-| 7 | Pages and windows | `feat/pages-polish` | Proposed |
+| 6 | Library | `feat/library-polish` | Merged |
+| 7 | Pages and windows | `feat/pages-polish` | Merged |
 
 ## Decisions
 
@@ -132,18 +132,31 @@ Notes from the build:
 
 ## PR 4: Today, Approvals and the review panel
 
-- [ ] Card footers never cut: the amount line and the draft or suggestion line wrap (H1, M1)
-- [ ] One "Drafted" style; the header follows the state ("All approved"); handled cards use the muted token (M21, L15)
-- [ ] Approvals: one primary action, Review, and "···" (Edit, Don't send); Edit always opens the panel with the draft in view; low-risk cards are marked; one footer pattern; one dismiss verb (M6, M7)
-- [ ] "Approved today" rows reflow on a phone (H7)
-- [ ] Panel: actions on one row, nothing hidden under the ask bar (M28)
-- [ ] Today card: a stretched button, not a click handler on a `div` (M38)
-- [ ] First-day and loading states for Approvals
-- [ ] Phone: no fixed card height, header on one line, no sort control, Approve plus "···" (M25, M27)
+- [x] Card footers never cut: the amount line and the draft or suggestion line wrap (H1, M1)
+- [x] One "Drafted" style; the header follows the state ("All approved"); handled cards use the muted token (M21, L15)
+- [x] Approvals: one primary action, Review, and "···" (Edit, Don't send); Edit always opens the panel with the draft in view; low-risk cards are marked; one footer pattern; one dismiss verb (M6, M7)
+- [x] "Approved today" rows reflow on a phone (H7)
+- [x] Panel: actions on one row, nothing hidden under the ask bar (M28)
+- [x] Today card: a stretched button, not a click handler on a `div` (M38)
+- [x] First-day and loading states for Approvals
+- [x] Phone: no fixed card height, header on one line, no sort control, Approve plus "···" (M25, M27)
 
 Files: `src/screens/Today.tsx`, `src/screens/Approvals.tsx`, `src/overlays/ProblemPanel.tsx`, specs.
 Risk: medium. The demo's first screen.
 Verify: E2E at Watch, Act and Run: every card's text fully visible at 390 and 1440 (no element with `scrollWidth > clientWidth`), edit a no-text draft in the panel and approve it, approve all low-risk and undo.
+
+Notes from the build:
+- **Not run here.** Built by a worker that can't start a browser: typecheck and lint pass; the E2E, visual and a11y suites and the screenshot check are the orchestrator's. New specs: `today-approvals.spec.ts` (1440: no text cut on Today and Approvals at Watch, Act and Run; Edit on a no-text draft in the panel, approve, Undo keeps the note; Approve all low-risk and its toast Undo; the Today card opens from its title and its menu doesn't) and `today-approvals-phone.spec.ts` (390: the same no-cut check, no sort, one header line, Approve plus "···", an approved row that reflows). Shared helpers in `e2e/today-approvals-helpers.ts`.
+- **Approvals cards** mirror Today: low-risk drafts (no money, no customers) get one-tap Approve and a "Low risk" badge; the rest get Review, which opens the panel where the Approve button is. "···" holds Edit and Don't send (and Review on a low-risk card). The note about who usually signs off moved above the buttons. Specs that approved a money or customer draft from its card now go through the panel (`page-actions.spec.ts`, the `act-today-approved` state in `states.ts`).
+- **Edit** always opens the panel. A draft with no text of its own shows a "Your note" field (stored through `editDraft`, shown on the card after, and kept through Undo). `draftView` now returns `agent.edits[id] ?? dr.body ?? null` and labels such a note "Your note" (`src/state/derive.ts`, additive).
+- **The panel's actions** (Approve, Edit or Done, Don't send) sit on one row in the footer above the ask bar, so they never scroll out of reach. "Not now" is gone; Don't send is the one dismiss verb (Today's "Not a problem" stays: it means the problem isn't one, not the draft).
+- **Today's header follows the state:** "Needs you", then "All approved" or "Nothing waiting" (with the set-aside count) once nothing waits. Handled and approved cards use `text-done` for the status line too. One Drafted style: "Drafted · ready to approve", "Drafted · <what waits>", and the panel's "Drafted · title". On a phone the sort control is gone, cards have no min height, and the Approvals header keeps one line.
+- **Leftovers settled:** "Restocked 11 units" keeps a no-break space after the number in the handled banner; "usually approves" became "Dana Kim usually signs off orders over $5,000. As an admin, you can approve it in Dana's place." (and the same for Leo's customer emails) so "Approved by Sam" reads right (`problems.json`); the 6:08 AM and 7:42 AM drafts stay as accepted.
+- **Review fixes:** Approvals first-day and loading are now states (`act-approvals-first-day`, `act-approvals-loading`, appended to `states.ts`, so the visual and a11y suites take them); loading has a screen-reader status and no sort or approve-all shows without data. The "Low risk" badge follows the low-risk list, not `waitsLabel`. Each "···" is named for its card ("More actions for <title>"). On a phone the amount sort no longer applies. The no-break-space fix moved to `handled()`. `z-raised` now means a raised layer inside a surface. "Don't send" in the panel hides for a problem already set aside (the simpler option; Undo then never overwrites an earlier snooze or dismiss). The chat draft card labels a person's note ("Your note"). The no-cut helper measures every descendant against its card and any clipping parent, and covers Approvals' Watch block. Not done: asserting the note "with the approved card", because an approved draft shows no body anywhere (card, row or panel); the note is asserted after Undo.
+- **Expected visual changes:** Today (Watch, Act, Run, first day, loading, cap, all approved), Approvals (Watch unchanged), the problem panel, and their phone shots; Approvals first-day and loading are new visual states (baselines to generate).
+- **Visual QA round 1 fixes:** the Today card footer gives the amount and status lines the full card width, with the button on its own row under them (left-aligned, `text-pretty` on wrapping lines). The review panel's main action takes its own row on a phone (Edit and Don't send below); desktop keeps one row. Run's waiting drafts use "Drafted · <what waits>" like Act (`issueCards`); the paused-tool line keeps its words. The "···" on Today and Approvals is the new `IconButton` `card` variant (resting border and fill, hover fill). "All approved" and "Nothing waiting" hide the sort. On a phone the handled banner's separators trail the item before them, so none starts a line. Not fixed here: footer dividers can still differ by a line across a grid row when one card's text wraps; the trace pop-up's jump-to-latest overlap and the notifications popover over the page (PR 5).
+- **Visual QA round 2 fixes:** the handled banner's list wrapped no more on a phone because the space after each item sat inside its `whitespace-nowrap` span; the space is now outside, so the list wraps at item boundaries with each " ·" trailing its item. Today's status line is two lines tall on desktop, so footers line up across a grid row. The "···" on handled and approved cards uses the ghost look in the done colour. The review panel's pinned footer has tighter gaps (tap sizes unchanged). Left for PR 5: the trace pop-up and notifications popover findings.
+
 
 ## PR 5: Conversation and composer
 
@@ -177,29 +190,58 @@ Notes from the build:
 
 ## PR 6: Library
 
-- [ ] Phone: one list, sort and type in a filter sheet, no previews in rows (M23, M27)
-- [ ] 768 to 1024px: places collapse to chips before the files column gets squeezed (M23)
-- [ ] List view gives names the spare width (M23)
-- [ ] No-results with Clear, and counts that follow the search (M19)
-- [ ] Dark: previews get a dimmed frame (M22)
-- [ ] Viewer on a phone scrolls code instead of wrapping it; an open file has its own link, so Back closes it (L13, L19)
-- [ ] First-day and loading states
+- [x] Phone: one list, sort and type in a filter sheet, no previews in rows (M23, M27)
+- [x] 768 to 1024px: places collapse to chips before the files column gets squeezed (M23)
+- [x] List view gives names the spare width (M23)
+- [x] No-results with Clear, and counts that follow the search (M19)
+- [x] Dark: previews get a dimmed frame (M22)
+- [x] Viewer on a phone scrolls code instead of wrapping it; an open file has its own link, so Back closes it (L13, L19)
+- [x] First-day and loading states
 
 Files: `src/screens/Library.tsx`, `src/screens/library/*`, specs.
 Risk: low to medium. One screen.
 Verify: E2E: search with no results and clear it, switch place and type, open and page through files at 390, 768 and 1440 with no name cut where there's room.
 
+Notes from the build:
+- **Not run here.** Written by a worker with light checks only (type check and lint pass). The E2E, visual and a11y runs and the screenshot check are the orchestrator's. New spec `e2e/library-polish.spec.ts` (search with no results and Clear, counts following the search in places, types and list, place and type together, Back closes a file and Forward reopens it, stepping adds no history entry, a link opens a file, an unknown file link says so, the chat link leaves cleanly; names whole at 1440, 768 and 390 in list, grid and masonry; paging four files at each width; the selected place's fill equals the side menu's; code scrolls sideways on a phone; dark dims previews; first day; loading). `phone.spec.ts` and `page-details-phone.spec.ts` had their Library tests rewritten for the one-list phone (the tab-fade test became the filter sheet test).
+- **Phone:** one list of rows (type badge, no pictures, name and details on up to two lines), Search, place chips, and a "Filters" button (with a count of what's set) that opens a bottom sheet (`library/FilterSheet.tsx`) holding Sort and Type. The View switch and the stored view are ignored on a phone (the store keeps the desktop pick). `EdgeFade` (the tab row's fade) is gone with the tabs.
+- **Places as chips from 1024px down** (a window width, not the 760 phone flag): `NavItem` has a new `chip` size, so the chip's selected look is the side menus' (`bg-fill-hover`, strong). The chips wrap on a tablet and scroll on a phone.
+- **List rows are container-driven:** from a list 42rem wide (`@2xl`) a row is columns (name, type, place, size, date), narrower it's a name over its details line, so 768 to 1024 no longer squeezes names. The name column is now 3fr (token `--app-grid-library-list` changed, not appended). Names, details and the wide list's place column wrap in full instead of cutting (no clamps, no ellipsis); a grid tile's "from" line takes two lines and reserves them (`--app-card-meta: 2lh`), so tiles stay even. The viewer's title wraps instead of an ellipsis.
+- **Counts follow the search** in the places too (they ignored it before). The no-results state has a "Clear" button (named so it doesn't clash with the search box's "Clear search").
+- **Dark:** `--app-preview-dim` (1 light, 0.82 dark) and a `preview-dim` utility dim pictures, document pages and posters in cards, rows and the viewer.
+- **An open file has its own link** `#/library/<file id>`, held in the hash and read with `useSyncExternalStore` (`library/route.ts`), so there's no copy of it in the store. Opening pushes an entry, Close and Esc step Back over it, Next and Previous replace it, a viewer link to a chat or approval replaces it with the list's. A link to a file that isn't there lands on the list with a notice. **Edit outside the owned files:** one line in `src/App.tsx`'s route effect (`useHashRoute`) so it leaves a `#/library/...` hash alone; PR 5 owns `src/state/*` and nothing there changed.
+- **Shared parts changed:** `NavItem` `chip` size (new variant, defaults unchanged). New: tokens above in `index.css` and `merge-config.ts`, two states in `e2e/states.ts` (`act-library-first-day`, `act-library-loading`).
+- **First day and Loading:** first day shows "No files yet" with a line on what will be here; loading shows placeholder cards (no animation, like Today's) with "Loading files" for screen readers.
+- **Expect baselines to change:** Library on the phone (every state: list, select, viewer, light and dark), Library at desktop in dark (dimmed previews), the list view (wider names), grid and masonry cards that wrap a long "from" line, the viewer title, plus two new states (first day, loading).
+- **Calls made:** the filter sheet uses `ChoiceChips` (32px chips drawn, each with a 44px `TAP_Y` tap area on a phone; wrapped rows sit 44px apart so areas don't overlap); the 1024px chips breakpoint is a window width (`WIDE_QUERY` in `library/route.ts`); the phone has no View switch.
+- **After review:** leaving the viewer for a chat or Routines replaces the file's entry with the destination's hash, so history is [list, destination] with no dead entry. An approval opens over the list: the viewer steps Back, and the approval panel opens again after App's hashchange handler has closed panels (a plain Close would lose it). Close steps Back once (a `closing` flag clears on popstate). A stale file id uses the same close; in a scenario with no files (First day) it closes quietly, with no "isn't available" notice. The filter sheet closes when the window leaves the phone layout. A type with no files says which type, with a Clear that resets the type and the search. `ChoiceChips` is tap-size on a phone. `chip` `NavItem` padding is a compound variant so it wins over `avatar: false`. Specs now load the file link fresh (`goto` with another query, then `reload`), press Back twice after each leave, check clamped lines and the code block's overflow.
+- **After visual QA (round 1):** the phone loading state is list rows (badge, name bar, details bar) in the loaded list's card. On a phone, Filters and Select/Done sit on their own row under the title in every mode, so Done swaps in place and the list doesn't move. Counts (places and types) are hidden while loading. First day hides Sort, View, Select, Filters and the type tabs, and the empty state has a "No files yet" heading over its line (the specs and the `act-library-first-day` ready text match "No files yet"). A card's right reserve for the hover menu is 40px (was 48) and its from line is `text-pretty`. `ChoiceChips` gaps are an even 6px across and down on a phone too (the 44px tap area reaches into the gaps, each chip stays fully tappable); this undoes the 12px row gap and fits the Team window's card again. The phone place chips have the edge fade back (`EdgeFade`, restored in `Library.tsx`). A phone row's details line drops the type (the badge shows it); a row with a picture keeps it.
+- **Left as is:** the sheet imports `@/components/ui/sheet` directly like `ProblemPanel`, `Skills`, `Routines` and `Sidebar`: there's no `src/ui` Sheet wrapper to use.
+
 ## PR 7: Pages and windows
 
-- [ ] Tools and Skills: descriptions on two lines, no ellipsis; one way to request; the tool page's question rows without the repeated chip; paused and disconnected read as such; no orphan "Suggested" heading (M2, M17, M19, L3, L4)
-- [ ] Routines: a row that fits a phone, an icon that says something or none, a "Last runs" list with results (M24, L1, L2)
-- [ ] Usage: the agent mark on the agent's row, phone columns (L5)
-- [ ] Settings: Models explains each model and why Smart is locked, one "How hard it thinks" label; Audit log rows on one edge; phone edges; phone controls per D4 (M31, M32, L12)
-- [ ] Activity: phone rows and "Open a line" (L15)
-- [ ] Team window: styled resize, no mid-word quote (L10)
-- [ ] First-day and loading states for each of these pages (M16)
-- [ ] Copy sweep (L15)
+- [x] Tools and Skills: descriptions on two lines, no ellipsis; one way to request; the tool page's question rows without the repeated chip; paused and disconnected read as such; no orphan "Suggested" heading (M2, M17, M19, L3, L4)
+- [x] Routines: a row that fits a phone, an icon that says something or none, a "Last runs" list with results (M24, L1, L2)
+- [x] Usage: the agent mark on the agent's row, phone columns (L5)
+- [x] Settings: Models explains each model and why Smart is locked, one "How hard it thinks" label; Audit log rows on one edge; phone edges; phone controls per D4 (M31, M32, L12)
+- [x] Activity: phone rows and "Open a line" (L15)
+- [x] Team window: styled resize, no mid-word quote (L10)
+- [x] First-day and loading states for each of these pages (M16)
+- [x] Copy sweep (L15)
 
 Files: `src/screens/Routines.tsx`, `Tools.tsx`, `Skills.tsx`, `Usage.tsx`, `Activity.tsx`, `Settings.tsx`, `src/screens/settings/content.ts`, `src/overlays/TeamWindow.tsx`, specs.
 Risk: low. Many small fixes over six pages.
 Verify: E2E: pause a tool and see Read and Draft change, open every page on first day and while loading, run a routine and see its result line, on a phone and on desktop.
+
+Notes from the build:
+- **Verified (light checks only).** `npm run typecheck` and `npm run lint` pass. The specs were written without a browser run: new `pages-polish.spec.ts` (1440) and `pages-polish-phone.spec.ts` (390) share `pages-polish-checks.ts`. CI runs E2E, visual and a11y.
+- **Tools and Skills.** Descriptions wrap in full (no `ellipsis`). One way to request: the "Missing a tool?" card is gone, "Request a tool" in the header is the one route (plus "Request" on a catalog row). A tool page's question rows lose the repeated tool chip. The Access row follows the tool's state ("None. A person paused it.", "None until the login is renewed.", and both facts when a tool is paused and disconnected) and a paused tool says so where its questions were. Skills hides "Suggested for Shopify brands" when nothing is suggested.
+- **Routines.** No decorative tile; the last run sits on its own line under the chips; tighter padding on a phone. A Run now line in "Last runs" says what the run found ("Run now · found 6 things") when the agent gives a result (`RoutineRun.result`, new and optional; the mock fills it from the routine's own last-run note, none on day one) and plain "Run now" when it doesn't. The row's last-run line follows the newest run, so the row and the sheet agree. Every run carries a check mark, so the time column has a state. The morning check's lines in "Last runs" fill their {read} and {found} counts like Activity does. Both sheets use `NO_MOTION`.
+- **Usage.** The agent's row on the Person tab wears the agent's mark. An empty breakdown (First day, Loading) says so. Phone rows already stack as one column, left as they were.
+- **Settings.** Models: each row says what the model is for, the default says why it stays on (on a phone just "It stays on while it's the default."), the section has no label (the h1 says it), one "How hard it thinks" caption sits above the rows over the picker column while the card is at least `@xl` wide (rows never wrap then); below that the rows wrap, the top caption hides and the first row's picker carries it directly above (exactly one is visible at any width), each picker is named "How hard it thinks: Smart" so the visible words are in its name, and the switch shows On or Off beside it. The default's switch can't be turned off (`Switch` with a reason ignores the change). Audit log: the paused row has an avatar like the rest, and an empty log is a muted `EmptyState` line, not a row (so settings search can't hit it): "Nothing changed yet. Changes to settings, rules and people show here." (First day) or "Still loading. Changes show here in a moment." (Loading). D4: on a phone every team settings page shows values that change something (switches, selects, inputs, effort pickers) as text with a one-line note (a model reads "Medium · team can use it" or "Medium · turned off", under one "How hard it thinks" caption), and the controls stay on desktop (Your settings keep theirs). A `button` row (Pause Inhouse agent, Open memory, Invite, Book a check-in, Ask the team, Forget, Export, Download CSV) keeps working on a phone. The menu and page share the phone page padding.
+- **Activity.** "Open a line"; on a phone the time and person sit under the line and an opened line has no indent. Empty states say First day and Loading apart.
+- **Team window.** Native resize handle gone (the field grows with its text, to a cap); a request's title is cut at a word and wraps instead of an ellipsis.
+- **Specs changed:** `page-actions` (no second "Ask the team"), `models-and-scroll-phone`, `page-details-phone` and `phone` (team settings are read-only on a phone; the cap test sets it at desktop width first; `menus` opens the Spending cap dropdown at desktop width only and counts the phone's Your settings dropdowns).
+- **Visual QA round 1 fixes.** Phone Models: one caption above the rows, values "<Effort> · team can use it" or "· turned off" (each part unbroken, the dot with the part after it). Audit log: Inhouse team rows wear the Inhouse mark in a round tile the size of a person's avatar. The phone note ("Change these on a computer.") shows only on a page where a control became text. Read-only values all sit at the row's right, level with the title, wrapping inside two fifths of the row. Smart reads "Opus 5.5 · Best for most work · stays on as the default" like the others (the "pick another default" hint is the switch's tooltip). Tools: a single-item section (Channels) spans the full width; wrapping descriptions use `text-pretty`. Skills rows top-align. A number keeps its unit ("3 days", "6 things") through `keepUnitsTogether` in `agent/clock.ts`, applied at display only (Tools questions, Skills, Activity lines, Settings descriptions, Routines last run), so search, copy and CSV still see plain spaces. Routines on a phone: the last run and next run take the card's full width under the switch row.
+- **Visual states expected to change:** every list page (Routines, Tools, a tool page, Skills, Usage person tab, Activity phone), Models, Audit log, and phone shots of team settings pages and the settings menu.
+

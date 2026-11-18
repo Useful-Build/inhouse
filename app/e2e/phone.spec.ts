@@ -108,7 +108,7 @@ test('Phone: the drawer has no Chats item; See all, a recent chat and a Settings
   await page.screenshot({ path: test.info().outputPath('phone-settings-search.png'), fullPage: true })
 })
 
-test('Phone: Library shows places as chips, scrolling tabs, two columns, and a viewer that fits 390 px', async ({ page }) => {
+test('Phone: Library shows places as chips, one list, a filter sheet, and a viewer that fits 390 px', async ({ page }) => {
   await start(page, '#/library')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
   await noSidewaysScroll(page)
@@ -118,31 +118,25 @@ test('Phone: Library shows places as chips, scrolling tabs, two columns, and a v
   await expect(nav.getByRole('button', { name: /^All files \d+$/ })).toHaveAttribute('aria-pressed', 'true')
   const chips = await nav.evaluate(e => ({ sw: e.scrollWidth, cw: e.clientWidth }))
   expect(chips.sw, 'the chip row scrolls sideways inside itself').toBeGreaterThan(chips.cw)
-  // Tabs scroll inside their own row.
-  const tabs = page.getByRole('radiogroup', { name: 'File type' })
-  const t = await tabs.evaluate(e => ({ sw: e.scrollWidth, cw: e.clientWidth }))
-  expect(t.sw).toBeGreaterThan(t.cw)
-  await expect(tabs.getByRole('radio', { name: /^Other \d+$/ })).toBeAttached()
-  // Two columns of cards.
-  const xs = await page.getByRole('list', { name: 'Files' }).getByRole('listitem').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().left)))
-  expect(new Set(xs).size, `columns at ${[...new Set(xs)]}`).toBe(2)
-  await page.screenshot({ path: test.info().outputPath('phone-library-masonry.png') })
+  // Sort, type and view are not on the page: one list, and a Filters button for the rest.
+  await expect(page.getByRole('radiogroup', { name: 'File type' })).toHaveCount(0)
+  await expect(page.getByRole('radiogroup', { name: 'View' })).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: /^Sort/ })).toHaveCount(0)
+  // One column of rows, each with a type badge and no picture.
+  const rows = page.getByRole('list', { name: 'Files' }).getByRole('listitem')
+  const xs = await rows.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().left)))
+  expect(new Set(xs).size, `columns at ${[...new Set(xs)]}`).toBe(1)
+  await expect(rows.locator('img')).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('phone-library-list.png') })
   // A place from the chips.
   await nav.getByRole('button', { name: /^Approvals/ }).click()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Approvals')
   await noSidewaysScroll(page)
   await nav.getByRole('button', { name: /^All files/ }).click()
-  // Views and Select fit.
-  await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'Grid' }).click()
-  await noSidewaysScroll(page)
-  await page.screenshot({ path: test.info().outputPath('phone-library-grid.png') })
-  await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'List' }).click()
-  await noSidewaysScroll(page)
-  await page.screenshot({ path: test.info().outputPath('phone-library-list.png') })
-  await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'Masonry' }).click()
+  // Select fits.
   await page.getByRole('button', { name: 'Select', exact: true }).click()
-  await page.getByRole('list', { name: 'Files' }).getByRole('listitem').nth(0).click()
-  await page.getByRole('list', { name: 'Files' }).getByRole('listitem').nth(1).click()
+  await rows.nth(0).click()
+  await rows.nth(1).click()
   const bar = page.getByRole('toolbar', { name: 'Selected files' })
   await expect(bar).toContainText('2 selected')
   const b = await bar.boundingBox()
@@ -151,7 +145,7 @@ test('Phone: Library shows places as chips, scrolling tabs, two columns, and a v
   await page.screenshot({ path: test.info().outputPath('phone-library-select.png') })
   await page.getByRole('button', { name: 'Done', exact: true }).click()
   // The viewer.
-  await page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: 'PO-1188' }).click()
+  await rows.filter({ hasText: 'PO-1188' }).click()
   const v = page.getByRole('dialog', { name: /^File: PO-1188/ })
   await expect(v).toBeVisible()
   const box = await v.boundingBox()
@@ -184,7 +178,7 @@ async function nothingUnderSwitcher(page: Page) {
   expect(hits, 'controls under the demo switcher').toEqual([])
 }
 
-test('Phone: with ?demo nothing sits under the switcher, and Library file names wrap to two lines', async ({ page }) => {
+test('Phone: with ?demo nothing sits under the switcher, and Library file names show whole', async ({ page }) => {
   for (const hash of ['#/library', '#/settings/you-general', '#/today', '#/chats/refunds']) {
     await start(page, hash)
     await expect(page.getByRole('button', { name: /^Demo switches/ })).toBeVisible()
@@ -192,18 +186,16 @@ test('Phone: with ?demo nothing sits under the switcher, and Library file names 
   }
   await start(page, '#/library')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
-  // 28 characters in a two-column card: the whole name shows, on two lines.
-  const name = page.getByRole('list', { name: 'Files' }).getByText('trail-shell-jacket-olive.png', { exact: true })
-  await name.scrollIntoViewIfNeeded()
-  const m = await name.evaluate(e => ({ clipped: e.scrollHeight > e.clientHeight + 1, lines: Math.round(e.clientHeight / parseFloat(getComputedStyle(e).lineHeight)) }))
-  expect(m.clipped, 'the name is cut off').toBe(false)
-  expect(m.lines).toBe(2)
-  // A file with no picture (a badge instead) gets the same: 28 characters, whole name, two lines.
-  const plain = page.getByRole('list', { name: 'Files' }).getByText('stuck-orders-over-3-days.csv', { exact: true })
-  await plain.scrollIntoViewIfNeeded()
-  const p = await plain.evaluate(e => ({ clipped: e.scrollHeight > e.clientHeight + 1, lines: Math.round(e.clientHeight / parseFloat(getComputedStyle(e).lineHeight)) }))
-  expect(p.clipped, 'the name is cut off').toBe(false)
-  expect(p.lines).toBe(2)
+  // 28 characters in a row: the whole name shows, on at most two lines.
+  const fit = async (text: string) => {
+    const name = page.getByRole('list', { name: 'Files' }).getByText(text, { exact: true })
+    await name.scrollIntoViewIfNeeded()
+    const m = await name.evaluate(e => ({ clipped: e.scrollHeight > e.clientHeight + 1, lines: Math.round(e.clientHeight / parseFloat(getComputedStyle(e).lineHeight)) }))
+    expect(m.clipped, `${text} is cut off`).toBe(false)
+    expect(m.lines).toBeLessThanOrEqual(2)
+  }
+  await fit('trail-shell-jacket-olive.png')
+  await fit('stuck-orders-over-3-days.csv')
   await noSidewaysScroll(page)
   await page.evaluate(() => document.querySelector('main')!.scrollTo({ top: 0 }))
   await keep(page, 'library-390')
@@ -226,10 +218,14 @@ test('Phone: reopening the open chat from See all keeps what was added', async (
 })
 
 test("Phone: Usage shows the capped state for a low saved cap, and there's no month picker", async ({ page }) => {
+  // Team settings are read on a phone, so the cap is set at a desktop width first.
+  await page.setViewportSize({ width: 1440, height: 900 })
   await start(page, '#/settings/team-spend')
   const cap = page.getByRole('textbox', { name: 'Monthly cap' })
   await cap.fill('$50')
   await cap.blur()
+  await expect(page.locator('[data-toast]').filter({ hasText: 'Saved' })).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(() => { location.hash = '#/usage' })
   await expect(page.getByText('$78.40 of $50', { exact: true })).toBeVisible()
   await expect(page.getByText('Cap reached with 14 days of the month left')).toBeVisible()

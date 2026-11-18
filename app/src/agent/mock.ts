@@ -269,7 +269,7 @@ const sanitize = (raw: unknown): AgentState => {
     libraryDeleted: flagsOf(raw.libraryDeleted),
     setAside: recOf(raw.setAside, (x): x is SetAsideRecord => isRec(x) && isStamp(x) && SET_ASIDE.includes(x.reason as SetAsideReason) && typeof x.ms === 'number'),
     routinesDeleted: Object.fromEntries(Object.keys(flagsOf(raw.routinesDeleted)).filter(known).map(id => [id, true as const])),
-    routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).filter((r): r is RoutineRun => hasStrs(r, ['routine', 'at']) && typeof r.atMin === 'number' && known(r.routine as string) && (r.trace === undefined || str(r.trace))),
+    routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).filter((r): r is RoutineRun => hasStrs(r, ['routine', 'at']) && typeof r.atMin === 'number' && known(r.routine as string) && (r.trace === undefined || str(r.trace)) && (r.result === undefined || str(r.result))),
     // managing chats. A started chat's title, pin and delete are kept until Reset demo: its id is unique per page load
     // (chatIds.ts), so it can't be taken by a newer chat, and the app keeps the chat itself across a reload.
     chatTitles: Object.fromEntries(Object.entries(recOf(raw.chatTitles, (x): x is string => str(x) && x.trim() !== '')).map(([k, t]) => [k, t.slice(0, CHAT_TITLE_MAX)])),
@@ -837,7 +837,9 @@ export class MockAgent implements AgentClient {
     if (!DATA.routines.some(r => r.id === id) && !this.state.routinesExtra.some(r => r.id === id)) throw new Error(`Unknown routine id: ${id}`)
     const { at, atMin } = this.stamp()
     // The morning check replays its recorded steps; other routines have none recorded.
-    const run: RoutineRun = { routine: id, at, atMin, ...(id === routineIdOf('Morning check') ? { trace: 'morning' } : {}) }
+    // The demo's result is the routine's own last-run note ("Last run today at 6:00 AM · found 6 things"); none if it has no note (day one has none).
+    const note = DATA_FOR[this.demo.scenario].routines.find(r => r.id === id)?.last?.split(' · ')[1]
+    const run: RoutineRun = { routine: id, at, atMin, ...(note ? { result: note } : {}), ...(id === routineIdOf('Morning check') ? { trace: 'morning' } : {}) }
     return this.writeThen({ routineRuns: [run, ...this.state.routineRuns] }, run)
   }
   deleteRoutine(id: string) { return this.write({ routinesDeleted: { ...this.state.routinesDeleted, [id]: true } }) }

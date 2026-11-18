@@ -19,6 +19,20 @@ const badge = (page: Page) => page.getByRole('navigation', { name: 'Main' }).get
 const card = (page: Page, title: string) => page.getByRole('article').filter({ hasText: title })
 const toast = (page: Page, text: string | RegExp) => page.locator('[data-toast]').filter({ hasText: text })
 const waiting = (page: Page) => page.getByRole('heading', { level: 2, name: /^Waiting for you/ })
+const moreItem = async (page: Page, title: string, item: string) => {
+  await draft(page, title).getByRole('button', { name: 'More' }).click()
+  await page.getByRole('menu', { name: 'Draft actions' }).getByRole('menuitem', { name: item, exact: true }).click()
+}
+/** Approve a draft from its card: low-risk ones in one tap, the rest through Review in the panel. */
+const approveDraft = async (page: Page, title: string) => {
+  const d = draft(page, title)
+  if (await d.getByRole('button', { name: 'Review', exact: true }).count()) {
+    await d.getByRole('button', { name: 'Review', exact: true }).click()
+    await page.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  } else await d.getByRole('button', { name: /^Approve/ }).click()
+}
 const draft = (page: Page, title: string) => page.locator('[data-slot=card]').filter({ has: page.getByRole('heading', { level: 2, name: title, exact: true }) })
 
 const D = {
@@ -43,7 +57,7 @@ test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all l
   await expect(draft(page, D.stock)).toContainText('· 6:08 AM')
 
   // Edit opens the panel with the draft's text ready to change; the change survives approving and undoing.
-  await draft(page, D.oversell).getByRole('button', { name: 'Edit', exact: true }).click()
+  await moreItem(page, D.oversell, 'Edit')
   const panel = page.getByRole('dialog')
   const text = panel.getByRole('textbox', { name: 'Email to customers, in your tone' })
   await expect(text).toBeVisible()
@@ -62,7 +76,7 @@ test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all l
   await expect(draft(page, D.oversell)).toContainText('Edited in the e2e run.')
 
   // Don't send takes the draft out of Waiting; Undo in the toast brings it back.
-  await draft(page, D.returns).getByRole('button', { name: "Don't send" }).click()
+  await moreItem(page, D.returns, "Don't send")
   await expect(draft(page, D.returns)).toHaveCount(0)
   await expect(waiting(page)).toHaveText(/·\s5$/)
   await expect(badge(page)).toContainText('5')
@@ -153,7 +167,7 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
   await expect(badge(page)).toContainText('6')
 })
 
-test('Tools: Request a tool and Ask the team open the team window; a disconnected tool has its own Reconnect; Pause access has Undo', async ({ page }) => {
+test('Tools: Request a tool opens the team window; a disconnected tool has its own Reconnect; Pause access has Undo', async ({ page }) => {
   await start(page, 'Act', 'Tool disconnected', '#/tools')
   await page.getByRole('button', { name: 'Request a tool' }).click()
   const team = page.getByRole('dialog', { name: /Your Inhouse team/ })
@@ -161,9 +175,8 @@ test('Tools: Request a tool and Ask the team open the team window; a disconnecte
   await shot(page, 'tools-request-team-window')
   await page.keyboard.press('Escape')
   await expect(team).toHaveCount(0)
-  await page.getByRole('button', { name: 'Ask the team →' }).click()
-  await expect(team).toBeVisible()
-  await page.keyboard.press('Escape')
+  // One way to ask for a tool: there is no second "Ask the team" button on the page.
+  await expect(page.getByRole('button', { name: /Ask the team/ })).toHaveCount(0)
 
   await page.goto('/?demo#/tools/gorgias')
   // The page's own Reconnect sits beside Pause access, apart from the one in the disconnected banner.
@@ -218,7 +231,7 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await start(page, 'Act', 'Normal', '#/approvals')
 
   // Don't send the ShipBob draft: Activity logs it, and its detail is searchable.
-  await draft(page, D.stuck).getByRole('button', { name: "Don't send" }).click()
+  await moreItem(page, D.stuck, "Don't send")
   await expect(waiting(page)).toHaveText(/·\s5$/)
   await go(page, '#/activity')
   const notSent = actRow(page, `Not sent: ask ShipBob why #4821 hasn't shipped`)
@@ -323,11 +336,11 @@ test('Counts leave set-aside problems out: Watch notifications and Approvals, an
   await demo.getByRole('radiogroup', { name: 'Stage' }).getByRole('radio', { name: 'Act', exact: true }).click()
   await demo.getByRole('button', { name: 'Close demo switches' }).click()
   await go(page, '#/approvals')
-  await draft(page, D.stuck).getByRole('button', { name: "Don't send" }).click()
+  await moreItem(page, D.stuck, "Don't send")
   for (const t of ALL.filter(x => x !== D.stuck)) {
-    await draft(page, t).getByRole('button', { name: /^Approve/ }).click()
+    await approveDraft(page, t)
     await expect(draft(page, t)).toHaveCount(0)
   }
   await go(page, '#/today')
-  await expect(page.getByRole('heading', { level: 2, name: /^Needs you/ })).toContainText('5 approved, 1 set aside')
+  await expect(page.getByRole('heading', { level: 2, name: /^Nothing waiting/ })).toContainText('5 approved, 1 set aside')
 })

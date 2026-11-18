@@ -29,7 +29,7 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
   const panel = page.getByRole('dialog')
   await expect(panel).toContainText('Spends money')
   await expect(panel).toContainText('Remembered: Kestrel ships in 14 days')
-  await expect(panel).toContainText('Dana Kim usually approves orders over $5,000')
+  await expect(panel).toContainText('Dana Kim usually signs off orders over $5,000')
   await page.screenshot({ path: test.info().outputPath('act-panel-kestrel.png') })
   await panel.getByRole('button', { name: 'Approve and send to Kestrel' }).click()
 

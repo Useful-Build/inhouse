@@ -326,8 +326,8 @@ export interface SetAsideRecord {
   ms: number
 }
 
-/** One Run now. `routine` is the routine's `id`; `at` is shown, `atMin` sorts; `trace` is the run's steps when the agent has them. */
-export interface RoutineRun { routine: string; at: string; atMin: number; trace?: string }
+/** One Run now. `routine` is the routine's `id`; `at` is shown, `atMin` sorts; `trace` is the run's steps when the agent has them; `result` is what the run found, when the agent says. */
+export interface RoutineRun { routine: string; at: string; atMin: number; trace?: string; result?: string }
 
 export type AgentNotice =
   | { type: 'approval.sent'; id: string; text: string }
