@@ -1,6 +1,6 @@
 // Settings content. Pure data: the screen renders it.
 import type { AgentData, AgentState, MemoryLine, StageIndex } from '../../agent/types'
-import { STAGE_TAGS } from '../../state/derive'
+import { STAGE_TAGS, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
 import type { Theme } from '../../lib/theme'
@@ -121,11 +121,12 @@ export function settingsPage(tab: string, env: Env): Page {
   const teach = R('Teach it something', 'Tell it a rule in a chat, in your own words. It appears here.', 'button', 'Teach in a chat', 1, undefined, undefined, () => env.newChat('Remember that '))
   const lim = people.runLimits
   const limKeys = ['l:returns', 'l:chase', 'l:nudge', 'l:pause']
-  const limDesc = ['When ShipBob marks a return as sellable.', 'One polite chase per purchase order.', 'After 3 days without a pick.', 'Pauses the variant. Customer emails still wait.']
+  // The channel the team hears from the agent on, when one is connected (the first). None: no channel wording or option.
+  const channel = data.tools.channels[0]?.name
   const auditRow = (e: { who: string; what: string; detail: string; at: string }) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${e.at}`, 'value'), e.who)
   const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Routines and jobs stopped · ${agent.paused}`, 'value'), me.id)] : []
   const nextStage = S < 2
-    ? ['Act adds drafted work, memory, routines and Slack.', 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
+    ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...data.tools.channels.filter(c => c.need === 1).map(c => c.name)])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
     : 'You have every stage. Money and customer actions still wait for a person.'
   const stageDesc = ['Watch: your Inhouse agent reads every tool and changes nothing.', 'Act: your Inhouse agent does real work, and each piece waits for approval.', 'Run: your Inhouse agent handles agreed jobs by itself, within your limits.'][S]
 
@@ -165,7 +166,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Region', rows: [{ ...sel('Time zone', "Your team's time zone.", 'g:tz', 'America/New_York', Object.keys(TIME_ZONES)), labels: TIME_ZONES }] },
     ] },
     'you-notif': { title: 'Notifications', sections: [
-      { label: 'Alerts', rows: [sel('Approvals waiting', 'When your Inhouse agent drafts something for you.', 'n:wait', 'Right away', ['Right away', 'Once an hour', 'Once a day'], 1), sel('Send alerts to', 'Where your Inhouse agent tells you about approvals and problems.', 'n:channel', 'Slack', ['Email', 'Slack', 'Email and Slack', 'In the app only'], 1), R('Slack', 'Ask your Inhouse agent and approve work in Slack.', 'toggle', '', 1, 'n:slack', true), R('Weekly report', 'Fridays at 4:00\u00a0PM.', 'toggle', '', 1, 'n:weekly', true)] },
+      { label: 'Alerts', rows: [sel('Approvals waiting', 'When your Inhouse agent drafts something for you.', 'n:wait', 'Right away', ['Right away', 'Once an hour', 'Once a day'], 1), sel('Send alerts to', 'Where your Inhouse agent tells you about approvals and problems.', 'n:channel', channel ?? 'Email', channel ? ['Email', channel, `Email and ${channel}`, 'In the app only'] : ['Email', 'In the app only'], 1), ...(channel ? [R(channel, `Ask your Inhouse agent and approve work in ${channel}.`, 'toggle', '', 1, 'n:slack', true)] : []), R('Weekly report', 'Fridays at 4:00\u00a0PM.', 'toggle', '', 1, 'n:weekly', true)] },
     ] },
     'you-memory': { title: 'Memory', sections: [
       { label: 'What your Inhouse agent knows about you', rows: forgetRows(memory.personal) },
@@ -194,7 +195,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Rules', rows: people.approvalRules.map((r, i) => withAvatar({ ...sel(r.what, r.detail, `a:${i}`, r.approver, approvers, 1), tag: approvers.includes(ruleApprover(r, i)) ? undefined : 'Not an approver' }, ruleApprover(r, i), 'control')) },
     ] },
     'team-limits': { title: 'Run limits', sections: [
-      { label: 'Jobs your Inhouse agent may finish by itself', rows: lim.jobsAgentMayFinish.map((name, i) => R(name, limDesc[i], 'toggle', '', 2, limKeys[i], true)) },
+      { label: 'Jobs your Inhouse agent may finish by itself', rows: lim.jobsAgentMayFinish.map(({ name, desc }, i) => R(name, desc, 'toggle', '', 2, limKeys[i], true)) },
       { label: 'How far your Inhouse agent can go', rows: [sel('Daily limit', 'After this many actions in one day, it stops and asks.', 'l:daily', `${lim.dailyActionLimit} actions`, ['10 actions', '25 actions', '50 actions', '100 actions', '200 actions'], 2), sel('Largest restock', 'Bigger restocks wait for a person.', 'l:restock', `${lim.largestRestockUnits} units`, ['25 units', '50 units', '100 units', '250 units', '500 units'], 2)] },
       { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always'), R('Pause Inhouse agent', 'Stops every routine and job at once. Asking questions still works.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause)] },
     ] },
@@ -203,7 +204,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Accounts', rows: [R('AI', 'Your Anthropic account, billed at cost.', 'value', 'Anthropic'), R('Hosting', 'Your Cloudflare account, billed at cost.', 'value', 'Cloudflare')] },
     ] },
     'team-data': { title: 'Data and access', sections: [
-      { label: 'Where your data stays', rows: [R('Your tools', 'Orders, customers and money stay in Shopify, Xero and your other tools. Your Inhouse agent reads what a job needs.', 'value', 'Stays in each tool'), R('Inhouse agent', 'Chats, memory, routines and logs are stored on your own Cloudflare account.', 'value', 'Your Cloudflare'), R('AI models', 'Questions go to Anthropic through your own account.', 'value', 'Your Anthropic')] },
+      { label: 'Where your data stays', rows: [R('Your tools', 'Orders, customers and money stay in your own tools. Your Inhouse agent reads what a job needs.', 'value', 'Stays in each tool'), R('Inhouse agent', 'Chats, memory, routines and logs are stored on your own Cloudflare account.', 'value', 'Your Cloudflare'), R('AI models', 'Questions go to Anthropic through your own account.', 'value', 'Your Anthropic')] },
       { label: 'How long things are kept', rows: [sel('Chats', 'Older chats are deleted automatically.', 'd:chats', '12 months', RETENTION), sel('Activity and steps', 'Every step it took, kept for checking later.', 'd:steps', '12 months', RETENTION), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
       { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', `${people.members.length} members`), R('Inhouse team access', 'Alex and the team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', 'toggle', '', 0, 'd:support', true), R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
       { label: 'Take it with you', rows: [R('Export everything', 'Chats, memory, routines, skills and logs as one download.', 'button', 'Export', 0, undefined, undefined, () => env.toast("Export isn't connected in this demo.", 4000, 'info')), R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },

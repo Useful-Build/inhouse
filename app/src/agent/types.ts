@@ -112,7 +112,15 @@ export interface ThinkingMode extends ModelMode { on: boolean }
 
 export interface MemoryLine { key: string; text: string; source: string }
 
-export interface UsageRow { name: string; sub: string; dollars: number; conversations: number }
+export interface UsageRow {
+  name: string
+  /** What the row covers when the team can't reach the agent in a channel. */
+  sub: string
+  /** The same line once a channel is connected: `{channel}` stands for the channel's name. Missing: `sub` always. */
+  subWithChannel?: string
+  dollars: number
+  conversations: number
+}
 
 // ---------- chat ----------
 
@@ -431,7 +439,7 @@ export interface UsageData {
 export interface PeopleData {
   members: { id: string; name: string; photo?: string; email: string; title: string; role: string }[]
   approvalRules: { what: string; detail: string; approver: string }[]
-  runLimits: { jobsAgentMayFinish: string[]; dailyActionLimit: number; largestRestockUnits: number }
+  runLimits: { jobsAgentMayFinish: { name: string; desc: string }[]; dailyActionLimit: number; largestRestockUnits: number }
 }
 
 export interface MemoryData {
@@ -499,6 +507,8 @@ export interface AgentData {
   routines: RoutineDef[]
   skills: SkillDef[]
   skillSuggestions: SkillSuggestion[]
+  /** The heading over `skillSuggestions` ("Suggested for Shopify brands"). Missing: "Suggested for you". */
+  skillSuggestionsTitle?: string
   usage: UsageData
   /** Usage by month for the month picker, newest first. The first one is `usage`. */
   usageMonths: UsageData[]

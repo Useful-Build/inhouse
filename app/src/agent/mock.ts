@@ -2,9 +2,9 @@
 // makes no model calls: same input, same output, same timings. Phase 2 swaps this
 // module for a real agent client behind the same AgentClient interface.
 import {
-  activityFixed, auditLog, chatList, chatScript, helpGuides, defaultModel, library, memory, meta, models, notifications, people, problemById,
-  problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skills, traceDisconnectedVariant,
-  traces, tools, usage, usageAtCap, usageHistory,
+  activityFixed, auditLog, chatList, chatScript, helpGuides, defaultModel, library, memory, meta as sampleMeta, models, notifications, people, problemById,
+  problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
+  traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
@@ -15,6 +15,17 @@ import type {
 import { AgentError, CHAT_TITLE_MAX, photoKey, stageIndex } from './types'
 import { demoNow, fmtTime, fmtWeekday, minuteOf, parseLocal } from './clock'
 import { listNames, pendingIds, visibleProblems } from '../state/derive'
+
+/**
+ * Test hook: a brand other than the sample one. `localStorage['inhouse.demo.data.v1']` is `{ "brandName"?: string, "channels"?: false }`:
+ * the brand's name, and no connected channel. Only the mock reads it, so the e2e specs can show a customer whose data isn't the sample's.
+ */
+const DATA_OVERRIDE_KEY = 'inhouse.demo.data.v1'
+const override = (() => {
+  try { return (JSON.parse(localStorage.getItem(DATA_OVERRIDE_KEY) ?? '{}') ?? {}) as { brandName?: string; channels?: false } } catch { return {} }
+})()
+const meta = override.brandName ? { ...sampleMeta, brand: { ...sampleMeta.brand, name: override.brandName } } : sampleMeta
+const tools = override.channels === false ? { ...sampleTools, channels: [] } : sampleTools
 
 /** v2: times are on the demo clock ("8:03 AM" with a sortable minute) and records carry who did it. v1 is dropped. */
 const STORAGE_KEY = 'inhouse.demo.v2'
@@ -138,6 +149,7 @@ const DATA: AgentData = {
   routines: routineDefs(),
   skills,
   skillSuggestions,
+  skillSuggestionsTitle,
   usage,
   usageMonths: [usage, ...usageHistory],
   people,

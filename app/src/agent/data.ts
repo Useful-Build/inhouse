@@ -90,6 +90,7 @@ export const seedRoutine = routinesJson.createdInSeedChat
 
 export const skills = (skillsJson.skills as SkillDef[]).map(x => ({ ...x, need: needOf(`the skill "${x.n}"`, x.need) }))
 export const skillSuggestions = skillsJson.suggested as SkillSuggestion[]
+export const skillSuggestionsTitle = skillsJson.suggestedTitle
 
 /** A recorded trace's key in traces.json: one per seeded or scripted answer, plus the morning check and a draft. */
 export type TraceKey = string
@@ -120,7 +121,7 @@ export const seedTable = (chatJson.seedThread.turns[1] as { agent: { type: strin
 
 type UsageBreakdown = Record<'person' | 'job' | 'model' | 'tool', UsageRow[]>
 const usageRows = (b: Record<string, unknown[]>) => Object.fromEntries(
-  Object.entries(b).map(([k, rows]) => [k, (rows as [string, string, number, number][]).map(([name, sub, dollars, conversations]) => ({ name, sub, dollars, conversations }))]),
+  Object.entries(b).map(([k, rows]) => [k, (rows as [string, string, number, number, string?][]).map(([name, sub, dollars, conversations, subWithChannel]) => ({ name, sub, dollars, conversations, ...(subWithChannel ? { subWithChannel } : {}) }))]),
 ) as UsageBreakdown
 
 export const usage = {
