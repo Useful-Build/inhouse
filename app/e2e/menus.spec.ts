@@ -116,7 +116,13 @@ for (const width of [1440, 390]) {
       await start(page, '#/today')
       // A phone has no sort on Today (one list, most urgent first): the picker is checked at desktop width.
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
-      await expect(page.getByRole('combobox', { name: /^Sort cards/ })).toHaveCount(0)
+      if (phone) {
+        await expect(page.getByRole('combobox', { name: /^Sort cards/ })).toHaveCount(0)
+      } else {
+        await page.getByRole('combobox', { name: /^Sort cards/ }).click()
+        await fits(page.getByRole('listbox', { name: 'Sort cards' }), 'Today sort')
+        await page.keyboard.press('Escape')
+      }
 
       for (const [label, name] of [['Attach', 'attach'], ['Tools read', 'tools'], ['Model', 'model']] as const) {
         await page.getByRole('button', { name: new RegExp(`^${label}`) }).click()
