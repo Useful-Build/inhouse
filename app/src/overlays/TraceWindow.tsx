@@ -247,7 +247,7 @@ function TraceSteps({ trace }: { trace: Trace }) {
         <Button variant="outline" aria-label={`Replay speed ${speed}×. Change speed`} onClick={() => setSpeed(NEXT_SPEED[speed])} className="flex-none gap-1.5 tabular-nums">
           {speed}×<Icon name="unfold_more" size={17} className="text-muted-foreground" />
         </Button>
-        <span className="ml-1.5 min-w-0 text-xs leading-note text-muted-foreground">Replays the recorded steps.<br />Nothing runs again.</span>
+        <span className={cn('min-w-0 text-xs leading-note text-muted-foreground', !phone && 'ml-1.5')}>Replays the recorded steps.<br />Nothing runs again.</span>
         <div className="flex-1" />
         {/* The legend reads the timeline's bars: a phone's list has none. */}
         {!phone && <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1.5 text-sm whitespace-nowrap text-foreground-2">
