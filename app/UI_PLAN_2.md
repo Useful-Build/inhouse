@@ -147,19 +147,32 @@ Verify: E2E at Watch, Act and Run: every card's text fully visible at 390 and 14
 
 ## PR 5: Conversation and composer
 
-- [ ] Answer presentation per D2: one white card per answer turn with text, tables, drafts and routines inside it (drafts and routines as inset blocks, hairlines around tables), the person's message a soft grey bubble, lines near 75 characters, one link to the steps (M9, M10)
-- [ ] Long messages collapse to about eight lines with "Show more" (M8)
-- [ ] Queue and steer: a message sent mid-answer shows as a queued chip above the composer (edit, send now, remove), "send now" interrupts, and Stop stays its own button (H8)
-- [ ] Edit message shows an "Editing" state with cancel; a stopped answer has Retry (M11)
-- [ ] Jump-to-latest clear of the sources; the multi-line field fades at its top edge; Send stays inside the composer at 768px; the title's focus box (M12, M13)
-- [ ] A new chat gets a short title (L8)
-- [ ] Trace window: wider names on desktop, a plain step list on a phone (H6, L9)
-- [ ] All chats: a real empty state, newest first (M19, L11)
-- [ ] Phone: mic and logo stack out, model into "+", action row per D3 (M27)
+- [x] Answer presentation per D2: one white card per answer turn with text, tables, drafts and routines inside it (drafts and routines as inset blocks, hairlines around tables), the person's message a soft grey bubble, lines near 75 characters, one link to the steps (M9, M10)
+- [x] Long messages collapse to about eight lines with "Show more" (M8)
+- [x] Queue and steer: a message sent mid-answer shows as a queued chip above the composer (edit, send now, remove), "send now" interrupts, and Stop stays its own button (H8)
+- [x] Edit message shows an "Editing" state with cancel; a stopped answer has Retry (M11)
+- [x] Jump-to-latest clear of the sources; the multi-line field fades at its top edge; Send stays inside the composer at 768px; the title's focus box (M12, M13)
+- [x] A new chat gets a short title (L8)
+- [x] Trace window: wider names on desktop, a plain step list on a phone (H6, L9)
+- [x] All chats: a real empty state, newest first (M19, L11)
+- [x] Phone: mic and logo stack out, model into "+", action row per D3 (M27)
 
 Files: `src/screens/Chats.tsx`, `src/screens/chat/*`, `src/components/Composer.tsx`, `src/ui/chat.tsx`, `src/overlays/TraceWindow.tsx`, specs.
 Risk: medium to high. The most-used surface, and D2 changes its look.
 Verify: E2E: paste a one-page message and expand it, queue a message mid-answer then send it now, edit and cancel, open the steps on a phone and read every step name. A frame-by-frame check (30 fps) of sending, streaming and finishing: no scroll jump.
+
+Notes from the build:
+- **Built, not run.** Type check and lint pass. E2E, visual, a11y and the 30 fps check run in CI (the orchestrator's). New spec `e2e/conversation-polish.spec.ts` (desktop and a 390px phone in one file): a pasted page folds to eight lines and Show more opens it without moving the view; two messages queued mid-answer, Send now on the first (the answer stops with a note, the first runs in the same run with its own steps, the second follows on its own), then Retry on the note; Edit with a draft and a file, Escape restores both, a sent edit replaces the question; All chats' time column through Select; Send inside the box at 768px; on a phone the answer row is Copy, steps and "···", every trace step name reads in full, and Select's bar clears the last chat.
+- **Queue and steer (H8)** live in the store: `queued` by chat id (not saved: a reload stops answers anyway, so a queued message is lost on reload), `queueMessage`, `unqueue`, `sendQueuedNow`. A queued message waits client-side, so Edit and Remove need nothing from the agent; when its chat's answer ends (finished or failed, not Stop) the first one is asked, in the background too (D9). Send now uses the contract's `send(runId, text, { priority: 'now' })`: the store notes "You stopped your Inhouse agent" and the agent answers it in the same run (`turn.started`). The run leaves `runs` the moment a terminal event arrives, so a Send now after that asks anew instead of sending into a finished run; a rejected `send` puts the message back at the front of the queue. Messages sent into a run wait in its `sent` list (they keep their quote and files for `turn.started`) and go back to the queue if the run is stopped. `ask` is now a thin wrapper over an internal `runAsk(chatId, ...)` that works for a chat that isn't open; `sendToRun` is gone. Stop is its own button: with text typed mid-answer a Queue button shows beside it, and Enter queues.
+- **Edit (M11)** is store state (`editMsg`, `startEdit`, `cancelEdit`, `sendEdit`): the composer shows "Editing your message" with Cancel (and Escape), keeps what it held before and puts it back on cancel and after sending; sending goes through `regenerate`, so it replaces the question and its answer and has Undo. The "Replace your draft?" question now only guards Edit on a queued message. Edit is off while the chat is answering. Retry shows on a stopped note (and the reload note) and asks that question again through `regenerate`.
+- **A trace id per turn** (`src/agent/mock.ts`, one comment in `src/agent/types.ts`): the first turn keeps the run id, a turn started by `send` is `${runId}-t${n}`, and the `part` event's `trace` carries it. The store now stores `ev.trace` as the message's trace.
+- **D2:** one `bg-card` card per answer turn (`[data-answer]`), parts stacked inside; text capped at `max-w-prose` (65ch, about 75 characters of prose); a table between hairlines (`border-y` and row dividers); drafts, routines and skills as `bg-muted` inset blocks with a divider edge; the error line and suggestions inside the card. Your message is a `bg-fill-hover` bubble with no border (a selected ring while it's being edited). The steps line is the one link to the steps and now always sits first in the row under the answer, so nothing moves when the hover actions show.
+- **Calls made:** short titles cut at a word break under 40 characters, never ending on a little word, with an ellipsis; a question that fits stays whole. Jump to latest moved to the column's right edge (clear of sources and tables, which sit left). M13's "title's focus box" read as the top bar's rename field clipping its focus halo: `ChatTitleInput` gives the halo room inside its own box. The phone changes (M27) apply to the chat's composer only: Today's composer is PR 4's screen and its phone spec checks the logo stack; on a phone's chat the tools switches aren't reachable (the plan moves only the model into "+"). L11 needed no change: the list is newest first by `iso` (the mock checks it) and the empty state is new.
+- **All chats:** the "···" trigger lays over the time on hover and focus (the time fades under it), so the time ends 20px inside the card and doesn't move with Select; a phone or touch screen keeps the trigger's room in Select mode too. Select mode ends the list with a `h-selection-room` spacer (the bar, its gap and the safe area) instead of `pb-24`, which the `page` utility's own padding could override. Empty: a card with suggested questions; no results: a line and Clear search. Select is off with no chats.
+- **Trace:** desktop names get `min(440px, 48%)` (`--app-trace-label` set again in the PR 5 token block; the old value above it can go when someone next edits that block). A phone shows a plain list: each step's name wraps in full with its time under it, no bars or legend; the view switch takes its own row. Replay is an `IconButton`, the speed a `Button`.
+- **Tokens added** (PR 5 block in `src/index.css`): `--app-composer-fade` (the field's top-edge mask once it scrolls), `--app-selection-room` (`h-selection-room`, in `merge-config.ts`), and the new `--app-trace-label` value.
+- **Specs changed:** `conversation`, `composer` (the queue and the field's fade), `no-persona` (phone chat: Reply from "···", no tools or model buttons), `chats-manage` and `data-states` ("No chats yet" without the stop).
+- **Left:** a queued message isn't kept across a reload; two quick Send nows run in reverse order (the mock puts each `now` first); `DESIGN_APP.md` should list D2's card and inset, `QueuedChip` and the `Editing` bar (not this PR's file).
 
 ## PR 6: Library
 

@@ -832,8 +832,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const ask = () => { void runAsk(cid, item.text, { quote: item.quote, atts: item.atts ?? [], model: item.model }) }
       // Nothing answering (it was stopped): it's simply asked.
       if (!r) { ask(); return }
-      // The answer stops here, and says so.
-      addTo(cid, { id: msgId(), role: 'event', text: STOPPED_NOTE })
+      // The answer stops here, and says so (once: a second Send now before the first is answered stops nothing more).
+      if (!r.sent.length) addTo(cid, { id: msgId(), role: 'event', text: STOPPED_NOTE })
       // Not started yet: a new question takes its place.
       if (!r.runId) { ask(); return }
       // Steer: the agent ends the current turn and answers this one next, in the same run (`turn.started` shows it).
