@@ -1,6 +1,5 @@
-// Static assets are served before the Worker runs. `assets.run_worker_first` for /api/* arrives with the deploy
-// pipeline PR (#39); until then non-navigation requests to /api/* reach the Worker, and navigations to /api/* get
-// index.html (the single-page-application fallback).
+// Static assets are served before the Worker runs, except /api/*: `assets.run_worker_first` sends every request to
+// /api/*, navigations included, to the Worker.
 import headersFile from '../public/_headers?raw'
 import { scrubReport } from './scrub.ts'
 

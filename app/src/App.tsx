@@ -8,6 +8,7 @@ import { Sidebar } from './shell/Sidebar'
 import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
+import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -25,18 +26,21 @@ import { TeamWindow } from './overlays/TeamWindow'
 import { HelpWindow } from './overlays/HelpWindow'
 import { CommandPalette } from './overlays/CommandPalette'
 
-// The heavy routes load on first visit (P-2): Settings, Usage, the Library (its viewer and previews come with it) and
-// the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Today and the
-// rest stay in the entry chunk.
-// After `vite:preloadError` is handled (see below) Vite's preload helper resolves the import with undefined, not the
-// module. Picking a component from that would throw into the screen's error boundary for the moment before the reload lands, so a
-// missing module returns a promise that never settles: the Suspense fallback stays up until the reload.
+/**
+ * Loads a heavy route on first use. After `vite:preloadError` is handled (see below) Vite's preload helper resolves the
+ * import with undefined, not the module. Picking a component from that would throw into the screen's error boundary for
+ * the moment before the reload lands, so a missing module returns a promise that never settles: the Suspense fallback
+ * stays up until the reload.
+ */
 function lazyRoute<M, C extends ComponentType>(load: () => Promise<M>, pick: (m: M) => C) {
   return lazy(async () => {
     const m = await load()
     return m === undefined ? new Promise<never>(() => {}) : { default: pick(m) }
   })
 }
+// The heavy routes load on first visit (P-2): Settings, Usage, the Library (its viewer and previews come with it) and
+// the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Today and the
+// rest stay in the entry chunk.
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
@@ -48,6 +52,7 @@ class TraceBoundary extends Component<{ children: ReactNode }, { failed: boolean
   static getDerivedStateFromError() { return { failed: true } }
   componentDidCatch(error: unknown) {
     console.error('Inhouse: the trace window crashed and was closed.', error instanceof Error ? error.message : error, error)
+    reportError('boundary', error)
     useUi.getState().patch({ traceId: null })
     useUi.getState().showToast("Couldn't open the trace. Reload and try again.", { icon: 'info', key: 'trace-error' })
   }
@@ -317,7 +322,7 @@ export default function App() {
   // already the new page's when its h1 takes focus.
   const label = page === 'app' ? toolName(tools, appKey) ?? 'Tools' : page === 'settings' ? (phone && setMenu ? 'Settings' : `${settingsLabel(setTab)} · Settings`) : PAGE_LABEL[page]
   useLayoutEffect(() => { document.title = `${label} · Inhouse` }, [label])
-  const focusKey = PAGE_SLUG[page] + (page === 'app' ? (toolKnown ? `/${appKey}` : '') : page === 'settings' && phone ? (setMenu ? '/menu' : '/page') : '')
+  const focusKey = PAGE_SLUG[page] + (page === 'app' ? (toolKnown ? `/${appKey}` : '') : page === 'settings' && phone && setMenu ? '/menu' : '')
 
   // An unknown tool key shows the Tools list until `useHashRoute` has moved the route there.
   const Screen = page === 'app' && !toolKnown ? Tools : SCREENS[page]

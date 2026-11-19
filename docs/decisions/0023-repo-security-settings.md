@@ -1,6 +1,6 @@
 # 0023. Repo security settings
 
-- Status: accepted, 2026-11-19. Being built in the hardening project (`fleet/hardening`)
+- Status: accepted, 2026-11-19. Built in the hardening project (`fleet/hardening`)
 - Was: production plan PD9
 - Plan: [production plan, Decisions](../plans/2026-11-19-production.md#decisions)
 

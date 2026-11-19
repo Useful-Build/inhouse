@@ -118,9 +118,8 @@ jobs:
         with:
           name: sourcemaps-${{ needs.plan.outputs.sha }}
           path: app/dist/sourcemaps/**
-          # Warn, not fail: the hidden maps arrive with the hardening project's client-error change; until then
-          # main's build makes none.
-          if-no-files-found: warn
+          # Every build makes hidden maps (vite.config.ts): none means the build changed, so fail.
+          if-no-files-found: error
           retention-days: 90
           overwrite: true
 

@@ -30,7 +30,7 @@ tracker's.
 | [0018](0018-custom-domain-indexable-demo.md) | A custom domain, and the demo is indexable | PD2, PD3 |
 | [0019](0019-deploy-on-merge-with-rollback.md) | Deploy on merge, with rollback by version id | PD4 |
 | [0020](0020-client-errors-into-workers-logs.md) | Client errors go to Workers Logs | PD6 |
-| [0021](0021-monitoring-and-runbook.md) | Monitoring: a scheduled check, Web Analytics and a runbook | PD7 |
+| [0021](0021-monitoring-and-runbook.md) | Monitoring: a scheduled check, a runbook and (not built yet) Web Analytics | PD7 |
 | [0022](0022-icon-font-subset.md) | Subset the icon font | PD8 |
 | [0023](0023-repo-security-settings.md) | Repo security settings | PD9 |
 | [0024](0024-issues-only-contributions.md) | Issues welcome, outside PRs not accepted | PD10 |
