@@ -31,7 +31,7 @@ Run them in `app/`.
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
 | `npm run test:visual:linux` | The visual suite in the Playwright Docker image (`:update` regenerates baselines) |
 | `npm run test:a11y` | axe, WCAG 2.1 A and AA |
-| `npm run deploy` | Build and deploy production (by hand, see below) |
+| `npm run deploy` | Build and deploy to the Cloudflare account wrangler is signed in to (a fork's own). Don't use it for this repo's production: that's `deploy.yml` |
 
 How to boot, drive and verify the app (ports, env switches, seeds, previews, the ship recording) is in the `verify`
 skill (`.agents/skills/verify`).
@@ -80,11 +80,19 @@ skill before any UI change. Repo specifics:
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.
   `preview-cleanup.yml` deletes previews of closed PRs daily.
-- **Deploys:** production deploys by hand with `npm run deploy` from a clean checkout of the merged commit.
-- **After merge:** none.
-- **Sensitive paths (need Wasim's OK):** `.github/workflows/`, `.github/rulesets/`, `app/playwright.config.ts`,
-  `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs, `visual.spec.ts-snapshots/`),
-  `app/src/**/*.property.test.ts`, `app/scripts/` (the lint and ship scripts), `app/wrangler.jsonc`, `app/worker/`,
-  `app/public/_headers`.
+- **Deploys:** every push to `main` deploys that commit to production (`deploy.yml`, environment `production`):
+  upload a version, smoke its Version URL, promote it, smoke the live hostname, tag a release `vYYYY.MM.DD.N`. Roll
+  back with `gh workflow run deploy -f rollback_to=<version-id>`. `monitor.yml` checks production hourly and opens a
+  `Production check failing` issue on a failure. Steps for an incident: `docs/runbook.md`. Nobody deploys
+  production from a laptop.
+- **After merge into `main`:** watch that commit's `deploy` run go green.
+- **No Actions cache:** no workflow restores an Actions cache (`actions/cache`, `setup-node`'s `cache:`), so a PR
+  run can't poison what a trusted run on `main` restores. A `packageManager` or `devEngines.packageManager` field in
+  `app/package.json` turns on setup-node's automatic npm cache: add `package-manager-cache: false` to every
+  setup-node step first.
+- **Sensitive paths (need Wasim's OK):** `.github/workflows/` (deploy, monitor and the preview workflows included),
+  `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
+  `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
+  scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`.
 - **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`). Give each parallel worktree its own `E2E_PORT`.
 - **Fleet repo:** no. `fleet/<topic>` is only the integration branch name here.

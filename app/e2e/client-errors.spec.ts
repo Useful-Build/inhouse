@@ -4,7 +4,7 @@
 // come from the demo switch `?demo&crash=screen|rejection` (src/report-error.ts), which does nothing without `?demo`
 // in a production build.
 import { readFileSync } from 'node:fs'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 type Report = { message: string; stack: string; url: string; release: string; kind: string; demo?: boolean }

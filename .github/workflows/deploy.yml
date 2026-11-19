@@ -635,7 +635,8 @@ jobs:
       # Version URL, plus no X-Robots-Tag (production is indexable). A rollback has no build here, so any app
       # passes the wait and only the checks run, minus the /api ones: a version from before run_worker_first
       # answers a navigation to /api/* with the SPA page. Its X-Robots-Tag is a warning for the same reason (a
-      # version from before this pipeline sends noindex). HSTS is a warning until _headers sets it.
+      # version from before this pipeline sends noindex). HSTS is required on a deploy and a warning on a rollback, for the
+      # same reason (a version from before HSTS sends none).
       - name: Smoke the live hostname
         if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
         working-directory: app
@@ -651,8 +652,13 @@ jobs:
           fi
           # Captured first: grep -q exiting early on a pipe would fail curl with SIGPIPE under pipefail.
           headers=$(curl -sS --proto '=https' --max-time 20 -o /dev/null -D - "https://$HOST/")
-          grep -qi '^strict-transport-security:' <<< "$headers" ||
-            echo "::warning::https://$HOST/ sends no Strict-Transport-Security header"
+          if ! grep -qi '^strict-transport-security:' <<< "$headers"; then
+            if [ "$DEPLOY" = true ]; then
+              echo "::error::https://$HOST/ sends no Strict-Transport-Security header"
+              exit 1
+            fi
+            echo "::warning::https://$HOST/ sends no Strict-Transport-Security header; the version rolled back to may predate it"
+          fi
           if grep -qi '^x-robots-tag:' <<< "$headers"; then
             if [ "$DEPLOY" = true ]; then
               echo "::error::https://$HOST/ sends X-Robots-Tag; production should be indexable"
