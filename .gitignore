@@ -1,5 +1,5 @@
 .claude/worktrees/
-verify/
+/verify/
 .DS_Store
 *.zip
 app/e2e/visual.spec.ts-snapshots/*-darwin.png

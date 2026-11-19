@@ -1,0 +1,312 @@
+Status: draft, waiting for Wasim's approval (2026-11-19).
+
+# Inhouse feature map
+
+Format and workflow: global `verification` skill, `references/feature-map.md`. Each entry has a `Covered:` line naming its spec files, or `gap`. Seed every path with `?demo` at Stage Act and Scenario Normal unless it says otherwise (see [SKILL.md](SKILL.md)). Gaps are listed first.
+
+## Gaps
+
+- Palette: the theme switch (light, dark, system).
+- Palette: "Report a bug": opening the window is checked (`tour.spec.ts`), sending the report isn't.
+- Read aloud on an answer: the menu item is checked for presence (`conversation.spec.ts`, `conversation-polish.spec.ts`, `brand-data.spec.ts`), what it does isn't.
+- Dictation in the composer: the button is checked for presence (`no-persona.spec.ts`), what it does isn't.
+- Google Drive and asking in Slack stubs (each says it isn't connected).
+- Settings pages: Stage and plan (only "Book a check-in" is checked, in `no-persona.spec.ts`), Team memory and Run limits (opened, controls unchecked).
+
+## Today
+
+Today: needs-you cards
+  Path:     Today
+  Selector: article cards, button "Review"
+  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text
+  Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts
+
+Today: snooze and dismiss
+  Path:     Today -> card "···" menu -> Snooze or Dismiss
+  Selector: card menu items, Approvals badge
+  Expected: the card leaves Today and Approvals, the badge agrees, a reload keeps it, Reset demo clears it
+  Covered:  e2e/page-actions.spec.ts
+
+Today: open a card
+  Path:     Today -> click the card
+  Selector: one real button per card, the "···" menu is separate
+  Expected: the problem panel opens; the menu doesn't open it
+  Covered:  e2e/today-approvals.spec.ts
+
+Today: sort at Run
+  Path:     Today at Run -> Biggest amount first
+  Selector: sort control
+  Expected: handled cards stay after the cards that need you
+  Covered:  e2e/cross-screen.spec.ts
+
+Today: composer logo row
+  Path:     Today -> composer
+  Selector: tool logos, "+N" chip
+  Expected: 3 logos, a +N chip for the rest, and the count is real
+  Covered:  e2e/dots-and-today.spec.ts
+
+## Approvals
+
+Approvals: approve, edit, Undo
+  Path:     Today -> Review -> Approve and send (or Edit first)
+  Selector: panel button "Approve and send to Kestrel", toast "Undo"
+  Expected: "goes out in 10 seconds" toast; Undo inside the hold cancels the send; a reload during the hold still sends it; Reset demo during the hold sends nothing
+  Covered:  e2e/app.spec.ts, e2e/state.spec.ts, e2e/page-actions.spec.ts
+
+Approvals: a draft with no text
+  Path:     Approvals -> Edit on a draft with no text
+  Selector: note field in the panel
+  Expected: the panel opens on a note field and the note survives approve and Undo
+  Covered:  e2e/today-approvals.spec.ts
+
+Approvals: approve all low-risk
+  Path:     Approvals -> Approve all low-risk
+  Selector: button "Approve all low-risk", toast "Undo"
+  Expected: three drafts approved, one Undo takes all three back
+  Covered:  e2e/today-approvals.spec.ts, e2e/toasts.spec.ts
+
+Approvals: Don't send and sort
+  Path:     Approvals -> Don't send, sort control
+  Selector: card menu, sort
+  Expected: card leaves with an Undo; sort reorders; counts leave set-aside problems out
+  Covered:  e2e/page-actions.spec.ts
+
+Approvals: loading and first day
+  Path:     Approvals at Loading and First day
+  Selector: status text
+  Expected: loading status, no sort, no approve-all, no cut text
+  Covered:  e2e/today-approvals.spec.ts
+
+Toasts
+  Path:     approve twice, delete two routines, hover, F6
+  Selector: `[data-toast]`, role "status"
+  Expected: two approvals share one toast with one Undo; at most four toasts; a held approval is never pushed out; hover pauses the countdown; focus moves to the next toast then the page
+  Covered:  e2e/toasts.spec.ts
+
+## Chats and conversation
+
+Chat: ask a question
+  Path:     Today or a chat -> composer -> Send
+  Selector: composer field, Send, Stop
+  Expected: the stuck-orders question gives the same table and a 6-step, 9.4 s trace; Stop ends the run and says nothing was changed; Send is off while the field is empty
+  Covered:  e2e/app.spec.ts, e2e/composer.spec.ts
+
+Chat: composer files
+  Path:     composer -> paste or drop files
+  Selector: file chips
+  Expected: chips appear; a file over the limit says why and isn't added; each chat keeps its own draft and files
+  Covered:  e2e/composer.spec.ts
+
+Chat: answer actions
+  Path:     answer -> Copy, Edit, Regenerate, thumbs, steps
+  Selector: answer row buttons
+  Expected: markdown renders, Jump to latest appears when scrolled up mid-stream, steps open the trace
+  Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts
+
+Chat: queue and edit
+  Path:     send two messages mid-answer, Edit a question
+  Selector: queued message, "Editing" label, Retry
+  Expected: queued messages wait and send in order, Stop pauses the queue, Escape in an edit restores the draft
+  Covered:  e2e/conversation-polish.spec.ts
+
+Chat: runs in the background
+  Path:     start an answer -> open another chat or the Library -> come back
+  Selector: sidebar running dot
+  Expected: the whole answer is there once; deleting a chat stops its run and Undo brings it back with a stopped note
+  Covered:  e2e/run-lifecycle.spec.ts
+
+Chat: See all and management
+  Path:     sidebar -> See all (`#/chats/all`)
+  Selector: search box, row menu, Select
+  Expected: search filters by title; rename, pin, copy link, delete with Undo, bulk delete; a reload keeps it until Reset demo
+  Covered:  e2e/chats-manage.spec.ts, e2e/sample-data.spec.ts
+
+Chat: links
+  Path:     `#/chats/<id>`, an unknown id or page
+  Selector: URL
+  Expected: Back and Forward move between chats; an unknown link lands where it would anyway and says so
+  Covered:  e2e/cross-screen.spec.ts, e2e/mock-behaviour.spec.ts, e2e/state.spec.ts
+
+Chat: mock answers
+  Path:     ask a routine request or an off-script question
+  Selector: routine row, suggestion chips
+  Expected: a schedule and a time make one routine; an off-script question gets "can't answer from your tools yet" with chips
+  Covered:  e2e/mock-behaviour.spec.ts
+
+## Library
+
+Library: browse and filter
+  Path:     Library (`#/library`)
+  Selector: tabs, places panel, search, view switch
+  Expected: tabs and places filter with matching counts; search has an empty state with Clear; masonry, grid and list show the same files
+  Covered:  e2e/library.spec.ts, e2e/library-polish.spec.ts
+
+Library: viewer
+  Path:     Library -> open a file
+  Selector: viewer window, link back to the source
+  Expected: the viewer opens, its link goes to the chat, routine or approval, arrow keys step through files, Back closes it
+  Covered:  e2e/library.spec.ts, e2e/library-polish.spec.ts, e2e/page-details.spec.ts
+
+Library: select and delete
+  Path:     Library -> Select -> Delete
+  Selector: confirm dialog, toast "Undo"
+  Expected: delete asks first, Undo restores, the delete survives a reload
+  Covered:  e2e/library.spec.ts, e2e/cross-screen.spec.ts
+
+## Routines, Activity, Tools, Skills, Usage
+
+Routines: details and actions
+  Path:     Routines -> a routine
+  Selector: switch "<name> on or off", Pause, Run now, Delete
+  Expected: details show; Delete asks and Undo works; all of it survives a reload; at Watch a routine is locked and shows its stage
+  Covered:  e2e/page-details.spec.ts
+
+Activity: log
+  Path:     Activity
+  Selector: rows, times
+  Expected: every time sits on one line; the Klaviyo line takes its date from the data
+  Covered:  e2e/sample-data.spec.ts
+
+Tools: list and pages
+  Path:     Tools (`#/tools`) -> a tool
+  Selector: search, Pause access, Reconnect, Request a tool
+  Expected: pausing or disconnecting changes the count, the tool page and the composer alike; Pause access has Undo; Request a tool opens the team window
+  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts
+
+Tools: Slack channel
+  Path:     Tools -> Slack
+  Selector: Slack row
+  Expected: its own page with channel details and no tool abilities; before Act it says "included from Act"; Back returns to Tools
+  Covered:  e2e/slack-channel.spec.ts
+
+Skills
+  Path:     Skills -> a skill
+  Selector: switch in details
+  Expected: turn a skill off and back on; search filters the list
+  Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts
+
+Usage
+  Path:     Usage
+  Selector: month picker, daily bars
+  Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state
+  Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts
+
+## Settings
+
+Settings: dropdowns and fields
+  Path:     Settings -> any page
+  Selector: dropdown, text field, search
+  Expected: a dropdown opens a real list, works by keyboard, Escape cancels; a pick survives a reload and Reset demo clears it; text fields save and show in the account menu
+  Covered:  e2e/sample-data.spec.ts, e2e/menus.spec.ts
+
+Settings: Models
+  Path:     Settings -> Models
+  Selector: effort picker, on switch
+  Expected: Max, Smart (default), Fast, Instant; switching one off hides it; effort persists
+  Covered:  e2e/models-and-scroll.spec.ts
+
+Settings: Members and approvers
+  Path:     Settings -> Members, Who approves what
+  Selector: role control, Remove
+  Expected: removing Admin asks first; a demoted approver stays on rules that name them with a tag; a wrong cap shows why and isn't saved
+  Covered:  e2e/page-details.spec.ts, e2e/edge-cases.spec.ts, e2e/cross-screen.spec.ts
+
+Settings: photos
+  Path:     Settings -> General -> photo
+  Selector: upload, Remove
+  Expected: the photo shows in the sidebar, account menu, Members, Activity and Usage; bad files give an error toast; reset clears it
+  Covered:  e2e/photo.spec.ts
+
+## Shell and states
+
+Navigation: palette and shortcuts
+  Path:     Cmd+K or Search -> type
+  Selector: palette, shortcuts Cmd+Shift+O, Cmd+\
+  Expected: pages, settings pages and chats open; Escape returns focus; shortcuts skip fields except Cmd+K
+  Covered:  e2e/navigation.spec.ts
+
+Sidebar
+  Path:     sidebar -> collapse
+  Selector: collapse button, rail tooltips
+  Expected: collapses to a rail, stays collapsed after a reload, expands with the shortcut
+  Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts
+
+Notifications and team window
+  Path:     bell -> a line; Message the team
+  Selector: bell count, window Send
+  Expected: reading a line drops the count, Mark all as read empties it; Send waits for words and carries the name from Settings
+  Covered:  e2e/navigation.spec.ts
+
+Keyboard and focus
+  Path:     Tab through the shell and overlays
+  Selector: Skip to content, F6
+  Expected: Skip to content is the first stop; overlays give focus back on close; no page drops focus to the document
+  Covered:  e2e/overlays-keyboard.spec.ts, e2e/chats-manage.spec.ts, e2e/cross-screen.spec.ts
+
+Scenarios and stages
+  Path:     demo switcher -> every Stage and Scenario
+  Selector: Stage, Scenario
+  Expected: every page opens with no crash, console error or other state's data; First day and Loading show their own empty looks; Cap reached shows the banner
+  Covered:  e2e/data-states.spec.ts, e2e/tour.spec.ts, e2e/app.spec.ts
+
+Memory across reloads
+  Path:     change something -> reload -> Reset demo
+  Selector: Reset demo
+  Expected: drafts, started chats, model pick and Library view survive a reload; Reset demo puts Act and Normal back; old saved values load cleanly
+  Covered:  e2e/memory.spec.ts, e2e/state.spec.ts
+
+Phone layout (390)
+  Path:     every page at 390x844
+  Selector: sidebar, composer, menus, toasts
+  Expected: nothing cut or covered; tap targets are tap-size; toasts sit above the composer
+  Covered:  the `e2e/*-phone.spec.ts` specs, e2e/text-fit-phone.spec.ts
+
+Visual and a11y
+  Path:     every state in `e2e/states.ts`
+  Selector: screenshot, axe
+  Expected: visual shots match the Linux baselines in light and dark; axe finds no new WCAG 2.1 A or AA issue
+  Covered:  e2e/visual.spec.ts, e2e/a11y.spec.ts
+
+Sample data rules
+  Path:     the data files
+  Selector: n/a
+  Expected: no 24-hour time, UK spelling, old dates or the words sample, demo or mock in text a person reads; no persona name from the old build
+  Covered:  e2e/sample-data.spec.ts, e2e/no-persona.spec.ts
+
+## Gaps, as entries
+
+Palette: theme switch
+  Path:     Cmd+K -> theme item
+  Selector: palette item
+  Expected: light, dark and system each apply and survive a reload
+  Covered:  gap
+
+Palette: Report a bug
+  Path:     Cmd+K -> Report a bug
+  Selector: menuitem "Report a bug"
+  Expected: the report window opens and sends (`tour.spec.ts` checks it opens; nothing checks the send)
+  Covered:  gap
+
+Chat: Read aloud
+  Path:     answer -> More -> Read aloud
+  Selector: menuitem "Read aloud"
+  Expected: the item does what it says (its presence is checked in `conversation.spec.ts`, `conversation-polish.spec.ts` and `brand-data.spec.ts`)
+  Covered:  gap
+
+Composer: dictation
+  Path:     composer -> Dictate
+  Selector: button "Dictate"
+  Expected: the button does what it says (its presence is checked in `no-persona.spec.ts`)
+  Covered:  gap
+
+Stubs: Google Drive and asking in Slack
+  Path:     the stub's button
+  Selector: toast
+  Expected: each says it isn't connected
+  Covered:  gap
+
+Settings: Stage and plan, Team memory, Run limits
+  Path:     Settings -> the page
+  Selector: page heading
+  Expected: the page's controls work (`no-persona.spec.ts`, `tour.spec.ts` and `state.spec.ts` open them; only Stage and plan's "Book a check-in" is checked)
+  Covered:  gap
