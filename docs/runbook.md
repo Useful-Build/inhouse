@@ -6,7 +6,7 @@ Use this when the live site is broken or looks wrong. Read it top to bottom. Rol
 
 | Alert | Where it arrives | What it means |
 |---|---|---|
-| `Production check failing` issue, label `monitor`, assigned to the owner | GitHub issues, with the usual issue email | The hourly check (workflow `monitor`, `monitor.yml`) failed: the live page didn't answer 200, isn't the app's page, or its entry script didn't load. |
+| `Production check failing` issue, label `monitor`, assigned to the owner | GitHub issues, with the usual issue email | The hourly check (workflow `monitor`, `monitor.yml`) failed: the live page didn't answer 200, isn't the app's page, a deep link or its entry script didn't load. A `deploy` run that fails at or after the promote also opens or comments on this issue. |
 | Failed `deploy` run | GitHub Actions, with the failed-run email | A push to `main` didn't fully ship (see "What a failed deploy leaves live"). |
 | `client_error` lines | Workers Logs | Browsers reported a crash or an unhandled error (`POST /api/client-error`). Nobody is paged on these. Look at them in triage. |
 
@@ -49,7 +49,9 @@ Rollback moves the live site to an earlier Worker version. It takes seconds and 
    - `gh workflow run deploy -f rollback_to=<version-id>`
 3. With `rollback_to` set, the `deploy` workflow skips the build, runs `wrangler rollback`, checks the active
    deployment is that version at 100% and smokes the live site. A rollback and a deploy share one concurrency
-   group (`production`), so they queue and never run at the same time. It makes no release.
+   group (`production`), so they queue and never run at the same time. It makes no release. A push that lands
+   while a rollback waits cancels the waiting rollback (its run shows cancelled): run it again after that deploy.
+   A rollback run can't be re-run; dispatch a new one.
 
 If the workflow itself is broken, run this by hand in `app/`, with the Cloudflare login:
 `npx wrangler rollback <version-id> --name inhouse-app -y -m "<reason>"`
