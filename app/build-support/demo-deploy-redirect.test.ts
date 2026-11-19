@@ -1,6 +1,7 @@
 // The ways the product build could break the demo's deploy redirect, each on a temp folder:
 //   - a product build that wrote its pointer leaves the demo's pointer (or no file) behind it;
-//   - a concurrent demo build's pointer, written after the snapshot, is never clobbered or removed;
+//   - a demo pointer written after the product's is never clobbered or removed;
+//   - a build killed by SIGTERM restores before it dies, and still dies by the signal;
 //   - a failed product build that wrote nothing changes nothing;
 //   - a stale product pointer in the snapshot is never put back;
 //   - a demo pointer sandwiched between the snapshot and the product's write is lost, but never replaced by the
@@ -9,6 +10,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { pointsInto, restoreRedirect, snapshotRedirect } from './demo-deploy-redirect.ts'
 
 const DEMO = '{"configPath":"../../dist/inhouse_app/wrangler.json","auxiliaryWorkers":[]}'
@@ -48,7 +51,7 @@ describe('restoreRedirect', () => {
     expect(read()).toBeNull()
   })
 
-  it('leaves a pointer a concurrent demo build wrote after the snapshot', () => {
+  it('leaves a demo pointer written after the snapshot or after the product\'s', () => {
     const none = snapshotRedirect(file)
     writeFileSync(file, DEMO_LATER)
     expect(restoreRedirect(none, 'dist-product')).toBe('left')
@@ -92,6 +95,33 @@ describe('restoreRedirect', () => {
     writeFileSync(file, PRODUCT)
     expect(restoreRedirect(snap, 'dist-product')).toBe('restored')
     expect(restoreRedirect(snap, 'dist-product')).toBe('left')
+    expect(read()).toBe(DEMO)
+  })
+})
+
+describe('restoreOnAnyEnd', () => {
+  const helper = fileURLToPath(new URL('./demo-deploy-redirect.ts', import.meta.url))
+  // A child process registers the restore, writes the product pointer, then is killed by SIGTERM (or exits).
+  const run = (end: 'SIGTERM' | 'exit') => spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { writeFileSync } from 'node:fs'
+    import { restoreOnAnyEnd, restoreRedirect, snapshotRedirect } from ${JSON.stringify(helper)}
+    const snap = snapshotRedirect(${JSON.stringify(file)})
+    restoreOnAnyEnd(() => restoreRedirect(snap, 'dist-product'))
+    writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(PRODUCT)})
+    ${end === 'SIGTERM' ? "process.kill(process.pid, 'SIGTERM'); setInterval(() => {}, 1000)" : ''}
+  `], { encoding: 'utf8' })
+
+  it('restores on SIGTERM and the process still ends by the signal', () => {
+    writeFileSync(file, DEMO)
+    const r = run('SIGTERM')
+    expect(r.signal).toBe('SIGTERM')
+    expect(read()).toBe(DEMO)
+  })
+
+  it('restores on a normal exit', () => {
+    writeFileSync(file, DEMO)
+    const r = run('exit')
+    expect(r.status).toBe(0)
     expect(read()).toBe(DEMO)
   })
 })

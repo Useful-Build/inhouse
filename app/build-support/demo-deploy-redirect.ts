@@ -19,7 +19,7 @@ export const snapshotRedirect = (file: string): RedirectSnapshot =>
 
 /**
  * Puts the redirect back to what it held before, only if it now points into `productOutDir`: that content can only
- * come from a product build, so a pointer a concurrent demo build wrote (or an untouched one) is left alone. If the
+ * come from a product build, so a demo pointer written after the product's (or an untouched one) is left alone. If the
  * snapshot itself pointed into the product (a run that died before restoring), the file is removed instead, so
  * `vite preview` fails loud rather than serving the product. Returns what it did.
  */
@@ -31,4 +31,15 @@ export const restoreRedirect = ({ file, before }: RedirectSnapshot, productOutDi
   }
   writeFileSync(file, before)
   return 'restored'
+}
+
+/**
+ * Runs `restore` however the process ends short of SIGKILL: on 'exit' (success, failure, a thrown error) and on SIGINT,
+ * SIGTERM and SIGHUP, after which the signal is raised again so the process still ends by it.
+ */
+export const restoreOnAnyEnd = (restore: () => void): void => {
+  process.once('exit', restore)
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.once(sig, () => { restore(); process.kill(process.pid, sig) })
+  }
 }

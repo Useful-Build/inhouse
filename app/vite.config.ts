@@ -7,7 +7,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, ren
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 
 import { cloudflare } from "@cloudflare/vite-plugin";
-import { restoreRedirect, snapshotRedirect } from './build-support/demo-deploy-redirect.ts'
+import { restoreOnAnyEnd, restoreRedirect, snapshotRedirect } from './build-support/demo-deploy-redirect.ts'
 import type { RedirectSnapshot } from './build-support/demo-deploy-redirect.ts'
 
 const appRoot = fileURLToPath(new URL('.', import.meta.url))
@@ -135,11 +135,7 @@ function keepDemoDeployRedirect(): Plugin {
     apply: 'build',
     config() {
       snapshot = snapshotRedirect(redirect)
-      process.once('exit', restore)
-      // A killed build (Ctrl-C, a CI cancel) skips 'exit': restore, then re-raise so the process still ends by the signal.
-      for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-        process.once(sig, () => { restore(); process.kill(process.pid, sig) })
-      }
+      restoreOnAnyEnd(restore)
     },
     // After the Cloudflare plugin's own post buildApp (which comes first in the plugin list) has written it.
     buildApp: {
