@@ -3,7 +3,6 @@
 // team window's Send and sender.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { atRest, fontsReady } from './states.js'
 
 async function start(page: Page, hash = '#/today') {
   await page.addInitScript(() => {
@@ -114,7 +113,6 @@ test('Palette over the problem panel: Escape closes only the palette; the palett
 
 test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows in full, the account name starts with its text', async ({ page }) => {
   await start(page)
-  await fontsReady(page) // the title is measured at hover time, so the font must have swapped in first
   const toggle = page.getByRole('button', { name: 'Sidebar', exact: true })
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
   await expect(toggle).toHaveAttribute('aria-controls', 'sidebar')
@@ -128,16 +126,12 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   await expect(trigger).toBeFocused()
   await expect(trigger).toHaveCSS('opacity', '1')
 
-  // A short title gets no tooltip. One that fits at rest but runs under the trigger on hover gets one. This checks the
-  // cut rule, not the open delay: the focus above opened the provider's skip-delay and the controlled tooltip never
-  // re-arms it, so every hover after that opens at pointer-enter.
+  // A short title gets no tooltip. One that fits at rest but runs under the trigger on hover gets one.
   const t = open.locator('.ellipsis')
   await t.evaluate(e => { e.textContent = 'Refunds' })
   await page.mouse.move(720, 450)
   await open.hover()
-  // Give a wrong tooltip the frames it would need to draw before checking there's none.
-  await atRest(page)
-  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))))
+  await page.waitForTimeout(1000)
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   const cutAtRest = await t.evaluate(e => {
     const menu = e.closest('[data-chat-row]')!.querySelector<HTMLElement>('[aria-haspopup="menu"]')!
