@@ -101,22 +101,54 @@ jobs:
           path: app/e2e-artifacts
           retention-days: 7
 
+  # The agent runner (app/runner/, its own package): types, tests, the zod-major check, then the image build and a start
+  # check. No secret here, ever: it runs the PR's code. Container tests under wrangler dev join this job in P3.
+  runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app/runner
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run check:zod
+      # Build context is app/, so the protocol schemas in app/shared/ can be bundled; Dockerfile.dockerignore keeps the
+      # rest of app/ out.
+      - run: docker build -f Dockerfile -t inhouse-runner:ci ..
+      # The image starts and answers its health route. --retry-connrefused waits for the port to open (a condition, not
+      # a fixed wait); a failure prints the container's log.
+      - name: The image starts
+        run: |
+          docker run -d --name runner -p 8080:8080 inhouse-runner:ci
+          curl -fsS --retry 30 --retry-delay 1 --retry-connrefused --max-time 5 http://127.0.0.1:8080/health ||
+            { docker logs runner; exit 1; }
+
   ci:
-    needs: e2e
+    needs: [e2e, runner]
     # always(): a cancelled or skipped shard makes ci red, never skipped (a skipped check counts as passing).
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Every shard passed
+      - name: Every shard and the runner job passed
         env:
           RESULT: ${{ needs.e2e.result }}
+          RUNNER: ${{ needs.runner.result }}
         run: |
           echo "e2e: $RESULT"
-          if [ "$RESULT" = cancelled ]; then
-            echo "::error::The e2e legs were cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
+          echo "runner: $RUNNER"
+          if [ "$RESULT" = cancelled ] || [ "$RUNNER" = cancelled ]; then
+            echo "::error::A job was cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
-          test "$RESULT" = success
+          test "$RESULT" = success && test "$RUNNER" = success
 
   pr-gates:
     if: github.event_name == 'pull_request'
