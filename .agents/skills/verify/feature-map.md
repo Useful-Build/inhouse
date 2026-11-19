@@ -8,7 +8,6 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 
 - Palette: the theme switch (light, dark, system).
 - Palette: "Report a bug": opening the window is checked (`tour.spec.ts`), sending the report isn't.
-- Read aloud on an answer: the menu item is checked for presence (`conversation.spec.ts`, `conversation-polish.spec.ts`, `brand-data.spec.ts`), what it does isn't.
 - Dictation in the composer: the button is checked for presence (`no-persona.spec.ts`), what it does isn't.
 - Google Drive and asking in Slack stubs (each says it isn't connected).
 - Settings pages: Stage and plan (only "Book a check-in" is checked, in `no-persona.spec.ts`), Team memory and Run limits (opened, controls unchecked).
@@ -98,10 +97,10 @@ Chat: composer files
   Covered:  e2e/composer.spec.ts
 
 Chat: answer actions
-  Path:     answer -> Copy, Edit, Regenerate, thumbs, steps
-  Selector: answer row buttons
-  Expected: markdown renders, Jump to latest appears when scrolled up mid-stream, steps open the trace
-  Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts
+  Path:     answer -> hover or Tab into the row -> Reply, Copy, Regenerate, thumbs, More; More -> Send to #channel, Report a wrong answer, Delete
+  Selector: answer row buttons, `[data-answer-actions]`, menu "Message actions"
+  Expected: at rest every answer (the newest too) shows only its steps line; hover or keyboard focus shows the actions and an open More menu keeps them; the menu has exactly Send to #channel (when a channel is connected), Report a wrong answer and Delete; the phone row is Copy, steps and More; markdown renders, Jump to latest appears when scrolled up mid-stream, steps open the trace
+  Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts
 
 Chat: queue and edit
   Path:     send two messages mid-answer, Edit a question
@@ -285,12 +284,6 @@ Palette: Report a bug
   Path:     Cmd+K -> Report a bug
   Selector: menuitem "Report a bug"
   Expected: the report window opens and sends (`tour.spec.ts` checks it opens; nothing checks the send)
-  Covered:  gap
-
-Chat: Read aloud
-  Path:     answer -> More -> Read aloud
-  Selector: menuitem "Read aloud"
-  Expected: the item does what it says (its presence is checked in `conversation.spec.ts`, `conversation-polish.spec.ts` and `brand-data.spec.ts`)
   Covered:  gap
 
 Composer: dictation

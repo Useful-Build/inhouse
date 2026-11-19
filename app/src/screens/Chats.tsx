@@ -134,7 +134,7 @@ function Thread() {
   const thinking = !!run
   const thinkingText = run?.text ?? ''
   const editingId = useUi(s => s.editMsg?.id)
-  const { ask, openTrace, patch, showToast, openTeam, branchChat, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue, sendQueuedNow } = useUi.getState()
+  const { ask, openTrace, patch, showToast, openTeam, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue, sendQueuedNow } = useUi.getState()
   const [menuId, setMenuId] = useState<string | null>(null)
   // Edit of a queued message over a draft asks first.
   const [replacing, setReplacing] = useState<QueuedMsg | null>(null)
@@ -264,22 +264,6 @@ function Thread() {
     replaced.current = false
     if (s.chatDraft.trim() || s.atts.length || s.replyTo) setReplacing(q); else putBack(q)
   }
-  const readAloud = (text: string) => {
-    const failed = () => showToast("Reading aloud isn't available in this browser.", { icon: 'error' })
-    if (typeof speechSynthesis === 'undefined' || typeof SpeechSynthesisUtterance === 'undefined') { failed(); return }
-    try {
-      const u = new SpeechSynthesisUtterance(text)
-      u.onstart = () => showToast('Reading aloud')
-      u.onerror = e => {
-        // Starting a new reading cancels the old one: that is not a failure.
-        if (e.error === 'canceled' || e.error === 'interrupted') return
-        console.warn('Inhouse: read aloud failed.', e.error)
-        failed()
-      }
-      speechSynthesis.cancel(); speechSynthesis.speak(u)
-    } catch (e) { console.warn('Inhouse: read aloud is not available here.', e); failed() }
-  }
-
   const bubbleMax = phone ? 'max-w-22/25' : 'max-w-18/25'
   const blocks = blocksOf(msgs)
 
@@ -328,10 +312,8 @@ function Thread() {
         { icon: 'reply', t: 'Reply', go: () => patch({ replyTo: txt.slice(0, 140) }) },
         ...(again ? [{ icon: 'refresh', t: 'Regenerate', go: again, disabled: thinking }] : []),
       ] : []),
-      { icon: 'graphic_eq', t: 'Read aloud', sep: phone, go: () => readAloud(txt) },
-      ...(sendChannel ? [{ icon: 'tag', t: `Send to ${sendChannel.name}`, go: () => { if (S >= sendChannel.need) showToast(`Send to ${sendChannel.name} isn't connected in this demo.`, { icon: 'info', ms: 4000 }) }, locked: S < sendChannel.need }] : []),
-      { icon: 'call_split', t: 'Branch from here', sep: true, go: () => { branchChat(msgs.slice(0, i + 1)); showToast('Started a new chat from this point') } },
-      { icon: 'flag', t: 'Report a wrong answer', go: () => openTeam('bug', 'This answer looks wrong: "' + txt.slice(0, 120) + '"') },
+      ...(sendChannel ? [{ icon: 'tag', t: `Send to ${sendChannel.name}`, sep: phone, go: () => { if (S >= sendChannel.need) showToast(`Send to ${sendChannel.name} isn't connected in this demo.`, { icon: 'info', ms: 4000 }) }, locked: S < sendChannel.need }] : []),
+      { icon: 'flag', t: 'Report a wrong answer', sep: phone && !sendChannel, go: () => openTeam('bug', 'This answer looks wrong: "' + txt.slice(0, 120) + '"') },
       // Undo works from any chat: the store finds this chat wherever it is by then (M5).
       { icon: 'delete', t: 'Delete', destructive: true, sep: true, go: () => { if (openId !== null) deleteMessages(openId, [...turnIds, ...tail]) } },
     ]
@@ -378,9 +360,9 @@ function Thread() {
         </div>
       )
     }
-    // The newest answer shows its actions; an earlier one on hover or focus. Opening More doesn't change that, so the
-    // More button never slides from under the pointer.
-    const on = menuOpen || !next ? '1' : undefined
+    // At rest every answer shows only its steps line; the actions show on hover or focus, and stay while More is open
+    // so the menu's button never fades from under the pointer.
+    const on = menuOpen ? '1' : undefined
     return (
       <div data-on={on} className={cn('relative mt-1.5 flex flex-wrap items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3', BAR_GROUND)}>
         {/* The steps line goes first, at the row's left edge, so nothing moves when the actions show. */}

@@ -659,7 +659,7 @@ test.describe('phone', () => {
     expect(names).toEqual(['Copy message', 'steps', 'More'])
     await answer.getByRole('button', { name: 'More', exact: true }).click()
     const menu = page.getByRole('menu', { name: 'Message actions' })
-    for (const n of ['Reply', 'Read aloud', 'Delete']) await expect(menu.getByRole('menuitem', { name: n })).toBeVisible()
+    for (const n of ['Reply', 'Report a wrong answer', 'Delete']) await expect(menu.getByRole('menuitem', { name: n })).toBeVisible()
     // The thumbs are a radio pair, so their state is read out.
     for (const n of ['Good answer', 'Bad answer']) await expect(menu.getByRole('menuitemradio', { name: n })).toHaveAttribute('aria-checked', 'false')
     await menu.getByRole('menuitemradio', { name: 'Good answer' }).click()

@@ -160,11 +160,32 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await expect(stepsButtons(page).last()).toHaveText(/^Smart · /)
   await expect(composer(page)).toHaveValue('Draft I keep')
 
-  // Reply and Copy sit in the row only; the ··· menu keeps the rest.
+  // The newest answer behaves like the earlier ones: at rest only its steps line shows; hover or keyboard focus shows
+  // the actions.
   const fresh = msg(page, REFUNDS_A).last()
+  const freshSteps = stepsButtons(page).last()
+  const freshActions = freshSteps.locator('xpath=..').locator('[data-answer-actions]')
+  await page.mouse.move(5, 5)
+  await expect.poll(() => opacity(freshActions)).toBe('0')
+  expect(await opacity(freshSteps)).toBe('1')
+  await shot(page, 'newest-answer-at-rest')
+  await fresh.hover()
+  await expect.poll(() => opacity(freshActions)).toBe('1')
+  await shot(page, 'newest-answer-hover')
+  await page.mouse.move(5, 5)
+  await expect.poll(() => opacity(freshActions)).toBe('0')
+  await freshSteps.focus()
+  await page.keyboard.press('Tab')
+  await expect(fresh.getByRole('button', { name: 'Reply', exact: true })).toBeFocused()
+  await expect.poll(() => opacity(freshActions)).toBe('1')
+  await shot(page, 'newest-answer-focus')
+
+  // Reply and Copy sit in the row only; the ··· menu keeps the rest, and the actions stay shown while it's open.
   await fresh.getByRole('button', { name: 'More', exact: true }).click()
   const menu = page.getByRole('menu', { name: 'Message actions' })
-  const names = ['Read aloud', `Send to ${CHANNEL}`, 'Branch from here', 'Report a wrong answer', 'Delete']
+  await page.mouse.move(5, 5)
+  expect(await opacity(freshActions)).toBe('1')
+  const names = [`Send to ${CHANNEL}`, 'Report a wrong answer', 'Delete']
   await expect(menu.getByRole('menuitem')).toHaveCount(names.length)
   for (const [i, n] of names.entries()) await expect(menu.getByRole('menuitem').nth(i)).toHaveAccessibleName(n)
   await page.keyboard.press('Escape')
