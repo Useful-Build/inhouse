@@ -51,7 +51,7 @@ export function TopBar() {
   return (
     <header className="relative flex h-14.5 items-center gap-1.5 bg-topbar-fade pr-4.5 pl-6">
       {phone && (
-        <IconButton icon="menu" label="Menu" variant="chrome" size={21} aria-expanded={sideOpen} aria-controls={sideOpen ? 'sidebar' : undefined} onClick={() => patch({ sideOpen: true })} className={cn('-ml-2', TAP)} />
+        <IconButton data-drawer-opener icon="menu" label="Menu" variant="chrome" size={21} aria-expanded={sideOpen} aria-controls={sideOpen ? 'sidebar' : undefined} onClick={() => patch({ sideOpen: true })} className={cn('-ml-2', TAP)} />
       )}
       {!phone && (
         <IconButton icon={sideCollapsed ? 'left_panel_open' : 'left_panel_close'} label="Sidebar" tip={sideCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} shortcut={SHORTCUTS.sidebar} variant="chrome" size={19}

@@ -36,7 +36,7 @@ export const test = base.extend<{ cspExpectViolation: boolean; cspGuard: void }>
       })
     }
     if (cspExpectViolation) {
-      expect(found.length, 'The guard recorded no violation, so it is not armed').toBeGreaterThan(0)
+      expect(found.some(v => v.directive.startsWith('script-src')), 'The guard recorded no script-src violation, so it is not armed').toBe(true)
       return
     }
     expect(found, `CSP violations: ${found.map(v => `${v.directive} blocked ${v.blocked} (${v.source}) on ${v.page}`).join('; ')}`).toEqual([])

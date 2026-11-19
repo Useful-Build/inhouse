@@ -376,8 +376,8 @@ Content Security Policy
 Keyboard and focus
   Path:     Tab through the shell and overlays
   Selector: Skip to content, F6
-  Expected: Skip to content is the first stop; overlays give focus back on close; no page drops focus to the document
-  Covered:  e2e/overlays-keyboard.spec.ts, e2e/chats-manage.spec.ts, e2e/cross-screen.spec.ts
+  Expected: Skip to content is the first stop; overlays give focus back on close; no page drops focus to the document, including an account-menu pick that closes the phone drawer
+  Covered:  e2e/overlays-keyboard.spec.ts, e2e/chats-manage.spec.ts, e2e/cross-screen.spec.ts, e2e/account-menu-focus-phone.spec.ts
 
 Scenarios and stages
   Path:     demo switcher -> every Stage and Scenario
