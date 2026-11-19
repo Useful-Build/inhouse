@@ -1,5 +1,5 @@
 // Route titles, focus on the page heading and the lazy routes (desktop). Production plan H3: P-2, A-10.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import { routeTitleFocusTests } from './route-title-focus.js'
 
 routeTitleFocusTests(false)

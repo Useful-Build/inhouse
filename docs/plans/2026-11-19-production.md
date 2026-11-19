@@ -153,6 +153,19 @@ connection.
 11. A reader can follow `docs/architecture.md`, the decision records, `docs/how-we-build.md` and the runbook; the
     README has screenshots and the live link; every decision id resolves to one record.
 
+## Built differently (2026-11-19)
+
+- PD7: the scheduled check is curl only (page, entry script, deep link). The small browser spec was dropped: it
+  covered the same paths for more cost. No keepalive either: only repository activity resets GitHub's 60-day timer,
+  so it's kept alive by Dependabot's weekly PRs and merges (decision 0021).
+- Acceptance 9: HSTS (`max-age=31536000; includeSubDomains`) came in a follow-up PR on the integration branch, and the
+  live smoke in `deploy.yml` then turned from a warning into a failure.
+- H3: an old tab's chunk failure is tested by `e2e/route-chunk-failure.spec.ts`. The spec for the crash screen
+  flashing before the reload couldn't be made to fail reliably on the old code after four tries; it's noted on PR #35
+  and the reload behaviour is covered instead.
+- Two specs (`client-errors`, `route-title-focus`) had landed without the CSP guard fixture; the follow-up PR moved
+  them onto it.
+
 ## Must not
 
 No visual change without an explained baseline update; no secret in a job that runs PR code; no production deploy

@@ -4,8 +4,8 @@
   Cross-Origin-Opener-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
   Referrer-Policy: no-referrer
-  # noindex stays on every response for now: _headers can't tell previews from production.
-  # Whether production is indexable (PD3) is decided later.
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  # Previews keep noindex. The deploy job drops this line from production's build, so production is indexable.
   X-Robots-Tag: noindex, nofollow
 
 /assets/*

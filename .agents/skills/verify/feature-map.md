@@ -9,10 +9,12 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
-- Ship specs: `e2e/ship/example.spec.ts` and `e2e/ship/setup-gaps.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview, never in CI's normal run.
+- Ship specs: `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts` and `e2e/ship/hardening.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview, never in CI's normal run.
 - Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Audit log: the download is checked on desktop only (its content in `sample-data.spec.ts`); the phone check sees the button.
+- Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
+  missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
 - Export everything and Sign out are stubs: specs check they say so and change nothing.
 
 ## Today
@@ -352,6 +354,24 @@ Crashes and error reports
   Selector: alert "Something went wrong." in main, Try again, Message the team
   Expected: a broken screen shows its own boundary and the shell keeps working; Message the team opens Report a bug with a line about the crash; each error sends one scrubbed report (no query, hash, email or token) with the release; other /api paths are 404 with the _headers security headers; no .map is served
   Covered:  e2e/client-errors.spec.ts
+
+Route titles and focus
+  Path:     sidebar -> any page; a deep link; the first load
+  Selector: document.title, the page's h1
+  Expected: the tab reads "<Page> · Inhouse" (Settings pages "<Page> · Settings · Inhouse"); a route change focuses the h1 and the first load leaves focus alone; a heavy page loads its own chunk on first visit and a deep link opens it directly; an in-page hash change leaves focus where the person put it
+  Covered:  e2e/route-title-focus.spec.ts, e2e/route-title-focus-phone.spec.ts, e2e/route-chunk-failure.spec.ts
+
+Old tab after a deploy
+  Path:     a lazy page whose chunk fails to load
+  Selector: the composer draft, alert "Something went wrong.", Reload
+  Expected: the tab reloads once into the page and keeps the draft, without showing the crash screen; a second failure within 30 s shows the error screen with Reload instead of looping; offline it shows the error screen and doesn't reload
+  Covered:  e2e/route-chunk-failure.spec.ts, e2e/route-title-focus.spec.ts
+
+Content Security Policy
+  Path:     every page any spec opens
+  Selector: `securitypolicyviolation` events, the CSP response header
+  Expected: no page reports a CSP violation and every app document carries the enforced CSP; menus, dialogs and the phone scroll lock work under it
+  Covered:  every spec in e2e/, through the `test` fixture in e2e/csp.ts
 
 Keyboard and focus
   Path:     Tab through the shell and overlays
