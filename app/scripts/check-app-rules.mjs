@@ -228,9 +228,10 @@ for (let i = 0; i < waits.length; i++) waits[i] = waits[i][2]
 const SEAM_LIST = new URL('./check-app-rules.e2e-seam.json', import.meta.url)
 const seamListed = new Map(existsSync(SEAM_LIST) ? Object.entries(JSON.parse(readFileSync(SEAM_LIST, 'utf8')).files) : [])
 const seam = []
-// A storage key (`inhouse.demo.`, the UI session), the sample data in any form (`sample-data` with or without a slash, the
-// `@sample` alias) or the mock module (`agent/mock`, any extension).
-const SEAM_HIT = /inhouse\.demo\.|inhouse\.ui\.session|sample-data|@sample|agent\/mock\b/
+// An app-owned storage key (`inhouse.demo.`, `inhouse.ui.`, `inhouse.crash.`, `inhouse.preload-reload`; not the theme), the
+// sample data in any form (`sample-data` with or without a slash, the `@sample` alias) or the mock module (`agent/mock`,
+// any extension, or the `@client` alias, its entry point).
+const SEAM_HIT = /inhouse\.(?:demo|ui|crash)\.|inhouse\.preload-reload|sample-data|@sample|@client|agent\/mock\b/
 if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
   const rel = `e2e/${relative(e2eDir, file)}`
   if (rel.startsWith('e2e/support/')) continue

@@ -3,7 +3,7 @@
 // `test` is the CSP guard's test (../csp.ts) plus `fx`, so every spec that uses it keeps the guard.
 //
 // `Fx` below is what a client must provide. clients/mock.ts implements it for the demo; P2 adds clients/real.ts.
-import type { Response } from '@playwright/test'
+import type { Page, Response } from '@playwright/test'
 import { expect, test as base } from '../csp.js'
 import { mockClient } from './clients/mock.js'
 
@@ -85,7 +85,8 @@ export interface Fx {
   /**
    * Back to a clean demo: the next load starts from nothing, with no earlier seed applied. Navigates the page away
    * (so the app can't write back), clears its storage, and leaves the page blank: call `open` (or `seed` then `open`)
-   * afterwards. Cookies are the one thing it leaves alone: don't clear them between `reset` and the next load.
+   * afterwards. Every other tab on the app is moved to about:blank first. The reset is per tab: it never stops a seed on
+   * another tab. Needs the page on the app or a project baseURL; it throws otherwise.
    */
   reset(): Promise<void>
   /** Opens the app at a route ("#/today"). */
@@ -93,7 +94,10 @@ export interface Fx {
 }
 
 export const test = base.extend<{ fx: Fx }>({
-  fx: async ({ page }, provide) => { await provide(mockClient(page)) },
+  fx: async ({ page, baseURL }, provide) => { await provide(mockClient(page, baseURL)) },
 })
+
+/** An `Fx` for a second tab of the same test (`context.newPage()`). */
+export const fxFor = (page: Page, baseURL: string | undefined): Fx => mockClient(page, baseURL)
 
 export { expect }

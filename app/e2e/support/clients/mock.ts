@@ -15,7 +15,7 @@ const KEYS = {
   session: 'inhouse.ui.session.v1',
   theme: 'inhouse.theme',
 } as const
-const RESET_COOKIE = 'e2e-reset'
+const RESET_MARK = 'e2e-reset'
 
 const DATA = new URL('../../../src/agent/sample-data/', import.meta.url)
 const read = (file: string) => JSON.parse(readFileSync(new URL(file, DATA), 'utf8'))
@@ -38,7 +38,7 @@ export function sampleNames(): Names {
   }
 }
 
-/** Per page: the id of the last script installed, whether the page was seeded, and the last id a reset switched off. */
+/** Per page: the id of the last script installed and whether the page was seeded. */
 const pages = new WeakMap<Page, { n: number; seeded: boolean }>()
 const stateOf = (page: Page) => {
   let s = pages.get(page)
@@ -47,10 +47,15 @@ const stateOf = (page: Page) => {
 }
 
 type Script = { id: number; entries: [string, string][]; once: boolean; clear: boolean }
-/** Runs before every document of the page. A script whose id a reset has passed does nothing. */
+/**
+ * Runs before every document of the page. The reset mark lives in this tab's sessionStorage (written by `reset`), so a
+ * reset on one tab never switches off another tab's seeds. A script whose id the mark has passed does nothing.
+ */
 function applySeed({ id, entries, once, clear }: Script) {
-  const reset = /(?:^|;\s*)e2e-reset=(\d+)/.exec(document.cookie)
-  if (reset && id <= Number(reset[1])) return
+  // about:blank and other non-http documents have no storage (it throws a SecurityError): nothing to seed there.
+  if (!location.protocol.startsWith('http')) return
+  const reset = sessionStorage.getItem('e2e-reset')
+  if (reset && id <= Number(reset)) return
   const mark = `e2e-seeded-${id}`
   if (once && sessionStorage.getItem(mark)) return
   if (clear) localStorage.clear()
@@ -62,7 +67,7 @@ const switches = ({ stage, scenario = 'Normal', demo }: Restage) => ({
   [KEYS.switches]: JSON.stringify({ stage, scenario, ambient: demo?.ambient ?? 'Off', animateMark: demo?.animateMark ?? false }),
 })
 
-export function mockClient(page: Page): Fx & { demoStartedAt(): Promise<number> } {
+export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt(): Promise<number> } {
   let names: Names | undefined
   const install = async (entries: Record<string, string>, once: boolean, clear: boolean) => {
     const st = stateOf(page)
@@ -94,21 +99,20 @@ export function mockClient(page: Page): Fx & { demoStartedAt(): Promise<number> 
     saved,
     async reset() {
       const st = stateOf(page)
-      const origin = page.url().startsWith('http') ? new URL(page.url()).origin : null
-      // 1. Leave the app, so its pagehide save has run and it can't write again.
-      await page.goto('about:blank')
-      // 2. Switch off every seed script installed so far, for every later load (a cookie survives the navigation).
+      const origin = page.url().startsWith('http') ? new URL(page.url()).origin : baseURL ? new URL(baseURL).origin : null
+      if (!origin) throw new Error('fx.reset: the page is not on the app and the project has no baseURL, so there is no origin to clear.')
+      // 1. Leave the app in every tab, so each pagehide save has run and no tab can write back after the clear.
+      for (const p of page.context().pages()) if (p.url().startsWith('http')) await p.goto('about:blank')
       st.seeded = false
-      if (!origin) return
-      await page.context().addCookies([{ name: RESET_COOKIE, value: String(st.n), url: origin }])
-      // 3. Clear the origin's storage from a page that isn't the app. The CSP header keeps the CSP guard armed.
+      // 2. Clear the origin's storage from a page that isn't the app (the CSP header keeps the CSP guard armed), then write
+      //    this tab's reset mark: every seed script installed so far does nothing on this tab's later loads.
       const blank = `${origin}/e2e-reset.html`
       await page.route(blank, r => r.fulfill({
         contentType: 'text/html', headers: { 'content-security-policy': "default-src 'none'" }, body: '<!doctype html><title>reset</title>',
       }))
       try {
         await page.goto(blank)
-        await page.evaluate(() => { localStorage.clear(); sessionStorage.clear() })
+        await page.evaluate(([mark, n]) => { localStorage.clear(); sessionStorage.clear(); sessionStorage.setItem(mark, n) }, [RESET_MARK, String(st.n)])
       } finally {
         await page.unroute(blank)
         await page.goto('about:blank')
