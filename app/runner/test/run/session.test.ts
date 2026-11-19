@@ -103,8 +103,10 @@ function fakeQuery(messages: SDKMessage[], opts: { throwAt?: number; holdUntilIn
   return { query, calls, interrupts: () => interrupted, release: () => release() }
 }
 
+/** Polls a condition on the event loop (no fixed sleep): resolves once it holds, fails after 10 s. */
 async function waitForTicks(cond: () => boolean) {
-  for (let i = 0; i < 1000 && !cond(); i++) await new Promise((r) => setImmediate(r))
+  const deadline = Date.now() + 10_000
+  while (!cond() && Date.now() < deadline) await new Promise((r) => setImmediate(r))
   expect(cond()).toBe(true)
 }
 
@@ -293,6 +295,8 @@ describe('runSession', () => {
       io: { fetch: fakeEgress().fetch, proxyUrl: PROXY_URL },
     })
     handler({ ok: true, value: { type: 'run', config: config() } })
+    // The files restore runs first: wait for the query's first message, then check no second one is pulled.
+    await waitForTicks(() => pulled === 1)
     for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
     expect(pulled).toBe(1)
     expect(sent.filter((m) => m.type === 'event')).toHaveLength(1)
