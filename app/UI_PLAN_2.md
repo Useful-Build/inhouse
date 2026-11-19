@@ -28,7 +28,7 @@ PR 1 ─┬─► PR 2 ─┬─► PR 4 (Today, Approvals, review panel)
 | 2 | One system, both themes | `refactor/one-system` | Merged |
 | 3 | State, Undo and believable data | `fix/state-undo-data` | Merged |
 | 4 | Today, Approvals and the review panel | `feat/today-approvals-polish` | Merged |
-| 5 | Conversation and composer | `feat/conversation-polish` | In review |
+| 5 | Conversation and composer | `feat/conversation-polish` | Merged |
 | 6 | Library | `feat/library-polish` | Merged |
 | 7 | Pages and windows | `feat/pages-polish` | Merged |
 
