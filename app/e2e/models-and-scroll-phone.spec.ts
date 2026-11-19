@@ -62,6 +62,8 @@ test('Phone: a model turned off on a computer reads "<Effort> · turned off" on 
 
 test('Phone: a long settings page scrolls with the page (main moves, nothing nested)', async ({ page }) => {
   await start(page, '#/settings/team-data')
+  // Settings loads on first visit (its own chunk): measure once the page is in.
+  await expect(page.getByRole('heading', { level: 1, name: 'Data and access' })).toBeVisible()
   const main = page.locator('main')
   expect(await main.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true)
   expect(await main.evaluate(el => el.scrollTop)).toBe(0)

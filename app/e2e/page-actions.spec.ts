@@ -194,6 +194,8 @@ test('Tools: Request a tool opens the team window; a disconnected tool has its o
 test('Usage: the daily bars are one tab stop; arrows, Home and End move between days with the tooltip', async ({ page }) => {
   await start(page, 'Act', 'Normal', '#/usage')
   const bars = page.getByRole('grid', { name: 'Daily cost' }).getByRole('gridcell')
+  // Usage loads on first visit (its own chunk): count once its bars are in.
+  await expect(bars.first()).toBeVisible()
   const n = await bars.count()
   expect(n).toBeGreaterThan(10)
   // Tab from the top of the page reaches the first bar; only one bar is in the tab order.

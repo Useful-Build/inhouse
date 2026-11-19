@@ -255,6 +255,8 @@ test('Library: a pick clears when the tab, place or search changes; two deletes 
   const cards = page.getByRole('list', { name: 'Files' }).getByRole('listitem')
   const tabs = page.getByRole('radiogroup', { name: 'File type' })
   const bar = page.getByRole('toolbar', { name: 'Selected files' })
+  // The Library loads on first visit (its own chunk): count once its cards are in.
+  await expect(cards.first()).toBeVisible()
   const total = await cards.count()
   await page.getByRole('button', { name: 'Select', exact: true }).click()
   await cards.nth(0).click()
