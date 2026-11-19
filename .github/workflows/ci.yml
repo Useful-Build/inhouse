@@ -131,9 +131,12 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
         run: |
           missing=""
-          for c in $(git log --no-merges --format=%H "$BASE..$HEAD"); do
+          # Commits already on the default branch passed this gate in their own PR; a PR that brings main into a
+          # fleet/<topic> branch carries them again (squash commits there can't be rewritten), so skip them.
+          for c in $(git log --no-merges --format=%H "$BASE..$HEAD" --not "refs/remotes/origin/$DEFAULT"); do
             t=$(git log -1 --format=%B "$c" | git interpret-trailers --parse)
             grep -qiE '^Verified:[[:space:]]*[^[:space:]]' <<< "$t" ||
               missing="$missing$(git log -1 --format='%h %s' "$c")"$'\n'
