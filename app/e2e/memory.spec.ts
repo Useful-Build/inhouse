@@ -6,6 +6,8 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today', stage = 'Act', scenario = 'Normal') {
+  // App time is driven by the tests (the session save, answers), so waiting for it is not a sleep.
+  await page.clock.install()
   await page.addInitScript(([s, sc]) => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
@@ -24,7 +26,7 @@ const chatBox = (page: Page) => page.getByRole('textbox', { name: 'Message your 
 const hash = (page: Page) => page.evaluate(() => location.hash)
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
 /** Waits out the session save (debounced 300 ms) before a reload. A reload also saves on pagehide; this keeps it honest. */
-const saved = (page: Page) => page.waitForTimeout(500)
+const saved = (page: Page) => page.clock.runFor(500)
 async function resetDemo(page: Page) {
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   await page.getByRole('button', { name: 'Reset demo', exact: true }).click()

@@ -3,7 +3,9 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { everything } from './page-text.js'
 
-async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today') {
+async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today', fakeClock = false) {
+  // The 10 s hold and the toasts run on app timers, so a test that waits for them installs the clock first and moves it itself.
+  if (fakeClock) await page.clock.install()
   await page.addInitScript(([s, sc]) => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
@@ -29,15 +31,16 @@ async function approveKestrel(page: Page) {
 }
 
 test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Undo is gone', async ({ page }) => {
-  await start(page, 'Act')
+  await start(page, 'Act', 'Normal', '#/today', true)
   await approveKestrel(page)
-  await page.waitForTimeout(3000)
+  await page.clock.runFor(3000)
   await page.reload()
   await expect(page.getByRole('heading', { level: 1 })).toContainText('5 left to approve today.')
   await expect(card(page, KESTREL)).toContainText('going out')
 
   const sent = sentToast(page)
-  await expect(sent).toBeVisible({ timeout: 12_000 })
+  await page.clock.fastForward(10_000)
+  await expect(sent).toBeVisible()
   await expect(sent.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(0)
   await expect(card(page, KESTREL)).not.toContainText('going out')
   await card(page, KESTREL).click()
@@ -48,14 +51,14 @@ test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Un
 })
 
 test('Act: Undo in the toast during the hold cancels the send', async ({ page }) => {
-  await start(page, 'Act')
+  await start(page, 'Act', 'Normal', '#/today', true)
   const toast = await approveKestrel(page)
   await expect(badge(page)).toContainText('5')
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(badge(page)).toContainText('6')
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
 
-  await page.waitForTimeout(11_000)
+  await page.clock.runFor(11_000)
   await expect(sentToast(page)).toHaveCount(0)
   await expect(badge(page)).toContainText('6')
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
@@ -93,7 +96,7 @@ test('Run: Pause, then Undo in the toast, puts Inhouse agent back to running', a
 })
 
 test('Act: Reset demo during the hold clears the approval and nothing is sent', async ({ page }) => {
-  await start(page, 'Act')
+  await start(page, 'Act', 'Normal', '#/today', true)
   await approveKestrel(page)
   await expect(badge(page)).toContainText('5')
 
@@ -102,27 +105,28 @@ test('Act: Reset demo during the hold clears the approval and nothing is sent', 
   await expect(badge(page)).toContainText('6')
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
 
-  await page.waitForTimeout(11_000)
+  await page.clock.runFor(11_000)
   await expect(sentToast(page)).toHaveCount(0)
   await expect(badge(page)).toContainText('6')
 })
 
 test('Act: two tabs, closing the one that started the hold still sends the reorder, and the other tab says so', async ({ page, context }) => {
   // Only page A seeds storage. Page B joins the same browser context and must not clear it.
-  await start(page, 'Act')
+  // The clock belongs to the context, so tab B shares it with tab A.
+  await start(page, 'Act', 'Normal', '#/today', true)
   await approveKestrel(page)
-  const approvedAt = Date.now()
 
   const other = await context.newPage()
   await other.goto('/?demo#/today')
   await expect(other.getByRole('heading', { level: 1 })).toContainText('5 left to approve today.')
   await expect(card(other, KESTREL)).toContainText('going out')
 
-  await page.waitForTimeout(Math.max(0, 2000 - (Date.now() - approvedAt)))
+  await page.clock.runFor(2000)
   await page.close()
 
   const sent = sentToast(other)
-  await expect(sent).toBeVisible({ timeout: 12_000 })
+  await other.clock.fastForward(10_000)
+  await expect(sent).toBeVisible()
   await expect(card(other, KESTREL)).not.toContainText('going out')
   await other.screenshot({ path: test.info().outputPath('state-two-tabs-sent.png') })
 })
@@ -165,12 +169,12 @@ test('Deep links: an unknown page lands on Today and an unknown tool on the Tool
 })
 
 test('Chats: New chat right after asking leaves the new chat empty, and the old answer never shows up', async ({ page }) => {
-  await start(page, 'Act')
+  await start(page, 'Act', 'Normal', '#/today', true)
   await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('Why did refunds jump this week?')
   await page.keyboard.press('Enter')
   await page.getByRole('button', { name: 'New chat' }).click()
 
-  await page.waitForTimeout(3000)
+  await page.clock.runFor(3000)
   await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
   await expect(page.getByText('Refund requests rose')).toHaveCount(0)
   // Only the suggestion chip may carry the question in the chat; the old user bubble must be gone.

@@ -1,6 +1,7 @@
 // At 390: Settings, the Models page and the picker fit, nothing is cut off and the page scrolls naturally.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { settled } from './settled.js'
 
 async function start(page: Page, hash: string) {
   await page.addInitScript(() => {
@@ -10,10 +11,10 @@ async function start(page: Page, hash: string) {
     sessionStorage.setItem('e2e-seeded', '1')
   })
   await page.goto('/?demo' + hash)
-  await page.waitForTimeout(500)
+  await settled(page)
 }
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
-const keep = async (page: Page, name: string) => { await page.waitForTimeout(400); await page.screenshot({ path: `${out}/${name}.png` }) }
+const keep = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: `${out}/${name}.png` }) }
 const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && [...document.querySelectorAll('main')].every(m => m.scrollWidth <= m.clientWidth))
 
 test('Phone: the mode picker fits', async ({ page }) => {

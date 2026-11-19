@@ -2,6 +2,7 @@
 // files by paste and drop with a limit, and a draft kept per chat (and Today's apart).
 import { expect, test } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
+import { settled } from './settled.js'
 
 async function start(page: Page, hash = '#/today') {
   await page.addInitScript(() => {
@@ -13,7 +14,7 @@ async function start(page: Page, hash = '#/today') {
   await page.goto('/?demo' + hash)
 }
 
-const shot = async (page: Page, name: string) => { await page.waitForTimeout(300); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const composer = (page: Page) => page.locator('[data-composer]')
 const chatField = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
 const todayField = (page: Page) => page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
@@ -49,6 +50,7 @@ async function dropFiles(page: Page, files: { name: string; type: string; bytes:
 }
 
 test('Composer: a multi-line question grows the field and keeps its lines; Send is off while empty; Stop ends the run', async ({ page }) => {
+  await page.clock.install() // app time is driven by the test, so waiting for it is not a sleep
   await start(page, '#/chats/refunds')
   const field = chatField(page)
   // Opening a chat on desktop puts the caret in its composer.
@@ -125,7 +127,7 @@ test('Composer: a multi-line question grows the field and keeps its lines; Send 
   await expect(page.getByText('You stopped your Inhouse agent. Nothing was changed.')).toBeVisible()
   await expect(stop).toHaveCount(0)
   await expect(composer(page).getByRole('button', { name: 'Send' })).toBeEnabled()
-  await page.waitForTimeout(3000)
+  await page.clock.runFor(30_000)
   await expect(page.getByText(/Refund requests rose from 14/)).toHaveCount(answers)
 })
 

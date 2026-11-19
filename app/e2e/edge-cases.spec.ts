@@ -3,6 +3,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import path from 'node:path'
+import { settled } from './settled.js'
 
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
 const FIXTURE = path.join(import.meta.dirname, 'fixtures', 'photo.png')
@@ -17,7 +18,7 @@ async function start(page: Page, hash: string, scenario = 'Normal') {
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).or(page.getByRole('banner')).first()).toBeVisible()
 }
-const keep = async (page: Page, name: string, fullPage = false) => { await page.waitForTimeout(400); await page.screenshot({ path: `${out}/${name}.png`, fullPage }) }
+const keep = async (page: Page, name: string, fullPage = false) => { await settled(page); await page.screenshot({ path: `${out}/${name}.png`, fullPage }) }
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const main = (page: Page) => page.locator('main')
 const hash = (page: Page) => page.evaluate(() => location.hash)

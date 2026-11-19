@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { settled } from './settled.js'
 
 async function start(page: Page, hash: string) {
   await page.addInitScript(() => {
@@ -15,7 +16,7 @@ async function start(page: Page, hash: string) {
 }
 
 async function shot(page: Page, name: string) {
-  await page.waitForTimeout(300)
+  await settled(page)
   const dir = process.env.POLISH_SHOTS
   if (dir) mkdirSync(dir, { recursive: true })
   await page.screenshot({ path: dir ? join(dir, `${name}.png`) : test.info().outputPath(`${name}.png`), fullPage: true })

@@ -3,6 +3,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { settled } from './settled.js'
 
 /** The sample data, read straight from its folder for the data checks. */
 const DATA_DIR = new URL('../src/agent/sample-data/', import.meta.url)
@@ -43,7 +44,7 @@ async function start(page: Page, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = 
 }
 
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
-const shot = async (page: Page, name: string) => { await page.waitForTimeout(300); await page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true }) }
+const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true }) }
 /** Reset demo clears every change and goes back to Today. */
 async function resetDemo(page: Page) {
   await page.getByRole('button', { name: /Demo switches/ }).click()
