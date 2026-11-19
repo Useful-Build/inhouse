@@ -58,8 +58,9 @@ Surfaces climb with height: page `#111`, card `#1a1a1a`, window and side panel `
 |---|---|---|
 | Arbitrary values (not in `src/components/ui/`, which stays close to shadcn) | `w-[330px]`, `bg-foreground/[4.5%]`, `[overflow-wrap:anywhere]`, `[--app-pad-x:24px]` | variants (`data-[state=open]:`, `[&_svg]:`, `has-[...]:`), a token by name (`px-(--app-pad-x)`) |
 | Inline styles in `.tsx` | a `style` value that is a number, a quoted string or a `var(--...)`, or picks one in a ternary (nested too) or falls back to one with `??`, `\|\|` or `&&` | a value computed from data or a prop (a bar's height, a position, a primitive's `size`) |
+| No fixed waits in `e2e/` | `waitForTimeout(`, any `setTimeout` or `setInterval` (a `new Promise` holding one, an alias, `promisify`), the `timers` module in any form (`timers/promises`, `require('timers')`, `import('node:timers')`), `scheduler.wait`, `Atomics.wait` | `test.setTimeout`, `test.slow`, `page.clock.*`, condition waits (`expect`, `expect.poll`) |
 
-Each failure prints as `file:line` and the offending text. Exceptions, only for content art (a picture rather than UI):
+Each failure prints as `file:line` and the offending text. The fixed-waits rule has no allow list. Exceptions for the other two, only for content art (a picture rather than UI):
 
 - `scripts/check-tokens.allow.json` (colors, the base format: paths from the app root, no reasons in the file). Today: `src/screens/library/Previews.tsx` (drawings of file pages, a spreadsheet and a deck, with their own colors) and `src/ui/photo.ts` (colors painted into canvas photos).
 - `scripts/check-app-rules.allow.json` (`files` with paths from `src/`, and exact `classes`). Today: `screens/library/Previews.tsx` (container-relative sizes in the file drawings), and no class entries. Add an entry only when the value truly can't be a scale step or a token, and give it a one-line `reason`. The check fails on an entry with no reason, a file that's gone or breaks neither rule, and a class nothing uses.

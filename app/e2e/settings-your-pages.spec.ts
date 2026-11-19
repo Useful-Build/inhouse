@@ -114,7 +114,10 @@ test('Memory: Forget (with Undo) and the learn switch work, survive a reload and
   await expect(forgets).toHaveCount(3)
 
   // Forget the second line and turn learning off: both survive a reload, and the other lines stay.
-  await main(page).getByText(PERSONAL[1], { exact: true }).locator('xpath=ancestor::div[contains(@class,"py-4")][1]').getByRole('button', { name: 'Forget' }).click()
+  // The line's row: the innermost block holding its text and a Forget button (not the card around all of them).
+  const line = main(page).locator('div').filter({ has: page.getByText(PERSONAL[1], { exact: true }) }).filter({ has: page.getByRole('button', { name: 'Forget' }) }).last()
+  await expect(line.getByRole('button', { name: 'Forget' })).toHaveCount(1)
+  await line.getByRole('button', { name: 'Forget' }).click()
   await expect(main(page).getByText(PERSONAL[1], { exact: true })).toHaveCount(0)
   await learn.click()
   await expect(learn).not.toBeChecked()

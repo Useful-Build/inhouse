@@ -1,7 +1,7 @@
 # Setup gaps: plan and spec
 
-Status: final draft, 2026-11-19. Decisions approved by Wasim; revised after second opinions from Claude Fable 5.2
-(xhigh) and GPT 6.2 Sol via Pi (xhigh). Implementation starts once the production plan is also on the table.
+Status: approved by Wasim, 2026-11-19; implemented on fleet/setup-gaps. Revised after second opinions from Claude
+Fable 5.2 (xhigh) and GPT 6.2 Sol via Pi (xhigh).
 
 ## Goal
 
@@ -43,8 +43,8 @@ Gaps:
 4. QA gate: `qa-tester` drives the preview's immutable deployment URL against the project's browser scenarios, one
    screenshot per scenario, and must return PASS.
 5. Ship recording: `ship.yml` runs the project's ship specs (`app/e2e/ship/<topic>.spec.ts`, one test per
-   scenario) against that same deployment URL, video on at an explicit size, slowed for a person to follow, a title
-   card per scenario rendered in the page. A host job stitches `reel.mp4` (desktop and phone on one canvas). The run
+   scenario) against that same deployment URL, video on at an explicit size, slowed for a person to follow. A host job
+   draws a title card per scenario with ffmpeg and stitches `reel.mp4` (desktop and phone on one canvas). The run
    fails on zero tests or a missing clip.
 6. Ship packet to Wasim, only when everything automatic is green: head SHA, deployment URL, browser scenarios with
    PASS and a screenshot each, `reel.mp4` (embedded in chat), engineering items with their evidence (CI run, `gh`
@@ -98,7 +98,7 @@ the default branch.
 | Worker | Job | Owns |
 |---|---|---|
 | W1 opus-worker | Preview pipeline. Spike first: one `wrangler preview --json` from CI to confirm the Preview URL, the immutable deployment URL, static assets, SPA fallback (deep link to `/#/chats/all` and a browser navigation to a non-root path), headers, and whether `preview_urls: false` blocks it (the production plan's deploy smoke needs Version URLs, so turn them on unless that exposes something); add the `previews` block and confirm it survives the Vite plugin's generated config. Then: `ci.yml` uploads the built app (no secrets in that job) and gets the `pr-gates` fixes (property-test pathspec as `':(glob)app/src/**/*.property.test.ts'`; the trailer check skips a PR only when `github.event.pull_request.user.login` is `dependabot[bot]`, which GitHub verifies, unlike commit author names; Dependabot arrives in the production plan). `preview.yml` on `workflow_run` of `ci` (success, same-repo PR only) runs from `main`, downloads the build, runs a pinned wrangler `preview --name pr-<n> --json`, comments the preview URL, deployment URL and head SHA in one updated comment. Only the comment step gets `pull-requests: write`. `preview-cleanup.yml` (daily cron plus dispatch) deletes previews of closed PRs with `--skip-confirmation`; missing previews are harmless. Deploy and delete share one concurrency group per PR. | `.github/workflows/ci.yml`, `preview.yml`, `preview-cleanup.yml`, `app/wrangler.jsonc` |
-| W2 sonnet-worker | Ship recording. `playwright.config.ts`: explicit `retries: 0`; opt-in `ship-desktop` and `ship-phone` projects (`SHIP=1`) matching `e2e/ship/`, `BASE_URL` (no webServer when set), `video: { mode: 'on', size }` at each viewport, `launchOptions.slowMo`, their own timeout; normal projects ignore `e2e/ship/`. `e2e/ship/helpers.ts`: title card per test. `ship.yml` (workflow_dispatch: PR number and spec file; inputs validated, passed through `env`, never interpolated into scripts): job 1 reads the deployment URL and head SHA from the preview comment, checks out that SHA, runs the ship specs in the Playwright container with `contents: read` and no secrets; job 2 on the host installs ffmpeg and stitches `reel.mp4`; job 3 comments the artifact link. A sample `e2e/ship/example.spec.ts` proves it end to end on a real preview once W1 lands. | `app/playwright.config.ts`, `app/e2e/ship/`, `.github/workflows/ship.yml` |
+| W2 sonnet-worker | Ship recording. `playwright.config.ts`: explicit `retries: 0`; opt-in `ship-desktop` and `ship-phone` projects (`SHIP=1`) matching `e2e/ship/`, `BASE_URL` (no webServer when set), `video: { mode: 'on', size }` at each viewport, `launchOptions.slowMo`, their own timeout; normal projects ignore `e2e/ship/`. `ship.yml` (workflow_dispatch: PR number and spec file; inputs validated, passed through `env`, never interpolated into scripts): job 1 reads the deployment URL and head SHA from the preview comment, checks out that SHA, runs the ship specs in the Playwright container with `contents: read` and no secrets; job 2 on the host installs ffmpeg, draws the title cards and stitches `reel.mp4`; job 3 comments the artifact link. A sample `e2e/ship/example.spec.ts` proves it end to end on a real preview once W1 lands. | `app/playwright.config.ts`, `app/e2e/ship/`, `.github/workflows/ship.yml` |
 
 W2 builds in parallel and merges after W1, once its end-to-end proof has run on a real preview.
 
@@ -149,8 +149,9 @@ Engineering items (evidence: `gh` output, CI runs, files):
 13. The global agent rules merged and synced (`main...origin/main`, nothing ahead or behind).
 
 Browser scenarios (QA gate and reel, desktop 1440x900 and phone 390x844): written in
-`e2e/ship/setup-gaps.spec.ts` by W4, one per Settings page and the Help window added to the map, approved with the
-map.
+`e2e/ship/setup-gaps.spec.ts` by W4, six scenarios for the pages that had no spec before (Notifications, Memory,
+Inhouse agent, Data and access, Audit log, Help), approved with the map. Spending cap and General were already
+covered by existing specs.
 
 ## Must not
 

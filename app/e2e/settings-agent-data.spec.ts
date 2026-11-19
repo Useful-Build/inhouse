@@ -87,7 +87,9 @@ test('Data and access: retention and access switches are saved, survive a reload
   await sw(page, 'Two-step sign-in').click()
   await expect(sw(page, 'Two-step sign-in')).not.toBeChecked()
   // The audit log's own retention is a fact, not a choice: its row shows 12 months as text.
-  const audit = main(page).getByText('Audit log', { exact: true }).locator('xpath=ancestor::div[contains(@class,"py-4")][1]')
+  // The row: the innermost block holding its label and the 12 months (no styling classes), not the card around every row.
+  const audit = main(page).locator('div').filter({ has: page.getByText('Audit log', { exact: true }) }).filter({ hasText: '12 months' }).last()
+  await expect(audit).not.toContainText('Chats')
   await expect(audit).toContainText('Changes to settings, rules and people. Cannot be shortened.')
   await expect(audit.getByText('12 months', { exact: true })).toBeVisible()
   await expect(audit.getByRole('combobox')).toHaveCount(0)

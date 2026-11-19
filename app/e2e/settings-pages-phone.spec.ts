@@ -18,11 +18,21 @@ async function start(page: Page, hash: string) {
 
 const main = (page: Page) => page.getByRole('main')
 const h1 = (page: Page, name: string) => page.getByRole('heading', { level: 1, name, exact: true })
-/** The settings row with this title. */
-const row = (page: Page, title: string) => main(page).getByText(title, { exact: true }).locator('xpath=ancestor::div[contains(@class,"py-4")][1]')
+/**
+ * The settings row with this title and value: the innermost block holding both (no styling classes). `neighbour` is a
+ * title that belongs to another row, so a match that grew to the whole card around every row fails.
+ */
+async function expectRow(page: Page, title: string, value: string | RegExp, neighbour: string) {
+  const row = main(page).locator('div').filter({ has: page.getByText(title, { exact: true }) }).filter({ hasText: value }).last()
+  await expect(row).toContainText(value)
+  await expect(row).not.toContainText(neighbour)
+}
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
-const noSidewaysScroll = (page: Page) =>
-  page.evaluate(() => [document.documentElement, document.querySelector('main')!].every(e => e.scrollWidth - e.clientWidth <= 1))
+async function noSidewaysScroll(page: Page) {
+  // Polled: right after a resize or a navigation the layout may not have settled yet. A real overflow still fails.
+  await expect.poll(() => page.evaluate(() => Math.max(...[document.documentElement, document.querySelector('main')!].map(e => e.scrollWidth - e.clientWidth))),
+    { message: 'horizontal overflow in px (page or main)' }).toBeLessThanOrEqual(1)
+}
 
 /** On a phone Settings shows its menu first: pick a page from it. */
 async function openFromMenu(page: Page, name: string) {
@@ -43,7 +53,7 @@ test('Phone: Notifications and Memory keep their controls, and a change survives
   await main(page).getByRole('combobox', { name: 'Approvals waiting: Right away', exact: true }).click()
   await page.getByRole('option', { name: 'Once an hour' }).click()
   await expect(main(page).getByRole('combobox', { name: 'Approvals waiting: Once an hour', exact: true })).toBeVisible()
-  expect(await noSidewaysScroll(page)).toBe(true)
+  await noSidewaysScroll(page)
 
   await openFromMenu(page, 'Memory')
   const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
@@ -51,7 +61,7 @@ test('Phone: Notifications and Memory keep their controls, and a change survives
   await forgets.first().click()
   await expect(forgets).toHaveCount(2)
   await expect(toast(page, 'Forgotten. Your Inhouse agent will no longer use this.')).toBeVisible()
-  expect(await noSidewaysScroll(page)).toBe(true)
+  await noSidewaysScroll(page)
 
   await page.reload()
   await expect(forgets).toHaveCount(2)
@@ -66,8 +76,8 @@ test('Phone: Inhouse agent, Data and access and Audit log read as text, and thei
   await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(main(page).getByRole('combobox')).toHaveCount(0)
   await expect(main(page).getByRole('textbox')).toHaveCount(0)
-  await expect(row(page, 'Tone')).toContainText('Friendly and short')
-  await expect(row(page, 'Signs emails as')).toContainText('The Northline team')
+  await expectRow(page, 'Tone', 'Friendly and short', 'Signs emails as')
+  await expectRow(page, 'Signs emails as', 'The Northline team', 'Tone')
   await main(page).getByRole('button', { name: 'Open memory', exact: true }).click()
   await expect(h1(page, 'Team memory')).toBeVisible()
   await openFromMenu(page, 'Inhouse agent')
@@ -80,20 +90,20 @@ test('Phone: Inhouse agent, Data and access and Audit log read as text, and thei
   await expect(main(page).getByRole('switch')).toHaveCount(0)
   await expect(main(page).getByRole('combobox')).toHaveCount(0)
   // Retention reads as its value, a switch as On.
-  await expect(row(page, 'Chats')).toContainText('12 months')
-  await expect(row(page, 'Activity and steps')).toContainText('12 months')
-  await expect(row(page, 'Inhouse team access')).toContainText(/On$/)
-  await expect(row(page, 'Two-step sign-in')).toContainText(/On$/)
+  await expectRow(page, 'Chats', '12 months', 'Activity and steps')
+  await expectRow(page, 'Activity and steps', '12 months', 'Chats')
+  await expectRow(page, 'Inhouse team access', /On$/, 'Two-step sign-in')
+  await expectRow(page, 'Two-step sign-in', /On$/, 'Inhouse team access')
   await main(page).getByRole('button', { name: 'Export', exact: true }).click()
   await expect(toast(page, "Export isn't connected in this demo.")).toBeVisible()
-  expect(await noSidewaysScroll(page)).toBe(true)
+  await noSidewaysScroll(page)
 
   // The audit log is facts and a button: no note, the rows show, Download CSV is there.
   await openFromMenu(page, 'Audit log')
   await expect(page.getByRole('note')).toHaveCount(0)
   await expect(main(page).getByText('Sam Mercer changed an approval rule', { exact: true })).toBeVisible()
   await expect(main(page).getByRole('button', { name: 'Download CSV', exact: true })).toBeVisible()
-  expect(await noSidewaysScroll(page)).toBe(true)
+  await noSidewaysScroll(page)
 })
 
 test('Phone: Help opens from the account menu, a guide opens and the window fits 390 px', async ({ page }) => {

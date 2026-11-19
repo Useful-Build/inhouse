@@ -39,7 +39,8 @@ skill (`.agents/skills/verify`).
 ## Done means
 
 `npm run typecheck`, `npm run lint` and `npm run test:unit` pass, and the E2E suite passes in CI for anything that
-changes behaviour or looks. A user-facing change also updates the feature map (`.agents/skills/verify/feature-map.md`).
+changes behaviour or looks. A user-facing change also updates the feature map
+(`.agents/skills/verify/feature-map.md`).
 
 ## Repo-only rules
 
@@ -73,9 +74,11 @@ skill before any UI change. Repo specifics:
   with a merge commit. Bring `main` into it through a PR (direct pushes are blocked). The final PR into `main` gets
   full CI, reviews, a preview, the QA gate and a ship recording (`ship.yml`, run by hand with the PR number and its
   ship spec). Wasim approves that head SHA, then it squash-merges with `--match-head-commit <sha>` and a squash
-  message ending in a `Verified:` trailer. A push after approval voids it. Plan: `docs/plans/2026-11-19-setup-gaps.md`.
-- **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted code from `main`
-  in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and the head SHA.
+  message ending in a `Verified:` trailer. A push after approval voids it. Plan:
+  `docs/plans/2026-11-19-setup-gaps.md`.
+- **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
+  code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
+  the head SHA.
   `preview-cleanup.yml` deletes previews of closed PRs daily.
 - **Deploys:** production deploys by hand with `npm run deploy` from a clean checkout of the merged commit.
 - **After merge:** none.
