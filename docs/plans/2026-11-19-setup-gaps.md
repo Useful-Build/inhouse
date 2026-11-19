@@ -121,7 +121,7 @@ Runs the landing flow end to end; the ship packet is the proof. No app code chan
 ### Phase 4: after Wasim approves and it merges
 W5 sonnet-worker in the global agent rules repo: the flow into `change-loop`, `verification`, `repo-setup` (blueprints for
 previews, ship recording, rulesets), `fleet` and `qa-check`, as an opt-in flow distinct from fleet policy. One
-Sonnet review, merge, `~/.agents` synced.
+Sonnet review, merge, the local copy synced.
 
 ## Acceptance
 
