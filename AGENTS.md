@@ -49,7 +49,8 @@ Rules are in `app/DESIGN_SYSTEM.md` (base-owned) and `app/DESIGN_APP.md` (this a
 - Never edit `src/ui-base.css` or `src/components/ui/` (except `icon.tsx`). An app-only look goes in a `src/ui` wrapper. Screens use `src/ui`, icons go through `<Icon name="..." />`.
 - Menus, dialogs, popovers, sheets, tooltips and accordions are Radix components.
 - Dark is decided per token, not inverted. Check every change in light and dark, on desktop and on a 390px phone.
-- A change meant to show runs `npm run test:visual:linux:update`, and the new baselines are committed with it.
+- A change meant to show runs `npm run test:visual:linux:update`, and the new baselines are committed with it. Never update
+  baselines to hide an unexplained failure.
 
 ## How changes land here
 

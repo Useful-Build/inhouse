@@ -7,11 +7,11 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 ## Gaps
 
 - Palette: the theme switch (light, dark, system).
-- Palette: "Report a bug" (the tour, `states.ts` and `no-persona.spec.ts` open it, nobody checks the result).
-- Read aloud on an answer: the menu item is checked for presence (`conversation.spec.ts`, `conversation-polish.spec.ts`), what it does isn't.
+- Palette: "Report a bug": opening the window is checked (`tour.spec.ts`), sending the report isn't.
+- Read aloud on an answer: the menu item is checked for presence (`conversation.spec.ts`, `conversation-polish.spec.ts`, `brand-data.spec.ts`), what it does isn't.
 - Dictation in the composer: the button is checked for presence (`no-persona.spec.ts`), what it does isn't.
 - Google Drive and asking in Slack stubs (each says it isn't connected).
-- Settings pages with no behaviour checked: Stage and plan, Team memory. Run limits only opens in `state.spec.ts`.
+- Settings pages: Stage and plan (only "Book a check-in" is checked, in `no-persona.spec.ts`), Team memory and Run limits (opened, controls unchecked).
 
 ## Today
 
@@ -284,13 +284,13 @@ Palette: theme switch
 Palette: Report a bug
   Path:     Cmd+K -> Report a bug
   Selector: menuitem "Report a bug"
-  Expected: the report window opens and sends (the tour, `states.ts` and `no-persona.spec.ts` only open it)
+  Expected: the report window opens and sends (`tour.spec.ts` checks it opens; nothing checks the send)
   Covered:  gap
 
 Chat: Read aloud
   Path:     answer -> More -> Read aloud
   Selector: menuitem "Read aloud"
-  Expected: the item does what it says (its presence is checked in `conversation.spec.ts` and `conversation-polish.spec.ts`)
+  Expected: the item does what it says (its presence is checked in `conversation.spec.ts`, `conversation-polish.spec.ts` and `brand-data.spec.ts`)
   Covered:  gap
 
 Composer: dictation
@@ -308,5 +308,5 @@ Stubs: Google Drive and asking in Slack
 Settings: Stage and plan, Team memory, Run limits
   Path:     Settings -> the page
   Selector: page heading
-  Expected: the page's controls work (`no-persona.spec.ts`, `tour.spec.ts` and `state.spec.ts` only open them)
+  Expected: the page's controls work (`no-persona.spec.ts`, `tour.spec.ts` and `state.spec.ts` open them; only Stage and plan's "Book a check-in" is checked)
   Covered:  gap
