@@ -1,0 +1,89 @@
+# Checks production every hour: the live page serves the app and its entry script loads. On a failure it opens an
+# issue "Production check failing" labelled monitor (or comments on the open one) and assigns it, so the owner is
+# notified; the next passing check closes it. Run by hand: gh workflow run monitor
+# The hostname is variable PRODUCTION_HOSTNAME of environment production. The job names the environment only to
+# read that variable: it uses no secret, and deployment: false keeps it from recording a deployment.
+# GitHub disables a scheduled workflow after 60 days without repository activity in a public repo. Re-enable it in
+# the Actions tab (or gh workflow enable monitor) if the repo goes quiet that long.
+name: monitor
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production
+      deployment: false
+    permissions:
+      contents: read
+      issues: write
+    env:
+      TITLE: Production check failing
+      LABEL: monitor
+      # Assigned on every new issue, so a failure always reaches a person.
+      ASSIGNEE: wasimjalali
+    steps:
+      # One try, no retries: a single failed check is worth an issue, and the next hour's check closes it.
+      - name: Check the live page and its entry script
+        id: check
+        env:
+          HOST: ${{ vars.PRODUCTION_HOSTNAME }}
+        run: |
+          report="$RUNNER_TEMP/report.md"
+          fail() { echo "::error::$1"; echo "$1" > "$report"; echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          [[ "$HOST" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] ||
+            fail "Variable PRODUCTION_HOSTNAME of environment production is missing or not a hostname."
+          base="https://$HOST"
+          page="$RUNNER_TEMP/index.html"
+          code=$(curl -sS --proto '=https' --max-time 20 -o "$page" -w '%{http_code}' "$base/" 2>&1) || true
+          [ "$code" = 200 ] || fail "$base/ answered HTTP $code."
+          grep -q '<div id="root">' "$page" || fail "$base/ is not the app's page."
+          entry=$(grep -oE 'src="/assets/[A-Za-z0-9._-]+\.js"' "$page" | head -n 1 | cut -d'"' -f2) || true
+          [ -n "$entry" ] || fail "$base/ names no entry script."
+          code=$(curl -sS --proto '=https' --max-time 20 -o /dev/null -w '%{http_code}' "$base$entry" 2>&1) || true
+          [ "$code" = 200 ] || fail "$base$entry answered HTTP $code."
+          echo "$base/ and $entry are up"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OK: ${{ steps.check.outputs.ok }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ "$OK" = true ] || [ "$OK" = false ] || { echo "::error::The check gave no result"; exit 1; }
+          open=$(gh api "repos/$REPO/issues?state=open&labels=$LABEL&per_page=100" \
+            --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number' | head -n 1)
+          now=$(date -u '+%Y-%m-%d %H:%M UTC')
+          if [ "$OK" = true ]; then
+            if [ -n "$open" ]; then
+              gh issue comment "$open" --repo "$REPO" --body "Passing again at $now: $RUN_URL"
+              gh issue close "$open" --repo "$REPO" --reason completed
+              echo "Closed #$open"
+            fi
+            exit 0
+          fi
+          body=$(printf '%s\n\n%s\n\nRun: %s\n' "Failed at $now." "$(cat "$RUNNER_TEMP/report.md")" "$RUN_URL")
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$REPO" --body "$body"
+            echo "Commented on #$open"
+          else
+            if ! gh api "repos/$REPO/labels/$LABEL" --silent 2> /dev/null; then
+              gh label create "$LABEL" --repo "$REPO" --color B60205 --description "Opened by the production monitor"
+            fi
+            gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --assignee "$ASSIGNEE" --body "$body"
+          fi
+          echo "::error::Production check failing"
+          exit 1
