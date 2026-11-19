@@ -84,8 +84,9 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   // The pop only clears if it is still 'me': an item may have opened another one (Help, the team window) already.
   // Where the menu opened: an item that moves to another page leaves focus there (the page focuses its heading).
   const openedOn = useRef('')
-  // The part of the hash that RouteFocus (App.tsx) treats as a route: the page, plus a tool's key.
-  const focusSlug = () => { const [s, sub] = location.hash.slice(2).split('/'); return s === 'tools' && sub ? `${s}/${sub}` : s }
+  // The part of the hash that RouteFocus (App.tsx) treats as a route (the page, plus a tool's key), and whether the
+  // phone drawer holding the Settings button is open: an item that closes the drawer leaves focus to the page too.
+  const focusSlug = () => { const [s, sub] = location.hash.slice(2).split('/'); return `${s === 'tools' && sub ? `${s}/${sub}` : s}|${useUi.getState().sideOpen}` }
   const onOpenChange = (o: boolean) => { if (o) { openedOn.current = focusSlug(); openPop('me') } else if (useUi.getState().pop === 'me') patch({ pop: null }) }
   return (
     <DropdownMenu modal={false} open={pop === 'me'} onOpenChange={onOpenChange}>

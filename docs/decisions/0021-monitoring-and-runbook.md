@@ -1,4 +1,4 @@
-# 0021. Monitoring: a scheduled check, Web Analytics and a runbook
+# 0021. Monitoring: a scheduled check, a runbook and (not built yet) Web Analytics
 
 - Status: accepted, 2026-11-19. Built in the hardening project (`fleet/hardening`)
 - Was: production plan PD7

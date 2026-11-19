@@ -7,8 +7,10 @@ declare global {
   interface Window { __cspReport?: (v: Violation) => void }
 }
 
-export const test = base.extend<{ cspGuard: void }>({
-  cspGuard: [async ({ context }, use) => {
+export const test = base.extend<{ cspExpectViolation: boolean; cspGuard: void }>({
+  // Only for the guard's own self-test (csp-guard.spec.ts): the test passes only if the guard recorded a violation.
+  cspExpectViolation: [false, { option: true }],
+  cspGuard: [async ({ context, cspExpectViolation }, use) => {
     const found: Violation[] = []
     // The guard is only armed if the app's documents carry the CSP: record any that don't.
     const unguarded: string[] = []
@@ -32,6 +34,10 @@ export const test = base.extend<{ cspGuard: void }>({
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r(null)))).catch((err: unknown) => {
         if (!page.isClosed()) throw err
       })
+    }
+    if (cspExpectViolation) {
+      expect(found.length, 'The guard recorded no violation, so it is not armed').toBeGreaterThan(0)
+      return
     }
     expect(found, `CSP violations: ${found.map(v => `${v.directive} blocked ${v.blocked} (${v.source}) on ${v.page}`).join('; ')}`).toEqual([])
   }, { auto: true }],
