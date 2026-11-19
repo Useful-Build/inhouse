@@ -1,0 +1,25 @@
+# Weekly version updates, grouped so they arrive as one PR per ecosystem. Security updates are on in the repo
+# settings and come as they're published. The pr-gates job in ci.yml skips the Verified-trailer check only for PRs
+# opened by dependabot[bot]; every other check still runs. Major versions come in their own group so one breaking
+# bump can't hold back the rest.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: weekly
+    groups:
+      app-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      app-major:
+        patterns: ["*"]
+        update-types: [major]
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

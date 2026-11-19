@@ -1,7 +1,7 @@
 // Settings > Notifications and Memory (your own pages), at 1440. Each control does what it says; the picks survive a
 // reload and Reset demo clears them. At Watch both pages are locked until Act. The phone twin is
 // settings-pages-phone.spec.ts.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 type Stage = 'Watch' | 'Act' | 'Run'

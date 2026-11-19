@@ -1,7 +1,7 @@
 // PR 5, navigation (desktop): the ⌘K palette (a chat, a settings page, New chat, focus back on Escape), the shortcuts,
 // the collapsible sidebar and its icon rail across a reload, notifications read one at a time and all at once, and the
 // team window's Send and sender.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {

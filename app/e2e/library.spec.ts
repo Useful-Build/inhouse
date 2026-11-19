@@ -1,5 +1,5 @@
 // Library: sidebar slot, tabs and counts, places, search, views, the viewer and its link back, Select, Delete and Undo.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

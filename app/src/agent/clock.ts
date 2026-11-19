@@ -1,4 +1,4 @@
-// The demo's one clock and its formats (D5 in app/UI_PLAN_2.md). Pure functions, no React.
+// The demo's one clock and its formats (D5 in docs/history/UI_PLAN_2.md). Pure functions, no React.
 // The demo runs on Monday, November 16, 2026 from 8:00 AM in the device's local time (the time zone in Settings is a
 // label; it doesn't move this clock), moving on with real time while it is open and stopping at
 // 11:59 AM so the morning stays a morning. Everything a person does is stamped on this clock, never the computer's own

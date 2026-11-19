@@ -2,7 +2,7 @@
 // team pages Inhouse agent, Data and access and Audit log read as text (decision D4) while their buttons still work;
 // Help opens from the account menu and fits. The desktop flows are in settings-your-pages.spec.ts,
 // settings-agent-data.spec.ts and help-account-menu.spec.ts.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash: string) {

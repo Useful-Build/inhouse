@@ -1,6 +1,6 @@
 // Page actions at 390 px: Settings shows its menu, then a page with Back (the app's and the browser's); the Library's filter sheet
 // holds the sort and the type.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
