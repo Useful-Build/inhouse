@@ -225,8 +225,10 @@ for (const width of [1440, 768, 390]) {
       const sideItem = page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^Library/ })
       await page.mouse.move(0, 0)
       const bg = (el: ReturnType<Page['locator']>) => el.evaluate(e => getComputedStyle(e).backgroundColor)
-      // The fill eases in, so retry until both fills have settled.
-      await expect.poll(async () => (await bg(place(page, 'All files'))) === (await bg(sideItem))).toBe(true)
+      // The fill eases in: wait for the transitions to end, then compare once.
+      await atRest(page)
+      expect(await bg(place(page, 'All files'))).toBe(await bg(sideItem))
+      expect(await bg(sideItem)).not.toBe('rgba(0, 0, 0, 0)')
     }
 
     // A list: whole names, however narrow. Phone: one list, no pictures.

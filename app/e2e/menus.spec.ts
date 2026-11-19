@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs'
 import { atRest } from './states.js'
 
 const OUT = process.env.VERIFY_DIR ?? 'e2e-artifacts'
+const TITLES: Record<string, string> = { 'you-general': 'General', 'you-notif': 'Notifications', 'you-memory': 'Memory', 'team-plan': 'Stage and plan', 'team-agent': 'Inhouse agent', 'team-memory': 'Team memory', 'team-members': 'Members', 'team-approvals': 'Who approves what', 'team-limits': 'Run limits', 'team-spend': 'Spending cap', 'team-data': 'Data and access', 'team-audit': 'Audit log' }
 const PAGES = ['you-general', 'you-notif', 'you-memory', 'team-plan', 'team-agent', 'team-memory', 'team-members', 'team-approvals', 'team-limits', 'team-spend', 'team-data', 'team-audit']
 
 async function start(page: Page, hash: string) {
@@ -65,7 +66,7 @@ for (const width of [1440, 390]) {
       let opened = 0, widest = 0, widestPage = '', widestIdx = 0
       for (const id of PAGES) {
         await page.evaluate(h => { location.hash = h }, `#/settings/${id}`)
-        await expect(page.getByRole('heading', { level: 1 })).toBeVisible() // the page drew, so its dropdowns are counted
+        await expect(page.getByRole('heading', { level: 1, name: TITLES[id] })).toBeVisible() // this page drew, so its dropdowns are counted
         await atRest(page)
         const buttons = page.locator('main [role="combobox"]')
         const n = await buttons.count()
@@ -166,7 +167,7 @@ test.describe('1440x700', () => {
     let upward = 0
     for (const id of PAGES) {
       await page.evaluate(h => { location.hash = h }, `#/settings/${id}`)
-      await expect(page.getByRole('heading', { level: 1 })).toBeVisible() // the page drew, so its dropdowns are counted
+      await expect(page.getByRole('heading', { level: 1, name: TITLES[id] })).toBeVisible() // this page drew, so its dropdowns are counted
       await atRest(page)
       const buttons = page.locator('main [role="combobox"]:not([disabled])')
       const n = await buttons.count()

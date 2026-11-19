@@ -14,7 +14,7 @@ test('Phone: the chat composer stays above the safe area, and opening a chat lea
   const field = page.getByRole('textbox', { name: 'Message your Inhouse agent' })
   const composer = page.locator('[data-composer]')
   await expect(field).toBeVisible()
-  await page.clock.runFor(300) // long enough for any delayed focus
+  await page.clock.runFor(300) // covers timer-based focus only (a setTimeout), not a focus after a real network or frame wait
   await expect(field).not.toBeFocused()
 
   // Opening another chat from the drawer doesn't focus it either.

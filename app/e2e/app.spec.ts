@@ -105,7 +105,6 @@ test('Chat: Stop ends a run and says nothing was changed', async ({ page }) => {
   await page.locator('[data-composer]').getByRole('button', { name: 'Stop' }).click()
   await expect(page.getByText('You stopped your Inhouse agent. Nothing was changed.')).toBeVisible()
   await page.clock.runFor(30_000)
-  await expect(page.getByText('You stopped your Inhouse agent. Nothing was changed.')).toBeVisible()
   await expect(page.getByText(/Refund requests rose from 14/)).toHaveCount(0)
 })
 

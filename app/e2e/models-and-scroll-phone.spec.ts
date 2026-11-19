@@ -11,6 +11,7 @@ async function start(page: Page, hash: string) {
     sessionStorage.setItem('e2e-seeded', '1')
   })
   await page.goto('/?demo' + hash)
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible() // the page drew (fresh load, so this is its own heading)
   await atRest(page)
 }
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'

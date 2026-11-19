@@ -113,7 +113,6 @@ test('Palette over the problem panel: Escape closes only the palette; the palett
 })
 
 test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows in full, the account name starts with its text', async ({ page }) => {
-  await page.clock.install() // time keeps flowing until pauseAt below
   await start(page)
   await fontsReady(page) // the title is measured at hover time, so the font must have swapped in first
   const toggle = page.getByRole('button', { name: 'Sidebar', exact: true })
@@ -129,15 +128,13 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   await expect(trigger).toBeFocused()
   await expect(trigger).toHaveCSS('opacity', '1')
 
-  // A short title gets no tooltip. One that fits at rest but runs under the trigger on hover gets one.
+  // A short title gets no tooltip. One that fits at rest but runs under the trigger on hover gets one. This checks the
+  // cut rule, not the open delay: the focus above opened the provider's skip-delay and the controlled tooltip never
+  // re-arms it, so every hover after that opens at pointer-enter.
   const t = open.locator('.ellipsis')
   await t.evaluate(e => { e.textContent = 'Refunds' })
   await page.mouse.move(720, 450)
-  // Pause app time just ahead, so the 500 ms open delay runs only on runFor.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100))
   await open.hover()
-  await expect(trigger).toHaveCSS('opacity', '1') // the "···" trigger has faded in: the title is measured against it when the delay ends
-  await page.clock.runFor(1000)
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   const cutAtRest = await t.evaluate(e => {
     const menu = e.closest('[data-chat-row]')!.querySelector<HTMLElement>('[aria-haspopup="menu"]')!
@@ -151,8 +148,6 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   expect(cutAtRest).toBe(false)
   await page.mouse.move(720, 450)
   await open.hover()
-  await expect(trigger).toHaveCSS('opacity', '1') // the "···" trigger has faded in: the title is measured against it when the delay ends
-  await page.clock.runFor(1000)
   await expect(page.getByRole('tooltip')).toBeVisible()
 
   const account = side(page).getByRole('button', { name: /account and settings/i })

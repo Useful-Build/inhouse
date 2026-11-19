@@ -14,6 +14,7 @@ async function open(page: Page, stage: string, scenario: string, hash: string) {
     if (theme) localStorage.setItem('inhouse.theme', theme)
   }, [stage, scenario, THEME])
   await page.goto('/?demo' + hash)
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible() // the page drew (fresh load, so this is its own heading)
   await atRest(page)
 }
 const shot = (page: Page, name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true })
