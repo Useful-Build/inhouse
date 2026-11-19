@@ -60,8 +60,8 @@ The setup project ([plan](plans/2026-11-19-setup-gaps.md), PR #30) was the first
 Each of these is in the PR history.
 
 - **Reviews found two ways a PR could reach the preview token.** The preview pipeline (#19) deploys a build that a PR
-  controls, from a job that holds a Cloudflare token. Review rounds on the first version caught two holes. A PR could change the wrangler config inside its own build, or leave files
-  that wrangler reads at deploy time (a `.env` can point it at another API host). And a source map comment in a built
+  controls, from a job that holds a Cloudflare token. Review rounds on the first version caught two holes. A PR could
+  change the wrangler config inside its own build, or leave files that wrangler reads at deploy time (a `.env` can point it at another API host). And a source map comment in a built
   file could make wrangler read a file outside the build and upload it. The fix treats the build as hostile: only
   plain files under `dist/` pass, the generated config must match `main`'s field by field, wrangler runs with no
   `.env` and no endpoint overrides, and every source map must be a plain sibling file. The tests behind it ran more

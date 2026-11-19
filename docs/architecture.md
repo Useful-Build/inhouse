@@ -54,9 +54,9 @@ One Worker, `inhouse-app` (`app/wrangler.jsonc`), with static assets. Cloudflare
 Worker runs, and `not_found_handling: single-page-application` answers any other path with `index.html`. Headers come
 from `app/public/_headers`.
 
-`/api/*` is the exception: it reaches the Worker first (`run_worker_first`). The first route is `/api/client-error`,
-which takes error reports from the browser, rate-limits and scrubs them and logs them to Workers Logs with the release
-SHA ([0020](decisions/0020-client-errors-into-workers-logs.md)). That route is being built in the hardening project.
+`/api/*` will be the exception: the hardening project routes it to the Worker first (`run_worker_first`). The first
+route is `/api/client-error`, which takes error reports from the browser, rate-limits and scrubs them and logs them to
+Workers Logs with the release SHA ([0020](decisions/0020-client-errors-into-workers-logs.md)).
 Until it lands, the Worker answers 404 to anything that isn't an asset.
 
 ## CI and the gates
