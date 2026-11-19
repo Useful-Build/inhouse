@@ -5,7 +5,8 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
   Referrer-Policy: no-referrer
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  # Previews keep noindex. The deploy job drops this line from production's build, so production is indexable.
+  # Previews keep noindex. The deploy job drops this line from production's build, so production's pages are
+  # indexable (the Worker's /api answers keep it).
   X-Robots-Tag: noindex, nofollow
 
 /assets/*

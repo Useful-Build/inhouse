@@ -31,7 +31,7 @@ Run them in `app/`.
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
 | `npm run test:visual:linux` | The visual suite in the Playwright Docker image (`:update` regenerates baselines) |
 | `npm run test:a11y` | axe, WCAG 2.1 A and AA |
-| `npm run deploy` | Build and deploy to the Cloudflare account wrangler is signed in to (a fork's own). Never this repo's production: that's `deploy.yml` |
+| `npm run deploy` | Build and deploy to the Cloudflare account wrangler is signed in to (a fork's own). Don't use it for this repo's production: that's `deploy.yml` |
 
 How to boot, drive and verify the app (ports, env switches, seeds, previews, the ship recording) is in the `verify`
 skill (`.agents/skills/verify`).
@@ -87,10 +87,12 @@ skill before any UI change. Repo specifics:
   production from a laptop.
 - **After merge into `main`:** watch that commit's `deploy` run go green.
 - **No Actions cache:** no workflow restores an Actions cache (`actions/cache`, `setup-node`'s `cache:`), so a PR
-  run can't poison what a trusted run on `main` restores.
-- **Sensitive paths (need Wasim's OK):** `.github/workflows/` (deploy, monitor and the preview workflows included), `.github/rulesets/`, `app/playwright.config.ts`,
-  `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs, `visual.spec.ts-snapshots/`),
-  `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship scripts), `app/wrangler.jsonc`, `app/worker/`,
-  `app/public/_headers`.
+  run can't poison what a trusted run on `main` restores. A `packageManager` or `devEngines.packageManager` field in
+  `app/package.json` turns on setup-node's automatic npm cache: add `package-manager-cache: false` to every
+  setup-node step first.
+- **Sensitive paths (need Wasim's OK):** `.github/workflows/` (deploy, monitor and the preview workflows included),
+  `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
+  `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
+  scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`.
 - **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`). Give each parallel worktree its own `E2E_PORT`.
 - **Fleet repo:** no. `fleet/<topic>` is only the integration branch name here.

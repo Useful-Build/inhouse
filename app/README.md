@@ -55,11 +55,15 @@ npm run test:a11y                 # axe, WCAG 2.1 A and AA
 
 ## Deploy
 
+Production deploys from `main` on every merge (`.github/workflows/deploy.yml`), with a rollback by version id; see
+[the runbook](../docs/runbook.md). In a fork, deploy to your own Cloudflare account with:
+
 ```bash
 npm run deploy     # build, then wrangler deploy to your Cloudflare account
 ```
 
-Phase 1 deploys as one Cloudflare Worker. It sends `noindex`, has no per-version preview URLs, and serves invented sample data only.
+Phase 1 deploys as one Cloudflare Worker and serves invented sample data only. Every PR gets a Workers Preview, which
+sends `noindex`; production's pages are indexable.
 
 ## The mock agent, and how phase 2 swaps it
 

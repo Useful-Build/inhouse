@@ -160,11 +160,11 @@ connection.
   so it's kept alive by Dependabot's weekly PRs and merges (decision 0021).
 - Acceptance 9: HSTS (`max-age=31536000; includeSubDomains`) came in a follow-up PR on the integration branch, and the
   live smoke in `deploy.yml` then turned from a warning into a failure.
-- H3: an old tab's chunk failure is tested by `e2e/route-chunk-failure.spec.ts`. The spec for the crash screen
-  flashing before the reload couldn't be made to fail reliably on the old code after four tries; it's noted on PR #35
-  and the reload behaviour is covered instead.
-- Two specs (`client-errors`, `route-title-focus`) had landed without the CSP guard fixture; the follow-up PR moved
-  them onto it.
+- H3: an old tab's chunk failure is tested by `e2e/route-chunk-failure.spec.ts`, which asserts the crash screen never
+  shows before the reload. After four tries that check still couldn't be shown to fail on the old code, so it may
+  miss a regression; this is noted on PR #35.
+- `client-errors.spec.ts` and the chunk-failure test in `route-title-focus.spec.ts` had landed without the CSP guard
+  fixture; the follow-up PR moved them onto it.
 
 ## Must not
 
