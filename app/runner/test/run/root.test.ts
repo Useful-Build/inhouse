@@ -246,14 +246,62 @@ describe('streams', () => {
   })
 
   it("the session's channel says when it is full, and the session waits for it to drain", async () => {
-    // Each event is over the socket's 16 KiB high-water mark, so every write reports a full buffer.
-    const n = 20
-    const events = await postRun(root, runStart({ prompt: `drain:${n}:${64 * 1024}` }))
-    expectOneEnd(events)
-    expect(events.at(-1)?.type).toBe('finished')
-    const sdk = events.filter((e) => e.type === 'sdk')
-    expect(sdk.slice(0, n).map((e) => (e.type === 'sdk' ? e.message.i : null))).toEqual([...Array(n).keys()])
-    expect(sdk.at(-1)).toMatchObject({ message: { type: 'drained', waits: n } })
+    // When a write says "full" depends on the kernel's buffers (a socketpair holds far more on Linux than on macOS), so
+    // the test makes the channel full by condition: the Worker doesn't read, the root pauses the session, and then the
+    // session's channel can't take what it still has to send (about 32 MB, as in the slow-Worker test above).
+    const spawned: ChildProcess[] = []
+    let stderr = ''
+    const onSpawn = (c: ChildProcess) => {
+      spawned.push(c)
+      c.stderr!.on('data', (d: Buffer) => (stderr += d.toString('utf8')))
+    }
+    const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn }))
+    try {
+      const n = 160
+      const start = runStart({ prompt: `drain:${n}:${200 * 1024}` })
+      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders }, resolve)
+        req.on('error', reject)
+        req.end(JSON.stringify(start))
+      })
+      expect(res.statusCode).toBe(200)
+      await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
+      // Stalled: the root holds the same bytes, poll after poll. A session that didn't wait would have run its loop to
+      // the end by now (its sends only queue in its own memory); one that waits is held at a full channel.
+      let quiet = 0
+      let last = -1
+      await waitFor(() => {
+        const buffered = slow.bufferedBytes(start.runId)!
+        quiet = spawned[0]!.stdout!.isPaused() && buffered === last ? quiet + 1 : 0
+        last = buffered
+        return quiet >= 100
+      }, 'the run stalled behind the slow Worker')
+      expect(stderr).not.toContain('drain: sent all')
+      const events: RunEvent[] = []
+      let buf = ''
+      res.setEncoding('utf8')
+      for await (const chunk of res as AsyncIterable<string>) {
+        buf += chunk
+        for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
+          events.push(parseRunEventLine(buf.slice(0, i)))
+          buf = buf.slice(i + 1)
+        }
+      }
+      expect(buf).toBe('')
+      expectOneEnd(events)
+      expect(events.at(-1)?.type).toBe('finished')
+      const sdk = events.filter((e) => e.type === 'sdk')
+      expect(sdk.slice(0, n).map((e) => (e.type === 'sdk' ? e.message.i : null))).toEqual([...Array(n).keys()])
+      // The channel said "full" at least once, and the session waited out each of those before its next send.
+      expect(sdk).toHaveLength(n + 1)
+      const drained = sdk.at(-1)
+      expect(drained).toMatchObject({ message: { type: 'drained' } })
+      const waits = drained?.type === 'sdk' ? (drained.message as { waits: number }).waits : 0
+      expect(waits).toBeGreaterThanOrEqual(1)
+      expect(waits).toBeLessThanOrEqual(n)
+    } finally {
+      await slow.close()
+    }
   })
 
   // Paused behind a slow Worker, then the Worker hangs up or the run times out: no drain will come, so the root must

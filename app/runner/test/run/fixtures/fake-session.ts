@@ -11,7 +11,7 @@
 //   console-log        logs through every console method that writes to stdout by default, then finished
 //   flood:<n>:<bytes>  sends n sdk events of about <bytes> each, carrying their index, then finished
 //   drain:<n>:<bytes>  sends n sdk events of about <bytes> each, awaiting each send the channel says is full; then
-//                      one sdk event {type: 'drained', waits} counting those, then finished
+//                      writes `drain: sent all` to stderr, one sdk event {type: 'drained', waits} counting those, then finished
 //   oversized          sends one line over the channel's cap
 //   dump               writes a file in its cwd, then sends its env, argv, run message and cwd files as one sdk event
 //   hang               never answers; ends only when killed
@@ -153,6 +153,7 @@ channel.onMessage((line) => {
             await full
           }
         }
+        process.stderr.write('drain: sent all\n')
         event({ type: 'sdk', message: { type: 'drained', waits }, truncated: false })
         finished()
         end()
