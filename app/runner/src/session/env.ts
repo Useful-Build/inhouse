@@ -15,6 +15,8 @@ export function sessionEnv(user: SessionUser, proxyPort: number): Record<string,
   return {
     PATH: '/usr/local/bin:/usr/bin:/bin',
     HOME: user.home,
+    // Temp files stay in the session's own 0700 folder, never in the shared /tmp (R2's guards deny /tmp to Read).
+    TMPDIR: `${user.workDir}/.tmp`,
     USER: user.user,
     LOGNAME: user.user,
     LANG: 'C.UTF-8',

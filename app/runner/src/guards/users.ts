@@ -169,6 +169,7 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
 
   return {
     kind: 'production',
+    quarantined: () => quarantined.size,
     allocate,
     release,
     state: () => ({

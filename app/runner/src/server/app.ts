@@ -277,7 +277,7 @@ export function createRoot(deps: RootDeps): Root {
       return json(res, 200, { version: PROTOCOL_VERSION, accepted: [...ACCEPTED_VERSIONS] } satisfies ProtocolInfo)
     }
     if (method === 'GET' && url.pathname === '/health') {
-      return json(res, 200, { ok: true, protocol: PROTOCOL_VERSION, live: runs.size, memory: deps.memory() } satisfies Health)
+      return json(res, 200, { ok: true, protocol: PROTOCOL_VERSION, live: runs.size, quarantinedUsers: deps.users.quarantined(), memory: deps.memory() } satisfies Health)
     }
 
     const header = req.headers[PROTOCOL_HEADER]

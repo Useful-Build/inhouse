@@ -177,6 +177,7 @@ export const Health = z.strictObject({
   ok: z.boolean(),
   protocol: z.int().nonnegative(),
   live: z.int().nonnegative(),
+  quarantinedUsers: z.int().nonnegative(),
   memory: z.strictObject({
     totalBytes: z.int().nonnegative().nullable(),
     availableBytes: z.int().nonnegative().nullable(),

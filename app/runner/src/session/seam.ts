@@ -24,6 +24,8 @@ export interface SessionUsers {
    * token. Also called for a run refused after `allocate` (a root uid). R2 implements it.
    */
   release(sessionKey: string, user: SessionUser): Promise<void>
+  /** How many uids a failed cleanup took out of the pool for good (reported on /health). */
+  quarantined(): number
 }
 
 /**

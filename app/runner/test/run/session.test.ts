@@ -343,7 +343,7 @@ describe('sessionEnv', () => {
     const env = sessionEnv(u, port)
     expect(Object.keys(env).sort()).toEqual(
       [
-        'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'INHOUSE_PROXY_URL',
+        'PATH', 'HOME', 'TMPDIR', 'USER', 'LOGNAME', 'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'INHOUSE_PROXY_URL',
         'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER',
       ].sort(),
     )

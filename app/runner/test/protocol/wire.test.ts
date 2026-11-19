@@ -62,7 +62,8 @@ const bodyArb: fc.Arbitrary<RunEventBody> = fc.oneof(
     isError: fc.boolean(),
     numTurns: fc.nat(),
     costUsd: fc.double({ min: 0, max: 100, noNaN: true }),
-    usage: fc.dictionary(fc.string(), fc.nat()),
+    // z.record drops an own `__proto__` key (safe, and intended), so the round trip leaves it out of the generator.
+    usage: fc.dictionary(fc.string().filter((k) => k !== '__proto__'), fc.nat()),
   }),
   fc.record({ type: fc.constant('failed' as const), reason, message: fc.string({ maxLength: 100 }) }),
 )
