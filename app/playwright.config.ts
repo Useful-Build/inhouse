@@ -27,7 +27,7 @@ const shipUse = (width: number, height: number) => ({
   video: { mode: 'on' as const, size: { width, height } },
   trace: 'on' as const,
   screenshot: 'off' as const,
-  launchOptions: { slowMo: 1600 }, // a pause after every action, so a person watching the reel can follow each step
+  launchOptions: { slowMo: 1600 }, // a pause after every action so a person can follow; under ~3 s (a 4 s toast is checked)
 })
 const shipProjects: PlaywrightTestProject[] = process.env.SHIP
   ? [
