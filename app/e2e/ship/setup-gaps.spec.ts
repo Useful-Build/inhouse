@@ -109,7 +109,9 @@ test('S5: Audit log: pause the Inhouse agent, the audit log shows it at the top;
   await accountItem(page, 'Team settings')
   await pickPage(page, 'Run limits')
   await main(page).getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
-  await expect(page.getByRole('status', { name: 'Inhouse agent is paused' })).toBeVisible()
+  await expect(toast(page, 'Your Inhouse agent is paused.')).toBeVisible()
+  // The top bar's pill shows on every desktop page; on a phone only on Today.
+  if (test.info().project.name !== 'ship-phone') await expect(page.getByRole('status', { name: 'Inhouse agent is paused' })).toBeVisible()
   await pickPage(page, 'Audit log')
   const paused = main(page).getByText('Sam Mercer paused your Inhouse agent', { exact: true })
   const seeded = main(page).getByText('Sam Mercer changed an approval rule', { exact: true })
