@@ -301,7 +301,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       const events = checkRun(await run.toEnd())
       expect(events.some(e => e.type === 'turn.started' && e.text === fx.questions.followUp)).toBe(true)
       // The new turn's trace id is the one on its first part, whatever the client calls it.
-      const turn = events.findIndex(e => e.type === 'turn.started')
+      const turn = events.findIndex(e => e.type === 'turn.started' && e.text === fx.questions.followUp)
+      expect(turn, 'the follow-up opens a turn').toBeGreaterThanOrEqual(0)
       const part = events.slice(turn + 1).find(e => e.type === 'part')
       expect(part, 'the new turn answers with a part').toBeDefined()
       const traceId = (part as Extract<RunEvent, { type: 'part' }>).trace
@@ -329,6 +330,21 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(await t.client.interrupt((first as Started).runId), 'interrupt() resolves to nothing').toBeUndefined()
       const events = checkRun(await run.toEnd())
       expect(TERMINAL).toContain(events.at(-1)!.type)
+      expect(notices).toEqual([])
+    })
+
+    test('interrupt cuts a live run short mid-turn: it ends as stopped, with the parts before the cut and none after', async () => {
+      const whole = checkRun(await drain(fx.questions.table))
+      expect(whole.some(e => e.type === 'part'), 'left alone, the answer has parts').toBe(true)
+      const run = startRun(fx.questions.table)
+      const first = await run.next()
+      expect((await run.next())?.type, 'the turn is under way').toBe('step')
+      const cut = run.events.length
+      await t.client.interrupt((first as Started).runId)
+      const events = checkRun(await run.toEnd())
+      expect(events.at(-1)!.type, 'an interrupt with nothing waiting ends the run as stopped').toBe('run.stopped')
+      expect(events.slice(cut).filter(e => e.type === 'part'), 'no part after the cut').toEqual([])
+      expect(events.filter(e => e.type === 'part').length, 'the answer was cut short').toBeLessThan(whole.filter(e => e.type === 'part').length)
       expect(notices).toEqual([])
     })
 
@@ -732,6 +748,28 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices[0]).toMatchObject({ type: 'error', code: 'forbidden' })
     })
 
+    test('a refused pause leaves the hold of an approve made while it was in flight: it still sends', async () => {
+      const id = heldProblem()
+      await t.injectError('pause', 'forbidden')
+      const refused = errorOf(t.client.pause())
+      await t.client.approve(id) // its hold starts before the refusal lands
+      expect(await refused).toBeInstanceOf(AgentError)
+      expect(t.client.getSnapshot().paused, 'the refused write is taken back').toBeNull()
+      await t.advance(fx.holdMs)
+      expect(t.client.getSnapshot().sent[id], 'the hold still sent').toBe(true)
+      expect(notices.some(n => n.type === 'approval.sent' && n.id === id)).toBe(true)
+    })
+
+    test('a refused setting takes back only its own entry: a photo saved while it was in flight stays', async () => {
+      await t.injectError('setSetting', 'forbidden')
+      const refused = errorOf(t.client.setSetting(fx.settingKey, fx.settingValue))
+      await t.client.setPhoto(fx.personId, fx.photoDataUrl) // replaces the same settings record before the refusal lands
+      expect(await refused).toBeInstanceOf(AgentError)
+      const settings = t.client.getSnapshot().settings
+      expect(settings[fx.settingKey], 'the refused setting is gone').toBeUndefined()
+      expect(settings[photoKey(fx.personId)], 'the photo stays').toBe(fx.photoDataUrl)
+    })
+
     test('a refusal on one method leaves the others working', async () => {
       await t.injectError('pause', 'forbidden')
       await expect(t.client.pause()).rejects.toBeInstanceOf(AgentError)
@@ -761,7 +799,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await until(() => notices.some(n => n.type === t.failedSaveNotice), 'the failed-save notice')
     })
 
-    // What the agent writes by itself is a save in the client on the mock only; a server target gets its own case in P2.
+    // What the agent writes by itself is a save in the client on the mock only; a server target adds its own failed-save case for agent writes in P2.
     // When the target says no, these show as skipped in the output, never silently.
     describe.runIf(t.capabilities.agentWritesSaveInClient)('agent writes that save in the client', () => {
       test('a save that fails while a hold finishes tells the person and the next write still works', async () => {
