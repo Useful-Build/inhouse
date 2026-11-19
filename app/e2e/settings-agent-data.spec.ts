@@ -42,7 +42,7 @@ test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset dem
   await expect(signs).toHaveValue('The Northline team')
 
   await combo(page, 'Tone: Friendly and short').click()
-  await expect(page.getByRole('listbox', { name: 'Tone' }).getByRole('option')).toHaveText([/^Friendly and short/, /^Warm and detailed/, /^Formal and brief/, /^Plain and direct/])
+  await expect(page.getByRole('listbox', { name: 'Tone' }).getByRole('option')).toHaveText([/^Friendly and short(\s*check)?$/, /^Warm and detailed(\s*check)?$/, /^Formal and brief(\s*check)?$/, /^Plain and direct(\s*check)?$/])
   await page.getByRole('option', { name: 'Formal and brief' }).click()
   await expect(combo(page, 'Tone: Formal and brief')).toBeVisible()
   await signs.fill('Sam at Northline')
@@ -76,7 +76,7 @@ test('Data and access: retention and access switches are saved, survive a reload
   await expect(sw(page, 'Two-step sign-in')).toBeChecked()
 
   await combo(page, 'Chats: 12 months').click()
-  await expect(page.getByRole('listbox', { name: 'Chats' }).getByRole('option')).toHaveText([/^3 months/, /^6 months/, /^12 months/, /^24 months/, /^Until deleted/])
+  await expect(page.getByRole('listbox', { name: 'Chats' }).getByRole('option')).toHaveText([/^3 months(\s*check)?$/, /^6 months(\s*check)?$/, /^12 months(\s*check)?$/, /^24 months(\s*check)?$/, /^Until deleted(\s*check)?$/])
   await page.getByRole('option', { name: '6 months' }).click()
   await expect(combo(page, 'Chats: 6 months')).toBeVisible()
   await combo(page, 'Activity and steps: 12 months').click()

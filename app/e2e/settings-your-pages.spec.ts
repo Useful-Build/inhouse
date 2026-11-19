@@ -64,11 +64,11 @@ test('Notifications: alert timing, where alerts go and both switches change, sur
 
   // Each dropdown lists its real choices and saves the one picked.
   await combo(page, 'Approvals waiting: Right away').click()
-  await expect(page.getByRole('listbox', { name: 'Approvals waiting' }).getByRole('option')).toHaveText([/^Right away/, /^Once an hour/, /^Once a day/])
+  await expect(page.getByRole('listbox', { name: 'Approvals waiting' }).getByRole('option')).toHaveText([/^Right away(\s*check)?$/, /^Once an hour(\s*check)?$/, /^Once a day(\s*check)?$/])
   await page.getByRole('option', { name: 'Once a day' }).click()
   await expect(combo(page, 'Approvals waiting: Once a day')).toBeVisible()
   await combo(page, 'Send alerts to: Slack').click()
-  await expect(page.getByRole('listbox', { name: 'Send alerts to' }).getByRole('option')).toHaveText([/^Email/, /^Slack/, /^Email and Slack/, /^In the app only/])
+  await expect(page.getByRole('listbox', { name: 'Send alerts to' }).getByRole('option')).toHaveText([/^Email(\s*check)?$/, /^Slack(\s*check)?$/, /^Email and Slack(\s*check)?$/, /^In the app only(\s*check)?$/])
   await page.getByRole('option', { name: 'In the app only' }).click()
   await expect(combo(page, 'Send alerts to: In the app only')).toBeVisible()
   await sw(page, 'Slack').click()

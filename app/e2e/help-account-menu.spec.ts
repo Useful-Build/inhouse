@@ -63,7 +63,8 @@ test('Help: one guide open at a time; Ask the team sends a question that is list
   await side(page).getByRole('button', { name: 'Message the team →' }).click()
   await expect(listed(page)).toBeVisible()
   // Request titles are the bold lines under "Open requests"; the new one is the first.
-  await expect(team(page).locator('div.text-base.font-strong').first()).toHaveText('I have a question: can a routine run twice a day?')
+  // The first row under "Open requests" (the selected row's icon and status sit in the same row, so contain, not equal).
+  await expect(team(page).getByRole('heading', { name: 'Open requests' }).locator('xpath=following-sibling::div[1]/div[1]')).toContainText('I have a question: can a routine run twice a day?')
   await expect(team(page).getByText('Feedback · sent by Sam Mercer, just now', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await page.reload()
