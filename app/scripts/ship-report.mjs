@@ -25,6 +25,12 @@ const walk = suite => {
 for (const s of report.suites ?? []) walk(s)
 
 if (mode === 'list') {
+  for (const t of tests) {
+    if (t.video && (/^([\\/]|[A-Za-z]:)/.test(t.video) || t.video.split(/[\\/]/).includes('..'))) {
+      console.error(`unsafe video path: [${t.project}] ${t.title}`)
+      process.exit(1)
+    }
+  }
   for (const t of tests) console.log([t.project, t.title, t.video].join('\t'))
 } else {
   const problems = []

@@ -21,11 +21,11 @@ while IFS=$'\t' read -r project title video; do
     *) view=$project ;;
   esac
   # Text goes through files, never into the filter string, so a title can't break or inject into it.
-  printf '%s' "$title" | fold -s -w 46 > "$work/title-$n.txt"
+  printf '%s' "$title" | fold -s -w 36 > "$work/title-$n.txt"
   printf '%s' "$view" > "$work/view-$n.txt"
   printf '%s' "${sha:0:7}" > "$work/sha-$n.txt"
   ffmpeg -nostdin -loglevel error -y -f lavfi -i "color=c=0x111111:s=${W}x${H}:d=2:r=$FPS" \
-    -vf "drawtext=fontfile=$font:textfile=$work/title-$n.txt:fontcolor=white:fontsize=52:line_spacing=12:x=(w-text_w)/2:y=(h-text_h)/2-40,drawtext=fontfile=$font:textfile=$work/view-$n.txt:fontcolor=0xbbbbbb:fontsize=32:x=(w-text_w)/2:y=h-200,drawtext=fontfile=$font:textfile=$work/sha-$n.txt:fontcolor=0x888888:fontsize=28:x=(w-text_w)/2:y=h-150,format=yuv420p" \
+    -vf "drawtext=expansion=none:fontfile=$font:textfile=$work/title-$n.txt:fontcolor=white:fontsize=52:line_spacing=12:x=(w-text_w)/2:y=(h-text_h)/2-40,drawtext=expansion=none:fontfile=$font:textfile=$work/view-$n.txt:fontcolor=0xbbbbbb:fontsize=32:x=(w-text_w)/2:y=h-200,drawtext=expansion=none:fontfile=$font:textfile=$work/sha-$n.txt:fontcolor=0x888888:fontsize=28:x=(w-text_w)/2:y=h-150,format=yuv420p" \
     -an -c:v libx264 -preset veryfast "$work/card-$n.mp4"
   ffmpeg -nostdin -loglevel error -y -i "$results/$video" \
     -vf "scale=$W:$H:force_original_aspect_ratio=decrease,pad=$W:$H:(ow-iw)/2:(oh-ih)/2:color=0x111111,fps=$FPS,format=yuv420p" \
