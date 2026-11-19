@@ -18,20 +18,22 @@ The `deploy` workflow (`deploy.yml`) uploads a new Worker version, smokes its Ve
 
 - Failed before "Promote the version to 100%" (build, upload or the Version URL smoke): the old version is still live.
 - Failed at or after the promote (custom domain, active-deployment check or live smoke): the new version may be live.
-  Check `npx wrangler deployments list --name inhouse-app` before you decide.
-- The release is created last, only after every step passed. A failed run has no release.
+  Check `npx wrangler deployments list --name inhouse-app` (in `app/`) before you decide.
+- The release is created last, only after every step passed. A failed run has no release. A red run whose `deploy`
+  job is green failed only at the release: the new version is live, and no issue opens.
 
 ## Triage in the first 10 minutes
 
 1. **Is it real?** Open the live site in a private window. Hard reload.
 2. **Check the monitor issue.** Open issues with the `monitor` label. Note the time of the first failure and what failed
-   (page, asset or smoke spec).
+   (page, entry script or deep link).
 3. **Check the last deploy.** In Actions, open the latest `deploy` run on `main`. Note its commit, its result and when
    it finished. Open the matching release (`vYYYY.MM.DD.N`), which names the Worker version id.
 4. **Line up the times.** A failure that starts right after a deploy points at that deploy. A failure with no deploy
    nearby points at Cloudflare or the network. Check the Cloudflare status page.
 5. **Read Workers Logs.** Filter for `event` = `client_error`. Each line carries `kind` (`error`, `rejection`,
-   `boundary` or `route`), `message`, `stack`, `url`, `release` and `country`. Look for one message repeated many times,
+   `boundary`, `route` or `unknown`), `message`, `stack`, `url`, `release` and `country`. Reports from the `?demo&crash=`
+   switches carry `demo: true`: leave those out. Look for one message repeated many times,
    and the first time it appeared. Errors only from old tabs after a deploy are usually a stale lazy route, not an outage.
 6. **Decide.** If a deploy caused it, or you can't tell, roll back (next section). Don't debug on the live site.
 
@@ -58,7 +60,7 @@ If the workflow itself is broken, run this by hand in `app/`, with the Cloudflar
 
 ### What rollback can't undo
 
-- **Backend data.** Rollback swaps code only. Any data a future backend has written stays as it is. Before you roll
+- **Backend data.** Rollback swaps the Worker version (code, config and static assets), not stored data. Any data a future backend has written stays as it is. Before you roll
   back past a change that altered stored data, check that the older code can still read it.
 - **Bindings and migrations.** Cloudflare may refuse a rollback across a change to bindings or migrations (see
   [Cloudflare's rollback docs](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)). If it
