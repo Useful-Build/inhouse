@@ -36,6 +36,8 @@ type LiveRun = {
   interruptRequested: boolean
   /** The Worker hung up. */
   gone: boolean
+  /** The run's NDJSON response, once its headers are out. */
+  res: ServerResponse | null
 }
 
 export type RootDeps = {
@@ -60,6 +62,11 @@ export type Root = {
   /** The live run's token for a session uid; null when there's none, or more than one (never guess). */
   tokenForUid(uid: number): string | null
   liveCount(): number
+  /**
+   * Bytes of a live run's events written but not yet taken by the Worker's connection; null for no such run or no
+   * stream yet. Bounded by backpressure: past the response's high-water mark the session's stdout isn't read.
+   */
+  bufferedBytes(runId: string): number | null
   /** The SIGTERM path: refuses new runs (503), stops every run, starting ones included, and resolves once each has ended. */
   stopAll(): Promise<void>
 }
@@ -110,6 +117,7 @@ export function createRoot(deps: RootDeps): Root {
       stopRequested: false,
       interruptRequested: false,
       gone: false,
+      res: null,
     }
     runs.set(config.runId, live)
     chats.add(config.chatId)
@@ -156,6 +164,7 @@ export function createRoot(deps: RootDeps): Root {
     }
 
     res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })
+    live.res = res
     // Backpressure: when the Worker reads slowly, stop reading the session until the response drains.
     const stream = new RunStream(config.runId, (e) => {
       if (res.destroyed || res.writableEnded) return
@@ -275,6 +284,7 @@ export function createRoot(deps: RootDeps): Root {
     server,
     tokenForUid,
     liveCount: () => runs.size,
+    bufferedBytes: (runId) => runs.get(runId)?.res?.writableLength ?? null,
     async stopAll() {
       stopping = true
       for (const r of runs.values()) {

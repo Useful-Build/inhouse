@@ -1,20 +1,20 @@
-// The session's end of the local channel: NDJSON on two inherited descriptors, fd 3 to the root and fd 4 from it (the
-// root spawns the session with `stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe']`). No Node IPC channel, so nothing
-// the session sends is parsed by Node's own channel code in the root.
+// The session's end of the local channel: NDJSON on the session process's own stdin (from the root) and stdout (to the
+// root). No Node IPC channel, so nothing the session sends is parsed by Node's own channel code in the root.
 //
-// Keeping fds 3 and 4 away from the CLI and its tools. They're inherited, so they aren't close-on-exec here, and on
-// Linux libuv doesn't close inherited descriptors when it spawns (macOS's posix_spawn does). They're socketpairs, which
-// can't be re-opened close-on-exec through /dev/fd. So the CLI is spawned through `spawnCli` (the SDK's
-// `spawnClaudeCodeProcess` hook), which puts /dev/null on fds 3 and 4 of the CLI: neither the CLI nor anything it
-// starts can write to the root or read what it sends. No zod here, so a plain-Node fixture can import it.
-import { spawn } from 'node:child_process'
-import { openSync } from 'node:fs'
+// stdout is the channel and nothing else: every log line goes to stderr. `openRootChannel` points `console` at stderr,
+// so a stray console call can't corrupt the channel; a stray direct write to stdout still reaches the root, which ends
+// only this session with `protocol`.
+//
+// Children of the session (the CLI and its tools) never get these descriptors: the SDK spawns the CLI with its own
+// stdio pipes (`stdio: ['pipe', 'pipe', 'pipe']`), and Node opens every other descriptor close-on-exec. A tool can't
+// reopen them through /proc/<session pid>/fd/0 or /1 either: Node's stdio pipes are socketpairs (libuv), and the
+// kernel refuses to open a socket through /proc (ENXIO). No zod here, so a plain-Node fixture can import it.
+import { Console } from 'node:console'
 import net from 'node:net'
-import type { SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk'
 import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '../protocol/ndjson.ts'
 
-export const TO_ROOT_FD = 3
-export const FROM_ROOT_FD = 4
+export const FROM_ROOT_FD = 0
+export const TO_ROOT_FD = 1
 
 export type RootChannel = {
   send(message: unknown): void
@@ -24,7 +24,17 @@ export type RootChannel = {
   close(): Promise<void>
 }
 
+/** Every `console` method writes to stderr from here on (log, info, debug, table, dir and the rest). */
+export function consoleToStderr(): void {
+  const toStderr = new Console({ stdout: process.stderr, stderr: process.stderr })
+  for (const key of Object.keys(toStderr) as (keyof Console)[]) {
+    const value = toStderr[key]
+    if (typeof value === 'function') (console as unknown as Record<string, unknown>)[key] = value
+  }
+}
+
 export function openRootChannel(maxLineBytes: number = LOCAL_LINE_MAX_BYTES): RootChannel {
+  consoleToStderr()
   const out = new net.Socket({ fd: TO_ROOT_FD, readable: false, writable: true })
   const inp = new net.Socket({ fd: FROM_ROOT_FD, readable: true, writable: false })
   // The root went away: nothing more can be said; the root decides the run's end from how this process exits.
@@ -55,21 +65,4 @@ export function openRootChannel(maxLineBytes: number = LOCAL_LINE_MAX_BYTES): Ro
         out.end(() => resolve())
       }),
   }
-}
-
-let devNull: number | undefined
-
-/**
- * Spawns the CLI the way the SDK's own local spawn does, except: fds 3 and 4 are /dev/null (see the top of this file),
- * and stderr goes to the session's stderr (the root keeps its tail), since the SDK reads no stderr from a custom spawn.
- */
-export function spawnCli(options: SpawnOptions): SpawnedProcess {
-  devNull ??= openSync('/dev/null', 'r+')
-  return spawn(options.command, options.args, {
-    cwd: options.cwd,
-    env: options.env,
-    signal: options.signal,
-    stdio: ['pipe', 'pipe', 'inherit', devNull, devNull],
-    windowsHide: true,
-  }) as SpawnedProcess
 }

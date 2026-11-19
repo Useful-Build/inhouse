@@ -6,20 +6,24 @@
 //   crash-after:<n>    sends n sdk events, then exits with code 3
 //   garbage            sends a message that isn't in the local schema
 //   bad-event          sends an event body that isn't a run event
-//   raw-garbage        writes bytes that aren't JSON (nor UTF-8) straight to fd 3
+//   raw-garbage        writes bytes that aren't JSON (nor UTF-8) straight to stdout (the channel)
+//   stray-stdout       a stray process.stdout.write after ready (a log line in the wrong place)
+//   console-log        logs through every console method that writes to stdout by default, then finished
+//   flood:<n>:<bytes>  sends n sdk events of about <bytes> each, carrying their index, then finished
 //   oversized          sends one line over the channel's cap
 //   dump               writes a file in its cwd, then sends its env, argv, run message and cwd files as one sdk event
 //   hang               never answers; ends only when killed
 //   obey-stop          waits for stop, then ends with failed/stopped
 //   await-interrupt    waits for interrupt, then ends with failed/interrupted
 //   big                sends one sdk event larger than the SDK message cap
-//   grandchild         starts a shell the way the CLI is started (spawnCli) that writes to fds 3 and 4, then finished
+//   grandchild         starts a shell the way the SDK starts the CLI, which writes to its fds 0 to 4 and to the
+//                      session's stdout through /proc, then finished
 //   leftover           starts a process in its group that never ends, reports its pid, then finished and exits
 // A file named `hold-ready` in its cwd holds `ready` back until SIGUSR2 (it writes `waiting-for-usr2` once it listens).
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, writeFileSync, writeSync } from 'node:fs'
 import { LOCAL_LINE_MAX_BYTES } from '../../../src/protocol/ndjson.ts'
-import { TO_ROOT_FD, openRootChannel, spawnCli } from '../../../src/session/channel.ts'
+import { TO_ROOT_FD, openRootChannel } from '../../../src/session/channel.ts'
 
 const channel = openRootChannel()
 const send = (m: unknown) => channel.send(m)
@@ -89,6 +93,29 @@ channel.onMessage((line) => {
     case 'raw-garbage':
       writeSync(TO_ROOT_FD, Buffer.from([0x00, 0xff, 0xfe, 0x7b, 0x0a]))
       break
+    case 'stray-stdout':
+      process.stdout.write('a log line in the wrong place\n')
+      break
+    case 'console-log':
+      console.log('log')
+      console.info('info')
+      console.debug('debug')
+      console.dir({ dir: true })
+      console.table([{ a: 1 }])
+      console.count('count')
+      console.group('group')
+      console.groupEnd()
+      finished()
+      end()
+      break
+    case 'flood': {
+      const n = Number(a)
+      const blob = 'f'.repeat(Number(b))
+      for (let i = 0; i < n; i++) event({ type: 'sdk', message: { type: 'assistant', i, blob }, truncated: false })
+      finished()
+      end()
+      break
+    }
     case 'oversized':
       event({ type: 'sdk', message: { type: 'assistant', blob: 'a'.repeat(LOCAL_LINE_MAX_BYTES) }, truncated: false })
       break
@@ -106,8 +133,21 @@ channel.onMessage((line) => {
       end()
       break
     case 'grandchild': {
-      // If fds 3 or 4 reached the shell, "leaked" would land on the root's channel and end the run as `protocol`.
-      const sh = spawnCli({ command: '/bin/sh', args: ['-c', 'echo leaked >&3; echo leaked >&4; echo shell-ran'], env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
+      // Spawned the way the SDK's default spawn starts the CLI (0.3.328 spawnLocalProcess: its own stdio pipes). If the
+      // shell could reach the session's stdout, "leaked" would land on the root's channel and end the run as
+      // `protocol`. fds 1 and 2 are the shell's own pipes to this process; 0 is its stdin; 3 and 4 aren't open.
+      const script = [
+        'for fd in 0 1 2 3 4; do (echo leaked >&$fd) 2>/dev/null; done',
+        '(echo leaked > /proc/$SESSION_PID/fd/1) 2>/dev/null; echo "proc-stdout=$?"',
+        '(echo leaked > /proc/$SESSION_PID/fd/0) 2>/dev/null; echo "proc-stdin=$?"',
+        'echo shell-ran',
+      ].join('\n')
+      const sh = spawn('/bin/sh', ['-c', script], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { PATH: '/usr/bin:/bin', SESSION_PID: String(process.pid) },
+        windowsHide: true,
+      })
+      sh.stderr.resume()
       let out = ''
       sh.stdout.on('data', (d: Buffer) => (out += d.toString('utf8')))
       sh.on('exit', (code) => {

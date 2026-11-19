@@ -9,7 +9,6 @@ import { z } from 'zod'
 import { SDK_MESSAGE_MAX_BYTES, type RunEventBody } from '../../../shared/protocol/index.ts'
 import { RootMessage, capSdkMessage, type RunConfig } from '../protocol/local.ts'
 import type { LineResult } from '../protocol/ndjson.ts'
-import { spawnCli } from './channel.ts'
 import type { QueryGuards } from './seam.ts'
 
 export type QueryFn = (params: { prompt: string; options: Options }) => Pick<Query, 'interrupt'> & AsyncIterable<SDKMessage>
@@ -42,8 +41,8 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     maxTurns: config.maxTurns,
     maxBudgetUsd: config.maxBudgetUsd,
     settingSources: [],
-    // Keeps the local channel's fds 3 and 4 away from the CLI and its tools (src/session/channel.ts).
-    spawnClaudeCodeProcess: spawnCli,
+    // The SDK's own CLI spawn and MCP delivery: the CLI gets fresh stdio pipes, so it never holds the local channel
+    // (src/session/channel.ts), and the SDK reads its stderr as usual.
     ...(config.resume ? { resume: config.sessionId } : { sessionId: config.sessionId }),
   }
 }

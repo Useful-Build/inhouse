@@ -58,7 +58,7 @@ export function cleanup(users: { dirs: Map<string, string> }) {
 export const testQueryGuards: QueryGuards = { kind: 'test', apply: (options) => options }
 
 /**
- * Spawns a fixture session script with the production spawn (its own process group, fds 3 and 4, the same Node flags).
+ * Spawns a fixture session script with the production spawn (its own process group, the channel on its stdio, the same Node flags).
  * The uids the test seam hands out aren't real users, so it runs as you. `onSpawn` sees each child.
  */
 export function spawnFixture(script: string, opts: { onSpawn?: (child: ChildProcess) => void } = {}): SpawnSession {

@@ -17,7 +17,14 @@ export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files'] as const
 const REQUEST_HEADERS = new Set(['content-type', 'content-length', 'accept', 'user-agent', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'])
 const forwardsRequestHeader = (name: string) => REQUEST_HEADERS.has(name) || name.startsWith('anthropic-')
 
-/** Response headers never passed back: hop-by-hop ones and the token header. */
+/**
+ * Response headers never passed back: hop-by-hop ones and the token header. A denylist here, unlike the request side,
+ * on purpose: the request allowlist guards what reaches the egress with a token on it, but a response goes back only to
+ * the session that asked, and it carries nothing that session can't already see. The SDK and the MCP transport read
+ * headers we'd otherwise have to track by name (rate limits, request ids, `mcp-session-id`, retry hints), and dropping
+ * one would break the caller rather than protect anything. The token header is dropped in case the egress ever echoes
+ * it.
+ */
 const RESPONSE_DROP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', RUN_TOKEN_HEADER])
 
 export type ProxyDeps = {

@@ -7,11 +7,14 @@
 // - an oversized SDK message is passed through whole;
 // - a stop never ends a session that ignores it;
 // - a run raced by a stop or a crash ends twice, or with a seq gap.
+import type { ChildProcess } from 'node:child_process'
+import http from 'node:http'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
-import { ACCEPTED_VERSIONS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, type RunEvent } from '../../../shared/protocol/index.ts'
+import { ACCEPTED_VERSIONS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
 import { spawnFixture } from './support/test-seams.ts'
+import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
 
 let root: TestRoot
 beforeEach(async () => {
@@ -41,6 +44,7 @@ describe('a session that misbehaves', () => {
     ['garbage', 'protocol'],
     ['bad-event', 'protocol'],
     ['raw-garbage', 'protocol'],
+    ['stray-stdout', 'protocol'],
     ['oversized', 'protocol'],
   ])('%s: one failed event (%s) and the root stays up', async (prompt, reason) => {
     const events = await postRun(root, runStart({ prompt }))
@@ -48,6 +52,21 @@ describe('a session that misbehaves', () => {
     expect(events.at(-1)).toMatchObject({ type: 'failed', reason })
     await stillServes()
     expect(root.liveCount()).toBe(0)
+  })
+
+  it('a stray write to stdout ends only that session (protocol); a concurrent session finishes', async () => {
+    const [stray, other] = await Promise.all([postRun(root, runStart({ prompt: 'stray-stdout' })), postRun(root, runStart({ prompt: 'echo:m:3' }))])
+    expectOneEnd(stray!)
+    expect(stray!.at(-1)).toMatchObject({ type: 'failed', reason: 'protocol' })
+    expectOneEnd(other!)
+    expect(other!.at(-1)?.type).toBe('finished')
+    await stillServes()
+  })
+
+  it('console output in the session goes to stderr, never the channel', async () => {
+    const events = await postRun(root, runStart({ prompt: 'console-log' }))
+    expectOneEnd(events)
+    expect(events.at(-1)?.type).toBe('finished')
   })
 
   it('a session that ignores stop is killed after the grace and ends as stopped', async () => {
@@ -146,6 +165,59 @@ describe('streams', () => {
       await waitFor(() => root.liveCount() === 0)
     },
   )
+
+  it("a slow Worker pauses reading the session's stdout: memory stays bounded, nothing is lost or reordered", async () => {
+    const spawned: ChildProcess[] = []
+    const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }))
+    try {
+      // About 32 MB of events: far more than the pipes, the sockets and the kernel's buffers on the way can hold.
+      const n = 160
+      const start = runStart({ prompt: `flood:${n}:${200 * 1024}` })
+      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders }, resolve)
+        req.on('error', reject)
+        req.end(JSON.stringify(start))
+      })
+      expect(res.statusCode).toBe(200)
+      // The response isn't read yet: its socket fills, the root's write returns false and it stops reading the session.
+      await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
+      const out = spawned[0]!.stdout!
+      // Then it stays stalled: paused, and holding no more than its buffers' worth, whatever the kernel takes first.
+      let quiet = 0
+      let last = -1
+      await waitFor(() => {
+        const buffered = slow.bufferedBytes(start.runId)
+        expect(buffered).not.toBeNull()
+        expect(buffered!).toBeLessThanOrEqual(LOCAL_LINE_MAX_BYTES)
+        expect(out.readableLength).toBeLessThanOrEqual(out.readableHighWaterMark + LOCAL_LINE_MAX_BYTES)
+        quiet = out.isPaused() && buffered === last ? quiet + 1 : 0
+        last = buffered!
+        return quiet >= 100
+      }, 'the run stalled behind the slow Worker')
+      // The session is held up writing, not done.
+      expect(spawned[0]!.exitCode).toBeNull()
+
+      // Now the Worker reads: every event arrives, once, in order.
+      const events: RunEvent[] = []
+      let buf = ''
+      res.setEncoding('utf8')
+      for await (const chunk of res as AsyncIterable<string>) {
+        buf += chunk
+        for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
+          events.push(parseRunEventLine(buf.slice(0, i)))
+          buf = buf.slice(i + 1)
+        }
+      }
+      expect(buf).toBe('')
+      expectOneEnd(events)
+      expect(events.at(-1)?.type).toBe('finished')
+      const sdk = events.filter((e) => e.type === 'sdk')
+      expect(sdk.map((e) => (e.type === 'sdk' ? e.message.i : null))).toEqual([...Array(n).keys()])
+      expect(sdk.every((e) => e.type === 'sdk' && !e.truncated)).toBe(true)
+    } finally {
+      await slow.close()
+    }
+  })
 
   it('one live run per chat', async () => {
     const first = runStart({ prompt: 'obey-stop' })

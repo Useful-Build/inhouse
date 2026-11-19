@@ -3,8 +3,9 @@
 // root keeps running: a line that is unreadable, oversized or fails the schema ends the session (`protocol`), and an
 // end without a terminal event is `session_crashed` (or `stopped` after a stop).
 //
-// The local channel is two pipes the root parses itself as NDJSON (src/protocol/ndjson.ts), not Node's IPC channel:
-// fd 3 carries the session's messages to the root, fd 4 the root's to the session.
+// The local channel is the session's own stdio, parsed by the root itself as NDJSON (src/protocol/ndjson.ts), not Node's
+// IPC channel: the session's stdout carries its messages to the root, its stdin the root's to the session. Its stderr
+// is for logs (the root keeps a tail).
 //
 // Leftover processes: the session leads its own process group (`detached`). On stop or timeout the whole group is
 // killed after the grace period, and once the session has exited the group is killed at once, so nothing it started
@@ -35,7 +36,7 @@ export function spawnSessionProcess(entry: string): SpawnSession {
       cwd: user.workDir,
       env,
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
 }
 
@@ -63,8 +64,8 @@ export function hostSession(opts: {
 }): SessionHandle {
   const { child, stream, config, log } = opts
   const runId = stream.runId
-  const fromSession = child.stdio[3] as Readable | null | undefined
-  const toSession = child.stdio[4] as Writable | null | undefined
+  const fromSession: Readable | null = child.stdout
+  const toSession: Writable | null = child.stdin
   let sentRun = false
   let stopping = false
   let interruptPending = false
@@ -133,7 +134,6 @@ export function hostSession(opts: {
     stderrBytes += d.length
     stderrTail = (stderrTail + d.toString('utf8')).slice(-STDERR_TAIL)
   })
-  child.stdout?.resume()
 
   const finish = (how: string) => {
     if (closed) return

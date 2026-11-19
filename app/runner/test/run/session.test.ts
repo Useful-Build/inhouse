@@ -1,6 +1,7 @@
 // The session process's run loop, with the SDK's query() mocked at the process boundary. Ways it could fail:
 // - the query gets options that don't come from the run config, misses settingSources: [], or swaps sessionId/resume;
-// - the guards aren't applied, a NODE_CHANNEL_ variable reaches the CLI's env, or the CLI isn't spawned via spawnCli;
+// - the guards aren't applied, a NODE_CHANNEL_ variable reaches the CLI's env, or a custom CLI spawn or MCP delivery
+//   sneaks back in (the SDK's default spawn keeps the session's stdio from the CLI);
 // - an interrupt that falls back to abort is reported as an SDK error;
 // - a run ends twice, or not at all, when the query throws, is stopped, or the root sends garbage;
 // - sessionEnv() grows a variable that isn't on its list (where a token could hide).
@@ -13,7 +14,6 @@ import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import type { LineResult } from '../../src/protocol/ndjson.ts'
-import { spawnCli } from '../../src/session/channel.ts'
 import { runSession, type QueryFn } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards } from '../../src/session/seam.ts'
@@ -166,12 +166,14 @@ describe('runSession', () => {
     expect(h.events()).toEqual([expect.objectContaining({ type: 'failed', reason: 'protocol' })])
   })
 
-  it('the query spawns the CLI through spawnCli (fds 3 and 4 kept from it)', async () => {
+  it("the query uses the SDK's default CLI spawn and MCP delivery", async () => {
     const q = fakeQuery([result])
     const h = harness(q.query)
     h.deliver({ type: 'run', config: config() })
     await h.done
-    expect(q.calls[0]!.options.spawnClaudeCodeProcess).toBe(spawnCli)
+    expect(q.calls[0]!.options).not.toHaveProperty('spawnClaudeCodeProcess')
+    expect(q.calls[0]!.options).not.toHaveProperty('mcpServersDelivery')
+    expect(q.calls[0]!.options).not.toHaveProperty('pathToClaudeCodeExecutable')
   })
 
   it('an SDK message over the cap is stubbed before it is sent', async () => {

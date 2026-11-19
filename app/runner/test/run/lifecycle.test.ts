@@ -7,7 +7,7 @@
 // - the chat frees before release() settles, so the next run's allocate races the last run's release;
 // - a timeout racing the session's finish gives two ends;
 // - SIGTERM (stopAll) misses a run that is still starting, or new runs are let in while stopping;
-// - fds 3 and 4 reach the CLI's tools; a process the session left behind outlives the run;
+// - a tool the CLI starts can write into the channel; a process the session left behind outlives the run;
 // - a uid maps to the wrong token, or to a token after its run's session has gone.
 import type { ChildProcess } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
@@ -202,13 +202,20 @@ describe('SIGTERM (stopAll)', () => {
 })
 
 describe('what a run leaves behind', () => {
-  it('fds 3 and 4 never reach a process started the way the CLI is', async () => {
+  it("a tool the CLI starts can't write into the channel, through its fds 0 to 4 or /proc", async () => {
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
       const events = await postRun(root, runStart({ prompt: 'grandchild' }))
       expectOneEnd(events)
-      // Had either fd leaked, "leaked" would have reached the root's parser and ended the run as protocol.
+      // Had any write reached the session's stdout, "leaked" would have hit the root's parser and ended the run as
+      // protocol.
       expect(events.at(-1)?.type).toBe('finished')
-      expect(events.find((e) => e.type === 'sdk')).toMatchObject({ message: { type: 'grandchild', out: 'shell-ran\n' } })
+      const sdk = events.find((e) => e.type === 'sdk')
+      expect(sdk).toMatchObject({ message: { type: 'grandchild', code: 0 } })
+      const out = sdk?.type === 'sdk' ? String(sdk.message.out) : ''
+      expect(out).toContain('shell-ran')
+      // Neither of the session's stdio sockets opens through /proc (ENXIO on Linux; no /proc elsewhere).
+      expect(out).toMatch(/^proc-stdout=[1-9]/m)
+      expect(out).toMatch(/^proc-stdin=[1-9]/m)
     })
   })
 
