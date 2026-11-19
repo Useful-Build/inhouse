@@ -68,11 +68,17 @@ const cap1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 /** A sample routine's id, from its name: "Morning check" is "routine-morning-check". */
 const routineIdOf = (name: string) => 'routine-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
-type RawTurn = { user?: string; stage?: string; agent?: Record<string, unknown>[]; trace?: string }
+type RawTurn = { user?: string; stage?: string; agent?: Record<string, unknown>[]; trace?: string; model?: string }
 /** A seeded answer's recorded trace: every one has its own, so its footer and steps are its own. */
 const needTrace = (turn: RawTurn, where: string): string => {
   if (!turn.trace) throw new Error(`Sample data: an answer in ${where} has no trace.`)
   return turn.trace
+}
+
+/** A seeded answer's model: the mode (models.json) that answered it, shown in its steps line. */
+const needModel = (turn: RawTurn, where: string): string => {
+  if (!turn.model || !models.some(m => m.id === turn.model)) throw new Error(`Sample data: an answer in ${where} has no known model.`)
+  return turn.model
 }
 
 const seedPart = (a: Record<string, unknown>): MessagePart => {
@@ -92,7 +98,7 @@ const seedPart = (a: Record<string, unknown>): MessagePart => {
 const seedThread: SeedTurn[] = (chatScript.seedThread.turns as RawTurn[]).map((turn): SeedTurn =>
   turn.user
     ? { role: 'user', text: turn.user }
-    : { role: 'agent', stage: turn.stage as Stage | undefined, trace: traceKey(needTrace(turn, 'the seed thread')), parts: (turn.agent ?? []).map(seedPart) })
+    : { role: 'agent', stage: turn.stage as Stage | undefined, trace: traceKey(needTrace(turn, 'the seed thread')), model: needModel(turn, 'the seed thread'), parts: (turn.agent ?? []).map(seedPart) })
 
 /** The other chats: plain text, work rows and tables, with the table's own data. */
 const chatPart = (a: Record<string, unknown>): MessagePart => {
@@ -111,7 +117,7 @@ function loadChats(): ChatThread[] {
     turns: c.turns === 'seedThread' ? seedThread : (c.turns as RawTurn[]).map((turn): SeedTurn => {
       if (turn.user) return { role: 'user', text: turn.user }
       if (turn.stage !== undefined && !STAGES_OK.includes(turn.stage)) throw new Error(`Sample data: chat "${c.id}" has a turn for an unknown stage "${turn.stage}".`)
-      return { role: 'agent', stage: turn.stage as Stage | undefined, trace: traceKey(needTrace(turn, `chat "${c.id}"`)), parts: (turn.agent ?? []).map(chatPart) }
+      return { role: 'agent', stage: turn.stage as Stage | undefined, trace: traceKey(needTrace(turn, `chat "${c.id}"`)), model: needModel(turn, `chat "${c.id}"`), parts: (turn.agent ?? []).map(chatPart) }
     }),
   }))
   // All chats lists them in this order, so it must be newest first by a real time (never by the shown `at`).

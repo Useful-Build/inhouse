@@ -27,7 +27,8 @@
               "text": "Refund requests rose from 14 last week to 31 this week. 19 of them are for the Trail Shell Jacket in size M, and most say it runs small. Every other product is flat. A sizing note on the product page would cut these."
             }
           ],
-          "trace": "refunds"
+          "trace": "refunds",
+          "model": "sonnet"
         },
         {
           "user": "Show me the newest ones."
@@ -71,7 +72,8 @@
               "text": "Leo has an answer ready in Gorgias for each of them. Most customers would take an exchange to size L, and we have 62 in stock."
             }
           ],
-          "trace": "refunds-list"
+          "trace": "refunds-list",
+          "model": "sonnet"
         },
         {
           "user": "Draft a sizing note for the product page."
@@ -84,7 +86,8 @@
               "text": "Here's a draft you can paste in:\n\n\"The Trail Shell Jacket fits close. If you're between sizes, or you plan to layer a fleece underneath, order one size up.\"\n\nI can't edit the product page in Watch, so it's yours to add."
             }
           ],
-          "trace": "sizing-note"
+          "trace": "sizing-note",
+          "model": "sonnet"
         },
         {
           "stage": "Act",
@@ -94,7 +97,8 @@
               "text": "Here's a draft you can paste in:\n\n\"The Trail Shell Jacket fits close. If you're between sizes, or you plan to layer a fleece underneath, order one size up.\"\n\nEditing a product page isn't one of the jobs I can draft for approval yet, so it's yours to add."
             }
           ],
-          "trace": "sizing-note"
+          "trace": "sizing-note",
+          "model": "sonnet"
         },
         {
           "stage": "Run",
@@ -104,7 +108,8 @@
               "text": "Here's a draft you can paste in:\n\n\"The Trail Shell Jacket fits close. If you're between sizes, or you plan to layer a fleece underneath, order one size up.\"\n\nEditing a product page isn't one of the jobs I can draft for approval yet, so it's yours to add."
             }
           ],
-          "trace": "sizing-note"
+          "trace": "sizing-note",
+          "model": "sonnet"
         }
       ]
     },
@@ -125,7 +130,8 @@
               "text": "The Cairn Insulated Bottle is the safe pick: 1,240 in stock, selling 18 a day, so about 69 days of cover. I'd stay away from the Ridge 30L Pack, which has 10 days of stock left, and the Summit Fleece, because PO-1187 from Kestrel hasn't shipped."
             }
           ],
-          "trace": "friday"
+          "trace": "friday",
+          "model": "sonnet"
         },
         {
           "user": "Which bottle color sells best?"
@@ -137,7 +143,8 @@
               "text": "Slate sells best: 52% of the last 30 days. Sage is 31% and Sand is 17%. Sage has the most stock left, so it's worth showing next to Slate."
             }
           ],
-          "trace": "bottle-colors"
+          "trace": "bottle-colors",
+          "model": "sonnet"
         }
       ]
     },
@@ -158,7 +165,8 @@
               "text": "The settlement for Oct 30 to Nov 12 paid $18,420. Xero expected $19,660, so the payout is $1,240 short. 18 orders were charged the large-item fee, though they ship as standard size. That's an Amazon error, so it can be claimed back. I can draft the reimbursement case for you to approve."
             }
           ],
-          "trace": "payout"
+          "trace": "payout",
+          "model": "sonnet"
         },
         {
           "user": "Can you check the next one?"
@@ -170,7 +178,8 @@
               "text": "The Amazon payout check already runs every day at 6:00 AM. It compares each payout with what Xero expected. I'll flag it here if the gap is over $500, so small differences stay quiet."
             }
           ],
-          "trace": "payout-check"
+          "trace": "payout-check",
+          "model": "haiku"
         }
       ]
     },
@@ -191,7 +200,8 @@
               "text": "Here's the week of Nov 7 to 13. It's saved to Library.\n\n| Measure | This week | Last week | Change |\n|---|---|---|---|\n| Revenue | $61,840 | $58,210 | +6% |\n| Orders | 1,284 | 1,196 | +7% |\n| Refund requests | 31 | 14 | +17 |\n| Ad spend | $9,260 | $9,010 | +3% |\n\nGross margin held at 52%. Refund requests more than doubled, mostly for the Trail Shell Jacket in size M, which runs small. The Ridge 30L Pack sells out on Wed, Nov 25 unless a reorder goes out."
             }
           ],
-          "trace": "weekly-report"
+          "trace": "weekly-report",
+          "model": "sonnet"
         }
       ]
     },
@@ -212,7 +222,8 @@
               "text": "Two campaigns. Ridge 30L Autumn spent $420 last week at a return of 3.1. Summit Fleece Layering spent $260 at 2.7. Both products are under 21 days of stock.\n\nI wouldn't pause them yet. If the Summit Fleece order slips again, that's the one to cut first."
             }
           ],
-          "trace": "meta-ads"
+          "trace": "meta-ads",
+          "model": "sonnet"
         }
       ]
     },
@@ -233,7 +244,8 @@
               "text": "You sell about 21 a day and have 295 left, which is 14 days. Kestrel needs 14 days to deliver, so the order has to go out today or you run out before it lands, on Wed, Nov 25.\n\n600 covers about 4 weeks after they arrive: 400 in Olive and 200 in Black, $9,600 in total. Dana approves orders over $5,000."
             }
           ],
-          "trace": "ridge"
+          "trace": "ridge",
+          "model": "sonnet"
         }
       ]
     },
@@ -254,7 +266,8 @@
               "text": "Across your last 6 purchase orders Kestrel took 13 to 16 days, 14 on average. Two came late. Mei Chen answers date questions by email within a day."
             }
           ],
-          "trace": "kestrel"
+          "trace": "kestrel",
+          "model": "sonnet"
         }
       ]
     }

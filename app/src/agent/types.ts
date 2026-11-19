@@ -481,7 +481,7 @@ export interface ActivityLine {
 /** One turn of the seed conversation. `stage` limits an agent turn to that stage. */
 export type SeedTurn =
   | { role: 'user'; text: string }
-  | { role: 'agent'; stage?: Stage; trace: string; parts: MessagePart[] }
+  | { role: 'agent'; stage?: Stage; trace: string; model: string; parts: MessagePart[] }
 
 /** One chat in the sidebar and in See all. Its messages are the turns, then whatever the person adds. */
 export interface ChatThread {

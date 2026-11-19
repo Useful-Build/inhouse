@@ -512,7 +512,7 @@ export function chatMessages(ctx: Ctx, chatId: string): ChatMessage[] {
     // The approval note goes after the whole turn, so the turn's parts stay together (one set of thumbs, one Regenerate).
     let note: ChatMessage | undefined
     turn.parts.forEach((part, k) => {
-      out.push({ id: `${chatId}-t${t}-p${k}`, role: 'agent', trace: turn.trace, part })
+      out.push({ id: `${chatId}-t${t}-p${k}`, role: 'agent', trace: turn.trace, model: turn.model, part })
       if (part.type !== 'approval') return
       const at = agent.approved[part.problemId]
       if (at) note = { id: `${chatId}-t${t}-approved`, role: 'event', text: `${firstName(at.by)} approved: ${lower1(at.title)} · ${at.at}` }
