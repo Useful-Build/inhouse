@@ -118,9 +118,12 @@ function demoPublicFiles(): Plugin[] {
 /**
  * The Cloudflare plugin writes one redirect per project, .wrangler/deploy/config.json, pointing `vite preview` and
  * `wrangler deploy` at the last build's Worker config. A product build would point it at dist-product/, so this puts
- * back what was there (the demo build's, or nothing) however the build ends: after buildApp, and on process exit for a
- * failed or thrown build. It restores only a pointer into dist-product/, so a concurrent demo build's is never
- * clobbered (build-support/demo-deploy-redirect.ts). The product build is served with
+ * back what was there (the demo build's, or nothing): after buildApp, on process exit (a failed or thrown build) and on
+ * SIGINT, SIGTERM and SIGHUP. SIGKILL can't be caught: after one, the next product build removes the stale pointer and
+ * the next demo build rewrites it. It restores only a pointer into dist-product/ (build-support/demo-deploy-redirect.ts).
+ * Never run a demo and a product build at the same time, or preview or deploy while a product build runs: the pointer
+ * points at the product for a moment before the restore, and a demo pointer written in between may be removed (preview
+ * then fails loud; it never serves the product). The product build is served with
  * `wrangler dev -c dist-product/inhouse_app/wrangler.json` instead (playwright.config.ts, the product project).
  */
 function keepDemoDeployRedirect(): Plugin {
@@ -133,6 +136,10 @@ function keepDemoDeployRedirect(): Plugin {
     config() {
       snapshot = snapshotRedirect(redirect)
       process.once('exit', restore)
+      // A killed build (Ctrl-C, a CI cancel) skips 'exit': restore, then re-raise so the process still ends by the signal.
+      for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+        process.once(sig, () => { restore(); process.kill(process.pid, sig) })
+      }
     },
     // After the Cloudflare plugin's own post buildApp (which comes first in the plugin list) has written it.
     buildApp: {

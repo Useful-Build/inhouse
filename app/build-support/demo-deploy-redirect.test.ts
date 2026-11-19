@@ -2,7 +2,9 @@
 //   - a product build that wrote its pointer leaves the demo's pointer (or no file) behind it;
 //   - a concurrent demo build's pointer, written after the snapshot, is never clobbered or removed;
 //   - a failed product build that wrote nothing changes nothing;
-//   - a stale product pointer in the snapshot is never put back.
+//   - a stale product pointer in the snapshot is never put back;
+//   - a demo pointer sandwiched between the snapshot and the product's write is lost, but never replaced by the
+//     product's (documented limit: demo and product builds must not run at the same time).
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -58,6 +60,14 @@ describe('restoreRedirect', () => {
     writeFileSync(file, DEMO_LATER) // the demo build finished last
     expect(restoreRedirect(snap, 'dist-product')).toBe('left')
     expect(read()).toBe(DEMO_LATER)
+  })
+
+  it('never leaves the product pointer when a demo write is sandwiched before the product write', () => {
+    const none = snapshotRedirect(file)
+    writeFileSync(file, DEMO) // the demo build wrote between the snapshot and the product's write
+    writeFileSync(file, PRODUCT)
+    expect(restoreRedirect(none, 'dist-product')).toBe('removed') // preview then fails loud, never serves the product
+    expect(read()).toBeNull()
   })
 
   it('changes nothing when the product build wrote nothing (a failed build)', () => {

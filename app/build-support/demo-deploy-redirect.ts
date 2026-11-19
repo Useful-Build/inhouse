@@ -1,6 +1,6 @@
 // The Cloudflare plugin writes one redirect per project, .wrangler/deploy/config.json ({"configPath": "<Worker config>"}),
 // pointing `vite preview` and `wrangler deploy` at the last build's Worker config. The product build must leave it on
-// the demo build however it ends, and never undo a pointer a concurrent demo build wrote. vite.config.ts uses these;
+// the demo build however it ends (SIGKILL excepted). Demo and product builds must not run at the same time. vite.config.ts uses these;
 // demo-deploy-redirect.test.ts tests them on a temp folder.
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
