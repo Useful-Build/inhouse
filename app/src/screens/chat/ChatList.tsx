@@ -1,16 +1,16 @@
 // See all: every chat, pinned first, then newest first grouped by day, with a search box that filters by title,
 // a "···" menu on each row and Select for deleting several at once (the toast has Undo).
 import { useEffect, useRef, useState } from 'react'
-import { cn } from '@/lib/utils'
 import { chatEntries, useCtx, useUi } from '../../state/store'
-import { Button, Icon, Page, PageHeader, SectionHeader, SelectionBar } from '../../ui'
-import { ChatRow } from '../../ui/chat'
+import { Button, EmptyState, Icon, Page, PageHeader, SectionHeader, SelectionBar } from '../../ui'
+import { ChatRow, SuggestionChip } from '../../ui/chat'
 import { SearchBox } from '../../ui/fields'
 
 export function ChatList() {
   const { data, agent: agentState } = useCtx()
   const openChat = useUi(s => s.openChat)
   const newChat = useUi(s => s.newChat)
+  const ask = useUi(s => s.ask)
   const deleteChats = useUi(s => s.deleteChats)
   const started = useUi(s => s.started)
   const phone = useUi(s => s.phone)
@@ -55,12 +55,12 @@ export function ChatList() {
   return (
     // The same Page column as every list page. Chats lays its screen out in a flex column, so the column takes the
     // full width (else it shrinks to its content). In Select mode the last row scrolls clear of the bar.
-    <Page className={cn('w-full pt-2', selecting && 'pb-24')}>
+    <Page className="w-full pt-2">
       <div ref={content}>
         <PageHeader title="All chats" className="mb-3.5" />
         <div className="flex items-center gap-2.5">
           <SearchBox value={q} onChange={search} placeholder="Search chats" label="Search chats" />
-          <Button variant="outline" size="lg" aria-pressed={selecting} onClick={() => (selecting ? endSelect() : setSelecting(true))} className="flex-none">
+          <Button variant="outline" size="lg" aria-pressed={selecting} disabled={!selecting && found.length === 0} onClick={() => (selecting ? endSelect() : setSelecting(true))} className="flex-none">
             {selecting ? 'Done' : 'Select'}
           </Button>
           <Button variant="outline" size="lg" onClick={() => newChat()} className="flex-none gap-2">
@@ -79,9 +79,30 @@ export function ChatList() {
             </div>
           </section>
         ))}
+        {/* What shows with no chats (M19): a search that found none, with Clear, or none at all, with questions to start one. */}
         {found.length === 0 && (
-          <p role="status" tabIndex={-1} data-chat-fallback className="mt-12 text-center text-md text-foreground-3">{needle ? `No chats match "${q.trim()}".` : 'No chats yet.'}</p>
+          <div tabIndex={-1} data-chat-fallback className="flex flex-col items-center outline-none">
+            {needle ? (
+              <>
+                <EmptyState variant="inline" className="mb-3">No chats match "{q.trim()}".</EmptyState>
+                {/* The button goes with the empty state: focus goes back to the search box. */}
+                <Button variant="outline" onClick={() => { search(''); content.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus() }}>Clear search</Button>
+              </>
+            ) : (
+              <EmptyState className="mt-6 flex w-full flex-col items-center gap-3 py-8">
+                <Icon name="forum" size={28} className="text-muted-foreground" />
+                <span className="text-md font-medium text-foreground">No chats yet</span>
+                {data.chat.suggestions.length > 0 && (
+                  <span className="mt-1 flex flex-wrap justify-center gap-2">
+                    {data.chat.suggestions.map(t => <SuggestionChip key={t} question={t} onAsk={x => { void ask(x) }} />)}
+                  </span>
+                )}
+              </EmptyState>
+            )}
+          </div>
         )}
+        {/* Select mode: the last row scrolls clear of the bar, above a phone's home bar too. */}
+        {selecting && <div aria-hidden="true" className="h-selection-room" />}
       </div>
 
       {selecting && (

@@ -131,7 +131,7 @@
   --app-composer-input-pad-y: 6px; /* the composer field's padding above and below its text */
   /* the composer's field grows to 8 lines (15px text at the body's 1.45 line height) plus its padding, then scrolls */
   --app-composer-input-max: calc(8 * var(--text-md) * 1.45 + 2 * var(--app-composer-input-pad-y));
-  --app-trace-label: min(330px, 46%);           /* the trace's step-name column */
+  --app-trace-label: min(440px, 48%);           /* the trace's step-name column, wide enough that names read in full on desktop (H6) */
   --app-playhead: 9px;                          /* the trace replay's playhead dot */
   --app-time-column: 8ch;                       /* a list's time column in mono: "10:12 AM" on one line */
   --app-bar-tick: 3px;                          /* the Usage chart: a $0 day still draws a tick on the baseline */
@@ -343,6 +343,24 @@
   --background-image-dot-grid: var(--app-dot-grid);
   --background-image-dot-grid-live: var(--app-dot-grid-live);
   --background-image-dot-grid-tool: var(--app-dot-grid-tool);
+}
+
+/* PR 5: conversation and composer. */
+:root {
+  --app-composer-fade: linear-gradient(to bottom, transparent 0, black 18px); /* the composer field's top edge once it scrolls */
+  --app-selection-room: calc(var(--app-toast-bottom) + 88px); /* room under a list in Select mode: the bar, its gap and a phone's home bar */
+  --app-prose-measure: 32.5rem; /* an answer's text, tables and insets, and your bubble: about 72 characters a line at 15px Geist */
+  --app-sheet-fade: linear-gradient(to bottom, transparent, var(--app-window-surface)); /* the foot of a window's scrolling list on a phone */
+  --app-bubble: var(--fill-hover); /* your message's bubble: the soft grey (#e9e9e9) in light */
+}
+.dark {
+  --app-bubble: #171717;        /* just under the answer card (#1a1a1a), so the card leads; still apart from the #111 page; ~15:1 for text (#ededed) */
+}
+@theme inline {
+  --spacing-selection-room: var(--app-selection-room);
+  --container-prose-measure: var(--app-prose-measure);
+  --color-bubble: var(--app-bubble);
+  --background-image-sheet-fade: var(--app-sheet-fade);
 }
 
 /* Motion: the agent's marks. */

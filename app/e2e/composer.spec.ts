@@ -82,6 +82,8 @@ test('Composer: a multi-line question grows the field and keeps its lines; Send 
     return { h: el.clientHeight, scroll: el.scrollHeight, lines8: 8 * parseFloat(cs.lineHeight) + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) }
   })
   expect(capped.scroll).toBeGreaterThan(capped.h)
+  // Scrolled, its top edge fades, so a cut line reads as more above (M12).
+  await expect.poll(() => field.evaluate(el => getComputedStyle(el).maskImage)).toContain('gradient')
   // The cap is exactly 8 lines of text plus the field's padding.
   expect(capped.h, `capped at ${capped.h}px, 8 lines are ${capped.lines8}px`).toBeCloseTo(capped.lines8, 0)
   const max = await height(field)
@@ -99,15 +101,25 @@ test('Composer: a multi-line question grows the field and keeps its lines; Send 
   await expect(field).toHaveValue('')
   expect(await height(field)).toBe(one)
 
-  // While the answer streams, Send is Stop in the same place. Typing doesn't bring Send back, and Enter doesn't send.
+  // While the answer streams, Send is Stop in the same place. A typed message gets its own Queue button beside Stop, and
+  // Enter queues it: it waits above the box, not in the thread (H8).
   const stop = composer(page).getByRole('button', { name: 'Stop' })
   await expect(stop).toBeVisible()
   await expect(composer(page).getByRole('button', { name: 'Send' })).toHaveCount(0)
   await field.fill('And last month?')
+  await expect(composer(page).getByRole('button', { name: 'Queue message' })).toBeVisible()
+  await expect(stop).toBeVisible()
   await page.keyboard.press('Enter')
   await expect(page.locator('main [data-chat-msg]').filter({ hasText: 'And last month?' })).toHaveCount(0)
-  await expect(field).toHaveValue('And last month?')
+  const queued = page.getByRole('list', { name: 'Queued messages' }).getByRole('listitem')
+  await expect(queued).toHaveCount(1)
+  await expect(queued).toContainText('And last month?')
+  await expect(field).toHaveValue('')
   await shot(page, 'composer-stop')
+  // Remove takes it out; nothing is sent.
+  await queued.getByRole('button', { name: 'Remove queued message' }).click()
+  await expect(queued).toHaveCount(0)
+  await field.fill('And last month?')
 
   await stop.click()
   await expect(page.getByText('You stopped your Inhouse agent. Nothing was changed.')).toBeVisible()

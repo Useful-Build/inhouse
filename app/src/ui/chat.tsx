@@ -95,6 +95,8 @@ export function ChatTitleInput({ title, size, className, onDone }: {
     onDone(save ? ref.current?.value ?? null : null, byKey)
   }
   return (
+    // Room for the 3px focus halo inside the field's own box, so a parent that clips (the top bar's title) shows all of it (M13).
+    <span className="-m-1 flex min-w-0 flex-1 p-1">
     <Input ref={ref} data-chat-rename size={size} aria-label="Chat title" defaultValue={title} maxLength={CHAT_TITLE_MAX} autoComplete="off" spellCheck={false} className={className}
       onKeyDown={e => {
         if (e.key === 'Enter') { e.preventDefault(); finish(true, true) }
@@ -102,13 +104,14 @@ export function ChatTitleInput({ title, size, className, onDone }: {
         else if (e.key === 'Escape') { e.stopPropagation(); finish(false, true) }
       }}
       onBlur={() => finish(true, false)} />
+    </span>
   )
 }
 
 const chatRowVariants = cva('group/chat relative flex flex-none items-center rounded-lg', {
   variants: {
     /** `sidebar` is a Recent chats or Pinned row; `list` a row in See all. */
-    place: { sidebar: 'h-8', list: 'min-h-13 gap-1 pr-1.5' },
+    place: { sidebar: 'h-8', list: 'min-h-13' },
     // The open chat has the nav's one selected look (NavItem), a step stronger than hover.
     open: { true: 'bg-fill-hover', false: 'hover:bg-accent has-focus-visible:bg-accent has-aria-expanded:bg-accent' },
   },
@@ -118,9 +121,10 @@ const chatRowVariants = cva('group/chat relative flex flex-none items-center rou
 const chatButtonVariants = cva('flex h-full min-w-0 flex-1 items-center text-left', {
   variants: {
     place: {
-      // The title gets the full width at rest. The row's "···" trigger is laid over its end on hover and focus.
+      // The title (and in See all the time) gets the full width at rest. The row's "···" trigger is laid over its end
+      // on hover and focus.
       sidebar: 'gap-2 rounded-lg pl-2.5 text-sm text-foreground-2',
-      list: 'min-h-13 gap-3.5 rounded-lg px-3 py-2',
+      list: 'min-h-13 gap-3.5 rounded-lg py-2 pl-3',
     },
     // A phone or touch screen always shows the trigger, so the title leaves room for it.
     reserve: { true: '', false: '' },
@@ -128,6 +132,11 @@ const chatButtonVariants = cva('flex h-full min-w-0 flex-1 items-center text-lef
   compoundVariants: [
     { place: 'sidebar', reserve: true, class: 'pr-9' },
     { place: 'sidebar', reserve: false, class: 'pr-2.5 pointer-coarse:pr-9' },
+    // See all: the time ends on the card's edge, 12px in; a phone or touch screen keeps the trigger's room after it.
+    // A phone in Select mode shows no trigger, so the row gives that room back to the title (the time moves right);
+    // a desktop keeps the time on one column in both views.
+    { place: 'list', reserve: true, class: 'pr-12' },
+    { place: 'list', reserve: false, class: 'pr-3 pointer-coarse:pr-12' },
   ],
   defaultVariants: { place: 'sidebar', reserve: false },
 })
@@ -203,7 +212,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
         <Tooltip open={tip} onOpenChange={o => setTip(o && cut())}>
           <TooltipTrigger asChild>
             <button ref={row} data-chat-open type="button" onClick={onClick} aria-current={open ? 'page' : undefined} aria-pressed={selecting ? picked : undefined}
-              aria-describedby={running ? runningId : undefined} className={chatButtonVariants({ place, reserve: phone })}>
+              aria-describedby={running ? runningId : undefined} className={cn(chatButtonVariants({ place, reserve: phone }), place === 'list' && phone && selecting && 'pr-3')}>
               {selecting && (
                 <span aria-hidden="true" className={cn('box-border flex size-5 flex-none items-center justify-center rounded-full text-primary-foreground', picked ? 'bg-primary' : 'border-hairline border-border-strong bg-card')}>
                   {picked && <Icon name="check" size={14} weight={500} />}
@@ -213,7 +222,9 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
               <span ref={titleEl} className={cn('ellipsis min-w-0 flex-1', place === 'list' && 'text-md font-medium')}>{chat.title}</span>
               {running && <span aria-hidden="true" className="size-2 flex-none animate-pulse rounded-full bg-brand" />}
               {/* On the selected fill muted text falls under 4.5:1, so a picked or open row's time steps up a level. */}
-              {place === 'list' && <span className={cn('flex-none text-sm tabular-nums', open || picked ? 'text-foreground-3' : 'text-muted-foreground')}>{chat.at}</span>}
+              {/* Where the "···" trigger shows over it (hover, focus, an open menu; not on a phone or touch screen), the time fades. */}
+              {place === 'list' && <span className={cn('flex-none text-sm tabular-nums transition-opacity duration-120', open || picked ? 'text-foreground-3' : 'text-muted-foreground',
+                !phone && !selecting && 'pointer-fine:group-hover/chat:opacity-0 pointer-fine:group-focus-within/chat:opacity-0 pointer-fine:group-has-[[aria-expanded=true]]/chat:opacity-0')}>{chat.at}</span>}
             </button>
           </TooltipTrigger>
           <TooltipContent side={place === 'sidebar' ? 'right' : 'top'} className="max-w-72">{chat.title}</TooltipContent>
@@ -222,7 +233,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
       {running && <span id={runningId} hidden>Answering now</span>}
       {!selecting && (
         <ChatMenu chat={chat} onRename={() => setEditing(true)} focusAfter={focusAfter} box={place === 'sidebar' ? 'icon-sm' : 'icon'}
-          className={cn(editing ? 'invisible' : reveal, place === 'sidebar' && 'absolute top-1/2 right-0.5 -translate-y-1/2', place === 'sidebar' && !phone && trigger(open || !!picked))} />
+          className={cn(editing ? 'invisible' : reveal, 'absolute top-1/2 -translate-y-1/2', place === 'sidebar' ? 'right-0.5' : 'right-1.5', place === 'sidebar' && !phone && trigger(open || !!picked))} />
       )}
     </div>
   )

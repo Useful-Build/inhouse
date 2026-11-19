@@ -119,30 +119,24 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await page.keyboard.press('Escape')
   await expect(page.getByRole('menu', { name: 'Message actions' })).toHaveCount(0)
 
-  // Copy your own message, then Edit puts it back in the composer, focused.
+  // Copy your own message. Edit shows "Editing" with the question in the box, focused, and Cancel puts back the draft
+  // that was there (M11).
   const mine = msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-md-code]') }).last()
   await mine.hover()
   await mine.getByRole('button', { name: 'Copy message' }).click()
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(REFUNDS_Q)
-  await mine.getByRole('button', { name: 'Edit message' }).click()
-  await expect(composer(page)).toHaveValue(REFUNDS_Q)
-  await expect(composer(page)).toBeFocused()
   await composer(page).fill('Draft I keep')
-  // Edit over a draft asks first; Cancel keeps the draft.
+  await mine.hover()
   await mine.getByRole('button', { name: 'Edit message' }).click()
-  const replace = page.getByRole('dialog', { name: 'Replace your draft?' })
-  await expect(replace).toBeVisible()
-  await replace.getByRole('button', { name: 'Cancel' }).click()
-  await expect(replace).toHaveCount(0)
-  await expect(composer(page)).toHaveValue('Draft I keep')
-  // Replace puts the question in the box, with focus and the caret at its end (not back on the Edit button).
-  await mine.getByRole('button', { name: 'Edit message' }).click()
-  await replace.getByRole('button', { name: 'Replace' }).click()
-  await expect(replace).toHaveCount(0)
+  const editingBar = page.locator('[data-composer]').getByText('Editing your message')
+  await expect(editingBar).toBeVisible()
   await expect(composer(page)).toHaveValue(REFUNDS_Q)
   await expect(composer(page)).toBeFocused()
   expect(await composer(page).evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.selectionEnd])).toEqual([REFUNDS_Q.length, REFUNDS_Q.length])
-  await composer(page).fill('Draft I keep')
+  await page.locator('[data-composer]').getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(editingBar).toHaveCount(0)
+  await expect(composer(page)).toHaveValue('Draft I keep')
+  await expect(msg(page, REFUNDS_A)).toHaveCount(1)
 
   // Scrolled up, Regenerate still goes to the bottom like a new question.
   await log(page).hover()
