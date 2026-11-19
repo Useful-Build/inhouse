@@ -1,4 +1,4 @@
-import { amountOf, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, userName, visibleProblems } from '../state/derive'
+import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, userName, visibleProblems } from '../state/derive'
 import { sevClass } from '../ui/severity'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -23,6 +23,9 @@ export function Approvals() {
   const sort = useUi(s => s.approvalSort)
   const tap = phone ? TAP : undefined
   const { S, agent } = ctx
+  // The copy describes Act, so it names the channel Act connects.
+  const channel = channelFrom(ctx.data, 1)
+  const where = channel ? `here or in ${channel.name}` : 'here'
   // Sorted on the minute of the day, never on the shown "6:02 AM". Drafts made at the same minute keep the agent's
   // order, whichever way time sorts.
   const draftedMin = (id: string) => problemById(ctx.data, id).draftedMin
@@ -65,7 +68,7 @@ export function Approvals() {
           <IconTile icon="task_alt" iconSize={20} size="lg" tone="outline" />
           <div className="min-w-0 flex-1">
             <div className="text-md font-semibold text-foreground">{noData || nProblems === 0 ? 'In Act, drafted fixes would be waiting here' : `In Act, today's ${nProblems} ${nProblems === 1 ? 'fix' : 'fixes'} would be waiting here`}</div>
-            <div className="mt-1 max-w-140 text-base leading-prose">{noData || nProblems === 0 ? 'In Act, your Inhouse agent drafts a fix for each problem it finds. Nothing goes out until someone approves it, here or in Slack.' : 'Your Inhouse agent found these problems this morning. In Act it also drafts the fix for each one, and nothing goes out until someone approves it, here or in Slack.'}</div>
+            <div className="mt-1 max-w-140 text-base leading-prose">{noData || nProblems === 0 ? `In Act, your Inhouse agent drafts a fix for each problem it finds. Nothing goes out until someone approves it, ${where}.` : `Your Inhouse agent found these problems this morning. In Act it also drafts the fix for each one, and nothing goes out until someone approves it, ${where}.`}</div>
             {!noData && nProblems > 0 && <ul className="m-0 mt-3.5 list-none border-t border-border p-0">
               {watchList.map(p => (
                 <li key={p.id} className="flex min-h-9.75 items-center gap-2.5 border-b border-border text-sm">

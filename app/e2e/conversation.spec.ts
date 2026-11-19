@@ -16,6 +16,8 @@ async function start(page: Page, scenario: string, hash: string) {
 
 const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+// The sample agent's chat channel (tools.json).
+const CHANNEL = 'Slack'
 const main = (page: Page) => page.locator('main')
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msg = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })
@@ -162,7 +164,7 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   const fresh = msg(page, REFUNDS_A).last()
   await fresh.getByRole('button', { name: 'More', exact: true }).click()
   const menu = page.getByRole('menu', { name: 'Message actions' })
-  const names = ['Read aloud', 'Send to Slack', 'Branch from here', 'Report a wrong answer', 'Delete']
+  const names = ['Read aloud', `Send to ${CHANNEL}`, 'Branch from here', 'Report a wrong answer', 'Delete']
   await expect(menu.getByRole('menuitem')).toHaveCount(names.length)
   for (const [i, n] of names.entries()) await expect(menu.getByRole('menuitem').nth(i)).toHaveAccessibleName(n)
   await page.keyboard.press('Escape')
