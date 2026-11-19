@@ -3,6 +3,7 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { agent } from '../agent'
+import { dataOverrideActive } from '../agent/mock'
 import type { AgentData, AgentState, Attachment, ChatMessage, LibraryFile, MessagePart, Scenario, SetAsideReason, Stage } from '../agent/types'
 import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
 import { demoNow, fmtTime } from '../agent/clock'
@@ -1017,6 +1018,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       agent.setDemo({ stage: d.stage, scenario: d.scenario })
       saveDemo(d)
       set({ ...initialUi(), ...d, phone: get().phone, demoOpen: get().demoOpen })
+      // The brand and channels came from the override at load, so a reload is what drops them.
+      if (dataOverrideActive) location.reload()
     },
 
     approveMany: ids => {

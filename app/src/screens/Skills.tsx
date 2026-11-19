@@ -83,7 +83,7 @@ export function Skills() {
       {openSkill && <SkillSheet skill={openSkill} phone={phone} onClose={() => setOpenKey(null)} />}
       {suggestions.length > 0 && <>
       <Separator className="mt-4.5 mb-4 bg-border" />
-      <SectionHeader title="Suggested for Shopify brands" className={SECTION_HEAD} />
+      <SectionHeader title={data.skillSuggestionsTitle ?? 'Suggested for you'} className={SECTION_HEAD} />
       <CardGrid size="lg" variant="rows">
         {suggestions.map(s => {
           const req = !!st.requestedSkills[s.n]

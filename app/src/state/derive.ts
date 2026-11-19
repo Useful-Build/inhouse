@@ -1,11 +1,16 @@
 // Pure selectors: stage + scenario + agent state -> what the screens show.
 import { photoKey } from '../agent/types'
-import type { AgentData, AgentState, ChatMessage, Effort, Problem, Scenario, StageIndex, ThinkingMode, ToolDetail } from '../agent/types'
+import type { AgentData, AgentState, ChatMessage, ToolChannel, Effort, Problem, Scenario, StageIndex, ThinkingMode, ToolDetail } from '../agent/types'
 import { DEMO_START, TIME_RE, fmtWeekday, minuteOfTime } from '../agent/clock'
 
 export const STAGE_TAGS = ['Watch', 'Act', 'Run'] as const
 
 export interface Ctx { S: StageIndex; scenario: Scenario; agent: AgentState; data: AgentData }
+
+/** The channel the team hears from the agent on at a stage: the first one whose stage is reached. None: no channel wording. */
+export const channelFrom = (data: AgentData, stage: StageIndex): ToolChannel | undefined => data.tools.channels.find(c => stage >= c.need)
+/** The channel connected now. Copy that describes a later stage uses `channelFrom(data, stage)`. */
+export const activeChannel = (ctx: Ctx): ToolChannel | undefined => channelFrom(ctx.data, ctx.S)
 
 export const problemById = (data: AgentData, id: string): Problem => {
   const p = data.problems.find(x => x.id === id)

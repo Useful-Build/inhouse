@@ -192,7 +192,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // Tools switched off for this chat and tools the agent can't read (paused, disconnected) are different things: the
   // label says one or the other, never a count that mixes them.
   // Where an order, product or customer can come from: the tools that hold them and that the agent can read now.
-  const holders = TOOL_KEYS.filter(k => ['shopify', 'amazon', 'gorgias'].includes(k)).map(k => toolDetail(data, k).name)
+  const attachExample = data.tools.attachExamples?.[0]
+  const holders = TOOL_KEYS.filter(k => attachExample?.sources.includes(k)).map(k => toolDetail(data, k).name)
   const orderSources = holders.length < 2 ? `From ${holders[0] ?? 'your connected tools'}` : `From ${holders.slice(0, -1).join(', ')} or ${holders[holders.length - 1]}`
   const offHere = TOOL_KEYS.length - onTools.length
   const toolsLabel = counts.connected === 0 ? 'No tools connected yet'
@@ -303,9 +304,11 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => notConnected('Google Drive')}>
               <AttachRow icon="add_to_drive" title="From Google Drive" sub="Sheets, docs and PDFs you can open" />
             </DropdownMenuItem>
-            <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => addAtts([{ name: 'Order #4821', meta: 'Shopify · Jamie Ortiz', icon: 'sell' }])}>
-              <AttachRow icon="sell" title="An order, product or customer" sub={orderSources} />
-            </DropdownMenuItem>
+            {attachExample && (
+              <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => addAtts([{ name: attachExample.name, meta: attachExample.meta, icon: attachExample.icon }])}>
+                <AttachRow icon={attachExample.icon} title={attachExample.label ?? 'A record from your tools'} sub={orderSources} />
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator className="mx-1.5 my-1" />
             <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => addAtts([{ name: `Screenshot of ${PAGE_TITLES[page] ?? 'this page'}`, meta: 'PNG · just now', icon: 'screenshot_region' }])}>
               <AttachRow icon="screenshot_region" title="Screenshot of this page" sub="Useful when something looks wrong" />
