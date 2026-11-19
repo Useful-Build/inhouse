@@ -52,7 +52,7 @@ Surfaces climb with height: page `#111`, card `#1a1a1a`, window and side panel `
 `npm run lint` runs `lint:tokens`, which runs two scripts:
 
 - `scripts/check-tokens.mjs`, base-owned: colors outside `src/ui-base.css` and `src/index.css`, and any `--name` in the override block that `ui-base.css` doesn't define (an app token starts with `--app-`). See `DESIGN_SYSTEM.md`.
-- `scripts/check-app-rules.mjs`, app-owned: Inhouse's two extra rules.
+- `scripts/check-app-rules.mjs`, app-owned: Inhouse's three extra rules (arbitrary values, literal inline styles, no fixed waits in e2e).
 
 | Rule | Fails | Passes |
 |---|---|---|

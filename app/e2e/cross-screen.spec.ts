@@ -185,6 +185,7 @@ test('Focus: Clear search goes back to the box, a dropdown closed from outside g
   await expect(search).toHaveValue('')
 
   await page.goto('/?demo#/settings/you-general')
+  await page.clock.install() // before the list opens, so its setTimeout(0) below runs on the page clock (time keeps flowing)
   const zone = page.getByRole('combobox', { name: 'Time zone: Eastern Time (New York)' })
   await expect(zone).not.toHaveAttribute('aria-controls', /.+/)
   await zone.click()
@@ -194,7 +195,7 @@ test('Focus: Clear search goes back to the box, a dropdown closed from outside g
   // While the list is open, Radix hides the rest of the page (the button included) from the accessibility tree.
   await expect(page.getByRole('combobox', { name: 'Time zone: Eastern Time (New York)', includeHidden: true })).toHaveAttribute('aria-controls', id!)
   // Radix attaches its outside-click listener in a setTimeout(0) after the list mounts; let it, or the click is missed.
-  await page.evaluate(() => new Promise(r => setTimeout(r)))
+  await page.clock.runFor(1)
   await page.mouse.click(720, 600)
   await expect(list).toHaveCount(0)
   await expect(zone).toBeFocused()
