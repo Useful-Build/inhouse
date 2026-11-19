@@ -24,18 +24,14 @@ Run them in `app/`.
 | `npm run typecheck` | `tsc -b` |
 | `npm run lint` | oxlint, then `lint:tokens` (the token and app rule checks) |
 | `npm run build` | Type check and production build |
-| `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones; see below) |
+| `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
 | `npm run test:visual` | Visual regression suite, on Linux (CI, or inside the Playwright image); skipped on macOS |
 | `npm run test:visual:update` | Regenerate the visual baselines on purpose, on Linux |
 | `npm run test:visual:linux` | The visual suite in the Playwright Docker image, from any machine with Docker |
 | `npm run test:visual:linux:update` | Regenerate the baselines in that image |
 | `npm run test:a11y` | axe, WCAG 2.1 A and AA |
 
-`E2E_PORT` sets the preview port for the E2E run and `VERIFY_DIR` where its artifacts go.
-
-The visual baselines are Linux renders (`-linux.png`), made in the official Playwright image. On macOS the visual projects are skipped outside a container, so `test:e2e` runs the rest and nothing writes a `-darwin.png`; run the visual suite with `test:visual:linux`. On Windows, run the visual suite with `test:visual:linux`, and the rest with `npx playwright test --project=desktop --project=phone --project=a11y`.
-
-CI (`.github/workflows/ci.yml`) runs on every pull request into `main` and `fleet/**` and in the merge queue: type check, lint, build and every Playwright project, in the Playwright image. Its `ci` check must pass to merge.
+How to boot, drive and verify the app (ports, env switches, seeds, the visual suite on macOS and Windows) is in the `verify` skill (`.agents/skills/verify`).
 
 ## Workflow
 
@@ -46,13 +42,18 @@ CI (`.github/workflows/ci.yml`) runs on every pull request into `main` and `flee
 
 ## Design system
 
-The full rules are in `app/DESIGN_SYSTEM.md` (the base's guide, rewritten on every base update) and `app/DESIGN_APP.md` (this app's layer). In short:
+Rules are in `app/DESIGN_SYSTEM.md` (base-owned) and `app/DESIGN_APP.md` (this app's layer). Load the `ui-foundation` skill before any UI change. Repo specifics:
 
-- Use tokens only. Never hard-code a color, size or shadow in a screen. `lint:tokens` fails on color literals outside `src/ui-base.css` and `src/index.css`.
-- A new value becomes an `--app-*` token in `src/index.css`, set in both `:root` and `.dark`, mapped in an `@theme inline` block, and listed in `src/lib/merge-config.ts` so `cn()` keeps it.
-- Never edit `src/ui-base.css` or `src/components/ui/` (except `icon.tsx`). They're base-owned. An app-only look goes in a `src/ui` wrapper.
-- On screens, use the `src/ui` parts, not `components/ui` directly. Menus, dialogs, popovers, sheets, tooltips and accordions are Radix components.
-- No arbitrary Tailwind values outside `src/components/ui/` and no literal inline styles in `.tsx` (`check-app-rules.mjs`).
-- Icons go through `<Icon name="..." />`. Never import an icon library in a component.
-- Dark is decided per token, not inverted. Check every change in light and dark, on desktop and on a 390px phone.
-- When a change is meant to show, run `npm run test:visual:linux:update` and commit the new baselines with it. Never update baselines to hide an unexplained failure.
+- `lint:tokens` runs `scripts/check-tokens.mjs` (no color literals outside `src/ui-base.css` and `src/index.css`) and `scripts/check-app-rules.mjs` (no arbitrary Tailwind values outside `src/components/ui/`, no literal inline styles in `.tsx`).
+- A new `--app-*` token goes in `src/index.css` (`:root` and `.dark`, mapped in `@theme inline`) and in `src/lib/merge-config.ts` so `cn()` keeps it.
+- Never edit `src/ui-base.css` or `src/components/ui/` (except `icon.tsx`). An app-only look goes in a `src/ui` wrapper. Screens use `src/ui`, icons go through `<Icon name="..." />`.
+- A change meant to show runs `npm run test:visual:linux:update`, and the new baselines are committed with it.
+
+## How changes land here
+
+- **CI gates:** the `ci` check (from `ci.yml`: `e2e` shards, which also run typecheck and lint) must be green to merge. The `pr-gates` job (Verified trailer, flagged check changes) runs on every PR. `baselines.yml` and `motion.yml` are manual only.
+- **Deploys:** nothing deploys on merge. `npm run deploy` (in `app/`) is run by hand.
+- **After merge:** none.
+- **Sensitive paths (need Wasim's OK):** `.github/workflows/`, `app/playwright.config.ts`, `app/e2e/` specs and helpers, `app/e2e/visual.spec.ts-snapshots/`, `app/scripts/` (the lint checks), `app/wrangler.jsonc`.
+- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`). Give each parallel worktree its own `E2E_PORT`.
+- **Fleet repo:** no, not yet.
