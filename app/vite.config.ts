@@ -7,6 +7,8 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, ren
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 
 import { cloudflare } from "@cloudflare/vite-plugin";
+import { restoreRedirect, snapshotRedirect } from './build-support/demo-deploy-redirect.ts'
+import type { RedirectSnapshot } from './build-support/demo-deploy-redirect.ts'
 
 const appRoot = fileURLToPath(new URL('.', import.meta.url))
 const sampleData = fileURLToPath(new URL('./src/agent/sample-data', import.meta.url))
@@ -116,24 +118,27 @@ function demoPublicFiles(): Plugin[] {
 /**
  * The Cloudflare plugin writes one redirect per project, .wrangler/deploy/config.json, pointing `vite preview` and
  * `wrangler deploy` at the last build's Worker config. A product build would point it at dist-product/, so this puts
- * back what was there (the demo build's, or nothing). The product build is served with
+ * back what was there (the demo build's, or nothing) however the build ends: after buildApp, and on process exit for a
+ * failed or thrown build. It restores only a pointer into dist-product/, so a concurrent demo build's is never
+ * clobbered (build-support/demo-deploy-redirect.ts). The product build is served with
  * `wrangler dev -c dist-product/inhouse_app/wrangler.json` instead (playwright.config.ts, the product project).
  */
 function keepDemoDeployRedirect(): Plugin {
   const redirect = resolve(appRoot, '.wrangler/deploy/config.json')
-  let before: string | null = null
+  let snapshot: RedirectSnapshot | null = null
+  const restore = () => { if (snapshot) restoreRedirect(snapshot, PRODUCT_OUT_DIR) }
   return {
     name: 'inhouse:keep-demo-deploy-redirect',
     apply: 'build',
     config() {
-      before = existsSync(redirect) ? readFileSync(redirect, 'utf8') : null
+      snapshot = snapshotRedirect(redirect)
+      process.once('exit', restore)
     },
     // After the Cloudflare plugin's own post buildApp (which comes first in the plugin list) has written it.
     buildApp: {
       order: 'post',
       async handler() {
-        if (before === null) rmSync(redirect, { force: true })
-        else writeFileSync(redirect, before)
+        restore()
       },
     },
   }

@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test'
 import type { PlaywrightTestProject } from '@playwright/test'
+import { existsSync } from 'node:fs'
 
 // Artifacts go to VERIFY_DIR when it's set, else to e2e-artifacts/. Runs against the
 // production build.
@@ -24,7 +25,7 @@ const ship = /e2e[\\/]ship[\\/]/
 // builds the product until CI gains its product step. It serves dist-product/ (npm run build:product) on its own port
 // with `wrangler dev` on the build's own Worker config: the Cloudflare plugin's .wrangler/deploy/config.json redirect,
 // which `vite preview` follows, stays on the demo build (vite.config.ts). Every other project ignores e2e/product/.
-// Run: E2E_PRODUCT=1 npx playwright test --project=product.
+// Run: npm run build:product && E2E_PRODUCT=1 npx playwright test --project=product.
 const product = /e2e[\\/]product[\\/]/
 const productPort = Number(process.env.E2E_PRODUCT_PORT ?? 5194)
 const productURL = `http://localhost:${productPort}`
@@ -51,7 +52,14 @@ const motionProject: PlaywrightTestProject[] = process.env.MOTION
 const productProject: PlaywrightTestProject[] = process.env.E2E_PRODUCT
   ? [{ name: 'product', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, baseURL: productURL }, testMatch: /e2e[\\/]product[\\/].*\.spec\.ts$/ }]
   : []
-// E2E_PREBUILT (CI): serve the build already in dist/ (dist-product/ for the product) instead of building again.
+// The product server never builds: a build here would run beside the demo's `npm run build`, and the two share the
+// Cloudflare plugin's deploy redirect. It serves the dist-product/ that `npm run build:product` wrote beforehand (CI's
+// product step runs that first) and fails here, before any server starts, when it's missing.
+const productWorkerConfig = 'dist-product/inhouse_app/wrangler.json'
+if (process.env.E2E_PRODUCT && !existsSync(new URL(productWorkerConfig, import.meta.url))) {
+  throw new Error(`E2E_PRODUCT=1 serves the prebuilt product build, and ${productWorkerConfig} is missing. Run \`npm run build:product\` first.`)
+}
+// E2E_PREBUILT (CI): serve the build already in dist/ instead of building again.
 const demoServer = {
   command: `${process.env.E2E_PREBUILT ? '' : 'npm run build && '}npx vite preview --port ${port} --strictPort`,
   url: `http://localhost:${port}`,
@@ -59,7 +67,7 @@ const demoServer = {
   timeout: 180_000,
 }
 const productServer = {
-  command: `${process.env.E2E_PREBUILT ? '' : 'npm run build:product && '}npx wrangler dev --config dist-product/inhouse_app/wrangler.json --port ${productPort}`,
+  command: `npx wrangler dev --config ${productWorkerConfig} --port ${productPort}`,
   url: productURL,
   reuseExistingServer: false,
   timeout: 180_000,

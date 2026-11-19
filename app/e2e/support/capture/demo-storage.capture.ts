@@ -28,9 +28,24 @@ declare global {
   interface Window { __cspReport?: (v: Violation) => void }
 }
 
+// Every step logs its name and has a deadline, so a hang names its step instead of running until the lock kills it.
+// The deadline is AbortSignal.timeout (no fixed wait: it only fails a step that hasn't finished).
+const STEP_MS = 30_000
+const step = async <T>(name: string, run: () => Promise<T>, ms = STEP_MS): Promise<T> => {
+  console.log(`capture: ${name}`)
+  let done = false
+  const deadline = AbortSignal.timeout(ms)
+  const timedOut = new Promise<never>((_, reject) => {
+    deadline.addEventListener('abort', () => { if (!done) reject(new Error(`capture: step "${name}" did not finish in ${ms / 1000} s`)) }, { once: true })
+  })
+  try { return await Promise.race([run(), timedOut]) } finally { done = true }
+}
+
 const browser = await chromium.launch()
 try {
   const context = await browser.newContext({ baseURL, viewport: { width: 1440, height: 900 } })
+  // Actions and navigations fail on their own well inside a step's deadline.
+  context.setDefaultTimeout(15_000)
 
   // The CSP guard, as in e2e/csp.ts.
   const violations: Violation[] = []
@@ -48,7 +63,8 @@ try {
   })
 
   const page: Page = await context.newPage()
-  // App time is ours: the 10 s send hold must still be pending when storage is read.
+  // App time is ours: the 10 s send hold must still be pending when storage is read. The clock fakes timers and
+  // requestAnimationFrame alike, so while it's paused below no animation frame runs.
   await page.clock.install()
   await page.addInitScript(() => {
     if (sessionStorage.getItem('capture-seeded')) return
@@ -56,47 +72,57 @@ try {
     localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
     sessionStorage.setItem('capture-seeded', '1')
   })
-  await page.goto('/?demo#/today')
+  await step('open Today', () => page.goto('/?demo#/today'))
 
   const side = page.getByRole('complementary', { name: 'Sidebar' })
   const log = page.getByRole('log', { name: 'Conversation' })
   const chatBox = page.getByRole('textbox', { name: 'Message your Inhouse agent' })
 
   // The model pick, then a question from Today: it starts a chat of its own.
-  await page.getByRole('button', { name: 'Model: Smart' }).click()
-  await page.getByRole('menuitemradio', { name: /Fast/ }).click()
-  await expect(page.getByRole('button', { name: 'Model: Fast' })).toBeVisible()
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(Q)
-  await page.keyboard.press('Enter')
-  await expect(log.getByText(A)).toBeVisible({ timeout: 15_000 })
-  expect(await page.evaluate(() => location.hash)).toMatch(/^#\/chats\/chat-new-/)
+  await step('pick the Fast model', async () => {
+    await page.getByRole('button', { name: 'Model: Smart' }).click()
+    await page.getByRole('menuitemradio', { name: /Fast/ }).click()
+    await expect(page.getByRole('button', { name: 'Model: Fast' })).toBeVisible()
+  })
+  await step('ask from Today and get the answer', async () => {
+    await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(Q)
+    await page.keyboard.press('Enter')
+    await expect(log.getByText(A)).toBeVisible({ timeout: 15_000 })
+    expect(await page.evaluate(() => location.hash)).toMatch(/^#\/chats\/chat-new-/)
+  })
 
   // A draft in a second chat's composer.
-  await side.getByRole('button', { name: SECOND_CHAT, exact: true }).click()
-  await expect(page.getByRole('banner')).toContainText(SECOND_CHAT)
-  await chatBox.fill(DRAFT)
+  await step('type a draft in a second chat', async () => {
+    await side.getByRole('button', { name: SECOND_CHAT, exact: true }).click()
+    await expect(page.getByRole('banner')).toContainText(SECOND_CHAT)
+    await chatBox.fill(DRAFT)
+  })
 
   // Approve the Kestrel reorder on Today: it's held for 10 s before it goes out.
-  await side.getByRole('button', { name: 'Today', exact: true }).click()
-  await page.getByRole('article').filter({ hasText: KESTREL }).getByRole('button', { name: 'Review' }).click()
-  await page.getByRole('dialog').getByRole('button', { name: 'Approve and send to Kestrel' }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })).toBeVisible()
-  await page.keyboard.press('Escape')
+  await step('approve the Kestrel reorder', async () => {
+    await side.getByRole('button', { name: 'Today', exact: true }).click()
+    await page.getByRole('article').filter({ hasText: KESTREL }).getByRole('button', { name: 'Review' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Approve and send to Kestrel' }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })).toBeVisible()
+    await page.keyboard.press('Escape')
+  })
 
   // Stop app time just ahead, then run past the session save (debounced 300 ms): the hold is still pending.
-  const now = await page.evaluate(() => Date.now())
-  await page.clock.pauseAt(now + 100)
-  await page.clock.runFor(500)
-  await expect(page.getByRole('article').filter({ hasText: KESTREL })).toContainText('going out')
+  await step('pause app time past the session save', async () => {
+    const now = await page.evaluate(() => Date.now())
+    await page.clock.pauseAt(now + 100)
+    await page.clock.runFor(500)
+    await expect(page.getByRole('article').filter({ hasText: KESTREL })).toContainText('going out')
+  })
 
-  const stored = await page.evaluate(() => {
+  const stored = await step('read localStorage', () => page.evaluate(() => {
     const out: Record<string, string> = {}
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)!
       if (key.startsWith('inhouse.')) out[key] = localStorage.getItem(key)!
     }
     return out
-  })
+  }))
   const session = JSON.parse(stored['inhouse.ui.session.v1'] ?? 'null') as { started?: unknown[]; drafts?: Record<string, { text?: string }>; modelSel?: string } | null
   expect(session, 'the session was saved').not.toBeNull()
   expect(session!.started, 'one started chat').toHaveLength(1)
@@ -106,8 +132,17 @@ try {
   expect(Object.keys(demo?.approved ?? {}), 'one approval').toHaveLength(1)
   expect(Object.keys(demo?.sent ?? {}), 'nothing sent yet: the approval is mid-hold').toHaveLength(0)
 
-  // Let queued violation events fire (one animation frame), then apply the guard.
-  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r(null))))
+  // Let queued violation events fire, as e2e/csp.ts does: one animation frame per open page. The paused clock holds
+  // requestAnimationFrame too (this wait hung before), so storage is already read and app time runs again first.
+  await step('flush queued CSP violation events', async () => {
+    await page.clock.resume()
+    for (const open of context.pages()) {
+      if (open.isClosed()) continue
+      await open.evaluate(() => new Promise(r => requestAnimationFrame(() => r(null)))).catch((err: unknown) => {
+        if (!open.isClosed()) throw err
+      })
+    }
+  })
   expect(unguarded, `Pages served without a Content-Security-Policy header: ${unguarded.join(', ')}`).toEqual([])
   expect(violations, `CSP violations: ${violations.map(v => `${v.directive} blocked ${v.blocked} (${v.source}) on ${v.page}`).join('; ')}`).toEqual([])
 
