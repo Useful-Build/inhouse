@@ -1,0 +1,20 @@
+# Weekly version updates, grouped so they arrive as one PR per ecosystem. Security updates are on in the repo
+# settings and come as they're published. pr-gates skips the Verified-trailer check only for PRs opened by
+# dependabot[bot]; every other check still runs.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: weekly
+    groups:
+      app-dependencies:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
