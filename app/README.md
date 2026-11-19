@@ -19,6 +19,7 @@ npm install
 npm run dev        # http://localhost:5173 (the demo switcher shows in dev)
 npm run typecheck  # tsc -b
 npm run lint       # oxlint
+npm run test:unit  # Vitest and fast-check property tests (src/**/*.property.test.ts); VITE_PROP_RUNS=1000 for a long run
 npm run test:e2e   # Playwright against the production build
 ```
 
@@ -45,7 +46,7 @@ npm run test:a11y                 # axe, WCAG 2.1 A and AA
 
 `.github/workflows/ci.yml` is the required `ci` check. It runs on every pull request into `main` and `fleet/**`, in the merge queue and on dispatch, in the Playwright image on GitHub's Linux runners:
 
-- Two `e2e` jobs. Playwright splits shards by test count, not time, and the slow desktop specs come first, so the suite is cut in four by test (`--fully-parallel --shard=n/4`): job 1 runs quarters 1 and 3, job 2 quarters 2 and 4, one test at a time. Job 1 also runs `npm run typecheck` and `npm run lint`. Each job runs `npm run build` once and its quarters serve that build. Every Playwright project runs: desktop, phone, visual-desktop, visual-phone and a11y.
+- Two `e2e` jobs. Playwright splits shards by test count, not time, and the slow desktop specs come first, so the suite is cut in four by test (`--fully-parallel --shard=n/4`): job 1 runs quarters 1 and 3, job 2 quarters 2 and 4, one test at a time. Job 1 also runs `npm run typecheck`, `npm run lint` and `npm run test:unit`. Each job runs `npm run build` once and its quarters serve that build. Every Playwright project runs: desktop, phone, visual-desktop, visual-phone and a11y.
 - A final job named `ci` passes only when both shards pass, so a ruleset requires one name. It always runs, so a cancelled or skipped shard makes it fail, never skip. A committed `test.only` fails the run (`--forbid-only`).
 - On failure, a timeout or a cancel each job uploads its HTML reports and test results (expected, actual and diff PNGs, and traces and videos of the failed tests), one folder per quarter, as the `playwright-shard-<n>` artifact, kept 7 days. Download it with `gh run download <run id>` and open `quarter-<n>/report/index.html`.
 
