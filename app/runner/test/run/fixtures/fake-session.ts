@@ -26,6 +26,11 @@
 //   finish-on-stop:<n> sends n sdk events, then waits; a stop makes it send finished (racing whatever the root decided)
 //   flood-on-stop:<n>:<bytes>  sends n sdk events of about <bytes> each, then waits; a stop makes it send finished
 //                      (costUsd 0.25), and it exits once that is flushed
+//   audit:<n>          sends n audit entries one after another, each awaiting the root's answer; then one sdk event
+//                      {type: 'audits', replies} with the answers, then finished
+//   audit-on-stop      sends one sdk event {type: 'waiting'} and waits for stop; then sends one audit entry and writes the root's answer to `audit-reply.json` in
+//                      its cwd before it ends with failed/stopped
+//   audit-bad          sends an audit entry that fails the schema
 // A stop before any run message ends it with failed/stopped ("stopped before the run started"), as the real session does.
 // A file named `hold-ready` in its cwd holds `ready` back until SIGUSR2 (it writes `waiting-for-usr2` once it listens).
 import { spawn } from 'node:child_process'
@@ -39,6 +44,16 @@ const end = () => void channel.close().then(() => process.exit(0))
 const event = (e: unknown) => send({ type: 'event', event: e })
 const finished = () => event({ type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} })
 
+const auditEntry = (i: number) => ({ hook: 'PreToolUse', toolName: 'Bash', toolUseId: `toolu_${i}`, decision: 'allow', input: { command: `echo ${i}` } })
+const auditWaiters = new Map<number, (reply: unknown) => void>()
+let nextAudit = 0
+const sendAudit = (entry: unknown) =>
+  new Promise<unknown>((resolve) => {
+    const id = nextAudit++
+    auditWaiters.set(id, resolve)
+    send({ type: 'audit', id, entry })
+  })
+
 let mode = ''
 let runMessage: unknown = null
 let ended = false
@@ -46,6 +61,20 @@ let ended = false
 channel.onMessage((line) => {
   if (!line.ok) return
   const raw = line.value as any
+  if (raw?.type === 'audit_ack' || raw?.type === 'audit_nack') {
+    auditWaiters.get(raw.id)?.(raw)
+    auditWaiters.delete(raw.id)
+    return
+  }
+  if (raw?.type === 'stop' && mode === 'audit-on-stop' && !ended) {
+    ended = true
+    void sendAudit(auditEntry(0)).then((reply) => {
+      writeFileSync('audit-reply.json', JSON.stringify(reply))
+      event({ type: 'failed', reason: 'stopped', message: 'stopped' })
+      end()
+    })
+    return
+  }
   if (raw?.type === 'stop' && runMessage === null && !ended) {
     ended = true
     event({ type: 'failed', reason: 'stopped', message: 'stopped before the run started' })
@@ -231,6 +260,21 @@ channel.onMessage((line) => {
       for (let i = 0; i < Number(a); i++) event({ type: 'sdk', message: { type: 'assistant', i, blob }, truncated: false })
       break
     }
+    case 'audit':
+      void (async () => {
+        const replies: unknown[] = []
+        for (let i = 0; i < Number(a); i++) replies.push(await sendAudit(auditEntry(i)))
+        event({ type: 'sdk', message: { type: 'audits', replies }, truncated: false })
+        finished()
+        end()
+      })()
+      break
+    case 'audit-bad':
+      send({ type: 'audit', id: 0, entry: { hook: 'PreToolUse', toolName: 'Bash', decision: 'allow', input: 'x'.repeat(20_000) } })
+      break
+    case 'audit-on-stop':
+      event({ type: 'sdk', message: { type: 'waiting' }, truncated: false })
+      break
     case 'hang':
     case 'obey-stop':
     case 'await-interrupt':

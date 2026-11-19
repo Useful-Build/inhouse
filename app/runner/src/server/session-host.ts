@@ -60,6 +60,8 @@ export function hostSession(opts: {
   config: RunConfig
   stopGraceMs: number
   log: (entry: Record<string, unknown>) => void
+  /** Whether an event written now reaches the Worker (its response is open). An audit entry is acked only then. */
+  canWrite: () => boolean
   maxLineBytes?: number
 }): SessionHandle {
   const { child, stream, config, log } = opts
@@ -116,6 +118,12 @@ export function hostSession(opts: {
       return
     }
     if (!sentRun) return failProtocol('an event before ready')
+    if (m.type === 'audit') {
+      // Acked only once the entry is on the Worker's stream; otherwise the session's hook must not let the call run.
+      if (stream.ended || !opts.canWrite()) return send({ type: 'audit_nack', id: m.id, error: 'the run has ended or the Worker has gone' })
+      stream.emit({ type: 'audit', entry: m.entry })
+      return send({ type: 'audit_ack', id: m.id })
+    }
     let event = m.event
     if (event.type === 'sdk') {
       const capped = capSdkMessage(event.message, SDK_MESSAGE_MAX_BYTES)

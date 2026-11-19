@@ -201,7 +201,7 @@ export function createRoot(deps: RootDeps): Root {
     let handle: SessionHandle
     try {
       child = deps.spawnSession(user, sessionEnv(user, deps.proxyPort))
-      handle = hostSession({ child, stream, config, stopGraceMs: deps.stopGraceMs, log: deps.log })
+      handle = hostSession({ child, stream, config, stopGraceMs: deps.stopGraceMs, log: deps.log, canWrite: () => !live.gone && !res.destroyed && !res.writableEnded })
     } catch (e) {
       // A synchronous spawn failure (EPERM from the uid switch, E2BIG, ...): one terminal event, and nothing left over.
       deps.log({ type: 'session_spawn_failed', runId: live.runId, error: errorText(e) })

@@ -98,11 +98,7 @@ export function createProxy(deps: ProxyDeps): http.Server {
     const path = req.url ?? '/'
     const route = /^\/([a-z]+)\//.exec(path)?.[1]
     if (!route || !(PROXY_ROUTES as readonly string[]).includes(route)) return refuse(res, 404, 'no such route')
-    // No dot segments, backslashes or fragments (`#`, raw or encoded) in the path, so it can't climb out of its route
-    // once the URL is resolved: `/model/..#x` would resolve to `/`. The query is free to carry encoded `#` and `.`
-    // (`?q=%23x`); a raw `#` is refused anywhere, since it would end the URL there.
-    const pathOnly = path.split('?', 1)[0]!
-    if (path.includes('#') || /(^|\/)\.\.?(\/|$)|\\|%2e|%5c|%23/i.test(pathOnly)) return refuse(res, 400, 'bad path')
+    if (badProxyPath(path)) return refuse(res, 400, 'bad path')
     // And whatever the checks above miss, the URL as resolved must still sit under the upstream base and this route.
     if (targetFor(deps.upstream, path, route) === null) return refuse(res, 400, 'bad path')
 
@@ -115,6 +111,17 @@ export function createProxy(deps: ProxyDeps): http.Server {
   }
 
   return server
+}
+
+/**
+ * Whether the proxy refuses a path as it stands. No dot segments, backslashes or fragments (`#`, raw or encoded) in the
+ * path, so it can't climb out of its route once the URL is resolved: `/model/..#x` would resolve to `/`. The query is
+ * free to carry encoded `#` and `.` (`?q=%23x`); a raw `#` is refused anywhere, since it would end the URL there. The
+ * session's files adapter (src/files/) asks this before it sends a name, so a refusal there is a clear notice.
+ */
+export function badProxyPath(path: string): boolean {
+  const pathOnly = path.split('?', 1)[0]!
+  return path.includes('#') || /(^|\/)\.\.?(\/|$)|\\|%2e|%5c|%23/i.test(pathOnly)
 }
 
 /**

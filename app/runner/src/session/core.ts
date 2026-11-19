@@ -1,17 +1,26 @@
 // The session process's run loop, without the SDK: the SDK's `query` comes in as a parameter, so tests drive this with a
 // mocked query at the process boundary. src/session/main.ts loads the real SDK and calls this.
 //
-// One session process runs one run: it says `ready`, takes one `run` message, runs one `query()`, streams every SDK
-// message back as an `sdk` event and ends with exactly one terminal event (`finished` or `failed`).
-// PR 2 adds the session store, files, deferred calls and the streaming prompt that `interrupt()` needs.
-import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+// One session process runs one run: it says `ready`, takes one `run` message and then:
+//   1. brings the chat's files into the work folder (`inputs/`, `outputs/`; src/files/), up to the restore cap;
+//   2. runs one `query()` with the session store adapter (src/store/), streaming every SDK message back as an `sdk`
+//      event. A prompt goes in as a one-message stream, so `interrupt()` works (it needs streaming input); the `""`
+//      resume after a deferred call's answer stays a plain string (P0 S1: an empty stream left the deferred tool
+//      unavailable), and an interrupt there falls back to the abort signal;
+//   3. at the end: the deferred call, if the run deferred one (with the runner's own one-call check), then the new and
+//      changed files under `outputs/`, then the store's checkpoint and repair (`checkpoint`, or `mirror_error`), then
+//      exactly one terminal event (`finished` or `failed`).
+// It also carries R2's blocking audit hook: `audit(entry)` resolves once the root has the entry on the Worker's stream.
+import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import { SDK_MESSAGE_MAX_BYTES, type RunEventBody } from '../../../shared/protocol/index.ts'
-import { RootMessage, capSdkMessage, type RunConfig } from '../protocol/local.ts'
+import { AuditEntry, DEFERRED_INPUT_MAX_BYTES, SDK_MESSAGE_MAX_BYTES, jsonBytes } from '../../../shared/protocol/index.ts'
+import { createFiles, snapshotOutputs } from '../files/files.ts'
+import { RootMessage, capSdkMessage, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import { LOCAL_MAX_DEPTH, deeperThan, type LineResult } from '../protocol/ndjson.ts'
+import { createStoreAdapter, type Fetch } from '../store/adapter.ts'
 import type { QueryGuards } from './seam.ts'
 
-export type QueryFn = (params: { prompt: string; options: Options }) => Pick<Query, 'interrupt'> & AsyncIterable<SDKMessage>
+export type QueryFn = (params: { prompt: string | AsyncIterable<SDKUserMessage>; options: Options }) => Pick<Query, 'interrupt'> & AsyncIterable<SDKMessage>
 
 /** The session's side of the local channel (src/session/channel.ts in production). */
 export type SessionChannel = {
@@ -19,9 +28,21 @@ export type SessionChannel = {
   send(message: unknown): void | Promise<void>
   /** Each line from the root, parsed, or the framing error (oversized, not JSON) that ends the run. */
   onMessage(handler: (line: LineResult) => void): void
+  /** The root's side has closed: nothing more will come. */
+  onClose?(handler: () => void): void
 }
 
-type SessionEvent = Exclude<RunEventBody, { type: 'started' }>
+/** Calls to the root's loopback proxy (the store and files routes). */
+export type SessionIo = { fetch: Fetch; proxyUrl: string }
+
+/**
+ * How the SDK flushes the transcript to the store. `'eager'` (alpha) is meant to keep the live turn through a hard kill;
+ * until the test against a hard kill passes it stays `'batched'`, and the checkpoint and repair cover the run's end.
+ */
+export const STORE_FLUSH: NonNullable<Options['sessionStoreFlush']> = 'batched'
+
+/** How long an audit entry may wait for the root's ack before the hook's call is refused. */
+export const AUDIT_TIMEOUT_MS = 10_000
 
 /** Env names the session process must not hand to the CLI. There's no Node IPC channel any more; the filter stays. */
 const NOT_FOR_THE_CLI = /^NODE_CHANNEL_/
@@ -32,7 +53,7 @@ export function cliEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out
 }
 
-export function baseOptions(config: RunConfig, cwd: string, env: Record<string, string>, abortController: AbortController): Options {
+export function baseOptions(config: RunConfig, cwd: string, env: Record<string, string>, abortController: AbortController, sessionStore?: Options['sessionStore']): Options {
   return {
     cwd,
     env,
@@ -45,7 +66,21 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     // The SDK's own CLI spawn and MCP delivery: the CLI gets fresh stdio pipes, so it never holds the local channel
     // (src/session/channel.ts), and the SDK reads its stderr as usual.
     ...(config.resume ? { resume: config.sessionId } : { sessionId: config.sessionId }),
+    ...(sessionStore ? { sessionStore, sessionStoreFlush: STORE_FLUSH } : {}),
   }
+}
+
+/** The prompt as a one-message stream, held open until `done` settles (the SDK ends the run when its input ends). */
+export function streamingPrompt(text: string, done: Promise<void>): AsyncIterable<SDKUserMessage> {
+  return (async function* () {
+    yield { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null }
+    await done
+  })()
+}
+
+/** What the agent is told about the chat's files that weren't brought in. */
+export function leftOutNote(leftOut: string[]): string {
+  return `[The chat's files over the restore size cap were not brought into the work folder: ${leftOut.join(', ')}]`
 }
 
 /**
@@ -56,20 +91,83 @@ export const SDK_MESSAGE_MAX_DEPTH = LOCAL_MAX_DEPTH - 4
 
 const message = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 2000)
 
+type Result = Extract<SDKMessage, { type: 'result' }>
+
+/**
+ * Tool calls the model made in its current turn (since the last tool results came back), by id. A deferral the CLI
+ * honoured with more than one call in the turn (P0 S1 saw it, though the docs say it can't happen) leaves the others'
+ * results unknown, so the runner refuses it rather than resume into that state.
+ */
+class TurnToolUses {
+  #ids = new Set<string>()
+  see(m: SDKMessage) {
+    const content = (m as { message?: { content?: unknown } }).message?.content
+    if (!Array.isArray(content)) return
+    if (m.type === 'user' && content.some((b) => (b as { type?: unknown })?.type === 'tool_result')) this.#ids.clear()
+    if (m.type === 'assistant') for (const b of content) if ((b as { type?: unknown })?.type === 'tool_use') this.#ids.add(String((b as { id?: unknown }).id))
+  }
+  get count() {
+    return this.#ids.size
+  }
+}
+
 export async function runSession(deps: {
   channel: SessionChannel
   query: QueryFn
   guards: QueryGuards
   cwd: string
   env: NodeJS.ProcessEnv
+  io: SessionIo
+  log?: (entry: Record<string, unknown>) => void
+  auditTimeoutMs?: number
 }): Promise<void> {
   const { channel } = deps
+  const log = deps.log ?? ((e) => process.stderr.write(`${JSON.stringify(e)}\n`))
   let ended = false
   const emit = (event: SessionEvent): void | Promise<void> => {
     if (ended) return
-    if (event.type === 'finished' || event.type === 'failed') ended = true
+    if (event.type === 'finished' || event.type === 'failed') {
+      ended = true
+      failAudits('the run has ended')
+    }
     return channel.send({ type: 'event', event })
   }
+
+  // ---- The audit transport (R2's blocking hook calls `audit`).
+  const audits = new Map<number, { resolve: () => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>()
+  let nextAudit = 0
+  let channelClosed = false
+  function failAudits(why: string) {
+    for (const [id, a] of audits) {
+      clearTimeout(a.timer)
+      a.reject(new Error(`audit refused: ${why}`))
+      audits.delete(id)
+    }
+  }
+  const settleAudit = (id: number, error: string | null) => {
+    const a = audits.get(id)
+    if (!a) return
+    audits.delete(id)
+    clearTimeout(a.timer)
+    if (error === null) a.resolve()
+    else a.reject(new Error(`audit refused: ${error}`))
+  }
+  /** Resolves once the root has written the entry to the Worker's stream; rejects on a nack, a closed channel or the timeout. */
+  const audit = (entry: AuditEntry): Promise<void> => {
+    const parsed = AuditEntry.safeParse(entry)
+    if (!parsed.success) return Promise.reject(new Error(`audit refused: ${z.prettifyError(parsed.error)}`))
+    if (ended || channelClosed) return Promise.reject(new Error('audit refused: the run has ended'))
+    const id = nextAudit++
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => settleAudit(id, 'no answer from the root in time'), deps.auditTimeoutMs ?? AUDIT_TIMEOUT_MS)
+      audits.set(id, { resolve, reject, timer })
+      void channel.send({ type: 'audit', id, entry: parsed.data })
+    })
+  }
+  channel.onClose?.(() => {
+    channelClosed = true
+    failAudits('the channel to the root closed')
+  })
 
   let q: ReturnType<QueryFn> | null = null
   let stopping = false
@@ -79,8 +177,12 @@ export async function runSession(deps: {
   let resolveRun!: (config: RunConfig) => void
   const runConfig = new Promise<RunConfig>((r) => (resolveRun = r))
   let gotRun = false
+  /** Ends the streaming prompt, so the SDK ends the run once its turn is over. */
+  let endInput!: () => void
+  const inputDone = new Promise<void>((r) => (endInput = r))
 
   const halt = async () => {
+    endInput()
     if (q === null) {
       interruptPending = true
       return
@@ -88,7 +190,7 @@ export async function runSession(deps: {
     try {
       await q.interrupt()
     } catch {
-      // interrupt() needs the streaming prompt (PR 2); until then a refused interrupt falls back to the abort signal.
+      // interrupt() needs the streaming prompt; the `""` resume has none, so it falls back to the abort signal.
       abort.abort()
     }
   }
@@ -116,6 +218,10 @@ export async function runSession(deps: {
       resolveRun(m.config)
     } else if (m.type === 'interrupt') {
       void halt()
+    } else if (m.type === 'audit_ack') {
+      settleAudit(m.id, null)
+    } else if (m.type === 'audit_nack') {
+      settleAudit(m.id, m.error)
     } else {
       stopping = true
       // A stop before the run: nothing has started, so the run ends here and no query ever runs.
@@ -137,45 +243,87 @@ export async function runSession(deps: {
   // A stop that came with the run (or while it was being read): end it without calling query().
   if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
 
-  const options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort), config)
-  let result: Extract<SDKMessage, { type: 'result' }> | null = null
+  // 1. The chat's files.
+  const files = createFiles({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl, cwd: deps.cwd, caps: config.fileCaps, log })
+  let leftOut: string[]
   try {
-    q = deps.query({ prompt: config.prompt, options })
+    const restored = await files.restore()
+    leftOut = restored.leftOut
+    if (restored.restored > 0 || restored.leftOut.length > 0) await emit(restored)
+  } catch (e) {
+    log({ type: 'files_restore_failed', error: message(e).slice(0, 300) })
+    return emit({ type: 'failed', reason: 'files', message: "the chat's files could not be brought into the work folder" })
+  }
+  if (ended) return
+  if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
+  const before = await snapshotOutputs(deps.cwd)
+
+  // 2. The query.
+  const store = createStoreAdapter({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl })
+  const text = config.prompt !== '' && leftOut.length > 0 ? `${config.prompt}\n\n${leftOutNote(leftOut)}` : config.prompt
+  const prompt = text === '' ? '' : streamingPrompt(text, inputDone)
+  const options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort, store.store), config, { audit })
+  const turn = new TurnToolUses()
+  let result: Result | null = null
+  let thrown: unknown = null
+  let threw = false
+  try {
+    q = deps.query({ prompt, options })
     // A stop or interrupt that came while the query was being set up.
     if (stopping || interruptPending) void halt()
     for await (const m of q) {
       if (ended) break
+      turn.see(m)
       // Capped here as well as in the root, so an honest session never sends a line over the channel's cap.
       const raw = m as unknown as Record<string, unknown>
       const stub = (why: 'tooDeep' | 'unencodable') => ({ message: { type: String(raw.type).slice(0, 64), [why]: true }, truncated: true })
       const capped = deeperThan(raw, SDK_MESSAGE_MAX_DEPTH) ? stub('tooDeep') : (capSdkMessage(raw, SDK_MESSAGE_MAX_BYTES) ?? stub('unencodable'))
-      if (m.type === 'result') result = m
+      if (m.type === 'result') {
+        result = m
+        // The turn is over: the input ends, so the SDK ends the run rather than wait for another message.
+        endInput()
+      }
       // Backpressure: while the root isn't reading, the next SDK message waits rather than piling up in this heap.
       await emit({ type: 'sdk', ...capped })
     }
   } catch (e) {
-    // A stop or interrupt that raced the SDK's result: the run did finish, and its cost and usage are kept.
-    if (result !== null && (stopping || abort.signal.aborted)) return emitFinished(result)
-    // An interrupt that fell back to the abort signal makes the SDK throw an AbortError: that's an interrupt, not an
-    // SDK fault.
-    if (stopping) emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
-    else if (abort.signal.aborted) emit({ type: 'failed', reason: 'interrupted', message: 'interrupted' })
-    else emit({ type: 'failed', reason: 'sdk_error', message: message(e) })
-    return
+    threw = true
+    thrown = e
   }
-  // A result was seen: the run finished, even when a stop raced its end.
-  if (result !== null) emitFinished(result)
-  else if (stopping) emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
-  else emit({ type: 'failed', reason: abort.signal.aborted ? 'interrupted' : 'sdk_error', message: 'the query ended without a result' })
+  endInput()
+  if (ended) return
 
-  function emitFinished(result: Extract<SDKMessage, { type: 'result' }>) {
-    emit({
-      type: 'finished',
-      subtype: result.subtype,
-      isError: result.is_error,
-      numTurns: result.num_turns,
-      costUsd: result.total_cost_usd,
-      usage: result.usage as unknown as Record<string, unknown>,
-    })
+  // 3. The end: the deferred call, files, the store, then the one terminal event.
+  let terminal: Extract<SessionEvent, { type: 'finished' | 'failed' }>
+  if (result !== null && (!threw || stopping || abort.signal.aborted)) {
+    // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept).
+    terminal = finishedEvent(result)
+    const deferred = result.subtype === 'success' ? result.deferred_tool_use : undefined
+    if (deferred) {
+      if (jsonBytes(deferred.input) > DEFERRED_INPUT_MAX_BYTES) terminal = { type: 'failed', reason: 'sdk_error', message: 'a deferred call whose input is over the cap' }
+      else if (turn.count === 1) await emit({ type: 'deferred', toolUseId: deferred.id, toolName: deferred.name, input: deferred.input })
+      else terminal = { type: 'failed', reason: 'sdk_error', message: `a deferred call in a turn with ${turn.count} tool calls; the runner defers only a lone call` }
+    }
+  } else if (stopping) terminal = { type: 'failed', reason: 'stopped', message: 'stopped' }
+  // An interrupt that fell back to the abort signal makes the SDK throw an AbortError: that's an interrupt, not an SDK fault.
+  else if (abort.signal.aborted) terminal = { type: 'failed', reason: 'interrupted', message: 'interrupted' }
+  else terminal = { type: 'failed', reason: 'sdk_error', message: threw ? message(thrown) : 'the query ended without a result' }
+
+  await files.save(before, emit)
+  const cp = await store.checkpoint()
+  if (cp.repaired > 0) log({ type: 'store_repaired', batches: cp.repaired })
+  if (cp.ok) await emit({ type: 'checkpoint', entries: cp.entries })
+  else await emit({ type: 'mirror_error', message: cp.error })
+  await emit(terminal)
+}
+
+function finishedEvent(result: Result): Extract<SessionEvent, { type: 'finished' }> {
+  return {
+    type: 'finished',
+    subtype: result.subtype,
+    isError: result.is_error,
+    numTurns: result.num_turns,
+    costUsd: result.total_cost_usd,
+    usage: result.usage as unknown as Record<string, unknown>,
   }
 }

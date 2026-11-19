@@ -1,6 +1,7 @@
 // The guards seam. R1 defines and calls these; R2 implements them in src/guards/. A test implementation lives under
 // test/ only, and the production wiring (src/server/production.ts) refuses anything that isn't marked production.
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
+import type { AuditEntry } from '../../../shared/protocol/index.ts'
 import type { RunConfig } from '../protocol/local.ts'
 
 /** The OS user a session runs as. `workDir` is the session's work folder (the process's cwd). */
@@ -35,7 +36,18 @@ export interface QueryGuards {
   /**
    * No spawn hook to keep: the local channel is the session's own stdin and stdout, and the SDK's default spawn gives
    * the CLI fresh stdio pipes (src/session/channel.ts). A guard that sets `spawnClaudeCodeProcess` must not hand the
-   * CLI the session's stdin or stdout.
+   * CLI the session's stdin or stdout. `baseOptions` already holds the session store (`sessionStore`,
+   * `sessionStoreFlush`); keep them.
    */
-  apply(baseOptions: Options, runConfig: RunConfig): Options
+  apply(baseOptions: Options, runConfig: RunConfig, run: RunContext): Options
+}
+
+/** What the session gives the guards for one run. */
+export type RunContext = {
+  /**
+   * The blocking audit log's transport, for the audit hook: resolves once the root has written the entry as an `audit`
+   * event on the Worker's open stream; rejects on a refusal (the run ended, the Worker went), a closed channel or a
+   * timeout. The hook must not let the call run unless this resolved.
+   */
+  audit(entry: AuditEntry): Promise<void>
 }
