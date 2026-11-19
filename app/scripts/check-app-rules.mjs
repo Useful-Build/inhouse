@@ -155,13 +155,39 @@ for (const [c, n] of ALLOWED_CLASSES) if (!n) problems.push(`check-app-rules.all
 // ---------- fixed waits in e2e ----------
 const e2eDir = new URL('../e2e/', import.meta.url).pathname
 const waits = []
-const FIXED_WAIT = /\bwaitForTimeout\s*\(|new\s+Promise\b[^\n]*\bsetTimeout\b/
-if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
-  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
-    if (/^\s*(\/\/|\*|\/\*)/.test(line)) return
-    if (FIXED_WAIT.test(line)) waits.push(`e2e/${relative(e2eDir, file)}:${i + 1}  ${line.trim()}`)
-  })
+// Blanks comments (keeping newlines, so line numbers stay right) and leaves strings alone.
+const stripComments = src => {
+  let out = '', quote = null
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i], n = src[i + 1]
+    if (quote) { out += c; if (c === '\\') out += src[++i] ?? ''; else if (c === quote) quote = null; continue }
+    if (c === '"' || c === "'" || c === '`') { quote = c; out += c }
+    else if (c === '/' && n === '/') { while (i < src.length && src[i] !== '\n') i++; i--; }
+    else if (c === '/' && n === '*') {
+      const end = src.indexOf('*/', i + 2), stop = end < 0 ? src.length : end + 2
+      out += src.slice(i, stop).replace(/[^\n]/g, ' '); i = stop - 1
+    } else out += c
+  }
+  return out
 }
+const FIXED_WAITS = [
+  /\bwaitForTimeout\b/, // page.waitForTimeout(...) and page['waitForTimeout'](...)
+  /new\s+Promise\b[^;]{0,200}?\bsetTimeout\b/s, // new Promise(r => setTimeout(r, ms)), also across lines
+  /import\s*\{[^}]*\bsetTimeout\b[^}]*\}\s*from\s*['"](?:node:)?timers\/promises['"]/s, // aliased or not
+  /\bscheduler\s*\.\s*wait\s*\(/,
+]
+if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
+  const text = readFileSync(file, 'utf8'), code = stripComments(text), lines = text.split('\n')
+  const seen = new Set()
+  for (const re of FIXED_WAITS) for (const m of code.matchAll(new RegExp(re.source, re.flags + 'g'))) {
+    const ln = code.slice(0, m.index).split('\n').length
+    if (seen.has(ln)) continue
+    seen.add(ln)
+    waits.push([ln, `e2e/${relative(e2eDir, file)}:${ln}  ${lines[ln - 1].trim()}`])
+  }
+}
+waits.sort((x, y) => x[1].localeCompare(y[1]) || x[0] - y[0])
+for (let i = 0; i < waits.length; i++) waits[i] = waits[i][1]
 
 const report = (list, msg) => { if (list.length) console.error(`${list.length} ${msg}\n${list.join('\n')}\n`) }
 report(hits.arbitrary, 'arbitrary value(s). Use a scale step (w-82.5 = 330px) or an --app-* token in src/index.css:')

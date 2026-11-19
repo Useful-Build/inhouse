@@ -133,6 +133,8 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   await page.mouse.move(720, 450)
   await open.hover()
   await page.clock.runFor(1000) // past the tooltip's 500 ms open delay, so a tooltip would be open by now
+  // One frame, so React's commit has landed before the negative check
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r(null))))
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   const cutAtRest = await t.evaluate(e => {
     const menu = e.closest('[data-chat-row]')!.querySelector<HTMLElement>('[aria-haspopup="menu"]')!
