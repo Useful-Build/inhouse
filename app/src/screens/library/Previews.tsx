@@ -3,6 +3,7 @@
 // Colors in the drawn contents of a thumbnail (paper, poster, waveform) are content art and stay literal. Type chips use the tag tokens.
 import type { DocPreview, LibraryFile } from '../../agent'
 import { cn } from '@/lib/utils'
+import { useAgentData } from '../../state/store'
 import { Icon } from '../../ui'
 
 const GREY = 'bg-fill text-foreground-2'
@@ -31,13 +32,14 @@ export function TypeChip({ type }: { type: string }) {
 /** First page of a document Inhouse agent made. Sizes use the page's own width, so it reads the same small or large. */
 export function DocPage({ doc }: { doc: DocPreview }) {
   // content art: a white sheet of paper, drawn the same in light and dark
+  const brand = useAgentData().meta.brand.name
   const label = 'font-mono text-[2.3cqw] tracking-[.05em] text-[#6b6b6b] uppercase'
   const total = doc.table?.total
   const col = (i: number) => (i === 0 ? 'flex-3 text-left' : 'flex-1 text-right')
   return (
     <div aria-hidden="true" className="@container relative aspect-[3/4] w-full overflow-hidden bg-[#fff] text-[#171717]">
       <div className="px-[7.5cqw] py-[7cqw] text-[3cqw] leading-[1.4]">
-        <div className={label}>Northline Outdoor · {doc.tag}</div>
+        <div className={label}>{brand} · {doc.tag}</div>
         <div className="mt-[3.2cqw] mb-[4cqw] text-[6.2cqw] leading-[1.12] font-strong tracking-[-0.03em]">{doc.title}</div>
         <div className="grid grid-cols-[auto_1fr] gap-x-[3cqw] gap-y-[.8cqw] text-[#3d3d3d]">
           {doc.meta.map(([k, v]) => <span key={k} className="contents"><span className="text-[#6b6b6b]">{k}</span><span>{v}</span></span>)}
