@@ -9,7 +9,8 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
-- Trace window: the replay speed, Pause replay, Restart, Stop and show everything and a step's details are opened by no spec.
+- Ship specs: `e2e/ship/example.spec.ts` and `e2e/ship/setup-gaps.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview, never in CI's normal run.
+- Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Audit log: the download is checked on desktop only (its content in `sample-data.spec.ts`); the phone check sees the button.
 - Export everything and Sign out are stubs: specs check they say so and change nothing.
@@ -320,7 +321,7 @@ Account menu
   Path:     sidebar -> account and settings
   Selector: menu "Account", items Your settings, Team settings, Help and guides, Report a bug, Send feedback, Sign out
   Expected: Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Send feedback opens the team window on Feedback with an empty field and no screenshot box; Report a bug opens it on the bug type; Sign out says it isn't connected
-  Covered:  e2e/help-account-menu.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts
+  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts
 
 Help and guides
   Path:     account menu -> Help and guides
@@ -337,7 +338,7 @@ Problem panel
 Trace window
   Path:     an answer's steps line, or an Activity row
   Selector: dialog "What your Inhouse agent did", radio "Technical", button "Replay", `trace-row`
-  Expected: the plain view shows the question and the time with no model or token words; Technical shows tokens; Replay runs; an answer sent mid-run opens its own steps
+  Expected: the plain view shows the question and the time with no model or token words; Technical shows tokens; Replay is clicked, its result not asserted; an answer sent mid-run opens its own steps
   Covered:  e2e/app.spec.ts, e2e/conversation-polish.spec.ts, e2e/no-persona.spec.ts, e2e/overlays-keyboard.spec.ts
 
 Notifications and team window
