@@ -10,10 +10,11 @@
 //      holding one, an alias, `promisify`), the `timers` module in any form, `scheduler.wait(`, `Atomics.wait`. Wait
 //      for a condition (an `expect` or `expect.poll`), or move time with the Clock API (`page.clock.install()`,
 //      `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine. No allow list.
-//   4. the mock's storage keys and sample data in the E2E specs: any `inhouse.demo.` string, and any path into
-//      `sample-data/`, in e2e/ outside e2e/support/. Specs read names and seed state through `fx`
-//      (e2e/support/fx.ts). Files still to migrate are listed in scripts/check-app-rules.e2e-seam.json: it only
-//      shrinks (a listed file with no hit fails, so you remove it as you migrate it) and is deleted when empty.
+//   4. the mock's storage keys, sample data and module in the E2E specs: any `inhouse.demo.` key or the UI session key, any
+//      `sample-data` or `@sample` reference, and the mock module (`agent/mock`), in e2e/ outside e2e/support/. Specs read
+//      names and seed or read back state through `fx` (e2e/support/fx.ts). Files still to migrate are in
+//      scripts/check-app-rules.e2e-seam.json with a hit count each: a count that goes up or an unlisted file fails, a
+//      stale or inexact entry fails, and the file is deleted when empty. A literal guard, not a wall (see the rule's code).
 // Exceptions live in scripts/check-app-rules.allow.json, each with a reason. An entry nothing uses fails too.
 // Run: npm run lint:tokens (part of npm run lint).
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -216,31 +217,38 @@ if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
 waits.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]))
 for (let i = 0; i < waits.length; i++) waits[i] = waits[i][2]
 
-// ---------- mock storage keys and sample data in e2e ----------
-// Only e2e/support/ (the fixtures layer) may name the mock's storage keys or import its sample data.
+// ---------- mock storage keys, sample data and the mock module in e2e ----------
+// Only e2e/support/ (the fixtures layer) may name the mock's storage keys or import its sample data or its module.
+// A literal guard, not a wall: a key built from pieces ('inhouse.' + 'demo.') or a path assembled at run time gets past it,
+// and review covers that. `inhouse.theme` is not in the rule: it's the app's own theme preference (product too), not demo
+// state; seed it through `fx.seed({ theme })`.
+// Files still to migrate are in scripts/check-app-rules.e2e-seam.json, with their hit counts (lines that match). A count
+// that goes up, or a file that isn't listed, fails; so does an entry that's stale or whose count is no longer exact. Batches
+// lower the counts, and the last one deletes the JSON.
 const SEAM_LIST = new URL('./check-app-rules.e2e-seam.json', import.meta.url)
-const seamListed = new Map(existsSync(SEAM_LIST) ? JSON.parse(readFileSync(SEAM_LIST, 'utf8')).files.map(f => [f, 0]) : [])
+const seamListed = new Map(existsSync(SEAM_LIST) ? Object.entries(JSON.parse(readFileSync(SEAM_LIST, 'utf8')).files) : [])
 const seam = []
-const SEAM_HIT = /inhouse\.demo\.|sample-data\//
+// A storage key (`inhouse.demo.`, the UI session), the sample data in any form (`sample-data` with or without a slash, the
+// `@sample` alias) or the mock module (`agent/mock`, any extension).
+const SEAM_HIT = /inhouse\.demo\.|inhouse\.ui\.session|sample-data|@sample|agent\/mock\b/
 if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
   const rel = `e2e/${relative(e2eDir, file)}`
   if (rel.startsWith('e2e/support/')) continue
-  const lines = stripComments(readFileSync(file, 'utf8')).split('\n')
+  const lines = stripComments(readFileSync(file, 'utf8'), false).split('\n')
   const found = lines.flatMap((line, i) => SEAM_HIT.test(line) ? [`${rel}:${i + 1}  ${line.trim()}`] : [])
-  if (seamListed.has(rel)) seamListed.set(rel, found.length)
-  else seam.push(...found)
+  const allowed = seamListed.get(rel)
+  if (allowed === undefined) seam.push(...found)
+  else if (found.length > allowed) problems.push(`check-app-rules.e2e-seam.json: ${rel} has ${found.length} hit(s), the list allows ${allowed}. Go through \`fx\`:\n${found.join('\n')}`)
+  else if (found.length < allowed) problems.push(`check-app-rules.e2e-seam.json: ${rel} has ${found.length} hit(s), the list says ${allowed}. ${found.length ? `Set it to ${found.length}` : 'Remove the entry (delete the file when it is empty)'}`)
 }
-for (const [path, n] of seamListed) {
-  if (!existsSync(new URL(`../${path}`, import.meta.url))) problems.push(`check-app-rules.e2e-seam.json: ${path} doesn't exist; remove it`)
-  else if (!n) problems.push(`check-app-rules.e2e-seam.json: ${path} no longer names a storage key or sample data; remove it (delete the file when it's empty)`)
-}
-if (seamListed.size) console.log(`e2e seam: ${seamListed.size} spec file(s) still name storage keys or sample data (scripts/check-app-rules.e2e-seam.json):\n${[...seamListed.keys()].join('\n')}\n`)
+for (const path of seamListed.keys()) if (!existsSync(new URL(`../${path}`, import.meta.url))) problems.push(`check-app-rules.e2e-seam.json: ${path} doesn't exist; remove it`)
+if (seamListed.size) console.log(`e2e seam: ${seamListed.size} spec file(s) still name storage keys, sample data or the mock module (scripts/check-app-rules.e2e-seam.json):\n${[...seamListed].map(([f, n]) => `${f} (${n})`).join('\n')}\n`)
 
 const report = (list, msg) => { if (list.length) console.error(`${list.length} ${msg}\n${list.join('\n')}\n`) }
 report(hits.arbitrary, 'arbitrary value(s). Use a scale step (w-82.5 = 330px) or an --app-* token in src/index.css:')
 report(hits.style, 'inline style(s) with a literal. Use a class, or compute the value from data:')
 report(waits, 'fixed wait(s) in e2e. Wait for a condition (expect, expect.poll) or use the Clock API (page.clock.install(), page.clock.runFor(ms)):')
-report(seam, "`inhouse.demo.` storage key(s) or sample-data path(s) in e2e outside e2e/support/. Go through `fx` (e2e/support/fx.ts):")
+report(seam, "storage key(s), sample-data or mock-module reference(s) in e2e outside e2e/support/. Go through `fx` (e2e/support/fx.ts):")
 report(problems, 'allow-list problem(s):')
 if (hits.arbitrary.length + hits.style.length + waits.length + seam.length + problems.length) process.exit(1)
 console.log('app rules: no arbitrary values (outside src/components/ui), literal inline styles, fixed waits or mock storage keys and sample data (outside e2e/support) in e2e')

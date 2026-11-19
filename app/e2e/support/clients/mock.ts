@@ -1,35 +1,21 @@
-// The mock client's side of the spec fixtures: the only file under e2e/ that knows the mock's storage keys, its demo URL
-// and its sample data. Specs go through `fx` (../fx.ts); P2 adds clients/real.ts beside this one.
+// The mock client's side of the spec fixtures: where the mock's storage keys, its demo URL and its sample data live
+// (with support/capture/ and support/fixtures/). Specs go through `fx` (../fx.ts); P2 adds clients/real.ts beside this one.
 import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
+import type { Fx, Names, Restage, Saved, Seed, SavedDemo } from '../fx.js'
 
-export type Stage = 'Watch' | 'Act' | 'Run'
-export type Theme = 'light' | 'dark'
-export type Seed = {
-  stage: Stage
-  /** A scenario switch ("Normal", "First day", "Loading", "Cap reached", "Tool disconnected"). Default "Normal". */
-  scenario?: string
-  theme?: Theme
-  /** Seed on the first load of the tab only (a reload keeps what the page saved). Default true. */
-  once?: boolean
-}
+export type { Names, Seed, Stage, Theme } from '../fx.js'
 
 /** What the mock keeps in the browser. Never change these: a returning visitor keeps their demo. */
 const KEYS = {
   switches: 'inhouse.demo.switches.v1',
-  session: 'inhouse.demo.v2',
+  demo: 'inhouse.demo.v2',
+  runs: 'inhouse.demo.runs.v1',
+  brand: 'inhouse.demo.data.v1',
+  session: 'inhouse.ui.session.v1',
   theme: 'inhouse.theme',
 } as const
-const SEEDED = 'e2e-seeded'
-
-/** The sample data's names, read from the data files so a spec never repeats a sample string it can look up. */
-export type Names = {
-  brand: string
-  user: { id: string; name: string; initials: string; email: string; title: string; role: string }
-  people: { id: string; name: string; email: string; role: string }[]
-  tools: { connected: string[]; beingConnected: string[]; catalog: { key: string; name: string }[] }
-  chats: { id: string; title: string }[]
-}
+const RESET_COOKIE = 'e2e-reset'
 
 const DATA = new URL('../../../src/agent/sample-data/', import.meta.url)
 const read = (file: string) => JSON.parse(readFileSync(new URL(file, DATA), 'utf8'))
@@ -52,40 +38,84 @@ export function sampleNames(): Names {
   }
 }
 
-export function mockClient(page: Page) {
-  const install = (stored: Record<string, string>, once: boolean) =>
-    page.addInitScript(([entries, onlyOnce, mark]) => {
-      if (onlyOnce && sessionStorage.getItem(mark)) return
-      localStorage.clear()
-      for (const [k, v] of entries) localStorage.setItem(k, v)
-      if (onlyOnce) sessionStorage.setItem(mark, '1')
-    }, [Object.entries(stored), once, SEEDED] as const)
+/** Per page: the id of the last script installed, whether the page was seeded, and the last id a reset switched off. */
+const pages = new WeakMap<Page, { n: number; seeded: boolean }>()
+const stateOf = (page: Page) => {
+  let s = pages.get(page)
+  if (!s) pages.set(page, (s = { n: 0, seeded: false }))
+  return s
+}
+
+type Script = { id: number; entries: [string, string][]; once: boolean; clear: boolean }
+/** Runs before every document of the page. A script whose id a reset has passed does nothing. */
+function applySeed({ id, entries, once, clear }: Script) {
+  const reset = /(?:^|;\s*)e2e-reset=(\d+)/.exec(document.cookie)
+  if (reset && id <= Number(reset[1])) return
+  const mark = `e2e-seeded-${id}`
+  if (once && sessionStorage.getItem(mark)) return
+  if (clear) localStorage.clear()
+  for (const [k, v] of entries) localStorage.setItem(k, v)
+  if (once) sessionStorage.setItem(mark, '1')
+}
+
+const switches = ({ stage, scenario = 'Normal', demo }: Restage) => ({
+  [KEYS.switches]: JSON.stringify({ stage, scenario, ambient: demo?.ambient ?? 'Off', animateMark: demo?.animateMark ?? false }),
+})
+
+export function mockClient(page: Page): Fx & { demoStartedAt(): Promise<number> } {
+  let names: Names | undefined
+  const install = async (entries: Record<string, string>, once: boolean, clear: boolean) => {
+    const st = stateOf(page)
+    await page.addInitScript(applySeed, { id: ++st.n, entries: Object.entries(entries), once, clear })
+  }
+  const seedOnce = async (s: Seed, saved?: SavedDemo) => {
+    const st = stateOf(page)
+    if (st.seeded) throw new Error('fx.seed: this page was already seeded. Seed once per page; use fx.restage to change the stage later, or fx.reset first.')
+    st.seeded = true
+    const stored: Record<string, string> = switches(s)
+    if (s.theme) stored[KEYS.theme] = s.theme
+    if (s.demo?.brand) stored[KEYS.brand] = JSON.stringify(s.demo.brand)
+    if (saved) stored[KEYS.demo] = JSON.stringify(saved)
+    await install(stored, s.once ?? true, true)
+  }
+  const saved = async (): Promise<Saved> => {
+    const [demo, runs, session] = await page.evaluate(
+      keys => keys.map(k => localStorage.getItem(k)),
+      [KEYS.demo, KEYS.runs, KEYS.session],
+    )
+    return { demo: JSON.parse(demo ?? '{}'), runs: JSON.parse(runs ?? '[]'), session: JSON.parse(session ?? '{}') }
+  }
 
   return {
-    names: sampleNames(),
-    /** Clears the browser's storage, then writes the demo switches (and a theme) before the app loads. */
-    seed({ stage, scenario = 'Normal', theme, once = true }: Seed) {
-      const stored: Record<string, string> = {
-        [KEYS.switches]: JSON.stringify({ stage, scenario, ambient: 'Off', animateMark: false }),
-      }
-      if (theme) stored[KEYS.theme] = theme
-      return install(stored, once)
-    },
-    /** Clears the browser's storage, then writes exactly these stored values (key to string) before the app loads. */
-    seedRaw(stored: Record<string, string>, once = true) {
-      return install(stored, once)
-    },
-    /** Back to a clean demo: clears the storage of the page that is open. Call it after the page has loaded. */
+    get names() { return (names ??= sampleNames()) },
+    seed: s => seedOnce(s),
+    seedSaved: (s, savedDemo) => seedOnce(s, savedDemo),
+    restage: s => install(switches(s), false, false),
+    saved,
     async reset() {
-      await page.evaluate(() => { localStorage.clear(); sessionStorage.clear() })
+      const st = stateOf(page)
+      const origin = page.url().startsWith('http') ? new URL(page.url()).origin : null
+      // 1. Leave the app, so its pagehide save has run and it can't write again.
+      await page.goto('about:blank')
+      // 2. Switch off every seed script installed so far, for every later load (a cookie survives the navigation).
+      st.seeded = false
+      if (!origin) return
+      await page.context().addCookies([{ name: RESET_COOKIE, value: String(st.n), url: origin }])
+      // 3. Clear the origin's storage from a page that isn't the app. The CSP header keeps the CSP guard armed.
+      const blank = `${origin}/e2e-reset.html`
+      await page.route(blank, r => r.fulfill({
+        contentType: 'text/html', headers: { 'content-security-policy': "default-src 'none'" }, body: '<!doctype html><title>reset</title>',
+      }))
+      try {
+        await page.goto(blank)
+        await page.evaluate(() => { localStorage.clear(); sessionStorage.clear() })
+      } finally {
+        await page.unroute(blank)
+        await page.goto('about:blank')
+      }
     },
-    /** Opens the demo at a route ("#/today"). */
-    open(hash = '') {
-      return page.goto('/?demo' + hash)
-    },
-    /** The real-time stamp the demo saved at its first load (ms): the zero of its clock. */
-    demoStartedAt() {
-      return page.evaluate(k => JSON.parse(localStorage.getItem(k) ?? '{}').demoStartedAt as number, KEYS.session)
-    },
+    open: (hash = '') => page.goto('/?demo' + hash),
+    /** The real-time stamp the demo saved at its first load (ms): the zero of its clock. Mock only (states.ts). */
+    async demoStartedAt() { return (await saved()).demo.demoStartedAt as number },
   }
 }
