@@ -67,7 +67,9 @@ network calls.
 - D2 Workers Previews (`wrangler preview`, open beta), deployed by a trusted workflow. Fallback if the beta blocks:
   Version URLs (`wrangler versions upload --preview-alias`).
 - D3 Public workers.dev preview URLs (invented data; noindex header).
-- D4 Rulesets, committed as JSON in `.github/rulesets/` and applied with `gh api`:
+- D4 Rulesets, committed as JSON in `.github/rulesets/` and applied with `gh api` (to change one: edit its file, then
+  `gh api -X PUT repos/Useful-Build/inhouse/rulesets/<id> --input .github/rulesets/<name>.json`, ids from
+  `gh api repos/Useful-Build/inhouse/rulesets`):
   - `main`: PR required, required checks `ci` and `pr-gates` with strict (branch up to date), squash only, no force
     push, no deletion, no bypass actors (agents act as the admin, so a bypass would void the gate).
   - `fleet/**`: PR required, required checks `ci` and `pr-gates`, not strict, merge commits only, no force push,
@@ -78,7 +80,7 @@ network calls.
 - D5 Global skills (`change-loop`, `verification`, `repo-setup`, `fleet`, `qa-check`) are updated after this flow has
   shipped once (Phase 4), as an opt-in flow distinct from fleet policy.
 - D6 Cloudflare token: one token for previews and (in the production plan) production deploys, made from the
-  documented "Edit Cloudflare Workers" template and scoped to the one account and the `usefulbuild.com` zone. It goes
+  documented "Edit Cloudflare Workers" template and scoped to the one account and the organisation's zone. It goes
   through a secret card into GitHub environments `preview` and `production`, whose deployment branches are `main`
   only, with `CLOUDFLARE_ACCOUNT_ID` as an environment variable. Only trusted workflow code on `main` ever holds it.
 
@@ -87,7 +89,7 @@ network calls.
 ### Phase 0: orchestrator, sequential
 - A1 Push `fleet/setup-gaps` at `main`'s head (no new commit).
 - A2 Apply both rulesets. Check: direct push to `main` rejected.
-- A3 Token and account id into environment `preview` (D6).
+- A3 Token and account id into environments `preview` and `production` (D6).
 
 ### Phase 1: bootstrap PRs straight into `main`, two workers in parallel
 These must be on `main` before the flow can run: `workflow_run` and `workflow_dispatch` only use workflow files from
@@ -111,13 +113,13 @@ W2 builds in parallel and merges after W1, once its end-to-end proof has run on 
   the browser scenarios for this project's reel (the new and mapped Settings pages and Help, desktop and phone).
   Owns `feature-map.md`, the new specs, that ship spec. The revised map goes to Wasim for approval.
 - Orchestrator: AGENTS.md (gap 5 and the landing flow in "How changes land here"), `verify` skill (gap 6, plus
-  previews and ship), root README (gap 7), `app/README.md` (queue claim).
+  previews and ship), root README (gap 7), `app/README.md` (queue claim), the merge-queue comment and trigger note in `ci.yml` (after W1 merges).
 
 ### Phase 3: final PR `fleet/setup-gaps` -> `main`
 Runs the landing flow end to end; the ship packet is the proof. No app code changes, so no production deploy.
 
 ### Phase 4: after Wasim approves and it merges
-W5 sonnet-worker in agents-config: the flow into `change-loop`, `verification`, `repo-setup` (blueprints for
+W5 sonnet-worker in the global agent rules repo: the flow into `change-loop`, `verification`, `repo-setup` (blueprints for
 previews, ship recording, rulesets), `fleet` and `qa-check`, as an opt-in flow distinct from fleet policy. One
 Sonnet review, merge, `~/.agents` synced.
 
@@ -144,7 +146,7 @@ Engineering items (evidence: `gh` output, CI runs, files):
     (motion, ship); Gaps section accurate; Wasim approved the revised map.
 12. The final PR's head SHA has a QA PASS, a ship packet and Wasim's approval, and merges with
     `--match-head-commit`.
-13. agents-config skills merged and synced (`main...origin/main`, nothing ahead or behind).
+13. The global agent rules merged and synced (`main...origin/main`, nothing ahead or behind).
 
 Browser scenarios (QA gate and reel, desktop 1440x900 and phone 390x844): written in
 `e2e/ship/setup-gaps.spec.ts` by W4, one per Settings page and the Help window added to the map, approved with the
