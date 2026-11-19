@@ -3,15 +3,12 @@
 import { expect } from '@playwright/test'
 import type { Page, TestType } from '@playwright/test'
 import { atRest } from './states.js'
+import { mockClient, type Stage } from './support/clients/mock.js'
 
-async function start(page: Page, stage: string, scenario: string, hash: string) {
-  await page.addInitScript(([s, sc]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, scenario])
-  await page.goto('/?demo' + hash)
+async function start(page: Page, stage: Stage, scenario: string, hash: string) {
+  const client = mockClient(page)
+  await client.seed({ stage, scenario })
+  await client.open(hash)
 }
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
 const noSideways = (page: Page) => page.evaluate(() => [document.documentElement, document.querySelector('main')!].every(e => e.scrollWidth - e.clientWidth <= 1))
