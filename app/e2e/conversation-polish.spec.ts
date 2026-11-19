@@ -28,6 +28,8 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msg = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })
+/** A message the person sent: the answer card carries data-answer on the same element, so hasNot can't skip it. */
+const sent = (page: Page, text: string) => log(page).locator('[data-chat-msg]:not([data-answer])').filter({ hasText: text })
 const field = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
 const dock = (page: Page) => page.locator('[data-composer]')
 const stop = (page: Page) => dock(page).getByRole('button', { name: 'Stop', exact: true })
@@ -167,7 +169,7 @@ test.describe('desktop', () => {
     await msg(page, STOPPED).getByRole('button', { name: 'Retry' }).click()
     await expect(log(page).getByText(STOPPED)).toHaveCount(0)
     await expect(msg(page, REFUNDS_A)).toHaveCount(1, { timeout: 15_000 })
-    await expect(msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-answer]') })).toHaveCount(1)
+    await expect(sent(page, REFUNDS_Q)).toHaveCount(1)
     await expect(stop(page)).toHaveCount(0)
   })
 
@@ -185,7 +187,7 @@ test.describe('desktop', () => {
     await field(page).fill('Draft I keep')
 
     // Edit: the question in the box, focused, with "Editing", and none of the draft's file.
-    const mine = msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-answer]') })
+    const mine = sent(page, REFUNDS_Q)
     await mine.hover()
     await mine.getByRole('button', { name: 'Edit message' }).click()
     const editing = dock(page).getByText('Editing your message')
@@ -221,7 +223,7 @@ test.describe('desktop', () => {
 
     // Undo of a sent edit, while its answer is still coming: the edited question and its partial answer go, the
     // question it replaced comes back with its answer, and nothing says it stopped.
-    const stuck = msg(page, STUCK_Q).filter({ hasNot: page.locator('[data-answer]') })
+    const stuck = sent(page, STUCK_Q)
     await stuck.hover()
     await stuck.getByRole('button', { name: 'Edit message' }).click()
     await expect(editing).toBeVisible()
@@ -263,7 +265,7 @@ test.describe('desktop', () => {
     await field(page).fill('Draft I keep')
 
     // Edit the question: the box holds it, with no file and no quote.
-    const question = msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-answer]') })
+    const question = sent(page, REFUNDS_Q)
     await question.hover()
     await question.getByRole('button', { name: 'Edit message' }).click()
     const editing = dock(page).getByText('Editing your message')
@@ -295,7 +297,7 @@ test.describe('desktop', () => {
     const mine = await page.evaluate(() => location.hash)
     const replying = dock(page).getByText('Replying to Inhouse agent')
     const editing = dock(page).getByText('Editing your message')
-    const question = msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-answer]') })
+    const question = sent(page, REFUNDS_Q)
     /** Reply on the answer, then Edit the question, which has no quote: the reply bar goes. */
     const replyThenEdit = async () => {
       const answer = log(page).locator('[data-answer]').first()
@@ -365,7 +367,7 @@ test.describe('desktop', () => {
     const file = dock(page).getByText('Order #4821')
     await expect(file).toBeVisible()
     await field(page).fill('Draft I keep')
-    const asked = msg(page, STUCK_Q).filter({ hasNot: page.locator('[data-answer]') })
+    const asked = sent(page, STUCK_Q)
     /** The composer still holds the draft, its file and its quote. */
     const kept = async () => {
       await expect(field(page)).toHaveValue('Draft I keep')
@@ -444,7 +446,7 @@ test.describe('desktop', () => {
     const edit = chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ })
     await expect(edit).toBeEnabled()
 
-    const question = msg(page, REFUNDS_Q).filter({ hasNot: page.locator('[data-answer]') })
+    const question = sent(page, REFUNDS_Q)
     await question.hover()
     await question.getByRole('button', { name: 'Edit message' }).click()
     const editing = dock(page).getByText('Editing your message')
