@@ -6,8 +6,8 @@
 //   2. inline `style` props in .tsx that carry a literal (a number, a quoted string, a var(--...)), also as a fallback
 //      (`?? 20`, `|| 20`, `&& 20`) or a ternary branch. Values computed at runtime (a bar's height from data, a
 //      position from state) are fine.
-//   3. fixed waits in the E2E specs (e2e/**/*.ts): `waitForTimeout(` and a promise wrapped around `setTimeout`
-//      (`new Promise(r => setTimeout(r, 500))`). Wait for a condition (an `expect` or `expect.poll`), or move time with
+//   3. fixed waits in the E2E specs (e2e/**/*.ts): `waitForTimeout(` and a promise whose body calls `setTimeout`
+//      (`new Promise(r => setTimeout(r, 500))`), `timers/promises`, `scheduler.wait(`. Wait for a condition (an `expect` or `expect.poll`), or move time with
 //      the Clock API (`page.clock.install()`, `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine.
 // Exceptions live in scripts/check-app-rules.allow.json, each with a reason. An entry nothing uses fails too.
 // Run: npm run lint:tokens (part of npm run lint).
@@ -155,39 +155,65 @@ for (const [c, n] of ALLOWED_CLASSES) if (!n) problems.push(`check-app-rules.all
 // ---------- fixed waits in e2e ----------
 const e2eDir = new URL('../e2e/', import.meta.url).pathname
 const waits = []
-// Blanks comments (keeping newlines, so line numbers stay right) and leaves strings alone.
-const stripComments = src => {
-  let out = '', quote = null
+// Blanks comments (keeping newlines, so line numbers stay right). Regex literals (after `( , = : [ ! & | ? { } ;`,
+// `return` or at the start) are skipped to their closing `/` so quotes inside them don't open a string; '...' and "..."
+// end at a newline. With blank=true the contents of strings and regex literals are blanked too (quotes kept).
+const stripComments = (src, blank = false) => {
+  let out = '', quote = null, last = ''
+  const put = (s, keep) => { out += keep || !blank ? s : s.replace(/[^\n]/g, ' '); }
   for (let i = 0; i < src.length; i++) {
     const c = src[i], n = src[i + 1]
-    if (quote) { out += c; if (c === '\\') out += src[++i] ?? ''; else if (c === quote) quote = null; continue }
-    if (c === '"' || c === "'" || c === '`') { quote = c; out += c }
-    else if (c === '/' && n === '/') { while (i < src.length && src[i] !== '\n') i++; i--; }
+    if (quote) {
+      if (c === '\\') { put(c + (src[++i] ?? '')); continue }
+      if (c === quote || (c === '\n' && quote !== '`')) { quote = null; out += c; last = c; continue }
+      put(c); continue
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; out += c; last = c }
+    else if (c === '/' && n === '/') { while (i < src.length && src[i] !== '\n') i++; i-- }
     else if (c === '/' && n === '*') {
       const end = src.indexOf('*/', i + 2), stop = end < 0 ? src.length : end + 2
       out += src.slice(i, stop).replace(/[^\n]/g, ' '); i = stop - 1
-    } else out += c
+    } else if (c === '/' && (last === '' || '(,=:[!&|?{};'.includes(last) || /(?:^|[^\w$.])return$/.test(out.trimEnd()))) {
+      let j = i + 1, cls = false
+      for (; j < src.length && src[j] !== '\n'; j++) {
+        if (src[j] === '\\') j++
+        else if (src[j] === '[') cls = true
+        else if (src[j] === ']') cls = false
+        else if (src[j] === '/' && !cls) break
+      }
+      put(src.slice(i, j + 1)); i = j; last = '/'
+    } else { out += c; if (!/\s/.test(c)) last = c }
   }
   return out
 }
+// Line numbers (1-based) of every `new Promise(` whose argument list, by paren depth, holds setTimeout or setInterval.
+const promiseTimers = blanked => {
+  const lines = []
+  for (const m of blanked.matchAll(/\bnew\s+Promise\s*\(/g)) {
+    let d = 0, k = m.index + m[0].length - 1
+    for (; k < blanked.length; k++) { if (blanked[k] === '(') d++; else if (blanked[k] === ')' && --d === 0) break }
+    if (/\b(?:setTimeout|setInterval)\b/.test(blanked.slice(m.index + m[0].length, k))) lines.push(blanked.slice(0, m.index).split('\n').length)
+  }
+  return lines
+}
 const FIXED_WAITS = [
   /\bwaitForTimeout\b/, // page.waitForTimeout(...) and page['waitForTimeout'](...)
-  /new\s+Promise\b[^;]{0,200}?\bsetTimeout\b/s, // new Promise(r => setTimeout(r, ms)), also across lines
-  /import\s*\{[^}]*\bsetTimeout\b[^}]*\}\s*from\s*['"](?:node:)?timers\/promises['"]/s, // aliased or not
+  /timers\/promises/, // any import of it: static, dynamic import(), namespace
   /\bscheduler\s*\.\s*wait\s*\(/,
 ]
 if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
   const text = readFileSync(file, 'utf8'), code = stripComments(text), lines = text.split('\n')
   const seen = new Set()
-  for (const re of FIXED_WAITS) for (const m of code.matchAll(new RegExp(re.source, re.flags + 'g'))) {
-    const ln = code.slice(0, m.index).split('\n').length
-    if (seen.has(ln)) continue
+  const add = ln => {
+    if (seen.has(ln)) return
     seen.add(ln)
-    waits.push([ln, `e2e/${relative(e2eDir, file)}:${ln}  ${lines[ln - 1].trim()}`])
+    waits.push([`e2e/${relative(e2eDir, file)}`, ln, `e2e/${relative(e2eDir, file)}:${ln}  ${lines[ln - 1].trim()}`])
   }
+  for (const re of FIXED_WAITS) for (const m of code.matchAll(new RegExp(re.source, re.flags + 'g'))) add(code.slice(0, m.index).split('\n').length)
+  for (const ln of promiseTimers(stripComments(text, true))) add(ln)
 }
-waits.sort((x, y) => x[1].localeCompare(y[1]) || x[0] - y[0])
-for (let i = 0; i < waits.length; i++) waits[i] = waits[i][1]
+waits.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]))
+for (let i = 0; i < waits.length; i++) waits[i] = waits[i][2]
 
 const report = (list, msg) => { if (list.length) console.error(`${list.length} ${msg}\n${list.join('\n')}\n`) }
 report(hits.arbitrary, 'arbitrary value(s). Use a scale step (w-82.5 = 330px) or an --app-* token in src/index.css:')
