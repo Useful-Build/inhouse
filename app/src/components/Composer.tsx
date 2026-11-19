@@ -306,7 +306,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             </DropdownMenuItem>
             {attachExample && (
               <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => addAtts([{ name: attachExample.name, meta: attachExample.meta, icon: attachExample.icon }])}>
-                <AttachRow icon="sell" title="An order, product or customer" sub={orderSources} />
+                <AttachRow icon={attachExample.icon} title={attachExample.label ?? 'A record from your tools'} sub={orderSources} />
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator className="mx-1.5 my-1" />

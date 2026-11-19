@@ -428,7 +428,7 @@ export interface ToolsData {
   channels: ToolChannel[]
   beingConnected: string[]
   /** Sample records the composer's "An order, product or customer" item attaches (the first one). None: the item is hidden. */
-  attachExamples?: (Attachment & { sources: string[] })[]
+  attachExamples?: (Attachment & { sources: string[]; label?: string })[]
   lastRead: Record<string, string> & { default: string }
   catalog: CatalogTool[]
   details: Record<string, ToolDetail>

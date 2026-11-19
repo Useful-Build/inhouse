@@ -28,6 +28,7 @@
       "name": "Order #4821",
       "meta": "Shopify · Jamie Ortiz",
       "icon": "sell",
+      "label": "An order, product or customer",
       "sources": [
         "shopify",
         "amazon",

@@ -63,12 +63,14 @@ export const problemById = (id: string): ProblemSeed => {
 }
 
 /** The sample records the composer can attach, checked once at load. */
-const loadAttachExamples = (): (Attachment & { sources: string[] })[] => {
-  const out = toolsJson.attachExamples as (Attachment & { sources: string[] })[]
+const loadAttachExamples = (): (Attachment & { sources: string[]; label?: string })[] => {
+  const out = (toolsJson.attachExamples ?? []) as (Attachment & { sources: string[]; label?: string })[]
   for (const a of out) {
     for (const k of ['name', 'meta', 'icon'] as const) {
       if (typeof a[k] !== 'string' || !a[k]) throw new Error(`Tools data: an attach example is missing "${k}".`)
     }
+    if (a.label !== undefined && (typeof a.label !== 'string' || !a.label)) throw new Error(`Tools data: the attach example "${a.name}" needs "label" to be a non-empty string.`)
+    if (Array.isArray(a.sources) && a.sources.length === 0) throw new Error(`Tools data: the attach example "${a.name}" needs at least one entry in "sources".`)
     if (!Array.isArray(a.sources) || a.sources.some(k => !Object.hasOwn(toolsJson.details, k))) throw new Error(`Tools data: the attach example "${a.name}" needs "sources" to be a list of known tool keys.`)
   }
   return out
