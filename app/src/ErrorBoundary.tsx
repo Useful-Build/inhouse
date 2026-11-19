@@ -66,15 +66,14 @@ function DemoCrash(): never {
   throw new Error('Demo crash for qa.person@example.com with token=demo0123456789abcdefghijklmn on https://inhouse.example/p?secret=1#frag')
 }
 
+/** A lazy screen's file that failed to load: Try again can't fix it (React keeps the failed import), a reload can. */
+const CHUNK_ERROR = /dynamically imported module|Importing a module script failed|Unable to preload/i
+
 /**
  * Around each screen (App.tsx, keyed by page), so one broken screen leaves the sidebar, top bar and windows working.
  * Going to another page remounts it; moving to another tool, chat or settings tab (`resetKey`) clears the error
  * without remounting a healthy screen.
  */
-
-/** A lazy screen's file that failed to load: Try again can't fix it (React keeps the failed import), a reload can. */
-const CHUNK_ERROR = /dynamically imported module|Importing a module script failed|Unable to preload/i
-
 export class RouteBoundary extends Component<{ children: ReactNode; name: string; resetKey: string }, { failed: boolean; message: string; chunk: boolean }> {
   state = { failed: false, message: '', chunk: false }
 
