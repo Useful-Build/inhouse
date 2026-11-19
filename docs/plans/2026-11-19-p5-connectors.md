@@ -4,9 +4,9 @@ Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend p
 (`docs/plans/2026-11-19-backend.md`). Common rules are in its "Phase schedule (waves)" section. P0 record:
 [S4](../decisions/p0-s4-connector-hub.md).
 
-
 Progress: tracked in the backend plan's "Implementation progress" section, entry P5. Read it before you start
 and update it before you stop.
+
 ## Goal
 
 Connect tools that publish an official MCP server through the hub, let the agent reach large results through code

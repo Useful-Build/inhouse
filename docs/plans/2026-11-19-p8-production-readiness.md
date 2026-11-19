@@ -4,9 +4,9 @@ Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend p
 (`docs/plans/2026-11-19-backend.md`, "Production readiness"). Common rules are in its "Phase schedule (waves)"
 section.
 
-
 Progress: tracked in the backend plan's "Implementation progress" section, entry P8. Read it before you start
 and update it before you stop.
+
 ## Goal
 
 The house deployment passes the readiness list before any real brand data: retention, export and deletion, backups

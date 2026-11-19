@@ -4,9 +4,9 @@ Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend p
 (`docs/plans/2026-11-19-backend.md`, "Phases" and "Phase schedule (waves)"). Common rules for every phase (landing,
 reviews, seats, scrub) are in that schedule section and aren't repeated here.
 
-
 Progress: tracked in the backend plan's "Implementation progress" section, entry P1. Read it before you start
 and update it before you stop.
+
 ## Goal
 
 Make the frontend ready for a real backend without changing what anyone sees. The mock keeps running the public demo,

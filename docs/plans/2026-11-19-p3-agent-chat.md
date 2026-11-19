@@ -5,9 +5,9 @@ Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend p
 [S1](../decisions/p0-s1-runner.md), [S2](../decisions/p0-s2-container-guards.md),
 [S3](../decisions/p0-s3-previews.md), [S5](../decisions/p0-s5-memory-tool-choice.md).
 
-
 Progress: tracked in the backend plan's "Implementation progress" section, entry P3. Read it before you start
 and update it before you stop.
+
 ## Goal
 
 The Inhouse agent answers in a real chat: the runner in containers under the guards, live runs in the BrandAgent
