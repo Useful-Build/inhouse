@@ -12,7 +12,6 @@ type Notice = AgentNotification & { go: () => void }
 
 /** The bell's notifications, newest first, as the agent sends them. Opening one marks it read; Mark all as read marks every one listed now. */
 // oxlint-disable-next-line react/only-export-components -- the top bar reads the unread count for the bell's name.
-
 export function useNotices(): Notice[] {
   const list = useSyncExternalStore(agent.subscribe, agent.listNotifications)
   const { go, openTool, openChat } = useUi.getState()

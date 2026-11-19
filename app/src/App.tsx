@@ -29,7 +29,7 @@ import { CommandPalette } from './overlays/CommandPalette'
 // the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Today and the
 // rest stay in the entry chunk.
 // After `vite:preloadError` is handled (see below) Vite's preload helper resolves the import with undefined, not the
-// module. Picking a component from that would throw into the ErrorBoundary for the moment before the reload lands, so a
+// module. Picking a component from that would throw into the screen's error boundary for the moment before the reload lands, so a
 // missing module returns a promise that never settles: the Suspense fallback stays up until the reload.
 function lazyRoute<M, C extends ComponentType>(load: () => Promise<M>, pick: (m: M) => C) {
   return lazy(async () => {
@@ -62,13 +62,13 @@ const SCREENS: Record<Page, React.ComponentType> = {
 // A tab left open across a deploy (or a rollback) asks for a chunk the new build no longer has. Vite fires
 // `vite:preloadError`: reload once so the tab gets the current index.html and its chunks. The saved session (drafts,
 // chats) is in localStorage and flushed on pagehide (state/store.ts), so a reload keeps it, and the hash keeps the route.
-// The stamp stops a loop: a second failure within 30 s is left to throw into the ErrorBoundary.
+// The stamp stops a loop: a second failure within 30 s is left to throw into the screen's error boundary (RouteBoundary), which offers Reload.
 const RELOAD_KEY = 'inhouse.preload-reload'
-// Set right before the reload: a later failure in this same document (a CSS dependency, then the module) must not reach the ErrorBoundary.
+// Set right before the reload: a later failure in this same document (a CSS dependency, then the module) must not reach the screen's error boundary.
 let reloading = false
 window.addEventListener('vite:preloadError', e => {
   if (reloading) { e.preventDefault(); return }
-  // Offline, a reload would only show the browser's error page: let the failure reach the ErrorBoundary.
+  // Offline, a reload would only show the browser's error page: let the failure reach the screen's error boundary (its Reload waits for the person, who can see they're offline).
   if (!navigator.onLine) return
   let last = 0
   try { last = Number(sessionStorage.getItem(RELOAD_KEY)) || 0 }
