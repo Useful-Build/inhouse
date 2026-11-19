@@ -5,7 +5,13 @@
 # build and upload and runs `wrangler rollback` to that version, then smokes the live hostname:
 #   gh workflow run deploy -f rollback_to=<version id>
 # (`wrangler versions list` or the Cloudflare dashboard lists version ids; each release names its version.)
-# A later push to main deploys main again, so a rollback holds until the next merge.
+# A later push to main deploys main again, so a rollback holds until the next merge. A push that lands while a
+# rollback waits for the production lane cancels the pending rollback (its run shows cancelled); dispatch it again.
+# A rollback runs once: a re-run of a rollback run is refused, so an old rollback can't roll production back again.
+# Production is indexable: the deploy job drops the X-Robots-Tag line from the /* block of the build's _headers
+# (previews keep noindex), and the live smoke expects no X-Robots-Tag.
+# A failure from the promote on (domain attach, rollback, active check, live smoke) opens or comments on the
+# monitor's issue "Production check failing" with the run link. Nothing rolls back on its own.
 # Threat model: the build job runs main's dependencies with no secrets, so its artifact is treated like preview.yml
 # treats a PR's: only static files and a wrangler config that matches main's, checked field by field, reach the
 # job that holds the token, which runs main's own wrangler by explicit path with no .env and no endpoint overrides.
@@ -51,6 +57,7 @@ jobs:
           REF: ${{ github.ref }}
           SHA: ${{ github.sha }}
           ROLLBACK_TO: ${{ inputs.rollback_to }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           [ "$REF" = refs/heads/main ] || { echo "::error::Production deploys and rollbacks run from main only"; exit 1; }
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad SHA"; exit 1; }
@@ -58,6 +65,8 @@ jobs:
             { echo "mode=deploy"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
             echo "Deploying $SHA"
           else
+            [ "$RUN_ATTEMPT" = 1 ] ||
+              { echo "::error::A rollback runs once. Dispatch a new one: gh workflow run deploy -f rollback_to=<version id>"; exit 1; }
             id=$(tr 'A-F' 'a-f' <<< "$ROLLBACK_TO")
             [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
               { echo "::error::rollback_to must be a Worker version id (a UUID)"; exit 1; }
@@ -65,8 +74,10 @@ jobs:
             echo "Rolling back to version $id"
           fi
 
-  # The pushed commit's build. No secrets, ever. Source maps (from upload_source_maps, or any the app's Vite config
-  # makes) are also kept on their own for 90 days, named by SHA, to read production stack traces later.
+  # The pushed commit's build. No secrets, ever. RELEASE_SHA is the commit the client reports its errors from. The
+  # client's hidden source maps (app/dist/sourcemaps/, never deployed) are kept on their own for 90 days, named by
+  # SHA, to read production stack traces later; the app-build artifact leaves them out. The Worker's own maps go up
+  # with the version (upload_source_maps).
   build:
     needs: plan
     if: needs.plan.outputs.mode == 'deploy'
@@ -87,6 +98,8 @@ jobs:
           node-version-file: app/.nvmrc
       - run: npm ci
       - run: npm run build
+        env:
+          RELEASE_SHA: ${{ needs.plan.outputs.sha }}
       # include-hidden-files: wrangler's redirect file lives under .wrangler/.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -94,15 +107,18 @@ jobs:
           path: |
             app/dist
             app/.wrangler/deploy/config.json
+            !app/dist/sourcemaps
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sourcemaps-${{ needs.plan.outputs.sha }}
-          path: app/dist/**/*.map
+          path: app/dist/sourcemaps/**
           if-no-files-found: ignore
           retention-days: 90
+          overwrite: true
 
   # The only job with the token: main's code, environment production.
   deploy:
@@ -121,6 +137,7 @@ jobs:
     outputs:
       deployed: ${{ steps.done.outputs.deployed }}
       version_id: ${{ steps.done.outputs.version_id }}
+      live: ${{ steps.live.outputs.live }}
     steps:
       # main's code and lockfile at this run's commit: wrangler is the version pinned there.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,7 +183,8 @@ jobs:
           mkdir "$RUNNER_TEMP/build"
           gh run download "$RUN_ID" --repo "$REPO" --name app-build --dir "$RUNNER_TEMP/build"
 
-      # Only dist/** and the Vite plugin's redirect file, all plain files and directories. Then copy just those.
+      # Only dist/** (minus dist/sourcemaps, never deployed) and the Vite plugin's redirect file, all plain files and
+      # directories. Then copy just those.
       - name: Check the build's files and copy them in
         if: steps.go.outputs.deploy == 'true'
         working-directory: app
@@ -186,6 +204,7 @@ jobs:
                 fail(`bad name ${JSON.stringify(p)}`);
               }
               if (/^\.(env|dev\.vars)/.test(name)) fail(`${p} is not allowed`);
+              if (p === 'dist/sourcemaps') fail(`${p} is never deployed`);
               const st = fs.lstatSync(path.join(root, p));
               if (st.isDirectory()) {
                 if (!DIRS.has(p) && !p.startsWith('dist/')) fail(`unexpected directory ${p}`);
@@ -326,6 +345,21 @@ jobs:
           leftovers=$(find . -maxdepth 1 \( -name '.env*' -o -name '.dev.vars*' \) -print)
           [ -z "$leftovers" ] || { echo "::error::Found $leftovers in app/"; exit 1; }
 
+      # Production is indexable; previews keep public/_headers' noindex. Drops every X-Robots-Tag line from the
+      # "/*" block (block starts parsed as smoke.sh parses them), before the version is uploaded.
+      - name: Let production be indexed
+        if: steps.go.outputs.deploy == 'true'
+        working-directory: app
+        run: |
+          f=dist/client/_headers
+          [ -f "$f" ] && [ ! -L "$f" ] || { echo "::error::No $f"; exit 1; }
+          : > "$RUNNER_TEMP/_headers"
+          awk -v out="$RUNNER_TEMP/_headers" '/^[^ \t#]/ { all = ($1 == "/*") }
+            all && tolower($0) ~ /^[ \t]+x-robots-tag[ \t]*:/ { n++; next }
+            { print > out }
+            END { print n + 0 }' "$f" > "$RUNNER_TEMP/removed"
+          cat "$RUNNER_TEMP/_headers" > "$f"
+          echo "Removed $(cat "$RUNNER_TEMP/removed") X-Robots-Tag line(s) from the /* block of $f"
 
       - name: Check the production settings
         if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
@@ -344,8 +378,9 @@ jobs:
       # goes, how it signs in, which Worker or environment it targets and where it writes its output; only the
       # token and account stay. Wrangler's machine-readable output (ND-JSON, src/output.ts) goes to one known file.
       # smoke.sh: waits until a URL serves the app (and, given an entry script, that build), then checks once: the
-      # page, its entry script, a deep link (the SPA fallback), POST /api/does-not-exist reaching the Worker's
-      # 404 (run_worker_first) and every header _headers sets for /*. Prints the entry script's path.
+      # page, its entry script, a deep link (the SPA fallback), POST /api/does-not-exist and a navigation to it
+      # reaching the Worker's 404 (the navigation proves run_worker_first: without it the SPA fallback answers 200)
+      # and every header _headers sets for /*. Prints the entry script's path.
       - name: Write the wrangler and smoke helpers
         if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
         run: |
@@ -365,7 +400,7 @@ jobs:
           EOF
           cat > "$RUNNER_TEMP/smoke.sh" <<'EOF'
           #!/usr/bin/env bash
-          # smoke.sh BASE_URL DEADLINE_SECONDS [EXPECTED_ENTRY] [HEADERS_FILE]; SMOKE_API=no skips the /api check.
+          # smoke.sh BASE_URL DEADLINE_SECONDS [EXPECTED_ENTRY] [HEADERS_FILE]; SMOKE_API=no skips the /api checks.
           set -euo pipefail
           base=$1 deadline=$2 expect=${3:-} headers=${4:-}
           [[ "$base" =~ ^https://[a-z0-9.-]+$ ]] || { echo "::error::Bad base URL" >&2; exit 1; }
@@ -407,6 +442,9 @@ jobs:
           if [ "${SMOKE_API:-yes}" != no ]; then
             code=$(get /api/does-not-exist api.txt -X POST -H 'Content-Type: application/json' --data '{}')
             [ "$code" = 404 ] || bad "POST /api/does-not-exist is HTTP $code, not 404"
+            code=$(get /api/does-not-exist api.html -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' \
+              -H 'Sec-Fetch-Dest: document')
+            [ "$code" = 404 ] || bad "a navigation to /api/does-not-exist is HTTP $code, not 404 (run_worker_first)"
           fi
           if [ -n "$headers" ]; then
             # Header names in the "/*" block of the build's _headers (detach lines "! Name" are skipped).
@@ -437,7 +475,7 @@ jobs:
           subject=${subject:0:100}
           echo "message=$subject" >> "$GITHUB_OUTPUT"
           rm -f "$RUNNER_TEMP/wrangler-output.ndjson"
-          "$RUNNER_TEMP/wrangler.sh" versions upload --tag "${SHA:0:7}" --message "$subject"
+          "$RUNNER_TEMP/wrangler.sh" versions upload --tag="${SHA:0:7}" --message="$subject"
 
       # The version id and its Version URL, from the version-upload entry wrangler wrote (src/versions/upload.ts).
       # A missing Version URL means Version URLs are off for the Worker (preview_urls), so nothing can be smoked.
@@ -478,6 +516,12 @@ jobs:
           entry=$("$RUNNER_TEMP/smoke.sh" "$URL" 180 "" dist/client/_headers)
           echo "entry=$entry" >> "$GITHUB_OUTPUT"
 
+      # From here on production changes, so a failure opens or comments on the monitor issue (job alert).
+      - name: Production changes from here
+        id: live
+        if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
+        run: echo "live=true" >> "$GITHUB_OUTPUT"
+
       - name: Promote the version to 100%
         if: steps.go.outputs.deploy == 'true'
         working-directory: app
@@ -487,7 +531,7 @@ jobs:
           VERSION_ID: ${{ steps.version.outputs.version_id }}
           MESSAGE: ${{ steps.upload.outputs.message }}
         run: |
-          "$RUNNER_TEMP/wrangler.sh" versions deploy "$VERSION_ID@100%" --yes --message "$MESSAGE"
+          "$RUNNER_TEMP/wrangler.sh" versions deploy "$VERSION_ID@100%" --yes --message="$MESSAGE"
 
       # wrangler.jsonc has no routes (preview.yml refuses any), so the custom domain is attached here through the
       # Workers Domains API (PUT /accounts/{id}/workers/domains, hostname and service). Idempotent: nothing
@@ -508,6 +552,7 @@ jobs:
           const call = async (method, url, body) => {
             const res = await fetch(url, {
               method,
+              signal: AbortSignal.timeout(30000),
               headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
               body: body === undefined ? undefined : JSON.stringify(body),
             });
@@ -546,7 +591,7 @@ jobs:
           VERSION_ID: ${{ needs.plan.outputs.rollback_to }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          "$RUNNER_TEMP/wrangler.sh" rollback "$VERSION_ID" --name inhouse-app --message "Rollback, deploy run $RUN_ID" --yes
+          "$RUNNER_TEMP/wrangler.sh" rollback "$VERSION_ID" --name=inhouse-app --message="Rollback, deploy run $RUN_ID" --yes
 
       # Whatever the commands printed, the active deployment must now be exactly that version at 100%.
       # The JSON also holds the deploying account's email, so only the versions are printed.
@@ -577,8 +622,10 @@ jobs:
           EOF
 
       # The live hostname: polled until it serves this build (by its entry script), then checked like the
-      # Version URL. A rollback has no build here, so any app passes the wait and only the checks run, minus
-      # the /api one: a version from before run_worker_first serves /api/* from the assets.
+      # Version URL, plus no X-Robots-Tag (production is indexable). A rollback has no build here, so any app
+      # passes the wait and only the checks run, minus the /api ones: a version from before run_worker_first
+      # answers a navigation to /api/* with the SPA page. Its X-Robots-Tag is a warning for the same reason (a
+      # version from before this pipeline sends noindex). HSTS is a warning until _headers sets it.
       - name: Smoke the live hostname
         if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
         working-directory: app
@@ -592,8 +639,17 @@ jobs:
           else
             SMOKE_API=no "$RUNNER_TEMP/smoke.sh" "https://$HOST" 600 > /dev/null
           fi
-          curl -sS --proto '=https' --max-time 20 -o /dev/null -D - "https://$HOST/" | grep -qi '^strict-transport-security:' ||
+          # Captured first: grep -q exiting early on a pipe would fail curl with SIGPIPE under pipefail.
+          headers=$(curl -sS --proto '=https' --max-time 20 -o /dev/null -D - "https://$HOST/")
+          grep -qi '^strict-transport-security:' <<< "$headers" ||
             echo "::warning::https://$HOST/ sends no Strict-Transport-Security header"
+          if grep -qi '^x-robots-tag:' <<< "$headers"; then
+            if [ "$DEPLOY" = true ]; then
+              echo "::error::https://$HOST/ sends X-Robots-Tag; production should be indexable"
+              exit 1
+            fi
+            echo "::warning::https://$HOST/ sends X-Robots-Tag; the version rolled back to may predate indexing"
+          fi
 
       - name: Record the result
         id: done
@@ -602,6 +658,47 @@ jobs:
           VERSION_ID: ${{ steps.version.outputs.version_id }}
         run: |
           { echo "deployed=true"; echo "version_id=$VERSION_ID"; } >> "$GITHUB_OUTPUT"
+
+  # A deploy or rollback that failed once production started changing (promote, domain attach, rollback, active
+  # check, live smoke) opens the monitor's issue, or comments on the open one, so a person hears of it without
+  # relying on a failure email. Nothing rolls back on its own. The monitor's next passing check closes the issue.
+  alert:
+    needs: [plan, deploy]
+    if: always() && needs.deploy.outputs.live == 'true' && needs.deploy.result != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TITLE: Production check failing
+          LABEL: monitor
+          # As in monitor.yml: assigned on every new issue, so a failure always reaches a person.
+          ASSIGNEE: wasimjalali
+          MODE: ${{ needs.plan.outputs.mode }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          ROLLBACK_TO: ${{ needs.plan.outputs.rollback_to }}
+          RESULT: ${{ needs.deploy.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$MODE" = rollback ]; then what="The rollback to version $ROLLBACK_TO"; else what="The deploy of $SHA"; fi
+          now=$(date -u '+%Y-%m-%d %H:%M UTC')
+          body=$(printf '%s\n\n%s\n\nRun: %s\n' \
+            "$what ended $RESULT at $now, after production started changing (promote, domain attach, rollback, active check or live smoke)." \
+            "Nothing rolls back on its own. Check the live site, then fix forward or roll back: gh workflow run deploy -f rollback_to=<version id>" \
+            "$RUN_URL")
+          numbers=$(gh api --paginate "repos/$REPO/issues?state=open&labels=$LABEL&per_page=100" \
+            --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number')
+          open=$(head -n 1 <<< "$numbers")
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$REPO" --body "$body"
+            echo "Commented on #$open"
+          else
+            gh label create "$LABEL" --repo "$REPO" --force --color B60205 --description "Opened by the production monitor"
+            gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --assignee "$ASSIGNEE" --body "$body"
+          fi
 
   # A release per deploy: vYYYY.MM.DD.N (UTC), N the next free number that day, on the deployed commit.
   # Rollbacks don't make one. The production group runs one at a time, so two releases never race for a number.
@@ -622,9 +719,9 @@ jobs:
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad SHA"; exit 1; }
           [[ "$VERSION_ID" =~ ^[0-9a-f-]{36}$ ]] || { echo "::error::Bad version id"; exit 1; }
           day=$(date -u +%Y.%m.%d)
-          last=$(gh api "repos/$REPO/git/matching-refs/tags/v$day." --jq '.[].ref' |
+          last=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v$day." --jq '.[].ref' |
             sed -nE 's#^refs/tags/v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.([0-9]+)$#\1#p' | sort -n | tail -n 1)
-          tag="v$day.$(( ${last:-0} + 1 ))"
+          tag="v$day.$((10#${last:-0} + 1))"
           gh release create "$tag" --repo "$REPO" --target "$SHA" --title "$tag" --generate-notes \
             --notes "Deployed to production as Worker version \`$VERSION_ID\`."
           echo "Released $tag"

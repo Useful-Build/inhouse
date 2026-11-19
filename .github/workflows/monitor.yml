@@ -1,22 +1,36 @@
-# Checks production every hour: the live page serves the app and its entry script loads. On a failure it opens an
-# issue "Production check failing" labelled monitor (or comments on the open one) and assigns it, so the owner is
-# notified; the next passing check closes it. Run by hand: gh workflow run monitor
+# Checks production every hour: the live page serves the app, its entry script loads and a deep link (a browser
+# navigation) gets the app through the SPA fallback. Plain curl checks; a browser spec would add cost, not coverage.
+# On a failure it opens an issue "Production check failing" labelled monitor (or comments on the open one) and
+# assigns it, so the owner is notified; the next passing check closes it. deploy.yml opens the same issue when a
+# deploy fails after production started changing. Run by hand: gh workflow run monitor
+# Rehearse the alert: gh workflow run monitor -f force_fail=true checks a path that must 404 as if it were the page.
 # The hostname is variable PRODUCTION_HOSTNAME of environment production. The job names the environment only to
 # read that variable: it uses no secret, and deployment: false keeps it from recording a deployment.
-# GitHub disables a scheduled workflow after 60 days without repository activity in a public repo. Re-enable it in
-# the Actions tab (or gh workflow enable monitor) if the repo goes quiet that long.
+# GitHub disables a scheduled workflow after 60 days without repository activity in a public repo, and only
+# repository activity resets that timer: a workflow can't keep itself alive without making commits. Dependabot's
+# weekly PRs and our merges keep the repo active. If it ever goes quiet that long, re-enable the workflow in the
+# Actions tab (or gh workflow enable monitor).
 name: monitor
 
 on:
   schedule:
     - cron: "23 * * * *"
   workflow_dispatch:
+    inputs:
+      force_fail:
+        description: Rehearse the alert. Checks a path that must 404 as if it were the page, so the check fails.
+        type: boolean
+        default: false
 
 permissions: {}
 
 concurrency:
   group: monitor
   cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   check:
@@ -35,25 +49,34 @@ jobs:
       ASSIGNEE: wasimjalali
     steps:
       # One try, no retries: a single failed check is worth an issue, and the next hour's check closes it.
-      - name: Check the live page and its entry script
+      - name: Check the live page, its entry script and a deep link
         id: check
         env:
           HOST: ${{ vars.PRODUCTION_HOSTNAME }}
+          FORCE_FAIL: ${{ inputs.force_fail == true }}
         run: |
           report="$RUNNER_TEMP/report.md"
           fail() { echo "::error::$1"; echo "$1" > "$report"; echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0; }
           [[ "$HOST" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] ||
             fail "Variable PRODUCTION_HOSTNAME of environment production is missing or not a hostname."
           base="https://$HOST"
+          # The rehearsal path is under /api/, which always reaches the Worker's 404 (run_worker_first).
+          path=/
+          if [ "$FORCE_FAIL" = true ]; then path=/api/monitor-rehearsal; echo "::notice::Rehearsal: checking $path as the page"; fi
           page="$RUNNER_TEMP/index.html"
-          code=$(curl -sS --proto '=https' --max-time 20 -o "$page" -w '%{http_code}' "$base/" 2>&1) || true
-          [ "$code" = 200 ] || fail "$base/ answered HTTP $code."
-          grep -q '<div id="root">' "$page" || fail "$base/ is not the app's page."
+          code=$(curl -sS --proto '=https' --max-time 20 -o "$page" -w '%{http_code}' "$base$path" 2>&1) || true
+          [ "$code" = 200 ] || fail "$base$path answered HTTP $code."
+          grep -q '<div id="root">' "$page" || fail "$base$path is not the app's page."
           entry=$(grep -oE 'src="/assets/[A-Za-z0-9._-]+\.js"' "$page" | head -n 1 | cut -d'"' -f2) || true
           [ -n "$entry" ] || fail "$base/ names no entry script."
           code=$(curl -sS --proto '=https' --max-time 20 -o /dev/null -w '%{http_code}' "$base$entry" 2>&1) || true
           [ "$code" = 200 ] || fail "$base$entry answered HTTP $code."
-          echo "$base/ and $entry are up"
+          deep="$RUNNER_TEMP/deep.html"
+          code=$(curl -sS --proto '=https' --max-time 20 -o "$deep" -w '%{http_code}' -H 'Accept: text/html' \
+            -H 'Sec-Fetch-Mode: navigate' -H 'Sec-Fetch-Dest: document' "$base/settings/monitor-check" 2>&1) || true
+          [ "$code" = 200 ] || fail "A deep link ($base/settings/monitor-check) answered HTTP $code."
+          grep -q '<div id="root">' "$deep" || fail "A deep link ($base/settings/monitor-check) is not the app's page."
+          echo "$base/, $entry and a deep link are up"
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
       - name: Open, update or close the issue
@@ -64,8 +87,9 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           [ "$OK" = true ] || [ "$OK" = false ] || { echo "::error::The check gave no result"; exit 1; }
-          open=$(gh api "repos/$REPO/issues?state=open&labels=$LABEL&per_page=100" \
-            --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number' | head -n 1)
+          numbers=$(gh api --paginate "repos/$REPO/issues?state=open&labels=$LABEL&per_page=100" \
+            --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number')
+          open=$(head -n 1 <<< "$numbers")
           now=$(date -u '+%Y-%m-%d %H:%M UTC')
           if [ "$OK" = true ]; then
             if [ -n "$open" ]; then
@@ -80,9 +104,7 @@ jobs:
             gh issue comment "$open" --repo "$REPO" --body "$body"
             echo "Commented on #$open"
           else
-            if ! gh api "repos/$REPO/labels/$LABEL" --silent 2> /dev/null; then
-              gh label create "$LABEL" --repo "$REPO" --color B60205 --description "Opened by the production monitor"
-            fi
+            gh label create "$LABEL" --repo "$REPO" --force --color B60205 --description "Opened by the production monitor"
             gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --assignee "$ASSIGNEE" --body "$body"
           fi
           echo "::error::Production check failing"
