@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useRef, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { agent } from '../agent'
 import type { AgentNotification } from '../agent'
@@ -12,6 +12,7 @@ type Notice = AgentNotification & { go: () => void }
 
 /** The bell's notifications, newest first, as the agent sends them. Opening one marks it read; Mark all as read marks every one listed now. */
 // oxlint-disable-next-line react/only-export-components -- the top bar reads the unread count for the bell's name.
+
 export function useNotices(): Notice[] {
   const list = useSyncExternalStore(agent.subscribe, agent.listNotifications)
   const { go, openTool, openChat } = useUi.getState()
@@ -82,13 +83,16 @@ export function AccountMenu({ children }: { children: ReactNode }) {
     ['logout', 'Sign out', () => { patch({ pop: null, sideOpen: false }); showToast("Sign out isn't connected in this demo.", { icon: 'info', ms: 4000 }) }],
   ]
   // The pop only clears if it is still 'me': an item may have opened another one (Help, the team window) already.
-  const onOpenChange = (o: boolean) => { if (o) openPop('me'); else if (useUi.getState().pop === 'me') patch({ pop: null }) }
+  // Where the menu opened: an item that moves to another page leaves focus there (the page focuses its heading).
+  const openedOn = useRef('')
+  const onOpenChange = (o: boolean) => { if (o) { openedOn.current = location.hash; openPop('me') } else if (useUi.getState().pop === 'me') patch({ pop: null }) }
   return (
     <DropdownMenu modal={false} open={pop === 'me'} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" aria-label="Account" aria-labelledby={undefined} className="w-menu-account p-2"
-        // A window opened by an item takes focus itself; otherwise focus returns to the Settings button.
-        onCloseAutoFocus={e => { const p = useUi.getState().pop; if (p === 'help' || p === 'team') e.preventDefault() }}
+        // A window opened by an item takes focus itself, and so does a page an item moved to; otherwise focus returns to
+        // the Settings button.
+        onCloseAutoFocus={e => { const p = useUi.getState().pop; if (p === 'help' || p === 'team' || location.hash !== openedOn.current) e.preventDefault() }}
         // Escape closes only this menu, not the phone drawer behind it (App's window listener).
         // Only while it's open: a closing menu still hears keys during its exit animation, and the window an item opened needs this Escape.
         onEscapeKeyDown={e => { if (useUi.getState().pop === 'me') e.stopPropagation() }}>

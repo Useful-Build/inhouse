@@ -1,6 +1,6 @@
 // A lazy route's chunk failing to load (an old tab after a deploy) and focus staying put on in-page hash changes (desktop).
 // Production plan H3: P-2, A-10.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 const CHUNK = /\/assets\/Usage-[^/]*\.js(\?.*)?$/
@@ -10,7 +10,7 @@ const CRASH = 'inhouse.e2e.crash-seen'
 async function start(page: Page, hash: string) {
   await page.addInitScript(crashKey => {
     new MutationObserver(() => {
-      if ([...document.querySelectorAll('h1')].some(h => h.textContent === 'Something went wrong.')) sessionStorage.setItem(crashKey, '1')
+      if ([...document.querySelectorAll('h1, h2')].some(h => h.textContent === 'Something went wrong.')) sessionStorage.setItem(crashKey, '1')
     }).observe(document, { childList: true, subtree: true, characterData: true })
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
@@ -21,7 +21,7 @@ async function start(page: Page, hash: string) {
 }
 const crashSeen = (page: Page) => page.evaluate(k => sessionStorage.getItem(k) === '1', CRASH)
 const sidebar = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
-const crashHeading = (page: Page) => page.getByRole('heading', { level: 1, name: 'Something went wrong.' })
+const crashHeading = (page: Page) => page.getByRole('heading', { name: 'Something went wrong.' })
 
 test('A lazy chunk that fails once reloads into the route, keeps the draft and never shows the crash screen', async ({ page }) => {
   await start(page, '#/today')

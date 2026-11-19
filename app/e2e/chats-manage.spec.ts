@@ -1,6 +1,6 @@
 // PR 3, managing chats: rename, pin, copy link and delete with Undo from the sidebar row menu, the top bar menu and
 // See all (with Select for several), checked in the sidebar, See all and the top bar, across a reload and Reset demo.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {

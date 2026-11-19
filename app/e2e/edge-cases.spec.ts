@@ -1,6 +1,6 @@
 // Modals sit above the Sidebar, a chat's additions survive a stale link, a failed save and a failed
 // photo are told, a demoted approver is flagged on the rules that still name them. Screenshots go to VERIFY_DIR (or e2e-artifacts/).
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import path from 'node:path'
 import { atRest } from './states.js'

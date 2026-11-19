@@ -1,6 +1,6 @@
 // Chats keep what was added and new chats stay listed, saved settings reach
 // other screens, focus returns, chat URLs, and the Library's selection, Undo, Escape, counts and data check.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

@@ -1,6 +1,6 @@
 // Shared by route-title-focus.spec.ts (desktop) and route-title-focus-phone.spec.ts (390 px): the document title per
 // route, focus on the page's h1 after a route change (not on first load), a lazy route opening, and a deep link to one.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash: string) {
