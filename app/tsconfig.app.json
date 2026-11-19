@@ -15,7 +15,7 @@
     "moduleDetection": "force",
     "noEmit": true,
     "resolveJsonModule": true,
-    "paths": { "@sample/*": ["./src/agent/sample-data/*"], "@/*": ["./src/*"] },
+    "paths": { "@client": ["./src/agent/client.demo.ts"], "@sample/*": ["./src/agent/sample-data/*"], "@/*": ["./src/*"] },
     "jsx": "react-jsx",
 
     /* Linting */
@@ -25,5 +25,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "src/agent/sample-data/*.json"]
+  "include": ["src", "shared", "src/agent/sample-data/*.json"]
 }
