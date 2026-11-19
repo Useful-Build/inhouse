@@ -8,7 +8,9 @@
 	"main": "worker/index.ts",
 	"compatibility_date": "2026-11-13",
 	"assets": {
-		"not_found_handling": "single-page-application"
+		"not_found_handling": "single-page-application",
+		// /api/* always reaches the Worker (its 404 today, the client-error route later), never the SPA fallback.
+		"run_worker_first": ["/api/*"]
 	},
 	"observability": {
 		"enabled": true
