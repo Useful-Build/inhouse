@@ -17,7 +17,7 @@ import { LOCAL_MAX_DEPTH, LineReader, encodeLine, type LineResult } from '../../
 import { SDK_MESSAGE_MAX_DEPTH, runSession, type QueryFn } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards } from '../../src/session/seam.ts'
-import { GuardsMissingError, productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
+import { productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
 import { runStart } from './support/root-client.ts'
 import { testQueryGuards, testSessionUsers } from './support/test-seams.ts'
 
@@ -346,13 +346,15 @@ describe('sessionEnv', () => {
 })
 
 describe('the production wiring', () => {
-  it('refuses to start without the real guards', () => {
-    expect(() => productionSessionUsers()).toThrow(GuardsMissingError)
-    expect(() => productionQueryGuards()).toThrow(GuardsMissingError)
+  // R2 wired the real guards: the session's guards are production ones, and the root refuses to start on a host whose
+  // /etc/passwd lacks the image's session user pool (any test host).
+  it('wires the real guards, and the root refuses a host without the session user pool', () => {
+    expect(productionQueryGuards().kind).toBe('production')
+    expect(() => productionSessionUsers()).toThrow(/pool user s00 is missing/)
   })
 
   // The bundle the image runs, built by the package's own build script into a temp folder.
-  it('the bundled root and session entries refuse to start without the guards, and zod is bundled as ESM', () => {
+  it('the bundled root refuses to start without the session user pool, the session entry gets past its guards, and zod is bundled as ESM', () => {
     const runner = fileURLToPath(new URL('../../', import.meta.url))
     const pkg = JSON.parse(readFileSync(join(runner, 'package.json'), 'utf8')) as { scripts: { build: string } }
     const [bin, ...args] = pkg.scripts.build.split(' ')
@@ -369,11 +371,16 @@ describe('the production wiring', () => {
       expect(zod.filter((i) => i.endsWith('.cjs'))).toEqual([])
       expect(inputs.some((i) => i.includes('claude-agent-sdk'))).toBe(false)
 
-      for (const entry of ['main.mjs', 'session/main.mjs']) {
-        const run = spawnSync(process.execPath, [join(out, entry)], { env: { PATH: process.env.PATH, EGRESS_URL: 'http://127.0.0.1:9' }, encoding: 'utf8', timeout: 30_000 })
-        expect(run.status, entry).not.toBe(0)
-        expect(run.stderr, entry).toMatch(/refusing to start without the guards/)
-      }
+      const start = (entry: string) =>
+        spawnSync(process.execPath, [join(out, entry)], { env: { PATH: process.env.PATH, EGRESS_URL: 'http://127.0.0.1:9' }, encoding: 'utf8', timeout: 30_000 })
+      const root = start('main.mjs')
+      expect(root.status).not.toBe(0)
+      expect(root.stderr).toMatch(/pool user s00 is missing/)
+      // Outside the package the SDK can't load: the session ends there, after its guards were built.
+      const session = start('session/main.mjs')
+      expect(session.status).not.toBe(0)
+      expect(session.stderr).not.toMatch(/refusing to start without the guards/)
+      expect(session.stderr).toMatch(/claude-agent-sdk/)
     } finally {
       rmSync(out, { recursive: true, force: true })
     }
