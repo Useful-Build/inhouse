@@ -445,7 +445,9 @@ describe('session save and load', () => {
     const valid = await validSession()
     const models = await usableModels()
     const ghost = fc.uniqueArray(fc.string().map(s => `ghost-${s}`), { minLength: 1, maxLength: 3 })
-    const unusable = fc.string().filter(s => !models.includes(s))
+    // Random ids plus near-misses of real ones (case, spaces, prefixes), so a loose compare would fail.
+    const nearMiss = fc.constantFrom(...models).chain(m => fc.constantFrom(m.toUpperCase(), ` ${m}`, `${m} `, m.slice(0, -1), `${m}x`))
+    const unusable = fc.oneof(fc.string(), nearMiss).filter(s => !models.includes(s))
     await fc.assert(fc.asyncProperty(valid, ghost, unusable, fc.boolean(), async (session, ghosts, badModel, spoilQueued) => {
       const spoil = (q: SavedQueued): SavedQueued => (spoilQueued ? { ...q, model: badModel } : q)
       const dirty: Session = {

@@ -14,8 +14,9 @@ export default defineConfig({
     environment: 'node',
     // Node 24.11.1 has a V8 garbage-collector bug: a mark-compact pass crashes with SIGSEGV
     // (ClearStaleLeftTrimmedPointerVisitor) when it meets a baseline (Sparkplug) frame. The property tests hit it on long
-    // strings (6 of 10 runs of 1000 cases). Turning Sparkplug off passed 8 of 8. Remove this once CI and .nvmrc run a Node
-    // with the fix (check by running VITE_PROP_RUNS=1000 npm run test:unit ten times without the flag).
+    // strings (6 of 10 runs of 1000 cases). Turning Sparkplug off passed 8 of 8. CI runs Node 26; the flag is for local
+    // Node 24.11.1, which engines >=24 allows. Remove it once the supported floor is past the bug (check by running
+    // VITE_PROP_RUNS=1000 npm run test:unit ten times without the flag).
     execArgv: ['--no-sparkplug'],
     // The slowest property takes about 7 s at 1000 cases (the whole file about 41 s), so 25 s fails a hang fast and leaves room.
     testTimeout: 25_000,
