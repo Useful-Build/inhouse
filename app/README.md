@@ -105,3 +105,8 @@ e2e/             Playwright specs (the acceptance checks)
 public/logos/    tool logos (official marks, see public/logos/SOURCES.md)
 public/library/  the Library's sample images (SVG, drawn for this app)
 ```
+
+## Dev notes
+
+- `@emnapi/core` and `@emnapi/runtime` are devDependencies only to work around an npm bug: npm 11.6.2 writes a lockfile that its own `npm ci` rejects ("Missing: @emnapi/core@2.0.0-beta.2"). Drop them on the next lockfile that `npm ci` accepts without them.
+- `vitest.config.ts` runs the unit tests with `--no-sparkplug` because of a V8 crash in Node 24.11.1 (see the comment there for when to remove it).
