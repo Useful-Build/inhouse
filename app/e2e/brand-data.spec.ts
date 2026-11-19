@@ -46,7 +46,10 @@ test('another brand without a channel: its name shows in the chrome, and no page
   await page.screenshot({ path: test.info().outputPath('settings-notif-no-channel.png') })
   // Usage: rows name chats alone.
   await go(page, '#/usage')
-  await expect(page.locator('main')).toContainText('Chats')
+  await page.getByRole('radiogroup', { name: 'Break down by' }).getByRole('radio', { name: 'Job', exact: true }).click()
+  const answering = page.locator('[data-usage-row]').filter({ hasText: 'Answering questions' })
+  await expect(answering).toContainText('Chats')
+  await expect(answering).not.toContainText('Chats and')
 })
 
 test('Today on the first day names no sample brand', async ({ page }) => {
