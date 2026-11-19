@@ -10,13 +10,22 @@ declare global {
 export const test = base.extend<{ cspGuard: void }>({
   cspGuard: [async ({ context }, use) => {
     const found: Violation[] = []
+    // The guard is only armed if the app's documents carry the CSP: record any that don't.
+    const unguarded: string[] = []
+    context.on('response', response => {
+      const request = response.request()
+      if (request.resourceType() !== 'document' || response.status() >= 300) return
+      if (!response.headers()['content-security-policy']) unguarded.push(response.url())
+    })
     await context.exposeBinding('__cspReport', (_source, v: Violation) => { found.push(v) })
     await context.addInitScript(() => {
+      const report = window.__cspReport // captured once, so a page script can't swap it out later
       document.addEventListener('securitypolicyviolation', e => {
-        window.__cspReport?.({ directive: e.violatedDirective, blocked: e.blockedURI, source: `${e.sourceFile}:${e.lineNumber}`, page: location.href })
+        report?.({ directive: e.violatedDirective, blocked: e.blockedURI, source: `${e.sourceFile}:${e.lineNumber}`, page: location.href })
       })
     })
     await use()
+    expect(unguarded, `Pages served without a Content-Security-Policy header, so violations can't be caught: ${unguarded.join(', ')}`).toEqual([])
     // Let queued violation events fire (no timers): one animation frame per open page.
     for (const page of context.pages()) {
       if (page.isClosed()) continue
