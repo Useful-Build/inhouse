@@ -1,0 +1,737 @@
+# Deploys main to production on every push, and rolls production back by hand. A push (or a dispatch with no
+# rollback_to) builds the pushed commit, uploads it as a new Worker version tagged with its short SHA, smokes that
+# version's Version URL, promotes it to 100%, makes sure the custom domain points at the Worker, smokes the live
+# hostname and creates a release vYYYY.MM.DD.N. A dispatch with rollback_to set to a Worker version id skips the
+# build and upload and runs `wrangler rollback` to that version, then smokes the live hostname:
+#   gh workflow run deploy -f rollback_to=<version id>
+# (`wrangler versions list` or the Cloudflare dashboard lists version ids; each release names its version.)
+# A later push to main deploys main again, so a rollback holds until the next merge. A push that lands while a
+# rollback waits for the production lane cancels the pending rollback (its run shows cancelled); dispatch it again.
+# A rollback runs once: a re-run of a rollback run is refused, so an old rollback can't roll production back again.
+# Production is indexable: the deploy job drops the X-Robots-Tag line from the /* block of the build's _headers
+# (previews keep noindex), and the live smoke expects no X-Robots-Tag.
+# A failure from the promote on (domain attach, rollback, active check, live smoke) opens or comments on the
+# monitor's issue "Production check failing" with the run link. Nothing rolls back on its own.
+# Threat model: the build job runs main's dependencies with no secrets, so its artifact is treated like preview.yml
+# treats a PR's: only static files and a wrangler config that matches main's, checked field by field, reach the
+# job that holds the token, which runs main's own wrangler by explicit path with no .env and no endpoint overrides.
+# Needs environment production (main only): secret CLOUDFLARE_API_TOKEN, variables CLOUDFLARE_ACCOUNT_ID and
+# PRODUCTION_HOSTNAME (the custom domain, a hostname on a zone in the same account; it lives only there).
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rollback_to:
+        description: Worker version id to roll production back to (a UUID). Leave empty to deploy main's head.
+        required: false
+        default: ""
+
+permissions: {}
+
+# One production lane for deploys and rollbacks. A run in progress is never cancelled. GitHub keeps at most one
+# run waiting: a newer one replaces it, so a burst of merges deploys the newest main once.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # What this run does, from main only. No secrets, no token permissions.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      sha: ${{ steps.plan.outputs.sha }}
+      rollback_to: ${{ steps.plan.outputs.rollback_to }}
+    steps:
+      - id: plan
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          ROLLBACK_TO: ${{ inputs.rollback_to }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          [ "$REF" = refs/heads/main ] || { echo "::error::Production deploys and rollbacks run from main only"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad SHA"; exit 1; }
+          if [ -z "$ROLLBACK_TO" ]; then
+            { echo "mode=deploy"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+            echo "Deploying $SHA"
+          else
+            [ "$RUN_ATTEMPT" = 1 ] ||
+              { echo "::error::A rollback runs once. Dispatch a new one: gh workflow run deploy -f rollback_to=<version id>"; exit 1; }
+            id=$(tr 'A-F' 'a-f' <<< "$ROLLBACK_TO")
+            [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
+              { echo "::error::rollback_to must be a Worker version id (a UUID)"; exit 1; }
+            { echo "mode=rollback"; echo "sha=$SHA"; echo "rollback_to=$id"; } >> "$GITHUB_OUTPUT"
+            echo "Rolling back to version $id"
+          fi
+
+  # The pushed commit's build. No secrets, ever. RELEASE_SHA is the commit the client reports its errors from. The
+  # client's hidden source maps (app/dist/sourcemaps/, never deployed) are kept on their own for 90 days, named by
+  # SHA, to read production stack traces later; the app-build artifact leaves them out. The Worker's own maps go up
+  # with the version (upload_source_maps).
+  build:
+    needs: plan
+    if: needs.plan.outputs.mode == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      # The run's own commit (plan has checked the run is on main, so it's main's head). No Actions cache is used
+      # here or anywhere in the repo: ship.yml runs PR code in the default branch's cache scope, so a cache restored
+      # by this build could be poisoned. Keep it that way.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - run: npm ci
+      - run: npm run build
+        env:
+          RELEASE_SHA: ${{ needs.plan.outputs.sha }}
+      # include-hidden-files: wrangler's redirect file lives under .wrangler/.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-build
+          path: |
+            app/dist
+            app/.wrangler/deploy/config.json
+            !app/dist/sourcemaps
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sourcemaps-${{ needs.plan.outputs.sha }}
+          path: app/dist/sourcemaps/**
+          # Warn, not fail: the hidden maps arrive with the hardening project's client-error change; until then
+          # main's build makes none.
+          if-no-files-found: warn
+          retention-days: 90
+          overwrite: true
+
+  # The only job with the token: main's code, environment production.
+  deploy:
+    needs: [plan, build]
+    # build is skipped in a rollback; any other build result stops the deploy.
+    if: >-
+      !cancelled() && needs.plan.result == 'success' &&
+      ((needs.plan.outputs.mode == 'deploy' && needs.build.result == 'success') ||
+      (needs.plan.outputs.mode == 'rollback' && needs.build.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      deployed: ${{ steps.done.outputs.deployed }}
+      version_id: ${{ steps.done.outputs.version_id }}
+      live: ${{ steps.live.outputs.live }}
+    steps:
+      # main's code and lockfile at this run's commit: wrangler is the version pinned there.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - working-directory: app
+        run: npm ci
+
+      # A deploy goes ahead only while its commit is still main's head. A newer push has its own run waiting in
+      # the production group, and a re-run of an old run must never put old code back live.
+      - name: Still main's head
+        id: go
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MODE: ${{ needs.plan.outputs.mode }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$MODE" = rollback ]; then
+            # Checked here too: "Re-run failed jobs" re-runs this job without re-running plan.
+            if [ "$ATTEMPT" != 1 ]; then
+              echo "::error::A rollback run can't be re-run (attempt $ATTEMPT). Dispatch a new rollback instead."
+              exit 1
+            fi
+            { echo "deploy=false"; echo "rollback=true"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          head=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          if [ "$head" != "$SHA" ]; then
+            echo "::notice::main is now at $head, not $SHA. Its own run deploys it; nothing to do here."
+            { echo "deploy=false"; echo "rollback=false"; } >> "$GITHUB_OUTPUT"
+          else
+            { echo "deploy=true"; echo "rollback=false"; } >> "$GITHUB_OUTPUT"
+          fi
+
+      # Unpacked outside the checkout, so nothing in it can land next to wrangler or in node_modules.
+      - name: Download the build
+        if: steps.go.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          mkdir "$RUNNER_TEMP/build"
+          gh run download "$RUN_ID" --repo "$REPO" --name app-build --dir "$RUNNER_TEMP/build"
+
+      # Only dist/** (minus dist/sourcemaps, never deployed) and the Vite plugin's redirect file, all plain files and
+      # directories. Then copy just those.
+      - name: Check the build's files and copy them in
+        if: steps.go.outputs.deploy == 'true'
+        working-directory: app
+        run: |
+          node - "$RUNNER_TEMP/build" <<'EOF'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const fail = (m) => { console.log(`::error::Build rejected: ${m}`); process.exit(1); };
+          const root = process.argv[2];
+          const REDIRECT = '.wrangler/deploy/config.json';
+          const DIRS = new Set(['.wrangler', '.wrangler/deploy', 'dist']);
+          let files = 0;
+          const walk = (rel) => {
+            for (const name of fs.readdirSync(path.join(root, rel))) {
+              const p = rel ? `${rel}/${name}` : name;
+              if (name === '.' || name === '..' || name.includes('/') || /[\x00-\x1f\x7f]/.test(name)) {
+                fail(`bad name ${JSON.stringify(p)}`);
+              }
+              if (/^\.(env|dev\.vars)/.test(name)) fail(`${p} is not allowed`);
+              if (p === 'dist/sourcemaps') fail(`${p} is never deployed`);
+              const st = fs.lstatSync(path.join(root, p));
+              if (st.isDirectory()) {
+                if (!DIRS.has(p) && !p.startsWith('dist/')) fail(`unexpected directory ${p}`);
+                walk(p);
+              } else if (st.isFile()) {
+                if (p !== REDIRECT && !p.startsWith('dist/')) fail(`unexpected file ${p}`);
+                files++;
+              } else {
+                fail(`${p} is not a regular file or directory`);
+              }
+            }
+          };
+          walk('');
+          if (!fs.existsSync(path.join(root, REDIRECT))) fail(`no ${REDIRECT}`);
+          if (!fs.existsSync(path.join(root, 'dist'))) fail('no dist/');
+          console.log(`OK: ${files} files`);
+          EOF
+          for p in dist .wrangler; do
+            if [ -e "$p" ] || [ -L "$p" ]; then echo "::error::app/$p already exists"; exit 1; fi
+          done
+          mkdir -p .wrangler/deploy
+          cp -R "$RUNNER_TEMP/build/dist" dist
+          cp "$RUNNER_TEMP/build/.wrangler/deploy/config.json" .wrangler/deploy/config.json
+
+      # Wrangler follows .wrangler/deploy/config.json to the config the Vite plugin wrote into dist. Both must match
+      # what the plugin makes from main's wrangler.jsonc: the expected config is rebuilt here with main's wrangler
+      # (as the plugin does, see @cloudflare/vite-plugin src/plugins/output-config.ts), and only main,
+      # assets.directory and the informational config paths may differ. On top of that, independent of main: no
+      # bindings, routes, build steps or extra modules, and previews is {}. Same check as preview.yml's.
+      - name: Check the generated wrangler config
+        if: steps.go.outputs.deploy == 'true'
+        working-directory: app
+        run: |
+          node - <<'EOF'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { isDeepStrictEqual } = require('node:util');
+          const fail = (m) => { console.log(`::error::Generated wrangler config rejected: ${m}`); process.exit(1); };
+          const show = (v) => JSON.stringify(v)?.slice(0, 200);
+          const readJson = (file) => {
+            try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { fail(`${file}: ${e.message}`); }
+          };
+          const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+          const deepEmpty = (v) => (Array.isArray(v) && v.length === 0) || (isObject(v) && Object.values(v).every(deepEmpty));
+          const dist = fs.realpathSync('dist');
+          const workerDir = path.join(dist, 'inhouse_app');
+
+          const redirect = readJson('.wrangler/deploy/config.json');
+          const expectedRedirect = { configPath: '../../dist/inhouse_app/wrangler.json', auxiliaryWorkers: [] };
+          if (!isDeepStrictEqual(redirect, expectedRedirect)) fail(`the redirect is ${show(redirect)}`);
+          const configFile = path.join(workerDir, 'wrangler.json');
+          if (!fs.existsSync(configFile) || !fs.lstatSync(configFile).isFile()) fail('no dist/inhouse_app/wrangler.json');
+          const config = readJson(configFile);
+          if (!isObject(config)) fail('not an object');
+
+          // What the plugin writes for main's wrangler.jsonc.
+          const { unstable_readConfig } = require(path.resolve('node_modules/wrangler'));
+          const input = unstable_readConfig({ config: path.resolve('wrangler.jsonc') }, { preserveOriginalMain: true });
+          for (const k of ['alias', 'base_dir', 'find_additional_modules', 'minify', 'no_bundle',
+            'preserve_file_names', 'site', 'tsconfig', 'build', 'define']) delete input[k];
+          const RULES = [{ type: 'ESModule', globs: ['**/*.js', '**/*.mjs'] }];
+          const built = { ...input, main: 'index.js', no_bundle: true, rules: RULES,
+            assets: { ...input.assets, directory: '../client' } };
+          if (isObject(built.unsafe) && Object.keys(built.unsafe).length === 0) delete built.unsafe;
+          const expected = JSON.parse(JSON.stringify(built));
+
+          const VARIES = new Set(['main', 'configPath', 'userConfigPath']);
+          const keys = Object.keys(config);
+          for (const k of keys) if (!Object.hasOwn(expected, k)) fail(`unexpected key ${k}`);
+          for (const k of Object.keys(expected)) if (!Object.hasOwn(config, k)) fail(`missing key ${k}`);
+          for (const k of keys) {
+            if (VARIES.has(k)) continue;
+            const [a, e] = k === 'assets' && isObject(config.assets)
+              ? [{ ...config.assets, directory: 0 }, { ...expected.assets, directory: 0 }] : [config[k], expected[k]];
+            if (!isDeepStrictEqual(a, e)) fail(`${k} is ${show(config[k])}, expected ${show(expected[k])}`);
+          }
+
+          // Independent of main's config: these hold whatever wrangler.jsonc says.
+          if (config.name !== 'inhouse-app' || config.topLevelName !== 'inhouse-app') fail('name is not inhouse-app');
+          if (config.no_bundle !== true) fail('no_bundle is not true');
+          if (!isDeepStrictEqual(config.rules, RULES)) fail(`rules is ${show(config.rules)}`);
+          if (!isDeepStrictEqual(config.previews, {})) fail(`previews is ${show(config.previews)}`);
+          for (const k of ['route', 'routes', 'account_id', 'env', 'legacy_env', 'base_dir', 'find_additional_modules',
+            'alias', 'define', 'tsconfig', 'site', 'text_blobs', 'data_blobs', 'wasm_modules', 'build', 'minify',
+            'preserve_file_names', 'pages_build_output_dir', 'unsafe']) {
+            if (Object.hasOwn(config, k)) fail(`${k} is set`);
+          }
+          // Every other key is a binding, trigger or resource list (services, kv_namespaces, queues, ai, browser,
+          // triggers, vars, migrations and any added later), and must be empty.
+          const SETTINGS = new Set(['configPath', 'userConfigPath', 'topLevelName', 'name', 'main', 'no_bundle', 'rules',
+            'compatibility_date', 'compatibility_flags', 'jsx_factory', 'jsx_fragment', 'assets', 'workers_dev',
+            'preview_urls', 'upload_source_maps', 'observability', 'python_modules', 'dev']);
+          for (const k of keys) if (!SETTINGS.has(k) && !deepEmpty(config[k])) fail(`${k} is not empty: ${show(config[k])}`);
+          for (const k of ['configPath', 'userConfigPath']) if (typeof config[k] !== 'string') fail(`${k} is not a string`);
+
+          const within = (p, dir, what) => {
+            let real;
+            try { real = fs.realpathSync(p); } catch { fail(`${what} does not exist`); }
+            if (real !== dir && !real.startsWith(dir + path.sep)) fail(`${what} is outside ${path.relative('.', dir)}/`);
+            return real;
+          };
+          const main = config.main;
+          if (typeof main !== 'string' || !main.endsWith('.js') || main.split(/[\\/]/).includes('..')) fail(`main is ${show(main)}`);
+          const mainReal = within(path.resolve(workerDir, main), workerDir, 'main');
+          if (mainReal === workerDir || !fs.statSync(mainReal).isFile()) fail('main is not a file');
+          if (typeof config.assets?.directory !== 'string') fail('no assets.directory');
+          if (!fs.statSync(within(path.resolve(workerDir, config.assets.directory), path.join(dist, 'client'),
+            'assets.directory')).isDirectory()) fail('assets.directory is not a directory');
+
+          // upload_source_maps: wrangler 4.162.0 (sourceMapForModule in src/deployment-bundle/source-maps.ts) reads
+          // the file a module's last trailing "//# sourceMappingURL=" names, joined to the module's directory with no
+          // containment, and uploads it. scanSourceMaps does that for every module (Text and Data too), so every
+          // file wrangler could upload from the worker directory either never mentions sourceMappingURL, or does so
+          // once, as its last line, naming a regular .map file next to it.
+          const checkSourceMaps = (dir) => {
+            for (const name of fs.readdirSync(dir)) {
+              const file = path.join(dir, name);
+              const rel = path.relative(dist, file);
+              const st = fs.lstatSync(file);
+              if (st.isDirectory()) { checkSourceMaps(file); continue; }
+              if (!st.isFile()) fail(`dist/${rel} is not a regular file`);
+              const text = new TextDecoder().decode(fs.readFileSync(file));
+              const mentions = text.match(/[#@]\s*sourceMappingURL\s*=/gi) ?? [];
+              if (mentions.length === 0) continue;
+              const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+              const m = /^\/\/# sourceMappingURL=([\w.-]+\.map)$/.exec(lines.at(-1) ?? '');
+              if (mentions.length !== 1 || !m) {
+                fail(`dist/${rel}: a sourceMappingURL must be one "//# sourceMappingURL=<name>.map" last line`);
+              }
+              let mapSt;
+              try { mapSt = fs.lstatSync(path.join(dir, m[1])); } catch { fail(`dist/${rel}: ${m[1]} does not exist`); }
+              if (!mapSt.isFile()) fail(`dist/${rel}: ${m[1]} is not a regular file`);
+            }
+          };
+          checkSourceMaps(workerDir);
+          console.log('OK: dist/inhouse_app/wrangler.json matches main');
+          EOF
+          leftovers=$(find . -maxdepth 1 \( -name '.env*' -o -name '.dev.vars*' \) -print)
+          [ -z "$leftovers" ] || { echo "::error::Found $leftovers in app/"; exit 1; }
+
+      # Production is indexable; previews keep public/_headers' noindex. Drops every X-Robots-Tag line from the
+      # "/*" block (block starts parsed as smoke.sh parses them), before the version is uploaded.
+      - name: Let production be indexed
+        if: steps.go.outputs.deploy == 'true'
+        working-directory: app
+        run: |
+          f=dist/client/_headers
+          [ -f "$f" ] && [ ! -L "$f" ] || { echo "::error::No $f"; exit 1; }
+          : > "$RUNNER_TEMP/_headers"
+          awk -v out="$RUNNER_TEMP/_headers" '/^[^ \t#]/ { all = ($1 == "/*") }
+            all && tolower($0) ~ /^[ \t]+x-robots-tag[ \t]*:/ { n++; next }
+            { print > out }
+            END { print n + 0 }' "$f" > "$RUNNER_TEMP/removed"
+          cat "$RUNNER_TEMP/_headers" > "$f"
+          echo "Removed $(cat "$RUNNER_TEMP/removed") X-Robots-Tag line(s) from the /* block of $f"
+
+      - name: Check the production settings
+        if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
+        env:
+          HOST: ${{ vars.PRODUCTION_HOSTNAME }}
+          ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          [[ "$HOST" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] && [[ "$HOST" != *.workers.dev ]] ||
+            { echo "::error::Variable PRODUCTION_HOSTNAME must be a lowercase hostname on our own zone"; exit 1; }
+          [[ "$ACCOUNT" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::Variable CLOUDFLARE_ACCOUNT_ID is not an account id"; exit 1; }
+
+      # Two helpers in $RUNNER_TEMP, written by this job before any secret is in reach.
+      # wrangler.sh: main's wrangler by explicit path. --env-file /dev/null replaces its default .env and .env.local
+      # in the cwd (wrangler 4.162.0 createCLIParser in src/index.ts loads args["env-file"] ??
+      # getDefaultEnvFiles(args.env); /dev/null parses to nothing). env -u drops any override of where the token
+      # goes, how it signs in, which Worker or environment it targets and where it writes its output; only the
+      # token and account stay. Wrangler's machine-readable output (ND-JSON, src/output.ts) goes to one known file.
+      # smoke.sh: waits until a URL serves the app (and, given an entry script, that build), then checks once: the
+      # page, its entry script, a deep link (the SPA fallback), POST /api/does-not-exist and a navigation to it
+      # reaching the Worker's 404 (the navigation proves run_worker_first: without it the SPA fallback answers 200)
+      # and every header _headers sets for /*. Prints the entry script's path.
+      - name: Write the wrangler and smoke helpers
+        if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
+        run: |
+          cat > "$RUNNER_TEMP/wrangler.sh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec env -u CLOUDFLARE_API_BASE_URL -u CLOUDFLARE_COMPLIANCE_REGION -u WRANGLER_API_ENVIRONMENT \
+            -u CLOUDFLARE_API_KEY -u CLOUDFLARE_EMAIL -u CLOUDFLARE_AUTH_PROFILE -u CLOUDFLARE_AUTH_USE_KEYRING \
+            -u CLOUDFLARE_CLIENT_ID -u WRANGLER_CLIENT_ID -u CLOUDFLARE_ACCESS_CLIENT_ID \
+            -u CLOUDFLARE_ACCESS_CLIENT_SECRET -u WRANGLER_AUTH_DOMAIN -u WRANGLER_AUTH_URL -u WRANGLER_TOKEN_URL \
+            -u WRANGLER_REVOKE_URL -u WRANGLER_CF_AUTHORIZATION_TOKEN -u CLOUDFLARE_INCLUDE_PROCESS_ENV \
+            -u CLOUDFLARE_ENV -u WRANGLER_CI_OVERRIDE_NAME -u WRANGLER_CI_MATCH_TAG -u WRANGLER_CI_GENERATE_PREVIEW_ALIAS \
+            -u WRANGLER_OUTPUT_FILE_DIRECTORY \
+            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/wrangler-output.ndjson" WRANGLER_SEND_METRICS=false \
+            WRANGLER_SEND_ERROR_REPORTS=false \
+            node "$GITHUB_WORKSPACE/app/node_modules/wrangler/bin/wrangler.js" "$@" --env-file /dev/null
+          EOF
+          cat > "$RUNNER_TEMP/smoke.sh" <<'EOF'
+          #!/usr/bin/env bash
+          # smoke.sh BASE_URL DEADLINE_SECONDS [EXPECTED_ENTRY] [HEADERS_FILE]; SMOKE_API=no skips the /api checks.
+          set -euo pipefail
+          base=$1 deadline=$2 expect=${3:-} headers=${4:-}
+          [[ "$base" =~ ^https://[a-z0-9.-]+$ ]] || { echo "::error::Bad base URL" >&2; exit 1; }
+          dir=$(mktemp -d)
+          # get PATH NAME [curl options]: prints the status, keeps the body in $dir/NAME and the headers in NAME.h.
+          get() {
+            local p=$1 name=$2 code
+            shift 2
+            code=$(curl -sS --proto '=https' --max-time 20 -o "$dir/$name" -D "$dir/$name.h" -w '%{http_code}' \
+              "$@" "$base$p") || code=000
+            echo "$code"
+          }
+          hdr() { grep -i "^$2:" "$dir/$1.h" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//' || true; }
+          # Vite's entry script, the first /assets/*.js the page loads. Empty when there is none.
+          entry() { grep -oE 'src="/assets/[A-Za-z0-9._-]+\.js"' "$1" | head -n 1 | cut -d'"' -f2 || true; }
+          # Waits on a condition (the app, and the expected build), polling until the deadline.
+          end=$((SECONDS + deadline))
+          while :; do
+            code=$(get / index.html)
+            asset=""
+            if [ "$code" = 200 ] && grep -q '<div id="root">' "$dir/index.html"; then asset=$(entry "$dir/index.html"); fi
+            if [ -n "$asset" ] && { [ -z "$expect" ] || [ "$asset" = "$expect" ]; }; then break; fi
+            if [ "$SECONDS" -ge "$end" ]; then
+              echo "::error::$base/ did not serve the expected app within ${deadline}s (last: HTTP $code, entry ${asset:-none}, expected ${expect:-any})" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          fail=0
+          bad() { echo "::error::$base: $*" >&2; fail=1; }
+          ct=$(hdr index.html content-type)
+          [[ "$ct" == text/html* ]] || bad "/ is $ct, not text/html"
+          code=$(get "$asset" entry.js)
+          ct=$(hdr entry.js content-type)
+          [ "$code" = 200 ] && [[ "$ct" == *javascript* ]] || bad "$asset is HTTP $code ($ct)"
+          code=$(get /settings/smoke-check deep.html -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' \
+            -H 'Sec-Fetch-Dest: document')
+          [ "$code" = 200 ] && grep -q '<div id="root">' "$dir/deep.html" || bad "a deep link is HTTP $code, not the app"
+          if [ "${SMOKE_API:-yes}" != no ]; then
+            code=$(get /api/does-not-exist api.txt -X POST -H 'Content-Type: application/json' --data '{}')
+            [ "$code" = 404 ] || bad "POST /api/does-not-exist is HTTP $code, not 404"
+            code=$(get /api/does-not-exist api.html -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' \
+              -H 'Sec-Fetch-Dest: document')
+            [ "$code" = 404 ] || bad "a navigation to /api/does-not-exist is HTTP $code, not 404 (run_worker_first)"
+          fi
+          if [ -n "$headers" ]; then
+            # Header names in the "/*" block of the build's _headers (detach lines "! Name" are skipped).
+            names=$(awk '/^[^ \t#]/ { all = ($1 == "/*"); next }
+              all && /^[ \t]+[A-Za-z0-9-]+[ \t]*:/ { sub(/^[ \t]+/, ""); sub(/[ \t]*:.*/, ""); print }' "$headers")
+            [ -n "$names" ] || bad "$headers sets no headers for /*"
+            for n in $names; do [ -n "$(hdr index.html "$n")" ] || bad "/ has no $n header"; done
+          fi
+          [ "$fail" = 0 ] || exit 1
+          echo "$base passed the smoke check (entry $asset)" >&2
+          echo "$asset"
+          EOF
+          chmod +x "$RUNNER_TEMP/wrangler.sh" "$RUNNER_TEMP/smoke.sh"
+
+      # A new version, not yet live. The tag is the short SHA and the message the commit's subject (the API caps
+      # it at 100 characters).
+      - name: Upload the version
+        id: upload
+        if: steps.go.outputs.deploy == 'true'
+        working-directory: app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          LC_ALL: C.UTF-8
+        run: |
+          subject=$(git log -1 --format=%s "$SHA" | tr -d '\000-\037\177')
+          subject=${subject:0:100}
+          echo "message=$subject" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/wrangler-output.ndjson"
+          "$RUNNER_TEMP/wrangler.sh" versions upload --tag="${SHA:0:7}" --message="$subject"
+
+      # The version id and its Version URL, from the version-upload entry wrangler wrote (src/versions/upload.ts).
+      # A missing Version URL means Version URLs are off for the Worker (preview_urls), so nothing can be smoked.
+      - name: Read the version id and Version URL
+        id: version
+        if: steps.go.outputs.deploy == 'true'
+        run: |
+          node - "$RUNNER_TEMP/wrangler-output.ndjson" <<'EOF'
+          const fs = require('node:fs');
+          const fail = (m) => { console.log(`::error::${m}`); process.exit(1); };
+          let entries;
+          try {
+            entries = fs.readFileSync(process.argv[2], 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+          } catch (e) { fail(`wrangler's output file: ${e.message}`); }
+          const uploads = entries.filter((e) => e?.type === 'version-upload');
+          if (uploads.length !== 1) fail(`expected one version-upload entry, found ${uploads.length}`);
+          const u = uploads[0];
+          if (u.worker_name !== 'inhouse-app') fail(`uploaded to ${JSON.stringify(u.worker_name)}, not inhouse-app`);
+          const id = u.version_id;
+          if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
+            fail(`bad version id ${JSON.stringify(id)}`);
+          }
+          const url = u.preview_url;
+          const m = typeof url === 'string' && /^https:\/\/([0-9a-f]{8})-inhouse-app\.[a-z0-9-]+\.workers\.dev$/.exec(url);
+          if (!m) fail(`no valid Version URL (${JSON.stringify(url)}); are Version URLs (preview_urls) on?`);
+          if (m[1] !== id.slice(0, 8)) fail(`the Version URL ${url} is not version ${id}'s`);
+          console.log(`version_id: ${id}\nversion_url: ${url}`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version_id=${id}\nversion_url=${url}\n`);
+          EOF
+
+      - name: Smoke the Version URL
+        id: smoke_version
+        if: steps.go.outputs.deploy == 'true'
+        working-directory: app
+        env:
+          URL: ${{ steps.version.outputs.version_url }}
+        run: |
+          entry=$("$RUNNER_TEMP/smoke.sh" "$URL" 180 "" dist/client/_headers)
+          echo "entry=$entry" >> "$GITHUB_OUTPUT"
+
+      # From here on production changes, so a failure opens or comments on the monitor issue (job alert).
+      - name: Production changes from here
+        id: live
+        if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
+        run: echo "live=true" >> "$GITHUB_OUTPUT"
+
+      - name: Promote the version to 100%
+        if: steps.go.outputs.deploy == 'true'
+        working-directory: app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION_ID: ${{ steps.version.outputs.version_id }}
+          MESSAGE: ${{ steps.upload.outputs.message }}
+        run: |
+          "$RUNNER_TEMP/wrangler.sh" versions deploy "$VERSION_ID@100%" --yes --message="$MESSAGE"
+
+      # wrangler.jsonc has no routes (preview.yml refuses any), so the custom domain is attached here through the
+      # Workers Domains API (PUT /accounts/{id}/workers/domains, hostname and service). Idempotent: nothing
+      # changes when the hostname already points at inhouse-app, and a hostname that points at another Worker
+      # fails instead of being taken over. The first attach also issues the certificate, which can take minutes.
+      - name: Attach the custom domain
+        if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          HOST: ${{ vars.PRODUCTION_HOSTNAME }}
+        run: |
+          node <<'EOF'
+          const { ACCOUNT, HOST, CLOUDFLARE_API_TOKEN: TOKEN } = process.env;
+          const SERVICE = 'inhouse-app';
+          const fail = (m) => { console.log(`::error::Custom domain: ${m}`); process.exit(1); };
+          const api = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/workers/domains`;
+          const call = async (method, url, body) => {
+            const res = await fetch(url, {
+              method,
+              signal: AbortSignal.timeout(30000),
+              headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+              body: body === undefined ? undefined : JSON.stringify(body),
+            });
+            let json;
+            try { json = await res.json(); } catch { fail(`${method} returned HTTP ${res.status}, not JSON`); }
+            if (!res.ok || json?.success !== true) {
+              const errors = (json?.errors ?? []).map((e) => `${e.code}: ${e.message}`).join('; ');
+              fail(`${method} returned HTTP ${res.status}: ${errors || 'no errors listed'}`);
+            }
+            return json.result;
+          };
+          const list = await call('GET', `${api}?hostname=${encodeURIComponent(HOST)}`);
+          if (!Array.isArray(list)) fail('the list is not an array');
+          const found = list.filter((d) => d?.hostname === HOST);
+          if (found.length > 1) fail(`${found.length} records for the hostname`);
+          if (found.length === 1 && found[0].service !== SERVICE) {
+            fail(`the hostname points at another Worker; detach it in Cloudflare first`);
+          }
+          if (found.length === 1 && found[0].enabled !== false) {
+            console.log(`Already attached to ${SERVICE}`);
+          } else {
+            const d = await call('PUT', api, { hostname: HOST, service: SERVICE, enabled: true });
+            if (d?.hostname !== HOST || d?.service !== SERVICE) fail('the API answered with a different domain');
+            console.log(`Attached to ${SERVICE}`);
+          }
+          EOF
+
+      # rollback restores the version's code, config and static assets (it deploys that version at 100%). The
+      # message is shown in the deployment history.
+      - name: Roll back
+        if: steps.go.outputs.rollback == 'true'
+        working-directory: app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION_ID: ${{ needs.plan.outputs.rollback_to }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          "$RUNNER_TEMP/wrangler.sh" rollback "$VERSION_ID" --name=inhouse-app --message="Rollback, deploy run $RUN_ID" --yes
+
+      # Whatever the commands printed, the active deployment must now be exactly that version at 100%.
+      # The JSON also holds the deploying account's email, so only the versions are printed.
+      - name: Check the active deployment
+        if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
+        working-directory: app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED: ${{ steps.go.outputs.deploy == 'true' && steps.version.outputs.version_id || needs.plan.outputs.rollback_to }}
+        run: |
+          out="$RUNNER_TEMP/deployment.json"
+          "$RUNNER_TEMP/wrangler.sh" deployments status --name inhouse-app --json > "$out"
+          node - "$out" <<'EOF'
+          const fs = require('node:fs');
+          const fail = (m) => { console.log(`::error::Active deployment: ${m}`); process.exit(1); };
+          const out = fs.readFileSync(process.argv[2], 'utf8');
+          const start = out.indexOf('{');
+          if (start < 0) fail('no JSON in the wrangler output');
+          let d;
+          try { d = JSON.parse(out.slice(start)); } catch (e) { fail(e.message); }
+          const versions = Array.isArray(d?.versions) ? d.versions : [];
+          const shown = versions.map((v) => `${v?.version_id}@${v?.percentage}%`).join(', ');
+          console.log(`Active: ${shown || 'none'}`);
+          if (versions.length !== 1 || versions[0].version_id !== process.env.EXPECTED || versions[0].percentage !== 100) {
+            fail(`expected ${process.env.EXPECTED}@100%`);
+          }
+          EOF
+
+      # The live hostname: polled until it serves this build (by its entry script), then checked like the
+      # Version URL, plus no X-Robots-Tag (production is indexable). A rollback has no build here, so any app
+      # passes the wait and only the checks run, minus the /api ones: a version from before run_worker_first
+      # answers a navigation to /api/* with the SPA page. Its X-Robots-Tag is a warning for the same reason (a
+      # version from before this pipeline sends noindex). HSTS is a warning until _headers sets it.
+      - name: Smoke the live hostname
+        if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
+        working-directory: app
+        env:
+          HOST: ${{ vars.PRODUCTION_HOSTNAME }}
+          ENTRY: ${{ steps.smoke_version.outputs.entry }}
+          DEPLOY: ${{ steps.go.outputs.deploy }}
+        run: |
+          if [ "$DEPLOY" = true ]; then
+            "$RUNNER_TEMP/smoke.sh" "https://$HOST" 600 "$ENTRY" dist/client/_headers > /dev/null
+          else
+            SMOKE_API=no "$RUNNER_TEMP/smoke.sh" "https://$HOST" 600 > /dev/null
+          fi
+          # Captured first: grep -q exiting early on a pipe would fail curl with SIGPIPE under pipefail.
+          headers=$(curl -sS --proto '=https' --max-time 20 -o /dev/null -D - "https://$HOST/")
+          grep -qi '^strict-transport-security:' <<< "$headers" ||
+            echo "::warning::https://$HOST/ sends no Strict-Transport-Security header"
+          if grep -qi '^x-robots-tag:' <<< "$headers"; then
+            if [ "$DEPLOY" = true ]; then
+              echo "::error::https://$HOST/ sends X-Robots-Tag; production should be indexable"
+              exit 1
+            fi
+            echo "::warning::https://$HOST/ sends X-Robots-Tag; the version rolled back to may predate indexing"
+          fi
+
+      - name: Record the result
+        id: done
+        if: steps.go.outputs.deploy == 'true'
+        env:
+          VERSION_ID: ${{ steps.version.outputs.version_id }}
+        run: |
+          { echo "deployed=true"; echo "version_id=$VERSION_ID"; } >> "$GITHUB_OUTPUT"
+
+  # A deploy or rollback that failed once production started changing (promote, domain attach, rollback, active
+  # check, live smoke) opens the monitor's issue, or comments on the open one, so a person hears of it without
+  # relying on a failure email. Nothing rolls back on its own. The monitor's next passing check closes the issue.
+  alert:
+    needs: [plan, deploy]
+    if: always() && needs.deploy.outputs.live == 'true' && needs.deploy.result != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TITLE: Production check failing
+          LABEL: monitor
+          # As in monitor.yml: assigned on every new issue, so a failure always reaches a person.
+          ASSIGNEE: wasimjalali
+          MODE: ${{ needs.plan.outputs.mode }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          ROLLBACK_TO: ${{ needs.plan.outputs.rollback_to }}
+          RESULT: ${{ needs.deploy.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$MODE" = rollback ]; then what="The rollback to version $ROLLBACK_TO"; else what="The deploy of $SHA"; fi
+          now=$(date -u '+%Y-%m-%d %H:%M UTC')
+          body=$(printf '%s\n\n%s\n\nRun: %s\n' \
+            "$what ended $RESULT at $now, after production started changing (promote, domain attach, rollback, active check or live smoke)." \
+            "Nothing rolls back on its own. Check the live site, then fix forward or roll back: gh workflow run deploy -f rollback_to=<version id>" \
+            "$RUN_URL")
+          numbers=$(gh api --paginate "repos/$REPO/issues?state=open&labels=$LABEL&per_page=100" \
+            --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number')
+          open=$(head -n 1 <<< "$numbers")
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$REPO" --body "$body"
+            echo "Commented on #$open"
+          else
+            gh label create "$LABEL" --repo "$REPO" --force --color B60205 --description "Opened by the production monitor"
+            gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --assignee "$ASSIGNEE" --body "$body"
+          fi
+
+  # A release per deploy: vYYYY.MM.DD.N (UTC), N the next free number that day, on the deployed commit.
+  # Rollbacks don't make one. The production group runs one at a time, so two releases never race for a number.
+  release:
+    needs: [plan, deploy]
+    if: needs.deploy.outputs.deployed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          VERSION_ID: ${{ needs.deploy.outputs.version_id }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad SHA"; exit 1; }
+          [[ "$VERSION_ID" =~ ^[0-9a-f-]{36}$ ]] || { echo "::error::Bad version id"; exit 1; }
+          day=$(date -u +%Y.%m.%d)
+          last=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v$day." --jq '.[].ref' |
+            sed -nE 's#^refs/tags/v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.([0-9]+)$#\1#p' | sort -n | tail -n 1)
+          tag="v$day.$((10#${last:-0} + 1))"
+          gh release create "$tag" --repo "$REPO" --target "$SHA" --title "$tag" --generate-notes \
+            --notes "Deployed to production as Worker version \`$VERSION_ID\`."
+          echo "Released $tag"
