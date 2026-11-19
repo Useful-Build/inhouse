@@ -32,7 +32,7 @@ test('Phone: the mode picker fits', async ({ page }) => {
 
 test('Phone: the Models page fits and reads as text', async ({ page }) => {
   await start(page, '#/settings/team-modes')
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
   // Team settings are read on a phone (D4): the values show as text, with no control to change them.
   await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(page.getByRole('switch')).toHaveCount(0)
@@ -44,7 +44,7 @@ test('Phone: the Models page fits and reads as text', async ({ page }) => {
   // The last row, the default model, is on the page, and the page's own main is the scroll area.
   await expect(page.locator('main').getByText('Default model', { exact: true })).toBeVisible()
   expect(await page.locator('main').evaluate(el => ['auto', 'scroll'].includes(getComputedStyle(el).overflowY))).toBe(true)
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
   await keep(page, '390-thinking-modes-page')
 })
 
@@ -57,7 +57,7 @@ test('Phone: a model turned off on a computer reads "<Effort> · turned off" on 
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('switch')).toHaveCount(0)
   await expect(page.locator('main')).toContainText('Low · turned off')
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
 })
 
 test('Phone: a long settings page scrolls with the page (main moves, nothing nested)', async ({ page }) => {
@@ -78,7 +78,7 @@ test('Phone: Settings and the Library scroll naturally, with no nested scroll ar
       return (o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight + 4
     }).length)
     expect(nested, name).toBe(0)
-    expect(await noSideways(page)).toBe(true)
+    await expect.poll(() => noSideways(page)).toBe(true)
     await page.locator('main').evaluate(el => { el.scrollTop = el.scrollHeight })
     await keep(page, `390-${name}-scrolled`)
   }
@@ -87,7 +87,7 @@ test('Phone: Settings and the Library scroll naturally, with no nested scroll ar
 for (const [name, hash] of [['today', '#/today'], ['approvals', '#/approvals'], ['routines', '#/routines'], ['activity', '#/activity'], ['tools', '#/tools'], ['skills', '#/skills'], ['usage', '#/usage'], ['chat', '#/chats/refunds'], ['chats-all', '#/chats/all']] as const) {
   test(`Phone: ${name} fits and scrolls`, async ({ page }) => {
     await start(page, hash)
-    expect(await noSideways(page)).toBe(true)
+    await expect.poll(() => noSideways(page)).toBe(true)
     await page.locator('main').evaluate(el => { el.scrollTop = el.scrollHeight })
     await keep(page, `390-${name}-scrolled`)
   })
