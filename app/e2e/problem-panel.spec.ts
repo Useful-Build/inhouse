@@ -1,7 +1,7 @@
 // The problem panel's two ways out that aren't approvals, at 1440: "Ask about this…" (in the panel and in the card's
 // menu) starts a chat holding the question, which a reload keeps; the memory note's Manage opens Team memory. Approve,
 // Edit, Don't send and Undo are in app.spec.ts, today-approvals.spec.ts and page-actions.spec.ts.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page) {

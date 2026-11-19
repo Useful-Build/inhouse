@@ -4,7 +4,7 @@
 // Overlays: bell, account menu, Help (every guide), team window, Needs you panels, Activity (every row, every trace it
 // opens, plain and technical), the chat trace windows, Library viewers and the Delete confirm, the chat hover actions
 // and "More" menu, the composer menus, every Settings dropdown and the Demo switches panel.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Locator, Page } from '@playwright/test'
 import { everything } from './page-text.js'
 

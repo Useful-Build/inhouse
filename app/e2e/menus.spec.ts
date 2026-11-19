@@ -1,6 +1,6 @@
 // Every dropdown and menu list fits its content: no sideways scroll, and every check mark sits inside the list's box.
 // Runs at 1440 and 390. Screenshots go to VERIFY_DIR (or e2e-artifacts/).
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Locator, Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { atRest } from './states.js'

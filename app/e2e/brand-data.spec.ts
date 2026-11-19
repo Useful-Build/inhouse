@@ -2,7 +2,7 @@
 // has no chat channel: the sidebar, a Library preview, and the Skills, Usage and Settings pages never say Northline, and no
 // page of a short tour says Slack. What the agent wrote (draft bodies, sign-offs, emails) is its data and may name anyone.
 // The mock reads the override from localStorage `inhouse.demo.data.v1` (see DATA_OVERRIDE_KEY in src/agent/mock.ts).
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 const BRAND = 'Fernwood Supply'

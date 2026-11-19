@@ -1,7 +1,7 @@
 // The theme switch: the ⌘K palette's "Switch to dark/light theme" item and Settings > General > Theme (the only place
 // to pick System). Each choice sets the root `dark` class and the page colour, saves in `inhouse.theme` (System saves
 // nothing and follows `prefers-color-scheme`) and survives a reload.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 const THEME_KEY = 'inhouse.theme'

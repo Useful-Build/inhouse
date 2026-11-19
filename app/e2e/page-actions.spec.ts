@@ -1,7 +1,7 @@
 // Page actions (PR 6): Approvals edit, don't send, approve all low-risk and sort; Today snooze and dismiss with counts that
 // agree everywhere, survive a reload and clear on Reset demo; approving a set-aside problem anywhere clears it, and Activity logs
 // each set-aside; Tools requests open the team window; Usage bars by keyboard.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today') {
