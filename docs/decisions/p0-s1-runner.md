@@ -70,6 +70,9 @@ the store 3.5 s; cold after destroy 4.1 to 5.8 s, boot 0.7 to 1.3 s.
    at 12, all 4 started. A new container app's capacity near our Durable Objects grew over its first 30 minutes. Not
    documented; ask Cloudflare.
 6. Custom instance types need at least 3 GiB per vCPU (learned from a rejected rollout, not in the docs).
+7. **Deleting a Worker doesn't delete its container applications** (found at P0 cleanup). They stay, with their
+   pre-placed instances, until deleted on their own (`DELETE /accounts/<id>/containers/applications/<app id>`). A
+   deleted Preview's container app stayed too.
 
 ## Verdict
 
@@ -99,6 +102,7 @@ big container is a single point of failure that every deploy or crash would cut 
 - Sizing: standard-4, containers per brand = max(2, ceil(peak concurrent runs / 25)), routed fill-first. A pool of
   runner DOs per brand (`runner-0..N`, each owning one container), not one container per brand. `max_instances` at
   least 3 times the need. Placement refusals are normal: route to a running container, alert on a shortfall.
+- Teardown and brand offboarding delete container applications explicitly and check none remain.
 - Open for P3: `interrupt()` before abort on SIGTERM (abort alone didn't end the turn loop); read memory without the
   cgroup files (not readable here); cold start over long idles and many brands.
 
