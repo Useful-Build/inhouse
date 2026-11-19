@@ -158,6 +158,13 @@ connection.
 - PD7: the scheduled check is curl only (page, entry script, deep link). The small browser spec was dropped: it
   covered the same paths for more cost. No keepalive either: only repository activity resets GitHub's 60-day timer,
   so it's kept alive by Dependabot's weekly PRs and merges (decision 0021).
+- H5 / PD7: the Web Analytics beacon wasn't added. It needs a Web Analytics site in the Cloudflare account, which
+  is an account step, not code. The CSP no longer allows the analytics hosts until it lands (decision 0021).
+- PD2: the custom domain is attached by `deploy.yml` through the Workers Domains API on each deploy and rollback,
+  not with `wrangler triggers deploy` (decision 0018).
+- Acceptance 4: the gzip budget covers Today's first load only. A deep link to a lazy page loads that page's chunk on
+  top, with no budget of its own.
+- Acceptance 3: the fallback glyph for an unknown icon name is drawn but no spec checks it (feature map, Gaps).
 - Acceptance 9: HSTS (`max-age=31536000; includeSubDomains`) came in a follow-up PR on the integration branch, and the
   live smoke in `deploy.yml` then turned from a warning into a failure.
 - H3: an old tab's chunk failure is tested by `e2e/route-chunk-failure.spec.ts`, which asserts the crash screen never

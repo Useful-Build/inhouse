@@ -54,10 +54,10 @@ One Worker, `inhouse-app` (`app/wrangler.jsonc`), with static assets. Cloudflare
 Worker runs, and `not_found_handling: single-page-application` answers any other path with `index.html`. Headers come
 from `app/public/_headers`.
 
-`/api/*` will be the exception: the hardening project routes it to the Worker first (`run_worker_first`). The first
-route is `/api/client-error`, which takes error reports from the browser, rate-limits and scrubs them and logs them to
-Workers Logs with the release SHA ([0020](decisions/0020-client-errors-into-workers-logs.md)).
-Until it lands, the Worker answers 404 to anything that isn't an asset.
+`/api/*` is the exception: it goes to the Worker first (`run_worker_first`). Its one route is `/api/client-error`,
+which takes error reports from the browser, rate-limits and scrubs them and logs them to Workers Logs with the release
+SHA ([0020](decisions/0020-client-errors-into-workers-logs.md)). Any other `/api/*` path gets a 404 with the same
+security headers as the pages.
 
 ## CI and the gates
 
@@ -93,7 +93,7 @@ job, with read access and no secrets. The owner watches the reel and approves th
 
 ## Deploys
 
-As designed in the production plan, and landing in a parallel PR ([0019](decisions/0019-deploy-on-merge-with-rollback.md)):
+Every merge into `main` deploys ([0019](decisions/0019-deploy-on-merge-with-rollback.md)):
 
 1. A merge into `main` starts `deploy.yml`. A build job with no secrets uploads the exact build.
 2. A trusted job in environment `production` uploads it as a new Worker version tagged with the SHA, smokes that
@@ -102,7 +102,7 @@ As designed in the production plan, and landing in a parallel PR ([0019](decisio
 4. Rollback promotes an earlier version by id, in the same concurrency group as deploys. Steps are in the
    [runbook](runbook.md).
 
-A scheduled check watches production and notifies the owner on failure
+An hourly check (`monitor.yml`) watches production and opens an issue assigned to the owner on failure
 ([0021](decisions/0021-monitoring-and-runbook.md)). The Cloudflare token lives only in GitHub environments that
 `main`'s workflows can use ([0015](decisions/0015-one-cloudflare-token-in-environments.md)).
 

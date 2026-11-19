@@ -33,7 +33,8 @@ The `deploy` workflow (`deploy.yml`) uploads a new Worker version, smokes its Ve
    nearby points at Cloudflare or the network. Check the Cloudflare status page.
 5. **Read Workers Logs.** Filter for `event` = `client_error`. Each line carries `kind` (`error`, `rejection`,
    `boundary`, `route` or `unknown`), `message`, `stack`, `url`, `release` and `country`. Reports from the `?demo&crash=`
-   switches carry `demo: true`: leave those out. Look for one message repeated many times,
+   switches carry `demo: true`: leave those out. The flag is sent by the browser, so anyone posting a
+   report can set it; it's a filter for convenience, not proof. Look for one message repeated many times,
    and the first time it appeared. Errors only from old tabs after a deploy are usually a stale lazy route, not an outage.
 6. **Decide.** If a deploy caused it, or you can't tell, roll back (next section). Don't debug on the live site.
 

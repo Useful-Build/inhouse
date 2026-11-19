@@ -1,6 +1,6 @@
 # 0021. Monitoring: a scheduled check, Web Analytics and a runbook
 
-- Status: accepted, 2026-11-19. Being built in the hardening project (`fleet/hardening`)
+- Status: accepted, 2026-11-19. Built in the hardening project (`fleet/hardening`)
 - Was: production plan PD7
 - Plan: [production plan, Decisions](../plans/2026-11-19-production.md#decisions)
 
@@ -16,7 +16,10 @@ No uptime check, no alerting, no Core Web Vitals and no written steps for an inc
   and there's no keepalive. GitHub only resets its 60-day timer on repository activity, so a workflow can't keep
   itself alive without committing. Dependabot's weekly PRs and merges keep the repo active; if it ever goes quiet,
   re-enable the workflow (`gh workflow enable monitor`).
-- Core Web Vitals from Cloudflare Web Analytics (page loads; hash routes aren't told apart).
+- Core Web Vitals from Cloudflare Web Analytics (page loads; hash routes aren't told apart). Not built yet: the beacon
+  needs a Web Analytics site created in the Cloudflare account first. Until then the CSP allows no analytics hosts;
+  adding the beacon means adding `https://static.cloudflareinsights.com` to `script-src` and
+  `https://cloudflareinsights.com` to `connect-src`.
 - A CI budget on the initial JS bundle.
 - A short incident and rollback runbook, [docs/runbook.md](../runbook.md).
 
