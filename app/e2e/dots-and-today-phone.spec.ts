@@ -1,5 +1,5 @@
 // UI polish A at 390 px: dots behind the cards, a clean Today, and no logo row in its box (the tools are in "+").
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'

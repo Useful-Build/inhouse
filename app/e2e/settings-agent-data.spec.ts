@@ -1,7 +1,7 @@
 // Settings > Inhouse agent, Data and access and Audit log (desktop: on a phone these team pages are read-only, see
 // settings-pages-phone.spec.ts). Each control does what it says; the picks the app keeps survive a reload and Reset demo
 // clears them. The audit log's download is checked in sample-data.spec.ts.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 type Stage = 'Watch' | 'Act' | 'Run'

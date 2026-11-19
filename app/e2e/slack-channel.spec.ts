@@ -1,5 +1,5 @@
 // Slack's own page: Tools → Slack opens #/tools/slack, with Back to Tools; before Act it says it's included from Act.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

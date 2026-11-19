@@ -1,6 +1,6 @@
 // UI polish A: the dotted background sits behind every card, Today shows only the title, the composer and the
 // Needs you cards, and the composer's logo row stops at 3 logos plus a "+N" chip.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
