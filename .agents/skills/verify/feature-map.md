@@ -6,7 +6,7 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 
 ## Gaps
 
-- Read aloud on an answer: the menu item is checked for presence (`conversation.spec.ts`, `conversation-polish.spec.ts`, `brand-data.spec.ts`), what it does isn't.
+None open.
 
 ## Today
 
@@ -105,10 +105,10 @@ Chat: Dictate
   Covered:  e2e/not-connected-stubs.spec.ts
 
 Chat: answer actions
-  Path:     answer -> Copy, Edit, Regenerate, thumbs, steps
-  Selector: answer row buttons
-  Expected: markdown renders, Jump to latest appears when scrolled up mid-stream, steps open the trace
-  Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts
+  Path:     answer -> hover or Tab into the row -> Reply, Copy, Regenerate, thumbs, More; More -> Send to #channel, Report a wrong answer, Delete
+  Selector: answer row buttons, `[data-answer-actions]`, menu "Message actions"
+  Expected: at rest every answer (the newest too) shows only its steps line; hover or keyboard focus shows the actions and an open More menu keeps them; the menu has exactly Send to #channel (when a channel is connected), Report a wrong answer and Delete; the phone row is Copy, steps and More; markdown renders, Jump to latest appears when scrolled up mid-stream, steps open the trace
+  Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts
 
 Chat: queue and edit
   Path:     send two messages mid-answer, Edit a question
@@ -309,11 +309,3 @@ Sample data rules
   Selector: n/a
   Expected: no 24-hour time, UK spelling, old dates or the words sample, demo or mock in text a person reads; no persona name from the old build
   Covered:  e2e/sample-data.spec.ts, e2e/no-persona.spec.ts
-
-## Gaps, as entries
-
-Chat: Read aloud
-  Path:     answer -> More -> Read aloud
-  Selector: menuitem "Read aloud"
-  Expected: the item does what it says (its presence is checked in `conversation.spec.ts`, `conversation-polish.spec.ts` and `brand-data.spec.ts`)
-  Covered:  gap

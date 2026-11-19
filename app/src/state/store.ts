@@ -178,8 +178,6 @@ export interface UiActions {
   openChat(id: string): void
   /** See all: the list of every chat. */
   openChatList(): void
-  /** Start a new chat holding copies of these messages. */
-  branchChat(messages: ChatMessage[]): void
   /** `replacesRun`: the run whose answer this replaces (Regenerate, Try again), so the agent doesn't make its routine or skill twice.
    *  `fromComposer`: the open composer's Send, which sends its quote and files and clears it. Any other ask (a suggestion,
    *  Try again) sends only its own `quote` and `atts` and leaves the composer's draft, files and quote as they are. */
@@ -819,15 +817,6 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set(u => ({ page: 'chats', chatList: false, openId: null, pop: null, sideOpen: false, ...withOpen(u, id), replyTo: null, chatDraft: '' }))
     },
     openChatList: () => set({ page: 'chats', chatList: true, openId: null, pop: null, sideOpen: false }),
-    branchChat: messages => {
-      // New ids, so the copies never collide with the seed thread or the original messages.
-      // Events (the derived "<name> approved" line) describe live state, so a copy would go stale.
-      const extras = messages.filter(m => m.role !== 'event').map(m => ({ ...m, id: msgId() }))
-      const first = extras.find(m => m.role === 'user')
-      const chat = startedChat(first?.role === 'user' ? first.text : '')
-      createChat(chat)
-      set(s => ({ page: 'chats', chatList: false, started: [chat, ...s.started], ...withOpen(s, chat.id), extras, hidden: {}, replyTo: null }))
-    },
 
     // Synchronous up to and including adding the person's message: regenerate() reads it right after calling.
     ask: async (question, askOpts = {}) => {

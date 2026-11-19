@@ -57,8 +57,9 @@ test('a chat answer\'s menu has no send-to-channel item without a channel', asyn
   const answer = page.locator('[data-chat-msg]').filter({ has: page.getByRole('button', { name: 'More', exact: true }) }).first()
   await answer.getByRole('button', { name: 'More', exact: true }).click()
   const menu = page.getByRole('menu', { name: 'Message actions' })
-  await expect(menu.getByRole('menuitem', { name: 'Read aloud' })).toBeVisible()
-  await expect(menu.getByRole('menuitem', { name: /^Send to/ })).toHaveCount(0)
+  const names = ['Report a wrong answer', 'Delete']
+  await expect(menu.getByRole('menuitem')).toHaveCount(names.length)
+  for (const [i, n] of names.entries()) await expect(menu.getByRole('menuitem').nth(i)).toHaveAccessibleName(n)
   await expect(menu).not.toContainText('Slack')
   await page.keyboard.press('Escape')
 })
