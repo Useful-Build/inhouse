@@ -112,7 +112,6 @@ test('Palette over the problem panel: Escape closes only the palette; the palett
 })
 
 test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows in full, the account name starts with its text', async ({ page }) => {
-  await page.clock.install() // app time is driven by the test, so waiting for it is not a sleep
   await start(page)
   const toggle = page.getByRole('button', { name: 'Sidebar', exact: true })
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
@@ -132,7 +131,8 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   await t.evaluate(e => { e.textContent = 'Refunds' })
   await page.mouse.move(720, 450)
   await open.hover()
-  await page.clock.runFor(1000) // past the tooltip's open delay
+  // Kept: proving no tooltip opens needs real time past its 500 ms open delay (a fake clock stopped the later tooltip from opening in CI).
+  await page.waitForTimeout(1000)
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   const cutAtRest = await t.evaluate(e => {
     const menu = e.closest('[data-chat-row]')!.querySelector<HTMLElement>('[aria-haspopup="menu"]')!
@@ -146,7 +146,6 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   expect(cutAtRest).toBe(false)
   await page.mouse.move(720, 450)
   await open.hover()
-  await page.clock.runFor(1000) // the tooltip's open delay runs on the fake clock
   await expect(page.getByRole('tooltip')).toBeVisible()
 
   const account = side(page).getByRole('button', { name: /account and settings/i })
