@@ -1,5 +1,5 @@
 // PR 4 on a phone (390px): every answer shows its action row and every question its Copy and Edit, without hover.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 
 test('Phone conversation: every answer and question shows its actions', async ({ page }) => {
   await page.addInitScript(() => {

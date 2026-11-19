@@ -1,6 +1,6 @@
 // PR 7, Pages and windows, at 390: the same checks as pages-polish.spec.ts, plus team settings that read as text
 // (decision D4) and an Activity row that fits.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import { pagesPolish } from './pages-polish-checks.js'
 
 pagesPolish(test, 'phone')

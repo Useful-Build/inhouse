@@ -1,7 +1,7 @@
 // PR 6, the Library: search with no results and Clear, counts that follow the search, place and type together, a
 // file's own link (Back closes it, a link opens it), names that show whole at 390, 768 and 1440, and the first-day and
 // loading states. Screenshots go to the report.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

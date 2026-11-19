@@ -1,5 +1,5 @@
 // The four models, the Models settings page, and scrolling that keeps side menus put.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
