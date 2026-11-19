@@ -38,3 +38,18 @@ tracker's.
 `PD` ids are the [production plan](../plans/2026-11-19-production.md#decisions)'s. The
 [backend plan](../plans/2026-11-19-backend.md#decisions)'s `BD1` to `BD13` don't collide and stay in that plan until
 its phases land; each becomes a record here then.
+
+## Backend spike and phase records
+
+The backend's spike and phase results are records too, named by the phase that made them rather than numbered, because
+the phase plans link them by name. Each states what was tested, the numbers, the verdict and what it changed in the
+[backend plan](../plans/2026-11-19-backend.md).
+
+| Record | What it settled |
+|---|---|
+| [p0-s1-runner](p0-s1-runner.md) | The runner on `ctx.container`, session store, deferred calls and sizing (standard-4 pool) |
+| [p0-s2-container-guards](p0-s2-container-guards.md) | Container guards, the locked built-in tools and skills, PDF and spreadsheet |
+| [p0-s3-previews](p0-s3-previews.md) | Worker Previews: alarms and per-PR D1 work, containers didn't start |
+| [p2-previews-retest](p2-previews-retest.md) | Wave 0 retest: containers do run in Previews, and Access with a service token works |
+| [p0-s4-connector-hub](p0-s4-connector-hub.md) | The connector hub is our own gateway Worker; Shopify reads and Slack's MCP server |
+| [p0-s5-memory-tool-choice](p0-s5-memory-tool-choice.md) | Memory recall and tool choice eval, and the softer memory rule |
