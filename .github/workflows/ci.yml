@@ -134,6 +134,8 @@ jobs:
           DEFAULT: ${{ github.event.repository.default_branch }}
         run: |
           missing=""
+          # A missing ref would make git log fail inside the for list, which bash doesn't stop on: fail loudly instead.
+          git rev-parse --verify -q "refs/remotes/origin/$DEFAULT" > /dev/null || { echo "::error::No refs/remotes/origin/$DEFAULT"; exit 1; }
           # Commits already on the default branch passed this gate in their own PR; a PR that brings main into a
           # fleet/<topic> branch carries them again (squash commits there can't be rewritten), so skip them.
           for c in $(git log --no-merges --format=%H "$BASE..$HEAD" --not "refs/remotes/origin/$DEFAULT"); do
