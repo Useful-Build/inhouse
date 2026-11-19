@@ -9,7 +9,8 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
-- Trace window: the replay speed, Stop and show everything and a step's details are opened by no spec.
+- Trace window: the replay speed, Pause replay, Restart, Stop and show everything and a step's details are opened by no spec.
+- Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Audit log: the download is checked on desktop only (its content in `sample-data.spec.ts`); the phone check sees the button.
 - Export everything and Sign out are stubs: specs check they say so and change nothing.
 
@@ -276,6 +277,12 @@ Settings: Audit log
   Selector: rows, button "Download CSV"
   Expected: the seeded rows show; pausing the agent adds a row at the top that survives a reload and Resume takes away; Download CSV saves the log with plain spaces in its times; First day and Loading show their own empty line
   Covered:  e2e/settings-agent-data.spec.ts, e2e/sample-data.spec.ts, e2e/pages-polish.spec.ts, e2e/settings-pages-phone.spec.ts
+
+Settings: General
+  Path:     Settings -> General
+  Selector: text field "Name", dropdowns "Theme", "Language", "Text size" and "Time zone", photo upload
+  Expected: the name saves, shows in the account menu and Reset demo clears it; a time zone pick saves, survives a reload and Reset demo clears it, on a phone too; Theme as in "Palette: theme switch" below; every dropdown opens a real list (Language and Text size partial, see Gaps); the photo as in "Settings: photos"
+  Covered:  e2e/sample-data.spec.ts, e2e/cross-screen.spec.ts, e2e/phone.spec.ts, e2e/menus.spec.ts, e2e/photo.spec.ts
 
 Settings: photos
   Path:     Settings -> General -> photo

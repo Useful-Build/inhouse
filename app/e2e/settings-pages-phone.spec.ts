@@ -70,6 +70,10 @@ test('Phone: Inhouse agent, Data and access and Audit log read as text, and thei
   await expect(row(page, 'Signs emails as')).toContainText('The Northline team')
   await main(page).getByRole('button', { name: 'Open memory', exact: true }).click()
   await expect(h1(page, 'Team memory')).toBeVisible()
+  await openFromMenu(page, 'Inhouse agent')
+  await main(page).getByRole('button', { name: 'View skills', exact: true }).click()
+  await expect(h1(page, 'Skills')).toBeVisible()
+  await expect(page).toHaveURL(/#\/skills$/)
 
   await openFromMenu(page, 'Data and access')
   await expect(page.getByRole('note')).toContainText('Change these on a computer.')

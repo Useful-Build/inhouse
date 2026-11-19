@@ -31,7 +31,7 @@ test('Problem panel: Ask about this… starts a chat with the question, the pane
 
   const question = `Tell me more about: ${STUCK}`
   await expect(panel(page)).toHaveCount(0)
-  await expect(page).toHaveURL(/#\/chats\/[^/]+$/)
+  await expect(page).toHaveURL(/#\/chats\/(?!new$|all$)[^/]+$/)
   await expect(sent(page, question)).toHaveCount(1)
   const url = page.url()
 
@@ -48,9 +48,12 @@ test('Problem panel: Ask about this… starts a chat with the question, the pane
 test("Card menu: Ask about this starts the same chat without opening the panel; the panel's Manage opens Team memory", async ({ page }) => {
   await start(page)
   await card(page, STUCK).getByRole('button', { name: 'More' }).click()
-  await page.getByRole('menu', { name: 'Card actions' }).getByRole('menuitem', { name: 'Ask about this', exact: true }).click()
+  const menu = page.getByRole('menu', { name: 'Card actions' })
+  await expect(menu).toBeVisible()
+  // The menu opened on its own: no problem panel behind it.
   await expect(panel(page)).toHaveCount(0)
-  await expect(page).toHaveURL(/#\/chats\/[^/]+$/)
+  await menu.getByRole('menuitem', { name: 'Ask about this', exact: true }).click()
+  await expect(page).toHaveURL(/#\/chats\/(?!new$|all$)[^/]+$/)
   await expect(sent(page, `Tell me more about: ${STUCK}`)).toHaveCount(1)
 
   // A drafted fix that leans on memory says so, and Manage goes to Team memory, closing the panel.

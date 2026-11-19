@@ -42,7 +42,7 @@ test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset dem
   await expect(signs).toHaveValue('The Northline team')
 
   await combo(page, 'Tone: Friendly and short').click()
-  await expect(page.getByRole('option')).toHaveText(['Friendly and short', 'Warm and detailed', 'Formal and brief', 'Plain and direct'])
+  await expect(page.getByRole('listbox', { name: 'Tone' }).getByRole('option')).toHaveText([/^Friendly and short/, /^Warm and detailed/, /^Formal and brief/, /^Plain and direct/])
   await page.getByRole('option', { name: 'Formal and brief' }).click()
   await expect(combo(page, 'Tone: Formal and brief')).toBeVisible()
   await signs.fill('Sam at Northline')
@@ -76,7 +76,7 @@ test('Data and access: retention and access switches are saved, survive a reload
   await expect(sw(page, 'Two-step sign-in')).toBeChecked()
 
   await combo(page, 'Chats: 12 months').click()
-  await expect(page.getByRole('option')).toHaveText(['3 months', '6 months', '12 months', '24 months', 'Until deleted'])
+  await expect(page.getByRole('listbox', { name: 'Chats' }).getByRole('option')).toHaveText([/^3 months/, /^6 months/, /^12 months/, /^24 months/, /^Until deleted/])
   await page.getByRole('option', { name: '6 months' }).click()
   await expect(combo(page, 'Chats: 6 months')).toBeVisible()
   await combo(page, 'Activity and steps: 12 months').click()
@@ -86,8 +86,11 @@ test('Data and access: retention and access switches are saved, survive a reload
   await expect(sw(page, 'Inhouse team access')).not.toBeChecked()
   await sw(page, 'Two-step sign-in').click()
   await expect(sw(page, 'Two-step sign-in')).not.toBeChecked()
-  // The audit log's own retention is a fact, not a choice.
-  await expect(main(page).getByRole('combobox', { name: /^Audit log/ })).toHaveCount(0)
+  // The audit log's own retention is a fact, not a choice: its row shows 12 months as text.
+  const audit = main(page).getByText('Audit log', { exact: true }).locator('xpath=ancestor::div[contains(@class,"py-4")][1]')
+  await expect(audit).toContainText('Changes to settings, rules and people. Cannot be shortened.')
+  await expect(audit.getByText('12 months', { exact: true })).toBeVisible()
+  await expect(audit.getByRole('combobox')).toHaveCount(0)
 
   await page.reload()
   await expect(combo(page, 'Chats: 6 months')).toBeVisible()
