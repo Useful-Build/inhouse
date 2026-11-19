@@ -1,8 +1,11 @@
 # P2: backend core (`fleet/backend-core`)
 
-Status: locked 2026-11-19, pending Wasim's approval to start. Phase plan under the backend plan
+Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend plan
 (`docs/plans/2026-11-19-backend.md`). Common rules are in its "Phase schedule (waves)" section.
 
+
+Progress: tracked in the backend plan's "Implementation progress" section, entry P2. Read it before you start
+and update it before you stop.
 ## Goal
 
 Stand up the product Worker with sign-in, members, roles, settings and the audit log, backed by D1, proven on the test
