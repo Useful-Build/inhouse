@@ -34,6 +34,11 @@ partial Preview pipeline, or the probe). Don't build container E2E on Previews.
 - Container E2E runs under `wrangler dev` and on the house deployment. Retest containers in Previews at P2 (with
   `monitor()` logging and a newer wrangler).
 - Access with a service token is checked at P2 when previews are set up.
+- Hardening's `preview.yml` deploys only a generated wrangler config equal to `main`'s (no bindings, routes or build
+  steps; `previews: {}` required). That is a security gate (decision 0011), so a per-PR D1 binding or a product preview
+  would have to change that workflow on purpose, through a bootstrap PR. Decision Q1 later dropped the per-PR product
+  preview, so the demo preview's gate stays as it is.
+- The wave 0 retest (`p2-previews-retest.md`) superseded the container verdict above.
 
 ## Docs read (2026-11-19)
 
