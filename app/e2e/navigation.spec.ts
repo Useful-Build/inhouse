@@ -3,7 +3,7 @@
 // team window's Send and sender.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { fontsReady } from './states.js'
+import { atRest, fontsReady } from './states.js'
 
 async function start(page: Page, hash = '#/today') {
   await page.addInitScript(() => {
@@ -135,6 +135,9 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   await t.evaluate(e => { e.textContent = 'Refunds' })
   await page.mouse.move(720, 450)
   await open.hover()
+  // Give a wrong tooltip the frames it would need to draw before checking there's none.
+  await atRest(page)
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))))
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   const cutAtRest = await t.evaluate(e => {
     const menu = e.closest('[data-chat-row]')!.querySelector<HTMLElement>('[aria-haspopup="menu"]')!
