@@ -31,6 +31,12 @@ export function routeTitleFocusTests(phone: boolean) {
       await page.keyboard.press('Enter')
     }
   }
+  /** Settings isn't in the sidebar's nav: a person opens it from the account menu. */
+  async function openSettings(page: Page) {
+    if (phone) await page.getByRole('button', { name: 'Menu' }).click()
+    await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /account and settings/i }).click()
+    await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Your settings', exact: true }).click()
+  }
   const h1 = (page: Page, name: string | RegExp) => page.getByRole('heading', { level: 1, name })
 
   test('First load sets the title and leaves focus alone; a route change names the page and focuses its h1', async ({ page }) => {
@@ -47,7 +53,7 @@ export function routeTitleFocusTests(phone: boolean) {
     await expect(page).toHaveTitle('Library · Inhouse')
     await expect(page.locator('main h1').first()).toBeFocused()
 
-    await open(page, 'Settings')
+    await openSettings(page)
     await expect(page).toHaveTitle(/ · Inhouse$/)
     await expect(page).not.toHaveTitle('Library · Inhouse')
     await expect(page.locator('main h1').first()).toBeFocused()

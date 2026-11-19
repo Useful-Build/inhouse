@@ -1,8 +1,8 @@
 // The JS budget for Today's first load (production plan P-2). Run after `npm run build`.
 // Reads the built index.html, takes its module script and modulepreload links, follows each chunk's static imports
 // (dynamic `import()` calls are the lazy routes and don't count), and gzips what the browser needs before Today shows.
-// Fails when the total is over BUDGET_KB (default 200, in KiB gzipped). The real number is the measured split size
-// plus 10%: read it from the first CI run's output, then change the default below or set BUDGET_KB.
+// Fails when the total is over BUDGET_KB (default 240, in KiB gzipped): the split measured 226 KB on 2026-11-19
+// (247 KB before the split), so the budget leaves about 6% of room. Raise it only on purpose, with the reason.
 // DIST overrides the build folder (for trying the script on a fake build).
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const budgetKb = Number(process.env.BUDGET_KB ?? 200)
+const budgetKb = Number(process.env.BUDGET_KB ?? 240)
 if (!Number.isFinite(budgetKb) || budgetKb <= 0) {
   console.error(`check-bundle: BUDGET_KB must be a positive number, got "${process.env.BUDGET_KB}".`)
   process.exit(1)
