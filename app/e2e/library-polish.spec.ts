@@ -3,6 +3,7 @@
 // loading states. Screenshots go to the report.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/library', width = 1440, scenario = 'Normal', theme = 'light') {
   await page.setViewportSize({ width, height: width < 800 ? 844 : 900 })
@@ -17,7 +18,7 @@ async function start(page: Page, hash = '#/library', width = 1440, scenario = 'N
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
 }
 
-const shot = async (page: Page, name: string) => { await page.waitForTimeout(400); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const places = (page: Page) => page.getByRole('navigation', { name: 'Library places' })
 const items = (page: Page) => page.getByRole('list', { name: 'Files' }).getByRole('listitem')
 const tab = (page: Page, name: string) => page.getByRole('radiogroup', { name: 'File type' }).getByRole('radio', { name: new RegExp(`^${name} \\d+$`) })
@@ -223,9 +224,11 @@ for (const width of [1440, 768, 390]) {
     if (!phone) {
       const sideItem = page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^Library/ })
       await page.mouse.move(0, 0)
-      await page.waitForTimeout(300) // the fill eases in
       const bg = (el: ReturnType<Page['locator']>) => el.evaluate(e => getComputedStyle(e).backgroundColor)
+      // The fill eases in: wait for the transitions to end, then compare once.
+      await atRest(page)
       expect(await bg(place(page, 'All files'))).toBe(await bg(sideItem))
+      expect(await bg(sideItem)).not.toBe('rgba(0, 0, 0, 0)')
     }
 
     // A list: whole names, however narrow. Phone: one list, no pictures.

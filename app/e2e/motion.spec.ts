@@ -76,7 +76,9 @@ for (const [name, viewport] of [['desktop', { width: 1440, height: 900 }], ['pho
         await startSampling(page)
         await ask(page, MD_Q)
         await ask(page, NEXT_Q)
-        await page.waitForTimeout(500) // frames after the answer settles
+        // About half a second of frames after the answer settles: wait for 30 more sampled frames.
+        const sampled = await page.evaluate(() => (window as unknown as { __frames: unknown[] }).__frames.length)
+        await page.waitForFunction(n => (window as unknown as { __frames: unknown[] }).__frames.length >= n + 30, sampled)
         const frames = await stopSampling(page)
         // The JSON lives next to the video, in the test's own output folder.
         writeFileSync(test.info().outputPath(`frames-${name}-run${run}.json`), JSON.stringify({ viewport, frames }, null, 1))

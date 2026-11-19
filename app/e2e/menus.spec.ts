@@ -3,8 +3,10 @@
 import { expect, test } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
+import { atRest } from './states.js'
 
 const OUT = process.env.VERIFY_DIR ?? 'e2e-artifacts'
+const TITLES: Record<string, string> = { 'you-general': 'General', 'you-notif': 'Notifications', 'you-memory': 'Memory', 'team-plan': 'Stage and plan', 'team-agent': 'Inhouse agent', 'team-memory': 'Team memory', 'team-members': 'Members', 'team-approvals': 'Who approves what', 'team-limits': 'Run limits', 'team-spend': 'Spending cap', 'team-data': 'Data and access', 'team-audit': 'Audit log' }
 const PAGES = ['you-general', 'you-notif', 'you-memory', 'team-plan', 'team-agent', 'team-memory', 'team-members', 'team-approvals', 'team-limits', 'team-spend', 'team-data', 'team-audit']
 
 async function start(page: Page, hash: string) {
@@ -56,7 +58,7 @@ for (const width of [1440, 390]) {
     if (phone) test.beforeEach(({ page }) => page.addInitScript(() => addEventListener('DOMContentLoaded', () => {
       const st = document.createElement('style'); st.textContent = '*::-webkit-scrollbar { display: none }'; document.head.append(st)
     })))
-    const shot = async (page: Page, name: string) => { mkdirSync(OUT, { recursive: true }); await page.waitForTimeout(250); await page.screenshot({ path: `${OUT}/${name}-${width}.png` }) }
+    const shot = async (page: Page, name: string) => { mkdirSync(OUT, { recursive: true }); await atRest(page); await page.screenshot({ path: `${OUT}/${name}-${width}.png` }) }
 
     test('Settings: every dropdown list fits, across all pages', async ({ page }) => {
       test.setTimeout(180_000)
@@ -64,7 +66,8 @@ for (const width of [1440, 390]) {
       let opened = 0, widest = 0, widestPage = '', widestIdx = 0
       for (const id of PAGES) {
         await page.evaluate(h => { location.hash = h }, `#/settings/${id}`)
-        await page.waitForTimeout(150)
+        await expect(page.getByRole('heading', { level: 1, name: TITLES[id] })).toBeVisible() // this page drew, so its dropdowns are counted
+        await atRest(page)
         const buttons = page.locator('main [role="combobox"]')
         const n = await buttons.count()
         // Team settings are read-only text on a phone (D4): not one dropdown there.
@@ -164,7 +167,8 @@ test.describe('1440x700', () => {
     let upward = 0
     for (const id of PAGES) {
       await page.evaluate(h => { location.hash = h }, `#/settings/${id}`)
-      await page.waitForTimeout(150)
+      await expect(page.getByRole('heading', { level: 1, name: TITLES[id] })).toBeVisible() // this page drew, so its dropdowns are counted
+      await atRest(page)
       const buttons = page.locator('main [role="combobox"]:not([disabled])')
       const n = await buttons.count()
       if (n === 0) continue
@@ -191,4 +195,4 @@ test.describe('1440x700', () => {
     expect(upward, 'at least one lowest dropdown opened upward').toBeGreaterThan(0)
   })
 })
-const shot700 = async (page: Page, name: string) => { mkdirSync(OUT, { recursive: true }); await page.waitForTimeout(250); await page.screenshot({ path: `${OUT}/${name}.png` }) }
+const shot700 = async (page: Page, name: string) => { mkdirSync(OUT, { recursive: true }); await atRest(page); await page.screenshot({ path: `${OUT}/${name}.png` }) }

@@ -1,6 +1,7 @@
 // Phone (390 px): Today, the problem panel, Approvals and Chats must work with no sideways scroll.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash: string) {
   await page.addInitScript(() => {
@@ -158,7 +159,7 @@ test('Phone: Library shows places as chips, one list, a filter sheet, and a view
 // ---------- more phone checks ----------
 
 const outDir = process.env.VERIFY_DIR ?? 'e2e-artifacts'
-const keep = async (page: Page, name: string, fullPage = false) => { await page.waitForTimeout(400); await page.screenshot({ path: `${outDir}/${name}.png`, fullPage }) }
+const keep = async (page: Page, name: string, fullPage = false) => { await atRest(page); await page.screenshot({ path: `${outDir}/${name}.png`, fullPage }) }
 
 /** No button, link or field overlaps the demo switcher's circle. */
 async function nothingUnderSwitcher(page: Page) {

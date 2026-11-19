@@ -1,6 +1,7 @@
 // Slack's own page: Tools → Slack opens #/tools/slack, with Back to Tools; before Act it says it's included from Act.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash: string, stage = 'Act') {
   await page.addInitScript(s => {
@@ -11,7 +12,7 @@ async function start(page: Page, hash: string, stage = 'Act') {
   }, stage)
   await page.goto('/?demo' + hash)
 }
-const shot = async (page: Page, name: string) => { await page.waitForTimeout(300); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 
 test('Slack row opens its page with the channel details, no tool abilities, and Back returns to Tools', async ({ page }) => {
   await start(page, '#/tools')

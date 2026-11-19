@@ -2,6 +2,7 @@
 // (pages-polish-phone.spec.ts): the same scenarios at 1440 and at 390.
 import { expect } from '@playwright/test'
 import type { Page, TestType } from '@playwright/test'
+import { atRest } from './states.js'
 
 async function start(page: Page, stage: string, scenario: string, hash: string) {
   await page.addInitScript(([s, sc]) => {
@@ -14,7 +15,7 @@ async function start(page: Page, stage: string, scenario: string, hash: string) 
 }
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
 const noSideways = (page: Page) => page.evaluate(() => [document.documentElement, document.querySelector('main')!].every(e => e.scrollWidth - e.clientWidth <= 1))
-const shot = async (page: Page, name: string) => { await page.waitForTimeout(300); await page.screenshot({ path: `${process.env.VERIFY_DIR ?? 'e2e-artifacts'}/${name}.png`, fullPage: true }) }
+const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: `${process.env.VERIFY_DIR ?? 'e2e-artifacts'}/${name}.png`, fullPage: true }) }
 const ability = (page: Page, key: 'read' | 'draft' | 'run') => page.locator(`[data-ability="${key}"]`)
 const detail = (page: Page, key: string) => page.locator('main dt', { hasText: new RegExp(`^${key}$`) }).locator('xpath=..')
 

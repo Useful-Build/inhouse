@@ -2,6 +2,7 @@
 // viewer stepping, and Settings' Admin confirm and field checks. Each flow reloads to prove what was saved.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash: string, stage = 'Act') {
   await page.addInitScript(s => {
@@ -12,7 +13,7 @@ async function start(page: Page, hash: string, stage = 'Act') {
   }, stage)
   await page.goto('/?demo' + hash)
 }
-const shot = async (page: Page, name: string) => { await page.waitForTimeout(300); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
 
 test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all of it survives a reload', async ({ page }) => {
@@ -211,6 +212,7 @@ test('Library: sort by name, delete from a row menu with Undo, step the viewer w
 })
 
 test('Settings: removing Admin asks first and Cancel keeps it; a wrong Monthly cap shows why and isn\'t saved', async ({ page }) => {
+  await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await start(page, '#/settings/team-members')
   await page.getByRole('combobox', { name: 'Sam Mercer: Admin' }).click()
   await page.getByRole('option', { name: 'Approver' }).click()
@@ -276,7 +278,8 @@ test('Settings: removing Admin asks first and Cancel keeps it; a wrong Monthly c
   await page.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: 'Inhouse agent' }).click()
   await page.getByRole('textbox', { name: 'Signs emails as' }).fill('Sam at Northline')
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Today/ }).click()
-  await page.waitForTimeout(1000)
+  await page.clock.runFor(1000) // past the 600 ms typing pause, when "Saved" would show
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(/need you|left to approve/) // Today is drawn
   await expect(toast(page, 'Saved')).toHaveCount(0)
 })
 

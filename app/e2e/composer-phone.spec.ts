@@ -3,6 +3,7 @@
 import { expect, test } from '@playwright/test'
 
 test('Phone: the chat composer stays above the safe area, and opening a chat leaves it unfocused', async ({ page }) => {
+  await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await page.addInitScript(() => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
@@ -13,7 +14,7 @@ test('Phone: the chat composer stays above the safe area, and opening a chat lea
   const field = page.getByRole('textbox', { name: 'Message your Inhouse agent' })
   const composer = page.locator('[data-composer]')
   await expect(field).toBeVisible()
-  await page.waitForTimeout(300)
+  await page.clock.runFor(300) // covers timer-based focus only (a setTimeout), not a focus after a real network or frame wait
   await expect(field).not.toBeFocused()
 
   // Opening another chat from the drawer doesn't focus it either.
@@ -22,7 +23,7 @@ test('Phone: the chat composer stays above the safe area, and opening a chat lea
   await side.getByRole('button', { name: 'Stuck orders over 3 days', exact: true }).click()
   await expect(side).toHaveCount(0)
   await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
-  await page.waitForTimeout(300)
+  await page.clock.runFor(300)
   await expect(field).not.toBeFocused()
 
   // Headless Chromium has no home bar (the inset is 0), so give the safe-area token a phone's 34 px:

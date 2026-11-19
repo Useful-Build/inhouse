@@ -6,6 +6,8 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today', stage = 'Act', scenario = 'Normal') {
+  // Time keeps flowing; runFor adds app time on top (the session save, answers), so no real sleep.
+  await page.clock.install()
   await page.addInitScript(([s, sc]) => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
@@ -24,7 +26,7 @@ const chatBox = (page: Page) => page.getByRole('textbox', { name: 'Message your 
 const hash = (page: Page) => page.evaluate(() => location.hash)
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
 /** Waits out the session save (debounced 300 ms) before a reload. A reload also saves on pagehide; this keeps it honest. */
-const saved = (page: Page) => page.waitForTimeout(500)
+const saved = (page: Page) => page.clock.runFor(500)
 async function resetDemo(page: Page) {
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   await page.getByRole('button', { name: 'Reset demo', exact: true }).click()
@@ -93,7 +95,6 @@ test('Memory: the Library view survives a reload', async ({ page }) => {
 })
 
 test('Memory: a chat answering when the page reloads keeps its question and says the answer stopped', async ({ page }) => {
-  await page.clock.install()
   await start(page, '#/chats/payout')
   await chatBox(page).fill(Q)
   await page.keyboard.press('Enter')
@@ -169,7 +170,6 @@ test('Memory: a message added to a sample chat survives a reload on First day an
 })
 
 test('Memory: the demo clock never runs backwards after a reload, even with nothing written before it', async ({ page }) => {
-  await page.clock.install()
   await start(page)
   // Half an hour into the demo: the first answer is stamped about 8:30 AM.
   await page.clock.fastForward('30:00')

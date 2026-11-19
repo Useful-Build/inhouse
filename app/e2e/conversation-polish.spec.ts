@@ -13,8 +13,11 @@
 // Select mode's bar never covers the last chat.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash: string) {
+  // Time keeps flowing; runFor adds app time on top (answers, the session save, toasts), so no real sleep.
+  await page.clock.install()
   await page.addInitScript(() => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
@@ -47,7 +50,7 @@ const RELOADED = 'Your Inhouse agent stopped when the page reloaded. Nothing was
 const OTHER_Q = 'What should we skip this Friday?'
 const SESSION = 'inhouse.ui.session.v1'
 /** Waits out the session save (debounced 300 ms). */
-const saved = (page: Page) => page.waitForTimeout(500)
+const saved = (page: Page) => page.clock.runFor(500)
 const chip = (page: Page, text: string) => queued(page).filter({ hasText: text })
 
 /** A one-page message: about forty lines, made up. */
@@ -88,8 +91,15 @@ test.describe('desktop', () => {
     expect(open.full - open.h).toBeLessThanOrEqual(1)
     expect(open.h).toBeGreaterThan(fold.h * 3)
     expect(await text.innerText()).toContain('Note 20: order #4819')
-    await page.waitForTimeout(200)
-    expect(await scroller(page).evaluate(el => el.scrollTop)).toBe(top)
+    // A late or smooth scroll is not in getAnimations: move app time on, then check the view held over a window.
+    await atRest(page)
+    await page.clock.runFor(500)
+    const samples: number[] = []
+    for (let i = 0; i < 15; i++) { // 15 frames cover 250 ms at 60 fps
+      samples.push(await scroller(page).evaluate(el => el.scrollTop))
+      await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r(null))))
+    }
+    expect(samples).toEqual(Array(15).fill(top))
     await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible()
     await shot(page, 'long-message-open')
 
@@ -238,7 +248,7 @@ test.describe('desktop', () => {
     await expect(stepsButtons(page)).toHaveCount(1)
     await expect(log(page).getByText(STOPPED)).toHaveCount(0)
     // Nothing more arrives from the run Undo stopped.
-    await page.waitForTimeout(3500)
+    await page.clock.runFor(3500)
     await expect(log(page).locator('[data-md-code]')).toHaveCount(0)
     await expect(stepsButtons(page)).toHaveCount(1)
     await expect(field(page)).toHaveValue('Draft I keep')
@@ -426,7 +436,7 @@ test.describe('desktop', () => {
     await expect(log(page).getByText(STOPPED)).toBeVisible()
     await expect(queued(page)).toHaveCount(1)
     await expect(chip(page, MD_Q)).toContainText('Paused')
-    await page.waitForTimeout(3500)
+    await page.clock.runFor(3500)
     await expect(msg(page, MD_Q)).toHaveCount(0)
     await expect(stop(page)).toHaveCount(0)
     await shot(page, 'queue-delete-undo')
@@ -487,7 +497,7 @@ test.describe('desktop', () => {
     await expect(msg(page, OTHER_Q)).toHaveCount(1)
     await expect(stepsButtons(page)).toHaveCount(1, { timeout: 15_000 })
     await expect(stop(page)).toHaveCount(0)
-    await page.waitForTimeout(3500)
+    await page.clock.runFor(3500)
     await expect(queued(page)).toHaveCount(2)
     await expect(msg(page, MD_Q)).toHaveCount(0)
     await expect(msg(page, STUCK_Q)).toHaveCount(0)
@@ -588,7 +598,7 @@ test.describe('desktop', () => {
     await expect(queued(page).nth(1)).toContainText(STUCK_Q)
     for (const q of [MD_Q, STUCK_Q]) await expect(chip(page, q)).toContainText('Paused')
     // Nothing goes on its own.
-    await page.waitForTimeout(3500)
+    await page.clock.runFor(3500)
     await expect(msg(page, MD_Q)).toHaveCount(0)
     await expect(stop(page)).toHaveCount(0)
     await shot(page, 'queue-after-reload')
@@ -598,7 +608,7 @@ test.describe('desktop', () => {
     await expect(msg(page, MD_Q)).toHaveCount(1)
     await expect(log(page).locator('[data-md-code]')).toBeVisible({ timeout: 15_000 })
     await expect(stop(page)).toHaveCount(0)
-    await page.waitForTimeout(1000)
+    await page.clock.runFor(1000)
     await expect(queued(page)).toHaveCount(1)
     await expect(msg(page, STUCK_Q)).toHaveCount(0)
 

@@ -2,6 +2,7 @@
 // Assertions are light; the screenshots are the artifact reviewed by eye.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { atRest } from './states.js'
 
 // TOUR_THEME=dark captures the same tour in dark mode.
 const THEME = process.env.TOUR_THEME ?? ''
@@ -13,7 +14,8 @@ async function open(page: Page, stage: string, scenario: string, hash: string) {
     if (theme) localStorage.setItem('inhouse.theme', theme)
   }, [stage, scenario, THEME])
   await page.goto('/?demo' + hash)
-  await page.waitForTimeout(300)
+  await expect(page.locator('main')).toBeVisible() // the page drew (some tour pages are chats, with no h1)
+  await atRest(page)
 }
 const shot = (page: Page, name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true })
 

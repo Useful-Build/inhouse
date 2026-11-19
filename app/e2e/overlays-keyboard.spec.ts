@@ -295,10 +295,11 @@ test('Skip to content works with the sidebar collapsed, and its link opened on i
   await expect(page.locator('main')).toBeFocused()
   // "#main" is an anchor, not a page: opened in a new tab it is Today, and nothing says the page doesn't exist.
   const tab = await page.context().newPage()
+  await tab.clock.install()
   await tab.goto('/?demo#main')
   await expect(tab.getByRole('heading', { level: 1 })).toContainText('6 things need you')
   // A route notice would show just after the page draws: give it the time before checking there is none.
-  await tab.waitForTimeout(1000)
+  await tab.clock.runFor(1000)
   await expect(tab.locator('[data-toast]')).toHaveCount(0)
   await tab.close()
 })
