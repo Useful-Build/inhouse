@@ -92,7 +92,9 @@ test('S4: Data and access: change how long chats are kept; Ask the team opens wi
   if (phone()) {
     // Retention reads as text on a phone.
     await expect(page.getByRole('note')).toContainText('Change these on a computer.')
-    await expect(main(page).getByText('Chats', { exact: true }).locator('xpath=ancestor::div[contains(@class,"py-4")][1]')).toContainText('12 months')
+    // The Chats row: the innermost block holding both its label and a retention value (no styling classes).
+    const chatsRow = main(page).locator('div').filter({ has: page.getByText('Chats', { exact: true }) }).filter({ hasText: /\d+ months|Until deleted/ }).last()
+    await expect(chatsRow).toContainText('12 months')
   } else {
     await combo(page, 'Chats: 12 months').click()
     await page.getByRole('option', { name: '6 months' }).click()
@@ -111,7 +113,7 @@ test('S5: Audit log: pause the Inhouse agent, the audit log shows it at the top;
   await main(page).getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
   await expect(toast(page, 'Your Inhouse agent is paused.')).toBeVisible()
   // The top bar's pill shows on every desktop page; on a phone only on Today.
-  if (test.info().project.name !== 'ship-phone') await expect(page.getByRole('status', { name: 'Inhouse agent is paused' })).toBeVisible()
+  if (!phone()) await expect(page.getByRole('status', { name: 'Inhouse agent is paused' })).toBeVisible()
   await pickPage(page, 'Audit log')
   const paused = main(page).getByText('Sam Mercer paused your Inhouse agent', { exact: true })
   const seeded = main(page).getByText('Sam Mercer changed an approval rule', { exact: true })
