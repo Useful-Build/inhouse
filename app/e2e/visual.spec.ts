@@ -1,7 +1,7 @@
 // Visual regression: every state in states.ts, light and dark, compared with the committed baselines in
 // visual.spec.ts-snapshots/. The visual-desktop (1440x900) and visual-phone (390x844) projects run it.
 // Update the baselines on purpose with npm run test:visual:update; the image diff then shows in the PR.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { openState, STATES, THEMES } from './states.js'
 

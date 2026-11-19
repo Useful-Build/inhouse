@@ -3,7 +3,7 @@
 // Every animation frame is sampled in the page (scrollTop, scrollHeight, the last message's bottom), saved as JSON
 // next to the video, and checked for a view that jumps up or a bottom gap that jumps.
 import { writeFileSync } from 'node:fs'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 type Frame = { t: number; top: number; height: number; client: number; msgs: number; gap: number }

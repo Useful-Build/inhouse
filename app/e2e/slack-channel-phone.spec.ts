@@ -1,5 +1,5 @@
 // Slack's page at 390 px: the row opens it and nothing is cut or scrolls sideways.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import { atRest } from './states.js'
 
 test('Phone: the Slack row opens its page and nothing is cut', async ({ page }) => {

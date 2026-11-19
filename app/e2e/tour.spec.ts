@@ -1,6 +1,6 @@
 // Visual tour: every page, stage, scenario and pop-up, one screenshot each.
 // Assertions are light; the screenshots are the artifact reviewed by eye.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

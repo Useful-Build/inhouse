@@ -1,7 +1,7 @@
 // PR 4, Today, Approvals and the review panel, at 1440: no card cuts a word at Watch, Act or Run; a draft with no text of
 // its own takes a note in the panel, is approved there and keeps the note through Undo; Approve all low-risk comes back with
 // one Undo from the toast. The 390 px twin is today-approvals-phone.spec.ts.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { cutText, expectNothingCut, start, STAGES } from './today-approvals-helpers.js'
 

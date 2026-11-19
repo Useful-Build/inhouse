@@ -1,10 +1,14 @@
 # UI plan 2: design audit
 
+> History. This tracker is finished and kept as written. Paths in it are relative to `app/`. Its decisions D1 to D9 are now
+> decision records [0001](../decisions/0001-base-variants-upstream-or-wrapper.md) to
+> [0009](../decisions/0009-leaving-a-chat-finishes-the-answer.md).
+
 Tracks the seven PRs that came out of the design audit on 2026-11-17 (every screen, light and dark, desktop and a 390px phone, plus the code). Finding ids below (H1, M7, L3) come from that audit. Update this file in every PR of the plan: tick what landed, add the PR link, note anything moved or dropped and why.
 
 **Status: approved on 2026-11-17.** The plan, the seven PRs and all nine decisions are approved as recommended. D2 was approved after mockups: one white card per answer, the person's message a soft grey bubble.
 
-Every PR stays on the UI system in [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) (ui-base's guide) and [`DESIGN_APP.md`](DESIGN_APP.md) (Inhouse's layer): tokens only, a new value becomes an `--app-*` token in the app's override block (both themes), Radix components for menus, dialogs, popovers, sheets, tooltips and accordions, a distinct part is an app component in `src/ui` with `cva` variants, no literals. Each PR passes `npm run lint` (with `lint:tokens`), `npm run typecheck`, the a11y suite and the visual suite, updates baselines on purpose after every changed screenshot has been checked (both themes, desktop and phone), gets a screenshot check in the running app, and adds one medium-hard E2E scenario.
+Every PR stays on the UI system in [`DESIGN_SYSTEM.md`](../../app/DESIGN_SYSTEM.md) (ui-base's guide) and [`DESIGN_APP.md`](../../app/DESIGN_APP.md) (Inhouse's layer): tokens only, a new value becomes an `--app-*` token in the app's override block (both themes), Radix components for menus, dialogs, popovers, sheets, tooltips and accordions, a distinct part is an app component in `src/ui` with `cva` variants, no literals. Each PR passes `npm run lint` (with `lint:tokens`), `npm run typecheck`, the a11y suite and the visual suite, updates baselines on purpose after every changed screenshot has been checked (both themes, desktop and phone), gets a screenshot check in the running app, and adds one medium-hard E2E scenario.
 
 ## Sequence
 

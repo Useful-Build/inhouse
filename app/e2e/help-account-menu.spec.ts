@@ -2,7 +2,7 @@
 // sends a question that lands among the open requests and stays after a reload. Send feedback opens the team window on
 // Feedback; Your settings and Team settings open their pages. (Help's keyboard path is in overlays-keyboard.spec.ts,
 // its focus return in cross-screen.spec.ts, Report a bug in report-bug.spec.ts, Sign out in sample-data.spec.ts.)
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash: string) {

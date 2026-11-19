@@ -2,7 +2,7 @@
 // toast with one Undo, a sent notice or any other notice never takes another toast's Undo, hover and focus pause the countdowns, the close button dismisses, and on a
 // phone the stack sits above the chat's composer. Screenshots of each state are attached to the report.
 // Time runs on Playwright's clock (`runFor`, and a held clock while a stack is built), so no check races a countdown.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {
