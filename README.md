@@ -15,7 +15,7 @@ The code lives in [`app/`](app/). Its [README](app/README.md) covers the archite
 
 ## Run it
 
-You need Node and npm. The app is developed on Node 24.
+You need Node 26 (see `app/.nvmrc`) and npm.
 
 ```bash
 cd app
