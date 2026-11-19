@@ -47,7 +47,7 @@ class TraceBoundary extends Component<{ children: ReactNode }, { failed: boolean
   state = { failed: false }
   static getDerivedStateFromError() { return { failed: true } }
   componentDidCatch(error: unknown) {
-    console.error('Inhouse: the trace window could not load.', error)
+    console.error('Inhouse: the trace window crashed and was closed.', error instanceof Error ? error.message : error, error)
     useUi.getState().patch({ traceId: null })
     useUi.getState().showToast("Couldn't open the trace. Reload and try again.", { icon: 'info', key: 'trace-error' })
   }
@@ -64,7 +64,10 @@ const SCREENS: Record<Page, React.ComponentType> = {
 // chats) is in localStorage and flushed on pagehide (state/store.ts), so a reload keeps it, and the hash keeps the route.
 // The stamp stops a loop: a second failure within 30 s is left to throw into the ErrorBoundary.
 const RELOAD_KEY = 'inhouse.preload-reload'
+// Set right before the reload: a later failure in this same document (a CSS dependency, then the module) must not reach the ErrorBoundary.
+let reloading = false
 window.addEventListener('vite:preloadError', e => {
+  if (reloading) { e.preventDefault(); return }
   // Offline, a reload would only show the browser's error page: let the failure reach the ErrorBoundary.
   if (!navigator.onLine) return
   let last = 0
@@ -74,6 +77,7 @@ window.addEventListener('vite:preloadError', e => {
   try { sessionStorage.setItem(RELOAD_KEY, String(Date.now())) }
   catch (err) { console.warn('Inhouse: could not write the reload stamp, not reloading.', err); return }
   e.preventDefault()
+  reloading = true
   location.reload()
 })
 

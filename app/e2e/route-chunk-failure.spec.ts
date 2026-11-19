@@ -57,6 +57,20 @@ test('A second chunk failure inside the guard window reaches the error screen in
   expect(loads).toBe(1)
 })
 
+test('Offline, a chunk failure reaches the error screen and does not reload', async ({ page }) => {
+  await start(page, '#/today')
+  let loads = 0
+  page.on('load', () => { loads++ })
+  await page.context().setOffline(true)
+  try {
+    await sidebar(page).getByRole('button', { name: 'Usage' }).click()
+    await expect(crashHeading(page)).toBeVisible()
+    expect(loads, 'no extra page load').toBe(0)
+  } finally {
+    await page.context().setOffline(false)
+  }
+})
+
 test('In-page hash changes leave focus where the person put it', async ({ page }) => {
   await start(page, '#/chats/all')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
