@@ -53,6 +53,9 @@ jobs:
       - if: matrix.shard == 1
         run: node --version && npm run test:unit
       - run: npm run build
+      # The gzip budget on the JS Today's first load needs (production plan P-2). Prints the sizes, fails over BUDGET_KB.
+      - if: matrix.shard == 1
+        run: node scripts/check-bundle.mjs
       # The built app, for preview.yml (trusted code on main) to deploy as this PR's Workers Preview. This job
       # holds no secrets, ever. include-hidden-files: wrangler's redirect file lives under .wrangler/.
       - if: matrix.shard == 1 && github.event_name == 'pull_request'

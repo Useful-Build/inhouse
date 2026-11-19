@@ -27,7 +27,7 @@ async function start(page: Page, hash: string) {
   await page.goto('/?demo' + hash)
 }
 
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => null))))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msg = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })

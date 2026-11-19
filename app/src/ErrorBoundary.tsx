@@ -71,15 +71,20 @@ function DemoCrash(): never {
  * Going to another page remounts it; moving to another tool, chat or settings tab (`resetKey`) clears the error
  * without remounting a healthy screen.
  */
-export class RouteBoundary extends Component<{ children: ReactNode; name: string; resetKey: string }, { failed: boolean; message: string }> {
-  state = { failed: false, message: '' }
+
+/** A lazy screen's file that failed to load: Try again can't fix it (React keeps the failed import), a reload can. */
+const CHUNK_ERROR = /dynamically imported module|Importing a module script failed|Unable to preload/i
+
+export class RouteBoundary extends Component<{ children: ReactNode; name: string; resetKey: string }, { failed: boolean; message: string; chunk: boolean }> {
+  state = { failed: false, message: '', chunk: false }
 
   componentDidUpdate(prev: { resetKey: string }) {
     if (prev.resetKey !== this.props.resetKey && this.state.failed) this.retry()
   }
 
   static getDerivedStateFromError(error: unknown) {
-    return { failed: true, message: error instanceof Error ? error.message : String(error) }
+    const message = error instanceof Error ? error.message : String(error)
+    return { failed: true, message, chunk: CHUNK_ERROR.test(message) }
   }
 
   componentDidCatch(error: unknown) {
@@ -87,7 +92,7 @@ export class RouteBoundary extends Component<{ children: ReactNode; name: string
     reportError('route', error)
   }
 
-  retry = () => this.setState({ failed: false, message: '' })
+  retry = () => this.setState({ failed: false, message: '', chunk: false })
 
   /** The shell still works here, so the team window opens in place on Report a bug. */
   messageTeam = () => useUi.getState().openTeam('bug', crashLine(`The ${this.props.name} screen crashed`, this.state.message))
@@ -99,7 +104,9 @@ export class RouteBoundary extends Component<{ children: ReactNode; name: string
         <h2 className="text-2xl font-medium tracking-heading">Something went wrong.</h2>
         <p className="max-w-90 text-base text-foreground-3">This page didn't load. The rest of the app still works, and your changes are kept.</p>
         <div className="mt-3.5 flex flex-wrap justify-center gap-2">
-          <Button onClick={this.retry} size="lg">Try again</Button>
+          {this.state.chunk
+            ? <Button onClick={() => location.reload()} size="lg">Reload</Button>
+            : <Button onClick={this.retry} size="lg">Try again</Button>}
           <Button variant="outline" onClick={this.messageTeam} size="lg">Message the team</Button>
         </div>
       </div>
