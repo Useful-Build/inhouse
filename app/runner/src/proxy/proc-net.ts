@@ -154,11 +154,22 @@ function connOf(s: SocketLike): Conn | null {
   return { localAddress: s.localAddress, localPort: s.localPort, remoteAddress: s.remoteAddress, remotePort: s.remotePort }
 }
 
-/** Reads both tables (as root), without blocking the event loop. Throws when a table can't be read. */
-async function readTcpTablesOnce(): Promise<TcpEntry[]> {
-  const texts = await Promise.all(['/proc/net/tcp', '/proc/net/tcp6'].map((p) => readFile(p, 'utf8')))
+/**
+ * Reads both tables (as root), without blocking the event loop. A missing IPv6 table (IPv6 off in the kernel) is an
+ * empty one; any other failure, or a missing IPv4 table, throws (the callers fail closed).
+ */
+export async function readTcpTableFiles(tcp = '/proc/net/tcp', tcp6 = '/proc/net/tcp6'): Promise<TcpEntry[]> {
+  const texts = await Promise.all([
+    readFile(tcp, 'utf8'),
+    readFile(tcp6, 'utf8').catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return ''
+      throw e
+    }),
+  ])
   return texts.flatMap(parseProcNetTcp)
 }
+
+const readTcpTablesOnce = () => readTcpTableFiles()
 
 /**
  * Coalesces table reads: every caller that asks before a read has started shares that read, so a burst of connections

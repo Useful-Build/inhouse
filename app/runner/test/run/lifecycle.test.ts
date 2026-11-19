@@ -271,18 +271,26 @@ describe('what a run leaves behind', () => {
   it("a process left in the session's group is killed before the user is released", async () => {
     let leftover: number | undefined
     // Checked inside release(), when it is called: by then the leftover must be dead (gone, or a zombie not yet reaped).
-    const runningAtRelease: boolean[] = []
-    const users = testSessionUsers({ onRelease: () => void runningAtRelease.push(leftover !== undefined && running(leftover)) })
+    // The pid is read from the run's own events there, so a release() that came before the test saw the pid can't pass
+    // as "not running" by default.
+    const atRelease: { pid: unknown; running: boolean }[] = []
+    let run: ReturnType<typeof openRun> | undefined
+    const users = testSessionUsers({
+      onRelease: () => {
+        const sdk = run?.events.find((e) => e.type === 'sdk')
+        const pid = sdk?.type === 'sdk' ? sdk.message.pid : undefined
+        atRelease.push({ pid, running: typeof pid === 'number' && running(pid) })
+      },
+    })
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
-      const run = openRun(root, runStart({ prompt: 'leftover' }))
-      await waitFor(() => run.events.some((e) => e.type === 'sdk'))
-      const sdk = run.events.find((e) => e.type === 'sdk')
-      leftover = sdk?.type === 'sdk' ? (sdk.message.pid as number) : undefined
-      expect(leftover).toBeTypeOf('number')
+      run = openRun(root, runStart({ prompt: 'leftover' }))
       const events = await run.done
       expect(events.at(-1)?.type).toBe('finished')
+      const sdk = events.find((e) => e.type === 'sdk')
+      leftover = sdk?.type === 'sdk' ? (sdk.message.pid as number) : undefined
+      expect(leftover).toBeTypeOf('number')
       await waitFor(() => users.released.length === 1)
-      expect(runningAtRelease).toEqual([false])
+      expect(atRelease).toEqual([{ pid: leftover, running: false }])
       // Killed with the group before release(); it's reaped by its new parent shortly after, hence the wait.
       await waitFor(() => !alive(leftover!), 'leftover gone')
     })

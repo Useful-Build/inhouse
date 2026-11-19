@@ -177,7 +177,9 @@ export function createRoot(deps: RootDeps): Root {
     live.res = res
     // Backpressure: when the Worker reads slowly, stop reading the session until the response drains. Once the run has
     // ended (its timeout, say) or the Worker has gone, no drain may ever come: the session is read and the rest dropped.
-    const discarding = () => live.gone || stream.ended || res.destroyed || res.writableEnded
+    // A stop sent counts too: the session's last events (its `finished`, with cost and usage) must get out before the
+    // grace runs out, so they're buffered here rather than held up in the session until it's killed.
+    const discarding = () => live.gone || live.stopRequested || stream.ended || res.destroyed || res.writableEnded
     const stream = new RunStream(config.runId, (e) => {
       if (res.destroyed || res.writableEnded) return
       if (!res.write(encodeRunEvent(e)) && !discarding()) live.handle?.pause()
@@ -228,6 +230,13 @@ export function createRoot(deps: RootDeps): Root {
     // The session and its group are gone: the token goes now; the chat slot frees once release() has settled (finally
     // in startRun), so a new run on this chat can't race this run's release.
     await end()
+  }
+
+  /** A stop: the session is read on (never paused again) until it ends, so it can flush its last events. */
+  function stopRun(live: LiveRun) {
+    live.stopRequested = true
+    live.handle?.resume()
+    live.handle?.stop()
   }
 
   const peers = new WeakMap<Socket, Promise<boolean>>()
@@ -285,10 +294,7 @@ export function createRoot(deps: RootDeps): Root {
       if (action[2] === 'interrupt') {
         if (live.handle) live.handle.interrupt()
         else live.interruptRequested = true
-      } else {
-        live.stopRequested = true
-        live.handle?.stop()
-      }
+      } else stopRun(live)
       return json(res, 202, { ok: true })
     }
     return json(res, 404, { error: 'not found' })
@@ -301,10 +307,7 @@ export function createRoot(deps: RootDeps): Root {
     bufferedBytes: (runId) => runs.get(runId)?.res?.writableLength ?? null,
     async stopAll() {
       stopping = true
-      for (const r of runs.values()) {
-        r.stopRequested = true
-        r.handle?.stop()
-      }
+      for (const r of runs.values()) stopRun(r)
       await Promise.all(ending)
     },
   }

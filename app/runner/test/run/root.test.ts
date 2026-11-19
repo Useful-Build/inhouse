@@ -144,10 +144,12 @@ describe('streams', () => {
   it.prop([fc.array(racer, { minLength: 2, maxLength: 5 })], { numRuns: 10 })(
     'concurrent sessions ending by races (stop, crash, timeout, finish): one end each, no seq gaps',
     async (runs) => {
-      // Its own root, with a time limit far above what a run that finishes takes, so only the held runs reach it.
+      // Only the timeout racers run on a root with a short time limit; the rest stay on the default root's long one, so
+      // a finish or stop racer on a loaded machine can't be cut off by the timeout meant for the held runs.
       const timed = await startTestRoot(spawnFixture('fake-session.ts'), { runTimeoutMs: 1500, stopGraceMs: 50 })
       try {
-        await raceRuns(timed, runs)
+        await raceRuns((r) => (r.end === 'timeout' ? timed : root), runs)
+        await waitFor(() => timed.liveCount() === 0)
       } finally {
         await timed.close()
       }
@@ -155,19 +157,20 @@ describe('streams', () => {
     60_000,
   )
 
-  async function raceRuns(root: TestRoot, runs: { n: number; end: string; stopAfter: number }[]) {
+  type Racer = { n: number; end: string; stopAfter: number }
+  async function raceRuns(rootFor: (r: Racer) => TestRoot, runs: Racer[]) {
     {
       const prompt = (r: { n: number; end: string }) =>
         r.end === 'crash' ? `crash-after:${r.n}` : r.end === 'timeout' ? `finish-on-stop:${r.n}` : `race:${r.n}`
       const opened = runs.map((r) => {
         const start = runStart({ prompt: prompt(r) })
-        return { r, start, run: openRun(root, start) }
+        return { r, start, run: openRun(rootFor(r), start) }
       })
       await Promise.all(
         opened.map(async ({ r, start, run }) => {
           if (r.end !== 'stop') return
           await waitFor(() => run.events.length >= Math.min(r.stopAfter, r.n) + 1 || run.events.some((e) => e.type === 'finished' || e.type === 'failed'))
-          expect([202, 404]).toContain(await post(root, `/runs/${start.runId}/stop`))
+          expect([202, 404]).toContain(await post(rootFor(r), `/runs/${start.runId}/stop`))
         }),
       )
       const streams = await Promise.all(opened.map((o) => o.run.done))
@@ -242,15 +245,25 @@ describe('streams', () => {
     }
   })
 
+  it("the session's channel says when it is full, and the session waits for it to drain", async () => {
+    // Each event is over the socket's 16 KiB high-water mark, so every write reports a full buffer.
+    const n = 20
+    const events = await postRun(root, runStart({ prompt: `drain:${n}:${64 * 1024}` }))
+    expectOneEnd(events)
+    expect(events.at(-1)?.type).toBe('finished')
+    const sdk = events.filter((e) => e.type === 'sdk')
+    expect(sdk.slice(0, n).map((e) => (e.type === 'sdk' ? e.message.i : null))).toEqual([...Array(n).keys()])
+    expect(sdk.at(-1)).toMatchObject({ message: { type: 'drained', waits: n } })
+  })
+
   // Paused behind a slow Worker, then the Worker hangs up or the run times out: no drain will come, so the root must
   // read on (and drop) what the session still sends, letting it flush and exit by itself rather than be killed.
   it.each(['hang-up', 'timeout'])("paused for backpressure, then %s: the session is read to its end and exits cleanly", async (how) => {
     const spawned: ChildProcess[] = []
-    const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), {
-      stopGraceMs: 5000,
-      runTimeoutMs: how === 'timeout' ? 1000 : 60_000,
-    })
+    const runTimeoutMs = how === 'timeout' ? 4000 : 60_000
+    const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 5000, runTimeoutMs })
     try {
+      const t0 = Date.now()
       const start = runStart({ prompt: `flood:160:${200 * 1024}` })
       const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders })
       const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
@@ -260,6 +273,18 @@ describe('streams', () => {
       // Paused before the timeout fires: once the run has ended, the root never pauses again, so this would fail.
       await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
       const child = spawned[0]!
+      // And stalled for good: every buffer on the way to the test is full (32 MB is far more than they hold), so no
+      // drain can come from the Worker's side any more. Only the timer's own resume can let the session go on.
+      let quiet = 0
+      let last = -1
+      await waitFor(() => {
+        const buffered = slow.bufferedBytes(start.runId)!
+        quiet = child.stdout!.isPaused() && buffered === last ? quiet + 1 : 0
+        last = buffered
+        return quiet >= 100
+      }, 'the run stalled behind the slow Worker')
+      // The stall came before the timer: otherwise this case proves nothing.
+      if (how === 'timeout') expect(Date.now() - t0).toBeLessThan(runTimeoutMs)
       const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once('exit', (code, signal) => r([code, signal])))
       if (how === 'hang-up') {
         res.destroy()
@@ -280,7 +305,39 @@ describe('streams', () => {
     } finally {
       await slow.close()
     }
-  })
+  }, 30_000)
+
+  // Paused behind a slow Worker, then stopped: the session's answer to the stop (its finished, with cost and usage)
+  // must get out within the grace, so the root reads it on rather than leaving it stuck behind the pause until killed.
+  it.each(['stop', 'stopAll'])('paused for backpressure, then %s: the session flushes its finished and exits cleanly', async (how) => {
+    const spawned: ChildProcess[] = []
+    const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 2000 })
+    try {
+      const n = 40
+      const start = runStart({ prompt: `flood-on-stop:${n}:${200 * 1024}` })
+      const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders })
+      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        req.on('response', resolve).on('error', reject)
+        req.end(JSON.stringify(start))
+      })
+      await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
+      const child = spawned[0]!
+      const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once('exit', (code, signal) => r([code, signal])))
+      const stopped = how === 'stop' ? post(slow, `/runs/${start.runId}/stop`) : slow.stopAll()
+      // Killed after the grace, it'd be SIGKILL; the Worker still isn't reading.
+      expect(await exited).toEqual([0, null])
+      let buf = ''
+      res.setEncoding('utf8')
+      for await (const chunk of res as AsyncIterable<string>) buf += chunk
+      await stopped
+      const events = buf.split('\n').filter(Boolean).map(parseRunEventLine)
+      expectOneEnd(events)
+      expect(events.filter((e) => e.type === 'sdk')).toHaveLength(n)
+      expect(events.at(-1)).toMatchObject({ type: 'finished', costUsd: 0.25, usage: { output_tokens: 7 } })
+    } finally {
+      await slow.close()
+    }
+  }, 30_000)
 
   it("a valid RunStart at its largest (a prompt of control characters, 1.2 MB as JSON) reaches the session whole", async () => {
     const prompt = `len:${'\u0001'.repeat(PROMPT_MAX_CHARS - 4)}`

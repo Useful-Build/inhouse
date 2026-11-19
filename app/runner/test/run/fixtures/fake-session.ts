@@ -10,6 +10,8 @@
 //   stray-stdout       a stray process.stdout.write after ready (a log line in the wrong place)
 //   console-log        logs through every console method that writes to stdout by default, then finished
 //   flood:<n>:<bytes>  sends n sdk events of about <bytes> each, carrying their index, then finished
+//   drain:<n>:<bytes>  sends n sdk events of about <bytes> each, awaiting each send the channel says is full; then
+//                      one sdk event {type: 'drained', waits} counting those, then finished
 //   oversized          sends one line over the channel's cap
 //   dump               writes a file in its cwd, then sends its env, argv, run message and cwd files as one sdk event
 //   hang               never answers; ends only when killed
@@ -22,6 +24,8 @@
 //   deep               sends an sdk event nested far past the depth cap (still under the line cap)
 //   len:<rest>         sends the prompt's length as an sdk event, then finished (the prompt can be any size)
 //   finish-on-stop:<n> sends n sdk events, then waits; a stop makes it send finished (racing whatever the root decided)
+//   flood-on-stop:<n>:<bytes>  sends n sdk events of about <bytes> each, then waits; a stop makes it send finished
+//                      (costUsd 0.25), and it exits once that is flushed
 // A stop before any run message ends it with failed/stopped ("stopped before the run started"), as the real session does.
 // A file named `hold-ready` in its cwd holds `ready` back until SIGUSR2 (it writes `waiting-for-usr2` once it listens).
 import { spawn } from 'node:child_process'
@@ -51,6 +55,12 @@ channel.onMessage((line) => {
   if (raw?.type === 'stop' && mode === 'finish-on-stop' && !ended) {
     ended = true
     finished()
+    end()
+    return
+  }
+  if (raw?.type === 'stop' && mode === 'flood-on-stop' && !ended) {
+    ended = true
+    event({ type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0.25, usage: { output_tokens: 7 } })
     end()
     return
   }
@@ -132,6 +142,23 @@ channel.onMessage((line) => {
       end()
       break
     }
+    case 'drain': {
+      const blob = 'd'.repeat(Number(b))
+      void (async () => {
+        let waits = 0
+        for (let i = 0; i < Number(a); i++) {
+          const full = channel.send({ type: 'event', event: { type: 'sdk', message: { type: 'assistant', i, blob }, truncated: false } })
+          if (full) {
+            waits++
+            await full
+          }
+        }
+        event({ type: 'sdk', message: { type: 'drained', waits }, truncated: false })
+        finished()
+        end()
+      })()
+      break
+    }
     case 'oversized':
       event({ type: 'sdk', message: { type: 'assistant', blob: 'a'.repeat(LOCAL_LINE_MAX_BYTES) }, truncated: false })
       break
@@ -198,6 +225,11 @@ channel.onMessage((line) => {
     case 'finish-on-stop':
       ticks(Number(a), undefined, () => {})
       break
+    case 'flood-on-stop': {
+      const blob = 'f'.repeat(Number(b))
+      for (let i = 0; i < Number(a); i++) event({ type: 'sdk', message: { type: 'assistant', i, blob }, truncated: false })
+      break
+    }
     case 'hang':
     case 'obey-stop':
     case 'await-interrupt':

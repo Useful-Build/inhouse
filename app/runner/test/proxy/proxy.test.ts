@@ -11,7 +11,7 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fc, it } from '@fast-check/vitest'
 import { afterAll, beforeAll, beforeEach, describe, expect } from 'vitest'
-import { PROXY_MAX_CONNECTIONS, RUN_TOKEN_HEADER, createProxy, targetFor, type ProxyDeps } from '../../src/proxy/server.ts'
+import { PROXY_MAX_CONNECTIONS, PROXY_MAX_CONNECTIONS_PER_UID, RUN_TOKEN_HEADER, createProxy, targetFor, type ProxyDeps } from '../../src/proxy/server.ts'
 import { waitFor } from '../run/support/root-client.ts'
 
 type Seen = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }
@@ -149,7 +149,7 @@ describe('what is forwarded', () => {
     expect(seen).toHaveLength(0)
   })
 
-  it.each(['/model/../store/x', '/files/%2e%2e/x', '/mcp/a\\b', '/store/./x', '/model/..#x', '/model/.%2e#x', '/model/%23/../x', '/model/x#frag', '/model/..%23x', '/model/x?q=#..'])('%s: 400, nothing forwarded', async (path) => {
+  it.each(['/model/../store/x', '/files/%2e%2e/x', '/mcp/a\\b', '/store/./x', '/model/..#x', '/model/.%2e#x', '/model/%23/../x', '/model/x#frag', '/model/..%23x', '/model/x?q=#..', '/model/..?x', '/files/a%2fb/%2E%2E?q=1'])('%s: 400, nothing forwarded', async (path) => {
     const res = await new Promise<number>((resolve, reject) => {
       const u = new URL(proxyUrl)
       http.request({ host: u.hostname, port: u.port, path, method: 'GET', headers: { connection: 'close' } }, (r) => {
@@ -159,6 +159,12 @@ describe('what is forwarded', () => {
     })
     expect(res).toBe(400)
     expect(seen).toHaveLength(0)
+  })
+
+  it('the query may carry an encoded # or dots: forwarded as sent', async () => {
+    const res = await call('/model/v1/messages?q=%23x&r=%2e%2e&s=%5c', { method: 'POST', body: '{}' })
+    expect(res.status).toBe(200)
+    expect(seen.map((s) => s.url)).toEqual(['/egress/model/v1/messages?q=%23x&r=%2e%2e&s=%5c'])
   })
 })
 
@@ -181,8 +187,90 @@ describe('targetFor (the last check on where a path goes)', () => {
 })
 
 describe('connections', () => {
-  it('the proxy caps how many connections it holds at once', () => {
+  // A keep-alive connection that has answered one request (so its uid is looked up and counted), or the error that
+  // ended it.
+  const connectAndAsk = async (url: string) => {
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 })
+    const u = new URL(url)
+    const status = await new Promise<number | string>((resolve) => {
+      http
+        .request({ host: u.hostname, port: u.port, path: '/model/v1/x', method: 'GET', agent }, (r) => {
+          r.resume()
+          r.on('end', () => resolve(r.statusCode!))
+        })
+        .on('error', (e: NodeJS.ErrnoException) => resolve(e.code ?? e.message))
+        .end()
+    })
+    return { status, close: () => agent.destroy() }
+  }
+
+  it('the defaults: 1024 in all, 256 per session user', async () => {
     expect(proxy.maxConnections).toBe(PROXY_MAX_CONNECTIONS)
+    expect(PROXY_MAX_CONNECTIONS).toBe(1024)
+    expect(PROXY_MAX_CONNECTIONS_PER_UID).toBe(256)
+  })
+
+  // Counts the proxy's own sockets as they close (the proxy's listeners on the same `close` have run by then).
+  const closes = (server: http.Server) => {
+    const seenClose = { n: 0 }
+    server.on('connection', (socket) => socket.once('close', () => seenClose.n++))
+    return seenClose
+  }
+
+  it('past the overall cap, a new connection is dropped; once one closes, a new one is served', async () => {
+    const small = await makeProxy({ maxConnections: 2 })
+    const closed = closes(small.server)
+    const open: { status: number | string; close: () => void }[] = []
+    try {
+      for (let i = 0; i < 2; i++) open.push(await connectAndAsk(small.url))
+      expect(open.map((c) => c.status)).toEqual([200, 200])
+      const refused = await connectAndAsk(small.url)
+      refused.close()
+      expect(refused.status).not.toBe(200)
+      expect(seen).toHaveLength(2)
+      open.shift()!.close()
+      await waitFor(() => closed.n === 1, 'the proxy saw the close')
+      const again = await connectAndAsk(small.url)
+      open.push(again)
+      expect(again.status).toBe(200)
+    } finally {
+      for (const c of open) c.close()
+      small.server.closeAllConnections()
+      await new Promise((r) => small.server.close(r))
+    }
+  })
+
+  it('one session user past its own cap is refused (logged); another user still gets in; a closed one frees a slot', async () => {
+    const small = await makeProxy({ maxConnectionsPerUid: 2 })
+    const closed = closes(small.server)
+    const open: { status: number | string; close: () => void }[] = []
+    try {
+      for (let i = 0; i < 2; i++) open.push(await connectAndAsk(small.url))
+      expect(open.map((c) => c.status)).toEqual([200, 200])
+      const third = await connectAndAsk(small.url)
+      third.close()
+      expect(third.status).not.toBe(200)
+      expect(logs).toContainEqual({ type: 'proxy_refused', uid: 1001, reason: 'too many connections for this user' })
+      expect(seen).toHaveLength(2)
+      await waitFor(() => closed.n === 1, 'the refused socket closed')
+      // Another session user is counted on its own.
+      tokens.set(1002, 'tok_live_run_1002_bbbbbbbb')
+      callerUid = 1002
+      const other = await connectAndAsk(small.url)
+      open.push(other)
+      expect(other.status).toBe(200)
+      // One of 1001's connections closes: once the proxy sees it, 1001 gets a slot back.
+      callerUid = 1001
+      open.shift()!.close()
+      await waitFor(() => closed.n === 2, 'the proxy saw the close')
+      const again = await connectAndAsk(small.url)
+      open.push(again)
+      expect(again.status).toBe(200)
+    } finally {
+      for (const c of open) c.close()
+      small.server.closeAllConnections()
+      await new Promise((r) => small.server.close(r))
+    }
   })
 })
 

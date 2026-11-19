@@ -13,8 +13,8 @@ import { fileURLToPath } from 'node:url'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import type { LineResult } from '../../src/protocol/ndjson.ts'
-import { runSession, type QueryFn } from '../../src/session/core.ts'
+import { LOCAL_MAX_DEPTH, LineReader, encodeLine, type LineResult } from '../../src/protocol/ndjson.ts'
+import { SDK_MESSAGE_MAX_DEPTH, runSession, type QueryFn } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards } from '../../src/session/seam.ts'
 import { GuardsMissingError, productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
@@ -28,7 +28,7 @@ function harness(query: QueryFn, guards: QueryGuards = testQueryGuards) {
   const sent: any[] = []
   let handler: (line: LineResult) => void = () => {}
   const done = runSession({
-    channel: { send: (m) => sent.push(m), onMessage: (h) => (handler = h) },
+    channel: { send: (m) => void sent.push(m), onMessage: (h) => (handler = h) },
     query,
     guards,
     cwd: '/work/s1',
@@ -74,6 +74,11 @@ function fakeQuery(messages: SDKMessage[], opts: { throwAt?: number; holdUntilIn
     })
   }
   return { query, calls, interrupts: () => interrupted, release: () => release() }
+}
+
+async function waitForTicks(cond: () => boolean) {
+  for (let i = 0; i < 1000 && !cond(); i++) await new Promise((r) => setImmediate(r))
+  expect(cond()).toBe(true)
 }
 
 describe('runSession', () => {
@@ -199,14 +204,75 @@ describe('runSession', () => {
     ])
   })
 
-  it('an SDK message JSON cannot encode is sent as a stub, never thrown', async () => {
-    let deep: unknown = 1
-    for (let i = 0; i < 300_000; i++) deep = [deep]
-    const h = harness(fakeQuery([{ type: 'assistant', a: deep } as unknown as SDKMessage, result]).query)
+  it('an SDK message JSON cannot encode (a BigInt) is sent as a stub, never thrown', async () => {
+    const h = harness(fakeQuery([{ type: 'assistant', n: 1n } as unknown as SDKMessage, result]).query)
     h.deliver({ type: 'run', config: config() })
     await h.done
     expect(h.events()[0]).toEqual({ type: 'sdk', message: { type: 'assistant', unencodable: true }, truncated: true })
     expect(h.events().at(-1)?.type).toBe('finished')
+  })
+
+  // The root refuses a line nested past LOCAL_MAX_DEPTH, envelope included: a message the session sends whole must fit
+  // inside it, or one honest (if odd) SDK message would end the run as protocol.
+  it.each([
+    [SDK_MESSAGE_MAX_DEPTH, false],
+    [SDK_MESSAGE_MAX_DEPTH + 1, true],
+    [LOCAL_MAX_DEPTH - 1, true],
+    [300_000, true],
+  ])('an SDK message nested %i levels: stubbed %s, and its line always passes the root\'s reader', async (depth, stubbed) => {
+    let inner: unknown = 1
+    for (let i = 1; i < depth; i++) inner = [inner]
+    const deep = { type: 'assistant', a: inner } as unknown as SDKMessage
+    const h = harness(fakeQuery([deep, result]).query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    const sent = h.sent.find((m) => m.type === 'event' && m.event.type === 'sdk')
+    if (stubbed) expect(sent.event).toEqual({ type: 'sdk', message: { type: 'assistant', tooDeep: true }, truncated: true })
+    else expect(sent.event).toEqual({ type: 'sdk', message: deep, truncated: false })
+    expect(new LineReader().push(Buffer.from(encodeLine(sent)))).toEqual([{ ok: true, value: sent }])
+    expect(h.events().at(-1)?.type).toBe('finished')
+  })
+
+  it('while the channel is full, the next SDK message is not read; it is once the channel drains', async () => {
+    let pulled = 0
+    const query: QueryFn = () =>
+      Object.assign(
+        (async function* () {
+          for (const m of [assistant, assistant, assistant, result]) {
+            pulled++
+            yield m
+          }
+        })(),
+        { interrupt: async () => undefined },
+      )
+    const sent: any[] = []
+    let handler: (line: LineResult) => void = () => {}
+    let drain: () => void = () => {}
+    const done = runSession({
+      // Full after every sdk event, until the test drains it.
+      channel: {
+        send: (m: any) => {
+          sent.push(m)
+          if (m.type === 'event' && m.event.type === 'sdk') return new Promise<void>((r) => (drain = r))
+        },
+        onMessage: (h) => (handler = h),
+      },
+      query,
+      guards: testQueryGuards,
+      cwd: '/work/s1',
+      env: {},
+    })
+    handler({ ok: true, value: { type: 'run', config: config() } })
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+    expect(pulled).toBe(1)
+    expect(sent.filter((m) => m.type === 'event')).toHaveLength(1)
+    for (let n = 2; n <= 4; n++) {
+      drain()
+      await waitForTicks(() => pulled === n)
+    }
+    drain()
+    await done
+    expect(sent.filter((m) => m.type === 'event').map((m) => m.event.type)).toEqual(['sdk', 'sdk', 'sdk', 'sdk', 'finished'])
   })
 
   it('an unreadable line from the root (oversized, not JSON) ends the session with failed protocol', async () => {

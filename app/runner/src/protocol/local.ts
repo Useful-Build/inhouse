@@ -47,7 +47,7 @@ export function parseSessionMessage(raw: unknown): { ok: true; message: ParsedSe
 /**
  * Caps an SDK message for an `sdk` event. A message over `maxBytes` (as JSON) becomes a stub with its `type`, `subtype`
  * and size. The root applies this to every `sdk` event, whatever the session sent. Never throws: a message JSON can't
- * encode (nested past the stack, say) gives null, and the caller ends the session.
+ * encode (a BigInt, a cycle, or nesting past the stack) gives null, and the caller ends the session.
  */
 export function capSdkMessage(message: Record<string, unknown>, maxBytes: number): { message: Record<string, unknown>; truncated: boolean } | null {
   let text: string

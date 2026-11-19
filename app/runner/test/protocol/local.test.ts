@@ -1,6 +1,6 @@
 // The local channel. Ways it could fail: the run token rides over it; a session can send `started` (the root's own);
-// garbage parses; a huge SDK message is passed through whole; a message nested deep enough to overflow the stack
-// throws out of the root's listener; how the bytes are chunked changes what the reader yields; a line split mid-UTF-8
+// garbage parses; a huge SDK message is passed through whole; a message JSON can't encode throws out of the root's
+// listener; how the bytes are chunked changes what the reader yields; a line split mid-UTF-8
 // is misread; the cap is off by one; a partial last line is taken for a whole one; a valid run start is too big for
 // the session's side of the channel.
 import { fc, it } from '@fast-check/vitest'
@@ -44,8 +44,13 @@ describe('the local channel', () => {
     },
   )
 
-  it('capSdkMessage gives null, never throws, on a message JSON cannot encode (nested past the stack)', () => {
-    expect(capSdkMessage({ type: 'assistant', a: nested(300_000) }, 256 * 1024)).toBeNull()
+  // Values JSON can't encode on any platform. (Deep nesting is the session's depth cap, tested in session.test.ts: how
+  // deep JSON.stringify gets before the stack runs out differs by platform; Linux's CI runner encodes 300k levels.)
+  it('capSdkMessage gives null, never throws, on a message JSON cannot encode (a BigInt, a cycle)', () => {
+    const cycle: Record<string, unknown> = { type: 'assistant' }
+    cycle.self = cycle
+    expect(capSdkMessage({ type: 'assistant', n: 1n }, 256 * 1024)).toBeNull()
+    expect(capSdkMessage(cycle, 256 * 1024)).toBeNull()
   })
 
   it("the session's side takes the largest run message a valid RunStart can make", () => {
@@ -111,6 +116,20 @@ describe('LineReader', () => {
     expect(split.push(exact(101).subarray(60))).toEqual([{ ok: false, error: 'line over the size cap' }])
     // Unterminated, past the cap: refused as soon as it's over, without waiting for the newline.
     expect(new LineReader(100).push(Buffer.from('a'.repeat(101)))).toEqual([{ ok: false, error: 'line over the size cap' }])
+  })
+
+  it('a line fed one byte at a time is held in one buffer, not one per byte, and reads whole', () => {
+    const value = { type: 'event', blob: 'b'.repeat(200 * 1024) }
+    const bytes = Buffer.from(encodeLine(value))
+    const reader = new LineReader()
+    let most = 0
+    for (let i = 0; i < bytes.length - 1; i++) {
+      expect(reader.push(bytes.subarray(i, i + 1))).toEqual([])
+      most = Math.max(most, reader.heldBuffers)
+    }
+    expect(most).toBe(1)
+    expect(reader.push(bytes.subarray(bytes.length - 1))).toEqual([{ ok: true, value }])
+    expect(reader.heldBuffers).toBe(0)
   })
 
   it('end() with a partial last line is an error; with nothing left, nothing', () => {

@@ -5,9 +5,12 @@
 // - a garbage or header line parses, or throws;
 // - the lookup matches the proxy's own (root-owned) socket, a listening socket, or one of several ambiguous entries;
 // - the API's peer check lets a session user's local process in, or a local peer it can't see, or shuts the Worker out.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import { coalescedReader, decideApiPeer, decodeAddress, findPeerUid, hostAddresses, normaliseAddress, parseProcNetTcp, type TcpEntry } from '../../src/proxy/proc-net.ts'
+import { coalescedReader, decideApiPeer, readTcpTableFiles, decodeAddress, findPeerUid, hostAddresses, normaliseAddress, parseProcNetTcp, type TcpEntry } from '../../src/proxy/proc-net.ts'
 
 const HEADER = '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode'
 const hex = (n: number, w: number) => n.toString(16).toUpperCase().padStart(w, '0')
@@ -191,5 +194,35 @@ describe('coalescedReader (one table read for a burst of connections)', () => {
     started[0]!()
     started[1]!()
     expect(await first).not.toBe(await second)
+  })
+})
+
+describe('reading the tables', () => {
+  const dir = () => mkdtempSync(join(tmpdir(), 'proc-net-'))
+  const tcpLine = line(0, v4hex([127, 0, 0, 1]), 8080, v4hex([127, 0, 0, 1]), 40000, 1, 1001)
+
+  it('with IPv6 off (no tcp6 table), the IPv4 table alone is read', async () => {
+    const d = dir()
+    try {
+      writeFileSync(join(d, 'tcp'), `${HEADER}\n${tcpLine}\n`)
+      expect(await readTcpTableFiles(join(d, 'tcp'), join(d, 'tcp6'))).toEqual(parseProcNetTcp(`${HEADER}\n${tcpLine}\n`))
+    } finally {
+      rmSync(d, { recursive: true })
+    }
+  })
+
+  it('a missing IPv4 table, or a tcp6 that fails any other way, still throws (fail closed)', async () => {
+    const d = dir()
+    try {
+      writeFileSync(join(d, 'tcp6'), `${HEADER}\n`)
+      await expect(readTcpTableFiles(join(d, 'tcp'), join(d, 'tcp6'))).rejects.toThrow(/ENOENT/)
+      writeFileSync(join(d, 'tcp'), `${HEADER}\n${tcpLine}\n`)
+      // A directory where the table should be: EISDIR, not ENOENT.
+      rmSync(join(d, 'tcp6'))
+      mkdirSync(join(d, 'tcp6'))
+      await expect(readTcpTableFiles(join(d, 'tcp'), join(d, 'tcp6'))).rejects.toThrow(/EISDIR/)
+    } finally {
+      rmSync(d, { recursive: true })
+    }
   })
 })

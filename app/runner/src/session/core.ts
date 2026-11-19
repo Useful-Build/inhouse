@@ -8,14 +8,15 @@ import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { SDK_MESSAGE_MAX_BYTES, type RunEventBody } from '../../../shared/protocol/index.ts'
 import { RootMessage, capSdkMessage, type RunConfig } from '../protocol/local.ts'
-import type { LineResult } from '../protocol/ndjson.ts'
+import { LOCAL_MAX_DEPTH, deeperThan, type LineResult } from '../protocol/ndjson.ts'
 import type { QueryGuards } from './seam.ts'
 
 export type QueryFn = (params: { prompt: string; options: Options }) => Pick<Query, 'interrupt'> & AsyncIterable<SDKMessage>
 
 /** The session's side of the local channel (src/session/channel.ts in production). */
 export type SessionChannel = {
-  send(message: unknown): void
+  /** A promise means the channel is full: the run loop reads no more SDK messages until it settles. */
+  send(message: unknown): void | Promise<void>
   /** Each line from the root, parsed, or the framing error (oversized, not JSON) that ends the run. */
   onMessage(handler: (line: LineResult) => void): void
 }
@@ -47,6 +48,12 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
   }
 }
 
+/**
+ * The deepest SDK message sent whole. The root refuses a line nested past `LOCAL_MAX_DEPTH`, and the event's envelope
+ * (`{type:'event', event:{type:'sdk', message}}`) adds two levels; two more are spare. A deeper message goes as a stub.
+ */
+export const SDK_MESSAGE_MAX_DEPTH = LOCAL_MAX_DEPTH - 4
+
 const message = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 2000)
 
 export async function runSession(deps: {
@@ -58,10 +65,10 @@ export async function runSession(deps: {
 }): Promise<void> {
   const { channel } = deps
   let ended = false
-  const emit = (event: SessionEvent) => {
+  const emit = (event: SessionEvent): void | Promise<void> => {
     if (ended) return
     if (event.type === 'finished' || event.type === 'failed') ended = true
-    channel.send({ type: 'event', event })
+    return channel.send({ type: 'event', event })
   }
 
   let q: ReturnType<QueryFn> | null = null
@@ -140,9 +147,11 @@ export async function runSession(deps: {
       if (ended) break
       // Capped here as well as in the root, so an honest session never sends a line over the channel's cap.
       const raw = m as unknown as Record<string, unknown>
-      const capped = capSdkMessage(raw, SDK_MESSAGE_MAX_BYTES) ?? { message: { type: String(raw.type).slice(0, 64), unencodable: true }, truncated: true }
-      emit({ type: 'sdk', ...capped })
+      const stub = (why: 'tooDeep' | 'unencodable') => ({ message: { type: String(raw.type).slice(0, 64), [why]: true }, truncated: true })
+      const capped = deeperThan(raw, SDK_MESSAGE_MAX_DEPTH) ? stub('tooDeep') : (capSdkMessage(raw, SDK_MESSAGE_MAX_BYTES) ?? stub('unencodable'))
       if (m.type === 'result') result = m
+      // Backpressure: while the root isn't reading, the next SDK message waits rather than piling up in this heap.
+      await emit({ type: 'sdk', ...capped })
     }
   } catch (e) {
     // A stop or interrupt that raced the SDK's result: the run did finish, and its cost and usage are kept.

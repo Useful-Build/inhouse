@@ -17,7 +17,8 @@ export const FROM_ROOT_FD = 0
 export const TO_ROOT_FD = 1
 
 export type RootChannel = {
-  send(message: unknown): void
+  /** Writes one message. Returns a promise when the socket's buffer is full, settled once it drains (or closes). */
+  send(message: unknown): void | Promise<void>
   /** Every line from the root, parsed, or the one error that ends the channel. Lines that came early are queued. */
   onMessage(handler: (line: LineResult) => void): void
   /** Flushes what was sent, then closes both descriptors. */
@@ -54,7 +55,19 @@ export function openRootChannel(maxLineBytes: number = ROOT_TO_SESSION_MAX_BYTES
   inp.on('end', () => deliver(reader.end()))
 
   return {
-    send: (m) => void out.write(encodeLine(m)),
+    send(m) {
+      // A closed channel takes nothing more (write would only raise an error); the root decides the run's end.
+      if (out.destroyed || out.write(encodeLine(m))) return
+      return new Promise<void>((resolve) => {
+        const done = () => {
+          out.off('drain', done)
+          out.off('close', done)
+          resolve()
+        }
+        out.on('drain', done)
+        out.on('close', done)
+      })
+    },
     onMessage(h) {
       handler = h
       for (const l of queued.splice(0)) h(l)

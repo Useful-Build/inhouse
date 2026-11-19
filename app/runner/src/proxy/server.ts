@@ -39,11 +39,17 @@ export type ProxyDeps = {
   maxBodyBytes?: number
   /** An upstream connection idle this long is cut (504 if nothing was answered yet). */
   upstreamTimeoutMs?: number
+  /** Open connections across every session (default `PROXY_MAX_CONNECTIONS`). */
+  maxConnections?: number
+  /** Open connections one uid may hold (default `PROXY_MAX_CONNECTIONS_PER_UID`). */
+  maxConnectionsPerUid?: number
 }
 
 export const PROXY_MAX_BODY_BYTES = 64 * 1024 * 1024
 /** Open connections the proxy takes at once, across every session; past it new ones are dropped by Node. */
 export const PROXY_MAX_CONNECTIONS = 1024
+/** Open connections one session user may hold, so one session can't take every slot above; past it they're closed. */
+export const PROXY_MAX_CONNECTIONS_PER_UID = 256
 export const PROXY_UPSTREAM_TIMEOUT_MS = 10 * 60_000
 
 export function createProxy(deps: ProxyDeps): http.Server {
@@ -55,7 +61,9 @@ export function createProxy(deps: ProxyDeps): http.Server {
       else res.destroy()
     })
   })
-  server.maxConnections = PROXY_MAX_CONNECTIONS
+  server.maxConnections = deps.maxConnections ?? PROXY_MAX_CONNECTIONS
+  const maxPerUid = deps.maxConnectionsPerUid ?? PROXY_MAX_CONNECTIONS_PER_UID
+  const openPerUid = new Map<number, number>()
   // The uid is looked up as the connection opens, while the caller's socket is certainly still in the tables.
   server.on('connection', (socket: Socket) => {
     uids.set(
@@ -65,6 +73,23 @@ export function createProxy(deps: ProxyDeps): http.Server {
         .catch((e) => {
           deps.log({ type: 'proxy_uid_lookup_failed', error: String(e instanceof Error ? e.message : e) })
           return null
+        })
+        .then((uid) => {
+          // Counted only while open: a socket already closed has fired its `close`, so it isn't counted at all.
+          if (uid === null || socket.destroyed) return uid
+          const open = (openPerUid.get(uid) ?? 0) + 1
+          if (open > maxPerUid) {
+            deps.log({ type: 'proxy_refused', uid, reason: 'too many connections for this user' })
+            socket.destroy()
+            return null
+          }
+          openPerUid.set(uid, open)
+          socket.once('close', () => {
+            const left = openPerUid.get(uid)! - 1
+            if (left === 0) openPerUid.delete(uid)
+            else openPerUid.set(uid, left)
+          })
+          return uid
         }),
     )
   })
@@ -73,9 +98,11 @@ export function createProxy(deps: ProxyDeps): http.Server {
     const path = req.url ?? '/'
     const route = /^\/([a-z]+)\//.exec(path)?.[1]
     if (!route || !(PROXY_ROUTES as readonly string[]).includes(route)) return refuse(res, 404, 'no such route')
-    // No dot segments, backslashes or fragments (`#`, raw or encoded), so a path can't climb out of its route once the
-    // URL is resolved: `/model/..#x` would resolve to `/`.
-    if (/(^|\/)\.\.?(\/|$|\?|#)|\\|%2e|%5c|#|%23/i.test(path)) return refuse(res, 400, 'bad path')
+    // No dot segments, backslashes or fragments (`#`, raw or encoded) in the path, so it can't climb out of its route
+    // once the URL is resolved: `/model/..#x` would resolve to `/`. The query is free to carry encoded `#` and `.`
+    // (`?q=%23x`); a raw `#` is refused anywhere, since it would end the URL there.
+    const pathOnly = path.split('?', 1)[0]!
+    if (path.includes('#') || /(^|\/)\.\.?(\/|$)|\\|%2e|%5c|%23/i.test(pathOnly)) return refuse(res, 400, 'bad path')
     // And whatever the checks above miss, the URL as resolved must still sit under the upstream base and this route.
     if (targetFor(deps.upstream, path, route) === null) return refuse(res, 400, 'bad path')
 

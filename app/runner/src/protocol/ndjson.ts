@@ -26,7 +26,8 @@ const utf8 = new TextDecoder('utf-8', { fatal: true })
 
 export class LineReader {
   readonly maxBytes: number
-  #parts: Buffer[] = []
+  /** The partial line so far: one buffer that grows by doubling, so a line fed a byte at a time holds one allocation. */
+  #buf: Buffer | null = null
   #size = 0
   #failed = false
 
@@ -36,6 +37,11 @@ export class LineReader {
 
   get failed(): boolean {
     return this.#failed
+  }
+
+  /** How many buffers the partial line holds: 0 or 1, however many chunks it came in (tests check this). */
+  get heldBuffers(): number {
+    return this.#buf === null ? 0 : 1
   }
 
   /** Feeds bytes. Returns the lines they complete, parsed; after the first error, returns that error and then nothing. */
@@ -48,8 +54,8 @@ export class LineReader {
       if (nl === -1) break
       const piece = chunk.subarray(start, nl)
       if (this.#size + piece.length > this.maxBytes) return this.#fail(out, 'line over the size cap')
-      const line = this.#size === 0 ? piece : Buffer.concat([...this.#parts, piece])
-      this.#parts = []
+      const line = this.#size === 0 ? piece : Buffer.concat([this.#buf!.subarray(0, this.#size), piece])
+      this.#buf = null
       this.#size = 0
       start = nl + 1
       const parsed = parseLine(line)
@@ -61,11 +67,19 @@ export class LineReader {
     }
     const rest = chunk.subarray(start)
     if (this.#size + rest.length > this.maxBytes) return this.#fail(out, 'line over the size cap')
-    if (rest.length > 0) {
-      this.#parts.push(Buffer.from(rest))
-      this.#size += rest.length
-    }
+    if (rest.length > 0) this.#hold(rest)
     return out
+  }
+
+  #hold(rest: Buffer) {
+    const need = this.#size + rest.length
+    if (this.#buf === null || this.#buf.length < need) {
+      const grown = Buffer.allocUnsafe(Math.min(this.maxBytes, Math.max(need, 2 * (this.#buf?.length ?? 0), 4096)))
+      this.#buf?.copy(grown, 0, 0, this.#size)
+      this.#buf = grown
+    }
+    rest.copy(this.#buf, this.#size)
+    this.#size = need
   }
 
   /** At the end of input: an unterminated last line is an error. */
@@ -76,7 +90,7 @@ export class LineReader {
 
   #fail(out: LineResult[], error: string): LineResult[] {
     this.#failed = true
-    this.#parts = []
+    this.#buf = null
     this.#size = 0
     out.push({ ok: false, error })
     return out
