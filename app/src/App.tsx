@@ -178,6 +178,9 @@ export default function App() {
   const toolKnown = !!toolName(useAgentData().tools, appKey)
   const phone = useUi(s => s.phone)
   const chatList = useUi(s => s.chatList)
+  const chatId = useUi(s => s.chatId)
+  const fresh = useUi(s => s.fresh)
+  const setTab = useUi(s => s.setTab)
   const mainRef = useRef<HTMLElement>(null)
   useHashRoute()
 
@@ -225,6 +228,7 @@ export default function App() {
 
   // An unknown tool key shows the Tools list until `useHashRoute` has moved the route there.
   const Screen = page === 'app' && !toolKnown ? Tools : SCREENS[page]
+  const subKey = page === 'app' ? appKey : page === 'settings' ? setTab : page === 'chats' ? (chatList ? 'all' : fresh ? 'new' : chatId ?? '') : ''
   return (
     // `isolation` here (not on main) keeps the dots layer (zIndex -1) above the page colour and below the cards, while modals inside main still stack above the Sidebar.
     <div className="isolate flex h-dvh overflow-hidden bg-background">
@@ -243,7 +247,8 @@ export default function App() {
           <div className="flex-none"><Banner /></div>
           {/* Chats, and on desktop Settings and the Library, fill what is left under the banner and scroll inside (their side menus stay put); other pages scroll in main. */}
           <div className={cn(page === 'chats' || (!phone && (page === 'settings' || page === 'library')) ? 'flex min-h-0 flex-1 basis-0 flex-col' : 'flex-none')}>
-            <RouteBoundary key={page} name={PAGE_LABEL[page]}><Screen /></RouteBoundary>
+            {/* Keyed by page; the sub-key (tool, chat, settings tab) resets it too, so moving away clears an error screen. */}
+            <RouteBoundary key={page} resetKey={subKey} name={PAGE_LABEL[page]}><Screen /></RouteBoundary>
           </div>
         </main>
       </div>

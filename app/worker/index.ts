@@ -1,5 +1,6 @@
-// Static assets are served before the Worker runs, except /api/* (`assets.run_worker_first`), so anything that
-// reaches it is an API call or has no route.
+// Static assets are served before the Worker runs. `assets.run_worker_first` for /api/* arrives with the deploy
+// pipeline PR (#39); until then non-navigation requests to /api/* reach the Worker, and navigations to /api/* get
+// index.html (the single-page-application fallback).
 import headersFile from '../public/_headers?raw'
 import { scrubReport } from './scrub.ts'
 
@@ -71,8 +72,20 @@ async function readCapped(request: Request, limit: number): Promise<string | nul
   return new TextDecoder().decode(all)
 }
 
+/**
+ * A post from another site: `Sec-Fetch-Site` other than same-origin, or an `Origin` that isn't ours. Clients that send
+ * neither (not a browser) pass, and stay under the per-IP limit.
+ */
+function crossSite(request: Request): boolean {
+  const site = request.headers.get('Sec-Fetch-Site')
+  if (site !== null && site !== 'same-origin') return true
+  const origin = request.headers.get('Origin')
+  return origin !== null && origin !== new URL(request.url).origin
+}
+
 async function clientError(request: Request): Promise<Response> {
   if (request.method !== 'POST') return respond(405, { headers: { Allow: 'POST' } })
+  if (crossSite(request)) return respond(403)
   if (!allow(request.headers.get('CF-Connecting-IP') ?? 'unknown')) return respond(429, { headers: { 'Retry-After': '60' } })
   const text = await readCapped(request, MAX_BODY)
   if (text === null) return respond(413)

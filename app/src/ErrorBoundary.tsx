@@ -68,10 +68,15 @@ function DemoCrash(): never {
 
 /**
  * Around each screen (App.tsx, keyed by page), so one broken screen leaves the sidebar, top bar and windows working.
- * Going to another page remounts it, which clears the error.
+ * Going to another page remounts it; moving to another tool, chat or settings tab (`resetKey`) clears the error
+ * without remounting a healthy screen.
  */
-export class RouteBoundary extends Component<{ children: ReactNode; name: string }, { failed: boolean; message: string }> {
+export class RouteBoundary extends Component<{ children: ReactNode; name: string; resetKey: string }, { failed: boolean; message: string }> {
   state = { failed: false, message: '' }
+
+  componentDidUpdate(prev: { resetKey: string }) {
+    if (prev.resetKey !== this.props.resetKey && this.state.failed) this.retry()
+  }
 
   static getDerivedStateFromError(error: unknown) {
     return { failed: true, message: error instanceof Error ? error.message : String(error) }
