@@ -68,7 +68,7 @@ skill before any UI change. Repo specifics:
 - **CI gates:** rulesets (`.github/rulesets/`) require a PR and the checks `ci` and `pr-gates` on `main` and
   `fleet/**`, with no bypass. `ci` (typecheck, lint, unit, build, every Playwright project) runs on every PR into
   either. `pr-gates` fails a commit without a `Verified:` trailer and flags changed existing checks. `main` also needs
-  the branch up to date with `main`.
+  the branch up to date with `main`. No merge queue for now.
 - **Big projects:** one integration branch `fleet/<topic>` cut from `main`. Each piece is its own PR into it, merged
   with a merge commit. Bring `main` into it through a PR (direct pushes are blocked). The final PR into `main` gets
   full CI, reviews, a preview, the QA gate and a ship recording (`ship.yml`, run by hand with the PR number and its
