@@ -16,7 +16,10 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    // app/shared/protocol/ has no node_modules of its own and the app has no zod: resolve it from the runner's.
+    "paths": { "zod": ["./node_modules/zod/index.d.ts"] }
   },
-  "include": ["src", "test", "scripts", "vitest.config.ts"]
+  "include": ["src", "test", "scripts", "vitest.config.ts", "../shared/protocol"]
 }

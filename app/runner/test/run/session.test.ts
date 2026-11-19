@@ -1,0 +1,211 @@
+// The session process's run loop, with the SDK's query() mocked at the process boundary. Ways it could fail:
+// - the query gets options that don't come from the run config, misses settingSources: [], or swaps sessionId/resume;
+// - the guards aren't applied, or Node's IPC channel leaks into the CLI's env;
+// - a run ends twice, or not at all, when the query throws, is stopped, or the root sends garbage;
+// - sessionEnv() grows a variable that isn't on its list (where a token could hide).
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+import { fc, it } from '@fast-check/vitest'
+import { describe, expect } from 'vitest'
+import { runSession, type QueryFn } from '../../src/session/core.ts'
+import { sessionEnv } from '../../src/session/env.ts'
+import type { QueryGuards } from '../../src/session/seam.ts'
+import { GuardsMissingError, productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
+import { runStart } from './support/root-client.ts'
+import { testQueryGuards, testSessionUsers } from './support/test-seams.ts'
+
+const result = { type: 'result', subtype: 'success', is_error: false, num_turns: 2, total_cost_usd: 0.01, usage: { input_tokens: 5 } } as unknown as SDKMessage
+const assistant = { type: 'assistant', message: { content: [] } } as unknown as SDKMessage
+
+function harness(query: QueryFn, guards: QueryGuards = testQueryGuards) {
+  const sent: any[] = []
+  let handler: (raw: unknown) => void = () => {}
+  const done = runSession({
+    channel: { send: (m) => sent.push(m), onMessage: (h) => (handler = h) },
+    query,
+    guards,
+    cwd: '/work/s1',
+    env: { PATH: '/bin', NODE_CHANNEL_FD: '3', NODE_CHANNEL_SERIALIZATION_MODE: 'json' },
+  })
+  const events = () => sent.filter((m) => m.type === 'event').map((m) => m.event)
+  return { sent, events, done, deliver: (m: unknown) => handler(m) }
+}
+
+const config = (over = {}) => {
+  const { runToken: _, ...c } = runStart(over)
+  return c
+}
+
+function fakeQuery(messages: SDKMessage[], opts: { throwAt?: number; holdUntilInterrupt?: boolean; interruptThrows?: boolean } = {}) {
+  const calls: { prompt: string; options: Options }[] = []
+  let interrupted = 0
+  let release!: () => void
+  const held = new Promise<void>((r) => (release = r))
+  const query: QueryFn = (params) => {
+    calls.push(params)
+    async function* gen() {
+      for (let i = 0; i < messages.length; i++) {
+        if (opts.throwAt === i) throw new Error('the CLI exited')
+        yield messages[i]!
+      }
+      if (opts.holdUntilInterrupt) await held
+    }
+    return Object.assign(gen(), {
+      interrupt: async () => {
+        interrupted++
+        if (opts.interruptThrows) throw new Error('needs streaming input')
+        release()
+        return undefined
+      },
+    })
+  }
+  return { query, calls, interrupts: () => interrupted, release: () => release() }
+}
+
+describe('runSession', () => {
+  it('says ready, runs one query from the run config and ends with finished', async () => {
+    const q = fakeQuery([assistant, result])
+    const h = harness(q.query, { kind: 'test', apply: (o) => ({ ...o, tools: ['Read'] }) })
+    expect(h.sent[0]).toEqual({ type: 'ready' })
+    const c = config({ resume: false, prompt: 'hello' })
+    h.deliver({ type: 'run', config: c })
+    await h.done
+    expect(q.calls).toHaveLength(1)
+    const { prompt, options } = q.calls[0]!
+    expect(prompt).toBe('hello')
+    expect(options).toMatchObject({
+      cwd: '/work/s1',
+      model: c.model,
+      effort: c.effort,
+      maxTurns: c.maxTurns,
+      maxBudgetUsd: c.maxBudgetUsd,
+      settingSources: [],
+      sessionId: c.sessionId,
+      tools: ['Read'],
+    })
+    expect(options.resume).toBeUndefined()
+    expect(options.env).toEqual({ PATH: '/bin' })
+    expect(h.events().map((e) => e.type)).toEqual(['sdk', 'sdk', 'finished'])
+    expect(h.events().at(-1)).toEqual({ type: 'finished', subtype: 'success', isError: false, numTurns: 2, costUsd: 0.01, usage: { input_tokens: 5 } })
+  })
+
+  it('resume: true passes resume, not sessionId; "" is passed as the prompt', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    const c = config({ resume: true, prompt: '' })
+    h.deliver({ type: 'run', config: c })
+    await h.done
+    expect(q.calls[0]!.options.resume).toBe(c.sessionId)
+    expect(q.calls[0]!.options.sessionId).toBeUndefined()
+    expect(q.calls[0]!.prompt).toBe('')
+  })
+
+  it('a query that throws ends with one failed sdk_error', async () => {
+    const h = harness(fakeQuery([assistant, result], { throwAt: 1 }).query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(h.events().map((e) => e.type)).toEqual(['sdk', 'failed'])
+    expect(h.events().at(-1)).toMatchObject({ reason: 'sdk_error' })
+  })
+
+  it('stop interrupts the query and ends with one failed stopped', async () => {
+    const q = fakeQuery([assistant], { holdUntilInterrupt: true })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await new Promise((r) => setImmediate(r))
+    h.deliver({ type: 'stop' })
+    await h.done
+    expect(q.interrupts()).toBe(1)
+    expect(h.events().filter((e) => e.type === 'failed' || e.type === 'finished')).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped' }])
+  })
+
+  it('when interrupt() is refused, the abort signal fires', async () => {
+    const q = fakeQuery([assistant], { holdUntilInterrupt: true, interruptThrows: true })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await new Promise((r) => setImmediate(r))
+    h.deliver({ type: 'interrupt' })
+    await new Promise((r) => setImmediate(r))
+    expect(q.calls[0]!.options.abortController!.signal.aborted).toBe(true)
+    q.release()
+    await h.done
+    expect(h.events().at(-1)).toMatchObject({ type: 'failed', reason: 'interrupted' })
+  })
+
+  it.prop([fc.anything().filter((m) => !(typeof m === 'object' && m !== null && 'type' in m))])(
+    'a message from the root it cannot read ends the session with failed protocol, and no query runs',
+    async (garbage) => {
+      const q = fakeQuery([result])
+      const h = harness(q.query)
+      h.deliver(garbage)
+      await h.done
+      expect(q.calls).toHaveLength(0)
+      expect(h.events()).toEqual([expect.objectContaining({ type: 'failed', reason: 'protocol' })])
+    },
+  )
+
+  it('a run message carrying a runToken is refused', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: { ...config(), runToken: 'tok_0123456789abcdef0123' } })
+    await h.done
+    expect(q.calls).toHaveLength(0)
+    expect(h.events()).toEqual([expect.objectContaining({ type: 'failed', reason: 'protocol' })])
+  })
+})
+
+describe('sessionEnv', () => {
+  const user = fc.record({
+    uid: fc.integer({ min: 1, max: 60000 }),
+    gid: fc.integer({ min: 1, max: 60000 }),
+    user: fc.stringMatching(/^s_[a-z0-9]{1,16}$/),
+    home: fc.stringMatching(/^\/home\/[a-z0-9_]{1,20}$/),
+    workDir: fc.stringMatching(/^\/work\/[a-z0-9_]{1,20}$/),
+  })
+  it.prop([user, fc.integer({ min: 1024, max: 65535 })])('holds only its listed variables, and the proxy URL has no credentials', (u, port) => {
+    const env = sessionEnv(u, port)
+    expect(Object.keys(env).sort()).toEqual(
+      [
+        'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'INHOUSE_PROXY_URL',
+        'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER',
+      ].sort(),
+    )
+    expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${port}/model`)
+    expect(new URL(env.INHOUSE_PROXY_URL!).username + new URL(env.INHOUSE_PROXY_URL!).password).toBe('')
+  })
+})
+
+describe('the production wiring', () => {
+  it('refuses to start without the real guards', () => {
+    expect(() => productionSessionUsers()).toThrow(GuardsMissingError)
+    expect(() => productionQueryGuards()).toThrow(GuardsMissingError)
+  })
+
+  it('refuses the test implementation even when it is handed over', () => {
+    expect(() => requireProduction(testSessionUsers(), 'SessionUsers')).toThrow(/test/)
+    expect(() => requireProduction(testQueryGuards, 'QueryGuards')).toThrow(/test/)
+    const real = { kind: 'production' as const }
+    expect(requireProduction(real, 'x')).toBe(real)
+  })
+})
+
+describe('imports', () => {
+  const files = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? files(join(dir, d.name)) : d.name.endsWith('.ts') ? [join(dir, d.name)] : []))
+  const src = fileURLToPath(new URL('../../src/', import.meta.url))
+
+  it('nothing in src/ imports from test/', () => {
+    for (const f of files(src)) expect(readFileSync(f, 'utf8'), f).not.toMatch(/from '[^']*\/test\//)
+  })
+
+  it('the root (main, server, proxy, protocol) loads the SDK for types only', () => {
+    const root = [join(src, 'main.ts'), ...files(join(src, 'server')), ...files(join(src, 'proxy')), ...files(join(src, 'protocol'))]
+    for (const f of root) {
+      const text = readFileSync(f, 'utf8')
+      expect(text, f).not.toMatch(/^import (?!type )[^\n]*'@anthropic-ai\/claude-agent-sdk'/m)
+      expect(text, f).not.toMatch(/import\(\s*'@anthropic-ai\/claude-agent-sdk'/)
+    }
+  })
+})
