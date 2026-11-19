@@ -73,7 +73,11 @@ export interface ContractTarget {
   }
   /** Let what is in flight arrive without moving the clock: microtasks flushed (the mock), delivery awaited (a server). Called before each `advance`. */
   settle(): Promise<void>
-  /** Move the client's clock on by `ms`: holds end, answers stream, timers fire. The tests never wait on real time. */
+  /**
+   * Move the client's clock on by `ms`: holds end, answers stream, timers fire. The tests never wait on real time. It
+   * resolves only once the effects of that time are delivered (state changed, listeners and notices told), so a test
+   * reads the result right after it without waiting again. A server target must await its delivery here too.
+   */
   advance(ms: number): Promise<void>
   /** Back to a first-run state: no writes, no saved runs, no pending holds, no failures armed. */
   reset(): Promise<void>
@@ -130,6 +134,8 @@ interface MockInternals {
   notify(n: AgentNotice): void
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
 /** The mock behind a Proxy that fails the armed methods the way a server's refusal would: after the change showed. */
 function injecting(mock: MockAgent, armed: Map<string, AgentErrorCode>): AgentClient {
   const inner = mock as unknown as MockInternals
@@ -147,18 +153,32 @@ function injecting(mock: MockAgent, armed: Map<string, AgentErrorCode>): AgentCl
         const timers = new Set(Object.keys(inner.holdTimers))
         const applied = method(...args) as Promise<unknown>
         const optimistic = inner.state
+        // What this call itself added: a write made later (an approve's hold timer, say) isn't in these and survives the refusal.
+        const addedCreated = [...inner.created].filter(id => !created.has(id))
+        const addedTimers = Object.keys(inner.holdTimers).filter(id => !timers.has(id))
         // What this call changed: the state keys it replaced. Only those are taken back, so a write made in between stays.
         const changed = (Object.keys(optimistic) as (keyof AgentState)[]).filter(k => optimistic[k] !== before[k])
         const refused = applied.then(async () => {
           // The server said no: take this change back (not the whole state), save what is left, tell the listeners and the person.
           const now = inner.state
           const kept: Record<string, unknown> = { ...now }
-          for (const k of changed) if (now[k] === optimistic[k]) kept[k] = before[k]
+          for (const k of changed) {
+            if (now[k] === optimistic[k]) { kept[k] = before[k]; continue }
+            // A concurrent write replaced the same record: take back only the entries this call changed.
+            const [was, mine, cur] = [before[k], optimistic[k], now[k]]
+            if (!isRecord(was) || !isRecord(mine) || !isRecord(cur)) continue
+            const entries: Record<string, unknown> = { ...cur }
+            for (const e of new Set([...Object.keys(was), ...Object.keys(mine)])) {
+              if (was[e] === mine[e] || cur[e] !== mine[e]) continue
+              if (e in was) entries[e] = was[e]; else delete entries[e]
+            }
+            kept[k] = entries
+          }
           // Nothing else changed meanwhile: the old state object itself comes back, so its identity does too.
           inner.state = now === optimistic ? before : (kept as unknown as AgentState)
           storage.set(MOCK_STORAGE_KEY, JSON.stringify(inner.state))
-          for (const id of [...inner.created]) if (!created.has(id)) inner.created.delete(id)
-          for (const id of Object.keys(inner.holdTimers)) if (!timers.has(id)) { clearTimeout(inner.holdTimers[id]); delete inner.holdTimers[id] }
+          for (const id of addedCreated) inner.created.delete(id)
+          for (const id of addedTimers) if (id in inner.holdTimers) { clearTimeout(inner.holdTimers[id]); delete inner.holdTimers[id] }
           inner.listeners.forEach(l => l())
           const text = `The server refused ${prop} (${code}).`
           inner.notify({ type: 'error', code, text })
