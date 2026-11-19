@@ -1,0 +1,202 @@
+// `sessionStoreFlush: 'eager'` against a hard kill (P0 S1's open item), with the real SDK and CLI against the scripted
+// model; no real model call. Ways it could fail, written first:
+// - with eager, the live turn (a tool call and its result, written before the CLI asks the model again) never reaches
+//   the store before the kill, so a resume loses it;
+// - the store holds a turn's entries out of order or twice, so the resume reads a broken transcript;
+// - a resume from the store in a fresh config dir (a new container) doesn't see the turn cut off by the kill.
+// The batched control shows the gap eager closes: killed at the same point, the store lacks the live turn.
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import http from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createScriptedModel, type MessagesRequest, type ScriptedModel } from '../../../test/scripted-model/index.ts'
+import { PROXY_URL, fakeEgress, type FakeEgress } from '../run/support/fake-egress.ts'
+
+const runner = fileURLToPath(new URL('../../', import.meta.url))
+const SESSION_ID = '0d6c1f8e-4b2a-4c1e-9a77-5e2b3c4d5e6f'
+const GLOB_ID = 'toolu_scripted_glob'
+
+let bundle: string
+let tmp: string[] = []
+const temp = (p: string) => {
+  const d = mkdtempSync(join(tmpdir(), p))
+  tmp.push(d)
+  return d
+}
+
+beforeAll(() => {
+  // Inside the runner, so the external SDK resolves from its node_modules.
+  const out = mkdtempSync(join(runner, 'node_modules', '.eager-test-'))
+  tmp.push(out)
+  bundle = join(out, 'eager-session.mjs')
+  execFileSync(
+    join(runner, 'node_modules/.bin/esbuild'),
+    ['test/store/fixtures/eager-session.ts', '--bundle', '--platform=node', '--format=esm', `--outfile=${bundle}`, '--external:@anthropic-ai/claude-agent-sdk', '--alias:zod=./node_modules/zod/index.js', '--log-level=warning'],
+    { cwd: runner, stdio: 'pipe' },
+  )
+})
+afterAll(() => {
+  for (const d of tmp) rmSync(d, { recursive: true, force: true })
+  tmp = []
+})
+
+/** Serves a `fetch`-shaped handler on loopback. */
+async function serve(handle: (req: Request) => Promise<Response>): Promise<{ url: string; close: () => void }> {
+  const server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = []
+    for await (const c of req) chunks.push(c as Buffer)
+    const r = await handle(new Request(`http://local${req.url}`, { method: req.method, headers: req.headers as Record<string, string>, body: req.method === 'GET' ? undefined : Buffer.concat(chunks) }))
+    res.writeHead(r.status, Object.fromEntries(r.headers))
+    res.end(Buffer.from(await r.arrayBuffer()))
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => server.closeAllConnections() }
+}
+
+const storeServer = (egress: FakeEgress) =>
+  serve(async (req) => egress.fetch(`${PROXY_URL}${new URL(req.url).pathname}`, { method: req.method, headers: { 'content-type': 'application/json' }, body: await req.text() }))
+
+type Run = { child: ChildProcess; out: () => Promise<string>; exited: Promise<number | null>; stderr: () => string }
+
+function startSession(o: { storeUrl: string; modelUrl: string; flush: string; prompt: string; resume: boolean; work: string; configDir: string }): Run {
+  const child = spawn(process.execPath, [bundle], {
+    cwd: o.work,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      PATH: process.env.PATH!,
+      HOME: o.work,
+      CLAUDE_CONFIG_DIR: o.configDir,
+      ANTHROPIC_BASE_URL: `${o.modelUrl}/model`,
+      ANTHROPIC_API_KEY: 'scripted-model-takes-no-key',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+      DISABLE_AUTOUPDATER: '1',
+      STORE_URL: o.storeUrl,
+      FLUSH: o.flush,
+      PROMPT: o.prompt,
+      SESSION_ID,
+      RESUME: o.resume ? '1' : '0',
+      WORK_DIR: o.work,
+    },
+  })
+  let out = ''
+  let err = ''
+  child.stdout!.on('data', (d: Buffer) => (out += d.toString('utf8')))
+  child.stderr!.on('data', (d: Buffer) => (err += d.toString('utf8')))
+  const exited = new Promise<number | null>((r) => child.on('close', (code) => r(code)))
+  return { child, exited, stderr: () => err, out: () => exited.then(() => (out === '' ? Promise.reject(new Error(`no output; stderr: ${err.slice(-2000)}`)) : out)) }
+}
+
+async function until(cond: () => boolean, what: string, ms = 60_000) {
+  const deadline = Date.now() + ms
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`${what}: not met in ${ms} ms`)
+    await new Promise((r) => setImmediate(r))
+  }
+}
+
+/** The session's main transcript as the store holds it, in part order. */
+const stored = (egress: FakeEgress) =>
+  [...egress.parts.keys()]
+    .map((k) => JSON.parse(k) as [string, string, string | null])
+    .filter(([, s, sub]) => s === SESSION_ID && sub === null)
+    .flatMap(([p, s]) => egress.entries({ projectKey: p, sessionId: s })) as { type?: string; uuid?: string; message?: { content?: unknown } }[]
+
+/** Where the live turn's two entries sit in the stored transcript: the tool call, then its result (-1 when missing). */
+function liveTurn(egress: FakeEgress) {
+  const entries = stored(egress).map((e) => JSON.stringify(e.message?.content ?? null))
+  return { call: entries.findIndex((c) => c.includes(`"id":"${GLOB_ID}"`)), result: entries.findIndex((c) => c.includes(`"tool_use_id":"${GLOB_ID}"`)) }
+}
+
+/**
+ * Turn 0 makes a tool call; the CLI answers it with a tool result (an error result: Glob isn't in this CLI's tool set,
+ * which doesn't matter here) and asks for turn 1, which is held until the test kills the session.
+ */
+function cutScenario(held: Promise<void>): ScriptedModel {
+  return createScriptedModel({
+    cut: {
+      turns: [
+        { content: [{ type: 'text', text: 'Looking.' }, { type: 'tool_use', id: GLOB_ID, name: 'Glob', input: { pattern: '*' } }] },
+        { content: [{ type: 'text', text: 'never sent' }], hold: () => held },
+      ],
+    },
+  })
+}
+
+const hasToolResult = (r: MessagesRequest) => JSON.stringify(r.messages).includes(`"tool_use_id":"${GLOB_ID}"`)
+
+async function killMidTurn(flush: 'eager' | 'batched', waitForStore: boolean) {
+  const egress = fakeEgress()
+  let release!: () => void
+  const held = new Promise<void>((r) => (release = r))
+  const model = cutScenario(held)
+  const store = await storeServer(egress)
+  const modelServer = await serve((req) => model.handle(req, 'cut'))
+  const work = temp('eager-work-')
+  const configDir = temp('eager-cfg-')
+  const run = startSession({ storeUrl: store.url, modelUrl: modelServer.url, flush, prompt: 'list the files', resume: false, work, configDir })
+  try {
+    // The CLI ran the tool and is waiting on the model for turn 1: the live turn is on its local disk.
+    await until(() => model.log.some((l) => l.turn === 1), 'the CLI to reach turn 1')
+    // The CLI writes the tool result before it asks for turn 1, and eager mirrors each entry as it's written, so with
+    // eager the store gets the whole live turn while the CLI waits. Batched holds it until the turn ends, never here.
+    if (waitForStore) await until(() => liveTurn(egress).result >= 0, 'the store to hold the live turn (eager)', 20_000)
+    process.kill(-run.child.pid!, 'SIGKILL')
+    await run.exited
+    return { egress, model, store, modelServer, work, release }
+  } catch (e) {
+    process.kill(-run.child.pid!, 'SIGKILL')
+    throw e
+  }
+}
+
+describe("sessionStoreFlush: 'eager' against a hard kill", () => {
+  it('the live turn reaches the store before the kill, in order, once; a fresh container resumes it from the store', async () => {
+    const k = await killMidTurn('eager', true)
+    try {
+      expect(k.model.misses).toEqual([])
+      const turn = liveTurn(k.egress)
+      expect(turn.call).toBeGreaterThanOrEqual(0)
+      expect(turn.result).toBeGreaterThan(turn.call)
+      const uuids = stored(k.egress).flatMap((e) => (typeof e.uuid === 'string' ? [e.uuid] : []))
+      expect(new Set(uuids).size).toBe(uuids.length)
+
+      // A new container: an empty config dir; the store is all there is.
+      const resumeModel = createScriptedModel({
+        // Turn 2: the resumed transcript holds the cut turn's assistant message, then the one the CLI adds on resume
+        // for the turn that never got its answer ("No response requested.").
+        resume: { turns: [null, null, { content: [{ type: 'text', text: 'resumed from the store' }], expect: hasToolResult }] },
+      })
+      const m2 = await serve((req) => resumeModel.handle(req, 'resume'))
+      try {
+        const run = startSession({ storeUrl: k.store.url, modelUrl: m2.url, flush: 'eager', prompt: 'go on', resume: true, work: k.work, configDir: temp('eager-cfg2-') })
+        const line = JSON.parse((await run.out()).trim().split('\n').at(-1)!) as { result: string; checkpoint: { ok: boolean } }
+        expect(resumeModel.misses).toEqual([])
+        expect(line).toMatchObject({ result: 'resumed from the store', checkpoint: { ok: true } })
+      } finally {
+        m2.close()
+      }
+    } finally {
+      k.release()
+      k.store.close()
+      k.modelServer.close()
+    }
+  }, 120_000)
+
+  it('the batched control: killed at the same point, the store lacks the live turn', async () => {
+    const k = await killMidTurn('batched', false)
+    try {
+      expect(k.model.misses).toEqual([])
+      expect(liveTurn(k.egress).result).toBe(-1)
+    } finally {
+      k.release()
+      k.store.close()
+      k.modelServer.close()
+    }
+  }, 120_000)
+})

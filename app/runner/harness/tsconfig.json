@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "lib": ["es2024"],
+    "types": ["./worker-configuration.d.ts"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    // As in the runner: app/shared/protocol has no node_modules of its own.
+    "paths": { "zod": ["./node_modules/zod/index.d.ts"] }
+  },
+  "include": ["src", "worker-configuration.d.ts"]
+}
