@@ -4,8 +4,9 @@ import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState 
 import { agent } from '../agent'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
-import { chatMessages, fmtSeconds, listNames, readingTools, toolDetail } from '../state/derive'
-import { fmtTime } from '../agent/clock'
+import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'
+import { fmtDuration, fmtTime } from '../lib/format'
+import { display } from '../state/display'
 import { cn } from '@/lib/utils'
 import { isStoppedNote, openChatKey, openRun, useCtx, useUi } from '../state/store'
 import type { QueuedMsg } from '../state/store'
@@ -277,7 +278,7 @@ function Thread() {
     const failed = m.part.type === 'error'
     // Mode, step count, time taken and when it answered, as far as they're known.
     const modelLabel = m.model ? ctx.data.models.find(x => x.id === m.model)?.label : undefined
-    const stepsLine = tr ? [modelLabel, `${tr.steps.length - 1} steps`, fmtSeconds(tr.duration), m.at === undefined ? undefined : fmtTime(new Date(m.at))].filter(Boolean).join(' · ') : ''
+    const stepsLine = tr ? [modelLabel, `${tr.steps.length - 1} steps`, fmtDuration(tr.durationMs, display()), m.at === undefined ? undefined : fmtTime(m.at, display())].filter(Boolean).join(' · ') : ''
     const steps = tr && (
       <Tooltip>
         <TooltipTrigger asChild>

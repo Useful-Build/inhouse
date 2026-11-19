@@ -1,6 +1,6 @@
 // The Library: every file the agent made or the team shared.
 import { z } from 'zod'
-import { PairSchema } from './common.ts'
+import { DurationMsSchema, InstantSchema, PairSchema } from './common.ts'
 
 export const LibraryKindSchema = z.enum(['images', 'documents', 'code', 'media', 'other'])
 export type LibraryKind = z.infer<typeof LibraryKindSchema>
@@ -41,10 +41,8 @@ export const LibraryFileSchema = z.object({
   /** True when the agent made the file, false when a person uploaded it. Decides "Made by" or "Uploaded by". */
   madeByAgent: z.boolean(),
   size: z.string(),
-  /** Shown. It carries no year on purpose. */
-  date: z.string(),
-  /** Sort key, newest last when ascending. */
-  at: z.string(),
+  /** When it was made or uploaded: shown, and what the date sorts follow. */
+  at: InstantSchema,
   /** Images: the picture and its width/height ratio. */
   src: z.string().optional(),
   ratio: z.string().optional(),
@@ -55,7 +53,8 @@ export const LibraryFileSchema = z.object({
   /** Code and text files: the contents. */
   text: z.string().optional(),
   media: z.enum(['audio', 'video']).optional(),
-  duration: z.string().optional(),
+  /** Audio and video: how long it plays. */
+  durationMs: DurationMsSchema.optional(),
   poster: z.string().optional(),
   /** ZIP: what is inside. */
   entries: z.array(z.string()).optional(),

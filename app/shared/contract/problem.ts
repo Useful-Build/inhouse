@@ -1,6 +1,6 @@
 // A problem the agent found, and the fix it drafted.
 import { z } from 'zod'
-import { PairSchema } from './common.ts'
+import { InstantSchema, MoneySchema, PairSchema } from './common.ts'
 
 export const ProblemSourceSchema = z.object({ n: z.string(), logo: z.string().optional(), icon: z.string().optional(), name: z.string(), text: z.string() })
 export type ProblemSource = z.infer<typeof ProblemSourceSchema>
@@ -31,12 +31,15 @@ export const ProblemSchema = z.object({
   title: z.string(),
   sub: z.string(),
   logos: z.array(z.string()),
-  cost: z.string(),
+  /** The money at stake, shown on the card ("$1,190"). */
+  cost: MoneySchema,
   costNote: z.string(),
   next: z.string(),
   review: z.string().optional(),
   /** Run: what Inhouse agent did by itself. Present means handled in Run. */
   done: z.string().optional(),
+  /** When it did it: the time `done` tells. Present with `done`. */
+  doneAt: InstantSchema.optional(),
   doneText: z.string(),
   /** What waits for a person in Run. */
   wait: z.string().optional(),
@@ -49,9 +52,7 @@ export const ProblemSchema = z.object({
   found: z.array(PairSchema),
   sources: z.array(ProblemSourceSchema),
   draft: DraftSchema,
-  /** When the agent made this problem's draft, as shown (Activity, Approvals). Never sort on it: use `draftedMin`. */
-  draftedAt: z.string(),
-  /** The same time as minutes since midnight: what Approvals sorts by. */
-  draftedMin: z.number(),
+  /** When the agent made this problem's draft (Activity, Approvals): what Approvals sorts by. */
+  draftedAt: InstantSchema,
 })
 export type Problem = z.infer<typeof ProblemSchema>

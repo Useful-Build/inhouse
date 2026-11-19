@@ -2,7 +2,7 @@
 // agent client both implement AgentClient, so swapping touches one module.
 // Every value and event AgentClient returns is a zod schema in shared/contract; the types here are inferred from those
 // schemas, so each is defined once. What stays here: the client interface, its inputs, the error class and constants.
-import type { Stage, StageIndex, Scenario, Effort, AgentErrorCode } from '../../shared/contract/common'
+import type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, Instant } from '../../shared/contract/common'
 import type { RoutineRun } from '../../shared/contract/routine'
 import type { Trace } from '../../shared/contract/trace'
 import type { ModelMode } from '../../shared/contract/model'
@@ -13,7 +13,7 @@ import type { ApproveResult, TeamRequest, SetAsideReason, AgentState } from '../
 import type { AgentNotice, AgentNotification } from '../../shared/contract/notice'
 import type { AgentData } from '../../shared/contract/data'
 
-export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode } from '../../shared/contract/common'
+export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, Instant, Money, ClockTime } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
 export type { ProblemSource, Draft, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolsData } from '../../shared/contract/tools'
@@ -120,8 +120,8 @@ export interface AgentClient {
   getTrace(id: string): Trace | null
 
   // Pause and resume
-  /** Resolves to when it was paused, as shown. */
-  pause(): Promise<string>
+  /** Resolves to when it was paused. */
+  pause(): Promise<Instant>
   resume(): Promise<void>
 
   // plain reads and writes

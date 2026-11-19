@@ -1,8 +1,12 @@
-// The demo's one clock and its formats (D5 in docs/history/UI_PLAN_2.md). Pure functions, no React.
+// The demo's one clock (D5 in docs/history/UI_PLAN_2.md) and a few text helpers. Pure functions, no React. Formatting
+// lives in src/lib/format.ts.
 // The demo runs on Monday, November 16, 2026 from 8:00 AM in the device's local time (the time zone in Settings is a
 // label; it doesn't move this clock), moving on with real time while it is open and stopping at
 // 11:59 AM so the morning stays a morning. Everything a person does is stamped on this clock, never the computer's own
-// time. Holds and timers keep using real epoch ms. US formats: "8:03 AM", "Nov 16", "Mon, Nov 16".
+// time. Holds and timers keep using real epoch ms.
+
+import type { ClockTime, Instant } from '../../shared/contract/common'
+import { instantOf } from '../lib/format'
 
 /** Monday, November 16, 2026, 8:00 AM, in the device's local time. */
 export const DEMO_START = new Date(2026, 10, 16, 8, 0, 0, 0)
@@ -13,25 +17,7 @@ export const DEMO_LATEST = new Date(2026, 10, 16, 11, 59, 0, 0)
 export const demoNow = (startedAt: number, now: number = Date.now()): Date =>
   new Date(Math.min(DEMO_START.getTime() + Math.max(0, now - startedAt), DEMO_LATEST.getTime()))
 
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-
-/** "8:03 AM", with a no-break space so a time never wraps between the digits and AM or PM. Built by hand:
- *  `toLocaleTimeString` puts a narrow no-break space there in current browsers. */
-export const fmtTime = (d: Date): string => {
-  const h = d.getHours()
-  return `${h % 12 === 0 ? 12 : h % 12}:${String(d.getMinutes()).padStart(2, '0')}\u00a0${h < 12 ? 'AM' : 'PM'}`
-}
-/** A count as shown: US thousands separators ("1,314"). Every number over 999 on screen goes through it. */
-export const fmtCount = (n: number): string => n.toLocaleString('en-US')
-/** "Nov 16" */
-export const fmtDay = (d: Date): string => `${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}`
-/** "Mon, Nov 16" */
-export const fmtWeekday = (d: Date): string => `${WEEKDAYS[d.getDay()].slice(0, 3)}, ${fmtDay(d)}`
-/** Minutes since midnight: the sortable value that goes next to a displayed time. Nothing sorts on a display string. */
-export const minuteOf = (d: Date): number => d.getHours() * 60 + d.getMinutes()
-
-/** A shown time ("6:04 AM", as `fmtTime` writes it) found in a text. */
+/** A shown time ("6:04 AM", as `fmtTime` in format.ts writes it) found in a text. */
 export const TIME_RE = /\b(1[0-2]|[1-9]):([0-5]\d)[ \u00a0](AM|PM)\b/
 
 /** Text leaving the screen (a copy, a CSV, a search): no-break spaces become plain ones, so "6:04 AM" typed or pasted matches. */
@@ -54,9 +40,35 @@ export const minuteOfTime = (text: string): number => {
   return (Number(m[1]) % 12 + (m[3] === 'PM' ? 12 : 0)) * 60 + Number(m[2])
 }
 
-/** A local date and time as the sample data writes it ("2026-11-16T06:08"). Throws on anything else. */
-export const parseLocal = (iso: string): Date => {
-  const m = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d)$/.exec(iso)
-  if (!m) throw new Error(`Not a local date and time like 2026-11-16T06:08: "${iso}"`)
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]))
+/** A sample instant as the sample data writes it: days from the demo's Monday and a local time ("0d 07:42" today,
+ *  "-1d 16:40" Sunday, "+4d 09:00" Friday). Local, so it reads the same in every time zone. Throws on anything else. */
+export const demoAt = (rel: string): Instant => {
+  const m = /^([+-]?\d+)d (\d\d):(\d\d)$/.exec(rel)
+  if (!m || Number(m[2]) > 23 || Number(m[3]) > 59) throw new Error(`Not a sample time like "-1d 16:40": "${rel}"`)
+  return instantOf(new Date(DEMO_START.getFullYear(), DEMO_START.getMonth(), DEMO_START.getDate() + Number(m[1]), Number(m[2]), Number(m[3])).getTime())
+}
+/** The demo's Monday at a minute since midnight: how a time stored before C1 ("8:03 AM", minute 483) becomes an instant. */
+export const demoDayAt = (minute: number): Instant =>
+  instantOf(new Date(DEMO_START.getFullYear(), DEMO_START.getMonth(), DEMO_START.getDate(), 0, minute).getTime())
+
+// ---------- times saved as they showed, before C1 ----------
+
+/** A time saved as it showed ("8:03 AM"), on the day of `base` in the device's local time. Null when it isn't one. */
+export const shownTimeOn = (text: string, base: Date): Instant | null => {
+  const m = TIME_RE.exec(text)
+  if (!m) return null
+  return instantOf(new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, minuteOfTime(m[0])).getTime())
+}
+/** A schedule time saved as it showed ("7:00 AM"). Null when it isn't one. */
+export const shownClock = (text: string): ClockTime | null => {
+  if (!TIME_RE.test(text)) return null
+  const min = minuteOfTime(text)
+  return { hour: Math.floor(min / 60), minute: min % 60 }
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** A date and time saved as it showed ("Next run Mon, Nov 23 at 7:00 AM"), in the year of `base`. Null when it isn't one. */
+export const shownDateTimeIn = (text: string, base: Date): Instant | null => {
+  const m = /\b([A-Z][a-z]{2}) (\d{1,2}) at (.+)$/.exec(text)
+  if (!m || !MONTHS.includes(m[1]) || !TIME_RE.test(m[3])) return null
+  return instantOf(new Date(base.getFullYear(), MONTHS.indexOf(m[1]), Number(m[2]), 0, minuteOfTime(m[3])).getTime())
 }

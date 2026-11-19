@@ -29,7 +29,7 @@
         "shopify",
         "shipbob"
       ],
-      "cost": "$1,190",
+      "cost": { "minor": 119000, "currency": "USD" },
       "costNote": "in orders at risk",
       "next": "pause the variant, then email 5 customers",
       "review": "Customers involved",
@@ -113,7 +113,7 @@
       "logos": [
         "shopify"
       ],
-      "cost": "$8,400",
+      "cost": { "minor": 840000, "currency": "USD" },
       "costNote": "in sales at risk",
       "next": "reorder 600 from Kestrel Supply today",
       "isDraft": true,
@@ -194,7 +194,7 @@
         "amazon",
         "xero"
       ],
-      "cost": "$1,240",
+      "cost": { "minor": 124000, "currency": "USD" },
       "costNote": "missing from the payout",
       "next": "open a reimbursement case for 18 orders",
       "review": "18 orders to check",
@@ -266,7 +266,7 @@
       "title": "PO-1187 from Kestrel is 6 days late",
       "sub": "420 Summit Fleece, promised for Nov 10.",
       "logos": [],
-      "cost": "$5,100",
+      "cost": { "minor": 510000, "currency": "USD" },
       "costNote": "of stock on order",
       "next": "ask Kestrel for a new ship date",
       "isDraft": true,
@@ -338,7 +338,7 @@
         "shipbob",
         "shopify"
       ],
-      "cost": "$1,030",
+      "cost": { "minor": 103000, "currency": "USD" },
       "costNote": "of stock you can't sell",
       "next": "restock the 11 units on Shopify",
       "isDraft": true,
@@ -403,7 +403,7 @@
         "shopify",
         "shipbob"
       ],
-      "cost": "$312",
+      "cost": { "minor": 31200, "currency": "USD" },
       "costNote": "order value",
       "next": "ask ShipBob why it hasn't shipped",
       "isDraft": true,

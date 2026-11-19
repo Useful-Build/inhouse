@@ -6,14 +6,16 @@ import {
   problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
+import { sampleAt } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
-  AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, AskOptions, Attachment, ChatThread, DemoContext,
-  LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, RunEvent, Scenario, SeedTurn, SendPriority, SetAsideReason, SetAsideRecord,
+  AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, AskOptions, Attachment, ChatThread, ClockTime, DemoContext,
+  Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, RunEvent, Scenario, SeedTurn, SendPriority, SetAsideReason, SetAsideRecord,
   SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, Trace, UsageData,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, photoKey, stageIndex } from './types'
-import { demoNow, fmtTime, fmtWeekday, minuteOf, parseLocal } from './clock'
+import { DEMO_START, demoDayAt, demoNow, shownClock, shownDateTimeIn, shownTimeOn } from './clock'
+import { instantOf } from '../lib/format'
 import { listNames, pendingIds, visibleProblems } from '../state/derive'
 
 /**
@@ -36,7 +38,8 @@ export const dataOverrideActive = !!override.brandName || override.channels === 
 const meta = override.brandName ? { ...sampleMeta, brand: { ...sampleMeta.brand, name: override.brandName } } : sampleMeta
 const tools = override.channels === false ? { ...sampleTools, channels: [] } : sampleTools
 
-/** v2: times are on the demo clock ("8:03 AM" with a sortable minute) and records carry who did it. v1 is dropped. */
+/** v2: times are on the demo clock and records carry who did it. v1 is dropped. Before C1 (P1) a time was saved as it
+ *  showed ("8:03 AM", with a sortable minute); `sanitize` turns those into instants, so the key doesn't change. */
 const STORAGE_KEY = 'inhouse.demo.v2'
 /** Run id to what the run replayed and made, so a saved answer's steps open after a reload and Regenerate updates in place. */
 const RUNS_KEY = 'inhouse.demo.runs.v1'
@@ -85,12 +88,12 @@ const seedPart = (a: Record<string, unknown>): MessagePart => {
   switch (a.type) {
     case 'text': return { type: 'text', text: a.text as string }
     case 'table': return { type: 'table', table: seedTable }
-    case 'workRow': return { type: 'workRow', text: a.text as string, time: a.time as string }
+    case 'workRow': return { type: 'workRow', text: a.text as string, at: sampleAt('a work row', a.at) }
     case 'notInThisStage': return { type: 'notInThisStage', text: a.text as string }
     case 'approval': return { type: 'approval', problemId: a.problemId as string }
     case 'routine':
       // The routine this chat set up: it is on the Routines page under its own name (routines.json).
-      return { type: 'routine', routine: { id: routineIdOf(seedRoutine.name), name: seedRoutine.name, freq: seedRoutine.freq, day: seedRoutine.day, time: seedRoutine.time, next: a.next as string, note: a.note as string } }
+      return { type: 'routine', routine: { id: routineIdOf(seedRoutine.name), name: seedRoutine.name, freq: seedRoutine.freq, day: seedRoutine.day, time: seedRoutine.time, next: sampleAt('the seed routine card', a.next), note: a.note as string } }
     default: throw new Error(`Unknown seed part type: ${String(a.type)}`)
   }
 }
@@ -104,16 +107,16 @@ const seedThread: SeedTurn[] = (chatScript.seedThread.turns as RawTurn[]).map((t
 const chatPart = (a: Record<string, unknown>): MessagePart => {
   switch (a.type) {
     case 'text': return { type: 'text', text: a.text as string }
-    case 'workRow': return { type: 'workRow', text: a.text as string, time: a.time as string }
+    case 'workRow': return { type: 'workRow', text: a.text as string, at: sampleAt('a work row', a.at) }
     case 'table': return { type: 'table', table: a.table as TablePart }
     default: throw new Error(`Unknown chat part type: ${String(a.type)}`)
   }
 }
 const STAGES_OK = ['Watch', 'Act', 'Run']
-/** The chats, newest first by `iso`; an agent turn with a `stage` shows only in that stage. Bad data stops the app. */
+/** The chats, newest first by `at`; an agent turn with a `stage` shows only in that stage. Bad data stops the app. */
 function loadChats(): ChatThread[] {
   const out = chatList.chats.map((c): ChatThread => ({
-    id: c.id, title: c.title, day: c.day, at: c.at, iso: c.iso,
+    id: c.id, title: c.title, at: sampleAt(`the chat "${c.id}"`, c.at),
     turns: c.turns === 'seedThread' ? seedThread : (c.turns as RawTurn[]).map((turn): SeedTurn => {
       if (turn.user) return { role: 'user', text: turn.user }
       if (turn.stage !== undefined && !STAGES_OK.includes(turn.stage)) throw new Error(`Sample data: chat "${c.id}" has a turn for an unknown stage "${turn.stage}".`)
@@ -122,8 +125,7 @@ function loadChats(): ChatThread[] {
   }))
   // All chats lists them in this order, so it must be newest first by a real time (never by the shown `at`).
   out.forEach((c, i) => {
-    const t = parseLocal(c.iso).getTime()
-    if (i > 0 && t > parseLocal(out[i - 1].iso).getTime()) throw new Error(`Sample data: chat "${c.id}" is newer than "${out[i - 1].id}", so the chats aren't newest first.`)
+    if (i > 0 && c.at.ms > out[i - 1].at.ms) throw new Error(`Sample data: chat "${c.id}" is newer than "${out[i - 1].id}", so the chats aren't newest first.`)
   })
   return out
 }
@@ -132,9 +134,9 @@ const chats = loadChats()
 for (const t of [...chatScript.scripted.map(x => x.trace), chatScript.fallback.trace, chatScript.firstDayTrace, chatScript.loadingTrace, 'generic', 'stuck', 'query', 'morning', 'draft']) traceKey(t)
 
 /** When each draft was made: the time on its file in the Library's Approvals place. Every problem needs one. */
-function draftTimes(): Record<string, Date> {
-  const out: Record<string, Date> = {}
-  for (const f of library.files) if (f.link?.to === 'approval') out[f.link.id] = parseLocal(f.at)
+function draftTimes(): Record<string, Instant> {
+  const out: Record<string, Instant> = {}
+  for (const f of library.files) if (f.link?.to === 'approval') out[f.link.id] = f.at
   for (const p of problems) if (!out[p.id]) throw new Error(`Sample data: no draft file with a time for problem "${p.id}".`)
   return out
 }
@@ -159,7 +161,7 @@ const DRAFT_TRACE = 'draft:'
 const DATA: AgentData = {
   status: 'ready',
   meta,
-  problems: problems.map(p => ({ ...p, trace: `${DRAFT_TRACE}${p.id}`, draftedAt: fmtTime(DRAFT_TIMES[p.id]), draftedMin: minuteOf(DRAFT_TIMES[p.id]) })),
+  problems: problems.map(p => ({ ...p, trace: `${DRAFT_TRACE}${p.id}`, draftedAt: DRAFT_TIMES[p.id] })),
   tools,
   routines: routineDefs(),
   skills,
@@ -175,7 +177,7 @@ const DATA: AgentData = {
   scenarios: {
     firstDay: { setup: scenarios['First day'].today.setup as [string, string][] },
     loading: { readDone: scenarios.Loading.today.readDone },
-    toolDisconnected: { tool: scenarios['Tool disconnected'].tool, at: scenarios['Tool disconnected'].at },
+    toolDisconnected: { tool: scenarios['Tool disconnected'].tool, at: sampleAt('the Tool disconnected scenario', scenarios['Tool disconnected'].at) },
   },
   models,
   defaultModel,
@@ -186,7 +188,7 @@ const DATA: AgentData = {
 
 /** A month with nothing spent: what a brand has before its agent has run. */
 const noUsage = (u: UsageData): UsageData => ({
-  ...u, total: 0, conversations: 0, questionsAsked: 0, jobsRun: 0, daily: u.daily.map(() => 0),
+  ...u, total: { ...u.total, minor: 0 }, conversations: 0, questionsAsked: 0, jobsRun: 0, daily: u.daily.map(d => ({ ...d, minor: 0 })),
   breakdown: { person: [], job: [], model: [], tool: [] },
 })
 /** Nothing found or done yet: no problems, chats, Activity lines, audit lines or usage. */
@@ -242,7 +244,7 @@ const linkOf = (opens: string): AgentNotification['link'] => {
 }
 /** A notification's id from what it says, so changed content arrives unread. */
 const noticeId = (text: string) => 'n-' + text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48)
-type RawNotification = { text: string | Record<string, string>; who: string; when: string; unread: boolean; opens: string | Record<string, string> }
+type RawNotification = { text: string | Record<string, string>; who: string; at: string; unread: boolean; opens: string | Record<string, string> }
 
 // ---------- saved state: keep only known shapes ----------
 
@@ -260,28 +262,70 @@ const SET_ASIDE: SetAsideReason[] = ['snoozed', 'dismissed', 'declined']
 /** The id for the next routine created in a chat: one past the highest so far. Deleted ones stay in `routinesExtra`, so ids never repeat. */
 const nextChatRoutineId = (extra: RoutineCard[]) =>
   `routine-chat-${extra.reduce((m, r) => Math.max(m, Number(/^routine-chat-(\d+)$/.exec(r.id)?.[1] ?? 0)), 0) + 1}`
-const isStamp = (x: unknown): x is StampRecord => isRec(x) && str(x.at) && str(x.by) && !!x.by.trim() && typeof x.atMin === 'number'
+const isInstant = (x: unknown): x is Instant => isRec(x) && str(x.iso) && typeof x.ms === 'number' && Date.parse(x.iso) === x.ms
+
+// ---------- a state saved before C1: times as they showed ("8:03 AM" with a minute), amounts and dates as text ----------
+
+/** When, from a record saved now (`at` an instant) or before C1 (`at` shown, `atMin` its minute on the demo's Monday). */
+const savedAt = (r: Rec): Instant | null => (isInstant(r.at) ? r.at : str(r.at) && typeof r.atMin === 'number' ? demoDayAt(r.atMin) : null)
+/** The real time of a record saved now (`loggedAt`) or before C1 (`ms`). */
+const savedLoggedAt = (r: Rec): Instant | null => (isInstant(r.loggedAt) ? r.loggedAt : typeof r.ms === 'number' && Number.isFinite(r.ms) ? instantOf(r.ms) : null)
+/** A pause saved now (an instant) or before C1 ("8:03 AM"). */
+const savedPause = (v: unknown): Instant | null => (isInstant(v) ? v : str(v) ? shownTimeOn(v, DEMO_START) : null)
+/** A routine card's time saved now or before C1 ("7:00 AM"). */
+const savedClock = (v: unknown): ClockTime | null => {
+  if (isRec(v) && Number.isInteger(v.hour) && Number.isInteger(v.minute) && (v.hour as number) >= 0 && (v.hour as number) < 24 && (v.minute as number) >= 0 && (v.minute as number) < 60) return { hour: v.hour as number, minute: v.minute as number }
+  return str(v) ? shownClock(v) : null
+}
+/** A routine card's next run saved now or before C1 ("Next run Mon, Nov 23 at 7:00 AM", in the demo's year). */
+const savedNext = (v: unknown): Instant | null => (isInstant(v) ? v : str(v) ? shownDateTimeIn(v, DEMO_START) : null)
+/** A routine made in a chat, saved now or before C1. */
+const savedRoutine = (r: unknown): RoutineCard | null => {
+  if (!hasStrs(r, ['id', 'name', 'freq', 'day', 'note', 'what'])) return null
+  const time = savedClock(r.time), next = savedNext(r.next)
+  return time && next ? { id: r.id as string, name: r.name as string, freq: r.freq as string, day: r.day as string, time, next, note: r.note as string, what: r.what as string } : null
+}
+/** A request to the Inhouse team, saved now or before C1 ("New tool · sent by Sam, just now", sent in that session: now). */
+const savedRequest = (r: unknown, now: Instant): TeamRequest | null => {
+  if (!hasStrs(r, ['icon', 'title', 'sub', 'status'])) return null
+  const base = { icon: r.icon as string, title: r.title as string, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}) }
+  if (isInstant(r.at)) return { ...base, sub: r.sub as string, at: r.at }
+  return { ...base, sub: (r.sub as string).replace(/, just now$/, ''), at: now }
+}
+/** A stamp (when and who), saved now or before C1. */
+const savedStamp = (x: unknown): StampRecord | null => {
+  if (!isRec(x) || !str(x.by) || !x.by.trim()) return null
+  const at = savedAt(x)
+  return at ? { at, by: x.by } : null
+}
+/** The entries of a saved record that `conv` keeps. */
+const recConv = <T,>(v: unknown, conv: (x: unknown) => T | null): Record<string, T> =>
+  isRec(v) ? Object.fromEntries(Object.entries(v).flatMap(([k, x]) => { const c = conv(x); return c === null ? [] : [[k, c]] })) : {}
 
 const sanitize = (raw: unknown): AgentState => {
   const init = initialState()
   if (!isRec(raw)) return init
+  const demoStartedAt = typeof raw.demoStartedAt === 'number' && Number.isFinite(raw.demoStartedAt) ? raw.demoStartedAt : init.demoStartedAt
   const approved: AgentState['approved'] = {}
   for (const [id, r] of Object.entries(isRec(raw.approved) ? raw.approved : {})) {
-    if (!hasStrs(r, ['at', 'by', 'title', 'doneText']) || !(r.by as string).trim() || typeof r.ms !== 'number' || typeof r.atMin !== 'number') continue
-    approved[id] = { at: r.at as string, atMin: r.atMin, by: r.by as string, ms: r.ms, title: r.title as string, doneText: r.doneText as string, partial: r.partial === true }
+    if (!hasStrs(r, ['by', 'title', 'doneText']) || !(r.by as string).trim()) continue
+    const at = savedAt(r), loggedAt = savedLoggedAt(r)
+    if (!at || !loggedAt) continue
+    approved[id] = { at, by: r.by as string, loggedAt, title: r.title as string, doneText: r.doneText as string, partial: r.partial === true }
   }
   const routinesExtra = (isArr(raw.routinesExtra) ? raw.routinesExtra : [])
-    .filter((r): r is RoutineCard => hasStrs(r, ['id', 'name', 'freq', 'day', 'time', 'next', 'note', 'what']))
+    .map(savedRoutine).filter((r): r is RoutineCard => r !== null)
     // An id twice keeps the first.
     .filter((r, i, all) => all.findIndex(x => x.id === r.id) === i)
   // Routine entries and runs that name no routine are dropped.
   const known = (id: string) => DATA.routines.some(r => r.id === id) || routinesExtra.some(r => r.id === id)
+  const now = instantOf(demoNow(demoStartedAt).getTime())
   return {
     approved,
     sent: flagsOf(raw.sent),
-    undone: recOf(raw.undone, isStamp),
+    undone: recConv(raw.undone, savedStamp),
     edits: recOf(raw.edits, str),
-    paused: str(raw.paused) ? raw.paused : null,
+    paused: savedPause(raw.paused),
     toggles: recOf(raw.toggles, (x): x is boolean => typeof x === 'boolean'),
     routinesExtra,
     skillsExtra: (isArr(raw.skillsExtra) ? raw.skillsExtra : []).filter((r): r is SkillDef => hasStrs(r, ['n', 'd', 'icon', 'by', 'used']) && !!(r.by as string).trim() && [0, 1, 2].includes(r.need as number)),
@@ -290,19 +334,27 @@ const sanitize = (raw: unknown): AgentState => {
     toolPaused: flagsOf(raw.toolPaused),
     forgot: flagsOf(raw.forgot),
     settings: recOf(raw.settings, str),
-    teamRequests: (isArr(raw.teamRequests) ? raw.teamRequests : []).filter((r): r is TeamRequest => hasStrs(r, ['icon', 'title', 'sub', 'status'])),
+    teamRequests: (isArr(raw.teamRequests) ? raw.teamRequests : []).map(r => savedRequest(r, now)).filter((r): r is TeamRequest => r !== null),
     // The old notificationsRead / notificationRead flags are dropped: their notifications show unread once more.
     readNotices: flagsOf(raw.readNotices),
     libraryDeleted: flagsOf(raw.libraryDeleted),
-    setAside: recOf(raw.setAside, (x): x is SetAsideRecord => isRec(x) && SET_ASIDE.includes(x.reason as SetAsideReason) && typeof x.ms === 'number' && isStamp(x)),
+    setAside: recConv(raw.setAside, (x): SetAsideRecord | null => {
+      if (!isRec(x) || !SET_ASIDE.includes(x.reason as SetAsideReason)) return null
+      const stamp = savedStamp(x), loggedAt = savedLoggedAt(x)
+      return stamp && loggedAt ? { reason: x.reason as SetAsideReason, ...stamp, loggedAt } : null
+    }),
     routinesDeleted: Object.fromEntries(Object.keys(flagsOf(raw.routinesDeleted)).filter(known).map(id => [id, true as const])),
-    routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).filter((r): r is RoutineRun => hasStrs(r, ['routine', 'at']) && typeof r.atMin === 'number' && known(r.routine as string) && (r.trace === undefined || str(r.trace)) && (r.result === undefined || str(r.result))),
+    routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).flatMap((r): RoutineRun[] => {
+      if (!hasStrs(r, ['routine']) || !known(r.routine as string) || !(r.trace === undefined || str(r.trace)) || !(r.result === undefined || str(r.result))) return []
+      const at = savedAt(r)
+      return at ? [{ routine: r.routine as string, at, ...(r.trace !== undefined ? { trace: r.trace as string } : {}), ...(r.result !== undefined ? { result: r.result as string } : {}) }] : []
+    }),
     // managing chats. A started chat's title, pin and delete are kept until Reset demo: its id is unique per page load
     // (chatIds.ts), so it can't be taken by a newer chat, and the app keeps the chat itself across a reload.
     chatTitles: Object.fromEntries(Object.entries(recOf(raw.chatTitles, (x): x is string => str(x) && x.trim() !== '')).map(([k, t]) => [k, t.slice(0, CHAT_TITLE_MAX)])),
     chatPinned: flagsOf(raw.chatPinned),
     chatDeleted: flagsOf(raw.chatDeleted),
-    demoStartedAt: typeof raw.demoStartedAt === 'number' && Number.isFinite(raw.demoStartedAt) ? raw.demoStartedAt : init.demoStartedAt,
+    demoStartedAt,
   }
 }
 
@@ -385,13 +437,13 @@ const timeIn = (q: string): Clock | null => {
   return null
 }
 
-/** The next run on the demo clock, after now: "Tue, Nov 17 at 7:00 AM". */
-const nextRun = (freq: string, day: string, at: Clock, now: Date): string => {
+/** The next run on the demo clock, after now. */
+const nextRun = (freq: string, day: string, at: Clock, now: Date): Instant => {
   const d = new Date(now)
   d.setHours(at.h, at.m, 0, 0)
   const ok = (x: Date) => x > now && (freq === 'Weekly' ? WEEKDAYS[(x.getDay() + 6) % 7] === day : day !== 'Weekdays' || (x.getDay() > 0 && x.getDay() < 6))
   while (!ok(d)) d.setDate(d.getDate() + 1)
-  return `${fmtWeekday(d)} at ${fmtTime(d)}`
+  return instantOf(d.getTime())
 }
 
 /** A name from a request's first words, with the person's own capitals (product and tool names stay as typed). */
@@ -448,7 +500,7 @@ function routineFromRequest(q: string, stage: number, id: string, now: Date): Ro
     name = nameOf(q)
   }
   if (!at) return null
-  return { id, name, freq, day, time: fmtTime(new Date(2026, 0, 1, at.h, at.m)), next: `Next run ${nextRun(freq, day, at, now)}`, note, what: q }
+  return { id, name, freq, day, time: { hour: at.h, minute: at.m }, next: nextRun(freq, day, at, now), note, what: q }
 }
 
 // A routine is made only from a request (not a question) with a schedule and a time. "How much did we refund each customer
@@ -646,8 +698,7 @@ export class MockAgent implements AgentClient {
 
   /** Now on the demo clock: shown, sortable, and who is doing it. */
   private stamp(): StampRecord {
-    const d = demoNow(this.state.demoStartedAt)
-    return { at: fmtTime(d), atMin: minuteOf(d), by: this.state.settings['g:name']?.trim() || meta.currentUser.name }
+    return { at: instantOf(demoNow(this.state.demoStartedAt).getTime()), by: this.state.settings['g:name']?.trim() || meta.currentUser.name }
   }
 
   getSnapshot = () => this.state
@@ -696,7 +747,7 @@ export class MockAgent implements AgentClient {
     for (const [id, rec] of Object.entries(this.state.approved)) {
       const p = problems.find(x => x.id === id)
       if (!p || this.state.sent[id] || p.draft.rev || this.holdTimers[id]) continue
-      this.scheduleSend(id, SEND_HOLD_MS - (Date.now() - rec.ms))
+      this.scheduleSend(id, SEND_HOLD_MS - (Date.now() - rec.loggedAt.ms))
     }
   }
 
@@ -708,7 +759,7 @@ export class MockAgent implements AgentClient {
     // Wording is fixed now, so history never rewrites itself when the stage or an undo changes later.
     const part = this.isPartial(p)
     const record = {
-      ...this.stamp(), ms: Date.now(),
+      ...this.stamp(), loggedAt: instantOf(Date.now()),
       title: part && p.draft.runTitle ? p.draft.runTitle : p.draft.title,
       doneText: (part && p.runDoneText) || p.doneText,
       partial: part,
@@ -743,7 +794,7 @@ export class MockAgent implements AgentClient {
 
   // ----- Pause and resume -----
 
-  pause(): Promise<string> { const { at } = this.stamp(); return this.writeThen({ paused: at }, at) }
+  pause(): Promise<Instant> { const { at } = this.stamp(); return this.writeThen({ paused: at }, at) }
   resume() { return this.write({ paused: null }) }
 
   // ----- plain reads and writes -----
@@ -811,7 +862,7 @@ export class MockAgent implements AgentClient {
         const kind = `waiting-${S >= 1 ? 'drafts' : 'today'}`
         const read = Object.keys(st.readNotices).some(k => k.startsWith(`${kind}-`) && Number(k.slice(kind.length + 1)) >= nNeed)
         out.push({
-          id: `${kind}-${nNeed}`, icon: 'task_alt', who: n.who, at: n.when, unread: n.unread && !read, waiting: true,
+          id: `${kind}-${nNeed}`, icon: 'task_alt', who: n.who, at: sampleAt('a notification', n.at), unread: n.unread && !read, waiting: true,
           text: S >= 1 ? `${nNeed} ${nNeed === 1 ? 'draft is' : 'drafts are'} waiting for your approval.` : `Today has ${nNeed} ${nNeed === 1 ? 'thing' : 'things'} that need${nNeed === 1 ? 's' : ''} you.`,
           link: { to: 'page', page: S >= 1 ? 'approvals' : 'today' },
         })
@@ -822,7 +873,7 @@ export class MockAgent implements AgentClient {
       const person = data.people.members.some(m => m.name === n.who) ? n.who : undefined
       const id = noticeId(n.text)
       out.push({
-        id, text: n.text, who: n.who, person, at: n.when, unread: n.unread && !st.readNotices[id], link,
+        id, text: n.text, who: n.who, person, at: sampleAt(`the notification "${n.text}"`, n.at), unread: n.unread && !st.readNotices[id], link,
         icon: person ? 'check_circle' : link.to === 'tool' ? 'support_agent' : link.to === 'chat' ? 'summarize' : 'notifications',
       })
     }
@@ -857,17 +908,17 @@ export class MockAgent implements AgentClient {
   setAside(id: string, reason: SetAsideReason | null) {
     problemById(id)
     const setAside = { ...this.state.setAside }
-    if (reason) setAside[id] = { reason, ...this.stamp(), ms: Date.now() }; else delete setAside[id]
+    if (reason) setAside[id] = { reason, ...this.stamp(), loggedAt: instantOf(Date.now()) }; else delete setAside[id]
     return this.write({ setAside })
   }
 
   runRoutine(id: string): Promise<RoutineRun> {
     if (!DATA.routines.some(r => r.id === id) && !this.state.routinesExtra.some(r => r.id === id)) throw new Error(`Unknown routine id: ${id}`)
-    const { at, atMin } = this.stamp()
+    const { at } = this.stamp()
     // The morning check replays its recorded steps; other routines have none recorded.
-    // The demo's result is the routine's own last-run note ("Last run today at 6:00 AM · found 6 things"); none if it has no note (day one has none).
-    const note = DATA_FOR[this.demo.scenario].routines.find(r => r.id === id)?.last?.split(' · ')[1]
-    const run: RoutineRun = { routine: id, at, atMin, ...(note ? { result: note } : {}), ...(id === routineIdOf('Morning check') ? { trace: 'morning' } : {}) }
+    // The demo's result is the routine's own last run's ("found 6 things"); none if it has no last run (day one has none).
+    const note = DATA_FOR[this.demo.scenario].routines.find(r => r.id === id)?.last?.result
+    const run: RoutineRun = { routine: id, at, ...(note ? { result: note } : {}), ...(id === routineIdOf('Morning check') ? { trace: 'morning' } : {}) }
     return this.writeThen({ routineRuns: [run, ...this.state.routineRuns] }, run)
   }
   deleteRoutine(id: string) { return this.write({ routinesDeleted: { ...this.state.routinesDeleted, [id]: true } }) }
@@ -889,7 +940,7 @@ export class MockAgent implements AgentClient {
     if (key === 'morning' && this.demo.scenario === 'Tool disconnected') {
       const v = traceDisconnectedVariant
       steps = steps.map(s => s.label.startsWith(v.replaceStepStartingWith)
-        ? { ...s, kind: 'fail' as const, label: v.with.label, end: v.with.endSeconds, detail: v.with.detail }
+        ? { ...s, kind: 'fail' as const, label: v.with.label, endMs: v.with.endMs, detail: v.with.detail }
         : s)
     }
     // In Run the message to ShipBob was sent within limits, so nothing waited.
@@ -1130,7 +1181,7 @@ export class MockAgent implements AgentClient {
       if (!t) throw new Error(`No recorded trace for ${info.trace}`)
       // Over before it says so: a message sent after this point is refused, not queued and lost.
       this.runs.delete(runId)
-      yield { type: 'run.finished', runId, steps: t.steps.length - 1, seconds: t.duration, cost: t.cost }
+      yield { type: 'run.finished', runId, steps: t.steps.length - 1, durationMs: t.durationMs, cost: t.cost }
     } finally {
       this.runs.delete(runId)
     }

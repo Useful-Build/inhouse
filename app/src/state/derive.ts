@@ -1,7 +1,9 @@
 // Pure selectors: stage + scenario + agent state -> what the screens show.
 import { photoKey } from '../agent/types'
-import type { AgentData, AgentState, ChatMessage, ToolChannel, Effort, Problem, Scenario, StageIndex, ThinkingMode, ToolDetail } from '../agent/types'
-import { DEMO_START, TIME_RE, fmtWeekday, minuteOfTime } from '../agent/clock'
+import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Scenario, StageIndex, ThinkingMode, ToolDetail } from '../agent/types'
+import { TIME_RE } from '../agent/clock'
+import { calendarOf, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtTime, fmtWeekday, majorOf, moneyOf, type Display } from '../lib/format'
+import { display, nowOf } from './display'
 
 export const STAGE_TAGS = ['Watch', 'Act', 'Run'] as const
 
@@ -38,15 +40,14 @@ export const toolState = (ctx: Ctx, key: string): ToolState => {
   return 'connected'
 }
 /**
- * The tool the Inhouse team is connecting now, from tools.json (its `since` is "Live by <date>"), or null: none is, or
- * it's First day, when nothing is live yet and Today lists the setup instead.
+ * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
+ * none is, or it's First day, when nothing is live yet and Today lists the setup instead.
  */
 export const goingLive = (ctx: Ctx): { name: string; by: string } | null => {
   if (ctx.scenario === 'First day') return null
   for (const key of Object.keys(ctx.data.tools.details)) {
     const d = toolDetail(ctx.data, key)
-    const by = /^Live by (.+)$/.exec(d.since)?.[1]
-    if (by && toolState(ctx, key) === 'connecting') return { name: d.name, by }
+    if (d.liveBy && toolState(ctx, key) === 'connecting') return { name: d.name, by: fmtWeekday(d.liveBy, display()) }
   }
   return null
 }
@@ -65,11 +66,11 @@ export const toolCounts = (ctx: Ctx) => {
   }
 }
 
-/** The last morning check before today's: the weekday before the demo's Monday (the check runs on weekdays). */
-const lastCheckBefore = (): Date => {
-  const d = new Date(DEMO_START)
-  do d.setDate(d.getDate() - 1); while (d.getDay() === 0 || d.getDay() === 6)
-  return d
+/** The last morning check before the one at `at`: the weekday before it (the check runs on weekdays). */
+const lastCheckBefore = (at: Instant, d: Display): number => {
+  let ms = at.ms
+  do ms -= 86_400_000; while ([0, 6].includes(calendarOf(ms, d).weekday))
+  return ms
 }
 
 export interface ToolAbility { key: 'read' | 'draft' | 'run'; icon: string; title: string; text: string; need: StageIndex; locked: boolean; tag: string }
@@ -90,11 +91,20 @@ export interface ToolView {
   /** Suggested questions: only while the agent can read the tool. */
   examples: string[]
 }
+/** When a tool was connected ("Nov 2"), or when one being connected goes live ("Live by Fri, Nov 20"). */
+export const sinceLine = (d: ToolDetail, d0: Display): string => {
+  if (d.since) return fmtDay(d.since, d0)
+  if (d.liveBy) return `Live by ${fmtWeekday(d.liveBy, d0)}`
+  throw new Error(`Tools data: "${d.name}" has no connected or going-live date.`)
+}
+
 export function toolView(ctx: Ctx, key: string): ToolView {
   const d = toolDetail(ctx.data, key)
   const state = toolState(ctx, key)
-  const { at } = ctx.data.scenarios.toolDisconnected
-  const readAt = ctx.data.tools.lastRead[key] ?? ctx.data.tools.lastRead.default
+  const d0 = display()
+  const at = fmtTime(ctx.data.scenarios.toolDisconnected.at, d0)
+  const lastRead = ctx.data.tools.lastRead[key] ?? ctx.data.tools.lastRead.default
+  const readAt = fmtTime(lastRead, d0)
   const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet' }[state]
   const ability = (k: ToolAbility['key'], icon: string, title: string, text: string, need: StageIndex): ToolAbility =>
     ({ key: k, icon, title, text, need, locked: ctx.S < need, tag: ctx.S < need ? STAGE_TAGS[need] : tagOf })
@@ -102,9 +112,9 @@ export function toolView(ctx: Ctx, key: string): ToolView {
     key, name: d.name, state,
     statusText: { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${at}` }[state],
     // Being connected: on day one, when Today's setup list says it connects; else when it goes live ("Live by Fri, Nov 20").
-    listLine: { connecting: (ctx.scenario === 'First day' && ctx.data.scenarios.firstDay.setup.find(([n]) => n === d.name)?.[1]) || d.since, connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting' }[state],
-    connectedRow: state === 'connecting' ? 'Not yet' : `${d.since}, by your Inhouse team`,
-    lastRead: state === 'connecting' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore())}, ${readAt}` : `Today, ${readAt}`,
+    listLine: { connecting: (ctx.scenario === 'First day' && ctx.data.scenarios.firstDay.setup.find(([n]) => n === d.name)?.[1]) || sinceLine(d, d0), connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting' }[state],
+    connectedRow: state === 'connecting' ? 'Not yet' : `${sinceLine(d, d0)}, by your Inhouse team`,
+    lastRead: state === 'connecting' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
     abilities: [
       ability('read', 'visibility', 'Read', d.read, 0),
       ability('draft', 'edit_note', 'Draft for your approval', d.draft, 1),
@@ -134,15 +144,17 @@ const dollarsIn = (v: string | undefined): number | null => {
   return Number.isFinite(n) && n >= 0 ? n : null
 }
 /** This month's spending cap: the Monthly cap set in Settings, else the agent's. */
-export const usageCap = (ctx: Ctx) => dollarsIn(ctx.agent.settings['s:cap']) ?? ctx.data.usage.cap
+export const usageCap = (ctx: Ctx): Money => {
+  const typed = dollarsIn(ctx.agent.settings['s:cap'])
+  return typed === null ? ctx.data.usage.cap : moneyOf(typed, ctx.data.usage.cap.currency)
+}
 /** The alert level, percent of the cap: set in Settings, else the agent's. */
 export const usageAlertAt = (ctx: Ctx) => dollarsIn(ctx.agent.settings['s:alert']) ?? ctx.data.usage.alertAt
 
-const usd = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })
 export interface CapStatus {
   /** What was spent this month: from the agent's data, never rescaled by the cap. */
-  spent: number
-  cap: number
+  spent: Money
+  cap: Money
   alertAt: number
   /** Spend reached the cap: routines and jobs pause. */
   reached: boolean
@@ -156,9 +168,32 @@ export function capStatus(ctx: Ctx): CapStatus {
   const alertAt = usageAlertAt(ctx)
   return {
     spent, cap, alertAt,
-    reached: spent >= cap,
-    bannerText: `Your Inhouse agent has used ${usd(spent)} of ${usd(cap)} this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.`,
+    reached: spent.minor >= cap.minor,
+    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.`,
   }
+}
+
+/**
+ * The sentence under a month's amount on Usage and the note beside its cap bar. `thisMonth` with `reached`: at the cap.
+ * A month's projection is its average day times 30.
+ */
+export function usageSummary(m: { total: Money; cap: Money; alertAt: number; daily: Money[] }, thisMonth: boolean, reached: boolean): { hint: string; capNote: string } {
+  const d0 = display()
+  const total = majorOf(m.total), cap = majorOf(m.cap), days = m.daily.length
+  const pct = Math.min(100, Math.round(total / cap * 100)) + '%'
+  const over = total > cap
+  const capText = fmtMoney(m.cap, d0)
+  const hint = !thisMonth
+    ? over ? `Went over your ${capText} cap` : `Finished under your ${capText} cap`
+    : reached
+      ? `Cap reached with ${30 - days} days of the month left`
+      : `On track for about ${fmtMoney(moneyOf(Math.round(total / days * 30), m.total.currency), d0)} this month, ${total / days * 30 > cap ? 'over' : 'under'} your cap`
+  const capNote = !thisMonth
+    ? over ? `Closed at ${Math.round(total / cap * 100)}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
+    : reached
+      ? 'Cap reached today. Routines and jobs are paused until an admin raises it.'
+      : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses routines and jobs at the cap.`
+  return { hint, capNote }
 }
 
 export function flags(ctx: Ctx) {
@@ -276,7 +311,7 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     const sens = !!(p.draft.money || p.draft.customer)
     const at = agent.approved[p.id]
     if (at) {
-      return { problem: p, status: `Approved by ${firstName(at.by)} at ${at.at}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, handled: false, dimmed: true }
+      return { problem: p, status: `Approved by ${firstName(at.by)} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, handled: false, dimmed: true }
     }
     if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', handled: false, dimmed: false }
     if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', handled: true, dimmed: true }
@@ -331,7 +366,7 @@ export function draftView(ctx: Ctx, id: string): DraftView {
   const rec = agent.approved[id]
   // An approved item keeps what it was when approved: a later stage switch or undo doesn't change its lines or note.
   const part = rec ? rec.partial : ranByAgent(ctx, p) && !!p.partial
-  const at = rec?.at ?? null
+  const at = rec ? fmtTime(rec.at, display()) : null
   const sent = !!agent.sent[id]
   // Approved items show the wording taken at approval time, so history never rewrites itself.
   const title = rec ? rec.title : part && dr.runTitle ? dr.runTitle : dr.title
@@ -372,21 +407,22 @@ export const lowRiskIds = (ctx: Ctx): string[] => {
   return issueCards(ctx).filter(c => c.primary === 'Approve' && pending.has(c.problem.id)).map(c => c.problem.id)
 }
 
-/** The money figure on a problem's card, as a number ("$8,400" is 8400). */
-export const amountOf = (p: Problem) => Number(p.cost.replace(/[^\d.]/g, ''))
+/** The money at stake on a problem's card, in its minor unit: what the money sort compares. */
+export const amountOf = (p: Problem) => p.cost.minor
 
 // ---------- Activity ----------
 
 export type ActivityKind = 'read' | 'change' | 'needs' | 'problem'
 export interface ActivityRow {
   key: string
+  /** The day it's listed under, as shown ("Today", "Fri, Nov 13"). */
   day: string
-  /** Shown. Never sort on it: use `atMin`. */
+  /** The time, as shown. Never sort on it: use `at`. */
   t: string
-  /** Minutes since midnight: what a day's rows sort by. */
-  atMin: number
-  /** Epoch ms of something a person did: breaks a tie on `atMin` (the demo clock stops at 11:59 AM). */
-  ms?: number
+  /** When: what a day's rows sort by. */
+  at: Instant
+  /** When a person did it on the real clock: breaks a tie on `at` (the demo clock stops at 11:59 AM). */
+  loggedAt?: Instant
   icon: string
   text: string
   who: string
@@ -410,27 +446,29 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
   const { S, agent } = ctx
   const f = flags(ctx)
   const rows: Omit<ActivityRow, 'key'>[] = []
+  const d0 = display()
   const base = { day: 'Today', iconTone: 'bg-background text-foreground-3' }
+  /** A row's shown time and its instant. */
+  const when = (at: Instant) => ({ t: fmtTime(at, d0), at })
   for (const p of ctx.data.problems.filter(x => agent.approved[x.id])) {
     const dv = draftView(ctx, p.id)
-    const { at, atMin, by, ms } = agent.approved[p.id]
-    rows.push({ ...base, t: at, atMin, ms, icon: 'check_circle', text: dv.doneText, who: `${firstName(by)} approved`, whoBy: by, kind: 'change', trace: p.trace, iconTone: 'bg-background text-foreground',
+    const { at, by, loggedAt } = agent.approved[p.id]
+    rows.push({ ...base, ...when(at), loggedAt, icon: 'check_circle', text: dv.doneText, who: `${firstName(by)} approved`, whoBy: by, kind: 'change', trace: p.trace, iconTone: 'bg-background text-foreground',
       undo: dv.canUndo ? { type: 'approval', id: p.id } : undefined,
       why: `${p.title}.`, result: dv.doneText + (dv.canUndo ? '. You can still undo it.' : '. It has gone out, so it can no longer be undone.'),
-      by: `Drafted by Inhouse agent at ${p.draftedAt}, approved by ${by} at ${at}.` })
+      by: `Drafted by Inhouse agent at ${fmtTime(p.draftedAt, d0)}, approved by ${by} at ${fmtTime(at, d0)}.` })
   }
   if (S === 2) {
     for (const p of ctx.data.problems.filter(x => ranByAgent(ctx, x)).reverse()) {
-      const t = TIME_RE.exec(p.done!)
-      if (!t) throw new Error(`Sample data: problem "${p.id}" says what it did with no time ("${p.done}").`)
-      rows.push({ ...base, t: t[0], atMin: minuteOfTime(t[0]), icon: 'bolt', text: doneLine(p), who: 'Inhouse agent, inside your limits', kind: 'change', trace: p.trace,
+      if (!p.doneAt) throw new Error(`Problem "${p.id}" says what the agent did with no time ("${p.done}").`)
+      rows.push({ ...base, ...when(p.doneAt), icon: 'bolt', text: doneLine(p), who: 'Inhouse agent, inside your limits', kind: 'change', trace: p.trace,
         iconTone: 'bg-brand-tint text-brand', undo: { type: 'handled', id: p.id },
         why: `${p.title}.`, result: `${p.done}.`, by: 'Inhouse agent, by itself. This job is switched on in Run limits.' })
     }
   }
   for (const id of pendingIds(ctx)) {
     const p = problemById(ctx.data, id), dv = draftView(ctx, id)
-    rows.push({ ...base, t: p.draftedAt, atMin: p.draftedMin, icon: 'front_hand', text: `Drafted: ${lower1(dv.draftTitle)}`, who: 'Waits for you', kind: 'needs', trace: p.trace,
+    rows.push({ ...base, ...when(p.draftedAt), icon: 'front_hand', text: `Drafted: ${lower1(dv.draftTitle)}`, who: 'Waits for you', kind: 'needs', trace: p.trace,
       iconTone: 'bg-warning-tint text-warning-text', review: id,
       why: `${p.title}.`, result: 'Nothing has gone out. The draft waits in Approvals' + (dv.waitsLabel ? ` (${dv.waitsLabel.toLowerCase()}).` : '.'),
       by: 'Drafted by Inhouse agent. ' + (p.draft.approver ? p.draft.approver.split('. ')[0] + '.' : 'Anyone who approves can send it.') })
@@ -445,8 +483,8 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
       dismissed: { icon: 'do_not_disturb_on', text: `Dismissed: ${p.title}`, result: "Marked as not a problem, so it won't come back today. Nothing has gone out." },
       declined: { icon: 'cancel_schedule_send', text: `Not sent: ${lower1(dv.draftTitle)}`, result: 'The draft left Approvals and nothing went out.' },
     }[rec.reason]
-    rows.push({ ...base, t: rec.at, atMin: rec.atMin, ms: rec.ms, icon: line.icon, text: line.text, who: firstName(rec.by), whoBy: rec.by, kind: 'change', trace: p.trace, iconTone: 'bg-background text-foreground-3',
-      undo: { type: 'setAside', id: p.id }, why: `${p.title}.`, result: line.result, by: `${rec.by}, at ${rec.at}. Drafted by Inhouse agent at ${p.draftedAt}.` })
+    rows.push({ ...base, ...when(rec.at), loggedAt: rec.loggedAt, icon: line.icon, text: line.text, who: firstName(rec.by), whoBy: rec.by, kind: 'change', trace: p.trace, iconTone: 'bg-background text-foreground-3',
+      undo: { type: 'setAside', id: p.id }, why: `${p.title}.`, result: line.result, by: `${rec.by}, at ${fmtTime(rec.at, d0)}. Drafted by Inhouse agent at ${fmtTime(p.draftedAt, d0)}.` })
   }
   const { today, earlier } = ctx.data.activity
   const morning = today[0]
@@ -454,8 +492,8 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
     if (f.disc) {
       const { tool, at } = ctx.data.scenarios.toolDisconnected
       const name = toolDetail(ctx.data, tool).name
-      rows.push({ ...base, t: morning.t, atMin: morning.atMin, icon: 'link_off', text: `Couldn't read ${name}: the login expired`, who: 'Skipped', kind: 'problem', trace: morning.trace,
-        iconTone: 'bg-destructive-tint text-destructive', why: `The ${name} login expired at ${at}.`,
+      rows.push({ ...base, ...when(morning.at), icon: 'link_off', text: `Couldn't read ${name}: the login expired`, who: 'Skipped', kind: 'problem', trace: morning.trace,
+        iconTone: 'bg-destructive-tint text-destructive', why: `The ${name} login expired at ${fmtTime(at, d0)}.`,
         result: "It tried 3 times, then carried on without it. Customer issues may be missing from today's list. Nothing was changed.",
         by: 'Inhouse agent, on schedule.', fix: `Reconnect ${name} in Tools. It reads it again at the next check.` })
     }
@@ -464,19 +502,19 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
     // With no tool connected yet (day one), the morning check read nothing, so it has no line.
     if (read.length) {
       const fill = fillActivity(ctx)
-      rows.push({ ...base, t: morning.t, atMin: morning.atMin, icon: 'visibility', kind: 'read', trace: morning.trace, who: morning.who, why: morning.why, by: morning.by,
+      rows.push({ ...base, ...when(morning.at), icon: 'visibility', kind: 'read', trace: morning.trace, who: morning.who, why: morning.why, by: morning.by,
         text: fill(morning.text), result: fill(morning.result) })
       // The routines that ran today, after the morning check (none on day one: nothing was connected to read).
       for (const e of today.slice(1)) {
         if (e.minStage === 'Act' && S < 1) continue
-        rows.push({ ...base, t: e.t, atMin: e.atMin, icon: 'visibility', kind: e.kind, trace: e.trace, who: e.who, why: e.why, by: e.by, text: e.text, result: e.result })
+        rows.push({ ...base, ...when(e.at), icon: 'visibility', kind: e.kind, trace: e.trace, who: e.who, why: e.why, by: e.by, text: e.text, result: e.result })
       }
     }
   }
   for (const e of earlier) {
     if (e.minStage === 'Act' && S < 1) continue
     const change = e.kind === 'change'
-    rows.push({ day: e.day!, t: e.t, atMin: e.atMin, icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : 'visibility', text: e.text, who: e.who,
+    rows.push({ day: fmtWeekday(e.at, d0), ...when(e.at), icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : 'visibility', text: e.text, who: e.who,
       kind: e.kind, trace: e.trace, iconTone: change ? 'bg-background text-foreground' : 'bg-background text-foreground-3', why: e.why, result: e.result, by: e.by })
   }
   return rows.map(r => ({ ...r, key: `${r.day}|${r.t}|${r.text}` }))
@@ -491,7 +529,7 @@ export function groupByDay(rows: ActivityRow[]) {
     g.rows.push(r)
   }
   for (const g of days) {
-    g.rows = g.rows.map((r, i) => [r, i] as const).sort((a, b) => b[0].atMin - a[0].atMin || (b[0].ms ?? 0) - (a[0].ms ?? 0) || a[1] - b[1]).map(x => x[0])
+    g.rows = g.rows.map((r, i) => [r, i] as const).sort((a, b) => b[0].at.ms - a[0].at.ms || (b[0].loggedAt?.ms ?? 0) - (a[0].loggedAt?.ms ?? 0) || a[1] - b[1]).map(x => x[0])
   }
   return days
 }
@@ -515,7 +553,7 @@ export function chatMessages(ctx: Ctx, chatId: string): ChatMessage[] {
       out.push({ id: `${chatId}-t${t}-p${k}`, role: 'agent', trace: turn.trace, model: turn.model, part })
       if (part.type !== 'approval') return
       const at = agent.approved[part.problemId]
-      if (at) note = { id: `${chatId}-t${t}-approved`, role: 'event', text: `${firstName(at.by)} approved: ${lower1(at.title)} · ${at.at}` }
+      if (at) note = { id: `${chatId}-t${t}-approved`, role: 'event', text: `${firstName(at.by)} approved: ${lower1(at.title)} · ${fmtTime(at.at, display())}` }
     })
     if (note) out.push(note)
   })
@@ -523,11 +561,15 @@ export function chatMessages(ctx: Ctx, chatId: string): ChatMessage[] {
 }
 
 /** "Every weekday at 6:00 AM" style schedule sentence. */
-export const whenOf = (r: { freq?: string; day?: string; time?: string }) =>
-  !r.freq ? '' : (r.freq === 'Daily' ? (r.day === 'Weekdays' ? 'Every weekday' : 'Every day') : `Every ${r.day}`) + ` at ${r.time}`
+export const whenOf = (r: { freq?: string; day?: string; time?: ClockTime }) =>
+  !r.freq || !r.time ? '' : (r.freq === 'Daily' ? (r.day === 'Weekdays' ? 'Every weekday' : 'Every day') : `Every ${r.day}`) + ` at ${fmtClock(r.time, display())}`
 
-export const fmtSeconds = (s: number) =>
-  s < 1 ? Math.round(s * 1000) + 'ms' : s < 60 ? (Math.round(s * 10) / 10) + 's' : Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's'
+/** A routine's last run: "Last run today at 6:00 AM · found 6 things", "Last run Fri, Nov 13 · saved to Library". */
+export const lastRunLine = (last: { at: Instant; result?: string }, now: number): string => {
+  const d0 = display()
+  const day = fmtDayWord(last.at, now, d0)
+  return `Last run ${day === 'today' ? `today at ${fmtTime(last.at, d0)}` : day}${last.result ? ` · ${last.result}` : ''}`
+}
 
 /** Up to two capital letters from a name. */
 export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?'
@@ -592,15 +634,16 @@ export interface RoutineRunLine { key: string; day: string; t: string; text: str
  * A routine's last runs, newest first: the Run nows from this session, then the Activity lines it wrote (matched by
  * its name), else the sample data's last-run note.
  */
-export function routineRuns(ctx: Ctx, r: { id: string; name: string; last?: string }): RoutineRunLine[] {
+export function routineRuns(ctx: Ctx, r: { id: string; name: string; last?: { at: Instant; result: string } }): RoutineRunLine[] {
   const { S, agent, data } = ctx
+  const d0 = display()
   const now = agent.routineRuns.filter(x => x.routine === r.id)
-    .map((x, i): RoutineRunLine => ({ key: `now|${i}|${x.at}`, day: 'Today', t: x.at, text: x.result ? `Run now · ${x.result}` : 'Run now', trace: x.trace, inActivity: false }))
+    .map((x, i): RoutineRunLine => ({ key: `now|${i}|${fmtTime(x.at, d0)}`, day: 'Today', t: fmtTime(x.at, d0), text: x.result ? `Run now · ${x.result}` : 'Run now', trace: x.trace, inActivity: false }))
   const name = r.name.toLowerCase()
   const fill = fillActivity(ctx)
-  const lines = [...data.activity.today.map(l => ({ ...l, day: 'Today' })), ...data.activity.earlier]
+  const lines = [...data.activity.today.map(l => ({ ...l, day: 'Today' })), ...data.activity.earlier.map(l => ({ ...l, day: fmtWeekday(l.at, d0) }))]
     .filter(l => !(l.minStage === 'Act' && S < 1) && l.text.toLowerCase().includes(name))
-    .map((l): RoutineRunLine => ({ key: `${l.day}|${l.t}|${l.text}`, day: l.day ?? 'Today', t: l.t, text: fill(l.text), trace: l.trace, inActivity: true }))
-  if (lines.length === 0 && r.last) lines.push({ key: 'last', day: '', t: '', text: r.last, inActivity: false })
+    .map((l): RoutineRunLine => ({ key: `${l.day}|${fmtTime(l.at, d0)}|${l.text}`, day: l.day, t: fmtTime(l.at, d0), text: fill(l.text), trace: l.trace, inActivity: true }))
+  if (lines.length === 0 && r.last) lines.push({ key: 'last', day: '', t: '', text: lastRunLine(r.last, nowOf(agent)), inActivity: false })
   return [...now, ...lines]
 }

@@ -1,6 +1,6 @@
 // `read()`: the read-only snapshot of everything the UI reads besides AgentState.
 import { z } from 'zod'
-import { PairSchema } from './common.ts'
+import { InstantSchema, PairSchema } from './common.ts'
 import { AgentMetaSchema } from './meta.ts'
 import { ProblemSchema } from './problem.ts'
 import { ToolsDataSchema } from './tools.ts'
@@ -13,6 +13,7 @@ import { ActivityLineSchema, AuditEntrySchema } from './activity.ts'
 import { ModelModeSchema } from './model.ts'
 import { ChatDataSchema } from './chat.ts'
 import { LibraryPlaceSchema } from './library.ts'
+import { TeamRequestSchema } from './state.ts'
 
 /**
  * Read-only snapshot of everything the UI reads besides AgentState: sample data in the mock,
@@ -38,14 +39,14 @@ export const AgentDataSchema = z.object({
   /** The fixed lines of Activity. Today's approvals and handled jobs come from state. */
   activity: z.object({ today: z.array(ActivityLineSchema), earlier: z.array(ActivityLineSchema) }),
   notifications: z.object({
-    teamRequests: z.array(z.object({ title: z.string(), sub: z.string(), status: z.string() })),
+    teamRequests: z.array(TeamRequestSchema.omit({ icon: true })),
   }),
   scenarios: z.object({
     firstDay: z.object({ setup: z.array(PairSchema) }),
     /** The Loading scenario: how many tools the morning check has read so far. */
     loading: z.object({ readDone: z.number() }),
-    /** The Tool disconnected scenario: which tool lost its login, and when (shown). */
-    toolDisconnected: z.object({ tool: z.string(), at: z.string() }),
+    /** The Tool disconnected scenario: which tool lost its login, and when. */
+    toolDisconnected: z.object({ tool: z.string(), at: InstantSchema }),
   }),
   models: z.array(ModelModeSchema),
   defaultModel: z.string(),

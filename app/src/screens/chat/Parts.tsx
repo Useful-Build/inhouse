@@ -3,6 +3,8 @@
 // line and suggested questions. The card itself is the thread's (Chats.tsx): a part draws no card of its own.
 import type { MessagePart } from '../../agent/types'
 import { draftView, whenOf } from '../../state/derive'
+import { fmtTime, fmtWeekdayAt } from '../../lib/format'
+import { display } from '../../state/display'
 import { useCtx, useUi } from '../../state/store'
 import { Button, Icon, LogoTile } from '../../ui'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -147,7 +149,7 @@ export function AgentPart({ part, trace }: { part: MessagePart; trace: string })
               <Icon name="schedule" size={16} />{whenOf(part.routine)}
             </span>
           </div>
-          <div className="mt-3 text-sm text-muted-foreground">{part.routine.next}</div>
+          <div className="mt-3 text-sm text-muted-foreground">Next run {fmtWeekdayAt(part.routine.next, display())}</div>
           <div className="mt-0.5 text-sm text-muted-foreground">{part.routine.note}</div>
         </div>
       )
@@ -156,11 +158,11 @@ export function AgentPart({ part, trace }: { part: MessagePart; trace: string })
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" onClick={() => openTrace(trace)} aria-label={`${part.text}, ${part.time}. See every step`}
+            <button type="button" onClick={() => openTrace(trace)} aria-label={`${part.text}, ${fmtTime(part.at, display())}. See every step`}
               className="-ml-2 flex h-7.5 items-center gap-2 self-start rounded-md pr-1.5 pl-2 text-sm text-foreground-3 hover:bg-fill-hover hover:text-foreground">
               <Icon name="check" size={16} />
               <span>{part.text}</span>{' '}
-              <span className="text-muted-foreground tabular-nums">{part.time}</span>
+              <span className="text-muted-foreground tabular-nums">{fmtTime(part.at, display())}</span>
               <Icon name="chevron_right" size={17} />
             </button>
           </TooltipTrigger>

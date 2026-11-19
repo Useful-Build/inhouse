@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { capStatus, flags, toolDetail } from '../state/derive'
+import { fmtTime } from '../lib/format'
+import { display } from '../state/display'
 import { chatEntries, openChatKey, useAgentState, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AgentMark, Button, Icon, IconButton } from '../ui'
@@ -105,7 +107,7 @@ export function Banner() {
   const lost = ctx.data.scenarios.toolDisconnected
   const lostName = f.disc ? toolDetail(ctx.data, lost.tool).name : ''
   const b = f.disc
-    ? { cls: 'bg-warning-tint text-warning-on-tint', icon: 'link_off', title: `${lostName} is disconnected.`, text: `The login expired at ${lost.at}, so your Inhouse agent couldn't read ${lostName} this morning. Customer issues may be missing from today's list.`, cta: 'Reconnect', go: () => openTool(lost.tool) }
+    ? { cls: 'bg-warning-tint text-warning-on-tint', icon: 'link_off', title: `${lostName} is disconnected.`, text: `The login expired at ${fmtTime(lost.at, display())}, so your Inhouse agent couldn't read ${lostName} this morning. Customer issues may be missing from today's list.`, cta: 'Reconnect', go: () => openTool(lost.tool) }
     : f.cap
       ? { cls: 'bg-destructive-tint text-destructive-text', icon: 'savings', title: 'Spending cap reached.', text: capStatus(ctx).bannerText, cta: 'Raise the cap', go: () => openSettings('team-spend') }
       : null

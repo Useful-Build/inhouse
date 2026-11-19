@@ -2,6 +2,9 @@ import { agent } from '../agent'
 import type { RequestType } from '../state/store'
 import { useCtx, useUi } from '../state/store'
 import { goingLive, userName } from '../state/derive'
+import { fmtAgo, fmtWeekday, instantOf } from '../lib/format'
+import { display, nowOf } from '../state/display'
+import type { TeamRequest } from '../agent/types'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -44,16 +47,21 @@ export function TeamWindow() {
   const isBug = team.type === 'bug'
   // The tool being connected takes its date from tools.json; on First day (nothing live yet) its request isn't listed.
   const live = goingLive(ctx)
+  // A request as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20" ("just now" for one sent this hour).
+  const d0 = display()
+  const now = nowOf(st)
+  const shown = (q: Omit<TeamRequest, 'icon'>) => ({ sub: `${q.sub}, ${fmtAgo(q.at, now, d0)}`, status: q.statusAt ? `${q.status} ${fmtWeekday(q.statusAt, d0)}` : q.status })
   const seeded = data.notifications.teamRequests.flatMap((q, i) => {
     const tool = /^Connect (.+)$/.exec(q.title)?.[1]
     if (tool && live?.name !== tool) return []
+    const line = shown(q)
     return [{
-      icon: q.sub.startsWith('New job') ? 'work' : 'add_link', title: q.title, sub: q.sub, status: tool && live ? `Live by ${live.by}` : q.status,
+      icon: q.sub.startsWith('New job') ? 'work' : 'add_link', title: q.title, sub: line.sub, status: tool && live ? `Live by ${live.by}` : line.status,
       ...(SEEDED_STYLE[i] ?? SEEDED_STYLE[1]),
     }]
   })
   const requests = [
-    ...st.teamRequests.map(q => ({ ...q, ...SEEDED_STYLE[1] })),
+    ...st.teamRequests.map(q => ({ icon: q.icon, title: q.title, ...shown(q), ...SEEDED_STYLE[1] })),
     ...seeded,
   ]
   // The sender is the signed-in person, by the name in Settings.
@@ -63,7 +71,7 @@ export function TeamWindow() {
   const send = () => {
     const txt = team.text.trim()
     if (!txt) return
-    agent.sendTeamRequest({ icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}, just now`, status: 'Sent' })
+    agent.sendTeamRequest({ icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}`, at: instantOf(nowOf(agent.getSnapshot())), status: 'Sent' })
     showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : 'Request sent. Your Inhouse team replies within one working day.')
     patch({ pop: null, team: { ...team, text: '' } })
   }

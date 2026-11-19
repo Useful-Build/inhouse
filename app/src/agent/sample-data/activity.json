@@ -8,7 +8,7 @@
   },
   "today": [
     {
-      "t": "6:00 AM",
+      "at": "0d 06:00",
       "kind": "read",
       "text": "Morning check: read {read} tools, found {found} things",
       "who": "Read only",
@@ -18,7 +18,7 @@
       "trace": "morning"
     },
     {
-      "t": "7:00 AM",
+      "at": "0d 07:00",
       "kind": "read",
       "minStage": "Act",
       "text": "Monday reorder list: nothing beyond the Ridge 30L draft",
@@ -28,7 +28,7 @@
       "by": "Inhouse agent, on schedule."
     },
     {
-      "t": "6:00 AM",
+      "at": "0d 06:00",
       "kind": "read",
       "minStage": "Act",
       "text": "Amazon payout check: found a $1,240 gap",
@@ -40,8 +40,7 @@
   ],
   "earlier": [
     {
-      "day": "Fri, Nov 13",
-      "t": "4:00 PM",
+      "at": "-3d 16:00",
       "kind": "read",
       "minStage": "Act",
       "text": "Saved the weekly numbers report",
@@ -52,8 +51,7 @@
       "trace": "weekly-report"
     },
     {
-      "day": "Fri, Nov 13",
-      "t": "6:00 AM",
+      "at": "-3d 06:00",
       "kind": "read",
       "text": "Morning check: read 5 tools, found 3 things",
       "who": "Read only",
@@ -63,8 +61,7 @@
       "trace": "morning"
     },
     {
-      "day": "Thu, Nov 12",
-      "t": "10:12 AM",
+      "at": "-4d 10:12",
       "kind": "change",
       "minStage": "Act",
       "text": "Reorder of 300 Summit Fleece sent to Kestrel Supply",
@@ -75,8 +72,7 @@
       "trace": "draft"
     },
     {
-      "day": "Thu, Nov 12",
-      "t": "6:00 AM",
+      "at": "-4d 06:00",
       "kind": "read",
       "text": "Morning check: read 4 tools, found 4 things",
       "who": "Read only",

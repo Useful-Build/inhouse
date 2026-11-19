@@ -1,6 +1,6 @@
 // Chats: the parts of an answer, the messages, the seed turns and the chat list.
 import { z } from 'zod'
-import { StageSchema } from './common.ts'
+import { ClockTimeSchema, InstantSchema, StageSchema } from './common.ts'
 
 export const AttachmentSchema = z.object({ name: z.string(), meta: z.string(), icon: z.string() })
 export type Attachment = z.infer<typeof AttachmentSchema>
@@ -21,8 +21,10 @@ export const RoutineCardSchema = z.object({
   name: z.string(),
   freq: z.string(),
   day: z.string(),
-  time: z.string(),
-  next: z.string(),
+  /** The time of day it runs, in the brand's time zone. */
+  time: ClockTimeSchema,
+  /** When it runs next. */
+  next: InstantSchema,
   note: z.string(),
   /** Original request, for routines created in a chat. */
   what: z.string().optional(),
@@ -39,7 +41,7 @@ export const MessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('approval'), problemId: z.string() }),
   z.object({ type: z.literal('routine'), routine: RoutineCardSchema }),
   z.object({ type: z.literal('skill'), skill: SkillCardSchema }),
-  z.object({ type: z.literal('workRow'), text: z.string(), time: z.string() }),
+  z.object({ type: z.literal('workRow'), text: z.string(), at: InstantSchema }),
   z.object({ type: z.literal('notInThisStage'), text: z.string() }),
   z.object({ type: z.literal('error'), text: z.string(), retryQuestion: z.string() }),
   /** Questions to ask next, offered as chips under an answer the agent couldn't give (decision D8). */
@@ -50,11 +52,11 @@ export type MessagePart = z.infer<typeof MessagePartSchema>
 export const ChatMessageSchema = z.discriminatedUnion('role', [
   z.object({ id: z.string(), role: z.literal('user'), text: z.string(), quote: z.string().optional(), atts: z.array(AttachmentSchema).optional() }),
   /**
-   * `model` (the model id from models.json, shown by its label) and `at` (when it answered, ms since the epoch) are set
+   * `model` (the model id from models.json, shown by its label) and `at` (when it answered) are set
    * on answers given in this session; seed answers have neither. Phase 1 stamps them in the store; in phase 2 the agent
    * fills them in on each `part` event.
    */
-  z.object({ id: z.string(), role: z.literal('agent'), part: MessagePartSchema, trace: z.string(), model: z.string().optional(), at: z.number().optional() }),
+  z.object({ id: z.string(), role: z.literal('agent'), part: MessagePartSchema, trace: z.string(), model: z.string().optional(), at: InstantSchema.optional() }),
   z.object({ id: z.string(), role: z.literal('event'), text: z.string() }),
 ])
 export type ChatMessage = z.infer<typeof ChatMessageSchema>
@@ -70,12 +72,8 @@ export type SeedTurn = z.infer<typeof SeedTurnSchema>
 export const ChatThreadSchema = z.object({
   id: z.string(),
   title: z.string(),
-  /** Group in See all: Today, Yesterday, Last 7 days or Earlier. */
-  day: z.string(),
-  /** Shown: today a time, the six days before a weekday, older a date. Never sort on it: use `iso`. */
-  at: z.string(),
-  /** When, as a local ISO date and time ("2026-11-16T07:42"): what the list's newest-first order follows. */
-  iso: z.string(),
+  /** When it was last active: what the list's newest-first order and its day groups follow. */
+  at: InstantSchema,
   turns: z.array(SeedTurnSchema),
 })
 export type ChatThread = z.infer<typeof ChatThreadSchema>
