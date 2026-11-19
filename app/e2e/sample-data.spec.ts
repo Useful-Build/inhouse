@@ -207,10 +207,11 @@ test('Chats: each recent chat opens its own conversation', async ({ page }) => {
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
 })
 
-test('Chats: every seeded answer ends with its footer, its steps and seconds from its own trace', async ({ page }) => {
-  const traces = json('traces.json').traces as Record<string, { durationSeconds: number; steps: unknown[] }>
+test('Chats: every seeded answer ends with its footer, its model, steps and seconds from its own trace', async ({ page }) => {
+  const traces = json('traces.json').traces as Record<string, { durationSeconds: number; steps: { kind: string; detail?: string }[] }>
+  const modes = json('models.json').modes as { id: string; label: string; model: string }[]
   const secs = (x: number) => (x < 60 ? `${Math.round(x * 10) / 10}s` : `${Math.floor(x / 60)}m ${Math.round(x % 60)}s`)
-  type Turn = { user?: string; stage?: string; trace?: string }
+  type Turn = { user?: string; stage?: string; trace?: string; model?: string }
   const seed = json('chat-script.json').seedThread.turns as Turn[]
   const chats = json('chats.json').chats as { id: string; turns: 'seedThread' | Turn[] }[]
   await start(page)
@@ -220,9 +221,14 @@ test('Chats: every seeded answer ends with its footer, its steps and seconds fro
     let inAnswer = false
     for (const t of typeof c.turns === 'string' ? seed : c.turns) {
       if (t.user) { inAnswer = false; continue }
-      if (t.stage && t.stage !== 'Act') continue
       const tr = traces[t.trace!.split(' ')[0]]
-      const line = `${tr.steps.length - 1} steps · ${secs(tr.durationSeconds)}`
+      // Its model is the mode (models.json) whose model its trace's last model step names, so the line and the steps agree.
+      // Checked for every stage's answer, not only the ones Act shows.
+      const last = tr.steps.filter(x => x.kind === 'model').at(-1)?.detail?.split(' · ')[0]
+      const mode = modes.find(m => m.id === t.model)
+      expect(mode?.model, `${c.id}: ${t.trace}`).toBe(last)
+      if (t.stage && t.stage !== 'Act') continue
+      const line = `${mode!.label} · ${tr.steps.length - 1} steps · ${secs(tr.durationSeconds)}`
       if (inAnswer) expected[expected.length - 1] = line; else expected.push(line)
       inAnswer = true
     }

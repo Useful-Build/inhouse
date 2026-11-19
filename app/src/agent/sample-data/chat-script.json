@@ -48,7 +48,8 @@
             ]
           }
         ],
-        "trace": "stuck"
+        "trace": "stuck",
+        "model": "sonnet"
       },
       {
         "user": "Chase ShipBob on #4821, and check for stuck orders every morning from now on."
@@ -65,7 +66,8 @@
             "text": "Approvals and routines start in Act"
           }
         ],
-        "trace": "stuck-watch"
+        "trace": "stuck-watch",
+        "model": "sonnet"
       },
       {
         "stage": "Act",
@@ -86,7 +88,8 @@
             "note": "Posts here only when it finds a stuck order"
           }
         ],
-        "trace": "routine"
+        "trace": "routine",
+        "model": "sonnet"
       },
       {
         "stage": "Run",
@@ -103,7 +106,8 @@
             "note": "Nudges ShipBob by itself, within your limits"
           }
         ],
-        "trace": "routine (without the approval step)"
+        "trace": "routine (without the approval step)",
+        "model": "sonnet"
       }
     ]
   },
