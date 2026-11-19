@@ -11,7 +11,7 @@
 // card's edge through Select. On a phone: the answer row is Copy, steps and "···" (D3) with the thumbs as radio items,
 // every step name in the trace reads in full, Send now on the last queued message puts focus on "+" (never Stop), and
 // Select mode's bar never covers the last chat.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

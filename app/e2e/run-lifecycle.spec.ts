@@ -3,7 +3,7 @@
 // answering chat stops it and Undo brings it back with the stopped note. Screenshots of each state go to the report.
 // Time runs on Playwright's clock: answers move on with `runFor`, and a paused clock holds an answer mid-way, so no
 // check depends on how fast the machine is.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {

@@ -1,6 +1,6 @@
 // Profile photos: sample portraits show for the team, Sam can upload (cropped to a 256 px square) or remove his own,
 // the new photo shows everywhere at once, a reload keeps it, and Reset demo brings the sample photo back.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import path from 'node:path'
 import { atRest } from './states.js'

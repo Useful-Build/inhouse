@@ -1,6 +1,6 @@
 // PR 5, navigation on a phone (390 px): the top bar names Today and chats, not a page with its own h1, the palette opens from its button and fits the
 // screen, and the toast's Undo and a Switch take 44px taps.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Locator, Page } from '@playwright/test'
 
 async function start(page: Page, hash: string) {

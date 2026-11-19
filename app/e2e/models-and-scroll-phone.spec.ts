@@ -1,5 +1,5 @@
 // At 390: Settings, the Models page and the picker fit, nothing is cut off and the page scrolls naturally.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

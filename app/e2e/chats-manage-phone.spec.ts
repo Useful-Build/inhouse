@@ -1,5 +1,5 @@
 // PR 3, managing chats on a phone (390 px): the row menu shows without hover in the drawer, and Rename works there.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 
 test('Phone: the chat row menu opens from the drawer and renames in place; Escape cancels without closing the drawer', async ({ page }) => {
   await page.addInitScript(() => {

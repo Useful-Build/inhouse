@@ -1,7 +1,7 @@
 // Settings > Stage and plan, Team memory and Run limits (desktop: on a phone these team pages are read-only). Each
 // control does what it says; the picks the app keeps (forgotten lines, switches, dropdowns, pause) survive a reload and
 // Reset demo clears them. Stage and plan keeps nothing: it shows the stage and opens the team window.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 type Stage = 'Watch' | 'Act' | 'Run'

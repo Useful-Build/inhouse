@@ -4,7 +4,7 @@
 // on itself, never with a focus ring or a "Close" tooltip on its Close button (L6). A locked switch says why in a tooltip
 // that keyboard focus reaches (M31). "Skip to content" is the first Tab stop and the top bar is the banner (L18). Each
 // overlay's screenshot is attached to the test report.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Locator, Page } from '@playwright/test'
 
 async function open(page: Page, hash: string, ready: string) {
