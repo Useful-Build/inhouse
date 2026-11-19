@@ -10,7 +10,7 @@
 
 @font-face { font-family: "Geist"; src: url("/fonts/geist-variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 @font-face { font-family: "Geist Mono"; src: url("/fonts/geist-mono-variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
-/* Material Symbols Rounded, self-hosted: the Google Fonts cut with the axes the app uses (FILL 0-1, opsz 20-48, wght 100-700, no GRAD). */
+/* Material Symbols Rounded, self-hosted: the Google Fonts cut with the axes the app uses (FILL 0-1, opsz 20-48, wght 300-500, no GRAD), subset to the names in src/ui/icon-manifest.ts. */
 @font-face { font-family: "Material Symbols Rounded"; src: url("/fonts/material-symbols-rounded.woff2") format("woff2"); font-weight: 200 500; font-style: normal; font-display: block; }
 
 /*
