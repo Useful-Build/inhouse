@@ -44,7 +44,7 @@ Projects are in `app/playwright.config.ts`.
 
 ## Previews
 
-Every same-repo PR gets a Workers Preview once `ci` passes. Its comment (marked `<!-- inhouse-preview -->`) gives the preview URL (follows the PR), the deployment URL (fixed to one commit: use this for QA and the ship recording) and the head SHA. Open it with `?demo` like any build. Fork PRs get none.
+Every same-repo PR gets a Workers Preview once `ci` passes. Its comment (marked `<!-- inhouse-preview -->`) gives the preview URL (follows the PR), the deployment URL (fixed to one commit: use this for QA and the ship recording) and the head SHA. Open it with `?demo` like any build. Fork and Dependabot PRs get none.
 
 ## Artifacts
 

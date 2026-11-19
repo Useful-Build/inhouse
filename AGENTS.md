@@ -74,7 +74,7 @@ skill before any UI change. Repo specifics:
   full CI, reviews, a preview, the QA gate and a ship recording (`ship.yml`, run by hand with the PR number and its
   ship spec). Wasim approves that head SHA, then it squash-merges with `--match-head-commit <sha>` and a squash
   message ending in a `Verified:` trailer. A push after approval voids it. Plan: `docs/plans/2026-11-19-setup-gaps.md`.
-- **Previews:** every same-repo PR gets a Workers Preview once `ci` passes (`preview.yml`, trusted code from `main`
+- **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted code from `main`
   in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and the head SHA.
   `preview-cleanup.yml` deletes previews of closed PRs daily.
 - **Deploys:** production deploys by hand with `npm run deploy` from a clean checkout of the merged commit.
