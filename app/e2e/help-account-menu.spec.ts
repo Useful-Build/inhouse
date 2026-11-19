@@ -21,8 +21,12 @@ const team = (page: Page) => page.getByRole('dialog', { name: 'Your Inhouse team
 const help = (page: Page) => page.getByRole('dialog', { name: 'Help and guides' })
 
 async function accountItem(page: Page, name: string) {
+  const menu = page.getByRole('menu', { name: 'Account' })
+  // A click on the trigger while the last menu is still closing is lost, so wait for it to be gone first.
+  await expect(menu).toHaveCount(0)
   await side(page).getByRole('button', { name: /account and settings/i }).click()
-  await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name, exact: true }).click()
+  await expect(menu).toBeVisible()
+  await menu.getByRole('menuitem', { name, exact: true }).click()
 }
 
 test('Help: one guide open at a time; Ask the team sends a question that is listed and survives a reload', async ({ page }) => {
