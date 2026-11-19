@@ -1,14 +1,20 @@
 // The Worker <-> runner schemas. Ways they could fail, written first:
 // - a valid message doesn't survive encode then parse unchanged (round trip);
 // - an unknown field slips through (every object is strict) or a known one is dropped;
-// - a version outside ACCEPTED_VERSIONS is accepted, or the previous version is refused;
+// - a version outside ACCEPTED_VERSIONS is accepted, or a non-canonical spelling (`01`) of one is;
+// - an empty prompt passes without resume; the body cap can't hold a RunStart at its field caps;
+// - a deferred input or a usage over its cap passes;
 // - negotiation picks a version one side doesn't speak.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import {
   ACCEPTED_VERSIONS,
+  DEFERRED_INPUT_MAX_BYTES,
+  PROMPT_MAX_CHARS,
   PROTOCOL_VERSION,
+  RUN_START_MAX_BYTES,
   RunEventBody,
+  USAGE_MAX_BYTES,
   RunStart,
   acceptsVersion,
   encodeRunEvent,
@@ -18,11 +24,11 @@ import {
 } from '../../../shared/protocol/index.ts'
 
 const id = fc.stringMatching(/^[A-Za-z0-9_-]{1,64}$/)
-const runStartArb: fc.Arbitrary<RunStart> = fc.record({
+const runStartFields = fc.record({
   runId: id,
   chatId: id,
   sessionId: fc.uuid({ version: 4 }),
-  resume: fc.boolean(),
+  resume: fc.constant(true),
   prompt: fc.string({ maxLength: 200 }),
   model: fc.constantFrom('claude-sonnet-5-5', 'claude-opus-5-5'),
   effort: fc.constantFrom('low', 'medium', 'high', 'xhigh', 'max'),
@@ -37,6 +43,10 @@ const runStartArb: fc.Arbitrary<RunStart> = fc.record({
     allowedTypes: fc.array(fc.constantFrom('application/pdf', 'image/png', 'text/csv'), { maxLength: 3 }),
   }),
 })
+// `resume` is free except that an empty prompt needs it.
+const runStartArb: fc.Arbitrary<RunStart> = fc
+  .tuple(runStartFields, fc.boolean())
+  .map(([s, resume]) => ({ ...s, resume: s.prompt === '' ? true : resume }))
 
 const reason = fc.constantFrom('session_crashed', 'protocol', 'store', 'interrupted', 'stopped', 'timeout', 'sdk_error' as const)
 const bodyArb: fc.Arbitrary<RunEventBody> = fc.oneof(
@@ -75,8 +85,33 @@ describe('RunStart', () => {
     expect(RunStart.safeParse(copy).success).toBe(false)
   })
 
-  it('takes "" as the deferred-answer resume prompt', () => {
+  it('takes "" as the deferred-answer resume prompt, and only with resume: true', () => {
     expect(RunStart.shape.prompt.parse('')).toBe('')
+    const start = fc.sample(runStartArb, 1)[0]!
+    expect(RunStart.safeParse({ ...start, prompt: '', resume: true }).success).toBe(true)
+    const refused = RunStart.safeParse({ ...start, prompt: '', resume: false })
+    expect(refused.success).toBe(false)
+    expect(refused.error?.issues[0]?.path).toEqual(['prompt'])
+  })
+
+  it('a RunStart at every field cap, its prompt written in the longest escapes, fits the body cap', () => {
+    const start: RunStart = {
+      runId: 'r'.repeat(64),
+      chatId: 'c'.repeat(64),
+      sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11',
+      resume: true,
+      // A control character is the longest a character gets in JSON: six bytes (\u0001).
+      prompt: '\u0001'.repeat(PROMPT_MAX_CHARS),
+      model: 'm'.repeat(128),
+      effort: 'medium',
+      maxTurns: 500,
+      maxBudgetUsd: 1000,
+      runToken: '!'.repeat(512),
+      webFetchDomains: Array.from({ length: 200 }, (_, i) => `${String(i).padStart(3, '0')}${'a'.repeat(57)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(61)}`),
+      fileCaps: { maxFileBytes: 1e15, maxFilesPerTurn: 1e15, maxRestoreBytes: 1e15, allowedTypes: Array.from({ length: 64 }, () => `application/${'x'.repeat(100)}`) },
+    }
+    expect(RunStart.safeParse(start).success).toBe(true)
+    expect(new TextEncoder().encode(JSON.stringify(start)).length).toBeLessThanOrEqual(RUN_START_MAX_BYTES)
   })
 })
 
@@ -106,16 +141,19 @@ describe('run events', () => {
 })
 
 describe('versions', () => {
-  it('accepts the current and the previous version', () => {
-    expect(ACCEPTED_VERSIONS).toEqual([PROTOCOL_VERSION, PROTOCOL_VERSION - 1])
-    expect(acceptsVersion(String(PROTOCOL_VERSION))).toBe(true)
-    expect(acceptsVersion(String(PROTOCOL_VERSION - 1))).toBe(true)
+  it('v1 accepts only itself (no phantom v0); the rule is current and previous once v2 exists', () => {
+    expect(PROTOCOL_VERSION).toBe(1)
+    expect(ACCEPTED_VERSIONS).toEqual([1])
+    expect(acceptsVersion('1')).toBe(true)
+    expect(acceptsVersion('0')).toBe(false)
   })
 
-  it.prop([fc.oneof(fc.integer({ min: -100, max: 1000 }).map(String), fc.string())])('refuses anything outside ACCEPTED_VERSIONS', (header) => {
-    const accepted = /^\d+$/.test(header) && ACCEPTED_VERSIONS.includes(Number(header))
-    expect(acceptsVersion(header)).toBe(accepted && !/^0\d/.test(header))
-  })
+  it.prop([fc.oneof(fc.integer({ min: -100, max: 1000 }).map(String), fc.string(), fc.nat(1000).map((n) => `0${n}`))])(
+    'accepts exactly the canonical decimal of an accepted version',
+    (header) => {
+      expect(acceptsVersion(header)).toBe(ACCEPTED_VERSIONS.some((v) => String(v) === header))
+    },
+  )
 
   it('refuses a missing header', () => {
     expect(acceptsVersion(undefined)).toBe(false)
@@ -137,4 +175,18 @@ describe('versions', () => {
       expect(v).toBe(shared.length ? Math.max(...shared) : null)
     },
   )
+})
+
+describe('caps on the open shapes', () => {
+  it('a deferred input or a usage over its cap fails the parse; at the cap it passes', () => {
+    // {"a":"..."} is 8 bytes of framing around the string.
+    const sized = (bytes: number) => ({ a: 'x'.repeat(bytes - 8) })
+    const deferred = (input: unknown) => RunEventBody.safeParse({ type: 'deferred', toolUseId: 't', toolName: 'n', input }).success
+    const finished = (usage: Record<string, unknown>) =>
+      RunEventBody.safeParse({ type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage }).success
+    expect(deferred(sized(DEFERRED_INPUT_MAX_BYTES))).toBe(true)
+    expect(deferred(sized(DEFERRED_INPUT_MAX_BYTES + 1))).toBe(false)
+    expect(finished(sized(USAGE_MAX_BYTES))).toBe(true)
+    expect(finished(sized(USAGE_MAX_BYTES + 1))).toBe(false)
+  })
 })

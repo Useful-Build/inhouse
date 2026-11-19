@@ -6,21 +6,24 @@
 // PR 2 adds the session store, files, deferred calls and the streaming prompt that `interrupt()` needs.
 import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import type { RunEventBody } from '../../../shared/protocol/index.ts'
-import { RootMessage, type RunConfig } from '../protocol/local.ts'
+import { SDK_MESSAGE_MAX_BYTES, type RunEventBody } from '../../../shared/protocol/index.ts'
+import { RootMessage, capSdkMessage, type RunConfig } from '../protocol/local.ts'
+import type { LineResult } from '../protocol/ndjson.ts'
+import { spawnCli } from './channel.ts'
 import type { QueryGuards } from './seam.ts'
 
 export type QueryFn = (params: { prompt: string; options: Options }) => Pick<Query, 'interrupt'> & AsyncIterable<SDKMessage>
 
-/** The session's side of the local channel. */
+/** The session's side of the local channel (src/session/channel.ts in production). */
 export type SessionChannel = {
   send(message: unknown): void
-  onMessage(handler: (raw: unknown) => void): void
+  /** Each line from the root, parsed, or the framing error (oversized, not JSON) that ends the run. */
+  onMessage(handler: (line: LineResult) => void): void
 }
 
 type SessionEvent = Exclude<RunEventBody, { type: 'started' }>
 
-/** Env names the session process must not hand to the CLI: Node's IPC channel would let a tool write to the root. */
+/** Env names the session process must not hand to the CLI. There's no Node IPC channel any more; the filter stays. */
 const NOT_FOR_THE_CLI = /^NODE_CHANNEL_/
 
 export function cliEnv(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -39,6 +42,8 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     maxTurns: config.maxTurns,
     maxBudgetUsd: config.maxBudgetUsd,
     settingSources: [],
+    // Keeps the local channel's fds 3 and 4 away from the CLI and its tools (src/session/channel.ts).
+    spawnClaudeCodeProcess: spawnCli,
     ...(config.resume ? { resume: config.sessionId } : { sessionId: config.sessionId }),
   }
 }
@@ -77,8 +82,13 @@ export async function runSession(deps: {
     }
   }
 
-  channel.onMessage((raw) => {
-    const parsed = RootMessage.safeParse(raw)
+  channel.onMessage((line) => {
+    if (!line.ok) {
+      emit({ type: 'failed', reason: 'protocol', message: `unreadable line from the root: ${line.error}` })
+      abort.abort()
+      return
+    }
+    const parsed = RootMessage.safeParse(line.value)
     if (!parsed.success) {
       emit({ type: 'failed', reason: 'protocol', message: `bad message from the root: ${z.prettifyError(parsed.error)}`.slice(0, 2000) })
       abort.abort()
@@ -115,11 +125,15 @@ export async function runSession(deps: {
     if (stopping) void halt()
     for await (const m of q) {
       if (ended) break
-      emit({ type: 'sdk', message: m as unknown as Record<string, unknown>, truncated: false })
+      // Capped here as well as in the root, so an honest session never sends a line over the channel's cap.
+      emit({ type: 'sdk', ...capSdkMessage(m as unknown as Record<string, unknown>, SDK_MESSAGE_MAX_BYTES) })
       if (m.type === 'result') result = m
     }
   } catch (e) {
+    // An interrupt that fell back to the abort signal makes the SDK throw an AbortError: that's an interrupt, not an
+    // SDK fault.
     if (stopping) emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
+    else if (abort.signal.aborted) emit({ type: 'failed', reason: 'interrupted', message: 'interrupted' })
     else emit({ type: 'failed', reason: 'sdk_error', message: message(e) })
     return
   }

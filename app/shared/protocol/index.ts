@@ -7,8 +7,11 @@
 import { z } from 'zod'
 
 export const PROTOCOL_VERSION = 1
-/** The versions this side speaks: the current one and the one before, so a Worker one version ahead still runs chats. */
-export const ACCEPTED_VERSIONS: readonly number[] = [PROTOCOL_VERSION, PROTOCOL_VERSION - 1]
+/**
+ * The versions this side speaks. The rule: the current one and the one before, so a Worker one version ahead still runs
+ * chats. There's no version before 1, so this is `[1]`; when v2 lands it becomes `[2, 1]`.
+ */
+export const ACCEPTED_VERSIONS: readonly number[] = [PROTOCOL_VERSION]
 /** Every request to the runner (except the discovery routes `/protocol` and `/health`) carries this header. */
 export const PROTOCOL_HEADER = 'x-inhouse-protocol'
 
@@ -19,9 +22,12 @@ export const ProtocolInfo = z.strictObject({
 })
 export type ProtocolInfo = z.infer<typeof ProtocolInfo>
 
-/** True when a request's protocol header names a version this side accepts. A missing or unreadable header is false. */
+/**
+ * True when a request's protocol header names a version this side accepts. Canonical decimals only (`1`, not `01` or
+ * `+1`); a missing or unreadable header is false.
+ */
 export function acceptsVersion(header: string | null | undefined, accepted: readonly number[] = ACCEPTED_VERSIONS): boolean {
-  if (header == null || !/^\d{1,6}$/.test(header)) return false
+  if (header == null || !/^(0|[1-9]\d{0,5})$/.test(header)) return false
   return accepted.includes(Number(header))
 }
 
@@ -51,15 +57,23 @@ export type FileCaps = z.infer<typeof FileCaps>
 
 export const Effort = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
 
-/** `POST /runs` body. The run token is accepted here and nowhere else. */
-export const RunStart = z.strictObject({
+/** The prompt cap, in characters. */
+export const PROMPT_MAX_CHARS = 200_000
+/**
+ * The runner's cap on a `POST /runs` body, in bytes. JSON can escape one prompt character as six bytes (`\u0000`), so
+ * the cap fits a prompt at its cap written that way, plus every other field at its own cap (checked in wire.test.ts).
+ */
+export const RUN_START_MAX_BYTES = 2 * 1024 * 1024
+
+/** The fields of a `POST /runs` body; `RunStart` adds the cross-field rules. */
+export const RunStartFields = z.strictObject({
   runId: Id,
   chatId: Id,
   sessionId: SessionId,
   /** false on a session's first run (`sessionId`), true after (`resume`). */
   resume: z.boolean(),
-  /** `""` resumes after a deferred tool call's answer. */
-  prompt: z.string().max(200_000),
+  /** `""` resumes after a deferred tool call's answer, so it's allowed only with `resume: true`. */
+  prompt: z.string().max(PROMPT_MAX_CHARS),
   model: z.string().regex(/^[A-Za-z0-9._:@/-]{1,128}$/),
   effort: Effort,
   maxTurns: z.int().min(1).max(500),
@@ -68,6 +82,14 @@ export const RunStart = z.strictObject({
   webFetchDomains: z.array(Hostname).max(200),
   fileCaps: FileCaps,
 })
+
+/** Cross-field rules shared by `RunStart` and the runner's run config (the same fields less the token). */
+export function checkRunStart(v: { prompt: string; resume: boolean }, ctx: z.RefinementCtx) {
+  if (v.prompt === '' && !v.resume) ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'an empty prompt is only for a resume' })
+}
+
+/** `POST /runs` body. The run token is accepted here and nowhere else. */
+export const RunStart = RunStartFields.superRefine(checkRunStart)
 export type RunStart = z.infer<typeof RunStart>
 
 /** The largest SDK message passed through whole in an `sdk` event; a bigger one arrives as a stub with `truncated`. */
@@ -78,7 +100,23 @@ export type FailureReason = z.infer<typeof FailureReason>
 
 export const FileRefusalReason = z.enum(['too_large', 'too_many', 'type_not_allowed', 'save_failed'])
 
-const Usage = z.record(z.string(), z.unknown())
+/** Caps on the open shapes a session sends, as JSON bytes. An event over one fails the parse (`protocol`). */
+export const DEFERRED_INPUT_MAX_BYTES = 64 * 1024
+export const USAGE_MAX_BYTES = 32 * 1024
+
+const utf8 = new TextEncoder()
+
+/** The size of a value as JSON, in UTF-8 bytes; Infinity for a value JSON can't encode. */
+export function jsonBytes(value: unknown): number {
+  try {
+    const text = JSON.stringify(value)
+    return text === undefined ? 0 : utf8.encode(text).length
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+}
+
+const Usage = z.record(z.string(), z.unknown()).refine((u) => jsonBytes(u) <= USAGE_MAX_BYTES, { message: `usage over ${USAGE_MAX_BYTES} bytes` })
 
 /** A run event without its envelope. The root runner stamps `runId` and `seq`. */
 export const RunEventBody = z.discriminatedUnion('type', [
@@ -91,7 +129,12 @@ export const RunEventBody = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('file_saved'), path: z.string().max(1024), bytes: z.int().nonnegative(), contentType: z.string().max(128) }),
   z.strictObject({ type: z.literal('file_refused'), path: z.string().max(1024), reason: FileRefusalReason, bytes: z.int().nonnegative().optional() }),
-  z.strictObject({ type: z.literal('deferred'), toolUseId: z.string().max(256), toolName: z.string().max(256), input: z.unknown() }),
+  z.strictObject({
+    type: z.literal('deferred'),
+    toolUseId: z.string().max(256),
+    toolName: z.string().max(256),
+    input: z.unknown().refine((i) => jsonBytes(i) <= DEFERRED_INPUT_MAX_BYTES, { message: `input over ${DEFERRED_INPUT_MAX_BYTES} bytes` }),
+  }),
   /** The store confirmed every batch of this run (`entries` uuids checked with `load()`). */
   z.strictObject({ type: z.literal('checkpoint'), entries: z.int().nonnegative() }),
   z.strictObject({

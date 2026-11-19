@@ -1,14 +1,19 @@
 // The session process's run loop, with the SDK's query() mocked at the process boundary. Ways it could fail:
 // - the query gets options that don't come from the run config, misses settingSources: [], or swaps sessionId/resume;
-// - the guards aren't applied, or Node's IPC channel leaks into the CLI's env;
+// - the guards aren't applied, a NODE_CHANNEL_ variable reaches the CLI's env, or the CLI isn't spawned via spawnCli;
+// - an interrupt that falls back to abort is reported as an SDK error;
 // - a run ends twice, or not at all, when the query throws, is stopped, or the root sends garbage;
 // - sessionEnv() grows a variable that isn't on its list (where a token could hide).
-import { readdirSync, readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
+import type { LineResult } from '../../src/protocol/ndjson.ts'
+import { spawnCli } from '../../src/session/channel.ts'
 import { runSession, type QueryFn } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards } from '../../src/session/seam.ts'
@@ -21,7 +26,7 @@ const assistant = { type: 'assistant', message: { content: [] } } as unknown as 
 
 function harness(query: QueryFn, guards: QueryGuards = testQueryGuards) {
   const sent: any[] = []
-  let handler: (raw: unknown) => void = () => {}
+  let handler: (line: LineResult) => void = () => {}
   const done = runSession({
     channel: { send: (m) => sent.push(m), onMessage: (h) => (handler = h) },
     query,
@@ -30,7 +35,7 @@ function harness(query: QueryFn, guards: QueryGuards = testQueryGuards) {
     env: { PATH: '/bin', NODE_CHANNEL_FD: '3', NODE_CHANNEL_SERIALIZATION_MODE: 'json' },
   })
   const events = () => sent.filter((m) => m.type === 'event').map((m) => m.event)
-  return { sent, events, done, deliver: (m: unknown) => handler(m) }
+  return { sent, events, done, deliver: (m: unknown) => handler({ ok: true, value: m }), deliverLine: (l: LineResult) => handler(l) }
 }
 
 const config = (over = {}) => {
@@ -38,17 +43,24 @@ const config = (over = {}) => {
   return c
 }
 
-function fakeQuery(messages: SDKMessage[], opts: { throwAt?: number; holdUntilInterrupt?: boolean; interruptThrows?: boolean } = {}) {
+function fakeQuery(messages: SDKMessage[], opts: { throwAt?: number; holdUntilInterrupt?: boolean; interruptThrows?: boolean; abortThrows?: boolean } = {}) {
   const calls: { prompt: string; options: Options }[] = []
   let interrupted = 0
   let release!: () => void
   const held = new Promise<void>((r) => (release = r))
   const query: QueryFn = (params) => {
     calls.push(params)
+    const signal = params.options.abortController!.signal
     async function* gen() {
       for (let i = 0; i < messages.length; i++) {
         if (opts.throwAt === i) throw new Error('the CLI exited')
         yield messages[i]!
+      }
+      if (opts.abortThrows) {
+        // As the real SDK does on its abort signal: the iteration throws an AbortError.
+        await new Promise<void>((_, reject) =>
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('Claude Code process aborted by user'), { name: 'AbortError' })), { once: true }),
+        )
       }
       if (opts.holdUntilInterrupt) await held
     }
@@ -134,6 +146,42 @@ describe('runSession', () => {
     expect(h.events().at(-1)).toMatchObject({ type: 'failed', reason: 'interrupted' })
   })
 
+  it('an interrupt that falls back to abort, where the SDK throws an AbortError, ends as interrupted', async () => {
+    const q = fakeQuery([assistant], { abortThrows: true, interruptThrows: true })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await new Promise((r) => setImmediate(r))
+    h.deliver({ type: 'interrupt' })
+    await h.done
+    expect(h.events().map((e) => e.type)).toEqual(['sdk', 'failed'])
+    expect(h.events().at(-1)).toMatchObject({ type: 'failed', reason: 'interrupted' })
+  })
+
+  it('an unreadable line from the root (oversized, not JSON) ends the session with failed protocol', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    h.deliverLine({ ok: false, error: 'line over the size cap' })
+    await h.done
+    expect(q.calls).toHaveLength(0)
+    expect(h.events()).toEqual([expect.objectContaining({ type: 'failed', reason: 'protocol' })])
+  })
+
+  it('the query spawns the CLI through spawnCli (fds 3 and 4 kept from it)', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(q.calls[0]!.options.spawnClaudeCodeProcess).toBe(spawnCli)
+  })
+
+  it('an SDK message over the cap is stubbed before it is sent', async () => {
+    const huge = { type: 'assistant', blob: 'a'.repeat(300 * 1024) } as unknown as SDKMessage
+    const h = harness(fakeQuery([huge, result]).query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(h.events()[0]).toMatchObject({ type: 'sdk', truncated: true, message: { type: 'assistant' } })
+  })
+
   it.prop([fc.anything().filter((m) => !(typeof m === 'object' && m !== null && 'type' in m))])(
     'a message from the root it cannot read ends the session with failed protocol, and no query runs',
     async (garbage) => {
@@ -183,6 +231,34 @@ describe('the production wiring', () => {
     expect(() => productionQueryGuards()).toThrow(GuardsMissingError)
   })
 
+  // The bundle the image runs, built by the package's own build script into a temp folder.
+  it('the bundled root and session entries refuse to start without the guards, and zod is bundled as ESM', () => {
+    const runner = fileURLToPath(new URL('../../', import.meta.url))
+    const pkg = JSON.parse(readFileSync(join(runner, 'package.json'), 'utf8')) as { scripts: { build: string } }
+    const [bin, ...args] = pkg.scripts.build.split(' ')
+    expect(bin).toBe('esbuild')
+    expect(args).toContain('--outdir=dist')
+    const out = mkdtempSync(join(tmpdir(), 'runner-bundle-'))
+    try {
+      const buildArgs = [...args.filter((a) => a !== '--outdir=dist'), `--outdir=${out}`, `--metafile=${join(out, 'meta.json')}`, '--log-level=warning']
+      execFileSync(join(runner, 'node_modules/.bin/esbuild'), buildArgs, { cwd: runner, stdio: 'pipe' })
+
+      const inputs = Object.keys((JSON.parse(readFileSync(join(out, 'meta.json'), 'utf8')) as { inputs: Record<string, unknown> }).inputs)
+      const zod = inputs.filter((i) => i.includes('node_modules/zod/'))
+      expect(zod).toContain('node_modules/zod/index.js')
+      expect(zod.filter((i) => i.endsWith('.cjs'))).toEqual([])
+      expect(inputs.some((i) => i.includes('claude-agent-sdk'))).toBe(false)
+
+      for (const entry of ['main.mjs', 'session/main.mjs']) {
+        const run = spawnSync(process.execPath, [join(out, entry)], { env: { PATH: process.env.PATH, EGRESS_URL: 'http://127.0.0.1:9' }, encoding: 'utf8', timeout: 30_000 })
+        expect(run.status, entry).not.toBe(0)
+        expect(run.stderr, entry).toMatch(/refusing to start without the guards/)
+      }
+    } finally {
+      rmSync(out, { recursive: true, force: true })
+    }
+  })
+
   it('refuses the test implementation even when it is handed over', () => {
     expect(() => requireProduction(testSessionUsers(), 'SessionUsers')).toThrow(/test/)
     expect(() => requireProduction(testQueryGuards, 'QueryGuards')).toThrow(/test/)
@@ -196,8 +272,18 @@ describe('imports', () => {
     readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? files(join(dir, d.name)) : d.name.endsWith('.ts') ? [join(dir, d.name)] : []))
   const src = fileURLToPath(new URL('../../src/', import.meta.url))
 
+  // Static imports, re-exports and dynamic import(), in either quote style.
+  const fromTest = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"`])[^'"`]*\/test\//
+
+  it('the import check catches every form', () => {
+    for (const line of [`import x from '../test/a'`, `import x from "../test/a"`, `export { x } from "../../test/a"`, `await import('../test/a')`, `await import("../test/a")`, `import "../test/side-effect"`]) {
+      expect(line).toMatch(fromTest)
+    }
+    expect(`import x from '../src/a'`).not.toMatch(fromTest)
+  })
+
   it('nothing in src/ imports from test/', () => {
-    for (const f of files(src)) expect(readFileSync(f, 'utf8'), f).not.toMatch(/from '[^']*\/test\//)
+    for (const f of files(src)) expect(readFileSync(f, 'utf8'), f).not.toMatch(fromTest)
   })
 
   it('the root (main, server, proxy, protocol) loads the SDK for types only', () => {

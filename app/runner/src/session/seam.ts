@@ -17,7 +17,12 @@ export interface SessionUsers {
   readonly kind: 'production' | 'test'
   /** One OS user per session key (the chat id). Idempotent: the same key gets the same user. */
   allocate(sessionKey: string): Promise<SessionUser>
-  /** Called when the session's process has ended. */
+  /**
+   * Called once the session's process has exited and the root has killed its process group. Must not resolve until no
+   * process of `user.uid` is left (a process that left the group with setsid included): the chat's slot, and with it
+   * the uid, frees only after this settles, and a leftover holding the uid would otherwise act under the next run's
+   * token. Also called for a run refused after `allocate` (a root uid). R2 implements it.
+   */
   release(sessionKey: string, user: SessionUser): Promise<void>
 }
 
@@ -27,5 +32,9 @@ export interface SessionUsers {
  */
 export interface QueryGuards {
   readonly kind: 'production' | 'test'
+  /**
+   * Must keep `baseOptions.spawnClaudeCodeProcess` (or call it from its own): it keeps the local channel's fds 3 and 4
+   * away from the CLI and its tools (src/session/channel.ts).
+   */
   apply(baseOptions: Options, runConfig: RunConfig): Options
 }

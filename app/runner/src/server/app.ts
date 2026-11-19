@@ -1,11 +1,14 @@
 // The root runner's HTTP server for the Worker (port 8080) and its table of live runs. It owns every run token, in
 // memory only, keyed by run id and the session's uid; the token goes to the loopback proxy and nowhere else (never
 // over the local channel, never into a session's env, argv or files). It never imports the Agent SDK.
+import type { ChildProcess } from 'node:child_process'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
+import type { Socket } from 'node:net'
 import {
   ACCEPTED_VERSIONS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
+  RUN_START_MAX_BYTES,
   RunStart,
   encodeRunEvent,
   type ErrorBody,
@@ -16,23 +19,39 @@ import {
 import { z } from 'zod'
 import type { RunConfig } from '../protocol/local.ts'
 import { sessionEnv } from '../session/env.ts'
-import type { SessionUsers } from '../session/seam.ts'
+import type { SessionUser, SessionUsers } from '../session/seam.ts'
 import { RunStream } from './run-stream.ts'
 import { hostSession, type SessionHandle, type SpawnSession } from './session-host.ts'
 
-const MAX_BODY_BYTES = 1024 * 1024
-
-type LiveRun = { runId: string; chatId: string; uid: number | null; token: string; handle: SessionHandle | null }
+type LiveRun = {
+  runId: string
+  chatId: string
+  /** The session's uid, once allocated. */
+  uid: number | null
+  /** Dropped as soon as the session has exited; the run stays listed until `release()` has settled. */
+  token: string | null
+  handle: SessionHandle | null
+  /** A stop or interrupt that came before the session was spawned: applied once it is. */
+  stopRequested: boolean
+  interruptRequested: boolean
+  /** The Worker hung up. */
+  gone: boolean
+}
 
 export type RootDeps = {
   users: SessionUsers
   spawnSession: SpawnSession
   proxyPort: number
-  /** After a stop (or a run's end) the session gets this long to exit before it's killed. */
+  /** After a stop (or a run's end) the session gets this long to exit before its process group is killed. */
   stopGraceMs: number
   /** A run still going after this long ends with `timeout`. */
   runTimeoutMs: number
   memory: () => Health['memory']
+  /**
+   * Whether a connection to this API may be served. Production refuses a peer that is a local process not owned by
+   * root (a session user's Bash), from the kernel's socket tables (src/proxy/proc-net.ts).
+   */
+  apiPeerAllowed: (socket: Socket) => Promise<boolean>
   log: (entry: Record<string, unknown>) => void
 }
 
@@ -41,22 +60,38 @@ export type Root = {
   /** The live run's token for a session uid; null when there's none, or more than one (never guess). */
   tokenForUid(uid: number): string | null
   liveCount(): number
-  /** Stops every live run (the SIGTERM path) and resolves once each has ended. */
+  /** The SIGTERM path: refuses new runs (503), stops every run, starting ones included, and resolves once each has ended. */
   stopAll(): Promise<void>
 }
+
+/** The token of the one run on `uid`; null for none, or for more than one. */
+export function pickToken(runs: Iterable<{ uid: number | null; token: string | null }>, uid: number): string | null {
+  const found = [...runs].filter((r) => r.uid === uid)
+  return found.length === 1 ? found[0]!.token : null
+}
+
+const errorText = (e: unknown) => String(e instanceof Error ? e.message : e)
 
 export function createRoot(deps: RootDeps): Root {
   const runs = new Map<string, LiveRun>()
   const chats = new Set<string>()
   const ending = new Set<Promise<void>>()
+  let stopping = false
 
-  const tokenForUid = (uid: number): string | null => {
-    const found = [...runs.values()].filter((r) => r.uid === uid)
-    return found.length === 1 ? found[0]!.token : null
+  const tokenForUid = (uid: number): string | null => pickToken(runs.values(), uid)
+
+  const release = async (live: LiveRun, user: SessionUser) => {
+    try {
+      await deps.users.release(live.chatId, user)
+    } catch (e) {
+      deps.log({ type: 'session_user_release_failed', runId: live.runId, error: errorText(e) })
+    }
   }
 
   async function startRun(req: IncomingMessage, res: ServerResponse) {
+    if (stopping) return json(res, 503, { error: 'the runner is stopping' })
     const body = await readJson(req)
+    if (stopping) return json(res, 503, { error: 'the runner is stopping' })
     if (!body.ok) return json(res, 400, { error: body.error })
     const parsed = RunStart.safeParse(body.value)
     // Issue messages and paths only: zod doesn't echo input values unless asked, so the token can't come back here.
@@ -65,68 +100,141 @@ export function createRoot(deps: RootDeps): Root {
     if (runs.has(config.runId)) return json(res, 409, { error: 'a run with this id is live' })
     if (chats.has(config.chatId)) return json(res, 409, { error: 'this chat has a live run' })
 
-    const live: LiveRun = { runId: config.runId, chatId: config.chatId, uid: null, token: runToken, handle: null }
+    // Admitted: from here the run is listed (so stop, interrupt and stopAll reach it) until its user is released.
+    const live: LiveRun = {
+      runId: config.runId,
+      chatId: config.chatId,
+      uid: null,
+      token: runToken,
+      handle: null,
+      stopRequested: false,
+      interruptRequested: false,
+      gone: false,
+    }
     runs.set(config.runId, live)
     chats.add(config.chatId)
-    const forget = () => {
+    const lifecycle = runLifecycle(live, config, res).finally(() => {
       runs.delete(config.runId)
       chats.delete(config.chatId)
-    }
+    })
+    ending.add(lifecycle)
+    await lifecycle
+    ending.delete(lifecycle)
+  }
 
-    let user
+  async function runLifecycle(live: LiveRun, config: RunConfig, res: ServerResponse) {
+    // The Worker hung up: nobody can read the run's events, so stop it, at whatever stage it is.
+    res.on('close', () => {
+      if (res.writableFinished) return
+      live.gone = true
+      deps.log({ type: 'worker_hung_up', runId: live.runId })
+      live.handle?.stop()
+    })
+
+    let user: SessionUser
     try {
       user = await deps.users.allocate(config.chatId)
     } catch (e) {
-      forget()
-      deps.log({ type: 'session_user_failed', runId: config.runId, error: String(e instanceof Error ? e.message : e) })
+      deps.log({ type: 'session_user_failed', runId: live.runId, error: errorText(e) })
       return json(res, 500, { error: 'could not set up the session user' })
     }
     if (user.uid === 0 || user.gid === 0) {
-      forget()
-      deps.log({ type: 'session_user_refused', runId: config.runId, reason: 'root' })
+      deps.log({ type: 'session_user_refused', runId: live.runId, reason: 'root' })
+      await release(live, user)
       return json(res, 500, { error: 'a session never runs as root' })
     }
+    // One run per uid: the proxy maps a uid to exactly one token. Not released: the uid belongs to the other run.
+    if ([...runs.values()].some((r) => r !== live && r.uid === user.uid)) {
+      deps.log({ type: 'session_user_refused', runId: live.runId, reason: 'uid busy', uid: user.uid })
+      return json(res, 500, { error: 'the session user still has a live run' })
+    }
     live.uid = user.uid
+    if (live.gone) {
+      deps.log({ type: 'run_abandoned', runId: live.runId, stage: 'allocate' })
+      await release(live, user)
+      return
+    }
 
     res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })
-    const stream = new RunStream(config.runId, (e) => res.write(encodeRunEvent(e)))
+    // Backpressure: when the Worker reads slowly, stop reading the session until the response drains.
+    const stream = new RunStream(config.runId, (e) => {
+      if (res.destroyed || res.writableEnded) return
+      if (!res.write(encodeRunEvent(e))) live.handle?.pause()
+    })
+    res.on('drain', () => live.handle?.resume())
     stream.emit({ type: 'started', sessionId: config.sessionId, resume: config.resume })
+    const end = async () => {
+      live.token = null
+      res.end()
+      await release(live, user)
+    }
 
-    const child = deps.spawnSession(user, sessionEnv(user, deps.proxyPort))
-    const handle = hostSession({ child, stream, config, stopGraceMs: deps.stopGraceMs, log: deps.log })
+    if (live.stopRequested) {
+      stream.emit({ type: 'failed', reason: 'stopped', message: 'stopped before the session started' })
+      return end()
+    }
+
+    let child: ChildProcess | undefined
+    let handle: SessionHandle
+    try {
+      child = deps.spawnSession(user, sessionEnv(user, deps.proxyPort))
+      handle = hostSession({ child, stream, config, stopGraceMs: deps.stopGraceMs, log: deps.log })
+    } catch (e) {
+      // A synchronous spawn failure (EPERM from the uid switch, E2BIG, ...): one terminal event, and nothing left over.
+      deps.log({ type: 'session_spawn_failed', runId: live.runId, error: errorText(e) })
+      if (child?.pid !== undefined) {
+        try {
+          process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+      stream.emit({ type: 'failed', reason: 'session_crashed', message: 'the session process could not start' })
+      return end()
+    }
     live.handle = handle
+    if (res.writableNeedDrain) handle.pause()
+    if (live.stopRequested || live.gone) handle.stop()
+    else if (live.interruptRequested) handle.interrupt()
 
     const timer = setTimeout(() => {
       stream.emit({ type: 'failed', reason: 'timeout', message: 'the run took too long' })
       handle.stop()
     }, deps.runTimeoutMs)
-    // The Worker hung up before the run ended: nobody can read its events, so stop it.
-    res.on('close', () => {
-      if (!stream.ended) handle.stop()
-    })
-
-    const finished = handle.done.then(async () => {
-      clearTimeout(timer)
-      forget()
-      res.end()
-      try {
-        await deps.users.release(config.chatId, user)
-      } catch (e) {
-        deps.log({ type: 'session_user_release_failed', runId: config.runId, error: String(e instanceof Error ? e.message : e) })
-      }
-    })
-    ending.add(finished)
-    await finished
-    ending.delete(finished)
+    await handle.done
+    clearTimeout(timer)
+    // The session and its group are gone: the token goes now; the chat slot frees once release() has settled (finally
+    // in startRun), so a new run on this chat can't race this run's release.
+    await end()
   }
 
+  const peers = new WeakMap<Socket, Promise<boolean>>()
   const server = http.createServer((req, res) => {
-    route(req, res).catch((e) => {
+    serve(req, res).catch((e) => {
       deps.log({ type: 'root_request_failed', error: String(e instanceof Error ? e.stack : e) })
       if (!res.headersSent) json(res, 500, { error: 'internal error' })
       else res.destroy()
     })
   })
+  server.on('connection', (socket: Socket) => {
+    const allowed = Promise.resolve().then(() => deps.apiPeerAllowed(socket)).catch((e) => {
+      deps.log({ type: 'api_peer_check_failed', error: errorText(e) })
+      return false
+    })
+    peers.set(socket, allowed)
+    void allowed.then((ok) => {
+      if (ok) return
+      deps.log({ type: 'api_peer_refused', remoteAddress: socket.remoteAddress, remotePort: socket.remotePort })
+      socket.destroy()
+    })
+  })
+
+  async function serve(req: IncomingMessage, res: ServerResponse) {
+    // Nothing is served before the peer check has passed, and nothing for a connection it refused.
+    const allowed = await (peers.get(req.socket) ?? Promise.resolve(false))
+    if (!allowed || req.socket.destroyed) return void req.socket.destroy()
+    return route(req, res)
+  }
 
   async function route(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://runner')
@@ -149,9 +257,15 @@ export function createRoot(deps: RootDeps): Root {
     const action = /^\/runs\/([A-Za-z0-9_-]{1,64})\/(interrupt|stop)$/.exec(url.pathname)
     if (method === 'POST' && action) {
       const live = runs.get(action[1]!)
-      if (!live?.handle) return json(res, 404, { error: 'no such live run' })
-      if (action[2] === 'interrupt') live.handle.interrupt()
-      else live.handle.stop()
+      if (!live) return json(res, 404, { error: 'no such live run' })
+      // A run still starting records it; it's applied once the session is spawned.
+      if (action[2] === 'interrupt') {
+        if (live.handle) live.handle.interrupt()
+        else live.interruptRequested = true
+      } else {
+        live.stopRequested = true
+        live.handle?.stop()
+      }
       return json(res, 202, { ok: true })
     }
     return json(res, 404, { error: 'not found' })
@@ -162,7 +276,11 @@ export function createRoot(deps: RootDeps): Root {
     tokenForUid,
     liveCount: () => runs.size,
     async stopAll() {
-      for (const r of runs.values()) r.handle?.stop()
+      stopping = true
+      for (const r of runs.values()) {
+        r.stopRequested = true
+        r.handle?.stop()
+      }
       await Promise.all(ending)
     },
   }
@@ -177,7 +295,7 @@ async function readJson(req: IncomingMessage): Promise<{ ok: true; value: unknow
   let size = 0
   for await (const c of req as AsyncIterable<Buffer>) {
     size += c.length
-    if (size > MAX_BODY_BYTES) return { ok: false, error: 'body too large' }
+    if (size > RUN_START_MAX_BYTES) return { ok: false, error: 'body too large' }
     chunks.push(c)
   }
   try {

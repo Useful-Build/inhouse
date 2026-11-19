@@ -9,69 +9,76 @@ import type { Socket } from 'node:net'
 export const RUN_TOKEN_HEADER = 'x-inhouse-run-token'
 export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files'] as const
 
-/** Headers never forwarded: hop-by-hop ones, the caller's own credentials (the egress adds the real key) and any token. */
-const DROP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-  'host',
-  'authorization',
-  'x-api-key',
-  RUN_TOKEN_HEADER,
-])
+/**
+ * The request headers forwarded, an allowlist: what the Messages API takes (`anthropic-*`), what the MCP streamable
+ * HTTP transport needs (`mcp-session-id`, `mcp-protocol-version`, `last-event-id`, `accept`, `content-type`), and the
+ * body's framing. Nothing else: no caller credentials (the egress adds the real key) and no token but the proxy's own.
+ */
+const REQUEST_HEADERS = new Set(['content-type', 'content-length', 'accept', 'user-agent', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'])
+const forwardsRequestHeader = (name: string) => REQUEST_HEADERS.has(name) || name.startsWith('anthropic-')
+
+/** Response headers never passed back: hop-by-hop ones and the token header. */
+const RESPONSE_DROP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', RUN_TOKEN_HEADER])
 
 export type ProxyDeps = {
   /** The Worker's egress, e.g. `http://egress.internal`. Paths are appended as they came in (`/model/v1/messages`). */
   upstream: URL
-  /** The uid on the other end of an accepted connection, or null when unknown. */
-  lookupUid: (socket: Socket) => number | null
+  /** The uid on the other end of an accepted connection, or null when unknown. Called once, when the connection opens. */
+  lookupUid: (socket: Socket) => Promise<number | null>
   /** The live run's token for a uid, or null. */
   tokenForUid: (uid: number) => string | null
   log: (entry: Record<string, unknown>) => void
+  /** The largest request body forwarded; a bigger one gets 413. */
+  maxBodyBytes?: number
+  /** An upstream connection idle this long is cut (504 if nothing was answered yet). */
+  upstreamTimeoutMs?: number
 }
 
-export function createProxy(deps: ProxyDeps): http.Server {
-  const uids = new WeakMap<Socket, number | null>()
-  const uidOf = (socket: Socket): number | null => {
-    if (!uids.has(socket)) {
-      let uid: number | null
-      try {
-        uid = deps.lookupUid(socket)
-      } catch (e) {
-        deps.log({ type: 'proxy_uid_lookup_failed', error: String(e instanceof Error ? e.message : e) })
-        uid = null
-      }
-      uids.set(socket, uid)
-    }
-    return uids.get(socket) ?? null
-  }
+export const PROXY_MAX_BODY_BYTES = 64 * 1024 * 1024
+export const PROXY_UPSTREAM_TIMEOUT_MS = 10 * 60_000
 
-  return http.createServer((req, res) => {
+export function createProxy(deps: ProxyDeps): http.Server {
+  const uids = new WeakMap<Socket, Promise<number | null>>()
+  const server = http.createServer((req, res) => {
+    void handle(req, res).catch((e) => {
+      deps.log({ type: 'proxy_failed', error: String(e instanceof Error ? e.stack : e) })
+      if (!res.headersSent) refuse(res, 500, 'internal error')
+      else res.destroy()
+    })
+  })
+  // The uid is looked up as the connection opens, while the caller's socket is certainly still in the tables.
+  server.on('connection', (socket: Socket) => {
+    uids.set(
+      socket,
+      Promise.resolve()
+        .then(() => deps.lookupUid(socket))
+        .catch((e) => {
+          deps.log({ type: 'proxy_uid_lookup_failed', error: String(e instanceof Error ? e.message : e) })
+          return null
+        }),
+    )
+  })
+
+  async function handle(req: IncomingMessage, res: ServerResponse) {
     const path = req.url ?? '/'
     const route = /^\/([a-z]+)\//.exec(path)?.[1]
     if (!route || !(PROXY_ROUTES as readonly string[]).includes(route)) return refuse(res, 404, 'no such route')
     // No dot segments or backslashes, so a path can't climb out of its route once the URL is resolved.
     if (/(^|\/)\.\.?(\/|$|\?)|\\|%2e|%5c/i.test(path)) return refuse(res, 400, 'bad path')
 
-    const uid = uidOf(req.socket)
+    const uid = await (uids.get(req.socket) ?? Promise.resolve(null))
     if (uid === null) return refuseLogged(deps, res, route, null, 'unknown caller')
     if (uid === 0) return refuseLogged(deps, res, route, uid, 'root never calls through the proxy')
     const token = deps.tokenForUid(uid)
     if (token === null) return refuseLogged(deps, res, route, uid, 'no live run for this user')
+    forward(deps, path, req, res, token, route, uid)
+  }
 
-    forward(deps.upstream, path, req, res, token, (error) => {
-      deps.log({ type: 'proxy_upstream_error', route, uid, error })
-    })
-  })
+  return server
 }
 
 function refuse(res: ServerResponse, status: number, error: string) {
-  res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify({ error }))
+  res.writeHead(status, { 'content-type': 'application/json', connection: 'close' }).end(JSON.stringify({ error }))
 }
 
 function refuseLogged(deps: ProxyDeps, res: ServerResponse, route: string, uid: number | null, reason: string) {
@@ -79,22 +86,68 @@ function refuseLogged(deps: ProxyDeps, res: ServerResponse, route: string, uid: 
   refuse(res, 403, reason)
 }
 
-function forward(upstream: URL, path: string, req: IncomingMessage, res: ServerResponse, token: string, onError: (e: string) => void) {
+function forward(deps: ProxyDeps, path: string, req: IncomingMessage, res: ServerResponse, token: string, route: string, uid: number) {
+  const maxBody = deps.maxBodyBytes ?? PROXY_MAX_BODY_BYTES
+  const logError = (error: string) => deps.log({ type: 'proxy_upstream_error', route, uid, error })
+  const tooLarge = () => {
+    deps.log({ type: 'proxy_refused', route, uid, reason: 'body too large' })
+    if (!res.headersSent) refuse(res, 413, 'body too large')
+    else res.destroy()
+  }
+  const declared = req.headers['content-length']
+  if (declared !== undefined && Number(declared) > maxBody) return tooLarge()
+
   const headers: Record<string, string | string[]> = {}
-  for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && !DROP.has(k)) headers[k] = v
+  for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && forwardsRequestHeader(k)) headers[k] = v
   headers[RUN_TOKEN_HEADER] = token
-  const target = new URL(upstream.pathname.replace(/\/$/, '') + path, upstream)
+  const target = new URL(deps.upstream.pathname.replace(/\/$/, '') + path, deps.upstream)
   const send = target.protocol === 'https:' ? https.request : http.request
-  const up = send(target, { method: req.method, headers }, (upRes) => {
+
+  let callerGone = false
+  let failed = false
+  const up = send(target, { method: req.method, headers, timeout: deps.upstreamTimeoutMs ?? PROXY_UPSTREAM_TIMEOUT_MS }, (upRes) => {
     const out: Record<string, string | string[]> = {}
-    for (const [k, v] of Object.entries(upRes.headers)) if (v !== undefined && !DROP.has(k)) out[k] = v
+    for (const [k, v] of Object.entries(upRes.headers)) if (v !== undefined && !RESPONSE_DROP.has(k)) out[k] = v
     res.writeHead(upRes.statusCode ?? 502, out)
     upRes.pipe(res)
+    // The upstream cut the body short: the caller must not take a partial body for a whole one.
+    upRes.on('close', () => {
+      if (upRes.complete || callerGone) return
+      logError('the upstream ended mid-body')
+      res.destroy()
+    })
   })
+  up.on('timeout', () => up.destroy(new Error('upstream timeout')))
   up.on('error', (e) => {
-    onError(e.message)
-    if (!res.headersSent) refuse(res, 502, 'upstream failed')
+    if (callerGone || failed) return
+    failed = true
+    logError(e.message)
+    if (!res.headersSent) refuse(res, e.message === 'upstream timeout' ? 504 : 502, 'upstream failed')
     else res.destroy()
   })
-  req.pipe(up)
+  // The caller went away (or its connection broke): the upstream request is dropped with it.
+  res.on('close', () => {
+    if (res.writableFinished) return
+    callerGone = true
+    up.destroy()
+  })
+
+  let size = 0
+  req.on('data', (chunk: Buffer) => {
+    if (failed) return
+    size += chunk.length
+    if (size > maxBody) {
+      failed = true
+      up.destroy()
+      tooLarge()
+      return
+    }
+    if (!up.write(chunk)) {
+      req.pause()
+      up.once('drain', () => req.resume())
+    }
+  })
+  req.on('end', () => {
+    if (!failed) up.end()
+  })
 }

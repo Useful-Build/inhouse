@@ -3,10 +3,11 @@
 // - IPv6 text differs from how Node reports the same address, so a real caller never matches;
 // - a v4-mapped IPv6 entry doesn't match the IPv4 address Node gives;
 // - a garbage or header line parses, or throws;
-// - the lookup matches the proxy's own (root-owned) socket, a listening socket, or one of several ambiguous entries.
+// - the lookup matches the proxy's own (root-owned) socket, a listening socket, or one of several ambiguous entries;
+// - the API's peer check lets a session user's local process in, or a local peer it can't see, or shuts the Worker out.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import { decodeAddress, findPeerUid, normaliseAddress, parseProcNetTcp, type TcpEntry } from '../../src/proxy/proc-net.ts'
+import { decideApiPeer, decodeAddress, findPeerUid, normaliseAddress, parseProcNetTcp, type TcpEntry } from '../../src/proxy/proc-net.ts'
 
 const HEADER = '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode'
 const hex = (n: number, w: number) => n.toString(16).toUpperCase().padStart(w, '0')
@@ -106,6 +107,45 @@ describe('findPeerUid', () => {
       expect(findPeerUid(entries, c)).toBeNull()
       entries.push({ local: { address: '127.0.0.1', port: cp }, remote: proxy, state: 1, uid: u })
       expect(findPeerUid(entries, c)).toBe(u)
+    },
+  )
+})
+
+describe('decideApiPeer (who may call the root API on 8080)', () => {
+  // The root API's side of a connection: local = the API, remote = the caller.
+  const api = { address: '10.0.0.5', port: 8080 }
+  const clientEnd = (address: string, port: number, uid: number, state = 1): TcpEntry => ({ local: { address, port }, remote: api, state, uid })
+  const listening: TcpEntry = { local: { address: '0.0.0.0', port: 8080 }, remote: { address: '0.0.0.0', port: 0 }, state: 10, uid: 0 }
+  const apiSide = (address: string, port: number): TcpEntry => ({ local: api, remote: { address, port }, state: 1, uid: 0 })
+  const conn = (address: string, port: number) => ({ localAddress: api.address, localPort: api.port, remoteAddress: address, remotePort: port })
+
+  it('a session user on this machine is refused; root on this machine is allowed', () => {
+    expect(decideApiPeer([listening, apiSide('10.0.0.5', 40000), clientEnd('10.0.0.5', 40000, 1001)], conn('10.0.0.5', 40000))).toBe('refuse')
+    expect(decideApiPeer([listening, apiSide('10.0.0.5', 40000), clientEnd('10.0.0.5', 40000, 0)], conn('10.0.0.5', 40000))).toBe('allow')
+  })
+
+  it('a peer with no socket here is the Worker and is allowed, unless it is loopback', () => {
+    expect(decideApiPeer([listening, apiSide('172.16.0.1', 5000)], conn('172.16.0.1', 5000))).toBe('allow')
+    expect(decideApiPeer([listening], { ...conn('127.0.0.1', 5000), localAddress: '127.0.0.1' })).toBe('refuse')
+    expect(decideApiPeer([listening], { ...conn('::1', 5000), localAddress: '::1' })).toBe('refuse')
+  })
+
+  it('a root-owned client end that is not established (a time-wait stub shows uid 0) is refused', () => {
+    expect(decideApiPeer([clientEnd('10.0.0.5', 40000, 0, 6)], conn('10.0.0.5', 40000))).toBe('refuse')
+  })
+
+  it('an address it cannot read is refused', () => {
+    expect(decideApiPeer([], conn('not-an-address', 1))).toBe('refuse')
+  })
+
+  it.prop([fc.array(fc.record({ uid: fc.integer({ min: 0, max: 3 }), state: fc.constantFrom(1, 1, 6, 8) }), { maxLength: 3 }), fc.constantFrom('10.0.0.5', '::ffff:10.0.0.5', '127.0.0.1', '172.16.0.9'), port])(
+    'allows exactly: no client end here and not loopback, or every client end root-owned and established',
+    (ends, address, p) => {
+      const normal = normaliseAddress(address)!
+      const entries = [listening, apiSide(normal, p), ...ends.map((e) => clientEnd(normal, p, e.uid, e.state))]
+      const expected =
+        ends.length === 0 ? (normal.startsWith('127.') ? 'refuse' : 'allow') : ends.every((e) => e.uid === 0 && e.state === 1) ? 'allow' : 'refuse'
+      expect(decideApiPeer(entries, { ...conn(address, p), localAddress: api.address })).toBe(expected)
     },
   )
 })

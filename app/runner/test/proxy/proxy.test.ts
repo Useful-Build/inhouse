@@ -2,52 +2,82 @@
 // - it forwards for an unknown uid, a uid with no live run, root, or when the uid lookup itself fails;
 // - it forwards without a token, or passes on a token (or key) the caller made up;
 // - it forwards a route outside the four, or a path that climbs out of its route;
-// - the token ends up in a log line.
+// - the token ends up in a log line;
+// - a header outside the allowlist is forwarded;
+// - the uid is looked up per request (or blocking) instead of once per connection;
+// - the caller goes away and the upstream request carries on; the upstream cuts the body and the caller takes the
+//   part for a whole one; an upstream that never answers holds the caller forever; a body of any size is forwarded.
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fc, it } from '@fast-check/vitest'
 import { afterAll, beforeAll, beforeEach, describe, expect } from 'vitest'
-import { RUN_TOKEN_HEADER, createProxy } from '../../src/proxy/server.ts'
+import { RUN_TOKEN_HEADER, createProxy, type ProxyDeps } from '../../src/proxy/server.ts'
+import { waitFor } from '../run/support/root-client.ts'
 
 type Seen = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }
 let seen: Seen[] = []
 let logs: Record<string, unknown>[] = []
 let callerUid: number | null | 'throw' = null
 let tokens = new Map<number, string>()
+let upstreamClosed: string[] = []
+let lookups = 0
 let upstream: http.Server
+let upstreamUrl: URL
 let proxy: http.Server
 let proxyUrl = ''
 
-beforeAll(async () => {
-  upstream = http.createServer((req, res) => {
-    let body = ''
-    req.on('data', (c) => (body += c))
-    req.on('end', () => {
-      seen.push({ method: req.method!, url: req.url!, headers: req.headers, body })
-      res.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: ok\n\n')
-    })
-  })
-  await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', r))
-  const up = upstream.address() as AddressInfo
-  proxy = createProxy({
-    upstream: new URL(`http://127.0.0.1:${up.port}/egress`),
-    lookupUid: () => {
+async function makeProxy(opts: Partial<ProxyDeps> = {}): Promise<{ server: http.Server; url: string }> {
+  const server = createProxy({
+    upstream: upstreamUrl,
+    lookupUid: async () => {
+      lookups++
       if (callerUid === 'throw') throw new Error('no /proc here')
       return callerUid
     },
     tokenForUid: (uid) => tokens.get(uid) ?? null,
     log: (e) => logs.push(e),
+    ...opts,
   })
-  await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r))
-  proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  return { server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }
+}
+
+beforeAll(async () => {
+  upstream = http.createServer((req, res) => {
+    // /hold never answers; /cut sends half a body and drops the connection; anything else echoes what it saw.
+    if (req.url!.endsWith('/hold')) {
+      req.resume()
+      req.on('close', () => upstreamClosed.push(req.url!))
+      return
+    }
+    if (req.url!.endsWith('/cut')) {
+      req.resume()
+      res.writeHead(200, { 'content-type': 'text/plain', 'content-length': '100' })
+      res.write('half', () => res.socket!.destroy())
+      return
+    }
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      seen.push({ method: req.method!, url: req.url!, headers: req.headers, body })
+      res.writeHead(200, { 'content-type': 'text/event-stream', [RUN_TOKEN_HEADER]: 'tok_from_upstream_xxxxxx' }).end('data: ok\n\n')
+    })
+  })
+  await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', r))
+  upstreamUrl = new URL(`http://127.0.0.1:${(upstream.address() as AddressInfo).port}/egress`)
+  ;({ server: proxy, url: proxyUrl } = await makeProxy())
 })
 afterAll(async () => {
+  proxy.closeAllConnections()
+  upstream.closeAllConnections()
   await new Promise((r) => proxy.close(r))
   await new Promise((r) => upstream.close(r))
 })
 beforeEach(() => {
   seen = []
   logs = []
+  upstreamClosed = []
+  lookups = 0
   tokens = new Map([[1001, 'tok_live_run_1001_aaaaaaaa'], [0, 'tok_root_must_never_be_used']])
   callerUid = 1001
 })
@@ -129,5 +159,110 @@ describe('what is forwarded', () => {
     })
     expect(res).toBe(400)
     expect(seen).toHaveLength(0)
+  })
+})
+
+describe('headers', () => {
+  it('forwards only the allowlist (and the token the proxy adds); drops the token header on the way back', async () => {
+    const res = await call('/mcp/x', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        'mcp-session-id': 's-1',
+        'mcp-protocol-version': '2025-11-25',
+        'last-event-id': 'e-9',
+        'anthropic-beta': 'b1',
+        'x-custom': 'nope',
+        cookie: 'a=b',
+        'x-forwarded-for': '1.2.3.4',
+        'accept-encoding': 'gzip',
+      },
+      body: '{}',
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get(RUN_TOKEN_HEADER)).toBeNull()
+    const h = seen[0]!.headers
+    expect(h).toMatchObject({ 'mcp-session-id': 's-1', 'mcp-protocol-version': '2025-11-25', 'last-event-id': 'e-9', 'anthropic-beta': 'b1' })
+    for (const dropped of ['x-custom', 'cookie', 'x-forwarded-for', 'accept-encoding']) expect(h[dropped], dropped).toBeUndefined()
+    expect(h[RUN_TOKEN_HEADER]).toBe('tok_live_run_1001_aaaaaaaa')
+  })
+})
+
+describe('the uid lookup', () => {
+  it('runs once per connection, when it opens, not per request', async () => {
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 })
+    const get = () =>
+      new Promise<number>((resolve, reject) => {
+        const u = new URL(proxyUrl)
+        http.request({ host: u.hostname, port: u.port, path: '/model/v1/x', method: 'GET', agent }, (r) => {
+          r.resume()
+          r.on('end', () => resolve(r.statusCode!))
+        }).on('error', reject).end()
+      })
+    expect(await get()).toBe(200)
+    expect(await get()).toBe(200)
+    agent.destroy()
+    expect(lookups).toBe(1)
+  })
+})
+
+describe('streams that break', () => {
+  it('the caller goes away: the upstream request is dropped', async () => {
+    const ac = new AbortController()
+    const reached = new Promise<void>((r) => upstream.once('request', () => r()))
+    const pending = call('/model/hold', { method: 'POST', body: 'x', signal: ac.signal })
+    await reached
+    ac.abort()
+    await expect(pending).rejects.toThrow()
+    await waitFor(() => upstreamClosed.length === 1, 'upstream request closed')
+  })
+
+  it('the upstream cuts the body: the caller is cut too, and it is logged', async () => {
+    const res = await call('/model/cut')
+    expect(res.status).toBe(200)
+    await expect(res.text()).rejects.toThrow()
+    await waitFor(() => logs.some((l) => l.type === 'proxy_upstream_error'))
+  })
+
+  it('an upstream that never answers times out with 504', async () => {
+    const short = await makeProxy({ upstreamTimeoutMs: 50 })
+    try {
+      const res = await fetch(`${short.url}/model/hold`, { method: 'POST', body: 'x', headers: { connection: 'close' } })
+      expect(res.status).toBe(504)
+      expect(logs).toContainEqual(expect.objectContaining({ type: 'proxy_upstream_error', error: 'upstream timeout' }))
+    } finally {
+      short.server.closeAllConnections()
+      await new Promise((r) => short.server.close(r))
+    }
+  })
+
+  it.each([
+    ['with a content-length', 'fixed'],
+    ['chunked', 'chunked'],
+  ])('a body over the cap gets 413 (%s), nothing forwarded whole', async (_, framing) => {
+    const small = await makeProxy({ maxBodyBytes: 1024 })
+    try {
+      const body = 'x'.repeat(4096)
+      const status = await new Promise<number>((resolve, reject) => {
+        const u = new URL(small.url)
+        const headers: Record<string, string> = { connection: 'close' }
+        if (framing === 'fixed') headers['content-length'] = String(body.length)
+        const req = http.request({ host: u.hostname, port: u.port, path: '/files/x', method: 'POST', headers }, (r) => {
+          r.resume()
+          resolve(r.statusCode!)
+        })
+        req.on('error', reject)
+        if (framing === 'chunked') {
+          req.write(body.slice(0, 2048))
+          req.end(body.slice(2048))
+        } else req.end(body)
+      })
+      expect(status).toBe(413)
+      expect(seen).toHaveLength(0)
+    } finally {
+      small.server.closeAllConnections()
+      await new Promise((r) => small.server.close(r))
+    }
   })
 })

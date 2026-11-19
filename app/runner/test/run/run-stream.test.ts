@@ -1,5 +1,6 @@
-// seq per run. Ways it could fail: under concurrent runs a seq repeats, skips or leaks across runs; events after the
-// terminal one are written; a run ends twice.
+// RunStream alone (the root's per-run stamping), not the root around it: root.test.ts proves the same through the HTTP
+// API with real sessions. Ways it could fail: under concurrent runs a seq repeats, skips or leaks across runs; events
+// after the terminal one are written; a run ends twice.
 import { fc, it } from '@fast-check/vitest'
 import { expect } from 'vitest'
 import type { RunEvent, RunEventBody } from '../../../shared/protocol/index.ts'
@@ -13,7 +14,7 @@ const body = fc.oneof(
 )
 
 it.prop([fc.array(fc.tuple(fc.nat(5), body), { maxLength: 200 }), fc.scheduler()])(
-  'every run gets seq 0..n-1 with no gaps, its own events only, and at most one end, under any interleaving',
+  'RunStream: every run gets seq 0..n-1 with no gaps, its own events only, and at most one end, under any interleaving',
   async (steps, s) => {
     const written: RunEvent[] = []
     const streams = Array.from({ length: 6 }, (_, i) => new RunStream(`run-${i}`, (e) => written.push(e)))

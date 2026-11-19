@@ -5,11 +5,12 @@
 // - the run token reaches the session: its env, argv, the run message, or a file it writes; or a log line;
 // - a request with an unaccepted protocol version is served; the previous version is refused;
 // - an oversized SDK message is passed through whole;
-// - a stop never ends a session that ignores it.
+// - a stop never ends a session that ignores it;
+// - a run raced by a stop or a crash ends twice, or with a seq gap.
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
 import { ACCEPTED_VERSIONS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, type RunEvent } from '../../../shared/protocol/index.ts'
-import { postRun, protocolHeaders, runStart, startTestRoot, type TestRoot } from './support/root-client.ts'
+import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
 import { spawnFixture } from './support/test-seams.ts'
 
 let root: TestRoot
@@ -39,6 +40,8 @@ describe('a session that misbehaves', () => {
     ['crash', 'session_crashed'],
     ['garbage', 'protocol'],
     ['bad-event', 'protocol'],
+    ['raw-garbage', 'protocol'],
+    ['oversized', 'protocol'],
   ])('%s: one failed event (%s) and the root stays up', async (prompt, reason) => {
     const events = await postRun(root, runStart({ prompt }))
     expectOneEnd(events)
@@ -109,6 +112,41 @@ describe('streams', () => {
     },
   )
 
+  // Runs whose end is decided by a race: a stop sent after some events against the session's own finish, a crash
+  // part-way, a plain finish; all at once. Whatever wins, each run has one end and no seq gaps, and only its own events.
+  const racer = fc.record({
+    n: fc.integer({ min: 0, max: 8 }),
+    end: fc.constantFrom('finish', 'stop', 'crash'),
+    stopAfter: fc.integer({ min: 0, max: 8 }),
+  })
+  it.prop([fc.array(racer, { minLength: 2, maxLength: 5 })], { numRuns: 10 })(
+    'concurrent sessions ending by races (stop, crash, finish): one end each, no seq gaps',
+    async (runs) => {
+      const opened = runs.map((r) => {
+        const start = runStart({ prompt: r.end === 'crash' ? `crash-after:${r.n}` : `race:${r.n}` })
+        return { r, start, run: openRun(root, start) }
+      })
+      await Promise.all(
+        opened.map(async ({ r, start, run }) => {
+          if (r.end !== 'stop') return
+          await waitFor(() => run.events.length >= Math.min(r.stopAfter, r.n) + 1 || run.events.some((e) => e.type === 'finished' || e.type === 'failed'))
+          expect([202, 404]).toContain(await post(root, `/runs/${start.runId}/stop`))
+        }),
+      )
+      const streams = await Promise.all(opened.map((o) => o.run.done))
+      streams.forEach((events, i) => {
+        const { r, start } = opened[i]!
+        expectOneEnd(events)
+        expect(events.every((e) => e.runId === start.runId)).toBe(true)
+        const last = events.at(-1)!
+        if (r.end === 'finish') expect(last.type).toBe('finished')
+        if (r.end === 'crash') expect(last).toMatchObject({ type: 'failed', reason: 'session_crashed' })
+        if (r.end === 'stop') expect(last.type === 'finished' || (last.type === 'failed' && last.reason === 'stopped')).toBe(true)
+      })
+      await waitFor(() => root.liveCount() === 0)
+    },
+  )
+
   it('one live run per chat', async () => {
     const first = runStart({ prompt: 'obey-stop' })
     const pending = postRun(root, first)
@@ -140,11 +178,12 @@ describe('the run token stays in the root', () => {
   it('the token is held, by uid, only while its run is live', async () => {
     const start = runStart({ prompt: 'obey-stop', runToken: 'tok_held_while_live_0001' })
     const pending = postRun(root, start)
-    await waitFor(() => root.tokenForUid(process.getuid!()) !== null)
-    expect(root.tokenForUid(process.getuid!())).toBe('tok_held_while_live_0001')
+    await waitFor(() => root.users.uids.has(start.chatId) && root.tokenForUid(root.users.uids.get(start.chatId)!) !== null)
+    const uid = root.users.uids.get(start.chatId)!
+    expect(root.tokenForUid(uid)).toBe('tok_held_while_live_0001')
     await fetch(`${root.url}/runs/${start.runId}/stop`, { method: 'POST', headers: protocolHeaders })
     await pending
-    expect(root.tokenForUid(process.getuid!())).toBeNull()
+    expect(root.tokenForUid(uid)).toBeNull()
   })
 
   it('a bad RunStart is refused without echoing the token', async () => {
@@ -175,19 +214,10 @@ describe('protocol version', () => {
     expect(res.status).toBe(426)
   })
 
-  it('the previous version is accepted', async () => {
-    const events = await postRun(root, runStart())
-    expect(events.at(-1)?.type).toBe('finished')
-    const res = await fetch(`${root.url}/runs/none/stop`, { method: 'POST', headers: { [PROTOCOL_HEADER]: String(PROTOCOL_VERSION - 1) } })
-    expect(res.status).toBe(404)
+  it('a non-canonical spelling of the current version gets 426', async () => {
+    for (const v of [`0${PROTOCOL_VERSION}`, `+${PROTOCOL_VERSION}`, `${PROTOCOL_VERSION}.0`, `${PROTOCOL_VERSION}e0`]) {
+      const res = await fetch(`${root.url}/runs/none/stop`, { method: 'POST', headers: { [PROTOCOL_HEADER]: v } })
+      expect(res.status, v).toBe(426)
+    }
   })
 })
-
-/** Polls a condition on the event loop (no fixed sleep): resolves as soon as it holds, fails after 5 s. */
-async function waitFor(cond: () => boolean) {
-  const deadline = Date.now() + 5000
-  while (!cond()) {
-    if (Date.now() > deadline) throw new Error('condition not met')
-    await new Promise((r) => setImmediate(r))
-  }
-}

@@ -6,13 +6,15 @@
 //    0: 0100007F:1F90 0100007F:D2A4 01 00000000:00000000 00:00000000 00000000  1000        0 12345 ...
 // Addresses are the raw in-kernel bytes printed as 32-bit words in host byte order. The container runs on
 // little-endian hosts (x86_64, arm64), so each word's bytes are reversed. Ports are big-endian hex.
-import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 
 export type Endpoint = { address: string; port: number }
 export type TcpEntry = { local: Endpoint; remote: Endpoint; state: number; uid: number }
 
 /** TCP_ESTABLISHED in the kernel's state numbering. */
 export const ESTABLISHED = 1
+
+export type Conn = { localAddress: string; localPort: number; remoteAddress: string; remotePort: number }
 
 function word(hex8: string): number[] {
   // One 32-bit word in little-endian host order: the bytes, low first.
@@ -100,28 +102,61 @@ export function parseProcNetTcp(text: string): TcpEntry[] {
   return out
 }
 
+/** The table entries for the client end of a connection we accepted (its local and remote are ours swapped). */
+function clientEnds(entries: TcpEntry[], conn: Conn): TcpEntry[] | null {
+  const ours = normaliseAddress(conn.localAddress)
+  const client = normaliseAddress(conn.remoteAddress)
+  if (ours === null || client === null) return null
+  return entries.filter(
+    (e) => e.local.address === client && e.local.port === conn.remotePort && e.remote.address === ours && e.remote.port === conn.localPort,
+  )
+}
+
 /**
  * The uid owning the client end of a connection the proxy accepted. The proxy's socket has local = the proxy, remote =
  * the client; the client's own socket is the table entry with those swapped. Exactly one established match, or null.
  */
-export function findPeerUid(entries: TcpEntry[], conn: { localAddress: string; localPort: number; remoteAddress: string; remotePort: number }): number | null {
-  const proxy = normaliseAddress(conn.localAddress)
-  const client = normaliseAddress(conn.remoteAddress)
-  if (proxy === null || client === null) return null
-  const matches = entries.filter(
-    (e) =>
-      e.state === ESTABLISHED &&
-      e.local.address === client &&
-      e.local.port === conn.remotePort &&
-      e.remote.address === proxy &&
-      e.remote.port === conn.localPort,
-  )
+export function findPeerUid(entries: TcpEntry[], conn: Conn): number | null {
+  const matches = clientEnds(entries, conn)?.filter((e) => e.state === ESTABLISHED) ?? []
   return matches.length === 1 ? matches[0]!.uid : null
 }
 
-/** Reads both tables (as root) and finds the peer's uid. Null when the connection isn't found exactly once. */
-export function readPeerUid(conn: { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number }): number | null {
-  if (!conn.localAddress || !conn.remoteAddress || !conn.localPort || !conn.remotePort) return null
-  const entries = ['/proc/net/tcp', '/proc/net/tcp6'].flatMap((p) => parseProcNetTcp(readFileSync(p, 'utf8')))
-  return findPeerUid(entries, { localAddress: conn.localAddress, localPort: conn.localPort, remoteAddress: conn.remoteAddress, remotePort: conn.remotePort })
+const isLoopback = (address: string) => address.startsWith('127.') || address === '::1'
+
+/**
+ * Whether the root's API (port 8080) may serve a connection. A peer with no socket in this machine's tables is the
+ * Worker (it connects from outside the container) and is allowed. A local peer is allowed only when every client end
+ * found is root's and established; a session user's process (its Bash, say) is refused. Fails closed on what it can't
+ * read: an address it can't parse, or a loopback peer whose socket isn't in the tables (it has already gone).
+ */
+export function decideApiPeer(entries: TcpEntry[], conn: Conn): 'allow' | 'refuse' {
+  const ends = clientEnds(entries, conn)
+  if (ends === null) return 'refuse'
+  if (ends.length === 0) return isLoopback(normaliseAddress(conn.remoteAddress)!) ? 'refuse' : 'allow'
+  return ends.every((e) => e.uid === 0 && e.state === ESTABLISHED) ? 'allow' : 'refuse'
+}
+
+type SocketLike = { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number }
+
+function connOf(s: SocketLike): Conn | null {
+  if (!s.localAddress || !s.remoteAddress || !s.localPort || !s.remotePort) return null
+  return { localAddress: s.localAddress, localPort: s.localPort, remoteAddress: s.remoteAddress, remotePort: s.remotePort }
+}
+
+/** Reads both tables (as root), without blocking the event loop. Throws when a table can't be read. */
+export async function readTcpTables(): Promise<TcpEntry[]> {
+  const texts = await Promise.all(['/proc/net/tcp', '/proc/net/tcp6'].map((p) => readFile(p, 'utf8')))
+  return texts.flatMap(parseProcNetTcp)
+}
+
+/** The peer's uid. Null when the connection isn't found exactly once. */
+export async function readPeerUid(socket: SocketLike): Promise<number | null> {
+  const conn = connOf(socket)
+  return conn === null ? null : findPeerUid(await readTcpTables(), conn)
+}
+
+/** The production `apiPeerAllowed` for the root's API. */
+export async function apiPeerAllowed(socket: SocketLike): Promise<boolean> {
+  const conn = connOf(socket)
+  return conn !== null && decideApiPeer(await readTcpTables(), conn) === 'allow'
 }

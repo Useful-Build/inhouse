@@ -3,11 +3,11 @@
 // Without the real guards (R2) it refuses to start.
 import { fileURLToPath } from 'node:url'
 import { createProxy } from './proxy/server.ts'
-import { readPeerUid } from './proxy/proc-net.ts'
+import { apiPeerAllowed, readPeerUid } from './proxy/proc-net.ts'
 import { createRoot } from './server/app.ts'
 import { readMemory } from './server/memory.ts'
 import { productionSessionUsers } from './server/production.ts'
-import { forkSession } from './server/session-host.ts'
+import { spawnSessionProcess } from './server/session-host.ts'
 
 const log = (entry: Record<string, unknown>) => console.log(JSON.stringify({ t: new Date().toISOString(), ...entry }))
 
@@ -28,11 +28,12 @@ const sessionEntry = fileURLToPath(new URL('./session/main.mjs', import.meta.url
 
 const root = createRoot({
   users,
-  spawnSession: forkSession(sessionEntry),
+  spawnSession: spawnSessionProcess(sessionEntry),
   proxyPort,
   stopGraceMs: 10_000,
   runTimeoutMs: 30 * 60_000,
   memory: readMemory,
+  apiPeerAllowed,
   log,
 })
 
@@ -41,11 +42,14 @@ const proxy = createProxy({ upstream, lookupUid: (s) => readPeerUid(s), tokenFor
 proxy.listen(proxyPort, '127.0.0.1', () => log({ type: 'proxy_listening', port: proxyPort }))
 root.server.listen(port, () => log({ type: 'runner_listening', port }))
 
-// SIGTERM: every live run gets interrupt(), flush, end (the session's stop path), then the root exits.
+// SIGTERM: no new runs (503), idle connections closed, and every run, starting ones included, gets interrupt(), flush,
+// end (the session's stop path); then the root exits.
 process.once('SIGTERM', () => {
   log({ type: 'sigterm', live: root.liveCount() })
+  const stopped = root.stopAll()
   root.server.close()
-  void root.stopAll().then(() => {
+  root.server.closeIdleConnections()
+  void stopped.then(() => {
     proxy.close()
     process.exit(0)
   })

@@ -1,14 +1,15 @@
 // The local channel between the root runner and a session process (runner-internal; not the Worker wire protocol).
-// Node's IPC channel on the spawn carries JSON; both ends parse every message through these schemas. A message that
-// fails to parse ends that session with a `failed` event (reason `protocol`); it never crashes the root.
+// Two pipes carry NDJSON (fd 3 session -> root, fd 4 root -> session; src/protocol/ndjson.ts frames them); both ends
+// parse every message through these schemas. A line that is unreadable, oversized or fails to parse ends that session
+// with a `failed` event (reason `protocol`); it never crashes the root.
 import { z } from 'zod'
-import { RunEventBody, RunStart } from '../../../shared/protocol/index.ts'
+import { RunEventBody, RunStartFields, checkRunStart } from '../../../shared/protocol/index.ts'
 
 /**
  * What a session process gets for its run: the run start without the run token. Strict, so a `runToken` field is a
  * parse error on both ends, and the token can't ride along by accident.
  */
-export const RunConfig = RunStart.omit({ runToken: true })
+export const RunConfig = RunStartFields.omit({ runToken: true }).superRefine(checkRunStart)
 export type RunConfig = z.infer<typeof RunConfig>
 
 /** Root -> session. */

@@ -3,13 +3,16 @@ import type { AddressInfo } from 'node:net'
 import { PROTOCOL_HEADER, PROTOCOL_VERSION, parseRunEventLine, type RunEvent, type RunStart } from '../../../../shared/protocol/index.ts'
 import { createRoot, type Root } from '../../../src/server/app.ts'
 import type { SpawnSession } from '../../../src/server/session-host.ts'
-import { cleanup, testSessionUsers } from './test-seams.ts'
+import { cleanup, testSessionUsers, type TestUsers } from './test-seams.ts'
 
-export type TestRoot = Root & { url: string; logs: Record<string, unknown>[]; close(): Promise<void> }
+export type TestRoot = Root & { url: string; logs: Record<string, unknown>[]; users: TestUsers; close(): Promise<void> }
 
-export async function startTestRoot(spawnSession: SpawnSession, opts: { stopGraceMs?: number; runTimeoutMs?: number } = {}): Promise<TestRoot> {
+export async function startTestRoot(
+  spawnSession: SpawnSession,
+  opts: { stopGraceMs?: number; runTimeoutMs?: number; users?: TestUsers } = {},
+): Promise<TestRoot> {
   const logs: Record<string, unknown>[] = []
-  const users = testSessionUsers()
+  const users = opts.users ?? testSessionUsers()
   const root = createRoot({
     users,
     spawnSession,
@@ -17,6 +20,7 @@ export async function startTestRoot(spawnSession: SpawnSession, opts: { stopGrac
     stopGraceMs: opts.stopGraceMs ?? 2000,
     runTimeoutMs: opts.runTimeoutMs ?? 60_000,
     memory: () => ({ totalBytes: null, availableBytes: null, rssBytes: 1, heapUsedBytes: 1 }),
+    apiPeerAllowed: async () => true,
     log: (e) => logs.push(e),
   })
   await new Promise<void>((r) => root.server.listen(0, '127.0.0.1', r))
@@ -25,8 +29,10 @@ export async function startTestRoot(spawnSession: SpawnSession, opts: { stopGrac
     ...root,
     url: `http://127.0.0.1:${port}`,
     logs,
+    users,
     async close() {
       await root.stopAll()
+      root.server.closeAllConnections()
       await new Promise<void>((r) => root.server.close(() => r()))
       cleanup(users)
     },
@@ -57,8 +63,42 @@ export const protocolHeaders = { 'content-type': 'application/json', [PROTOCOL_H
 
 /** POSTs a run and reads its whole NDJSON stream, every line parsed through the shared schema. */
 export async function postRun(root: TestRoot, start: RunStart): Promise<RunEvent[]> {
-  const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: protocolHeaders, body: JSON.stringify(start) })
-  if (res.status !== 200) throw new Error(`POST /runs ${res.status}: ${await res.text()}`)
-  const text = await res.text()
-  return text.split('\n').filter(Boolean).map(parseRunEventLine)
+  return openRun(root, start).done
+}
+
+/** POSTs a run and reads its stream as it arrives: `events` fills up live; `hangUp()` drops the connection. */
+export function openRun(root: TestRoot, start: RunStart) {
+  const ac = new AbortController()
+  const events: RunEvent[] = []
+  const done = (async () => {
+    const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: protocolHeaders, body: JSON.stringify(start), signal: ac.signal })
+    if (res.status !== 200) throw new Error(`POST /runs ${res.status}: ${await res.text()}`)
+    const decoder = new TextDecoder()
+    let buf = ''
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buf += decoder.decode(chunk, { stream: true })
+      for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
+        events.push(parseRunEventLine(buf.slice(0, i)))
+        buf = buf.slice(i + 1)
+      }
+    }
+    if (buf !== '') throw new Error(`unterminated last line: ${buf.slice(0, 100)}`)
+    return events
+  })()
+  return { events, done, hangUp: () => ac.abort() }
+}
+
+export async function post(root: TestRoot, path: string): Promise<number> {
+  const res = await fetch(`${root.url}${path}`, { method: 'POST', headers: protocolHeaders })
+  await res.body?.cancel()
+  return res.status
+}
+
+/** Polls a condition on the event loop (no fixed sleep): resolves as soon as it holds, fails after 10 s. */
+export async function waitFor(cond: () => boolean, what = 'condition') {
+  const deadline = Date.now() + 10_000
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`${what} not met`)
+    await new Promise((r) => setImmediate(r))
+  }
 }
