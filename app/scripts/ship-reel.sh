@@ -23,13 +23,17 @@ while IFS=$'\t' read -r project title video; do
   # Text goes through files, never into the filter string, so a title can't break or inject into it.
   # One file and one drawtext per wrapped line: a line break inside drawtext's text renders as a box with Ubuntu's
   # ffmpeg (text shaping on), and fold -s leaves a trailing space. Lines are trimmed and centred one by one.
-  mapfile -t lines < <(printf '%s\n' "$title" | fold -s -w 34 | sed 's/[[:space:]]*$//')
+  # Blank lines are dropped (drawtext fails on an empty file); a read loop, not mapfile, so bash 3.2 runs it too.
+  lines=()
+  while IFS= read -r line; do [ -n "$line" ] && lines+=("$line"); done < <(printf '%s\n' "$title" | fold -s -w 34 | sed 's/[[:space:]]*$//')
+  [ ${#lines[@]} -gt 0 ] || lines=("$project")
   count=${#lines[@]}
   filter=""
   for i in "${!lines[@]}"; do
     printf '%s' "${lines[$i]}" > "$work/title-$n-$i.txt"
-    y=$(( H / 2 - 40 + (2 * i - count + 1) * 36 ))
-    filter+="drawtext=expansion=none:fontfile=$font:textfile=$work/title-$n-$i.txt:fontcolor=white:fontsize=52:x=(w-text_w)/2:y=$y-text_h/2,"
+    # A fixed offset (about half the 52 px line), so each line's own glyphs can't move its baseline.
+    y=$(( H / 2 - 40 + (2 * i - count + 1) * 36 - 30 ))
+    filter+="drawtext=expansion=none:fontfile=$font:textfile=$work/title-$n-$i.txt:fontcolor=white:fontsize=52:x=(w-text_w)/2:y=$y,"
   done
   printf '%s' "$view" > "$work/view-$n.txt"
   printf '%s' "${sha:0:7}" > "$work/sha-$n.txt"
