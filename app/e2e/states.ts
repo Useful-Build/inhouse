@@ -228,6 +228,8 @@ export const STATES: UiState[] = [
   },
   page_('act-approvals-first-day', 'Act', 'First day', '#/approvals', 'Nothing to approve yet.', true),
   page_('act-approvals-loading', 'Act', 'Loading', '#/approvals', 'Waiting for you', true),
+  page_('act-channel-slack', 'Act', 'Normal', '#/tools/slack', 'Connected · Nov 2', true),
+  page_('watch-channel-slack', 'Watch', 'Normal', '#/tools/slack', 'Included from Act'),
 ]
 
 /** Opens a state from a clean demo: a fixed theme, no agent-mark animation, no dot sweep. */
