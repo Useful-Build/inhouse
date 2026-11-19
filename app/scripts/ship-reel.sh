@@ -21,7 +21,7 @@ while IFS=$'\t' read -r project title video; do
     *) view=$project ;;
   esac
   # Text goes through files, never into the filter string, so a title can't break or inject into it.
-  printf '%s' "$title" | fold -s -w 36 > "$work/title-$n.txt"
+  printf '%s' "$title" | fold -s -w 34 > "$work/title-$n.txt"
   printf '%s' "$view" > "$work/view-$n.txt"
   printf '%s' "${sha:0:7}" > "$work/sha-$n.txt"
   ffmpeg -nostdin -loglevel error -y -f lavfi -i "color=c=0x111111:s=${W}x${H}:d=2:r=$FPS" \

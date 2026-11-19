@@ -59,9 +59,10 @@ jobs:
           [ "$(jq -r .head.repo.full_name <<< "$pr")" = "$REPO" ] || { echo "::error::PR $PR is from a fork"; exit 1; }
           head=$(jq -r .head.sha <<< "$pr")
           # Only the workflow bot's comment counts: anyone can comment the marker.
-          body=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- inhouse-preview -->"))) | .body | @json' \
-            | head -n 1 | jq -r .)
+          # Capture first, then take the first match: piping gh into head would SIGPIPE it under pipefail.
+          all=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- inhouse-preview -->"))) | .body | @json')
+          body=$(jq -rs '.[0] // empty' <<< "$all")
           [ -n "$body" ] || { echo "::error::No preview comment on PR $PR yet"; exit 1; }
           sha=$(grep -E '^- Head SHA' <<< "$body" | grep -oE '[0-9a-f]{40}' | head -n 1 || true)
           url=$(grep -E '^- Deployment URL' <<< "$body" | grep -oE 'https://[^][:space:])>`*"]+' | head -n 1 || true)

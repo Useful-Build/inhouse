@@ -31,7 +31,8 @@ if (mode === 'list') {
       process.exit(1)
     }
   }
-  for (const t of tests) console.log([t.project, t.title, t.video].join('\t'))
+  // Tabs and newlines in a title would forge extra fields or lines in this tab-separated list.
+  for (const t of tests) console.log([t.project, t.title.replace(/[\t\r\n]+/g, ' '), t.video].join('\t'))
 } else {
   const problems = []
   if (tests.length === 0) problems.push('no tests ran')
