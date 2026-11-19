@@ -2,8 +2,22 @@
 // line capped. The reader never throws: a line that is too long, not UTF-8 or not JSON comes back as an error result,
 // and the reader stops there (the caller ends the session). No zod here, so a plain-Node fixture can import it.
 
-/** The largest line either side accepts. The session caps SDK messages (256 KiB) well under it before sending. */
+/** The largest line the root accepts from a session. The session caps SDK messages (256 KiB) well under it before sending. */
 export const LOCAL_LINE_MAX_BYTES = 1024 * 1024
+
+/**
+ * The largest line a session accepts from the root. A `run` message re-encodes the Worker's RunStart, whose body may be
+ * up to 2 MiB (`RUN_START_MAX_BYTES` in app/shared/protocol; a prompt of control characters escapes to six bytes each),
+ * so this direction gets that cap plus room for the message's own wrapping. Not imported from there: this module stays
+ * plain Node (no zod) so a fixture can load it; test/protocol/local.test.ts checks the two agree.
+ */
+export const ROOT_TO_SESSION_MAX_BYTES = 2 * 1024 * 1024 + 64 * 1024
+
+/**
+ * The deepest nesting of arrays and objects a line may hold. Deeper JSON parses, but `JSON.stringify` (and anything
+ * else recursive) then overflows the stack on it; no SDK message comes near this.
+ */
+export const LOCAL_MAX_DEPTH = 256
 
 export type LineResult = { ok: true; value: unknown } | { ok: false; error: string }
 
@@ -76,11 +90,26 @@ function parseLine(line: Buffer): LineResult {
   } catch {
     return { ok: false, error: 'line is not UTF-8' }
   }
+  let value: unknown
   try {
-    return { ok: true, value: JSON.parse(text) }
+    value = JSON.parse(text)
   } catch {
     return { ok: false, error: 'line is not JSON' }
   }
+  if (deeperThan(value, LOCAL_MAX_DEPTH)) return { ok: false, error: 'line nested too deep' }
+  return { ok: true, value }
+}
+
+/** Whether `value` nests arrays and objects more than `max` levels deep. Iterative, so it can't overflow the stack itself. */
+export function deeperThan(value: unknown, max: number): boolean {
+  const stack: [unknown, number][] = [[value, 1]]
+  while (stack.length > 0) {
+    const [v, depth] = stack.pop()!
+    if (typeof v !== 'object' || v === null) continue
+    if (depth > max) return true
+    for (const child of Array.isArray(v) ? v : Object.values(v)) if (typeof child === 'object' && child !== null) stack.push([child, depth + 1])
+  }
+  return false
 }
 
 /** One message as one line. Throws only on values JSON can't encode (a bug at the caller). */

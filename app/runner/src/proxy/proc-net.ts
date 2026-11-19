@@ -7,6 +7,7 @@
 // Addresses are the raw in-kernel bytes printed as 32-bit words in host byte order. The container runs on
 // little-endian hosts (x86_64, arm64), so each word's bytes are reversed. Ports are big-endian hex.
 import { readFile } from 'node:fs/promises'
+import { networkInterfaces } from 'node:os'
 
 export type Endpoint = { address: string; port: number }
 export type TcpEntry = { local: Endpoint; remote: Endpoint; state: number; uid: number }
@@ -127,13 +128,23 @@ const isLoopback = (address: string) => address.startsWith('127.') || address ==
  * Whether the root's API (port 8080) may serve a connection. A peer with no socket in this machine's tables is the
  * Worker (it connects from outside the container) and is allowed. A local peer is allowed only when every client end
  * found is root's and established; a session user's process (its Bash, say) is refused. Fails closed on what it can't
- * read: an address it can't parse, or a loopback peer whose socket isn't in the tables (it has already gone).
+ * read: an address it can't parse, or a peer that is this machine (loopback, the connection's own local address or
+ * any of `ownAddresses`, the host's interface addresses) whose socket isn't in the tables (it has already gone).
  */
-export function decideApiPeer(entries: TcpEntry[], conn: Conn): 'allow' | 'refuse' {
+export function decideApiPeer(entries: TcpEntry[], conn: Conn, ownAddresses: readonly string[] = []): 'allow' | 'refuse' {
   const ends = clientEnds(entries, conn)
   if (ends === null) return 'refuse'
-  if (ends.length === 0) return isLoopback(normaliseAddress(conn.remoteAddress)!) ? 'refuse' : 'allow'
+  if (ends.length === 0) {
+    const peer = normaliseAddress(conn.remoteAddress)!
+    const own = [conn.localAddress, ...ownAddresses].map(normaliseAddress)
+    return isLoopback(peer) || own.includes(peer) ? 'refuse' : 'allow'
+  }
   return ends.every((e) => e.uid === 0 && e.state === ESTABLISHED) ? 'allow' : 'refuse'
+}
+
+/** This host's own interface addresses (every family), as `decideApiPeer` compares them. */
+export function hostAddresses(): string[] {
+  return Object.values(networkInterfaces()).flatMap((list) => (list ?? []).map((i) => i.address.replace(/%.*$/, '')))
 }
 
 type SocketLike = { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number }
@@ -144,10 +155,33 @@ function connOf(s: SocketLike): Conn | null {
 }
 
 /** Reads both tables (as root), without blocking the event loop. Throws when a table can't be read. */
-export async function readTcpTables(): Promise<TcpEntry[]> {
+async function readTcpTablesOnce(): Promise<TcpEntry[]> {
   const texts = await Promise.all(['/proc/net/tcp', '/proc/net/tcp6'].map((p) => readFile(p, 'utf8')))
   return texts.flatMap(parseProcNetTcp)
 }
+
+/**
+ * Coalesces table reads: every caller that asks before a read has started shares that read, so a burst of connections
+ * costs one pass over the tables, not one each. A read already under way is never shared with a later caller: its
+ * snapshot may predate that caller's connection, which the kernel lists only once accepted. Callers that come during a
+ * read share the next one.
+ */
+export function coalescedReader(read: () => Promise<TcpEntry[]>): () => Promise<TcpEntry[]> {
+  let next: Promise<TcpEntry[]> | null = null
+  return () => {
+    if (next === null) {
+      // Starts on the next turn, so every caller in this one joins it; from the moment it starts, callers wait for the next.
+      const p: Promise<TcpEntry[]> = new Promise<void>((r) => setImmediate(r)).then(() => {
+        if (next === p) next = null
+        return read()
+      })
+      next = p
+    }
+    return next
+  }
+}
+
+export const readTcpTables = coalescedReader(readTcpTablesOnce)
 
 /** The peer's uid. Null when the connection isn't found exactly once. */
 export async function readPeerUid(socket: SocketLike): Promise<number | null> {
@@ -158,5 +192,5 @@ export async function readPeerUid(socket: SocketLike): Promise<number | null> {
 /** The production `apiPeerAllowed` for the root's API. */
 export async function apiPeerAllowed(socket: SocketLike): Promise<boolean> {
   const conn = connOf(socket)
-  return conn !== null && decideApiPeer(await readTcpTables(), conn) === 'allow'
+  return conn !== null && decideApiPeer(await readTcpTables(), conn, hostAddresses()) === 'allow'
 }

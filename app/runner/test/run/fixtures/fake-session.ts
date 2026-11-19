@@ -19,6 +19,10 @@
 //   grandchild         starts a shell the way the SDK starts the CLI, which writes to its fds 0 to 4 and to the
 //                      session's stdout through /proc, then finished
 //   leftover           starts a process in its group that never ends, reports its pid, then finished and exits
+//   deep               sends an sdk event nested far past the depth cap (still under the line cap)
+//   len:<rest>         sends the prompt's length as an sdk event, then finished (the prompt can be any size)
+//   finish-on-stop:<n> sends n sdk events, then waits; a stop makes it send finished (racing whatever the root decided)
+// A stop before any run message ends it with failed/stopped ("stopped before the run started"), as the real session does.
 // A file named `hold-ready` in its cwd holds `ready` back until SIGUSR2 (it writes `waiting-for-usr2` once it listens).
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, writeFileSync, writeSync } from 'node:fs'
@@ -38,6 +42,18 @@ let ended = false
 channel.onMessage((line) => {
   if (!line.ok) return
   const raw = line.value as any
+  if (raw?.type === 'stop' && runMessage === null && !ended) {
+    ended = true
+    event({ type: 'failed', reason: 'stopped', message: 'stopped before the run started' })
+    end()
+    return
+  }
+  if (raw?.type === 'stop' && mode === 'finish-on-stop' && !ended) {
+    ended = true
+    finished()
+    end()
+    return
+  }
   if (raw?.type === 'stop' && (mode === 'obey-stop' || mode === 'race') && !ended) {
     ended = true
     event({ type: 'failed', reason: 'stopped', message: 'stopped' })
@@ -166,6 +182,22 @@ channel.onMessage((line) => {
       end()
       break
     }
+    case 'deep': {
+      // 300k levels in about 600 KB: parses, but JSON.stringify on it overflows the stack.
+      const depth = 300_000
+      const line = `{"type":"event","event":{"type":"sdk","message":{"type":"assistant","a":${'['.repeat(depth)}${']'.repeat(depth)}},"truncated":false}}\n`
+      // Through the stream, which writes it all; one writeSync on the socket could write only part of it.
+      process.stdout.write(line)
+      break
+    }
+    case 'len':
+      event({ type: 'sdk', message: { type: 'len', length: raw.config.prompt.length }, truncated: false })
+      finished()
+      end()
+      break
+    case 'finish-on-stop':
+      ticks(Number(a), undefined, () => {})
+      break
     case 'hang':
     case 'obey-stop':
     case 'await-interrupt':

@@ -7,7 +7,7 @@
 // - the API's peer check lets a session user's local process in, or a local peer it can't see, or shuts the Worker out.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import { decideApiPeer, decodeAddress, findPeerUid, normaliseAddress, parseProcNetTcp, type TcpEntry } from '../../src/proxy/proc-net.ts'
+import { coalescedReader, decideApiPeer, decodeAddress, findPeerUid, hostAddresses, normaliseAddress, parseProcNetTcp, type TcpEntry } from '../../src/proxy/proc-net.ts'
 
 const HEADER = '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode'
 const hex = (n: number, w: number) => n.toString(16).toUpperCase().padStart(w, '0')
@@ -134,18 +134,62 @@ describe('decideApiPeer (who may call the root API on 8080)', () => {
     expect(decideApiPeer([clientEnd('10.0.0.5', 40000, 0, 6)], conn('10.0.0.5', 40000))).toBe('refuse')
   })
 
+  it("a peer with no socket here that is one of this host's own addresses, or the connection's local address, is refused", () => {
+    // The API listens on 10.0.0.5; a local process connecting from another of the host's addresses, gone from the tables.
+    expect(decideApiPeer([listening], conn('10.0.0.5', 5000))).toBe('refuse')
+    expect(decideApiPeer([listening], conn('192.168.1.7', 5000), ['192.168.1.7', 'fe80::1'])).toBe('refuse')
+    expect(decideApiPeer([listening], conn('::ffff:192.168.1.7', 5000), ['192.168.1.7'])).toBe('refuse')
+    expect(decideApiPeer([listening], conn('fe80::1', 5000), ['192.168.1.7', 'fe80::1'])).toBe('refuse')
+    expect(decideApiPeer([listening], conn('172.16.0.1', 5000), ['192.168.1.7', 'fe80::1'])).toBe('allow')
+  })
+
+  it('hostAddresses lists this host, loopback included, in a form decideApiPeer reads', () => {
+    const own = hostAddresses()
+    expect(own).toContain('127.0.0.1')
+    for (const a of own) expect(normaliseAddress(a), a).not.toBeNull()
+  })
+
   it('an address it cannot read is refused', () => {
     expect(decideApiPeer([], conn('not-an-address', 1))).toBe('refuse')
   })
 
-  it.prop([fc.array(fc.record({ uid: fc.integer({ min: 0, max: 3 }), state: fc.constantFrom(1, 1, 6, 8) }), { maxLength: 3 }), fc.constantFrom('10.0.0.5', '::ffff:10.0.0.5', '127.0.0.1', '172.16.0.9'), port])(
-    'allows exactly: no client end here and not loopback, or every client end root-owned and established',
+  const own = ['10.0.0.5', '192.168.1.7']
+  it.prop([fc.array(fc.record({ uid: fc.integer({ min: 0, max: 3 }), state: fc.constantFrom(1, 1, 6, 8) }), { maxLength: 3 }), fc.constantFrom('10.0.0.5', '::ffff:10.0.0.5', '127.0.0.1', '172.16.0.9', '192.168.1.7'), port])(
+    'allows exactly: no client end here and not this host, or every client end root-owned and established',
     (ends, address, p) => {
       const normal = normaliseAddress(address)!
       const entries = [listening, apiSide(normal, p), ...ends.map((e) => clientEnd(normal, p, e.uid, e.state))]
-      const expected =
-        ends.length === 0 ? (normal.startsWith('127.') ? 'refuse' : 'allow') : ends.every((e) => e.uid === 0 && e.state === 1) ? 'allow' : 'refuse'
-      expect(decideApiPeer(entries, { ...conn(address, p), localAddress: api.address })).toBe(expected)
+      const local = normal.startsWith('127.') || own.includes(normal)
+      const expected = ends.length === 0 ? (local ? 'refuse' : 'allow') : ends.every((e) => e.uid === 0 && e.state === 1) ? 'allow' : 'refuse'
+      expect(decideApiPeer(entries, { ...conn(address, p), localAddress: api.address }, own)).toBe(expected)
     },
   )
+})
+
+describe('coalescedReader (one table read for a burst of connections)', () => {
+  const api = { address: '127.0.0.1', port: 8081 }
+  const tick = () => new Promise((r) => setImmediate(r))
+  it.prop([fc.integer({ min: 1, max: 30 })])('callers in the same turn share one read', async (n) => {
+    let reads = 0
+    const read = coalescedReader(async () => [{ local: api, remote: api, state: reads++, uid: 0 }])
+    const results = await Promise.all(Array.from({ length: n }, () => read()))
+    expect(reads).toBe(1)
+    for (const r of results) expect(r).toBe(results[0])
+  })
+
+  it('a caller that comes once a read has started gets a new read, never the one already under way', async () => {
+    let reads = 0
+    const started: (() => void)[] = []
+    const read = coalescedReader(() => new Promise<TcpEntry[]>((resolve) => started.push(() => resolve([{ local: api, remote: api, state: reads, uid: 0 }]))).finally(() => reads++))
+    const first = read()
+    await tick()
+    expect(started).toHaveLength(1)
+    // The first read is under way: a caller now must not share its snapshot.
+    const second = read()
+    await tick()
+    expect(started).toHaveLength(2)
+    started[0]!()
+    started[1]!()
+    expect(await first).not.toBe(await second)
+  })
 })

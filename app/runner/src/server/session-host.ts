@@ -109,24 +109,45 @@ export function hostSession(opts: {
     if (m.type === 'ready') {
       if (sentRun) return failProtocol('ready sent twice')
       sentRun = true
+      // A stop that came first: the session gets the stop only, never the run, and ends without starting a query.
+      if (stopping) return send({ type: 'stop' })
       send({ type: 'run', config })
-      if (stopping) send({ type: 'stop' })
-      else if (interruptPending) send({ type: 'interrupt' })
+      if (interruptPending) send({ type: 'interrupt' })
       return
     }
     if (!sentRun) return failProtocol('an event before ready')
-    const event = m.event.type === 'sdk' ? { ...m.event, ...capSdkMessage(m.event.message, SDK_MESSAGE_MAX_BYTES) } : m.event
+    let event = m.event
+    if (event.type === 'sdk') {
+      const capped = capSdkMessage(event.message, SDK_MESSAGE_MAX_BYTES)
+      if (capped === null) return failProtocol('an sdk message JSON cannot encode')
+      event = { ...event, ...capped }
+    }
     stream.emit(event)
     if (stream.ended) killAfterGrace()
   }
 
+  // The safety net: nothing a session sends may throw out of these listeners (an uncaught throw there would end the
+  // root and every run on it). Whatever slips past the checks above ends this session only, as `protocol`.
+  const guarded = (what: string, fn: () => void) => {
+    try {
+      fn()
+    } catch (e) {
+      if (stream.ended) return void log({ type: 'session_listener_failed', runId, what, error: String(e instanceof Error ? e.message : e).slice(0, 500) })
+      failProtocol(`${what}: ${String(e instanceof Error ? e.message : e)}`)
+    }
+  }
+
   const reader = new LineReader(opts.maxLineBytes ?? LOCAL_LINE_MAX_BYTES)
-  fromSession?.on('data', (chunk: Buffer) => {
-    for (const line of reader.push(chunk)) onLine(line)
-  })
-  fromSession?.on('end', () => {
-    for (const line of reader.end()) onLine(line)
-  })
+  fromSession?.on('data', (chunk: Buffer) =>
+    guarded('read', () => {
+      for (const line of reader.push(chunk)) onLine(line)
+    }),
+  )
+  fromSession?.on('end', () =>
+    guarded('read', () => {
+      for (const line of reader.end()) onLine(line)
+    }),
+  )
   // Pipe errors (EPIPE once the session is gone) are logged; the run's end comes from `close`.
   fromSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, error: e.message }))
   toSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, error: e.message }))

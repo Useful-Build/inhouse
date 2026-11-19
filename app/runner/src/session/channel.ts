@@ -11,7 +11,7 @@
 // kernel refuses to open a socket through /proc (ENXIO). No zod here, so a plain-Node fixture can import it.
 import { Console } from 'node:console'
 import net from 'node:net'
-import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '../protocol/ndjson.ts'
+import { LineReader, ROOT_TO_SESSION_MAX_BYTES, encodeLine, type LineResult } from '../protocol/ndjson.ts'
 
 export const FROM_ROOT_FD = 0
 export const TO_ROOT_FD = 1
@@ -33,7 +33,7 @@ export function consoleToStderr(): void {
   }
 }
 
-export function openRootChannel(maxLineBytes: number = LOCAL_LINE_MAX_BYTES): RootChannel {
+export function openRootChannel(maxLineBytes: number = ROOT_TO_SESSION_MAX_BYTES): RootChannel {
   consoleToStderr()
   const out = new net.Socket({ fd: TO_ROOT_FD, readable: false, writable: true })
   const inp = new net.Socket({ fd: FROM_ROOT_FD, readable: true, writable: false })

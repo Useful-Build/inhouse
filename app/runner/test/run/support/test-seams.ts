@@ -15,6 +15,8 @@ export type TestUsersOpts = {
   onRelease?: (sessionKey: string, user: SessionUser) => Promise<void> | void
   /** The uid a session key gets (default: its own, from 20000 up, as production gives each session its own user). */
   uidFor?: (sessionKey: string) => number
+  /** The gid a session key gets (default: yours). */
+  gidFor?: (sessionKey: string) => number
 }
 
 export type TestUsers = SessionUsers & { dirs: Map<string, string>; uids: Map<string, number>; allocated: string[]; released: string[] }
@@ -42,7 +44,7 @@ export function testSessionUsers(opts: TestUsersOpts = {}): TestUsers {
       await opts.onAllocate?.(sessionKey, dir)
       if (!uids.has(sessionKey)) uids.set(sessionKey, opts.uidFor?.(sessionKey) ?? nextUid++)
       const uid = uids.get(sessionKey)!
-      return { uid, gid: process.getgid!(), user: 'tester', home: dir, workDir: dir } satisfies SessionUser
+      return { uid, gid: opts.gidFor?.(sessionKey) ?? process.getgid!(), user: 'tester', home: dir, workDir: dir } satisfies SessionUser
     },
     async release(sessionKey, user) {
       await opts.onRelease?.(sessionKey, user)

@@ -66,13 +66,18 @@ export async function runSession(deps: {
 
   let q: ReturnType<QueryFn> | null = null
   let stopping = false
+  /** An interrupt that came before the query existed: applied as soon as it does. */
+  let interruptPending = false
   const abort = new AbortController()
   let resolveRun!: (config: RunConfig) => void
   const runConfig = new Promise<RunConfig>((r) => (resolveRun = r))
   let gotRun = false
 
   const halt = async () => {
-    if (q === null) return
+    if (q === null) {
+      interruptPending = true
+      return
+    }
     try {
       await q.interrupt()
     } catch {
@@ -106,6 +111,12 @@ export async function runSession(deps: {
       void halt()
     } else {
       stopping = true
+      // A stop before the run: nothing has started, so the run ends here and no query ever runs.
+      if (!gotRun) {
+        emit({ type: 'failed', reason: 'stopped', message: 'stopped before the run started' })
+        abort.abort()
+        return
+      }
       void halt()
     }
   })
@@ -116,19 +127,26 @@ export async function runSession(deps: {
     new Promise<null>((r) => abort.signal.addEventListener('abort', () => r(null), { once: true })),
   ])
   if (config === null || ended) return
+  // A stop that came with the run (or while it was being read): end it without calling query().
+  if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
 
   const options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort), config)
   let result: Extract<SDKMessage, { type: 'result' }> | null = null
   try {
     q = deps.query({ prompt: config.prompt, options })
-    if (stopping) void halt()
+    // A stop or interrupt that came while the query was being set up.
+    if (stopping || interruptPending) void halt()
     for await (const m of q) {
       if (ended) break
       // Capped here as well as in the root, so an honest session never sends a line over the channel's cap.
-      emit({ type: 'sdk', ...capSdkMessage(m as unknown as Record<string, unknown>, SDK_MESSAGE_MAX_BYTES) })
+      const raw = m as unknown as Record<string, unknown>
+      const capped = capSdkMessage(raw, SDK_MESSAGE_MAX_BYTES) ?? { message: { type: String(raw.type).slice(0, 64), unencodable: true }, truncated: true }
+      emit({ type: 'sdk', ...capped })
       if (m.type === 'result') result = m
     }
   } catch (e) {
+    // A stop or interrupt that raced the SDK's result: the run did finish, and its cost and usage are kept.
+    if (result !== null && (stopping || abort.signal.aborted)) return emitFinished(result)
     // An interrupt that fell back to the abort signal makes the SDK throw an AbortError: that's an interrupt, not an
     // SDK fault.
     if (stopping) emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
@@ -136,9 +154,12 @@ export async function runSession(deps: {
     else emit({ type: 'failed', reason: 'sdk_error', message: message(e) })
     return
   }
-  if (stopping) emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
-  else if (result === null) emit({ type: 'failed', reason: abort.signal.aborted ? 'interrupted' : 'sdk_error', message: 'the query ended without a result' })
-  else
+  // A result was seen: the run finished, even when a stop raced its end.
+  if (result !== null) emitFinished(result)
+  else if (stopping) emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
+  else emit({ type: 'failed', reason: abort.signal.aborted ? 'interrupted' : 'sdk_error', message: 'the query ended without a result' })
+
+  function emitFinished(result: Extract<SDKMessage, { type: 'result' }>) {
     emit({
       type: 'finished',
       subtype: result.subtype,
@@ -147,4 +168,5 @@ export async function runSession(deps: {
       costUsd: result.total_cost_usd,
       usage: result.usage as unknown as Record<string, unknown>,
     })
+  }
 }

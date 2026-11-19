@@ -157,6 +157,58 @@ describe('runSession', () => {
     expect(h.events().at(-1)).toMatchObject({ type: 'failed', reason: 'interrupted' })
   })
 
+  it('an interrupt delivered with the run, in the same tick, reaches the query', async () => {
+    const q = fakeQuery([assistant], { holdUntilInterrupt: true })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    h.deliver({ type: 'interrupt' })
+    await h.done
+    expect(q.interrupts()).toBe(1)
+    expect(h.events().filter((e) => e.type === 'failed' || e.type === 'finished')).toHaveLength(1)
+  })
+
+  it('a stop delivered with the run, in the same tick, ends the run as stopped without calling query()', async () => {
+    const q = fakeQuery([assistant, result])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    h.deliver({ type: 'stop' })
+    await h.done
+    expect(q.calls).toHaveLength(0)
+    expect(h.events()).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped before the query started' }])
+  })
+
+  it('a stop with no run ends the session as stopped; no query runs', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    h.deliver({ type: 'stop' })
+    await h.done
+    expect(q.calls).toHaveLength(0)
+    expect(h.events()).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped before the run started' }])
+  })
+
+  it.each([false, true])('a stop racing the finish after the result ends as finished, with cost and usage (interrupt falls back: %s)', async (interruptThrows) => {
+    const q = fakeQuery([assistant, result], { holdUntilInterrupt: !interruptThrows, abortThrows: interruptThrows, interruptThrows })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    // Once the result is out, the stop comes in.
+    while (!h.events().some((e) => e.type === 'sdk' && e.message.type === 'result')) await new Promise((r) => setImmediate(r))
+    h.deliver({ type: 'stop' })
+    await h.done
+    expect(h.events().filter((e) => e.type === 'failed' || e.type === 'finished')).toEqual([
+      { type: 'finished', subtype: 'success', isError: false, numTurns: 2, costUsd: 0.01, usage: { input_tokens: 5 } },
+    ])
+  })
+
+  it('an SDK message JSON cannot encode is sent as a stub, never thrown', async () => {
+    let deep: unknown = 1
+    for (let i = 0; i < 300_000; i++) deep = [deep]
+    const h = harness(fakeQuery([{ type: 'assistant', a: deep } as unknown as SDKMessage, result]).query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(h.events()[0]).toEqual({ type: 'sdk', message: { type: 'assistant', unencodable: true }, truncated: true })
+    expect(h.events().at(-1)?.type).toBe('finished')
+  })
+
   it('an unreadable line from the root (oversized, not JSON) ends the session with failed protocol', async () => {
     const q = fakeQuery([result])
     const h = harness(q.query)

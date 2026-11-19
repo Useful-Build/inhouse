@@ -9,7 +9,7 @@
 // - SIGTERM (stopAll) misses a run that is still starting, or new runs are let in while stopping;
 // - a tool the CLI starts can write into the channel; a process the session left behind outlives the run;
 // - a uid maps to the wrong token, or to a token after its run's session has gone.
-import type { ChildProcess } from 'node:child_process'
+import { spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
@@ -44,6 +44,12 @@ const alive = (pid: number) => {
   }
 }
 
+/** Whether a process is running: it exists and isn't a zombie (killed, waiting for its parent to reap it). */
+const running = (pid: number) => {
+  const stat = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim()
+  return stat !== '' && !stat.startsWith('Z')
+}
+
 describe('a stop or interrupt while the run is starting', () => {
   it('a stop during allocate is answered 202 and ends the run as stopped without spawning', async () => {
     const allocating = gate()
@@ -64,7 +70,7 @@ describe('a stop or interrupt while the run is starting', () => {
     })
   })
 
-  it('a stop between spawn and ready is applied once the session is ready', async () => {
+  it('a stop between spawn and ready is applied at ready: the session gets the stop and never the run', async () => {
     const spawned: ChildProcess[] = []
     const users = testSessionUsers({ onAllocate: (_, dir) => writeFileSync(join(dir, 'hold-ready'), '') })
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users }), async (root) => {
@@ -75,8 +81,9 @@ describe('a stop or interrupt while the run is starting', () => {
       spawned[0]!.kill('SIGUSR2')
       const events = await run.done
       expectOneEnd(events)
-      // The session's own stopped event: it got the run, then the stop.
-      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'stopped', message: 'stopped' })
+      // The session's own stopped event, for a stop with no run before it (the fixture says which it got).
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'stopped', message: 'stopped before the run started' })
+      expect(events.filter((e) => e.type === 'sdk')).toEqual([])
     })
   })
 
@@ -136,6 +143,41 @@ describe('the Worker hangs up', () => {
   })
 })
 
+describe('a hang-up at admission', () => {
+  // The Worker's connection is gone as the body ends, before the run's own close listener is attached.
+  it('a hang-up as the body ends is seen at admission: nothing is spawned and the user is released', async () => {
+    const spawned: ChildProcess[] = []
+    const users = testSessionUsers()
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users }), async (root) => {
+      root.server.prependListener('request', (req) => req.once('end', () => req.socket.destroy()))
+      const start = runStart({ prompt: 'echo:m:3' })
+      await expect(openRun(root, start).done).rejects.toThrow()
+      await waitFor(() => root.logs.some((l) => l.type === 'run_abandoned') && root.liveCount() === 0, 'the run was abandoned')
+      expect(spawned).toHaveLength(0)
+      expect(users.released).toEqual([start.chatId])
+    })
+  })
+})
+
+describe('a session user that is root', () => {
+  it.each([
+    ['uid', { uidFor: () => 0 }],
+    ['gid', { gidFor: () => 0 }],
+  ] as const)('a run allocated root %s is refused, nothing is spawned, and the user is still released', async (_, seam) => {
+    const spawned: ChildProcess[] = []
+    const users = testSessionUsers(seam)
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users }), async (root) => {
+      const start = runStart()
+      const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: protocolHeaders, body: JSON.stringify(start) })
+      expect(res.status).toBe(500)
+      await waitFor(() => root.liveCount() === 0)
+      expect(spawned).toHaveLength(0)
+      expect(users.released).toEqual([start.chatId])
+      expect(root.logs).toContainEqual(expect.objectContaining({ type: 'session_user_refused', reason: 'root' }))
+    })
+  })
+})
+
 describe('a spawn that throws', () => {
   it('ends the run with one session_crashed, releases the user and frees the chat and the token', async () => {
     const users = testSessionUsers()
@@ -158,16 +200,23 @@ describe('a spawn that throws', () => {
 })
 
 describe('timeouts', () => {
-  it.prop([fc.integer({ min: 0, max: 6 }), fc.integer({ min: 1, max: 15 })], { numRuns: 8 })(
-    'a timeout racing the session finish gives one end, whichever wins',
-    async (n, timeoutMs) => {
-      await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { runTimeoutMs: timeoutMs, stopGraceMs: 50 }), async (root) => {
-        const events = await postRun(root, runStart({ prompt: `echo:m:${n}` }))
+  // The fixture is held mid-run (after n events) until a stop, and answers the stop with its own finished: the timer
+  // always lands mid-run, and the session's finish always races the timeout the root has just decided.
+  it.prop([fc.integer({ min: 0, max: 6 })], { numRuns: 5 })(
+    'a timeout landing mid-run, raced by the session finishing: one end, the timeout, and the session exits by itself',
+    async (n) => {
+      const spawned: ChildProcess[] = []
+      await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { runTimeoutMs: 800, stopGraceMs: 5000 }), async (root) => {
+        const events = await postRun(root, runStart({ prompt: `finish-on-stop:${n}` }))
         expectOneEnd(events)
-        const last = events.at(-1)!
-        expect(last.type === 'finished' || (last.type === 'failed' && last.reason === 'timeout')).toBe(true)
+        expect(events.filter((e) => e.type === 'sdk')).toHaveLength(n)
+        expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'timeout' })
+        await waitFor(() => root.liveCount() === 0)
+        // It got the timeout's stop and sent its finished (dropped by the root), then exited: not killed after the grace.
+        expect([spawned[0]!.exitCode, spawned[0]!.signalCode]).toEqual([0, null])
       })
     },
+    30_000,
   )
 })
 
@@ -221,7 +270,9 @@ describe('what a run leaves behind', () => {
 
   it("a process left in the session's group is killed before the user is released", async () => {
     let leftover: number | undefined
-    const users = testSessionUsers()
+    // Checked inside release(), when it is called: by then the leftover must be dead (gone, or a zombie not yet reaped).
+    const runningAtRelease: boolean[] = []
+    const users = testSessionUsers({ onRelease: () => void runningAtRelease.push(leftover !== undefined && running(leftover)) })
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
       const run = openRun(root, runStart({ prompt: 'leftover' }))
       await waitFor(() => run.events.some((e) => e.type === 'sdk'))
@@ -231,6 +282,7 @@ describe('what a run leaves behind', () => {
       const events = await run.done
       expect(events.at(-1)?.type).toBe('finished')
       await waitFor(() => users.released.length === 1)
+      expect(runningAtRelease).toEqual([false])
       // Killed with the group before release(); it's reaped by its new parent shortly after, hence the wait.
       await waitFor(() => !alive(leftover!), 'leftover gone')
     })

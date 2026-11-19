@@ -79,6 +79,9 @@ export function pickToken(runs: Iterable<{ uid: number | null; token: string | n
 
 const errorText = (e: unknown) => String(e instanceof Error ? e.message : e)
 
+/** Open connections the API takes at once (the Worker's runs and calls); past it new ones are dropped by Node. */
+export const API_MAX_CONNECTIONS = 512
+
 export function createRoot(deps: RootDeps): Root {
   const runs = new Map<string, LiveRun>()
   const chats = new Set<string>()
@@ -121,7 +124,7 @@ export function createRoot(deps: RootDeps): Root {
     }
     runs.set(config.runId, live)
     chats.add(config.chatId)
-    const lifecycle = runLifecycle(live, config, res).finally(() => {
+    const lifecycle = runLifecycle(live, config, req, res).finally(() => {
       runs.delete(config.runId)
       chats.delete(config.chatId)
     })
@@ -130,14 +133,21 @@ export function createRoot(deps: RootDeps): Root {
     ending.delete(lifecycle)
   }
 
-  async function runLifecycle(live: LiveRun, config: RunConfig, res: ServerResponse) {
-    // The Worker hung up: nobody can read the run's events, so stop it, at whatever stage it is.
-    res.on('close', () => {
-      if (res.writableFinished) return
+  async function runLifecycle(live: LiveRun, config: RunConfig, req: IncomingMessage, res: ServerResponse) {
+    // The Worker hung up: nobody can read the run's events, so stop it, at whatever stage it is, and read what the
+    // session still sends without waiting for a drain that will never come (so it can flush and end cleanly).
+    const hungUp = () => {
+      if (live.gone) return
       live.gone = true
       deps.log({ type: 'worker_hung_up', runId: live.runId })
+      live.handle?.resume()
       live.handle?.stop()
+    }
+    res.on('close', () => {
+      if (!res.writableFinished) hungUp()
     })
+    // A hang-up between the end of the body and the listener above: its `close` has already gone by.
+    if (res.destroyed || req.socket.destroyed) hungUp()
 
     let user: SessionUser
     try {
@@ -165,10 +175,12 @@ export function createRoot(deps: RootDeps): Root {
 
     res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })
     live.res = res
-    // Backpressure: when the Worker reads slowly, stop reading the session until the response drains.
+    // Backpressure: when the Worker reads slowly, stop reading the session until the response drains. Once the run has
+    // ended (its timeout, say) or the Worker has gone, no drain may ever come: the session is read and the rest dropped.
+    const discarding = () => live.gone || stream.ended || res.destroyed || res.writableEnded
     const stream = new RunStream(config.runId, (e) => {
       if (res.destroyed || res.writableEnded) return
-      if (!res.write(encodeRunEvent(e))) live.handle?.pause()
+      if (!res.write(encodeRunEvent(e)) && !discarding()) live.handle?.pause()
     })
     res.on('drain', () => live.handle?.resume())
     stream.emit({ type: 'started', sessionId: config.sessionId, resume: config.resume })
@@ -202,12 +214,13 @@ export function createRoot(deps: RootDeps): Root {
       return end()
     }
     live.handle = handle
-    if (res.writableNeedDrain) handle.pause()
+    if (res.writableNeedDrain && !discarding()) handle.pause()
     if (live.stopRequested || live.gone) handle.stop()
     else if (live.interruptRequested) handle.interrupt()
 
     const timer = setTimeout(() => {
       stream.emit({ type: 'failed', reason: 'timeout', message: 'the run took too long' })
+      handle.resume()
       handle.stop()
     }, deps.runTimeoutMs)
     await handle.done
@@ -225,6 +238,7 @@ export function createRoot(deps: RootDeps): Root {
       else res.destroy()
     })
   })
+  server.maxConnections = API_MAX_CONNECTIONS
   server.on('connection', (socket: Socket) => {
     const allowed = Promise.resolve().then(() => deps.apiPeerAllowed(socket)).catch((e) => {
       deps.log({ type: 'api_peer_check_failed', error: errorText(e) })

@@ -42,6 +42,8 @@ export type ProxyDeps = {
 }
 
 export const PROXY_MAX_BODY_BYTES = 64 * 1024 * 1024
+/** Open connections the proxy takes at once, across every session; past it new ones are dropped by Node. */
+export const PROXY_MAX_CONNECTIONS = 1024
 export const PROXY_UPSTREAM_TIMEOUT_MS = 10 * 60_000
 
 export function createProxy(deps: ProxyDeps): http.Server {
@@ -53,6 +55,7 @@ export function createProxy(deps: ProxyDeps): http.Server {
       else res.destroy()
     })
   })
+  server.maxConnections = PROXY_MAX_CONNECTIONS
   // The uid is looked up as the connection opens, while the caller's socket is certainly still in the tables.
   server.on('connection', (socket: Socket) => {
     uids.set(
@@ -70,8 +73,11 @@ export function createProxy(deps: ProxyDeps): http.Server {
     const path = req.url ?? '/'
     const route = /^\/([a-z]+)\//.exec(path)?.[1]
     if (!route || !(PROXY_ROUTES as readonly string[]).includes(route)) return refuse(res, 404, 'no such route')
-    // No dot segments or backslashes, so a path can't climb out of its route once the URL is resolved.
-    if (/(^|\/)\.\.?(\/|$|\?)|\\|%2e|%5c/i.test(path)) return refuse(res, 400, 'bad path')
+    // No dot segments, backslashes or fragments (`#`, raw or encoded), so a path can't climb out of its route once the
+    // URL is resolved: `/model/..#x` would resolve to `/`.
+    if (/(^|\/)\.\.?(\/|$|\?|#)|\\|%2e|%5c|#|%23/i.test(path)) return refuse(res, 400, 'bad path')
+    // And whatever the checks above miss, the URL as resolved must still sit under the upstream base and this route.
+    if (targetFor(deps.upstream, path, route) === null) return refuse(res, 400, 'bad path')
 
     const uid = await (uids.get(req.socket) ?? Promise.resolve(null))
     if (uid === null) return refuseLogged(deps, res, route, null, 'unknown caller')
@@ -82,6 +88,22 @@ export function createProxy(deps: ProxyDeps): http.Server {
   }
 
   return server
+}
+
+/**
+ * The upstream URL for a caller's path, or null when, once resolved, it isn't under the upstream base's own path and
+ * then `/<route>/`, or it carries a fragment.
+ */
+export function targetFor(upstream: URL, path: string, route: string): URL | null {
+  const base = upstream.pathname.replace(/\/$/, '')
+  let target: URL
+  try {
+    target = new URL(base + path, upstream)
+  } catch {
+    return null
+  }
+  if (target.origin !== upstream.origin || target.hash !== '' || !target.pathname.startsWith(`${base}/${route}/`)) return null
+  return target
 }
 
 function refuse(res: ServerResponse, status: number, error: string) {
@@ -107,7 +129,7 @@ function forward(deps: ProxyDeps, path: string, req: IncomingMessage, res: Serve
   const headers: Record<string, string | string[]> = {}
   for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && forwardsRequestHeader(k)) headers[k] = v
   headers[RUN_TOKEN_HEADER] = token
-  const target = new URL(deps.upstream.pathname.replace(/\/$/, '') + path, deps.upstream)
+  const target = targetFor(deps.upstream, path, route)!
   const send = target.protocol === 'https:' ? https.request : http.request
 
   let callerGone = false

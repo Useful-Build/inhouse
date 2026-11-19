@@ -11,7 +11,7 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fc, it } from '@fast-check/vitest'
 import { afterAll, beforeAll, beforeEach, describe, expect } from 'vitest'
-import { RUN_TOKEN_HEADER, createProxy, type ProxyDeps } from '../../src/proxy/server.ts'
+import { PROXY_MAX_CONNECTIONS, RUN_TOKEN_HEADER, createProxy, targetFor, type ProxyDeps } from '../../src/proxy/server.ts'
 import { waitFor } from '../run/support/root-client.ts'
 
 type Seen = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }
@@ -149,7 +149,7 @@ describe('what is forwarded', () => {
     expect(seen).toHaveLength(0)
   })
 
-  it.each(['/model/../store/x', '/files/%2e%2e/x', '/mcp/a\\b', '/store/./x'])('%s: 400, nothing forwarded', async (path) => {
+  it.each(['/model/../store/x', '/files/%2e%2e/x', '/mcp/a\\b', '/store/./x', '/model/..#x', '/model/.%2e#x', '/model/%23/../x', '/model/x#frag', '/model/..%23x', '/model/x?q=#..'])('%s: 400, nothing forwarded', async (path) => {
     const res = await new Promise<number>((resolve, reject) => {
       const u = new URL(proxyUrl)
       http.request({ host: u.hostname, port: u.port, path, method: 'GET', headers: { connection: 'close' } }, (r) => {
@@ -159,6 +159,30 @@ describe('what is forwarded', () => {
     })
     expect(res).toBe(400)
     expect(seen).toHaveLength(0)
+  })
+})
+
+describe('targetFor (the last check on where a path goes)', () => {
+  const base = new URL('http://egress.internal/egress')
+  it('keeps a path under the base and its route', () => {
+    expect(targetFor(base, '/model/v1/messages?beta=true', 'model')?.href).toBe('http://egress.internal/egress/model/v1/messages?beta=true')
+  })
+  it.each(['/model/..#x', '/model/../x', '/model/./../store/x', '/model/x#y', '/model/%2e%2e/x/../../x'])('%s: refused', (path) => {
+    expect(targetFor(base, path, 'model')).toBeNull()
+  })
+  it.prop([fc.webPath(), fc.constantFrom('model', 'mcp', 'store', 'files')])('anything it lets through sits under the base and the route', (path, route) => {
+    const t = targetFor(base, `/${route}/${path.replace(/^\//, '')}`, route)
+    if (t !== null) {
+      expect(t.origin).toBe(base.origin)
+      expect(t.pathname.startsWith(`/egress/${route}/`)).toBe(true)
+      expect(t.hash).toBe('')
+    }
+  })
+})
+
+describe('connections', () => {
+  it('the proxy caps how many connections it holds at once', () => {
+    expect(proxy.maxConnections).toBe(PROXY_MAX_CONNECTIONS)
   })
 })
 

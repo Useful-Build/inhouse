@@ -11,10 +11,11 @@ import type { ChildProcess } from 'node:child_process'
 import http from 'node:http'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
-import { ACCEPTED_VERSIONS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
+import { ACCEPTED_VERSIONS, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
 import { spawnFixture } from './support/test-seams.ts'
 import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
+import { API_MAX_CONNECTIONS } from '../../src/server/app.ts'
 
 let root: TestRoot
 beforeEach(async () => {
@@ -46,6 +47,7 @@ describe('a session that misbehaves', () => {
     ['raw-garbage', 'protocol'],
     ['stray-stdout', 'protocol'],
     ['oversized', 'protocol'],
+    ['deep', 'protocol'],
   ])('%s: one failed event (%s) and the root stays up', async (prompt, reason) => {
     const events = await postRun(root, runStart({ prompt }))
     expectOneEnd(events)
@@ -132,17 +134,33 @@ describe('streams', () => {
   )
 
   // Runs whose end is decided by a race: a stop sent after some events against the session's own finish, a crash
-  // part-way, a plain finish; all at once. Whatever wins, each run has one end and no seq gaps, and only its own events.
+  // part-way, a timeout that lands mid-run and races the session's finish, a plain finish; all at once. Whatever wins,
+  // each run has one end and no seq gaps, and only its own events.
   const racer = fc.record({
     n: fc.integer({ min: 0, max: 8 }),
-    end: fc.constantFrom('finish', 'stop', 'crash'),
+    end: fc.constantFrom('finish', 'stop', 'crash', 'timeout'),
     stopAfter: fc.integer({ min: 0, max: 8 }),
   })
   it.prop([fc.array(racer, { minLength: 2, maxLength: 5 })], { numRuns: 10 })(
-    'concurrent sessions ending by races (stop, crash, finish): one end each, no seq gaps',
+    'concurrent sessions ending by races (stop, crash, timeout, finish): one end each, no seq gaps',
     async (runs) => {
+      // Its own root, with a time limit far above what a run that finishes takes, so only the held runs reach it.
+      const timed = await startTestRoot(spawnFixture('fake-session.ts'), { runTimeoutMs: 1500, stopGraceMs: 50 })
+      try {
+        await raceRuns(timed, runs)
+      } finally {
+        await timed.close()
+      }
+    },
+    60_000,
+  )
+
+  async function raceRuns(root: TestRoot, runs: { n: number; end: string; stopAfter: number }[]) {
+    {
+      const prompt = (r: { n: number; end: string }) =>
+        r.end === 'crash' ? `crash-after:${r.n}` : r.end === 'timeout' ? `finish-on-stop:${r.n}` : `race:${r.n}`
       const opened = runs.map((r) => {
-        const start = runStart({ prompt: r.end === 'crash' ? `crash-after:${r.n}` : `race:${r.n}` })
+        const start = runStart({ prompt: prompt(r) })
         return { r, start, run: openRun(root, start) }
       })
       await Promise.all(
@@ -161,10 +179,15 @@ describe('streams', () => {
         if (r.end === 'finish') expect(last.type).toBe('finished')
         if (r.end === 'crash') expect(last).toMatchObject({ type: 'failed', reason: 'session_crashed' })
         if (r.end === 'stop') expect(last.type === 'finished' || (last.type === 'failed' && last.reason === 'stopped')).toBe(true)
+        // Held mid-run until the timeout's stop, which makes it send finished: the root's timeout came first and stands.
+        if (r.end === 'timeout') {
+          expect(last).toMatchObject({ type: 'failed', reason: 'timeout' })
+          expect(events.filter((e) => e.type === 'sdk')).toHaveLength(r.n)
+        }
       })
       await waitFor(() => root.liveCount() === 0)
-    },
-  )
+    }
+  }
 
   it("a slow Worker pauses reading the session's stdout: memory stays bounded, nothing is lost or reordered", async () => {
     const spawned: ChildProcess[] = []
@@ -217,6 +240,54 @@ describe('streams', () => {
     } finally {
       await slow.close()
     }
+  })
+
+  // Paused behind a slow Worker, then the Worker hangs up or the run times out: no drain will come, so the root must
+  // read on (and drop) what the session still sends, letting it flush and exit by itself rather than be killed.
+  it.each(['hang-up', 'timeout'])("paused for backpressure, then %s: the session is read to its end and exits cleanly", async (how) => {
+    const spawned: ChildProcess[] = []
+    const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), {
+      stopGraceMs: 5000,
+      runTimeoutMs: how === 'timeout' ? 1000 : 60_000,
+    })
+    try {
+      const start = runStart({ prompt: `flood:160:${200 * 1024}` })
+      const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders })
+      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        req.on('response', resolve).on('error', reject)
+        req.end(JSON.stringify(start))
+      })
+      // Paused before the timeout fires: once the run has ended, the root never pauses again, so this would fail.
+      await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
+      const child = spawned[0]!
+      const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once('exit', (code, signal) => r([code, signal])))
+      if (how === 'hang-up') {
+        res.destroy()
+        req.destroy()
+      } else await waitFor(() => !child.stdout!.isPaused(), 'the timeout resumed the session')
+      // The flood ignores stop: it ends by itself once every line is read. Killed after the grace, it'd be SIGKILL.
+      expect(await exited).toEqual([0, null])
+      await waitFor(() => slow.liveCount() === 0)
+      if (how === 'timeout') {
+        const events: RunEvent[] = []
+        let buf = ''
+        res.setEncoding('utf8')
+        for await (const chunk of res as AsyncIterable<string>) buf += chunk
+        for (const l of buf.split('\n').filter(Boolean)) events.push(parseRunEventLine(l))
+        expectOneEnd(events)
+        expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'timeout' })
+      }
+    } finally {
+      await slow.close()
+    }
+  })
+
+  it("a valid RunStart at its largest (a prompt of control characters, 1.2 MB as JSON) reaches the session whole", async () => {
+    const prompt = `len:${'\u0001'.repeat(PROMPT_MAX_CHARS - 4)}`
+    const events = await postRun(root, runStart({ prompt }))
+    expectOneEnd(events)
+    expect(events.find((e) => e.type === 'sdk')).toMatchObject({ message: { type: 'len', length: PROMPT_MAX_CHARS } })
+    expect(events.at(-1)?.type).toBe('finished')
   })
 
   it('one live run per chat', async () => {
@@ -279,6 +350,10 @@ describe('protocol version', () => {
       expect(res.status).toBe(426)
       expect(await res.json()).toMatchObject({ version: PROTOCOL_VERSION })
     }
+  })
+
+  it('the API caps how many connections it holds at once', () => {
+    expect(root.server.maxConnections).toBe(API_MAX_CONNECTIONS)
   })
 
   it('no header gets 426', async () => {
