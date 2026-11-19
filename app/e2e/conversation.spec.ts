@@ -183,8 +183,13 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   // Reply and Copy sit in the row only; the ··· menu keeps the rest, and the actions stay shown while it's open.
   await fresh.getByRole('button', { name: 'More', exact: true }).click()
   const menu = page.getByRole('menu', { name: 'Message actions' })
+  await expect(menu).toBeVisible()
   await page.mouse.move(5, 5)
-  expect(await opacity(freshActions)).toBe('1')
+  // Focus is in the portaled menu (outside the row), the pointer is off it and the fade has run: only data-on holds them.
+  await expect.poll(() => menu.evaluate(m => m.contains(document.activeElement))).toBe(true)
+  await settled(page)
+  await expect(freshActions).toHaveAttribute('data-on', '1')
+  await expect.poll(() => opacity(freshActions)).toBe('1')
   const names = [`Send to ${CHANNEL}`, 'Report a wrong answer', 'Delete']
   await expect(menu.getByRole('menuitem')).toHaveCount(names.length)
   for (const [i, n] of names.entries()) await expect(menu.getByRole('menuitem').nth(i)).toHaveAccessibleName(n)
