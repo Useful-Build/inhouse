@@ -47,7 +47,8 @@ test('Notifications and Memory at Watch: the alerts, the memory lines and the le
 
   await goTo(page, 'you-memory')
   await expect(page.getByRole('heading', { level: 1, name: 'Memory', exact: true })).toBeVisible()
-  for (const line of PERSONAL) await expect(main(page).getByText(line, { exact: true })).toBeVisible()
+  // A locked row's text node also holds its screen-reader note ("Locked, included in a later stage: Act"), so match a substring.
+  for (const line of PERSONAL) await expect(main(page).getByText(line)).toBeVisible()
   await expect(main(page).getByRole('button', { name: 'Forget', exact: true })).toHaveCount(3)
   await expect(main(page).locator('button:not([disabled])', { hasText: /^Forget$/ })).toHaveCount(0)
   await expect(main(page).getByRole('switch', { name: 'Learn from my chats' })).toBeDisabled()
