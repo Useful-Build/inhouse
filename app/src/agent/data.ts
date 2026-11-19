@@ -52,7 +52,8 @@ const needOf = (what: string, need: unknown): StageIndex => {
   return need
 }
 
-export const meta = metaJson
+// The file's own notes (`note`, `fixedClock`) document the sample data: the agent returns only who the brand, agent and person are.
+export const meta = { brand: metaJson.brand, agent: metaJson.agent, currentUser: metaJson.currentUser }
 /** A problem as the sample data has it: the mock adds the draft time from the Library (see `DATA` in mock.ts). */
 export type ProblemSeed = Omit<Problem, 'draftedAt' | 'draftedMin'>
 export const problems = problemsJson.problems as unknown as ProblemSeed[]
@@ -136,7 +137,9 @@ export const traceDisconnectedVariant = tracesJson.toolDisconnectedVariant
 export const chatScript = chatJson
 export const chatList = chatsJson
 export const helpGuides = helpJson.guides
-export const seedTable = (chatJson.seedThread.turns[1] as { agent: { type: string }[] }).agent[1] as unknown as TablePart & { type: 'table' }
+// The seed reply's table part without its `type`: the part around it carries that.
+const { type: _seedType, ...seedTablePart } = (chatJson.seedThread.turns[1] as { agent: { type: string }[] }).agent[1] as unknown as TablePart & { type: 'table' }
+export const seedTable: TablePart = seedTablePart
 
 type UsageBreakdown = Record<'person' | 'job' | 'model' | 'tool', UsageRow[]>
 const usageRows = (b: Record<string, unknown[]>) => Object.fromEntries(
@@ -196,7 +199,9 @@ for (const j of peopleJson.runLimits.jobsAgentMayFinish as { id?: unknown }[]) {
   if (typeof j.id !== 'string' || !j.id) throw new Error('Sample data: a job in runLimits.jobsAgentMayFinish has no id.')
 }
 if (new Set(peopleJson.runLimits.jobsAgentMayFinish.map(j => j.id)).size !== peopleJson.runLimits.jobsAgentMayFinish.length) throw new Error('Sample data: runLimits.jobsAgentMayFinish has a repeated id.')
-export const people = peopleJson
+// `placeholders` is a note on the sample data, not something the agent returns.
+const { placeholders: _placeholders, ...runLimits } = peopleJson.runLimits
+export const people = { ...peopleJson, runLimits }
 
 const memLines = (group: string, rows: { text: string; source: string }[]): MemoryLine[] =>
   rows.map((r, i) => ({ key: `${group}:${i}`, text: r.text, source: r.source }))

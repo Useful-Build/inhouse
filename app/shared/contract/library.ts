@@ -19,8 +19,9 @@ export const DocPreviewSchema = z.object({
 export type DocPreview = z.infer<typeof DocPreviewSchema>
 
 /** Where a file came from. Opening it goes to that chat, the Routines page or that approval. Uploads have no link. */
-export const LibraryLinkSchema = z.union([
-  z.object({ to: z.enum(['chat', 'approval']), id: z.string() }),
+export const LibraryLinkSchema = z.discriminatedUnion('to', [
+  z.object({ to: z.literal('chat'), id: z.string() }),
+  z.object({ to: z.literal('approval'), id: z.string() }),
   z.object({ to: z.literal('routines') }),
 ])
 export type LibraryLink = z.infer<typeof LibraryLinkSchema>
@@ -47,6 +48,8 @@ export const LibraryFileSchema = z.object({
   /** Images: the picture and its width/height ratio. */
   src: z.string().optional(),
   ratio: z.string().optional(),
+  /** Images: the text a screen reader reads for the picture; empty when it only decorates the card. */
+  alt: z.string().optional(),
   doc: DocPreviewSchema.optional(),
   table: z.object({ head: z.array(z.string()), rows: z.array(z.array(z.string())), total: z.string() }).optional(),
   /** Code and text files: the contents. */

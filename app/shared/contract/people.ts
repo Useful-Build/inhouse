@@ -6,6 +6,8 @@ export const PeopleDataSchema = z.object({
   approvalRules: z.array(z.object({ what: z.string(), detail: z.string(), approver: z.string() })),
   runLimits: z.object({
     jobsAgentMayFinish: z.array(z.object({ id: z.string(), name: z.string(), desc: z.string() })),
+    /** What always waits for a person, whatever the stage: "Money", "Customers". */
+    alwaysWaitsForAPerson: z.array(z.string()),
     dailyActionLimit: z.number(),
     largestRestockUnits: z.number(),
   }),
