@@ -7,8 +7,9 @@
 // - before a uid serves a session, any process or file it left outside the work tree is gone and the session's
 //   folders are remade for it;
 // - pool exhausted: a typed refusal, never a shared uid;
-// - a uid whose cleanup failed is quarantined (never handed out again in this container's life), and the failure is
-//   thrown so the root logs it.
+// - a uid whose cleanup failed is quarantined (never handed out again in this container's life), logged, counted in
+//   `state()`, and the failure is thrown;
+// - the session folder is parked whatever the kill did: a uid whose processes survived never keeps its folder open.
 import type { SessionUser, SessionUsers } from '../session/seam.ts'
 import { assertSessionKey } from './paths.ts'
 
@@ -79,7 +80,12 @@ export type SessionPool = SessionUsers & {
   readonly state: () => { free: number[]; live: Map<string, number>; quarantined: number[] }
 }
 
-export function createSessionPool(pool: readonly PoolUser[], host: SessionHost): SessionPool {
+export type PoolLog = (entry: Record<string, unknown>) => void
+
+/** The root's log format (one JSON line on stdout, as src/main.ts writes). */
+const stdoutLog: PoolLog = (entry) => console.log(JSON.stringify({ t: new Date().toISOString(), ...entry }))
+
+export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, log: PoolLog = stdoutLog): SessionPool {
   const free: PoolUser[] = [...pool]
   const live = new Map<string, Live>()
   const quarantined = new Set<number>()
@@ -91,12 +97,16 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost):
    */
   const reclaim = async (sessionKey: string, user: PoolUser, drop: () => void) => {
     try {
-      await host.killAll(user)
-      await host.parkFolder(sessionKey)
+      try {
+        await host.killAll(user)
+      } finally {
+        await host.parkFolder(sessionKey)
+      }
       await host.wipeUserFiles(user)
     } catch (e) {
       drop()
       quarantined.add(user.uid)
+      log({ type: 'session_user_quarantined', uid: user.uid, user: user.user, sessionKey, error: String(e instanceof Error ? e.message : e), quarantined: quarantined.size })
       throw e
     }
     drop()

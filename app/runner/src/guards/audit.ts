@@ -5,6 +5,7 @@
 // channel or stream, or no answer within the timeout throws, and `onFailure: 'block'` turns the throw into a blocked
 // call. R1's second PR adds the messages; until then the production channel is `auditTransportMissing` (every call
 // blocked), never a channel that says yes.
+import { createHash } from 'node:crypto'
 import type { HookCallbackMatcher, HookInput } from '@anthropic-ai/claude-agent-sdk'
 
 /** One tool call, as the root records it. `input` is the tool's input, capped (see `AUDIT_INPUT_MAX_BYTES`). */
@@ -12,7 +13,7 @@ export type AuditEntry = {
   toolUseId: string
   tool: string
   input: unknown
-  /** True when `input` was over the cap and is replaced by its size. */
+  /** True when `input` was over the cap and is replaced by its size, hash, start and end (see `capInput`). */
   truncated: boolean
 }
 
@@ -26,8 +27,10 @@ export interface AuditChannel {
 
 export class AuditRefusedError extends Error {}
 
-/** Within the event cap with room to spare; a bigger input is recorded as its size. */
+/** Within the event cap with room to spare; a bigger input is recorded as its size, hash, start and end. */
 export const AUDIT_INPUT_MAX_BYTES = 64 * 1024
+/** How much of the start and of the end of an over-cap input is kept, in characters of its JSON text. */
+export const AUDIT_EDGE_CHARS = 4 * 1024
 /** How long the hook waits for the root's ack. */
 export const AUDIT_TIMEOUT_MS = 5_000
 /** The engine's own hook timeout, in seconds, above ours so our timeout is the one that fires. */
@@ -41,8 +44,10 @@ export function capInput(input: unknown): { input: unknown; truncated: boolean }
     return { input: { unencodable: true }, truncated: true }
   }
   const bytes = text === undefined ? 0 : Buffer.byteLength(text)
-  if (bytes <= AUDIT_INPUT_MAX_BYTES) return { input, truncated: false }
-  return { input: { bytes }, truncated: true }
+  if (bytes <= AUDIT_INPUT_MAX_BYTES || text === undefined) return { input, truncated: false }
+  // Padding can't hide a command: its start and end are kept, and the hash pins the whole input.
+  const sha256 = createHash('sha256').update(text).digest('hex')
+  return { input: { bytes, sha256, head: text.slice(0, AUDIT_EDGE_CHARS), tail: text.slice(-AUDIT_EDGE_CHARS) }, truncated: true }
 }
 
 /**

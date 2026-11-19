@@ -1,7 +1,8 @@
 // The options builder: the session's `query()` options with every guard on. Runs inside the session process, around
 // the base options R1 builds (src/session/core.ts). Whatever the base carries, the guarded fields below are ours: a
 // base that tries to set one of them is refused (thrown), never merged.
-import { basename, dirname, join } from 'node:path'
+import { isIP } from 'node:net'
+import { basename, join } from 'node:path'
 import type { HookCallbackMatcher, HookEvent, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { RunConfig } from '../protocol/local.ts'
 import type { QueryGuards } from '../session/seam.ts'
@@ -32,6 +33,9 @@ export const GUARDED_OPTIONS = [
   'executableArgs',
   'pathToClaudeCodeExecutable',
   'spawnClaudeCodeProcess',
+  'agents',
+  // A settings key, so `settings` being ours already covers it; listed in case a base spreads it at the top level.
+  'disableBundledSkills',
 ] as const
 
 export class GuardConfigError extends Error {}
@@ -47,6 +51,28 @@ export type QueryGuardDeps = {
 
 /** Names that always mean this container, whatever its interfaces say. */
 export const LOCAL_NAMES = ['localhost', '127.0.0.1', '::1', '0.0.0.0', '::']
+/** Suffixes of names that never mean the public web. */
+export const LOCAL_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa', '.lan']
+
+/**
+ * A WebFetch domain must be a public DNS name, written as the URL parser writes it: never an IP literal (in any form
+ * the parser reads as one, `1.2` or `0x7f.1` included), a local name or one of this container's own addresses.
+ */
+export function assertFetchDomain(domain: string, hostAddresses: readonly string[]): void {
+  let host: string
+  try {
+    host = new URL(`http://${domain}/`).hostname
+  } catch {
+    throw new GuardConfigError(`webFetchDomains: "${domain}" is not a host name`)
+  }
+  const bare = host.replace(/^\[|\]$/g, '')
+  if (host !== domain || host.endsWith('.')) throw new GuardConfigError(`webFetchDomains: "${domain}" must be written as "${host.replace(/\.$/, '')}"`)
+  if (isIP(bare) !== 0) throw new GuardConfigError(`webFetchDomains: "${domain}" is an IP address`)
+  if (!host.includes('.') || LOCAL_NAMES.includes(host) || LOCAL_SUFFIXES.some((s) => host.endsWith(s))) {
+    throw new GuardConfigError(`webFetchDomains: "${domain}" is a local name`)
+  }
+  if (hostAddresses.includes(host)) throw new GuardConfigError(`webFetchDomains: "${domain}" is this container`)
+}
 
 export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
   const workRoot = deps.workRoot ?? WORK_ROOT
@@ -71,15 +97,21 @@ export function guardedOptions(
     throw new GuardConfigError('settingSources must be [] (no settings file is read)')
   }
   const cwd = base.cwd
-  if (typeof cwd !== 'string' || dirname(cwd) !== deps.workRoot || !validSessionKey(basename(cwd))) {
+  // Exactly <workRoot>/<key>: no trailing slash, no doubled one, nothing that only normalises to a session folder.
+  if (typeof cwd !== 'string' || !validSessionKey(basename(cwd)) || cwd !== join(deps.workRoot, basename(cwd))) {
     throw new GuardConfigError('cwd must be a session folder under the work root')
   }
   const home = join(cwd, HOME)
   if (base.env?.HOME !== home) throw new GuardConfigError("HOME must be the session folder's home")
   const servers = Object.keys(base.mcpServers ?? {})
   if (servers.some((s) => s !== INHOUSE_MCP_SERVER)) throw new GuardConfigError(`only the "${INHOUSE_MCP_SERVER}" MCP server is allowed`)
+  // Ours is the root's proxy over http: never a program to run.
+  const inhouse = base.mcpServers?.[INHOUSE_MCP_SERVER]
+  if (inhouse !== undefined && inhouse.type !== 'http') throw new GuardConfigError(`the "${INHOUSE_MCP_SERVER}" MCP server must be an http server`)
 
+  const hostAddresses = deps.hostAddresses()
   const domains = [...config.webFetchDomains]
+  for (const d of domains) assertFetchDomain(d, hostAddresses)
   // A permission rule's absolute path starts with `//`.
   const abs = (p: string) => `/${p}`
   const settings: Settings = {
@@ -94,6 +126,13 @@ export function guardedOptions(
         `Read(${abs(RUNNER_DIR)}/**)`,
         'Read(//root/**)',
         'Read(//home/**)',
+        // Read, Glob and Grep run in-process, unsandboxed, as the session's uid: no other process's /proc entries
+        // (their command lines), and none of the shared tmp folders (the session's TMPDIR is in its own folder).
+        'Read(//proc/**)',
+        'Read(//tmp/**)',
+        'Read(//var/tmp/**)',
+        'Read(//dev/shm/**)',
+        'Read(//dev/mqueue/**)',
       ],
     },
     skillOverrides: Object.fromEntries(BUNDLED_SKILLS_OFF.map((s) => [s, 'off' as const])),
@@ -133,7 +172,7 @@ export function guardedOptions(
         // Bash reaches the listed WebFetch domains and nothing else; never this container or its root's ports.
         allowedDomains: domains,
         strictAllowlist: true,
-        deniedDomains: [...new Set([...LOCAL_NAMES, ...deps.hostAddresses()])],
+        deniedDomains: [...new Set([...LOCAL_NAMES, ...hostAddresses])],
         allowLocalBinding: false,
         allowAllUnixSockets: false,
       },

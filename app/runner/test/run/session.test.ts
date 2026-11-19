@@ -4,9 +4,11 @@
 //   sneaks back in (the SDK's default spawn keeps the session's stdio from the CLI);
 // - an interrupt that falls back to abort is reported as an SDK error;
 // - a run ends twice, or not at all, when the query throws, is stopped, or the root sends garbage;
-// - sessionEnv() grows a variable that isn't on its list (where a token could hide).
+// - sessionEnv() grows a variable that isn't on its list (where a token could hide);
+// - the session process keeps the inherited umask (022), so what it writes in /tmp is readable by other sessions;
+// - production can start unguarded: no guards, injected host deps, or an audit hook that lets a call through.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,7 +19,12 @@ import { LOCAL_MAX_DEPTH, LineReader, encodeLine, type LineResult } from '../../
 import { SDK_MESSAGE_MAX_DEPTH, runSession, type QueryFn } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards } from '../../src/session/seam.ts'
-import { productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
+import { AuditRefusedError } from '../../src/guards/audit.ts'
+import { sessionPaths } from '../../src/guards/paths.ts'
+import { poolUserName } from '../../src/guards/users.ts'
+import { RunConfig } from '../../src/protocol/local.ts'
+import { baseOptions, cliEnv } from '../../src/session/core.ts'
+import { GuardsMissingError, productionHostDeps, productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
 import { runStart } from './support/root-client.ts'
 import { testQueryGuards, testSessionUsers } from './support/test-seams.ts'
 
@@ -371,8 +378,15 @@ describe('the production wiring', () => {
       expect(zod.filter((i) => i.endsWith('.cjs'))).toEqual([])
       expect(inputs.some((i) => i.includes('claude-agent-sdk'))).toBe(false)
 
+      // Reports the umask the process ends with, however it ends.
+      const preload = join(out, 'umask.cjs')
+      writeFileSync(preload, "process.on('exit', () => process.stderr.write('umask=' + process.umask().toString(8) + '\\n'))")
       const start = (entry: string) =>
-        spawnSync(process.execPath, [join(out, entry)], { env: { PATH: process.env.PATH, EGRESS_URL: 'http://127.0.0.1:9' }, encoding: 'utf8', timeout: 30_000 })
+        spawnSync(process.execPath, ['--require', preload, join(out, entry)], {
+          env: { PATH: process.env.PATH, EGRESS_URL: 'http://127.0.0.1:9' },
+          encoding: 'utf8',
+          timeout: 30_000,
+        })
       const root = start('main.mjs')
       expect(root.status).not.toBe(0)
       expect(root.stderr).toMatch(/pool user s00 is missing/)
@@ -381,9 +395,32 @@ describe('the production wiring', () => {
       expect(session.status).not.toBe(0)
       expect(session.stderr).not.toMatch(/refusing to start without the guards/)
       expect(session.stderr).toMatch(/claude-agent-sdk/)
+      // The session entry sets umask 077 first thing: what it (and the CLI and Bash under it) writes is its own.
+      expect(session.stderr).toMatch(/^umask=77$/m)
     } finally {
       rmSync(out, { recursive: true, force: true })
     }
+  })
+
+  it('production cannot run a tool call unrecorded, takes no injected host deps, and refuses a missing guard', async () => {
+    const config = RunConfig.parse({
+      runId: 'r1', chatId: 'chat1', sessionId: '00000000-0000-4000-8000-000000000000', resume: false, prompt: 'hi',
+      model: 'claude-sonnet-5-5', effort: 'low', maxTurns: 1, maxBudgetUsd: 1, webFetchDomains: [],
+      fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 0, allowedTypes: [] },
+    })
+    const p = sessionPaths(config.chatId)
+    const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: p.home, workDir: p.workDir }, 8081)
+    const o = productionQueryGuards().apply(baseOptions(config, p.workDir, cliEnv(env), new AbortController()), config)
+    const audit = o.hooks!.PreToolUse!.filter((m) => m.matcher === undefined)
+    expect(audit.length).toBeGreaterThan(0)
+    const input = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'u1', session_id: 's', transcript_path: '', cwd: p.workDir }
+    for (const m of audit) {
+      expect(m.onFailure).toBe('block')
+      await expect(m.hooks[0]!(input as never, 'u1', { signal: new AbortController().signal })).rejects.toThrow(AuditRefusedError)
+    }
+    const pool = Array.from({ length: 2 }, (_, i) => ({ user: poolUserName(i), uid: 30000 + i, gid: 30000 + i }))
+    expect(Object.keys(productionHostDeps(pool))).toEqual(['poolUids'])
+    expect(() => requireProduction(undefined, 'QueryGuards')).toThrow(GuardsMissingError)
   })
 
   it('refuses the test implementation even when it is handed over', () => {

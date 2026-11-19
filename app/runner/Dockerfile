@@ -16,6 +16,8 @@ FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c01
 # - tini: PID 1 reaps orphans, so a session's leftovers don't linger as zombies the pool's release would wait on.
 # - python3 and its libraries: the file skills (PDF, Word, spreadsheet; decision Q7).
 # Pinned to bookworm's versions: a build fails loudly when Debian replaces one, and the pin is bumped then.
+# Pins checked 2026-11-19. To bump: `docker run --rm <the base image above> sh -c 'apt-get update -qq && apt-cache policy
+# <package>'`, take each package's Candidate version, update it here and the date above, and let CI's runner job build.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bubblewrap=0.8.0-2+deb12u1 \
@@ -43,11 +45,12 @@ WORKDIR /opt/runner
 COPY runner/package.json runner/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY --from=build /runner/dist ./dist
-# Our skills, as a plugin: root-owned and read-only.
+# Our skills, as a plugin: root-owned and read-only. /work is 0711: bwrap and each session reach the session's own
+# folder, but no session can list the chat ids. The wipe runs find and ipcrm (findutils, util-linux: always installed).
 COPY runner/image/plugin /opt/inhouse/plugin
 RUN chown -R root:root /opt/runner /opt/inhouse \
  && chmod -R go-w,a+rX /opt/runner /opt/inhouse \
- && mkdir -m 0755 /work
+ && mkdir -m 0711 /work
 
 # The root runner runs as root: it starts each session as that session's own pool user.
 EXPOSE 8080

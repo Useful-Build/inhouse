@@ -7,6 +7,7 @@
 // - an exhausted pool shares a uid instead of refusing; the refusal isn't typed;
 // - the same key gets two users, or a key mid-release gets the user being torn down;
 // - release of a session that isn't live (or with the wrong uid) succeeds quietly;
+// - a failed kill leaves the folder open to the uid's group (it isn't parked), or a quarantine goes unlogged;
 // - the pool reader accepts a missing member, a root or system uid, a login shell, or a shared uid or gid.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
@@ -136,6 +137,29 @@ describe('the session pool', () => {
     await released
     expect(order).toEqual(['kill', 'park', 'wipe', 'resolved'])
     expect(p.state().free).toEqual([30000])
+  })
+
+  it('a failed kill still parks the folder, and the quarantine is logged and counted', async () => {
+    const order: string[] = []
+    const logged: Record<string, unknown>[] = []
+    let failKill = false
+    const host: SessionHost = {
+      killAll: async () => {
+        order.push('kill')
+        if (failKill) throw new Error('survived')
+      },
+      wipeUserFiles: async () => void order.push('wipe'),
+      prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }),
+      parkFolder: async () => void order.push('park'),
+    }
+    const p = createSessionPool(pool(1), host, (e) => void logged.push(e))
+    const u = await p.allocate('a')
+    order.length = 0
+    failKill = true
+    await expect(p.release('a', u)).rejects.toThrow(/survived/)
+    expect(order).toEqual(['kill', 'park'])
+    expect(p.state().quarantined).toEqual([30000])
+    expect(logged).toEqual([expect.objectContaining({ type: 'session_user_quarantined', uid: 30000, error: expect.stringMatching(/survived/) })])
   })
 
   it('the same key gets the same user; an exhausted pool refuses with a typed error', async () => {

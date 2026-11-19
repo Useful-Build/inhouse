@@ -10,7 +10,10 @@ import { describe, expect } from 'vitest'
 import { allowedFetchHost, webFetchAllowRules, webFetchHook } from '../../src/guards/webfetch.ts'
 
 const label = fc.stringMatching(/^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$/)
-const domain = fc.tuple(label, label).map(([a, b]) => `${a}.${b}`)
+// The top label starts with a letter: a numeric one (`a.3`) makes the URL parser read an IPv4 address, and the guards
+// refuse such a domain in the run config (options.ts, assertFetchDomain).
+const tld = fc.stringMatching(/^[a-z]([a-z0-9-]{0,10}[a-z0-9])?$/)
+const domain = fc.tuple(label, tld).map(([a, b]) => `${a}.${b}`)
 
 const call = (url: unknown): HookInput =>
   ({ hook_event_name: 'PreToolUse', tool_name: 'WebFetch', tool_input: { url, prompt: 'x' }, tool_use_id: 't1', session_id: 's', transcript_path: '', cwd: '/work/a' }) as unknown as HookInput

@@ -2,9 +2,9 @@
 // implementation not marked production, so the test implementation (test/run/support/) can never be wired in here.
 import { readFileSync } from 'node:fs'
 import { auditTransportMissing } from '../guards/audit.ts'
-import { createSessionHost } from '../guards/host.ts'
+import { createSessionHost, parkAllFolders, type HostDeps } from '../guards/host.ts'
 import { createQueryGuards } from '../guards/options.ts'
-import { createSessionPool, readPool } from '../guards/users.ts'
+import { createSessionPool, readPool, type PoolUser } from '../guards/users.ts'
 import { hostAddresses } from '../proxy/proc-net.ts'
 import type { QueryGuards, SessionUsers } from '../session/seam.ts'
 
@@ -16,10 +16,19 @@ export function requireProduction<T extends { kind: string }>(impl: T | undefine
   return impl
 }
 
-/** The root's seam: one OS user per session, from the image's pool. Throws (the root doesn't start) on a broken pool. */
+/** The production host's deps: the pool's uids and nothing else, so every OS step is the real one. */
+export function productionHostDeps(pool: readonly PoolUser[]): HostDeps {
+  return { poolUids: new Set(pool.map((u) => u.uid)) }
+}
+
+/**
+ * The root's seam: one OS user per session, from the image's pool. Every folder a run before a restart left is parked
+ * first. Throws (the root doesn't start) on a broken pool or a work root someone else wrote in.
+ */
 export function productionSessionUsers(): SessionUsers {
   const pool = readPool(readFileSync('/etc/passwd', 'utf8'))
-  const host = createSessionHost({ poolUids: new Set(pool.map((u) => u.uid)) })
+  parkAllFolders()
+  const host = createSessionHost(productionHostDeps(pool))
   return requireProduction<SessionUsers>(createSessionPool(pool, host), 'SessionUsers')
 }
 

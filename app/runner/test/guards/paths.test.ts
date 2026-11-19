@@ -24,7 +24,7 @@ describe('session keys', () => {
     expect(resolve(p.workDir)).toBe(p.workDir)
     expect(dirname(p.workDir)).toBe(WORK_ROOT)
     expect(basename(p.workDir)).toBe(key)
-    for (const sub of [p.home, p.inputs, p.outputs]) expect(dirname(sub)).toBe(p.workDir)
+    for (const sub of [p.home, p.tmp, p.inputs, p.outputs]) expect(dirname(sub)).toBe(p.workDir)
   })
 
   it.prop([fc.anything()])('anything that is not a string is refused', (v) => {

@@ -36,7 +36,11 @@ export const INHOUSE_MCP_SERVER = 'inhouse'
 /** The bundled skill we keep (its licence keeps it inside the engine, so it's allowlisted by name). */
 export const KEPT_BUNDLED_SKILLS = ['dataviz'] as const
 
-/** The other 15 bundled skills, each turned off (P0 S2's list for the pinned engine). */
+/**
+ * The other 15 bundled skills, each turned off. P0 S2 read this list (and the `@builtin` plugin ids below) from SDK
+ * 0.3.325's init output; the pin is now 0.3.328. PR B's container probe asserts the real init output on the pin:
+ * `skills` exactly dataviz plus ours, plugins only ours plus `sec-default`, and `/code-review` refused.
+ */
 export const BUNDLED_SKILLS_OFF = [
   'deep-research',
   'update-config',

@@ -1,7 +1,10 @@
 // Where sessions live in the image, and the one check every session key passes before it touches a path.
 import { join } from 'node:path'
 
-/** The work root: 0755 root, so bwrap can traverse it; each session's folder under it is closed to every other. */
+/**
+ * The work root: 0711 root, so bwrap (and a session) can reach the session's own folder but no session can list the
+ * chat ids. Each session's folder under it is closed to every other.
+ */
 export const WORK_ROOT = '/work'
 /** The runner's own code: no session may read it. */
 export const RUNNER_DIR = '/opt/runner'
@@ -24,16 +27,20 @@ export function assertSessionKey(key: unknown): asserts key is string {
   if (!validSessionKey(key)) throw new InvalidSessionKeyError('a session key must be 1 to 64 of A-Z, a-z, 0-9, _ and -')
 }
 
-/** The names under a session folder. `.home` is the session's HOME, closed to everything but its user. */
+/**
+ * The names under a session folder. `.home` is the session's HOME and `.tmp` its TMPDIR, each closed to everything but
+ * its user.
+ */
 export const INPUTS = 'inputs'
 export const OUTPUTS = 'outputs'
 export const HOME = '.home'
+export const TMP = '.tmp'
 
-export type SessionPaths = { workDir: string; home: string; inputs: string; outputs: string }
+export type SessionPaths = { workDir: string; home: string; tmp: string; inputs: string; outputs: string }
 
 /** A session's folders. Throws on a key that isn't a single safe segment. */
 export function sessionPaths(key: string, root: string = WORK_ROOT): SessionPaths {
   assertSessionKey(key)
   const workDir = join(root, key)
-  return { workDir, home: join(workDir, HOME), inputs: join(workDir, INPUTS), outputs: join(workDir, OUTPUTS) }
+  return { workDir, home: join(workDir, HOME), tmp: join(workDir, TMP), inputs: join(workDir, INPUTS), outputs: join(workDir, OUTPUTS) }
 }

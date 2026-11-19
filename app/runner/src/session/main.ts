@@ -5,6 +5,7 @@ import { productionQueryGuards } from '../server/production.ts'
 import { openRootChannel } from './channel.ts'
 import { runSession, type QueryFn } from './core.ts'
 
+process.umask(0o077) // first: what this process, the CLI and Bash write (in /tmp too) is the session's alone
 // The SDK calls process.report.getReport(), which reverse-resolves every open socket and, with internet off, waits on
 // DNS timeouts (P0 S1 and S2: 60 to 140 s per query()). Must be set before the SDK loads.
 // (@types/node doesn't declare it yet.)

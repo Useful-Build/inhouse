@@ -7,7 +7,10 @@
 // - WebFetch: the permission rules and the sandbox allowlist differ from the run config's list;
 // - the container's own addresses or localhost aren't denied to sandboxed commands;
 // - our hooks are dropped, or run after the base's, or the base's hooks are lost;
-// - reads of other sessions, /home, the runner's code or /root are open to Bash.
+// - reads of other sessions, /home, the runner's code or /root are open to Bash;
+// - the in-process Read, Glob and Grep (unsandboxed, as the session uid) reach /proc or the shared tmp folders;
+// - webFetchDomains lets in an IP literal, a local name or this container's own address;
+// - a cwd that only looks like a session folder (`/work/a/`) passes; `agents` or a non-http `inhouse` server gets in.
 import { fc, it } from '@fast-check/vitest'
 import type { HookCallbackMatcher, Options } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect } from 'vitest'
@@ -16,7 +19,7 @@ import { baseOptions, cliEnv } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { AuditChannel } from '../../src/guards/audit.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF } from '../../src/guards/lists.ts'
-import { GUARDED_OPTIONS, GuardConfigError, LOCAL_NAMES, createQueryGuards } from '../../src/guards/options.ts'
+import { GUARDED_OPTIONS, GuardConfigError, LOCAL_NAMES, LOCAL_SUFFIXES, createQueryGuards } from '../../src/guards/options.ts'
 import { PLUGIN_DIR, sessionPaths } from '../../src/guards/paths.ts'
 
 const ack: AuditChannel = { send: async () => ({ ok: true }) }
@@ -24,7 +27,9 @@ const ADDRS = ['172.17.0.5', 'fe80::1', '127.0.0.1']
 const guards = createQueryGuards({ audit: ack, hostAddresses: () => ADDRS })
 
 const label = fc.stringMatching(/^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$/)
-const domain = fc.tuple(label, label).map(([a, b]) => `${a}.${b}`)
+// The top label starts with a letter: `1.2` is IPv4 shorthand, which the guards refuse.
+const tld = fc.stringMatching(/^[a-z]([a-z0-9-]{0,10}[a-z0-9])?$/).filter((t) => !LOCAL_SUFFIXES.some((s) => `.${t}`.endsWith(s)) && t !== 'arpa' && t !== 'localhost')
+const domain = fc.tuple(label, tld).map(([a, b]) => `${a}.${b}`)
 const key = fc.stringMatching(/^[A-Za-z0-9_-]{1,64}$/)
 const config = fc
   .record({
@@ -103,6 +108,11 @@ describe('the guarded options', () => {
       'Edit(//opt/**)',
       'Read(//opt/runner/**)',
       'Read(//root/**)',
+      'Read(//proc/**)',
+      'Read(//tmp/**)',
+      'Read(//var/tmp/**)',
+      'Read(//dev/shm/**)',
+      'Read(//dev/mqueue/**)',
     ]) {
       expect(deny).toContain(rule)
     }
@@ -148,9 +158,22 @@ describe('the guarded options', () => {
     expect(() => guards.apply({ ...b, settingSources: undefined }, c)).toThrow(/settingSources/)
     expect(() => guards.apply({ ...b, mcpServers: { other: { type: 'http', url: 'http://x.y' } } }, c)).toThrow(/MCP/)
     expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'http', url: 'http://x.y' } } }, c)).not.toThrow()
-    for (const cwd of ['/tmp/x', '/work', '/work/a/b', '/work/../etc', '/workx/a', undefined]) {
+    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'stdio', command: 'sh' } } }, c)).toThrow(/MCP/)
+    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'sse', url: 'http://x.y' } } }, c)).toThrow(/MCP/)
+    for (const cwd of ['/tmp/x', '/work', '/work/a/b', '/work/a/', '/work//a', '/work/../etc', '/workx/a', undefined]) {
       expect(() => guards.apply({ ...b, cwd }, c), String(cwd)).toThrow(/cwd/)
     }
     expect(() => guards.apply({ ...b, env: { ...b.env, HOME: '/root' } }, c)).toThrow(/HOME/)
   })
+
+  it('guards agents and disableBundledSkills', () => {
+    expect(GUARDED_OPTIONS).toEqual(expect.arrayContaining(['agents', 'disableBundledSkills']))
+  })
+
+  it.prop([config, fc.oneof(fc.ipV4(), fc.ipV4Extended(), fc.constantFrom(...LOCAL_NAMES, ...ADDRS, 'a.localhost', 'printer.local', 'db.internal', 'r.home.arpa', '1.2', '0x7f.1', 'Example.com', 'example.com.'))])(
+    'refuses a WebFetch domain that is an IP literal, a local name or this container',
+    (c, bad) => {
+      expect(() => guards.apply(base(c), { ...c, webFetchDomains: [...c.webFetchDomains, bad] })).toThrow(/webFetchDomains/)
+    },
+  )
 })
