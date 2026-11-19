@@ -64,6 +64,19 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+      # Which PR this build is for and the merge commit it was built from, for preview.yml to check and show.
+      - if: matrix.shard == 1 && github.event_name == 'pull_request'
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
+        run: printf '{"pr":%s,"sha":"%s"}\n' "$PR" "$SHA" > pr-meta.json
+      - if: matrix.shard == 1 && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-meta
+          path: app/pr-meta.json
+          if-no-files-found: error
+          retention-days: 7
       # Playwright balances shards by test count, not time, and the slow desktop specs come first. So the
       # suite is cut in four by test (--fully-parallel) and each job runs one slow and one fast quarter.
       # One worker: the tests run one at a time. Every quarter runs even if the one before failed.

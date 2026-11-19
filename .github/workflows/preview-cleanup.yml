@@ -1,6 +1,7 @@
-# Deletes the Workers Previews (pr-<number>, from preview.yml) of PRs closed in the last few days. Daily, or by
-# hand: gh workflow run preview-cleanup [-f days=30]. Wrangler has no command that lists previews, so it tries
-# each recently closed PR and treats a preview that doesn't exist as already gone.
+# Deletes the Workers Previews (pr-<number>, from preview.yml) of closed PRs. Daily for PRs closed in the last
+# day (plus two hours, so a late cron run leaves no gap), or by hand for a longer window:
+# gh workflow run preview-cleanup [-f days=30]. Wrangler has no command that lists previews, so it tries each
+# closed PR and treats a preview that doesn't exist as already gone.
 name: preview-cleanup
 
 on:
@@ -28,14 +29,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
           DAYS: ${{ inputs.days || '7' }}
         run: |
-          [[ "$DAYS" =~ ^[0-9]+$ ]] && [ "$DAYS" -ge 1 ] && [ "$DAYS" -le 365 ] ||
-            { echo "::error::days must be a whole number from 1 to 365"; exit 1; }
-          since=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
-          # The 100 most recently updated closed PRs cover any PR closed in the window.
-          prs=$(SINCE="$since" gh api "repos/$REPO/pulls?state=closed&sort=updated&direction=desc&per_page=100" \
-            --jq '[.[] | select(.closed_at >= env.SINCE) | .number]')
+          if [ "$EVENT" = schedule ]; then
+            since=$(date -u -d "26 hours ago" +%Y-%m-%dT%H:%M:%SZ)
+          else
+            [[ "$DAYS" =~ ^[0-9]+$ ]] && [ "$DAYS" -ge 1 ] && [ "$DAYS" -le 365 ] ||
+              { echo "::error::days must be a whole number from 1 to 365"; exit 1; }
+            since=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+          fi
+          # Every closed PR, every page. A PR closed in the window was updated in it too.
+          numbers=$(SINCE="$since" gh api --paginate "repos/$REPO/pulls?state=closed&sort=updated&direction=desc&per_page=100" \
+            --jq '.[] | select(.closed_at >= env.SINCE) | .number')
+          prs=$(jq -cs . <<< "$numbers")
+          count=$(jq length <<< "$prs")
+          # A matrix holds at most 256 jobs.
+          [ "$count" -le 256 ] || { echo "::error::$count PRs closed since $since. Use a smaller days."; exit 1; }
           echo "Closed since $since: $prs"
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
 
@@ -80,8 +90,11 @@ jobs:
             echo "$out"; echo "Deleted pr-$PR"; exit 0
           fi
           echo "$out"
-          # A preview that was never made, or is already deleted, is fine. Any other failure is not.
-          if grep -qiE 'not found|does not exist|could not find|no preview' <<< "$out"; then
+          # A preview that was never made, or is already deleted, is fine. Any other failure is not. Wrangler
+          # 4.162.0 passes the API's error through: "A request to the Cloudflare API (<path>) failed." then the
+          # message with "[code: 10025]" (PREVIEW_NOT_FOUND_ERR_CODE in src/preview/secrets/index.ts).
+          if grep -qF "/workers/workers/inhouse-app/previews/pr-$PR) failed." <<< "$out" &&
+            grep -qF "[code: 10025]" <<< "$out"; then
             echo "pr-$PR has no preview"
           else
             echo "::error::Deleting pr-$PR failed"; exit 1

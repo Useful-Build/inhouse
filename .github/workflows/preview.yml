@@ -1,7 +1,9 @@
 # Deploys each same-repo PR's build as a Cloudflare Workers Preview named pr-<number> and comments its URLs.
 # Runs after ci passes, from main's code (workflow_run always does), so only trusted code ever holds the token.
-# The PR's code arrives as the app-build artifact from that ci run: its generated wrangler config is checked
-# before wrangler reads it. Fork PRs never deploy. preview-cleanup.yml deletes the previews of closed PRs.
+# Threat model: the ci run, its artifacts and everything in them are PR-controlled (a same-repo PR can change
+# ci.yml, and a dependency can write into dist/). Only static files and a wrangler config that matches main's,
+# checked field by field, reach the deploy step. Fork and Dependabot PRs never deploy. preview-cleanup.yml
+# deletes the previews of closed PRs.
 name: preview
 
 on:
@@ -11,126 +13,268 @@ on:
 
 permissions: {}
 
-# One group per PR, shared with preview-cleanup.yml, so a deploy and a delete of the same preview never overlap.
-# A newer run waits for the one in progress and replaces any older one still waiting.
-concurrency:
-  group: preview-pr-${{ github.event.workflow_run.pull_requests[0].number || format('run-{0}', github.run_id) }}
-  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  deploy:
+  # Which PR ci built, from its pr-meta artifact. That file is PR-controlled too, so it only picks among the PRs
+  # GitHub attached to the run, and the PR's head must still be the commit ci tested. No secrets here.
+  gate:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.pull_requests[0].number
+      github.event.workflow_run.actor.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: preview
+    timeout-minutes: 5
     permissions:
-      contents: read
       actions: read
       pull-requests: read
     outputs:
-      pr: ${{ steps.gate.outputs.pr }}
-      sha: ${{ steps.gate.outputs.sha }}
-      preview_url: ${{ steps.urls.outputs.preview_url }}
-      deployment_url: ${{ steps.urls.outputs.deployment_url }}
+      ok: ${{ steps.pr.outputs.ok }}
+      pr: ${{ steps.pr.outputs.pr }}
+      sha: ${{ steps.pr.outputs.sha }}
+      merge_sha: ${{ steps.pr.outputs.merge_sha }}
     steps:
-      # Deploy only an open PR whose head is still the commit ci tested. A newer push gets its own run.
       - name: PR is open and at the tested commit
-        id: gate
+        id: pr
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
           SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_PRS: ${{ toJSON(github.event.workflow_run.pull_requests.*.number) }}
         run: |
-          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::Bad PR number"; exit 1; }
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad head SHA"; exit 1; }
-          read -r state head < <(gh api "repos/$REPO/pulls/$PR" --jq '[.state, .head.sha] | @tsv')
+          meta="$RUNNER_TEMP/pr-meta"
+          mkdir "$meta"
+          gh run download "$RUN_ID" --repo "$REPO" --name pr-meta --dir "$meta"
+          vals=$(node - "$meta" <<'EOF'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const fail = (m) => { console.error(`::error::pr-meta rejected: ${m}`); process.exit(1); };
+          const dir = process.argv[2];
+          const entries = fs.readdirSync(dir);
+          if (entries.length !== 1 || entries[0] !== 'pr-meta.json') fail(`files are ${JSON.stringify(entries)}`);
+          const file = path.join(dir, 'pr-meta.json');
+          if (!fs.lstatSync(file).isFile()) fail('pr-meta.json is not a regular file');
+          let meta;
+          try { meta = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { fail('not JSON'); }
+          if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) fail('not an object');
+          if (Object.keys(meta).sort().join() !== 'pr,sha') fail(`keys are ${JSON.stringify(Object.keys(meta))}`);
+          if (!Number.isSafeInteger(meta.pr) || meta.pr < 1) fail('bad pr');
+          if (typeof meta.sha !== 'string' || !/^[0-9a-f]{40}$/.test(meta.sha)) fail('bad sha');
+          const runPrs = JSON.parse(process.env.RUN_PRS);
+          if (!Array.isArray(runPrs) || !runPrs.includes(meta.pr)) {
+            fail(`PR #${meta.pr} is not one of the run's PRs ${JSON.stringify(runPrs)}`);
+          }
+          console.log(`${meta.pr} ${meta.sha}`);
+          EOF
+          )
+          read -r pr merge_sha <<< "$vals"
+          info=$(gh api "repos/$REPO/pulls/$pr" --jq '[.state, .head.sha] | @tsv')
+          read -r state head <<< "$info"
           if [ "$state" != open ] || [ "$head" != "$SHA" ]; then
-            echo "::notice::PR #$PR is $state at $head, not open at $SHA. Nothing to deploy."
+            echo "::notice::PR #$pr is $state at $head, not open at $SHA. Nothing to deploy."
             echo "ok=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          { echo "ok=true"; echo "pr=$PR"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+          { echo "ok=true"; echo "pr=$pr"; echo "sha=$SHA"; echo "merge_sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
 
+  deploy:
+    needs: gate
+    if: needs.gate.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: preview
+    # One group per PR, shared with preview-cleanup.yml, so a deploy and a delete of the same preview never
+    # overlap. A newer run waits for the one in progress and replaces any older one still waiting.
+    concurrency:
+      group: preview-pr-${{ needs.gate.outputs.pr }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      preview_url: ${{ steps.urls.outputs.preview_url }}
+      deployment_url: ${{ steps.urls.outputs.deployment_url }}
+    steps:
       # main's code and lockfile, never the PR's: wrangler is the version pinned on main.
-      - if: steps.gate.outputs.ok == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - if: steps.gate.outputs.ok == 'true'
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: app/.nvmrc
-      - if: steps.gate.outputs.ok == 'true'
-        working-directory: app
+      - working-directory: app
         run: npm ci
 
+      # Unpacked outside the checkout, so nothing in it can land next to wrangler or in node_modules.
       - name: Download the PR's build
-        if: steps.gate.outputs.ok == 'true'
-        working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          test ! -e dist && test ! -e .wrangler
-          gh run download "$RUN_ID" --repo "$REPO" --name app-build --dir .
+          mkdir "$RUNNER_TEMP/pr-build"
+          gh run download "$RUN_ID" --repo "$REPO" --name app-build --dir "$RUNNER_TEMP/pr-build"
 
-      # The build is PR code. Wrangler follows .wrangler/deploy/config.json to the config the Vite plugin
-      # generated, so check both: the config must stay inside dist, target this Worker only and run nothing.
-      - name: Check the generated wrangler config
-        if: steps.gate.outputs.ok == 'true'
+      # Only dist/** and the Vite plugin's redirect file, all plain files and directories. Then copy just those.
+      - name: Check the build's files and copy them in
         working-directory: app
         run: |
-          node <<'EOF'
+          node - "$RUNNER_TEMP/pr-build" <<'EOF'
           const fs = require('node:fs');
           const path = require('node:path');
+          const fail = (m) => { console.log(`::error::Build rejected: ${m}`); process.exit(1); };
+          const root = process.argv[2];
+          const REDIRECT = '.wrangler/deploy/config.json';
+          const DIRS = new Set(['.wrangler', '.wrangler/deploy', 'dist']);
+          let files = 0;
+          const walk = (rel) => {
+            for (const name of fs.readdirSync(path.join(root, rel))) {
+              const p = rel ? `${rel}/${name}` : name;
+              if (name === '.' || name === '..' || name.includes('/') || /[\x00-\x1f\x7f]/.test(name)) {
+                fail(`bad name ${JSON.stringify(p)}`);
+              }
+              if (/^\.(env|dev\.vars)/.test(name)) fail(`${p} is not allowed`);
+              const st = fs.lstatSync(path.join(root, p));
+              if (st.isDirectory()) {
+                if (!DIRS.has(p) && !p.startsWith('dist/')) fail(`unexpected directory ${p}`);
+                walk(p);
+              } else if (st.isFile()) {
+                if (p !== REDIRECT && !p.startsWith('dist/')) fail(`unexpected file ${p}`);
+                files++;
+              } else {
+                fail(`${p} is not a regular file or directory`);
+              }
+            }
+          };
+          walk('');
+          if (!fs.existsSync(path.join(root, REDIRECT))) fail(`no ${REDIRECT}`);
+          if (!fs.existsSync(path.join(root, 'dist'))) fail('no dist/');
+          console.log(`OK: ${files} files`);
+          EOF
+          test ! -e dist && test ! -e .wrangler
+          mkdir -p .wrangler/deploy
+          cp -R "$RUNNER_TEMP/pr-build/dist" dist
+          cp "$RUNNER_TEMP/pr-build/.wrangler/deploy/config.json" .wrangler/deploy/config.json
+
+      # Wrangler follows .wrangler/deploy/config.json to the config the Vite plugin wrote into dist. Both must match
+      # what the plugin makes from main's wrangler.jsonc: the expected config is rebuilt here with main's wrangler
+      # (as the plugin does, see @cloudflare/vite-plugin src/plugins/output-config.ts), and only main,
+      # assets.directory and the informational config paths may differ. On top of that, independent of main: no
+      # bindings, routes, build steps or extra modules, and previews is {}. A PR that changes wrangler.jsonc or
+      # wrangler's version gets no preview until it merges.
+      - name: Check the generated wrangler config
+        working-directory: app
+        run: |
+          node - <<'EOF'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { isDeepStrictEqual } = require('node:util');
           const fail = (m) => { console.log(`::error::Generated wrangler config rejected: ${m}`); process.exit(1); };
+          const show = (v) => JSON.stringify(v)?.slice(0, 200);
+          const readJson = (file) => {
+            try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { fail(`${file}: ${e.message}`); }
+          };
+          const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+          const deepEmpty = (v) => (Array.isArray(v) && v.length === 0) || (isObject(v) && Object.values(v).every(deepEmpty));
           const dist = fs.realpathSync('dist');
-          const inside = (p) => {
+          const workerDir = path.join(dist, 'inhouse_app');
+
+          const redirect = readJson('.wrangler/deploy/config.json');
+          const expectedRedirect = { configPath: '../../dist/inhouse_app/wrangler.json', auxiliaryWorkers: [] };
+          if (!isDeepStrictEqual(redirect, expectedRedirect)) fail(`the redirect is ${show(redirect)}`);
+          const configFile = path.join(workerDir, 'wrangler.json');
+          if (!fs.existsSync(configFile) || !fs.lstatSync(configFile).isFile()) fail('no dist/inhouse_app/wrangler.json');
+          const config = readJson(configFile);
+          if (!isObject(config)) fail('not an object');
+
+          // What the plugin writes for main's wrangler.jsonc.
+          const { unstable_readConfig } = require(path.resolve('node_modules/wrangler'));
+          const input = unstable_readConfig({ config: path.resolve('wrangler.jsonc') }, { preserveOriginalMain: true });
+          for (const k of ['alias', 'base_dir', 'find_additional_modules', 'minify', 'no_bundle',
+            'preserve_file_names', 'site', 'tsconfig', 'build', 'define']) delete input[k];
+          const RULES = [{ type: 'ESModule', globs: ['**/*.js', '**/*.mjs'] }];
+          const built = { ...input, main: 'index.js', no_bundle: true, rules: RULES,
+            assets: { ...input.assets, directory: '../client' } };
+          if (isObject(built.unsafe) && Object.keys(built.unsafe).length === 0) delete built.unsafe;
+          const expected = JSON.parse(JSON.stringify(built));
+
+          const VARIES = new Set(['main', 'configPath', 'userConfigPath']);
+          const keys = Object.keys(config);
+          for (const k of keys) if (!Object.hasOwn(expected, k)) fail(`unexpected key ${k}`);
+          for (const k of Object.keys(expected)) if (!Object.hasOwn(config, k)) fail(`missing key ${k}`);
+          for (const k of keys) {
+            if (VARIES.has(k)) continue;
+            const [a, e] = k === 'assets' && isObject(config.assets)
+              ? [{ ...config.assets, directory: 0 }, { ...expected.assets, directory: 0 }] : [config[k], expected[k]];
+            if (!isDeepStrictEqual(a, e)) fail(`${k} is ${show(config[k])}, expected ${show(expected[k])}`);
+          }
+
+          // Independent of main's config: these hold whatever wrangler.jsonc says.
+          if (config.name !== 'inhouse-app' || config.topLevelName !== 'inhouse-app') fail('name is not inhouse-app');
+          if (config.no_bundle !== true) fail('no_bundle is not true');
+          if (!isDeepStrictEqual(config.rules, RULES)) fail(`rules is ${show(config.rules)}`);
+          if (!isDeepStrictEqual(config.previews, {})) fail(`previews is ${show(config.previews)}`);
+          for (const k of ['route', 'routes', 'account_id', 'env', 'legacy_env', 'base_dir', 'find_additional_modules',
+            'alias', 'define', 'tsconfig', 'site', 'text_blobs', 'data_blobs', 'wasm_modules', 'build', 'minify',
+            'preserve_file_names', 'pages_build_output_dir', 'unsafe']) {
+            if (Object.hasOwn(config, k)) fail(`${k} is set`);
+          }
+          // Every other key is a binding, trigger or resource list (services, kv_namespaces, queues, ai, browser,
+          // triggers, vars, migrations and any added later), and must be empty.
+          const SETTINGS = new Set(['configPath', 'userConfigPath', 'topLevelName', 'name', 'main', 'no_bundle', 'rules',
+            'compatibility_date', 'compatibility_flags', 'jsx_factory', 'jsx_fragment', 'assets', 'workers_dev',
+            'preview_urls', 'upload_source_maps', 'observability', 'python_modules', 'dev']);
+          for (const k of keys) if (!SETTINGS.has(k) && !deepEmpty(config[k])) fail(`${k} is not empty: ${show(config[k])}`);
+          for (const k of ['configPath', 'userConfigPath']) if (typeof config[k] !== 'string') fail(`${k} is not a string`);
+
+          const within = (p, dir, what) => {
             let real;
-            try { real = fs.realpathSync(p); } catch { fail(`${p} does not exist`); }
-            if (!real.startsWith(dist + path.sep)) fail(`${p} is outside dist/`);
+            try { real = fs.realpathSync(p); } catch { fail(`${what} does not exist`); }
+            if (real !== dir && !real.startsWith(dir + path.sep)) fail(`${what} is outside ${path.relative('.', dir)}/`);
             return real;
           };
-          const redirectFile = '.wrangler/deploy/config.json';
-          const redirect = JSON.parse(fs.readFileSync(redirectFile, 'utf8'));
-          if (typeof redirect.configPath !== 'string') fail('the redirect has no configPath');
-          if ((redirect.auxiliaryWorkers ?? []).length) fail('auxiliary Workers are not allowed');
-          const configFile = inside(path.resolve(path.dirname(redirectFile), redirect.configPath));
-          const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-          if (config.name !== 'inhouse-app') fail(`name is ${JSON.stringify(config.name)}, not "inhouse-app"`);
-          for (const key of ['route', 'routes']) {
-            const v = config[key];
-            if (v !== undefined && !(Array.isArray(v) && v.length === 0)) fail(`${key} is set`);
-          }
-          for (const key of ['build', 'account_id']) if (config[key] !== undefined) fail(`${key} is set`);
-          if (typeof config.previews !== 'object' || config.previews === null) fail('no "previews" block');
-          const base = path.dirname(configFile);
-          if (typeof config.main !== 'string') fail('no main');
-          inside(path.resolve(base, config.main));
-          if (config.assets?.directory !== undefined) inside(path.resolve(base, config.assets.directory));
-          console.log(`OK: ${path.relative(process.cwd(), configFile)}`);
+          const main = config.main;
+          if (typeof main !== 'string' || !main.endsWith('.js') || main.split(/[\\/]/).includes('..')) fail(`main is ${show(main)}`);
+          const mainReal = within(path.resolve(workerDir, main), workerDir, 'main');
+          if (mainReal === workerDir || !fs.statSync(mainReal).isFile()) fail('main is not a file');
+          if (typeof config.assets?.directory !== 'string') fail('no assets.directory');
+          if (!fs.statSync(within(path.resolve(workerDir, config.assets.directory), path.join(dist, 'client'),
+            'assets.directory')).isDirectory()) fail('assets.directory is not a directory');
+          console.log('OK: dist/inhouse_app/wrangler.json matches main');
           EOF
+          leftovers=$(find . -maxdepth 1 \( -name '.env*' -o -name '.dev.vars*' \) -print)
+          [ -z "$leftovers" ] || { echo "::error::Found $leftovers in app/"; exit 1; }
 
+      # Wrangler by explicit path from main's node_modules. --env-file /dev/null replaces its default .env and
+      # .env.local in the cwd (wrangler 4.162.0 createCLIParser in src/index.ts loads
+      # args["env-file"] ?? getDefaultEnvFiles(args.env); /dev/null parses to nothing).
+      # env -u drops any override of where the token goes or how it signs in; only the token and account stay.
       - name: Deploy the Workers Preview
-        if: steps.gate.outputs.ok == 'true'
         working-directory: app
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_SEND_METRICS: "false"
-          PR: ${{ steps.gate.outputs.pr }}
-        run: npx --no-install wrangler preview --name "pr-$PR" --json > "$RUNNER_TEMP/preview.out"
+          PR: ${{ needs.gate.outputs.pr }}
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::Bad PR number"; exit 1; }
+          out="$RUNNER_TEMP/preview.out"
+          if ! env -u CLOUDFLARE_API_BASE_URL -u CLOUDFLARE_COMPLIANCE_REGION -u WRANGLER_API_ENVIRONMENT \
+            -u CLOUDFLARE_API_KEY -u CLOUDFLARE_EMAIL -u CLOUDFLARE_AUTH_PROFILE -u CLOUDFLARE_ACCESS_CLIENT_ID \
+            -u CLOUDFLARE_ACCESS_CLIENT_SECRET -u WRANGLER_AUTH_DOMAIN -u WRANGLER_AUTH_URL -u WRANGLER_TOKEN_URL \
+            -u WRANGLER_REVOKE_URL -u WRANGLER_CF_AUTHORIZATION_TOKEN -u CLOUDFLARE_INCLUDE_PROCESS_ENV \
+            node node_modules/wrangler/bin/wrangler.js preview --name "pr-$PR" --json --env-file /dev/null > "$out"; then
+            cat "$out"; echo "::error::wrangler preview failed"; exit 1
+          fi
 
       # wrangler prints a few lines before the JSON, so parse from the first "{".
       - name: Read the URLs
         id: urls
-        if: steps.gate.outputs.ok == 'true'
         run: |
           node <<'EOF'
           const fs = require('node:fs');
@@ -148,9 +292,9 @@ jobs:
           }
           EOF
 
-  # The only job that can write to the PR. It sees the URLs and nothing else.
+  # The only job that can write to the PR. It sees the PR number, SHAs and URLs and nothing else.
   comment:
-    needs: deploy
+    needs: [gate, deploy]
     if: needs.deploy.outputs.deployment_url != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -161,8 +305,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ needs.deploy.outputs.pr }}
-          SHA: ${{ needs.deploy.outputs.sha }}
+          PR: ${{ needs.gate.outputs.pr }}
+          SHA: ${{ needs.gate.outputs.sha }}
+          MERGE_SHA: ${{ needs.gate.outputs.merge_sha }}
           PREVIEW_URL: ${{ needs.deploy.outputs.preview_url }}
           DEPLOYMENT_URL: ${{ needs.deploy.outputs.deployment_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -174,13 +319,13 @@ jobs:
 
           - Preview URL (follows this PR): $PREVIEW_URL
           - Deployment URL (this commit only): $DEPLOYMENT_URL
-          - Head SHA: \`$SHA\`
+          - Head SHA: \`$SHA\`, built from \`$MERGE_SHA\` (head merged into base)
           - Run: $RUN_URL
           EOF
           )
-          id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith(env.MARKER))) | .id' |
-            head -n 1)
+          ids=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith(env.MARKER))) | .id')
+          id=$(head -n 1 <<< "$ids")
           if [ -n "$id" ]; then
             gh api --method PATCH "repos/$REPO/issues/comments/$id" -f body="$body" > /dev/null
             echo "Updated comment $id"
