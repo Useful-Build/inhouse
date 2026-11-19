@@ -221,12 +221,13 @@ test('Chats: every seeded answer ends with its footer, its model, steps and seco
     let inAnswer = false
     for (const t of typeof c.turns === 'string' ? seed : c.turns) {
       if (t.user) { inAnswer = false; continue }
-      if (t.stage && t.stage !== 'Act') continue
       const tr = traces[t.trace!.split(' ')[0]]
       // Its model is the mode (models.json) whose model its trace's last model step names, so the line and the steps agree.
+      // Checked for every stage's answer, not only the ones Act shows.
       const last = tr.steps.filter(x => x.kind === 'model').at(-1)?.detail?.split(' · ')[0]
       const mode = modes.find(m => m.id === t.model)
       expect(mode?.model, `${c.id}: ${t.trace}`).toBe(last)
+      if (t.stage && t.stage !== 'Act') continue
       const line = `${mode!.label} · ${tr.steps.length - 1} steps · ${secs(tr.durationSeconds)}`
       if (inAnswer) expected[expected.length - 1] = line; else expected.push(line)
       inAnswer = true
