@@ -6,7 +6,7 @@ import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey
 import { Sidebar } from './shell/Sidebar'
 import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
-import { CRASH_KEY } from './ErrorBoundary'
+import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { DevSwitcher } from './shell/DevSwitcher'
 import { cn } from '@/lib/utils'
 import { DotsBackground, GooDefs } from './ui'
@@ -243,7 +243,7 @@ export default function App() {
           <div className="flex-none"><Banner /></div>
           {/* Chats, and on desktop Settings and the Library, fill what is left under the banner and scroll inside (their side menus stay put); other pages scroll in main. */}
           <div className={cn(page === 'chats' || (!phone && (page === 'settings' || page === 'library')) ? 'flex min-h-0 flex-1 basis-0 flex-col' : 'flex-none')}>
-            <Screen />
+            <RouteBoundary key={page} name={PAGE_LABEL[page]}><Screen /></RouteBoundary>
           </div>
         </main>
       </div>

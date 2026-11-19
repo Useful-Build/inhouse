@@ -347,6 +347,12 @@ Notifications and team window
   Expected: reading a line drops the count, Mark all as read empties it; Send waits for words and carries the name from Settings
   Covered:  e2e/navigation.spec.ts
 
+Crashes and error reports
+  Path:     ?demo&crash=screen (a screen throws), ?demo&crash=rejection; /api/client-error, /api/unknown
+  Selector: alert "Something went wrong." in main, Try again, Message the team
+  Expected: a broken screen shows its own boundary and the shell keeps working; Message the team opens Report a bug with a line about the crash; each error sends one scrubbed report (no query, hash, email or token) with the release; other /api paths are 404 with the _headers security headers; no .map is served
+  Covered:  e2e/client-errors.spec.ts
+
 Keyboard and focus
   Path:     Tab through the shell and overlays
   Selector: Skip to content, F6
