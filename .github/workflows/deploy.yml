@@ -116,7 +116,9 @@ jobs:
         with:
           name: sourcemaps-${{ needs.plan.outputs.sha }}
           path: app/dist/sourcemaps/**
-          if-no-files-found: ignore
+          # Warn, not fail: the hidden maps arrive with the hardening project's client-error change; until then
+          # main's build makes none.
+          if-no-files-found: warn
           retention-days: 90
           overwrite: true
 
@@ -159,8 +161,14 @@ jobs:
           REPO: ${{ github.repository }}
           MODE: ${{ needs.plan.outputs.mode }}
           SHA: ${{ needs.plan.outputs.sha }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
           if [ "$MODE" = rollback ]; then
+            # Checked here too: "Re-run failed jobs" re-runs this job without re-running plan.
+            if [ "$ATTEMPT" != 1 ]; then
+              echo "::error::A rollback run can't be re-run (attempt $ATTEMPT). Dispatch a new rollback instead."
+              exit 1
+            fi
             { echo "deploy=false"; echo "rollback=true"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
