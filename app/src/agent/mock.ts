@@ -294,7 +294,7 @@ const sanitize = (raw: unknown): AgentState => {
     // The old notificationsRead / notificationRead flags are dropped: their notifications show unread once more.
     readNotices: flagsOf(raw.readNotices),
     libraryDeleted: flagsOf(raw.libraryDeleted),
-    setAside: recOf(raw.setAside, (x): x is SetAsideRecord => isRec(x) && isStamp(x) && SET_ASIDE.includes(x.reason as SetAsideReason) && typeof x.ms === 'number'),
+    setAside: recOf(raw.setAside, (x): x is SetAsideRecord => isRec(x) && SET_ASIDE.includes(x.reason as SetAsideReason) && typeof x.ms === 'number' && isStamp(x)),
     routinesDeleted: Object.fromEntries(Object.keys(flagsOf(raw.routinesDeleted)).filter(known).map(id => [id, true as const])),
     routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).filter((r): r is RoutineRun => hasStrs(r, ['routine', 'at']) && typeof r.atMin === 'number' && known(r.routine as string) && (r.trace === undefined || str(r.trace)) && (r.result === undefined || str(r.result))),
     // managing chats. A started chat's title, pin and delete are kept until Reset demo: its id is unique per page load
