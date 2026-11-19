@@ -6,6 +6,9 @@
 //   2. inline `style` props in .tsx that carry a literal (a number, a quoted string, a var(--...)), also as a fallback
 //      (`?? 20`, `|| 20`, `&& 20`) or a ternary branch. Values computed at runtime (a bar's height from data, a
 //      position from state) are fine.
+//   3. fixed waits in the E2E specs (e2e/**/*.ts): `waitForTimeout(` and a promise wrapped around `setTimeout`
+//      (`new Promise(r => setTimeout(r, 500))`). Wait for a condition (an `expect` or `expect.poll`), or move time with
+//      the Clock API (`page.clock.install()`, `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine.
 // Exceptions live in scripts/check-app-rules.allow.json, each with a reason. An entry nothing uses fails too.
 // Run: npm run lint:tokens (part of npm run lint).
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -149,9 +152,21 @@ for (const [path, n] of ALLOWED) {
 }
 for (const [c, n] of ALLOWED_CLASSES) if (!n) problems.push(`check-app-rules.allow.json: ${c} is not used anywhere; remove it`)
 
+// ---------- fixed waits in e2e ----------
+const e2eDir = new URL('../e2e/', import.meta.url).pathname
+const waits = []
+const FIXED_WAIT = /\bwaitForTimeout\s*\(|new\s+Promise\b[^\n]*\bsetTimeout\b/
+if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
+  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) return
+    if (FIXED_WAIT.test(line)) waits.push(`e2e/${relative(e2eDir, file)}:${i + 1}  ${line.trim()}`)
+  })
+}
+
 const report = (list, msg) => { if (list.length) console.error(`${list.length} ${msg}\n${list.join('\n')}\n`) }
 report(hits.arbitrary, 'arbitrary value(s). Use a scale step (w-82.5 = 330px) or an --app-* token in src/index.css:')
 report(hits.style, 'inline style(s) with a literal. Use a class, or compute the value from data:')
+report(waits, 'fixed wait(s) in e2e. Wait for a condition (expect, expect.poll) or use the Clock API (page.clock.install(), page.clock.runFor(ms)):')
 report(problems, 'allow-list problem(s):')
-if (hits.arbitrary.length + hits.style.length + problems.length) process.exit(1)
-console.log('app rules: no arbitrary values (outside src/components/ui) or literal inline styles')
+if (hits.arbitrary.length + hits.style.length + waits.length + problems.length) process.exit(1)
+console.log('app rules: no arbitrary values (outside src/components/ui), literal inline styles or fixed waits in e2e')
