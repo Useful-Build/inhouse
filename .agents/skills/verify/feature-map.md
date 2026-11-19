@@ -1,4 +1,4 @@
-Status: revised 2026-11-19, awaiting Wasim's approval.
+Status: approved by Wasim, 2026-11-19 (revised map, PR #20).
 
 # Inhouse feature map
 
