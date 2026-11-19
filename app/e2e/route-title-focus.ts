@@ -13,13 +13,6 @@ async function start(page: Page, hash: string) {
   await page.goto('/?demo' + hash)
 }
 
-/** The built JS files the page has asked for so far. */
-function trackScripts(page: Page) {
-  const urls = new Set<string>()
-  page.on('requestfinished', r => { if (new URL(r.url()).pathname.endsWith('.js')) urls.add(r.url()) })
-  return urls
-}
-
 export function routeTitleFocusTests(phone: boolean) {
   /** Open a page from the sidebar by its name, the way a person does: on a phone through the Menu drawer, on desktop by keyboard. */
   async function open(page: Page, name: string) {
@@ -65,15 +58,13 @@ export function routeTitleFocusTests(phone: boolean) {
   })
 
   test('A lazy route loads a chunk of its own when opened', async ({ page }) => {
-    const scripts = trackScripts(page)
     await start(page, '#/today')
     await expect(h1(page, /./)).toBeVisible()
-    await expect.poll(() => scripts.size).toBeGreaterThan(0)
-    const before = new Set(scripts)
-
+    // Vite names a lazy chunk after its module: assets/Usage-<hash>.js.
+    const usageChunk = page.waitForRequest(r => /\/assets\/Usage-[^/]*\.js$/.test(r.url()))
     await open(page, 'Usage')
+    await usageChunk
     await expect(h1(page, 'Usage')).toBeVisible()
-    expect([...scripts].filter(u => !before.has(u)).length, 'Usage brought a chunk of its own').toBeGreaterThan(0)
   })
 
   test('A deep link to a lazy route loads it directly', async ({ page }) => {

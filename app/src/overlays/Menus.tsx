@@ -84,14 +84,16 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   // The pop only clears if it is still 'me': an item may have opened another one (Help, the team window) already.
   // Where the menu opened: an item that moves to another page leaves focus there (the page focuses its heading).
   const openedOn = useRef('')
-  const onOpenChange = (o: boolean) => { if (o) { openedOn.current = location.hash; openPop('me') } else if (useUi.getState().pop === 'me') patch({ pop: null }) }
+  // The part of the hash that RouteFocus (App.tsx) treats as a route: the page, plus a tool's key.
+  const focusSlug = () => { const [s, sub] = location.hash.slice(2).split('/'); return s === 'tools' && sub ? `${s}/${sub}` : s }
+  const onOpenChange = (o: boolean) => { if (o) { openedOn.current = focusSlug(); openPop('me') } else if (useUi.getState().pop === 'me') patch({ pop: null }) }
   return (
     <DropdownMenu modal={false} open={pop === 'me'} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" aria-label="Account" aria-labelledby={undefined} className="w-menu-account p-2"
         // A window opened by an item takes focus itself, and so does a page an item moved to; otherwise focus returns to
         // the Settings button.
-        onCloseAutoFocus={e => { const p = useUi.getState().pop; if (p === 'help' || p === 'team' || location.hash !== openedOn.current) e.preventDefault() }}
+        onCloseAutoFocus={e => { const p = useUi.getState().pop; if (p === 'help' || p === 'team' || focusSlug() !== openedOn.current) e.preventDefault() }}
         // Escape closes only this menu, not the phone drawer behind it (App's window listener).
         // Only while it's open: a closing menu still hears keys during its exit animation, and the window an item opened needs this Escape.
         onEscapeKeyDown={e => { if (useUi.getState().pop === 'me') e.stopPropagation() }}>
