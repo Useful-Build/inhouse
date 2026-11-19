@@ -55,13 +55,21 @@ official MCP server (built at onboarding, BD4); a public Slack Marketplace app (
 - P4's hub core is on `fleet/watch` (since wave 2) and `main` with P3 has merged into it; this branch is cut from
   there at the start of wave 4. **The stack is the one approved exception to cutting from `main`.** Its final PR
   follows P4's.
-- **The S4 Slack record is final** (wave 0 spike): OAuth, token expiry and rotation, scopes, and **whose Slack
-  identity the agent reads as**. One user's token would answer every member with what that user can see, so the
-  record limits the read scopes to public channels (no private channel, DM or group DM history) and says so. Any
-  change it makes to this plan went to Wasim. W1 doesn't start before it.
-- **Wasim's decisions:** which official MCP read tool P5 connects first for the "ask across it and Shopify" slice
-  (Slack is a channel, not a read tool, per the decision log; recommended: the tool most of the first brands use that
-  has an official MCP server with a test mode).
+- **The S4 Slack record is final** (done 2026-11-19, [S4](../decisions/p0-s4-connector-hub.md)). Its results are
+  inputs to W1 and W4: the hub runs Slack's OAuth itself (no dynamic registration) with a one-time `state` and checks
+  the workspace; the token sits AES-GCM encrypted in a Durable Object; with token rotation on, the refresh saves the
+  new pair atomically. Slack's 13 write tools appear only with a per-run grant the server sets and the model can't, and
+  that grant goes only to the outbox and `notification_send` path, never the runner (Wasim, 2026-11-19). Each brand's
+  app gets the 5 least scopes (`search:read.public`, `channels:read`, `channels:history`, `users:read`,
+  `chat:write`), so the agent reads public channels only and whose identity it reads as doesn't widen what it sees.
+  The hub lists only the tools the brand allows (the full list costs 13K to 99K input tokens a question), and
+  private-channel search is a per-brand hub policy. Still open from S4, checked by W1: whether Slack hides a tool
+  whose scope is missing or lists it and fails the call.
+- **Slack is also the first read tool** for the "ask across it and Shopify" slice: S4 proved its reads behind the hub,
+  and the decision log makes the connection read-only for the agent. Search ANDs keywords, so W1 adds a better tool
+  description or a hub fallback (retry single keywords, or read the brand's listed channels), and S4's supplier-delay
+  case is rerun on Sonnet 5.5 at medium before any engineering change and joins the eval set. **Wasim's decision:**
+  whether a second official MCP tool joins P5 now (recommended: no, add it at the first brand that uses one).
 - A test workspace for that tool and the Slack test workspace from P0, with apps registered by Wasim.
 - **Before W2 starts:** Dynamic Workers availability and pricing read from the current docs; a paid add-on waits for
   Wasim. **If it's unavailable or not approved, code mode is deferred, not passed:** W2 doesn't run, S3 below and
@@ -93,7 +101,7 @@ The orchestrator (Opus) writes the design into the brief of every sensitive work
 
 | Id | Role, model, effort | Job | Owns | Waits for |
 |---|---|---|---|---|
-| W1 | opus-worker (Opus 5.5, medium), sensitive: auth | OAuth for official MCP servers at the hub: pre-registered and dynamic clients, connect start, the callback exchange, PKCE, one-use state bound to the member and connector account and re-checked at the callback, refresh (serialised in the `SignIn` object, so a refresh racing a disconnect can't bring a token back), revoke, error states; the per-connector tool allowlist with default deny; tool registration for tool search; the fake OAuth MCP server; the connector account migration. | `app/hub/oauth/**`, `app/hub/connectors/mcp/**`, `app/server/api/connect.ts`, `app/test/upstreams/mcp/**`, migrations in `0300`-`0399` for its tables | branch cut; the S4 Slack record; H1 on this branch for the registration |
+| W1 | opus-worker (Opus 5.5, medium), sensitive: auth | OAuth for official MCP servers at the hub: pre-registered and dynamic clients, connect start, the callback exchange, PKCE, one-use state bound to the member and connector account and re-checked at the callback, refresh (serialised in the `SignIn` object, so a refresh racing a disconnect can't bring a token back), revoke, error states; the per-connector tool allowlist with default deny; tool registration for tool search; the fake OAuth MCP server; the connector account migration. | `app/hub/oauth/**`, `app/hub/connectors/mcp/**`, `app/server/api/connect.ts`, `app/test/upstreams/mcp/**`, migrations in `0300`-`0399` for its tables | branch cut; H1 on this branch for the registration |
 | W2 | opus-worker (Opus 5.5, medium), sensitive: sandbox | Code mode for Shopify: the Dynamic Worker loader keyed by code hash, no network, the read-only binding, caps and timeouts, the code-mode tool definition; measured on the recorded full order list as in S4. | `app/hub/codemode/**` | branch cut; the cost check |
 | W3 | sonnet-worker (Sonnet 5.5, medium) | The Tools page and its contract on the mock, client and server: connected tools, connect, pause, disconnect, read-only for admins; the composer's tool chips from real data. | `app/server/api/tools.ts`, `app/shared/contract/tools.ts`, `src/agent/http/tools.ts`, `src/screens/Tools.tsx`, `src/components/Composer.tsx` (tool chips); its mock edits after P4's | branch cut |
 | W4 | opus-worker (Opus 5.5, medium), sensitive: exfiltration guard | Slack delivery: `notification_send` (member ids to the bell, listed channels to Slack from Act), the text bounds (unfurls off, URLs, mentions, length, the per-run and per-day caps), the narrow delivery binding at the hub, the channel list with shared channels refused, audit lines, the Settings notifications section and its client; the fake Slack upstream; the channel list migration. | `app/server/notify-slack/**`, `app/server/mcp/tools/notifications/**`, `app/hub/connectors/slack/**`, `app/shared/contract/notify-slack.ts`, `src/agent/http/notifications.ts`, `app/test/upstreams/slack/**`, migrations in `0300`-`0399` for its tables; its settings edits after P4's | W1 |
@@ -110,17 +118,17 @@ PR into `main`), the live check, `AGENTS.md`, `verify` skill, feature map, `e2e/
 ## Order and parallelism
 
 1. Branch cut from `fleet/watch` at the start of wave 4.
-2. W1, W2 and W3 in parallel (W1 once the S4 Slack record is final; W2 only if the cost check passes); W4 after W1; W5
-   last.
+2. W1, W2 and W3 in parallel (W2 only if the cost check passes); W4 after W1; W5 last.
 3. At most 3 workers at once (P4 runs beside this phase with 4).
 4. P4's final head merges in just before its squash; then `main`; then this phase's diff check, ship gate and final
-   PR. If an outside input is late (the Slack record, the first tool, the cost answer), the tail carries into wave 5
+   PR. If an outside input is late (the cost answer, a second tool if Wasim adds one), the tail carries into wave 5
    with one worker, and P6 doesn't wait for it.
 
 ## Browser scenarios (`e2e/ship/connectors.spec.ts`, desktop and phone, test build with the hub and the fake upstreams)
 
-- S1: As the Inhouse team, connect the chosen tool with the pre-consented test user; Tools shows it connected.
-- S2: Ask a question that needs the tool and Shopify; the answer cites both.
+- S1: As the Inhouse team, connect Slack with the pre-consented test user; Tools shows it connected.
+- S2: Ask a question that needs Slack and Shopify (a supplier delay and the orders it holds up); the answer cites
+  both.
 - S3: Ask over the whole order list; the answer comes from a code-mode script and stays short. (If code mode is
   deferred: the answer comes from bounded, paged reads and says how many orders it covered.)
 - S4: At Act, an alert reaches a listed Slack channel with no link preview; a channel that isn't listed is refused
@@ -131,8 +139,8 @@ PR into `main`), the live check, `AGENTS.md`, `verify` skill, feature map, `e2e/
 
 ## Acceptance
 
-1. OAuth connect, refresh and revoke work against the fake server in CI and against the chosen server's test mode and
-   Slack's pre-registered app in the nightly; a callback with a wrong, reused or another member's state is refused; a
+1. OAuth connect, refresh and revoke work against the fake server in CI and against Slack's hosted
+   server through its pre-registered app in the nightly; a callback with a wrong, reused or another member's state is refused; a
    refresh racing a disconnect leaves no token; no token crosses from the hub to the product Worker.
 2. An MCP tool outside its connector's allowlist is hidden and refused at the hub, a write tool on the fake server
    included; a tool the server adds stays hidden until it's listed.
@@ -165,8 +173,8 @@ the ship recording; no tool token in CI.
   version where it can, and the allowlist means a new tool is never live by surprise.
 - Dynamic Workers may be beta or paid; the cost check before W2, with P4's bounded reads as the recorded fallback.
 - Slack needs a registered app per brand; P8's onboarding checklist covers it.
-- Three outside inputs gate this phase (the Slack record, the first tool, the cost answer). The Slack record runs in
-  wave 0, and a late input delays only this phase's tail.
+- One outside input still gates part of this phase (the Dynamic Workers cost answer); the Slack record is done, and a
+  late input delays only this phase's tail.
 
 ## How it lands
 

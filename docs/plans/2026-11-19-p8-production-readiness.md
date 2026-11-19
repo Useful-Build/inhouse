@@ -122,7 +122,9 @@ Migrations `0600`-`0699` (if any), `app/server/routes.ts`, `app/server/access-ma
 Shopify apps per brand, the Slack app, the two Access applications, the first Admin, the WebFetch list),
 `docs/data-map.md` (template only, no brand), `AGENTS.md`, `verify` skill, `e2e/ship/production-readiness.spec.ts`,
 the docs check on the webhooks, the candidate rehearsal, the soak record, the restore drill and the rehearsals with
-their records, and the Bedrock eval run if Q5 keeps the switch.
+their records, the Bedrock eval run if Q5 keeps the switch, and the brand teardown runbook step (P0: deleting a Worker
+leaves its container applications and their pre-placed instances, so teardown deletes each container application
+explicitly, listing them before and after, and fails if any remain).
 
 ## Order and parallelism
 
@@ -170,7 +172,8 @@ their records, and the Bedrock eval run if Q5 keeps the switch.
 10. The Bedrock switch: either deferred by Wasim's decision with a record, or it passes the eval suite and the
     injection and Run sets on Bedrock for the house brand and is off by default. Either way a session never switches
     provider (P3).
-11. The onboarding checklist and data map template exist, with no brand detail in this repo.
+11. The onboarding checklist and data map template exist, with no brand detail in this repo; the teardown step leaves
+    no container application behind (listed before and after on the house deployment's rehearsal).
 12. QA PASS and the ship recording on S1 to S5; the readiness list is checked item by item.
 
 ## Must not
