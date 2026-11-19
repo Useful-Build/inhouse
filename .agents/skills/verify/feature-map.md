@@ -1,4 +1,4 @@
-Status: draft, waiting for Wasim's approval (2026-11-19).
+Status: approved by Wasim, 2026-11-19.
 
 # Inhouse feature map
 
@@ -6,11 +6,7 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 
 ## Gaps
 
-- Palette: the theme switch (light, dark, system).
-- Palette: "Report a bug": opening the window is checked (`tour.spec.ts`), sending the report isn't.
-- Dictation in the composer: the button is checked for presence (`no-persona.spec.ts`), what it does isn't.
-- Google Drive and asking in Slack stubs (each says it isn't connected).
-- Settings pages: Stage and plan (only "Book a check-in" is checked, in `no-persona.spec.ts`), Team memory and Run limits (opened, controls unchecked).
+None open.
 
 ## Today
 
@@ -95,6 +91,18 @@ Chat: composer files
   Selector: file chips
   Expected: chips appear; a file over the limit says why and isn't added; each chat keeps its own draft and files
   Covered:  e2e/composer.spec.ts
+
+Chat: Google Drive and Slack stubs
+  Path:     composer -> Attach -> From Google Drive; answer -> More -> Send to Slack
+  Selector: menuitem "From Google Drive", menuitem "Send to Slack", toast
+  Expected: each says "<What> isn't connected in this demo." and changes nothing; the approver's "Ask Leo" button says the same (`sample-data.spec.ts`)
+  Covered:  e2e/not-connected-stubs.spec.ts
+
+Chat: Dictate
+  Path:     composer -> Dictate
+  Selector: button "Dictate", toast
+  Expected: for now it says "Dictation isn't connected in this demo." and leaves the field alone. Dictation stays a feature: a model gets connected later, and this check changes when it lands
+  Covered:  e2e/not-connected-stubs.spec.ts
 
 Chat: answer actions
   Path:     answer -> hover or Tab into the row -> Reply, Copy, Regenerate, thumbs, More; More -> Send to #channel, Report a wrong answer, Delete
@@ -210,6 +218,24 @@ Settings: Members and approvers
   Expected: removing Admin asks first; a demoted approver stays on rules that name them with a tag; a wrong cap shows why and isn't saved
   Covered:  e2e/page-details.spec.ts, e2e/edge-cases.spec.ts, e2e/cross-screen.spec.ts
 
+Settings: Stage and plan
+  Path:     Settings -> Stage and plan
+  Selector: rows "Current stage" and "Next stage", button "Book a check-in"
+  Expected: the page names the stage and the next one at Watch, Act and Run; Book a check-in opens the team window on "Change something". The page keeps nothing
+  Covered:  e2e/settings-team-pages.spec.ts, e2e/no-persona.spec.ts
+
+Settings: Team memory
+  Path:     Settings -> Team memory
+  Selector: buttons "Forget", switch "Ask before saving a team rule", button "Teach in a chat"
+  Expected: locked at Watch; Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
+  Covered:  e2e/settings-team-pages.spec.ts
+
+Settings: Run limits
+  Path:     Settings -> Run limits
+  Selector: job switches, "Daily limit", "Largest restock", button "Pause Inhouse agent"
+  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree, Resume undoes it) and survives a reload; Reset demo clears all of it
+  Covered:  e2e/settings-team-pages.spec.ts
+
 Settings: photos
   Path:     Settings -> General -> photo
   Selector: upload, Remove
@@ -223,6 +249,18 @@ Navigation: palette and shortcuts
   Selector: palette, shortcuts Cmd+Shift+O, Cmd+\
   Expected: pages, settings pages and chats open; Escape returns focus; shortcuts skip fields except Cmd+K
   Covered:  e2e/navigation.spec.ts
+
+Palette: theme switch
+  Path:     Cmd+K -> Switch to dark theme (or light); Settings -> General -> Theme
+  Selector: palette item, Theme dropdown, root `dark` class, body colour
+  Expected: the palette item flips light and dark, and Settings adds System (follows the OS setting live); each sets the class and the page colour, is saved in `inhouse.theme` (System saves nothing) and survives a reload
+  Covered:  e2e/palette-theme.spec.ts
+
+Palette: Report a bug
+  Path:     Cmd+K -> Report a bug
+  Selector: option "Report a bug", team window Send
+  Expected: the window opens on the bug type; Send waits for words; sending closes the window, shows "Bug sent to your Inhouse team. Thank you." and lists the report among the open requests (the account menu's item opens it: `tour.spec.ts`)
+  Covered:  e2e/report-bug.spec.ts
 
 Sidebar
   Path:     sidebar -> collapse
@@ -271,35 +309,3 @@ Sample data rules
   Selector: n/a
   Expected: no 24-hour time, UK spelling, old dates or the words sample, demo or mock in text a person reads; no persona name from the old build
   Covered:  e2e/sample-data.spec.ts, e2e/no-persona.spec.ts
-
-## Gaps, as entries
-
-Palette: theme switch
-  Path:     Cmd+K -> theme item
-  Selector: palette item
-  Expected: light, dark and system each apply and survive a reload
-  Covered:  gap
-
-Palette: Report a bug
-  Path:     Cmd+K -> Report a bug
-  Selector: menuitem "Report a bug"
-  Expected: the report window opens and sends (`tour.spec.ts` checks it opens; nothing checks the send)
-  Covered:  gap
-
-Composer: dictation
-  Path:     composer -> Dictate
-  Selector: button "Dictate"
-  Expected: the button does what it says (its presence is checked in `no-persona.spec.ts`)
-  Covered:  gap
-
-Stubs: Google Drive and asking in Slack
-  Path:     the stub's button
-  Selector: toast
-  Expected: each says it isn't connected
-  Covered:  gap
-
-Settings: Stage and plan, Team memory, Run limits
-  Path:     Settings -> the page
-  Selector: page heading
-  Expected: the page's controls work (`no-persona.spec.ts`, `tour.spec.ts` and `state.spec.ts` open them; only Stage and plan's "Book a check-in" is checked)
-  Covered:  gap
