@@ -94,6 +94,7 @@ test('S4: Data and access: change how long chats are kept; Ask the team opens wi
     await expect(page.getByRole('note')).toContainText('Change these on a computer.')
     // The Chats row: the innermost block holding both its label and a retention value (no styling classes).
     const chatsRow = main(page).locator('div').filter({ has: page.getByText('Chats', { exact: true }) }).filter({ hasText: /\d+ months|Until deleted/ }).last()
+    await expect(chatsRow).not.toContainText('Audit log') // the row itself, not the card around every row
     await expect(chatsRow).toContainText('12 months')
   } else {
     await combo(page, 'Chats: 12 months').click()
