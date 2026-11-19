@@ -7,7 +7,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash: string) {
+async function start(page: Page, hash: string, ready: (page: Page) => Promise<void>) {
   await page.addInitScript(() => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
@@ -15,14 +15,17 @@ async function start(page: Page, hash: string) {
     sessionStorage.setItem('e2e-seeded', '1')
   })
   await page.goto('/?demo' + hash)
-  await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
+  await ready(page)
 }
+
+/** A page with a title: Today. A chat has none, so it waits for its own answer. */
+const titled = (page: Page) => expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
 const composer = (page: Page) => page.locator('[data-composer]')
 
 test('Composer: "From Google Drive" says Google Drive isn\'t connected and attaches nothing', async ({ page }) => {
-  await start(page, '#/today')
+  await start(page, '#/today', titled)
   const field = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
   await composer(page).getByRole('button', { name: 'Attach', exact: true }).click()
   const menu = page.getByRole('menu')
@@ -35,7 +38,7 @@ test('Composer: "From Google Drive" says Google Drive isn\'t connected and attac
 })
 
 test('Composer: Dictate says Dictation isn\'t connected and leaves the field alone', async ({ page }) => {
-  await start(page, '#/today')
+  await start(page, '#/today', titled)
   const field = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
   await field.fill('Draft I keep')
   await composer(page).getByRole('button', { name: 'Dictate' }).click()
@@ -44,8 +47,8 @@ test('Composer: Dictate says Dictation isn\'t connected and leaves the field alo
 })
 
 test('Answer menu: "Send to Slack" says Slack isn\'t connected', async ({ page }) => {
-  await start(page, '#/chats/refunds')
   const answer = page.getByRole('log', { name: 'Conversation' }).locator('[data-chat-msg]').filter({ hasText: 'Refund requests rose from 14 last week to 31 this week' })
+  await start(page, '#/chats/refunds', () => expect(answer).toBeVisible())
   await answer.getByRole('button', { name: 'More', exact: true }).click()
   await page.getByRole('menu', { name: 'Message actions' }).getByRole('menuitem', { name: 'Send to Slack' }).click()
   await expect(toast(page, "Send to Slack isn't connected in this demo.")).toBeVisible()
