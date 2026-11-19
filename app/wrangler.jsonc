@@ -14,9 +14,11 @@
 		"enabled": true
 	},
 	"upload_source_maps": true,
-	// Phase 1: one Worker URL, no per-version preview URLs.
+	// One Worker URL, plus preview URLs: each version and each Workers Preview gets its own URL.
+	// "previews" turns on `wrangler preview`, which .github/workflows/preview.yml runs for every PR.
 	"workers_dev": true,
-	"preview_urls": false
+	"preview_urls": true,
+	"previews": {}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
