@@ -21,7 +21,7 @@
     "test:visual:linux": "docker run --rm --init --ipc=host -v \"$PWD\":/work -v /work/node_modules -w /work mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 sh -c 'npm ci --no-audit --no-fund && npx playwright test --project=visual-desktop --project=visual-phone'",
     "test:visual:linux:update": "docker run --rm --init --ipc=host -v \"$PWD\":/work -v /work/node_modules -w /work mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 sh -c 'npm ci --no-audit --no-fund && npx playwright test --project=visual-desktop --project=visual-phone --update-snapshots'",
     "test:a11y": "playwright test --project=a11y",
-    "lint:tokens": "node scripts/check-tokens.mjs src && node scripts/check-app-rules.mjs && node scripts/check-icons.mjs"
+    "lint:tokens": "node scripts/check-format.mjs && node scripts/check-tokens.mjs src && node scripts/check-app-rules.mjs && node scripts/check-icons.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

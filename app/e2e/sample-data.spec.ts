@@ -9,6 +9,14 @@ import { atRest } from './states.js'
 const DATA_DIR = new URL('../src/agent/sample-data/', import.meta.url)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const json = (name: string): any => JSON.parse(readFileSync(new URL(name, DATA_DIR), 'utf8'))
+/** A sample time ("-3d 16:20": days from the demo's Monday, Nov 16, and a local time), as minutes from that Monday's midnight. */
+const offsetMin = (at: string) => {
+  const m = /^([+-]?\d+)d (\d\d):(\d\d)$/.exec(at)
+  if (!m) throw new Error(`Not a sample time like "-3d 16:20": "${at}"`)
+  return Number(m[1]) * 24 * 60 + Number(m[2]) * 60 + Number(m[3])
+}
+/** A sample time's day, as days from the demo's Monday. */
+const dayOf = (at: string) => Math.floor(offsetMin(at) / (24 * 60))
 const DATA_FILES = readdirSync(DATA_DIR).filter(f => f.endsWith('.json'))
 /** Keys that hold notes for whoever edits the data: never shown in the app. */
 const NOTE_KEYS = new Set(['fieldGuide', 'sampleFacts', 'rowShape', 'usedBy', 'stepKinds', 'rule', 'kinds', 'openQuestion', 'placeholders'])
@@ -408,7 +416,7 @@ test('Data: a file made in a chat names that chat by its title', () => {
 test("Data: every seeded answer names its own trace, and its steps and seconds are that trace's", () => {
   const traces = json('traces.json').traces as Record<string, { durationSeconds: number; steps: { kind: string; endSeconds: number }[] }>
   type Turn = { trace?: string; agent?: { type: string }[] }
-  const chats = json('chats.json').chats as { id: string; iso: string; turns: 'seedThread' | Turn[] }[]
+  const chats = json('chats.json').chats as { id: string; at: string; turns: 'seedThread' | Turn[] }[]
   const seed = json('chat-script.json').seedThread.turns as Turn[]
   const answers = chats.flatMap(c => (typeof c.turns === 'string' ? seed : c.turns).map(t => ({ chat: c.id, ...t }))).filter(t => t.agent)
   const used = new Map<string, string>()
@@ -432,18 +440,19 @@ test("Data: every seeded answer names its own trace, and its steps and seconds a
     expect(traces[String(k).split(' ')[0]], `scripted trace "${k}"`).toBeTruthy()
   }
   // All chats is newest first by a real time.
-  const isos = chats.map(c => c.iso)
-  expect(isos).toEqual([...isos].sort().reverse())
+  const ats = chats.map(c => offsetMin(c.at))
+  expect(ats).toEqual([...ats].sort((a, b) => b - a))
 })
 
 test('Data: PO-1187, the stuck-orders window, the cap and Slack each have one value', () => {
   // PO-1187: the Today card's amount is the PDF's total, and the price list prices it.
-  const po = (json('problems.json').problems as { id: string; cost: string }[]).find(p => p.id === 'po')!
+  const po = (json('problems.json').problems as { id: string; cost: { minor: number; currency: string } }[]).find(p => p.id === 'po')!
   const files = json('library.json').files as { id: string; doc?: { table?: { rows: string[][]; total?: string[] } } }[]
   const pdf = files.find(f => f.id === 'a-po-1187')!
-  expect(pdf.doc!.table!.total![2]).toBe(po.cost)
-  // Its lines add up to its total: units and dollars.
   const dollars = (v: string) => Number(v.replace(/[$,]/g, '')) || 0
+  expect(po.cost.currency).toBe('USD')
+  expect(Math.round(dollars(pdf.doc!.table!.total![2]) * 100)).toBe(po.cost.minor)
+  // Its lines add up to its total: units and dollars.
   const lines = pdf.doc!.table!.rows
   expect(lines.reduce((a, r) => a + dollars(r[2]), 0)).toBe(dollars(pdf.doc!.table!.total![2]))
   expect(lines.reduce((a, r) => a + (Number(r[1]) || 0), 0)).toBe(Number(pdf.doc!.table!.total![1]))
@@ -470,41 +479,34 @@ test('Data: PO-1187, the stuck-orders window, the cap and Slack each have one va
 })
 
 test('Data: the bell is newest first, no denied text anywhere a person reads, no chat reads a tool before it was connected, and Klaviyo has one date', () => {
-  const DAY_MIN = 24 * 60
-  /** "7:30 AM" is today (Mon, Nov 16); "Fri, Nov 13" is that day. As minutes, for ordering. */
-  const minutes = (when: string) => {
-    const t = /^(\d{1,2}):(\d\d)[ \u00a0](AM|PM)$/.exec(when)
-    if (t) return 16 * DAY_MIN + (Number(t[1]) % 12 + (t[3] === 'PM' ? 12 : 0)) * 60 + Number(t[2])
-    const d = /^\w{3}, Nov (\d{1,2})$/.exec(when)
-    if (!d) throw new Error(`The bell has a time it can't read: "${when}"`)
-    return Number(d[1]) * DAY_MIN
-  }
-  const bell = (json('notifications.json').notifications as { when: string }[]).map(n => minutes(n.when))
+  const bell = (json('notifications.json').notifications as { at: string }[]).map(n => offsetMin(n.at))
   expect(bell, 'the bell, newest first').toEqual([...bell].sort((a, b) => b - a))
 
   // E2E_DENY_NAMES is a comma-separated list of texts that must never show; unset or empty, a generic list of placeholders stands in.
   const deny = (process.env.E2E_DENY_NAMES || 'lorem,TODO,sample data').split(',').map(d => d.trim().toLowerCase()).filter(Boolean)
   expect(personText().filter(([, , t]) => deny.some(d => t.toLowerCase().includes(d))), 'text with a denied name or placeholder').toEqual([])
 
-  // A chat's answers read only tools that were connected by the chat's day ("since": "Nov 13").
+  // A chat's answers read only tools that were connected by the chat's day ("since": "-3d 09:00"). A tool still being
+  // connected has `liveBy` instead, and no chat reads it.
   const tools = json('tools.json')
-  const since = new Map((Object.values(tools.details) as { name: string; since: string }[]).map(d => [d.name, d.since]))
+  const since = new Map((Object.values(tools.details) as { name: string; since?: string }[]).flatMap(d => (d.since ? [[d.name, dayOf(d.since)] as const] : [])))
   const traces = json('traces.json').traces as Record<string, { steps: { kind: string; label: string }[] }>
   const late: string[] = []
   // (The stuck chat's turns are the seed thread in chat-script.json, named here by a string, and it's dated today, after every tool was connected.)
-  for (const c of json('chats.json').chats as { id: string; iso: string; turns: { trace?: string }[] | string }[]) {
-    const day = Number(c.iso.slice(8, 10))
+  for (const c of json('chats.json').chats as { id: string; at: string; turns: { trace?: string }[] | string }[]) {
+    const day = dayOf(c.at)
     for (const key of (Array.isArray(c.turns) ? c.turns : []).flatMap(t => (t.trace ? [t.trace.split(' ')[0]] : []))) {
       for (const s of traces[key]?.steps ?? []) {
-        const on = s.kind === 'tool' ? /^Nov (\d{1,2})$/.exec(since.get(s.label.split(' · ')[0]) ?? '') : null
-        if (on && Number(on[1]) > day) late.push(`${c.id} (${c.iso}) reads ${s.label} before it was connected`)
+        const on = s.kind === 'tool' ? since.get(s.label.split(' · ')[0]) : undefined
+        if (on !== undefined && on > day) late.push(`${c.id} (${c.at}) reads ${s.label} before it was connected`)
       }
     }
   }
   expect(late).toEqual([])
 
   // Klaviyo goes live on one date, wherever it's said.
-  const live = /Live by (\w{3}, Nov \d{1,2})$/.exec(tools.details.klaviyo.since)![1]
+  const liveDay = new Date(2026, 10, 16 + dayOf(tools.details.klaviyo.liveBy))
+  const live = `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][liveDay.getDay()]}, Nov ${liveDay.getDate()}`
   const dates = personText().filter(([, , t]) => /klaviyo/i.test(t) && /Nov \d/.test(t)).map(([f, path, t]) => [f, path, /\w{3}, Nov \d{1,2}/.exec(t)?.[0]])
   expect(dates.length).toBeGreaterThan(0)
   expect(dates.filter(([, , d]) => d !== live)).toEqual([])
