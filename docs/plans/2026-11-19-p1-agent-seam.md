@@ -44,8 +44,8 @@ Out: any backend, route or Worker change (P2); C2 to C7 and C9 (P2, P3, P6); dep
 
 - Hardening (`fleet/hardening`) has merged into `main`: it touches `App.tsx`, `index.html`, `main.tsx`,
   `vite.config.ts`, the Worker and every spec (the CSP fixture). Cut `fleet/agent-seam` from `main` after that.
-- The orchestrator re-reads hardening's merged `App.tsx`, `vite.config.ts`, `deploy.yml`, `public/` and the spec
-  fixture at the Plan step and updates the briefs below if a path moved.
+- Re-reading hardening's merged `App.tsx`, `vite.config.ts`, `deploy.yml`, `public/` and the CSP fixture
+  `app/e2e/csp.ts` is the Plan step's first job; the orchestrator updates the briefs below if a path moved.
 - No input from Wasim beyond approving this plan, which is also his OK for the sensitive paths named below
   (`app/e2e/`, `app/scripts/`, `app/vitest.config.ts`, `app/playwright.config.ts`, `.github/workflows/ci.yml`).
 - **Test model (Wasim, 2026-11-19):** every test, eval, smoke or check in this phase that calls a real model runs on
@@ -209,7 +209,7 @@ before its checker exists; no retries or fixed waits; no deploy of the product b
   so tests pin it.
 - **Stored demos.** A stored value in the old shape could break a returning visitor's demo; the upgrade spec covers
   it, and the mock converts an old shape on load.
-- **Spec churn.** 54 spec files touch storage today and hardening just edited all of them; W2 and W3 start from merged
+- **Spec churn.** 54 spec files touch storage today and hardening edited all of them (now merged); W2 and W3 start from merged
   hardening only.
 - **Vite plugin output.** A second build mode may clash with the Cloudflare plugin's single Worker output; the
   orchestrator checks its docs at PR0 and falls back to a separate config file for product mode.
@@ -217,7 +217,7 @@ before its checker exists; no retries or fixed waits; no deploy of the product b
 
 ## How it lands
 
-- Branch `fleet/agent-seam` from `main` after hardening merges. Worker PRs into it with merge commits once `ci` and
+- Branch `fleet/agent-seam` from `main` after hardening merged (cut at cd03483). Worker PRs into it with merge commits once `ci` and
   review are clean.
 - Review rows (change-loop): W1 and W4 Sonnet plus Opus at medium (multi-file refactor); W2, W3 and W5 Sonnet plus
   Opus at medium (test infrastructure and changed existing checks, listed in the PR body); PR0 Sonnet alone at medium

@@ -44,7 +44,7 @@ Bedrock switch (P8, Wasim's decision Q5). Tools not built here return a typed "n
 ## Inputs and gates
 
 - Runner track: Wasim's wave 0 development key with a spend limit for its few real-model checks; everything else uses
-  the scripted model. It starts in wave 0, beside hardening, and puts PRs only into this branch (see the schedule).
+  the scripted model. It started in wave 0, beside hardening (now merged), and puts PRs only into this branch (see the schedule).
 - **Spike S6, wave 0 (orchestrator):** one chat under `wrangler dev` with the SDK sandbox on and one OS user per
   session, on the Mac, on a GitHub runner and beside the ship job's Playwright container. Every P0 spike ran deployed,
   and Cloudflare's local-dev docs say non-root users get no Linux capabilities locally. Record:
@@ -104,7 +104,7 @@ Bedrock switch (P8, Wasim's decision Q5). Tools not built here return a typed "n
   alarm. Later phases register handlers in their own files (routine slots, the send hold and sweep, retention, backups);
   this phase registers the audit copy and grant expiry.
 - **The runner track merges into this branch early.** It never touches `app/src/`, `app/server/` or shared configs
-  other than `app/shared/protocol/`, so it runs while hardening, P1 and P2 are open. A runner job in this branch's
+  other than `app/shared/protocol/`, so it ran while hardening was open and runs while P1 and P2 are open (hardening is in `main` now). A runner job in this branch's
   `ci.yml` (types, tests, the image build) keeps `ci` honest about it. The harness is deleted once the real runner
   objects carry the runner tests.
 - **Image builds.** Building the container image needs Docker. On the Mac only the orchestrator starts Docker, under
@@ -177,7 +177,7 @@ most 5 P3 workers run at once, the runner track included.
 
 1. Wave 0: R0, then R1's first PR (the session process contract), then R1 and R2 in parallel on `fleet/agent-chat`
    cut from `main`, against the harness. S6 runs as soon as R1's contract and R2's sandbox config exist.
-2. Waves 1 and 2: the runner track continues. `main` merges in after hardening, P1 and P2.
+2. Waves 1 and 2: the runner track continues. hardening is in `main`, so `main` can merge into `fleet/agent-chat` now (through a PR), and again after P1 and P2.
 3. Wave 3, when P2 merges: W1's first PR (contracts, token table interface, scheduler and registry). Then W1, W2, W3
    in parallel with the runner track's tail (5 at once in total).
 4. As seats free: W5 and W6, then W4. All three need only W1's first PR.
@@ -262,8 +262,8 @@ calls a real model released without the cap; no retries in tests; no paid eval r
 
 ## How it lands
 
-- Branch `fleet/agent-chat` from `main` at the runner track's start (wave 0); `main` merges in after hardening, P1 and
-  P2.
+- Branch `fleet/agent-chat` from `main` at the runner track's start (wave 0); hardening is in `main`, so `main` can merge into `fleet/agent-chat` now (through a PR), and
+  again after P1 and P2.
 - Review rows: R1, R2, W1 to W4 and every migration at Sonnet plus Opus high (concurrency, secrets, money, schema);
   W5, W6, W7 Sonnet plus Opus medium; the nightly and ship workflow bootstrap PRs at high (secrets).
 - Final PR with the full ship gate on the test build. After merge, the orchestrator releases the tag to the house

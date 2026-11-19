@@ -50,7 +50,9 @@ docs or gets it in writing from Partner support. If they don't apply, F2 and its
 with a decision record. If they do, or it stays unclear, F2 builds.
 
 Out of this repo: the scheduled monitor, monitor targets, per-brand data-flow documents and the brand release workflow
-(private ops repo, BD13). This plan only states what the app exposes for them.
+(private ops repo, BD13). This plan only states what the app exposes for them. The demo's `monitor.yml` and
+`docs/runbook.md` stay as they are; `docs/runbook-backend.md` links to `runbook.md`. The product rollback is a tag
+redeploy through the private ops workflow, not `deploy.yml`'s `rollback_to`.
 
 ## Inputs and gates
 
