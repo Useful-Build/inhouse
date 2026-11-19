@@ -380,7 +380,7 @@ const composerActions = (set: (f: (s: UiState) => Partial<UiState>) => void): Pi
 // the composer drafts, the model pick, their thumbs and the Library view. Saved on change (debounced) and on pagehide.
 // Runs aren't saved: a chat that was answering gets RELOAD_NOTE when the page loads again.
 
-const SESSION_KEY = 'inhouse.ui.session.v1'
+export const SESSION_KEY = 'inhouse.ui.session.v1'
 interface SavedSession {
   started: ChatEntry[]
   /** Every chat's additions, the open one's too, by chat id. */
