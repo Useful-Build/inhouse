@@ -362,7 +362,7 @@ function Thread() {
     }
     // At rest every answer shows only its steps line; the actions show on hover or focus, and stay while More is open
     // so the menu's button never fades from under the pointer.
-    const on = undefined
+    const on = menuOpen ? '1' : undefined
     return (
       <div data-on={on} className={cn('relative mt-1.5 flex flex-wrap items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3', BAR_GROUND)}>
         {/* The steps line goes first, at the row's left edge, so nothing moves when the actions show. */}
