@@ -116,6 +116,7 @@ export const ICON_NAMES = [
   'thumb_down',
   'thumb_up',
   'tune',
+  'undo',
   'unfold_more',
   'upload_file',
   'view_list',

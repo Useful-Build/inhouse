@@ -36,7 +36,7 @@ function walk(dir, ok, out = []) {
   return out
 }
 
-/** Where a name is spelled out: Icon `name`, an `icon` attribute or key, a name with an underscore, a sample-data `icon`. */
+/** Where a name is spelled out: Icon `name`, any `*icon`/`*Icon` attribute or key (`statusIcon:`, `leadingIcon=`), a name with an underscore, a sample-data `icon`. */
 function usedNames() {
   const used = new Map() // name -> first file
   const add = (n, f) => { if (!used.has(n)) used.set(n, path.relative(root, f)) }
@@ -44,12 +44,12 @@ function usedNames() {
   for (const f of srcFiles) {
     const s = fs.readFileSync(f, 'utf8')
     if (f.endsWith('.json')) {
-      for (const m of s.matchAll(/"icon"\s*:\s*"([^"]+)"/g)) add(m[1], f)
+      for (const m of s.matchAll(/"\w*[iI]con"\s*:\s*"([^"]+)"/g)) add(m[1], f)
       continue
     }
     for (const m of s.matchAll(/<Icon\b[^>]*?\bname=(?:"([^"]+)"|\{([^}]*)\})/g)) (m[1] ? [m[1]] : results(m[2])).forEach(n => add(n, f))
-    for (const m of s.matchAll(/\bicon=(?:"([^"]+)"|\{([^}]*)\})/g)) (m[1] ? [m[1]] : results(m[2])).forEach(n => add(n, f))
-    for (const m of s.matchAll(/\bicon:\s*([^,}\n;]+)/g)) results(m[1]).forEach(n => add(n, f))
+    for (const m of s.matchAll(/\b\w*[iI]con=(?:"([^"]+)"|\{([^}]*)\})/g)) (m[1] ? [m[1]] : results(m[2])).forEach(n => add(n, f))
+    for (const m of s.matchAll(/\b\w*[iI]con:\s*([^,}\n;]+)/g)) results(m[1]).forEach(n => add(n, f))
     for (const n of lits(s)) if (n.includes('_') && /^[a-z]+(_[a-z0-9]+)+$/.test(n)) add(n, f)
   }
   const strings = new Set(srcFiles.flatMap(f => (f.endsWith('.json') ? [] : lits(fs.readFileSync(f, 'utf8')))))
