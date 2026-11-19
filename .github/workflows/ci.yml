@@ -123,13 +123,18 @@ jobs:
       # Build context is app/, so the protocol schemas in app/shared/ can be bundled; Dockerfile.dockerignore keeps the
       # rest of app/ out.
       - run: docker build -f Dockerfile -t inhouse-runner:ci ..
-      # The image starts and answers its health route. --retry-connrefused waits for the port to open (a condition, not
-      # a fixed wait); a failure prints the container's log.
-      - name: The image starts
+      # Until R2's guards land, the image must start Node, load the bundle and refuse to run without the guards (a
+      # production runner never starts unguarded). R2's first PR turns this back into the /health start check.
+      - name: The image refuses to start without the guards
         run: |
-          docker run -d --name runner -p 8080:8080 inhouse-runner:ci
-          curl -fsS --retry 30 --retry-delay 1 --retry-connrefused --max-time 5 http://127.0.0.1:8080/health ||
-            { docker logs runner; exit 1; }
+          set +e
+          out=$(docker run --rm -e EGRESS_URL=http://127.0.0.1:9 inhouse-runner:ci 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 0 ] || ! grep -q 'refusing to start without the guards' <<< "$out"; then
+            echo "::error::Expected the runner to refuse to start without the guards (exit $rc)"; exit 1
+          fi
 
   ci:
     needs: [e2e, runner]
