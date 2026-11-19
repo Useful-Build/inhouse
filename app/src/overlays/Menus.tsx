@@ -7,6 +7,7 @@ import { userName } from '../state/derive'
 import { Avatar, EmptyState, Icon, IconTile, MenuItem } from '../ui'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { PHONE_QUERY } from '../components/Composer'
 
 type Notice = AgentNotification & { go: () => void }
 
@@ -84,8 +85,12 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   // The pop only clears if it is still 'me': an item may have opened another one (Help, the team window) already.
   // Where the menu opened: an item that moves to another page leaves focus there (the page focuses its heading).
   const openedOn = useRef('')
-  // The part of the hash that RouteFocus (App.tsx) treats as a route: the page, plus a tool's key.
-  const focusSlug = () => { const [s, sub] = location.hash.slice(2).split('/'); return s === 'tools' && sub ? `${s}/${sub}` : s }
+  // What RouteFocus (App.tsx `focusKey`) treats as a route: the page, plus a tool's key, plus the phone Settings menu.
+  const focusSlug = () => {
+    const [s, sub] = location.hash.slice(2).split('/')
+    const menu = s === 'settings' && useUi.getState().setMenu && window.matchMedia(PHONE_QUERY).matches
+    return s === 'tools' && sub ? `${s}/${sub}` : menu ? `${s}/menu` : s
+  }
   // Whether the phone drawer holding the Settings button was open when the menu opened.
   const inDrawer = useRef(false)
   const onOpenChange = (o: boolean) => { if (o) { openedOn.current = focusSlug(); inDrawer.current = useUi.getState().sideOpen; openPop('me') } else if (useUi.getState().pop === 'me') patch({ pop: null }) }
