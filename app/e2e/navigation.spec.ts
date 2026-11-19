@@ -146,6 +146,7 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   expect(cutAtRest).toBe(false)
   await page.mouse.move(720, 450)
   await open.hover()
+  await page.clock.runFor(1000) // the tooltip's open delay runs on the fake clock
   await expect(page.getByRole('tooltip')).toBeVisible()
 
   const account = side(page).getByRole('button', { name: /account and settings/i })
