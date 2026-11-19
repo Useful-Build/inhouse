@@ -49,6 +49,8 @@ jobs:
         run: npm run typecheck
       - if: matrix.shard == 1
         run: npm run lint
+      - if: matrix.shard == 1
+        run: node --version && npm run test:unit
       - run: npm run build
       # Playwright balances shards by test count, not time, and the slow desktop specs come first. So the
       # suite is cut in four by test (--fully-parallel) and each job runs one slow and one fast quarter.
