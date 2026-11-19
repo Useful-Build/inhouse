@@ -1,4 +1,5 @@
-import { Suspense, lazy, useEffect, useRef } from 'react'
+import { Component, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import { agent } from './agent'
 import type { ToolsData } from './agent/types'
 import type { Page } from './state/store'
@@ -27,10 +28,31 @@ import { CommandPalette } from './overlays/CommandPalette'
 // The heavy routes load on first visit (P-2): Settings, Usage, the Library (its viewer and previews come with it) and
 // the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Today and the
 // rest stay in the entry chunk.
-const Library = lazy(() => import('./screens/Library').then(m => ({ default: m.Library })))
-const Usage = lazy(() => import('./screens/Usage').then(m => ({ default: m.Usage })))
-const Settings = lazy(() => import('./screens/Settings').then(m => ({ default: m.Settings })))
-const TraceWindow = lazy(() => import('./overlays/TraceWindow').then(m => ({ default: m.TraceWindow })))
+// After `vite:preloadError` is handled (see below) Vite's preload helper resolves the import with undefined, not the
+// module. Picking a component from that would throw into the ErrorBoundary for the moment before the reload lands, so a
+// missing module returns a promise that never settles: the Suspense fallback stays up until the reload.
+function lazyRoute<M, C extends ComponentType>(load: () => Promise<M>, pick: (m: M) => C) {
+  return lazy(async () => {
+    const m = await load()
+    return m === undefined ? new Promise<never>(() => {}) : { default: pick(m) }
+  })
+}
+const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
+const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
+const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
+const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.TraceWindow)
+
+/** A trace window whose chunk can't load closes and says so, instead of taking the app down. */
+class TraceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(error: unknown) {
+    console.error('Inhouse: the trace window could not load.', error)
+    useUi.getState().patch({ traceId: null })
+    useUi.getState().showToast("Couldn't open the trace. Reload and try again.", { icon: 'info', key: 'trace-error' })
+  }
+  render() { return this.state.failed ? null : this.props.children }
+}
 
 const SCREENS: Record<Page, React.ComponentType> = {
   today: Today, library: Library, chats: Chats, approvals: Approvals, routines: Routines, activity: Activity,
@@ -43,6 +65,8 @@ const SCREENS: Record<Page, React.ComponentType> = {
 // The stamp stops a loop: a second failure within 30 s is left to throw into the ErrorBoundary.
 const RELOAD_KEY = 'inhouse.preload-reload'
 window.addEventListener('vite:preloadError', e => {
+  // Offline, a reload would only show the browser's error page: let the failure reach the ErrorBoundary.
+  if (!navigator.onLine) return
   let last = 0
   try { last = Number(sessionStorage.getItem(RELOAD_KEY)) || 0 }
   catch (err) { console.warn('Inhouse: could not read the reload stamp, not reloading.', err); return }
@@ -55,9 +79,12 @@ window.addEventListener('vite:preloadError', e => {
 
 /** What a lazy page shows while its chunk loads: the Library's loading look (skeleton blocks, a hidden status line). */
 function PageFallback() {
+  // The live region is on screen first and its text arrives a moment later, so a screen reader announces it.
+  const [text, setText] = useState('')
+  useEffect(() => { const t = setTimeout(() => setText('Loading'), 50); return () => clearTimeout(t) }, [])
   return (
     <PageBox width="wide" role="status">
-      <span className="sr-only">Loading</span>
+      <span className="sr-only">{text}</span>
       <Skeleton className="h-9 w-44 animate-none rounded-sm bg-fill-hover" />
       <Skeleton className="mt-4 h-4 w-80 max-w-full animate-none rounded-sm" />
       <Skeleton className="mt-7 h-40 animate-none rounded-2xl" />
@@ -68,6 +95,8 @@ function PageFallback() {
 /** The page's h1 (or main, for a page without one) takes focus on a route change, not on first load. Rendered inside the page's Suspense, so a lazy page is in the DOM first. */
 let shownSlug: string | null = null
 function RouteFocus({ slug }: { slug: string }) {
+  // `slug` names the page plus what a click inside the page changes into another page (a tool, the phone's settings menu);
+  // a chat id, a settings tab or a Library file is not part of it.
   useEffect(() => {
     const prev = shownSlug
     shownSlug = slug
@@ -278,8 +307,11 @@ export default function App() {
   useEffect(() => { mainRef.current?.scrollTo({ top: 0 }) }, [page])
 
   // The tab's title names the page ("Usage · Inhouse"), a tool or a settings page by its own name.
-  const label = page === 'app' ? toolName(tools, appKey) ?? 'Tools' : page === 'settings' ? (phone && setMenu ? 'Settings' : settingsLabel(setTab)) : PAGE_LABEL[page]
-  useEffect(() => { document.title = `${label} · Inhouse` }, [label])
+  // Settings pages read "<Page> · Settings · Inhouse". A layout effect runs before RouteFocus's effect, so the title is
+  // already the new page's when its h1 takes focus.
+  const label = page === 'app' ? toolName(tools, appKey) ?? 'Tools' : page === 'settings' ? (phone && setMenu ? 'Settings' : `${settingsLabel(setTab)} · Settings`) : PAGE_LABEL[page]
+  useLayoutEffect(() => { document.title = `${label} · Inhouse` }, [label])
+  const focusKey = PAGE_SLUG[page] + (page === 'app' ? (toolKnown ? `/${appKey}` : '') : page === 'settings' && phone ? (setMenu ? '/menu' : '/page') : '')
 
   // An unknown tool key shows the Tools list until `useHashRoute` has moved the route there.
   const Screen = page === 'app' && !toolKnown ? Tools : SCREENS[page]
@@ -303,13 +335,13 @@ export default function App() {
           <div className={cn(page === 'chats' || (!phone && (page === 'settings' || page === 'library')) ? 'flex min-h-0 flex-1 basis-0 flex-col' : 'flex-none')}>
             <Suspense fallback={<PageFallback />}>
               <Screen />
-              <RouteFocus slug={PAGE_SLUG[page]} />
+              <RouteFocus slug={focusKey} />
             </Suspense>
           </div>
         </main>
       </div>
       <ProblemPanel />
-      {traceId && <Suspense fallback={null}><TraceWindow /></Suspense>}
+      {traceId && <TraceBoundary><Suspense fallback={null}><TraceWindow /></Suspense></TraceBoundary>}
       <TeamWindow />
       <HelpWindow />
       <CommandPalette />

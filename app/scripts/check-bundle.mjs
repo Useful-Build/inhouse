@@ -2,7 +2,8 @@
 // Reads the built index.html, takes its module script and modulepreload links, follows each chunk's static imports
 // (dynamic `import()` calls are the lazy routes and don't count), and gzips what the browser needs before Today shows.
 // Fails when the total is over BUDGET_KB (default 240, in KiB gzipped): the split measured 226 KB on 2026-11-19
-// (247 KB before the split), so the budget leaves about 6% of room. Raise it only on purpose, with the reason.
+// (247 KB before the split), so the budget leaves about 6% of room.
+// The budget covers Today's first load only: a deep link to a lazy route adds that route's chunk on top. Raise it only on purpose, with the reason.
 // DIST overrides the build folder (for trying the script on a fake build).
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
