@@ -96,6 +96,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     outputs:
       preview_url: ${{ steps.urls.outputs.preview_url }}
       deployment_url: ${{ steps.urls.outputs.deployment_url }}
@@ -156,7 +157,9 @@ jobs:
           if (!fs.existsSync(path.join(root, 'dist'))) fail('no dist/');
           console.log(`OK: ${files} files`);
           EOF
-          test ! -e dist && test ! -e .wrangler
+          for p in dist .wrangler; do
+            if [ -e "$p" ] || [ -L "$p" ]; then echo "::error::app/$p already exists"; exit 1; fi
+          done
           mkdir -p .wrangler/deploy
           cp -R "$RUNNER_TEMP/pr-build/dist" dist
           cp "$RUNNER_TEMP/pr-build/.wrangler/deploy/config.json" .wrangler/deploy/config.json
@@ -245,36 +248,98 @@ jobs:
           if (typeof config.assets?.directory !== 'string') fail('no assets.directory');
           if (!fs.statSync(within(path.resolve(workerDir, config.assets.directory), path.join(dist, 'client'),
             'assets.directory')).isDirectory()) fail('assets.directory is not a directory');
+
+          // upload_source_maps: wrangler 4.162.0 (sourceMapForModule in src/deployment-bundle/source-maps.ts) reads
+          // the file a module's last trailing "//# sourceMappingURL=" names, joined to the module's directory with no
+          // containment, and uploads it. scanSourceMaps does that for every module (Text and Data too), so every
+          // file wrangler could upload from the worker directory either never mentions sourceMappingURL, or does so
+          // once, as its last line, naming a regular .map file next to it.
+          const checkSourceMaps = (dir) => {
+            for (const name of fs.readdirSync(dir)) {
+              const file = path.join(dir, name);
+              const rel = path.relative(dist, file);
+              const st = fs.lstatSync(file);
+              if (st.isDirectory()) { checkSourceMaps(file); continue; }
+              if (!st.isFile()) fail(`dist/${rel} is not a regular file`);
+              const text = new TextDecoder().decode(fs.readFileSync(file));
+              const mentions = text.match(/[#@]\s*sourceMappingURL\s*=/gi) ?? [];
+              if (mentions.length === 0) continue;
+              const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+              const m = /^\/\/# sourceMappingURL=([\w.-]+\.map)$/.exec(lines.at(-1) ?? '');
+              if (mentions.length !== 1 || !m) {
+                fail(`dist/${rel}: a sourceMappingURL must be one "//# sourceMappingURL=<name>.map" last line`);
+              }
+              let mapSt;
+              try { mapSt = fs.lstatSync(path.join(dir, m[1])); } catch { fail(`dist/${rel}: ${m[1]} does not exist`); }
+              if (!mapSt.isFile()) fail(`dist/${rel}: ${m[1]} is not a regular file`);
+            }
+          };
+          checkSourceMaps(workerDir);
           console.log('OK: dist/inhouse_app/wrangler.json matches main');
           EOF
           leftovers=$(find . -maxdepth 1 \( -name '.env*' -o -name '.dev.vars*' \) -print)
           [ -z "$leftovers" ] || { echo "::error::Found $leftovers in app/"; exit 1; }
 
+      # The gate checked before this job waited its turn in the concurrency group. If the PR closed or moved on
+      # meanwhile, deploying would leave a preview behind or put an old commit on it, so skip.
+      - name: PR is still open at the tested commit
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.gate.outputs.pr }}
+          SHA: ${{ needs.gate.outputs.sha }}
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::Bad PR number"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad head SHA"; exit 1; }
+          info=$(gh api "repos/$REPO/pulls/$PR" --jq '[.state, .head.sha] | @tsv')
+          read -r state head <<< "$info"
+          if [ "$state" != open ] || [ "$head" != "$SHA" ]; then
+            echo "::notice::PR #$PR is now $state at $head, not open at $SHA. Skipping the deploy."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # Wrangler by explicit path from main's node_modules. --env-file /dev/null replaces its default .env and
       # .env.local in the cwd (wrangler 4.162.0 createCLIParser in src/index.ts loads
       # args["env-file"] ?? getDefaultEnvFiles(args.env); /dev/null parses to nothing).
+      # --ignore-base-config: a new preview takes nothing (bindings, vars, secrets) from the dashboard's Preview
+      # base config (wrangler's createPreview sends ignore_base_config=true).
       # env -u drops any override of where the token goes or how it signs in; only the token and account stay.
+      # The deployment is labelled with the PR and its head, not main's checkout: --tag and --message replace the
+      # git fallbacks, PULL_REQUEST_NUMBER and PULL_REQUEST_URL win over the workflow_run event
+      # (getDirectPullRequestMetadata), and GITHUB_SHA, which getCommitSha reads first, is main's commit here.
       - name: Deploy the Workers Preview
+        if: steps.live.outputs.ok == 'true'
         working-directory: app
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_SEND_METRICS: "false"
           PR: ${{ needs.gate.outputs.pr }}
+          SHA: ${{ needs.gate.outputs.sha }}
+          PR_LINK: ${{ github.server_url }}/${{ github.repository }}/pull/${{ needs.gate.outputs.pr }}
         run: |
           [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::Bad PR number"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad head SHA"; exit 1; }
+          [[ "$PR_LINK" =~ ^https://[A-Za-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$ ]] ||
+            { echo "::error::Bad PR URL"; exit 1; }
           out="$RUNNER_TEMP/preview.out"
           if ! env -u CLOUDFLARE_API_BASE_URL -u CLOUDFLARE_COMPLIANCE_REGION -u WRANGLER_API_ENVIRONMENT \
             -u CLOUDFLARE_API_KEY -u CLOUDFLARE_EMAIL -u CLOUDFLARE_AUTH_PROFILE -u CLOUDFLARE_ACCESS_CLIENT_ID \
             -u CLOUDFLARE_ACCESS_CLIENT_SECRET -u WRANGLER_AUTH_DOMAIN -u WRANGLER_AUTH_URL -u WRANGLER_TOKEN_URL \
             -u WRANGLER_REVOKE_URL -u WRANGLER_CF_AUTHORIZATION_TOKEN -u CLOUDFLARE_INCLUDE_PROCESS_ENV \
-            node node_modules/wrangler/bin/wrangler.js preview --name "pr-$PR" --json --env-file /dev/null > "$out"; then
+            GITHUB_SHA="$SHA" PULL_REQUEST_NUMBER="$PR" PULL_REQUEST_URL="$PR_LINK" \
+            node node_modules/wrangler/bin/wrangler.js preview --name "pr-$PR" --json --env-file /dev/null \
+            --ignore-base-config --tag "${SHA:0:7}" --message "PR #$PR" > "$out"; then
             cat "$out"; echo "::error::wrangler preview failed"; exit 1
           fi
 
       # wrangler prints a few lines before the JSON, so parse from the first "{".
       - name: Read the URLs
         id: urls
+        if: steps.live.outputs.ok == 'true'
         run: |
           node <<'EOF'
           const fs = require('node:fs');

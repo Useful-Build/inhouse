@@ -1,7 +1,7 @@
 # Deletes the Workers Previews (pr-<number>, from preview.yml) of closed PRs. Daily for PRs closed in the last
-# day (plus two hours, so a late cron run leaves no gap), or by hand for a longer window:
-# gh workflow run preview-cleanup [-f days=30]. Wrangler has no command that lists previews, so it tries each
-# closed PR and treats a preview that doesn't exist as already gone.
+# 7 days, so a missed run or a deploy that finished just after a PR closed still gets cleaned up, or by hand for
+# another window: gh workflow run preview-cleanup [-f days=30]. Wrangler has no command that lists previews, so it
+# tries each closed PR and treats a preview that doesn't exist as already gone (a cheap not-found).
 name: preview-cleanup
 
 on:
@@ -29,16 +29,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          EVENT: ${{ github.event_name }}
           DAYS: ${{ inputs.days || '7' }}
         run: |
-          if [ "$EVENT" = schedule ]; then
-            since=$(date -u -d "26 hours ago" +%Y-%m-%dT%H:%M:%SZ)
-          else
-            [[ "$DAYS" =~ ^[0-9]+$ ]] && [ "$DAYS" -ge 1 ] && [ "$DAYS" -le 365 ] ||
-              { echo "::error::days must be a whole number from 1 to 365"; exit 1; }
-            since=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
-          fi
+          [[ "$DAYS" =~ ^[0-9]+$ ]] && [ "$DAYS" -ge 1 ] && [ "$DAYS" -le 365 ] ||
+            { echo "::error::days must be a whole number from 1 to 365"; exit 1; }
+          since=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
           # Every closed PR, every page. A PR closed in the window was updated in it too.
           numbers=$(SINCE="$since" gh api --paginate "repos/$REPO/pulls?state=closed&sort=updated&direction=desc&per_page=100" \
             --jq '.[] | select(.closed_at >= env.SINCE) | .number')
