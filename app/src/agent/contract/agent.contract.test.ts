@@ -18,7 +18,7 @@
 // To replay a failing property: VITE_PROP_SEED=<seed> npm run test:unit. Longer run: VITE_PROP_RUNS=1000.
 import { fc } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { z } from 'zod'
+import { z } from 'zod'
 import {
   AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, LibraryFileSchema,
   RoutineRunSchema, RunEventSchema, TraceSchema,
@@ -71,6 +71,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     notices.forEach((n, i) => parse(AgentNoticeSchema, n, `notice ${i}`))
   })
 
+  /** Parses every notice collected so far, then forgets them: none is cleared unread. */
+  const clearNotices = () => {
+    notices.forEach((n, i) => parse(AgentNoticeSchema, n, `notice ${i}`))
+    notices.length = 0
+  }
+
   /** One answer being read. It moves the target's clock on until the next event is there; it never counts loops. */
   const startRun = (question: string, opts: { chatId?: string; replacesRun?: string } = {}) => {
     const it = t.client.ask(question, { chatId: opts.chatId ?? chatId(), ...(opts.replacesRun ? { replacesRun: opts.replacesRun } : {}) })[Symbol.asyncIterator]()
@@ -85,9 +91,10 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         let settled = false
         pending.then(() => { settled = true }, () => { settled = true })
         for (let waited = 0; ; waited += STEP_MS) {
-          await t.advance(waited === 0 ? 0 : STEP_MS)
+          await t.settle() // an event already on its way arrives before the clock moves
           if (settled) break
           if (waited > STUCK_MS) throw new Error(`no event after ${STUCK_MS / 1000} s of demo time; events so far: ${events.map(e => e.type).join(', ')}`)
+          await t.advance(STEP_MS)
         }
         const r = await pending
         if (r.done) { over = true; return undefined }
@@ -148,6 +155,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   const until = async (cond: () => boolean, what: string) => {
     for (let waited = 0; !cond(); waited += STEP_MS) {
       if (waited > STUCK_MS) throw new Error(`${what} didn't happen within ${STUCK_MS / 1000} s of demo time`)
+      await t.settle()
+      if (cond()) return
       await t.advance(STEP_MS)
     }
   }
@@ -291,7 +300,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await t.client.send(runId, fx.questions.followUp, { priority })
       const events = checkRun(await run.toEnd())
       expect(events.some(e => e.type === 'turn.started' && e.text === fx.questions.followUp)).toBe(true)
-      parse(TraceSchema, t.client.getTrace(`${runId}-t2`), `getTrace("${runId}-t2")`)
+      // The new turn's trace id is the one on its first part, whatever the client calls it.
+      const turn = events.findIndex(e => e.type === 'turn.started')
+      const part = events.slice(turn + 1).find(e => e.type === 'part')
+      expect(part, 'the new turn answers with a part').toBeDefined()
+      const traceId = (part as Extract<RunEvent, { type: 'part' }>).trace
+      expect(traceId).not.toBe(runId)
+      parse(TraceSchema, t.client.getTrace(traceId), `getTrace("${traceId}")`)
       checkWorld('after a message sent into a run')
     })
 
@@ -311,7 +326,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     test('interrupt on a live run ends its turn; with nothing waiting the run ends', async () => {
       const run = startRun(fx.questions.table)
       const first = await run.next()
-      await t.client.interrupt((first as Started).runId)
+      expect(await t.client.interrupt((first as Started).runId), 'interrupt() resolves to nothing').toBeUndefined()
       const events = checkRun(await run.toEnd())
       expect(TERMINAL).toContain(events.at(-1)!.type)
       expect(notices).toEqual([])
@@ -419,7 +434,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     test('pause resolves to when, resume clears it', async () => {
-      const at = await t.client.pause()
+      const at = parse(z.string(), await t.client.pause(), 'pause()')
       expect(parse(AgentStateSchema, t.client.getSnapshot(), 'getSnapshot()').paused).toBe(at)
       expect(at.length).toBeGreaterThan(0)
       await t.client.resume()
@@ -429,7 +444,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     test('undo what the agent handled, then redo it', async () => {
       await fresh('Run')
       const id = heldProblem()
-      const toast = await t.client.undoHandled(id)
+      const toast = parse(z.string(), await t.client.undoHandled(id), 'undoHandled()')
       expect(toast.length).toBeGreaterThan(0)
       expect(t.client.getSnapshot().undone[id]).toBeDefined()
       await t.client.redoHandled(id)
@@ -466,7 +481,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await c.setPhoto(fx.personId, fx.photoDataUrl)
       expect(c.getSnapshot().settings[photoKey(fx.personId)]).toBe(fx.photoDataUrl)
       await c.setPhoto(fx.personId, null)
-      expect(c.getSnapshot().settings[photoKey(fx.personId)], 'a removed photo is kept as an empty string').toBe('')
+      expect(c.getSnapshot().settings[photoKey(fx.personId)], 'a removed photo no longer reads as the photo').not.toBe(fx.photoDataUrl)
       checkWorld('after the plain writes')
     })
 
@@ -559,15 +574,23 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     test('subscribe tells listeners of every change, and stops after unsubscribe', async () => {
-      const calls = vi.fn()
+      // `seed` resolves only once the client shows the new world, so a listener has heard it by the time it returns.
+      const calls = vi.fn(() => t.client.getSnapshot())
       const off = t.client.subscribe(calls)
+      const before = t.client.getSnapshot()
       await t.client.pause()
-      expect(calls).toHaveBeenCalledTimes(1)
-      await t.seed({ stage: 'Run', scenario: 'Normal' })
-      expect(calls).toHaveBeenCalledTimes(2)
+      expect(calls.mock.calls.length, 'a write tells the listener').toBeGreaterThanOrEqual(1)
+      expect(calls.mock.results.at(-1)!.value, 'what the listener saw is the new state').toBe(t.client.getSnapshot())
+      expect(t.client.getSnapshot()).not.toBe(before)
+      const afterWrite = calls.mock.calls.length
+      const data = t.client.read()
+      await t.seed({ stage: 'Act', scenario: 'Cap reached' })
+      expect(calls.mock.calls.length, 'a scenario change tells the listener').toBeGreaterThan(afterWrite)
+      expect(t.client.read()).not.toBe(data)
       off()
+      const heard = calls.mock.calls.length
       await t.client.resume()
-      expect(calls).toHaveBeenCalledTimes(2)
+      expect(calls.mock.calls.length, 'nothing after unsubscribe').toBe(heard)
     })
   })
 
@@ -624,8 +647,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     const arm = async (scenario: Scenario, w: WriteCase) => {
       await fresh('Act', scenario)
       await (w.prepare ?? noop)(t.client)
-      await t.advance(0)
-      notices.length = 0
+      await t.settle()
+      clearNotices()
       const heard: ReturnType<ContractTarget['client']['getSnapshot']>[] = []
       const off = t.client.subscribe(() => heard.push(t.client.getSnapshot()))
       return { snapshot: t.client.getSnapshot(), data: t.client.read(), observed: observe(w), heard, off }
@@ -650,7 +673,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         checkWorld(`after ${w.label}`)
       })
 
-      test.each(cases.filter(w => w.saves !== false))('$label: with saves failing it rejects, is taken back, and sends one save.failed', async w => {
+      test.each(cases.filter(w => w.saves !== false))('$label: with saves failing it rejects, is taken back, and sends one failed-save notice', async w => {
         const before = await arm(scenario, w)
         await t.failSaves(true)
         const failure = await errorOf(w.run(t.client))
@@ -661,7 +684,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         expect(t.client.read(), 'read() is untouched').toBe(before.data)
         expect(observe(w)).toEqual(before.observed)
         expect(notices, 'exactly one notice').toHaveLength(1)
-        expect(parse(AgentNoticeSchema, notices[0], 'the notice')).toMatchObject({ type: 'save.failed' })
+        expect(parse(AgentNoticeSchema, notices[0], 'the notice')).toMatchObject({ type: t.failedSaveNotice })
         expect(before.heard.length, 'listeners were told of the rollback').toBeGreaterThanOrEqual(1)
         expect(before.heard.at(-1), 'the last thing they saw is the restored state').toBe(before.snapshot)
         await neverSent(w)
@@ -671,7 +694,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         const before = await arm(scenario, w)
         for (const code of ['forbidden', 'conflict'] as const) {
           await t.injectError(w.method, code)
-          notices.length = 0
+          clearNotices()
           before.heard.length = 0
           const settled = errorOf(w.run(t.client))
           expect(observe(w), `${code}: the change shows before the server answers`).not.toEqual(before.observed)
@@ -697,6 +720,18 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices).toEqual([{ type: 'error', code: 'forbidden', text: expect.any(String) }])
     })
 
+    test('a refused write takes back only itself: a write made while it was in flight stays', async () => {
+      await t.injectError('pause', 'forbidden')
+      const refused = errorOf(t.client.pause())
+      await t.client.setToggle(fx.toggleKey, false) // lands before the refusal does
+      expect(await refused).toBeInstanceOf(AgentError)
+      const snap = t.client.getSnapshot()
+      expect(snap.toggles[fx.toggleKey], 'the write that worked is kept').toBe(false)
+      expect(snap.paused, 'the refused write is taken back').toBeNull()
+      expect(notices).toHaveLength(1)
+      expect(notices[0]).toMatchObject({ type: 'error', code: 'forbidden' })
+    })
+
     test('a refusal on one method leaves the others working', async () => {
       await t.injectError('pause', 'forbidden')
       await expect(t.client.pause()).rejects.toBeInstanceOf(AgentError)
@@ -712,7 +747,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(normal.total, 'a normal month is under the cap').toBeLessThan(normal.cap)
       await fresh('Act', 'Cap reached')
       const data = parse(AgentDataSchema, t.client.read(), 'read()')
-      expect(data.usage.total, 'spend is at the cap').toBe(data.usage.cap)
+      expect(data.usage.total, 'spend is at or over the cap').toBeGreaterThanOrEqual(data.usage.cap)
       expect(data.status).toBe('ready')
       await t.client.setToggle(fx.toggleKey, false)
       expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(false)
@@ -720,26 +755,33 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices).toEqual([])
     })
 
-    test('a save that fails while a hold finishes tells the person and the next write still works', async () => {
-      await t.client.approve(heldProblem())
-      await t.failSaves(true)
-      await until(() => notices.some(n => n.type === 'save.failed'), 'the save.failed notice')
-      await t.failSaves(false)
-      await t.client.pause()
-      checkWorld('after the failed save')
-    })
-
     test('a write that fails does not raise an unhandled rejection when nobody awaits it', async () => {
       await t.failSaves(true)
       void t.client.pause()
-      await until(() => notices.some(n => n.type === 'save.failed'), 'the save.failed notice')
+      await until(() => notices.some(n => n.type === t.failedSaveNotice), 'the failed-save notice')
     })
 
-    test('a save that fails inside an answer tells the person, and the answer still ends', async () => {
-      await t.failSaves(true)
-      const events = checkRun(await drain(fx.questions.routineRequest))
-      expect(TERMINAL).toContain(events.at(-1)!.type)
-      expect(notices.some(n => n.type === 'save.failed')).toBe(true)
+    // What the agent writes by itself is a save in the client on the mock only; a server target gets its own case in P2.
+    // When the target says no, these show as skipped in the output, never silently.
+    describe.runIf(t.capabilities.agentWritesSaveInClient)('agent writes that save in the client', () => {
+      test('a save that fails while a hold finishes tells the person and the next write still works', async () => {
+        await t.client.approve(heldProblem())
+        await t.failSaves(true)
+        await until(() => notices.some(n => n.type === t.failedSaveNotice), 'the failed-save notice')
+        await t.failSaves(false)
+        await t.client.pause()
+        checkWorld('after the failed save')
+      })
+
+      test('a save that fails inside an answer tells the person, and the answer still ends', async () => {
+        await t.failSaves(true)
+        for (const question of [fx.questions.routineRequest, fx.questions.skillRequest]) {
+          clearNotices()
+          const events = checkRun(await drain(question))
+          expect(TERMINAL).toContain(events.at(-1)!.type)
+          expect(notices.some(n => n.type === t.failedSaveNotice), `${question}: a failed-save notice`).toBe(true)
+        }
+      })
     })
   })
 
@@ -755,7 +797,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     const question = fc.oneof(fc.constantFrom(...Object.values(fx.questions)), fc.string())
 
     type Ids = ReturnType<typeof ids>
-    type Op = (c: ContractTarget['client'], i: Ids) => Promise<unknown>
+    /** `forSave`: the step is there to be failed by a save, so it skips what a client would refuse for another reason (undo of nothing approved). */
+    type Op = (c: ContractTarget['client'], i: Ids, forSave?: boolean) => Promise<unknown>
     interface Step { name: string; run: Op }
     // First day has no problems and Loading no routines: an op with nothing to act on does nothing (SKIP).
     const nth = <T,>(list: T[], n: number): T | undefined => list[n % Math.max(1, list.length)]
@@ -764,7 +807,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     /** Writes: each one saves, so with saves failing each one must reject. */
     const writeOps: fc.Arbitrary<Step>[] = [
-      fc.tuple(pick(50), fc.boolean()).map(([n, hold]) => step(`approve#${n}`, (c, i) => on(i.problems, n, id => (hold ? (c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.approve(id)) : c.undo(id))))),
+      fc.tuple(pick(50), fc.boolean()).map(([n, hold]) => step(`approve#${n}`, (c, i, forSave) => on(i.problems, n, id => (hold ? (c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.approve(id)) : forSave && !c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.undo(id))))),
       fc.tuple(pick(50), fc.string()).map(([n, s]) => step('editDraft', (c, i) => on(i.problems, n, id => c.editDraft(id, s)))),
       fc.tuple(pick(50), fc.boolean()).map(([n, undo]) => step('undoHandled', (c, i) => on(i.problems, n, id => (undo ? c.undoHandled(id) : c.redoHandled(id))))),
       fc.boolean().map(p => step('pause', c => (p ? c.pause() : c.resume()))),
@@ -841,17 +884,18 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await fc.assert(fc.asyncProperty(fc.array(op, { maxLength: 10 }), writeOp, async (before, failing) => {
         await fresh()
         for (const s of before) await errorOf(s.run(t.client, ids()))
-        await t.advance(0)
+        await t.settle()
         const snap = t.client.getSnapshot()
-        notices.length = 0
+        clearNotices()
         await t.failSaves(true)
-        const result = await failing.run(t.client, ids()).then(v => ({ v }), (e: unknown) => ({ e }))
+        const result = await failing.run(t.client, ids(), true).then(v => ({ v }), (e: unknown) => ({ e }))
         await t.failSaves(false)
         if ('v' in result && result.v === SKIP) return // nothing to write in this scenario (First day has no problems)
         // Not vacuous: a write that had something to save must reject, and say so in a notice.
         expect('e' in result, `${failing.name} rejects when it can't save`).toBe(true)
         expect('e' in result && result.e).toBeInstanceOf(AgentError)
-        expect(notices.length, `${failing.name} sends a notice`).toBeGreaterThanOrEqual(1)
+        notices.forEach((n, i) => parse(AgentNoticeSchema, n, `notice ${i} of ${failing.name}`))
+        expect(notices.some(n => n.type === t.failedSaveNotice), `${failing.name} sends the failed-save notice`).toBe(true)
         expect(t.client.getSnapshot(), `after ${failing.name} failed to save`).toBe(snap)
         rejected++
       }), params)

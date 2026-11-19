@@ -62,11 +62,22 @@ export interface ContractTarget {
   setup(): Promise<void>
   /** After each test: give time back. */
   teardown(): Promise<void>
+  /** The notice kind a write that couldn't save sends: the mock's `save.failed` (as `types.ts` says), a server's `error`. Tests assert exactly this. */
+  failedSaveNotice: 'save.failed' | 'error'
+  capabilities: {
+    /**
+     * Writes the agent makes by itself (the hold's send, a routine or skill an answer creates) are saves in the client, so
+     * `failSaves` can fail them. True on the mock only: on a server they happen server-side, and P2 adds its own case.
+     */
+    agentWritesSaveInClient: boolean
+  }
+  /** Let what is in flight arrive without moving the clock: microtasks flushed (the mock), delivery awaited (a server). Called before each `advance`. */
+  settle(): Promise<void>
   /** Move the client's clock on by `ms`: holds end, answers stream, timers fire. The tests never wait on real time. */
   advance(ms: number): Promise<void>
   /** Back to a first-run state: no writes, no saved runs, no pending holds, no failures armed. */
   reset(): Promise<void>
-  /** Put the client in a stage and scenario (the demo's dev switcher). */
+  /** Put the client in a stage and scenario (the demo's dev switcher). Resolves only once the client shows the new world: `read()` is the new data and `subscribe` listeners have heard it. */
   seed(state: DemoContext): Promise<void>
   /**
    * Make every write fail to save (true) or work again (false). For the mock that is the browser's storage refusing a
@@ -77,6 +88,8 @@ export interface ContractTarget {
   /**
    * Make one method fail with an `AgentError` of this code after it was applied optimistically (null: work again): the
    * server answered 403, 409 or 5xx. The client takes the write back and sends one `error` notice with that code.
+   * On the mock this is a proxy in this file, so the injected-refusal tests exercise the proxy and the client's rollback
+   * path, not the mock itself; they become real checks of a server with P2's target.
    */
   injectError(method: WriteMethod, code: AgentErrorCode | null): Promise<void>
 }
@@ -98,6 +111,9 @@ Object.defineProperty(globalThis, 'localStorage', { value: shim, configurable: t
 // Imported after the shim: the mock reads storage when it loads. Until W4 merges, `reset()` makes a fresh instance;
 // W4 adds `demo.reset()` and this target switches to it.
 const { MockAgent: Mock } = await import('../mock')
+
+/** Where the mock saves its state (its own constant isn't exported): the proxy keeps this in step when it takes a change back. */
+const MOCK_STORAGE_KEY = 'inhouse.demo.v2'
 
 const WRITE_METHODS: ReadonlySet<string> = new Set<WriteMethod>([
   'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool',
@@ -130,10 +146,18 @@ function injecting(mock: MockAgent, armed: Map<string, AgentErrorCode>): AgentCl
         const created = new Set(inner.created)
         const timers = new Set(Object.keys(inner.holdTimers))
         const applied = method(...args) as Promise<unknown>
+        const optimistic = inner.state
+        // What this call changed: the state keys it replaced. Only those are taken back, so a write made in between stays.
+        const changed = (Object.keys(optimistic) as (keyof AgentState)[]).filter(k => optimistic[k] !== before[k])
         const refused = applied.then(async () => {
-          // The server said no: take the change back, tell the listeners and the person.
-          inner.state = before
-          inner.created.clear(); created.forEach(id => inner.created.add(id))
+          // The server said no: take this change back (not the whole state), save what is left, tell the listeners and the person.
+          const now = inner.state
+          const kept: Record<string, unknown> = { ...now }
+          for (const k of changed) if (now[k] === optimistic[k]) kept[k] = before[k]
+          // Nothing else changed meanwhile: the old state object itself comes back, so its identity does too.
+          inner.state = now === optimistic ? before : (kept as unknown as AgentState)
+          storage.set(MOCK_STORAGE_KEY, JSON.stringify(inner.state))
+          for (const id of [...inner.created]) if (!created.has(id)) inner.created.delete(id)
           for (const id of Object.keys(inner.holdTimers)) if (!timers.has(id)) { clearTimeout(inner.holdTimers[id]); delete inner.holdTimers[id] }
           inner.listeners.forEach(l => l())
           const text = `The server refused ${prop} (${code}).`
@@ -181,8 +205,11 @@ function mockTarget(): ContractTarget {
       unknownChatId: 'no-such-chat',
       unknownTraceId: 'no-such-trace',
     },
+    failedSaveNotice: 'save.failed',
+    capabilities: { agentWritesSaveInClient: true },
     async setup() { vi.useFakeTimers() },
     async teardown() { vi.useRealTimers() },
+    async settle() { await vi.advanceTimersByTimeAsync(0) },
     async advance(ms) { await vi.advanceTimersByTimeAsync(ms) },
     async reset() {
       savesFail = false
