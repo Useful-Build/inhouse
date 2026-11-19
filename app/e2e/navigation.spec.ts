@@ -130,9 +130,17 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   const t = open.locator('.ellipsis')
   await t.evaluate(e => { e.textContent = 'Refunds' })
   await page.mouse.move(720, 450)
+  // Radix dispatches `tooltip.open` on the document once the open delay has passed, even when the row declines to open
+  // because the title isn't cut. Wait for that event (no clock, no fixed wait), then one frame for React's commit.
+  // Wrapped in an object: evaluateHandle would otherwise wait for the promise itself.
+  const delayPassed = await page.evaluateHandle(() => ({ done: new Promise<void>(r => document.addEventListener('tooltip.open', () => r(), { once: true })) }))
   await open.hover()
-  await page.waitForTimeout(1000)
+  await delayPassed.evaluate(o => o.done)
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r(null))))
   await expect(page.getByRole('tooltip')).toHaveCount(0)
+  // A fresh page for the cut title, so no tooltip state from the hover above (or the earlier Tab) carries over.
+  await page.reload()
+  await t.evaluate(e => { e.textContent = 'Refunds' })
   const cutAtRest = await t.evaluate(e => {
     const menu = e.closest('[data-chat-row]')!.querySelector<HTMLElement>('[aria-haspopup="menu"]')!
     const room = menu.getBoundingClientRect().left - e.getBoundingClientRect().left

@@ -36,7 +36,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
     await expect(detail(page, 'Access')).toContainText('None. A person paused it.')
     await expect(page.locator('[data-tool-example]')).toHaveCount(0)
     await expect(page.getByText('Access is paused. Resume it and you can ask about Shopify again.')).toBeVisible()
-    expect(await noSideways(page)).toBe(true)
+    await expect.poll(() => noSideways(page)).toBe(true)
     await shot(page, `pages-polish-${size}-tool-paused`)
     // The list agrees, then Resume restores the page.
     await go(page, '#/tools')
@@ -99,7 +99,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
       await go(page, '#/settings/team-audit')
       await expect(page.getByRole('heading', { level: 1, name: 'Audit log' })).toBeVisible()
       await expect(page.locator('main')).toContainText(firstDay ? 'Nothing changed yet. Changes to settings, rules and people show here.' : 'Still loading. Changes show here in a moment.')
-      expect(await noSideways(page)).toBe(true)
+      await expect.poll(() => noSideways(page)).toBe(true)
       expect(errors, errors.join('\n')).toEqual([])
     })
   }
@@ -110,7 +110,7 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
     // The last run sits on its own line under the chips, and the row fits the screen.
     const row = page.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Morning check', exact: true }) })
     await expect(row).toContainText('Last run today at 6:00 AM · found 6 things')
-    expect(await noSideways(page)).toBe(true)
+    await expect.poll(() => noSideways(page)).toBe(true)
     expect(await row.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
     await shot(page, `pages-polish-${size}-routines`)
 

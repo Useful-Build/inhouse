@@ -6,6 +6,10 @@
 //   2. inline `style` props in .tsx that carry a literal (a number, a quoted string, a var(--...)), also as a fallback
 //      (`?? 20`, `|| 20`, `&& 20`) or a ternary branch. Values computed at runtime (a bar's height from data, a
 //      position from state) are fine.
+//   3. fixed waits in the E2E specs (e2e/**/*.ts): `waitForTimeout(`, any `setTimeout` or `setInterval` (a promise
+//      holding one, an alias, `promisify`), the `timers` module in any form, `scheduler.wait(`, `Atomics.wait`. Wait
+//      for a condition (an `expect` or `expect.poll`), or move time with the Clock API (`page.clock.install()`,
+//      `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine. No allow list.
 // Exceptions live in scripts/check-app-rules.allow.json, each with a reason. An entry nothing uses fails too.
 // Run: npm run lint:tokens (part of npm run lint).
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -149,9 +153,69 @@ for (const [path, n] of ALLOWED) {
 }
 for (const [c, n] of ALLOWED_CLASSES) if (!n) problems.push(`check-app-rules.allow.json: ${c} is not used anywhere; remove it`)
 
+// ---------- fixed waits in e2e ----------
+const e2eDir = new URL('../e2e/', import.meta.url).pathname
+const waits = []
+// Blanks comments (keeping newlines, so line numbers stay right). Regex literals (after `( , = : [ ! & | ? { } ;`,
+// `return` or at the start) are skipped to their closing `/` so quotes inside them don't open a string; '...' and "..."
+// end at a newline. With blank=true the contents of strings and regex literals are blanked too (quotes kept).
+const stripComments = (src, blank = false) => {
+  let out = '', quote = null, last = ''
+  const put = (s, keep) => { out += keep || !blank ? s : s.replace(/[^\n]/g, ' '); }
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i], n = src[i + 1]
+    if (quote) {
+      if (c === '\\') { put(c + (src[++i] ?? '')); continue }
+      if (c === quote || (c === '\n' && quote !== '`')) { quote = null; out += c; last = c; continue }
+      put(c); continue
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; out += c; last = c }
+    else if (c === '/' && n === '/') { while (i < src.length && src[i] !== '\n') i++; i-- }
+    else if (c === '/' && n === '*') {
+      const end = src.indexOf('*/', i + 2), stop = end < 0 ? src.length : end + 2
+      out += src.slice(i, stop).replace(/[^\n]/g, ' '); i = stop - 1
+    } else if (c === '/' && (last === '' || '(,=:[!&|?{};'.includes(last) || out.trimEnd().endsWith('=>') || /(?:^|[^\w$.])return$/.test(out.trimEnd()))) {
+      let j = i + 1, cls = false
+      for (; j < src.length && src[j] !== '\n'; j++) {
+        if (src[j] === '\\') j++
+        else if (src[j] === '[') cls = true
+        else if (src[j] === ']') cls = false
+        else if (src[j] === '/' && !cls) break
+      }
+      put(src.slice(i, j + 1)); i = j; last = '/'
+    } else { out += c; if (!/\s/.test(c)) last = c }
+  }
+  return out
+}
+// Timers outside the test's own timeout: any setTimeout or setInterval (called, aliased, promisified, handed to a
+// promise) except `test.setTimeout(...)` and `page.clock.*`. Run on code with strings blanked.
+const TIMERS = /(?<!\b(?:test|clock)\s*\.\s*)\bset(?:Timeout|Interval)\b/
+// Run on code with strings kept (a module name is a string).
+const FIXED_WAITS = [
+  /\bwaitForTimeout\b/, // page.waitForTimeout(...) and page['waitForTimeout'](...)
+  /['"`](?:node:)?timers(?:\/promises)?['"`]/, // the timers module in any form: import, import(), require()
+  /\bscheduler\s*\.\s*wait\s*\(/,
+  /\bAtomics\s*\.\s*wait\b/,
+]
+if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
+  const text = readFileSync(file, 'utf8'), code = stripComments(text), lines = text.split('\n')
+  const seen = new Set()
+  const add = ln => {
+    if (seen.has(ln)) return
+    seen.add(ln)
+    waits.push([`e2e/${relative(e2eDir, file)}`, ln, `e2e/${relative(e2eDir, file)}:${ln}  ${lines[ln - 1].trim()}`])
+  }
+  for (const re of FIXED_WAITS) for (const m of code.matchAll(new RegExp(re.source, re.flags + 'g'))) add(code.slice(0, m.index).split('\n').length)
+  const blanked = stripComments(text, true)
+  for (const m of blanked.matchAll(new RegExp(TIMERS.source, 'g'))) add(blanked.slice(0, m.index).split('\n').length)
+}
+waits.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]))
+for (let i = 0; i < waits.length; i++) waits[i] = waits[i][2]
+
 const report = (list, msg) => { if (list.length) console.error(`${list.length} ${msg}\n${list.join('\n')}\n`) }
 report(hits.arbitrary, 'arbitrary value(s). Use a scale step (w-82.5 = 330px) or an --app-* token in src/index.css:')
 report(hits.style, 'inline style(s) with a literal. Use a class, or compute the value from data:')
+report(waits, 'fixed wait(s) in e2e. Wait for a condition (expect, expect.poll) or use the Clock API (page.clock.install(), page.clock.runFor(ms)):')
 report(problems, 'allow-list problem(s):')
-if (hits.arbitrary.length + hits.style.length + problems.length) process.exit(1)
-console.log('app rules: no arbitrary values (outside src/components/ui) or literal inline styles')
+if (hits.arbitrary.length + hits.style.length + waits.length + problems.length) process.exit(1)
+console.log('app rules: no arbitrary values (outside src/components/ui), literal inline styles or fixed waits in e2e')

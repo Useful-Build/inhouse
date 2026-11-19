@@ -1,4 +1,4 @@
-Status: approved by Wasim, 2026-11-19.
+Status: approved by Wasim, 2026-11-19 (revised map, PR #20).
 
 # Inhouse feature map
 
@@ -6,7 +6,14 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 
 ## Gaps
 
-None open.
+No entry is `Covered: gap`. Not checked by any spec, or only in part:
+
+- Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
+- Ship specs: `e2e/ship/example.spec.ts` and `e2e/ship/setup-gaps.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview, never in CI's normal run.
+- Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
+- Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
+- Audit log: the download is checked on desktop only (its content in `sample-data.spec.ts`); the phone check sees the button.
+- Export everything and Sign out are stubs: specs check they say so and change nothing.
 
 ## Today
 
@@ -164,9 +171,9 @@ Library: select and delete
 
 Routines: details and actions
   Path:     Routines -> a routine
-  Selector: switch "<name> on or off", Pause, Run now, Delete
-  Expected: details show; Delete asks and Undo works; all of it survives a reload; at Watch a routine is locked and shows its stage
-  Covered:  e2e/page-details.spec.ts
+  Selector: switch "<name> on or off", Pause, Run now, Delete, Last runs
+  Expected: details show; Delete asks and Undo works; all of it survives a reload; at Watch a routine is locked and shows its stage; a Run now lands in Last runs with its result and survives a reload
+  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts
 
 Activity: log
   Path:     Activity
@@ -177,8 +184,8 @@ Activity: log
 Tools: list and pages
   Path:     Tools (`#/tools`) -> a tool
   Selector: search, Pause access, Reconnect, Request a tool
-  Expected: pausing or disconnecting changes the count, the tool page and the composer alike; Pause access has Undo; Request a tool opens the team window
-  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts
+  Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window
+  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts
 
 Tools: Slack channel
   Path:     Tools -> Slack
@@ -209,8 +216,8 @@ Settings: dropdowns and fields
 Settings: Models
   Path:     Settings -> Models
   Selector: effort picker, on switch
-  Expected: Max, Smart (default), Fast, Instant; switching one off hides it; effort persists
-  Covered:  e2e/models-and-scroll.spec.ts
+  Expected: Max, Smart (default), Fast, Instant; switching one off hides it; effort persists; one "How hard it thinks" caption sits over the pickers
+  Covered:  e2e/models-and-scroll.spec.ts, e2e/pages-polish.spec.ts
 
 Settings: Members and approvers
   Path:     Settings -> Members, Who approves what
@@ -235,6 +242,48 @@ Settings: Run limits
   Selector: job switches, "Daily limit", "Largest restock", button "Pause Inhouse agent"
   Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree, Resume undoes it) and survives a reload; Reset demo clears all of it
   Covered:  e2e/settings-team-pages.spec.ts
+
+Settings: Notifications
+  Path:     Settings -> Notifications
+  Selector: dropdowns "Approvals waiting" and "Send alerts to", switches "Slack" and "Weekly report"
+  Expected: locked at Watch; each dropdown lists its choices and saves a pick, the switches turn off; a reload keeps all of it and Reset demo clears it; the dropdown works by keyboard; with no channel connected alerts default to Email and there is no channel switch; on a phone the controls stay
+  Covered:  e2e/settings-your-pages.spec.ts, e2e/sample-data.spec.ts, e2e/brand-data.spec.ts, e2e/settings-pages-phone.spec.ts
+
+Settings: Memory
+  Path:     Settings -> Memory
+  Selector: buttons "Forget", switch "Learn from my chats"
+  Expected: locked at Watch; Forget removes a line with an Undo toast; the switch turns off; both survive a reload and Reset demo clears them; Team memory is not touched; Forget works on a phone
+  Covered:  e2e/settings-your-pages.spec.ts, e2e/settings-pages-phone.spec.ts
+
+Settings: Inhouse agent
+  Path:     Settings -> Inhouse agent
+  Selector: dropdown "Tone", text field "Signs emails as", buttons "Open memory" and "View skills"
+  Expected: the tone and sign-off save, survive a reload and Reset demo clears them; Open memory opens Team memory, View skills opens Skills; the memory count follows Team memory; on a phone the values read as text and the buttons work
+  Covered:  e2e/settings-agent-data.spec.ts, e2e/settings-team-pages.spec.ts, e2e/page-details.spec.ts, e2e/settings-pages-phone.spec.ts
+
+Settings: Spending cap
+  Path:     Settings -> Spending cap
+  Selector: field "Monthly cap", dropdowns "Alert at" and "Show amounts in"
+  Expected: a cap and alert level show on Usage; a wrong amount says why and isn't saved; a cap below spend shows the cap banner and the capped state; the currency pick saves; values survive a reload; on a phone it reads as text
+  Covered:  e2e/cross-screen.spec.ts, e2e/edge-cases.spec.ts, e2e/data-states.spec.ts, e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/phone.spec.ts
+
+Settings: Data and access
+  Path:     Settings -> Data and access
+  Selector: dropdowns "Chats" and "Activity and steps", switches "Inhouse team access" and "Two-step sign-in", buttons "Export" and "Ask the team"
+  Expected: retention picks and the switches save, survive a reload and Reset demo clears them; the audit log's retention is fixed; Export says it isn't connected and changes nothing; Ask the team opens the team window on "Change something" with the delete request written; on a phone it reads as text and Export still answers
+  Covered:  e2e/settings-agent-data.spec.ts, e2e/settings-pages-phone.spec.ts, e2e/no-persona.spec.ts
+
+Settings: Audit log
+  Path:     Settings -> Audit log
+  Selector: rows, button "Download CSV"
+  Expected: the seeded rows show; pausing the agent adds a row at the top that survives a reload and Resume takes away; Download CSV saves the log with plain spaces in its times; First day and Loading show their own empty line
+  Covered:  e2e/settings-agent-data.spec.ts, e2e/sample-data.spec.ts, e2e/pages-polish.spec.ts, e2e/settings-pages-phone.spec.ts
+
+Settings: General
+  Path:     Settings -> General
+  Selector: text field "Name", dropdowns "Theme", "Language", "Text size" and "Time zone", photo upload
+  Expected: the name saves, shows in the account menu and Reset demo clears it; a time zone pick saves, survives a reload and Reset demo clears it, on a phone too; Theme as in "Palette: theme switch" below; every dropdown opens a real list (Language and Text size partial, see Gaps); the photo as in "Settings: photos"
+  Covered:  e2e/sample-data.spec.ts, e2e/cross-screen.spec.ts, e2e/phone.spec.ts, e2e/menus.spec.ts, e2e/photo.spec.ts
 
 Settings: photos
   Path:     Settings -> General -> photo
@@ -268,6 +317,30 @@ Sidebar
   Expected: collapses to a rail, stays collapsed after a reload, expands with the shortcut
   Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts
 
+Account menu
+  Path:     sidebar -> account and settings
+  Selector: menu "Account", items Your settings, Team settings, Help and guides, Report a bug, Send feedback, Sign out
+  Expected: Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Send feedback opens the team window on Feedback with an empty field and no screenshot box; Report a bug opens it on the bug type; Sign out says it isn't connected
+  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts
+
+Help and guides
+  Path:     account menu -> Help and guides
+  Selector: dialog "Help and guides", guide buttons, button "Ask the team"
+  Expected: one guide open at a time and its text shows; Ask the team swaps Help for the team window on Feedback with "I have a question: " written, and the sent question is listed and survives a reload; by keyboard it opens quiet and Escape gives focus back; on a phone it fits 390
+  Covered:  e2e/help-account-menu.spec.ts, e2e/sample-data.spec.ts, e2e/overlays-keyboard.spec.ts, e2e/cross-screen.spec.ts, e2e/no-persona.spec.ts, e2e/settings-pages-phone.spec.ts
+
+Problem panel
+  Path:     Today or Approvals -> a card
+  Selector: panel dialog, Approve, Edit, Don't send, Ask <approver>, Manage, "Ask about this…"
+  Expected: the approval actions as in Approvals above; Ask <approver> says it isn't connected; Ask about this… (in the panel and the card menu) starts a chat holding the question that a reload keeps; Manage on a memory note opens Team memory
+  Covered:  e2e/problem-panel.spec.ts, e2e/today-approvals.spec.ts, e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts
+
+Trace window
+  Path:     an answer's steps line, or an Activity row
+  Selector: dialog "What your Inhouse agent did", radio "Technical", button "Replay", `trace-row`
+  Expected: the plain view shows the question and the time with no model or token words; Technical shows tokens; Replay is clicked, its result not asserted; an answer sent mid-run opens its own steps
+  Covered:  e2e/app.spec.ts, e2e/conversation-polish.spec.ts, e2e/no-persona.spec.ts, e2e/overlays-keyboard.spec.ts
+
 Notifications and team window
   Path:     bell -> a line; Message the team
   Selector: bell count, window Send
@@ -283,8 +356,8 @@ Keyboard and focus
 Scenarios and stages
   Path:     demo switcher -> every Stage and Scenario
   Selector: Stage, Scenario
-  Expected: every page opens with no crash, console error or other state's data; First day and Loading show their own empty looks; Cap reached shows the banner
-  Covered:  e2e/data-states.spec.ts, e2e/tour.spec.ts, e2e/app.spec.ts
+  Expected: every page opens with no crash, console error or other state's data; First day and Loading show their own empty looks (Routines, Skills, Tools, Usage, Activity and the audit log each a real state); Cap reached shows the banner
+  Covered:  e2e/data-states.spec.ts, e2e/tour.spec.ts, e2e/app.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts
 
 Memory across reloads
   Path:     change something -> reload -> Reset demo
@@ -296,13 +369,19 @@ Phone layout (390)
   Path:     every page at 390x844
   Selector: sidebar, composer, menus, toasts
   Expected: nothing cut or covered; tap targets are tap-size; toasts sit above the composer
-  Covered:  the `e2e/*-phone.spec.ts` specs, e2e/text-fit-phone.spec.ts
+  Covered:  e2e/phone.spec.ts, e2e/chats-manage-phone.spec.ts, e2e/composer-phone.spec.ts, e2e/conversation-phone.spec.ts, e2e/dots-and-today-phone.spec.ts, e2e/models-and-scroll-phone.spec.ts, e2e/navigation-phone.spec.ts, e2e/page-actions-phone.spec.ts, e2e/page-details-phone.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/settings-pages-phone.spec.ts, e2e/slack-channel-phone.spec.ts, e2e/text-fit-phone.spec.ts, e2e/today-approvals-phone.spec.ts
 
 Visual and a11y
   Path:     every state in `e2e/states.ts`
   Selector: screenshot, axe
   Expected: visual shots match the Linux baselines in light and dark; axe finds no new WCAG 2.1 A or AA issue
   Covered:  e2e/visual.spec.ts, e2e/a11y.spec.ts
+
+Motion (30 fps)
+  Path:     send, stream and finish an answer
+  Selector: every animation frame's scrollTop, scrollHeight and last message bottom
+  Expected: the view never jumps up and the bottom gap never jumps
+  Covered:  e2e/motion.spec.ts (manual only: `MOTION=1`, the `motion` workflow; not in CI's normal run)
 
 Sample data rules
   Path:     the data files

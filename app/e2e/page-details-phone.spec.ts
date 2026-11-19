@@ -27,7 +27,7 @@ test('Phone: Settings opens on its menu, a page replaces it, and Back returns to
   await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
   await expect(nav.getByRole('button', { name: 'Spending cap' })).toBeVisible()
   await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan' })).toHaveCount(0)
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
   await shot(page, '390-settings-menu')
   // Menu rows are at least 44 px tall.
   const h = await nav.locator('button[data-nav-row]').first().evaluate(e => e.getBoundingClientRect().height)
@@ -42,7 +42,7 @@ test('Phone: Settings opens on its menu, a page replaces it, and Back returns to
   await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(page.locator('main')).toContainText('$250')
   expect(await page.locator('main').evaluate(e => e.scrollTop)).toBe(0)
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
   await shot(page, '390-settings-page')
   // The browser's Back returns to the menu, not out of Settings; Forward opens the page again.
   await page.goBack()
@@ -87,7 +87,7 @@ test('Phone: the Library filter sheet sorts and picks a type, and any type can b
   await filters.click()
   const sheet = page.getByRole('dialog', { name: 'Filter files' })
   await expect(sheet).toBeVisible()
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
   await shot(page, '390-library-filters')
   // Sort by name, and the last type.
   // The chips are drawn at 32px, each with a tap area at least 44px tall.
@@ -108,7 +108,7 @@ test('Phone: the Library filter sheet sorts and picks a type, and any type can b
   await expect(filters).toBeFocused()
   const names = (await rows.locator('xpath=.//span[contains(@class,"font-strong")]').allInnerTexts()).map(t => t.toLowerCase())
   expect(names, 'sorted by name').toEqual([...names].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })))
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
   await shot(page, '390-library-other-tab')
 
   // Each row's menu shows without hover on a phone.

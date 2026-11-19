@@ -13,8 +13,9 @@ async function start(page: Page, hash: string) {
 }
 
 async function noSidewaysScroll(page: Page) {
-  const over = await page.evaluate(() => [document.documentElement, document.querySelector('main')!].map(e => e.scrollWidth - e.clientWidth))
-  expect(over.every(px => px <= 1), `horizontal overflow: ${over}`).toBe(true)
+  // Polled: right after a resize or a navigation the layout may not have settled yet. A real overflow still fails.
+  await expect.poll(() => page.evaluate(() => Math.max(...[document.documentElement, document.querySelector('main')!].map(e => e.scrollWidth - e.clientWidth))),
+    { message: 'horizontal overflow in px (page or main)' }).toBeLessThanOrEqual(1)
 }
 
 /**

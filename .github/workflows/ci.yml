@@ -1,4 +1,5 @@
-# The required check for main and fleet/** (job name "ci"). Runs on PRs, in the merge queue and on dispatch.
+# The required check for main and fleet/** (job name "ci"). Runs on PRs and on dispatch. The merge_group trigger is kept
+# for a merge queue, which is off for now (see AGENTS.md, "How changes land here").
 # The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
 # Playwright image so screenshots render the same on every run. Two shards at most: runner slots are shared.
 name: ci
@@ -151,7 +152,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          paths=(app/e2e app/playwright.config.ts app/vitest.config.ts app/scripts .github/workflows
+          paths=(app/e2e app/playwright.config.ts app/vitest.config.ts app/scripts .github/workflows .github/rulesets
             ':(glob)app/src/**/*.property.test.ts')
           files=$(git -c core.quotepath=off diff --name-status --diff-filter=MDR "$BASE...$HEAD" -- "${paths[@]}")
           [ -z "$files" ] && exit 0
