@@ -83,10 +83,16 @@ export interface Fx {
   /** What the app has saved, parsed. Call it on a loaded page. */
   saved(): Promise<Saved>
   /**
-   * Back to a clean demo: the next load starts from nothing, with no earlier seed applied. Navigates the page away
-   * (so the app can't write back), clears its storage, and leaves the page blank: call `open` (or `seed` then `open`)
-   * afterwards. Every other tab on the app is moved to about:blank first. The reset is per tab: it never stops a seed on
-   * another tab. Needs the page on the app or a project baseURL; it throws otherwise.
+   * Back to a clean demo: this page's next load starts from nothing, with none of its earlier seeds applied. Navigates
+   * the page away (so the app can't write back), clears the saved state, and leaves the page blank: call `open` (or
+   * `seed` then `open`) afterwards.
+   *
+   * Every tab in the context shares one saved state, so the reset wipes it for all of them, and it moves every other
+   * tab on the app to about:blank first. Which seeds it switches off is per tab: only this page's. A seed on another
+   * tab that hasn't applied yet, or one that applies on every load (`once: false`, `restage`), still applies on that
+   * tab's next load, and what it saves is then what every tab loads, this one too.
+   *
+   * Needs the page on the app or a project baseURL; it throws otherwise.
    */
   reset(): Promise<void>
   /** Opens the app at a route ("#/today"). */

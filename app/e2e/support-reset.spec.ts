@@ -1,5 +1,5 @@
-// Proves fx.reset() in a browser: the next load is the clean demo, a seed made after a reset applies, and a reset on one
-// tab never stops a seed on another.
+// Proves fx.reset() in a browser: the next load is the clean demo, a seed made after a reset applies, a reset works from
+// a page that is not on the app, and across two tabs it never stops the other tab's seed while it wipes what both saved.
 import { expect, fxFor, test } from './support/fx.js'
 
 test('reset gives the clean demo, and a seed made after it applies', async ({ page, fx }) => {
@@ -22,7 +22,23 @@ test('reset gives the clean demo, and a seed made after it applies', async ({ pa
   await expect(page.getByRole('button', { name: 'Demo switches: Watch, First day' })).toBeVisible()
 })
 
-test('a reset on one tab does not stop a seed on another tab', async ({ page, context, baseURL, fx }) => {
+test('reset from a page that is not on the app clears the app at the project baseURL', async ({ page, fx }) => {
+  await fx.seed({ stage: 'Run' })
+  await fx.open('#/today')
+  await expect(page.getByRole('button', { name: 'Demo switches: Run, Normal' })).toBeVisible()
+
+  // The page leaves the app: what the seed saved stays behind, and the page's own URL no longer names the app.
+  await page.goto('about:blank')
+  // With no baseURL either there is nothing to clear, and reset says so instead of returning quietly.
+  await expect(fxFor(page, undefined).reset()).rejects.toThrow('no baseURL')
+
+  // The baseURL names the app. Still showing Run here would mean the saved state was kept, or the seed applied again.
+  await fx.reset()
+  await fx.open('#/today')
+  await expect(page.getByRole('button', { name: 'Demo switches: Act, Normal' })).toBeVisible()
+})
+
+test('a reset on one tab does not stop a seed on another tab, and it wipes what both tabs saved', async ({ page, context, baseURL, fx }) => {
   await fx.seed({ stage: 'Run' })
   await fx.open('#/today')
   await expect(page.getByRole('button', { name: 'Demo switches: Run, Normal' })).toBeVisible()
@@ -36,7 +52,17 @@ test('a reset on one tab does not stop a seed on another tab', async ({ page, co
   await fxB.open('#/today')
   await expect(tabB.getByRole('button', { name: 'Demo switches: Watch, Normal' })).toBeVisible()
 
-  // And tab A is clean again after its own reset.
+  // The two tabs share one saved state, so tab A now loads what B's seed saved, not the clean demo. A's own seed (Run)
+  // stays off: the reset mark is per tab, the saved state is not.
+  await fx.open('#/today')
+  await expect(page.getByRole('button', { name: 'Demo switches: Watch, Normal' })).toBeVisible()
+
+  // A second reset from tab A takes tab B off the app and wipes what both saved. Both then load the clean demo: B's seed
+  // has applied already (once per tab), so it doesn't come back.
+  await fx.reset()
+  expect(tabB.url()).toBe('about:blank')
   await fx.open('#/today')
   await expect(page.getByRole('button', { name: 'Demo switches: Act, Normal' })).toBeVisible()
+  await fxB.open('#/today')
+  await expect(tabB.getByRole('button', { name: 'Demo switches: Act, Normal' })).toBeVisible()
 })

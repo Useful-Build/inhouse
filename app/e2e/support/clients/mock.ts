@@ -38,6 +38,13 @@ export function sampleNames(): Names {
   }
 }
 
+/**
+ * The last script id handed out. Ids count across every page, never per page: a popup starts with a copy of its opener's
+ * sessionStorage (the reset mark and the once-marks with it), and a seed on the popup must not be skipped by a mark it
+ * copied. A script installed after the copy always has a higher id than every mark in it.
+ */
+let lastId = 0
+
 /** Per page: the id of the last script installed and whether the page was seeded. */
 const pages = new WeakMap<Page, { n: number; seeded: boolean }>()
 const stateOf = (page: Page) => {
@@ -49,7 +56,8 @@ const stateOf = (page: Page) => {
 type Script = { id: number; entries: [string, string][]; once: boolean; clear: boolean }
 /**
  * Runs before every document of the page. The reset mark lives in this tab's sessionStorage (written by `reset`), so a
- * reset on one tab never switches off another tab's seeds. A script whose id the mark has passed does nothing.
+ * reset on one tab never switches off another tab's seeds. A script whose id the mark has passed does nothing. Ids are
+ * unique across pages (`lastId`), so the marks a popup copies from its opener never cover a script of its own.
  */
 function applySeed({ id, entries, once, clear }: Script) {
   // about:blank and other non-http documents have no storage (it throws a SecurityError): nothing to seed there.
@@ -71,7 +79,8 @@ export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt()
   let names: Names | undefined
   const install = async (entries: Record<string, string>, once: boolean, clear: boolean) => {
     const st = stateOf(page)
-    await page.addInitScript(applySeed, { id: ++st.n, entries: Object.entries(entries), once, clear })
+    st.n = ++lastId
+    await page.addInitScript(applySeed, { id: st.n, entries: Object.entries(entries), once, clear })
   }
   const seedOnce = async (s: Seed, saved?: SavedDemo) => {
     const st = stateOf(page)
