@@ -427,6 +427,8 @@ export interface ToolsData {
   /** Connected channels the team hears from the agent on (Slack, from Act): not tools it reads. Decision D6. */
   channels: ToolChannel[]
   beingConnected: string[]
+  /** Sample records the composer's "An order, product or customer" item attaches (the first one). None: the item is hidden. */
+  attachExamples?: (Attachment & { sources: string[] })[]
   lastRead: Record<string, string> & { default: string }
   catalog: CatalogTool[]
   details: Record<string, ToolDetail>

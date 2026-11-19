@@ -22,7 +22,7 @@ import libraryRaw from '@sample/library.json'
 import { keepTimesTogether, minuteOfTime } from './clock'
 import type {
   ActivityLine, CatalogTool, Effort, LibraryFile, LibraryKind, LibraryPlace, MemoryLine, ModelMode, Problem, RoutineDef, SkillDef, SkillSuggestion, StageIndex,
-  TablePart, ToolChannel, ToolDetail, Trace, TraceStep, TraceStepKind, UsageRow,
+  Attachment, TablePart, ToolChannel, ToolDetail, Trace, TraceStep, TraceStepKind, UsageRow,
 } from './types'
 
 // Every shown time in the sample data keeps its digits and AM or PM on one line ("5:41\u00a0AM"), like fmtTime.
@@ -62,6 +62,18 @@ export const problemById = (id: string): ProblemSeed => {
   return p
 }
 
+/** The sample records the composer can attach, checked once at load. */
+const loadAttachExamples = (): (Attachment & { sources: string[] })[] => {
+  const out = toolsJson.attachExamples as (Attachment & { sources: string[] })[]
+  for (const a of out) {
+    for (const k of ['name', 'meta', 'icon'] as const) {
+      if (typeof a[k] !== 'string' || !a[k]) throw new Error(`Tools data: an attach example is missing "${k}".`)
+    }
+    if (!Array.isArray(a.sources) || a.sources.some(k => !Object.hasOwn(toolsJson.details, k))) throw new Error(`Tools data: the attach example "${a.name}" needs "sources" to be a list of known tool keys.`)
+  }
+  return out
+}
+
 /** The channels, checked once at load (decision D6: Slack is a channel from Act, not a tool the agent reads). */
 const loadChannels = (): ToolChannel[] => {
   const out = toolsJson.channels as unknown as ToolChannel[]
@@ -82,6 +94,7 @@ const loadChannels = (): ToolChannel[] => {
 export const tools = {
   connected: toolsJson.connected,
   channels: loadChannels(),
+  attachExamples: loadAttachExamples(),
   beingConnected: toolsJson.beingConnected,
   lastRead: toolsJson.lastRead as Record<string, string> & { default: string },
   catalog: (toolsJson.catalog as CatalogTool[]).map(t => (t.need === undefined ? t : { ...t, need: needOf(`the tool "${t.k}"`, t.need) })),

@@ -52,6 +52,17 @@ test('another brand without a channel: its name shows in the chrome, and no page
   await expect(answering).not.toContainText('Chats and')
 })
 
+test('a chat answer\'s menu has no send-to-channel item without a channel', async ({ page }) => {
+  await start(page, 'Run', '#/chats/refunds')
+  const answer = page.locator('[data-chat-msg]').filter({ has: page.getByRole('button', { name: 'More', exact: true }) }).first()
+  await answer.getByRole('button', { name: 'More', exact: true }).click()
+  const menu = page.getByRole('menu', { name: 'Message actions' })
+  await expect(menu.getByRole('menuitem', { name: 'Read aloud' })).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: /^Send to/ })).toHaveCount(0)
+  await expect(menu).not.toContainText('Slack')
+  await page.keyboard.press('Escape')
+})
+
 test('Today on the first day names no sample brand', async ({ page }) => {
   await start(page, 'Watch', '#/today', 'First day')
   const line = page.getByText('Today fills in the day after')

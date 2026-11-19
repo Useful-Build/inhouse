@@ -23,6 +23,18 @@
       "ask": "Anyone in #ops"
     }
   ],
+  "attachExamples": [
+    {
+      "name": "Order #4821",
+      "meta": "Shopify · Jamie Ortiz",
+      "icon": "sell",
+      "sources": [
+        "shopify",
+        "amazon",
+        "gorgias"
+      ]
+    }
+  ],
   "beingConnected": [
     "klaviyo"
   ],
