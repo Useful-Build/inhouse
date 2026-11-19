@@ -173,7 +173,7 @@ const stripComments = (src, blank = false) => {
     else if (c === '/' && n === '*') {
       const end = src.indexOf('*/', i + 2), stop = end < 0 ? src.length : end + 2
       out += src.slice(i, stop).replace(/[^\n]/g, ' '); i = stop - 1
-    } else if (c === '/' && (last === '' || '(,=:[!&|?{};'.includes(last) || /(?:^|[^\w$.])return$/.test(out.trimEnd()))) {
+    } else if (c === '/' && (last === '' || '(,=:[!&|?{};'.includes(last) || out.trimEnd().endsWith('=>') || /(?:^|[^\w$.])return$/.test(out.trimEnd()))) {
       let j = i + 1, cls = false
       for (; j < src.length && src[j] !== '\n'; j++) {
         if (src[j] === '\\') j++
@@ -186,10 +186,10 @@ const stripComments = (src, blank = false) => {
   }
   return out
 }
-// Line numbers (1-based) of every `new Promise(` whose argument list, by paren depth, holds setTimeout or setInterval.
+// Line numbers (1-based) of every `new Promise(` (or `new Promise<T>(`) whose argument list, by paren depth, holds setTimeout or setInterval.
 const promiseTimers = blanked => {
   const lines = []
-  for (const m of blanked.matchAll(/\bnew\s+Promise\s*\(/g)) {
+  for (const m of blanked.matchAll(/\bnew\s+Promise\s*(?:<[^>()]*>\s*)?\(/g)) {
     let d = 0, k = m.index + m[0].length - 1
     for (; k < blanked.length; k++) { if (blanked[k] === '(') d++; else if (blanked[k] === ')' && --d === 0) break }
     if (/\b(?:setTimeout|setInterval)\b/.test(blanked.slice(m.index + m[0].length, k))) lines.push(blanked.slice(0, m.index).split('\n').length)
