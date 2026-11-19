@@ -86,3 +86,40 @@ jobs:
             echo "::error::The e2e legs were cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
           test "$RESULT" = success
+
+  pr-gates:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Every commit has a Verified trailer
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=""
+          for c in $(git log --no-merges --format=%H "$BASE..$HEAD"); do
+            t=$(git log -1 --format=%B "$c" | git interpret-trailers --parse)
+            grep -qiE '^Verified:[[:space:]]*[^[:space:]]' <<< "$t" ||
+              missing="$missing$(git log -1 --format='%h %s' "$c")"$'\n'
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Commits without a Verified: trailer:"; printf '%s' "$missing"; exit 1
+          fi
+      - name: Flag changes to existing checks
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          paths=(app/e2e app/playwright.config.ts app/vitest.config.ts app/scripts .github/workflows)
+          files=$(git -c core.quotepath=off diff --name-status --diff-filter=MDR "$BASE...$HEAD" -- "${paths[@]}")
+          [ -z "$files" ] && exit 0
+          { echo "### Changed existing checks"; echo '```'; echo "$files"; echo '```'
+            echo "Reviewer: the PR body must explain each one."; } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::This PR changes existing checks. See the job summary."
