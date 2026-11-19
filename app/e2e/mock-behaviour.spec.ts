@@ -297,7 +297,7 @@ test('Links: First day picked with a sample chat open falls back quietly, with n
   await expect.poll(() => page.evaluate(() => location.hash)).not.toContain('refunds')
   // The notice would show just after the fallback: give it the time before checking there is none.
   await page.clock.runFor(1000)
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible() // the page is drawn, so no toast is a real absence
+  await expect(page.locator('main')).toBeVisible() // the page is drawn, so no toast is a real absence
   await expect(page.locator('[data-toast]').filter({ hasText: 'may have been deleted' })).toHaveCount(0)
 })
 

@@ -136,6 +136,7 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   // Pause app time just ahead, so the 500 ms open delay runs only on runFor.
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100))
   await open.hover()
+  await expect(trigger).toHaveCSS('opacity', '1') // the "···" trigger has faded in: the title is measured against it when the delay ends
   await page.clock.runFor(1000)
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   const cutAtRest = await t.evaluate(e => {
@@ -150,6 +151,7 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   expect(cutAtRest).toBe(false)
   await page.mouse.move(720, 450)
   await open.hover()
+  await expect(trigger).toHaveCSS('opacity', '1') // the "···" trigger has faded in: the title is measured against it when the delay ends
   await page.clock.runFor(1000)
   await expect(page.getByRole('tooltip')).toBeVisible()
 
