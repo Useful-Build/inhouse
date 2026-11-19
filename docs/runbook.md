@@ -6,11 +6,20 @@ Use this when the live site is broken or looks wrong. Read it top to bottom. Rol
 
 | Alert | Where it arrives | What it means |
 |---|---|---|
-| `Production check failing` issue, label `monitor` | GitHub issues, with the usual issue email | The hourly check of the live site failed (`monitor.yml`). |
-| Failed `deploy` run | GitHub Actions, with the failed-run email | A push to `main` did not reach the live site, or the smoke after it failed. |
-| `client-error` lines | Workers Logs | Browsers reported a crash or an unhandled error (`/api/client-error`). Nobody is paged on these. Look at them in triage. |
+| `Production check failing` issue, label `monitor`, assigned to the owner | GitHub issues, with the usual issue email | The hourly check (workflow `monitor`, `monitor.yml`) failed: the live page didn't answer 200, isn't the app's page, or its entry script didn't load. |
+| Failed `deploy` run | GitHub Actions, with the failed-run email | A push to `main` didn't fully ship (see "What a failed deploy leaves live"). |
+| `client_error` lines | Workers Logs | Browsers reported a crash or an unhandled error (`POST /api/client-error`). Nobody is paged on these. Look at them in triage. |
 
-The monitor opens one issue and keeps adding to it. It does not open a second one while the first is open.
+The monitor comments on the open issue instead of opening a second one. A passing check comments and closes it.
+
+### What a failed deploy leaves live
+
+The `deploy` workflow (`deploy.yml`) uploads a new Worker version, smokes its Version URL, then promotes it to 100%.
+
+- Failed before "Promote the version to 100%" (build, upload or the Version URL smoke): the old version is still live.
+- Failed at or after the promote (custom domain, active-deployment check or live smoke): the new version may be live.
+  Check `npx wrangler deployments list --name inhouse-app` before you decide.
+- The release is created last, only after every step passed. A failed run has no release.
 
 ## Triage in the first 10 minutes
 
@@ -18,11 +27,12 @@ The monitor opens one issue and keeps adding to it. It does not open a second on
 2. **Check the monitor issue.** Open issues with the `monitor` label. Note the time of the first failure and what failed
    (page, asset or smoke spec).
 3. **Check the last deploy.** In Actions, open the latest `deploy` run on `main`. Note its commit, its result and when
-   it finished. Open the matching release (`vYYYY.MM.DD.N`).
+   it finished. Open the matching release (`vYYYY.MM.DD.N`), which names the Worker version id.
 4. **Line up the times.** A failure that starts right after a deploy points at that deploy. A failure with no deploy
    nearby points at Cloudflare or the network. Check the Cloudflare status page.
-5. **Read Workers Logs.** Filter for `client-error`. Look for one message repeated many times, and the first time it
-   appeared. Errors only from old tabs after a deploy are usually a stale lazy route, not an outage.
+5. **Read Workers Logs.** Filter for `event` = `client_error`. Each line carries `kind` (`error`, `rejection`,
+   `boundary` or `route`), `message`, `stack`, `url`, `release` and `country`. Look for one message repeated many times,
+   and the first time it appeared. Errors only from old tabs after a deploy are usually a stale lazy route, not an outage.
 6. **Decide.** If a deploy caused it, or you can't tell, roll back (next section). Don't debug on the live site.
 
 ## Roll back
@@ -30,34 +40,38 @@ The monitor opens one issue and keeps adding to it. It does not open a second on
 Rollback moves the live site to an earlier Worker version. It takes seconds and needs no build.
 
 1. **Find the last good version id.** Pick one of:
-   - `npx wrangler deployments list`, run in `app/`. Each deployment shows its version id and time. Take the one
-     before the bad deploy.
-   - The release notes of the last good release, which name the version id.
+   - The release notes of the last good release: they say "Deployed to production as Worker version `<id>`".
+   - `npx wrangler deployments list --name inhouse-app`, run in `app/`. It shows only the 10 most recent
+     deployments, each with its version id and time. Take the one before the bad deploy. For an older one, use the
+     release notes.
 2. **Run the rollback.** Pick one of:
-   - Actions, then `deploy`, then Run workflow, with `rollback_to` set to the version id.
+   - Actions, then `deploy`, then Run workflow on `main`, with `rollback_to` set to the version id (a UUID).
    - `gh workflow run deploy -f rollback_to=<version-id>`
-3. The workflow runs `wrangler rollback` and then smokes the live site. A rollback and a deploy share one concurrency
-   group, so they never run at the same time.
+3. With `rollback_to` set, the `deploy` workflow skips the build, runs `wrangler rollback`, checks the active
+   deployment is that version at 100% and smokes the live site. A rollback and a deploy share one concurrency
+   group (`production`), so they queue and never run at the same time. It makes no release.
 
-If the workflow itself is broken, run `npx wrangler rollback <version-id>` by hand in `app/`, with the Cloudflare login.
+If the workflow itself is broken, run this by hand in `app/`, with the Cloudflare login:
+`npx wrangler rollback <version-id> --name inhouse-app -y -m "<reason>"`
 
 ### What rollback can't undo
 
 - **Backend data.** Rollback swaps code only. Any data a future backend has written stays as it is. Before you roll
   back past a change that altered stored data, check that the older code can still read it.
-- **Bindings and settings.** Cloudflare won't roll back across a change to bindings or migrations. If that's the
-  cause, fix forward.
+- **Bindings and migrations.** Cloudflare may refuse a rollback across a change to bindings or migrations (see
+  [Cloudflare's rollback docs](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)). If it
+  does, fix forward.
 - **Pushes to `main`.** The next push deploys again. If the bad commit is still on `main`, revert it before anything
   else merges.
 
 ## Confirm recovery
 
-- The deploy run's smoke step passes against the live site.
+- The rollback run's "Smoke the live hostname" step passes.
 - Open the live site and click through Today and one other route.
-- Run the monitor by hand (Actions, `monitor`, Run workflow) and see it pass.
-- Watch Workers Logs for a few minutes. The `client-error` rate should drop to its usual level.
-- Comment on the `monitor` issue with the version id you rolled back to and the time. Close it once the monitor has
-  passed again.
+- Run the monitor by hand (`gh workflow run monitor`) and see it pass. A passing run closes the `monitor` issue.
+- Watch Workers Logs for a few minutes. `client_error` lines should drop to their usual rate.
+- Comment on the `monitor` issue with the version id you rolled back to and the time. Do it before the monitor passes,
+  or the issue closes first and you comment on a closed one.
 
 ## Follow-up
 
