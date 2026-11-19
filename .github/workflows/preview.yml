@@ -1,0 +1,190 @@
+# Deploys each same-repo PR's build as a Cloudflare Workers Preview named pr-<number> and comments its URLs.
+# Runs after ci passes, from main's code (workflow_run always does), so only trusted code ever holds the token.
+# The PR's code arrives as the app-build artifact from that ci run: its generated wrangler config is checked
+# before wrangler reads it. Fork PRs never deploy. preview-cleanup.yml deletes the previews of closed PRs.
+name: preview
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions: {}
+
+# One group per PR, shared with preview-cleanup.yml, so a deploy and a delete of the same preview never overlap.
+# A newer run waits for the one in progress and replaces any older one still waiting.
+concurrency:
+  group: preview-pr-${{ github.event.workflow_run.pull_requests[0].number || format('run-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: preview
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.gate.outputs.pr }}
+      sha: ${{ steps.gate.outputs.sha }}
+      preview_url: ${{ steps.urls.outputs.preview_url }}
+      deployment_url: ${{ steps.urls.outputs.deployment_url }}
+    steps:
+      # Deploy only an open PR whose head is still the commit ci tested. A newer push gets its own run.
+      - name: PR is open and at the tested commit
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::Bad PR number"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad head SHA"; exit 1; }
+          read -r state head < <(gh api "repos/$REPO/pulls/$PR" --jq '[.state, .head.sha] | @tsv')
+          if [ "$state" != open ] || [ "$head" != "$SHA" ]; then
+            echo "::notice::PR #$PR is $state at $head, not open at $SHA. Nothing to deploy."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          { echo "ok=true"; echo "pr=$PR"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+
+      # main's code and lockfile, never the PR's: wrangler is the version pinned on main.
+      - if: steps.gate.outputs.ok == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: steps.gate.outputs.ok == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - if: steps.gate.outputs.ok == 'true'
+        working-directory: app
+        run: npm ci
+
+      - name: Download the PR's build
+        if: steps.gate.outputs.ok == 'true'
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          test ! -e dist && test ! -e .wrangler
+          gh run download "$RUN_ID" --repo "$REPO" --name app-build --dir .
+
+      # The build is PR code. Wrangler follows .wrangler/deploy/config.json to the config the Vite plugin
+      # generated, so check both: the config must stay inside dist, target this Worker only and run nothing.
+      - name: Check the generated wrangler config
+        if: steps.gate.outputs.ok == 'true'
+        working-directory: app
+        run: |
+          node <<'EOF'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const fail = (m) => { console.log(`::error::Generated wrangler config rejected: ${m}`); process.exit(1); };
+          const dist = fs.realpathSync('dist');
+          const inside = (p) => {
+            let real;
+            try { real = fs.realpathSync(p); } catch { fail(`${p} does not exist`); }
+            if (!real.startsWith(dist + path.sep)) fail(`${p} is outside dist/`);
+            return real;
+          };
+          const redirectFile = '.wrangler/deploy/config.json';
+          const redirect = JSON.parse(fs.readFileSync(redirectFile, 'utf8'));
+          if (typeof redirect.configPath !== 'string') fail('the redirect has no configPath');
+          if ((redirect.auxiliaryWorkers ?? []).length) fail('auxiliary Workers are not allowed');
+          const configFile = inside(path.resolve(path.dirname(redirectFile), redirect.configPath));
+          const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+          if (config.name !== 'inhouse-app') fail(`name is ${JSON.stringify(config.name)}, not "inhouse-app"`);
+          for (const key of ['route', 'routes']) {
+            const v = config[key];
+            if (v !== undefined && !(Array.isArray(v) && v.length === 0)) fail(`${key} is set`);
+          }
+          for (const key of ['build', 'account_id']) if (config[key] !== undefined) fail(`${key} is set`);
+          if (typeof config.previews !== 'object' || config.previews === null) fail('no "previews" block');
+          const base = path.dirname(configFile);
+          if (typeof config.main !== 'string') fail('no main');
+          inside(path.resolve(base, config.main));
+          if (config.assets?.directory !== undefined) inside(path.resolve(base, config.assets.directory));
+          console.log(`OK: ${path.relative(process.cwd(), configFile)}`);
+          EOF
+
+      - name: Deploy the Workers Preview
+        if: steps.gate.outputs.ok == 'true'
+        working-directory: app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
+          PR: ${{ steps.gate.outputs.pr }}
+        run: npx --no-install wrangler preview --name "pr-$PR" --json > "$RUNNER_TEMP/preview.out"
+
+      # wrangler prints a few lines before the JSON, so parse from the first "{".
+      - name: Read the URLs
+        id: urls
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          node <<'EOF'
+          const fs = require('node:fs');
+          const out = fs.readFileSync(`${process.env.RUNNER_TEMP}/preview.out`, 'utf8');
+          const start = out.indexOf('{');
+          if (start < 0) { console.log(out); console.log('::error::No JSON in the wrangler output'); process.exit(1); }
+          const json = JSON.parse(out.slice(start));
+          const urls = { preview_url: json.preview?.urls?.[0], deployment_url: json.deployment?.urls?.[0] };
+          for (const [k, v] of Object.entries(urls)) {
+            if (typeof v !== 'string' || !/^https:\/\/[A-Za-z0-9.-]+\/?$/.test(v)) {
+              console.log(out); console.log(`::error::No valid ${k} in the wrangler output`); process.exit(1);
+            }
+            console.log(`${k}: ${v}`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${v}\n`);
+          }
+          EOF
+
+  # The only job that can write to the PR. It sees the URLs and nothing else.
+  comment:
+    needs: deploy
+    if: needs.deploy.outputs.deployment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post or update the preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.deploy.outputs.pr }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          PREVIEW_URL: ${{ needs.deploy.outputs.preview_url }}
+          DEPLOYMENT_URL: ${{ needs.deploy.outputs.deployment_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MARKER: "<!-- inhouse-preview -->"
+        run: |
+          body=$(cat <<EOF
+          $MARKER
+          ### Workers Preview
+
+          - Preview URL (follows this PR): $PREVIEW_URL
+          - Deployment URL (this commit only): $DEPLOYMENT_URL
+          - Head SHA: \`$SHA\`
+          - Run: $RUN_URL
+          EOF
+          )
+          id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith(env.MARKER))) | .id' |
+            head -n 1)
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$id" -f body="$body" > /dev/null
+            echo "Updated comment $id"
+          else
+            gh api --method POST "repos/$REPO/issues/$PR/comments" -f body="$body" > /dev/null
+            echo "Posted a new comment"
+          fi
