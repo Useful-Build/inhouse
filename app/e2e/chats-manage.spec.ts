@@ -196,7 +196,7 @@ test('Chats: the top bar menu has Export, and a new chat with nothing asked has 
   await page.getByRole('toolbar', { name: 'Selected chats' }).getByRole('button', { name: 'Select all' }).click()
   await page.getByRole('toolbar', { name: 'Selected chats' }).getByRole('button', { name: 'Delete' }).click()
   await expect(toast(page)).toContainText(`Deleted ${count} chats`)
-  await expect(main(page).getByText('No chats yet.')).toBeVisible()
+  await expect(main(page).getByText('No chats yet', { exact: true })).toBeVisible()
   await expect(side(page).getByRole('group', { name: 'Recent chats' }).getByRole('button')).toHaveCount(0)
   await page.goto('/?demo#/chats')
   await expect(header(page)).toContainText('New chat')
@@ -283,7 +283,7 @@ test('Chats: focus never drops to the page after deleting from See all, in bulk,
   await main(page).getByRole('button', { name: 'Select', exact: true }).click()
   await toolbar.getByRole('button', { name: 'Select all' }).click()
   await toolbar.getByRole('button', { name: 'Delete' }).click()
-  await expect(main(page).getByText('No chats yet.')).toBeVisible()
+  await expect(main(page).getByText('No chats yet', { exact: true })).toBeVisible()
   await expect.poll(() => focused(page)).toBe('fallback')
 
   // Undo brings a chat back; as the last Recent row, with no other group, its delete hands focus to New chat (with no

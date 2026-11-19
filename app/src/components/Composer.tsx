@@ -1,13 +1,15 @@
 // The ask box on Today and in Chats: attach (also by paste and drop), tools chip, model picker, dictate, send or stop.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+// In a chat it also queues a message while the answer streams, and shows "Editing" while a sent question is changed.
+// On a phone both boxes keep attach and send: the tools and the model move into "+", the logo stack and dictate leave (M27).
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, DragEvent, ReactElement } from 'react'
 import type { Attachment } from '../agent/types'
 import { activeMode, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
-import { openRun, useCtx, useUi } from '../state/store'
+import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
-import { AttachmentChip, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
+import { AttachmentChip, Button, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
 import { TAP } from '../ui/fields'
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -31,12 +33,14 @@ const ATTACH_ITEM = 'rounded-xl px-2'
 const OWN_MARK = 'pl-2.5 [&>span:first-child]:hidden'
 const ROUND = 'flex size-8.5 flex-none items-center justify-center rounded-full'
 const SEND = 'flex size-9 flex-none items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-fill-strong disabled:text-muted-foreground'
+// The bar over the field that says what Send will do (replying to an answer, editing a question).
+const NOTE_BAR = 'mb-2 -ml-1.5 flex items-center gap-2 rounded-lg bg-accent py-1.75 pr-2 pl-2.5 text-sm text-foreground-3'
 
 // Phase 1 limits on files a person adds. A file over them shows why and isn't added.
 const MAX_FILES = 10
 const MAX_MB = 20
 /** The phone layout's breakpoint (App.tsx), read directly: the store's `phone` is set after the first render. */
-const PHONE_QUERY = '(max-width: 760px)'
+export const PHONE_QUERY = '(max-width: 760px)'
 /** A touch-only screen (no mouse, no hover): no Shift+Enter there, so Enter makes a new line and only Send sends.
  *  A narrow desktop window, or an iPad with a keyboard (it can hover), still sends on Enter. */
 const TOUCH_QUERY = '(pointer: coarse) and (hover: none)'
@@ -68,6 +72,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // The agent is answering in this chat: Send becomes Stop. Today always sends (it starts a chat of its own).
   const running = useUi(s => variant === 'chat' && !!openRun(s))
   const chatKey = useUi(s => (s.fresh ? '' : s.chatId ?? ''))
+  // A sent question being edited in this chat: Send puts it in place of the old one and its answer.
+  const editing = useUi(s => variant === 'chat' && s.editMsg !== null && s.editMsg.chatId === openChatKey(s, ctx.data))
   const composerFocus = useUi(s => s.composerFocus)
   const atts = useUi(s => s.atts)
   const replyTo = useUi(s => s.replyTo)
@@ -76,7 +82,13 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const phone = useUi(s => s.phone)
   const touch = useTouchOnly()
   const page = useUi(s => s.page)
-  const { patch, ask, go, stopRun } = useUi.getState()
+  const { patch, ask, go, stopRun, queueMessage, cancelEdit, sendEdit } = useUi.getState()
+  // A phone's box, Today's and a chat's: the tools and the model sit in "+", no logo stack or dictate (M27).
+  const slim = phone
+  const editNote = useId()
+  const toolsHead = useId()
+  // The field's top edge fades once it scrolls (over 8 lines), so a cut line reads as more above (M12).
+  const [scrolled, setScrolled] = useState(false)
   const [pop, setPop] = useState<Pop>(null)
   // Limit notes belong to the chat they were shown in.
   const [rejectedIn, setRejectedIn] = useState<{ key: string; list: { name: string; reason: string }[] }>({ key: chatKey, list: [] })
@@ -162,10 +174,13 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const notConnected = (what: string) => useUi.getState().showToast(`${what} isn't connected in this demo.`, { icon: 'info', ms: 4000 })
   const canSend = !!draft.trim()
   const send = () => {
-    // No sending over a running answer: Stop first.
-    if (running || !draft.trim()) return
+    if (!draft.trim()) return
     setRejected([])
-    void ask(draft)
+    // Editing goes first: it replaces the old question (and stops an answer to it). Over a running answer a message
+    // waits above the box for its turn.
+    if (editing) sendEdit()
+    else if (running) queueMessage()
+    else void ask(draft, { fromComposer: true })
   }
 
   // What the agent can read now (not paused, not disconnected, none on day one), less what's switched off for this chat.
@@ -187,6 +202,31 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const sel = activeMode(data, ctx.agent.settings, modelSel).id
   const modelLabel = modes.find(m => m.id === sel)?.label ?? ''
 
+  // The tools switches for this chat and Manage tools: the tools menu, or "+" on a phone.
+  const toolItems = (
+    <>
+      <DropdownMenuLabel id={toolsHead} className={cn('text-sm font-normal', slim ? 'px-2.5 pt-2 pb-1 text-muted-foreground' : 'pt-2 pb-1.5')}>Tools read in this chat</DropdownMenuLabel>
+      <DropdownMenuGroup aria-labelledby={toolsHead}>
+      {TOOL_KEYS.length === 0 && (
+        <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{counts.connected === 0 ? 'No tools are connected yet.' : "Your Inhouse agent can't read any of your tools right now."}</DropdownMenuLabel>
+      )}
+      {TOOL_KEYS.map(k => {
+        const on = !toolOff[k]
+        return (
+          <DropdownMenuCheckboxItem key={k} checked={on} className={OWN_MARK}
+            onSelect={e => e.preventDefault()} onCheckedChange={() => patch({ toolOff: { ...toolOff, [k]: on } })}>
+            <LogoTile k={k} size="sm" />
+            <span className="flex-1 text-base">{toolDetail(data, k).name}</span>
+            <SwitchLook on={on} small />
+          </DropdownMenuCheckboxItem>
+        )
+      })}
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator className="mx-1.5 my-1" />
+      <DropdownMenuItem className="px-2.5 py-2 text-sm font-strong" onSelect={() => go('apps')}>Manage tools →</DropdownMenuItem>
+    </>
+  )
+
   const side = below ? 'bottom' : 'top'
   const menuProps = { side, sideOffset: 8, collisionPadding: 16 } as const
   const onOpen = (name: Exclude<Pop, null>) => (open: boolean) => setPop(open ? name : p => (p === name ? null : p))
@@ -200,8 +240,15 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
       onDragOver={e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
       onDragLeave={e => { if (!hasFiles(e)) return; dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragging(false) }}
       onDrop={e => { if (!hasFiles(e)) return; e.preventDefault(); endDrag(); takeFiles(Array.from(e.dataTransfer.files)) }}>
+      {editing && (
+        <div className={NOTE_BAR}>
+          <Icon name="edit" size={15} />
+          <b id={editNote} className="min-w-0 flex-1 font-semibold text-foreground">Editing your message</b>
+          <Button variant="ghost" size="sm" onClick={cancelEdit} className={cn('-my-1.5 flex-none', phone && TAP)}>Cancel</Button>
+        </div>
+      )}
       {variant === 'chat' && replyTo && (
-        <div className="mb-2 -ml-1.5 flex items-center gap-2 rounded-lg bg-accent py-1.75 pr-2 pl-2.5 text-sm text-foreground-3">
+        <div className={NOTE_BAR}>
           <Icon name="reply" size={15} />
           <b className="font-semibold whitespace-nowrap text-foreground">Replying to Inhouse agent</b>
           <span className="ellipsis min-w-0 flex-1">{replyTo}</span>
@@ -224,13 +271,17 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
         </div>
       )}
       <Textarea ref={inputRef} rows={1} value={draft} onChange={e => setDraft(e.target.value)} onPaste={onPaste} enterKeyHint={touch ? 'enter' : 'send'}
+        aria-describedby={editing ? editNote : undefined}
+        data-scrolled={scrolled || undefined} onScroll={e => setScrolled(e.currentTarget.scrollTop > 0)}
         onKeyDown={e => {
+          // Escape leaves editing, the old question untouched.
+          if (e.key === 'Escape' && editing) { e.preventDefault(); e.stopPropagation(); cancelEdit(); return }
           // Safari ends an IME composition with a keydown of keyCode 229 and isComposing false: that Enter isn't a send.
           if (e.key !== 'Enter' || e.shiftKey || touch || e.nativeEvent.isComposing || e.keyCode === 229) return
           e.preventDefault(); send()
         }}
         placeholder={variant === 'today' ? (phone ? 'Ask about orders, stock or numbers' : 'Ask about orders, stock, customers or numbers…') : 'Message your Inhouse agent'} aria-label={variant === 'today' ? 'Ask your Inhouse agent' : 'Message your Inhouse agent'}
-        className="block max-h-composer-input min-h-8.5 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 py-(--app-composer-input-pad-y) text-md text-foreground shadow-none outline-0 focus:shadow-none" />
+        className="block max-h-composer-input min-h-8.5 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 py-(--app-composer-input-pad-y) text-md text-foreground shadow-none outline-0 focus:shadow-none data-scrolled:mask-(--app-composer-fade)" />
 
       <div className="relative mt-2.5 flex items-center gap-2">
         <input ref={fileRef} type="file" multiple className="sr-only" tabIndex={-1} aria-hidden="true" onChange={(e: ChangeEvent<HTMLInputElement>) => {
@@ -240,7 +291,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
         <DropdownMenu modal={false} open={pop === 'attach'} onOpenChange={onOpen('attach')}>
           <Tip label="Attach">
             <DropdownMenuTrigger asChild>
-              <button type="button" aria-label="Attach" className={cn(ROUND, 'text-foreground-2', pop === 'attach' ? 'bg-fill-hover' : 'bg-secondary hover:bg-fill-hover')}>
+              <button type="button" aria-label={slim ? 'Attach, tools and model' : 'Attach'} className={cn(ROUND, 'text-foreground-2', pop === 'attach' ? 'bg-fill-hover' : 'bg-secondary hover:bg-fill-hover')}>
                 <Icon name="add" size={20} />
               </button>
             </DropdownMenuTrigger>
@@ -259,14 +310,23 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => addAtts([{ name: `Screenshot of ${PAGE_TITLES[page] ?? 'this page'}`, meta: 'PNG · just now', icon: 'screenshot_region' }])}>
               <AttachRow icon="screenshot_region" title="Screenshot of this page" sub="Useful when something looks wrong" />
             </DropdownMenuItem>
+            {slim && (
+              <>
+                <DropdownMenuSeparator className="mx-1.5 my-1" />
+                {toolItems}
+                <DropdownMenuSeparator className="mx-1.5 my-1" />
+                <DropdownMenuLabel className="px-2.5 pt-2 pb-1 text-sm font-normal text-muted-foreground">Model</DropdownMenuLabel>
+                <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
-        <DropdownMenu modal={false} open={pop === 'tools'} onOpenChange={onOpen('tools')}>
+        {!slim && <DropdownMenu modal={false} open={pop === 'tools'} onOpenChange={onOpen('tools')}>
           <Tip label="Tools read in this chat">
             <DropdownMenuTrigger asChild>
               <button type="button" aria-label={`Tools read in this chat: ${logosOn.length ? `${logosOn.map(k => toolDetail(data, k).name).join(', ')}${moreCount > 0 ? ` +${moreCount} ` : ', '}` : ''}${toolsLabel}`}
-                className={cn('flex h-8.5 items-center gap-2.5 rounded-full pr-2.5 pl-1.5 hover:bg-accent', pop === 'tools' && 'bg-accent')}>
-                <span className="flex">
+                className={cn('flex h-8.5 min-w-0 items-center gap-2.5 rounded-full pr-2.5 pl-1.5 hover:bg-accent', pop === 'tools' && 'bg-accent')}>
+                <span className="flex flex-none">
                   {logosOn.map(k => (
                     <LogoTile key={k} k={k} size="sm" round className="-mr-1.25" />
                   ))}
@@ -274,76 +334,79 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
                     <LogoCount n={moreCount} size="sm" data-testid="tools-more" className="ml-1.75" />
                   )}
                 </span>
-                {showToolsLabel && <>{' '}<span className="ml-1 text-xs whitespace-nowrap text-muted-foreground">{toolsLabel}</span></>}
+                {/* The label gives way first when the row is tight (768px), so Send stays inside the box (M13). */}
+                {showToolsLabel && <>{' '}<span className="ellipsis ml-1 min-w-0 text-xs text-muted-foreground">{toolsLabel}</span></>}
               </button>
             </DropdownMenuTrigger>
           </Tip>
           <DropdownMenuContent {...menuProps} align="start" alignOffset={-12} className={cn(MENU, 'w-menu-tools')}>
-            <DropdownMenuLabel className="pt-2 pb-1.5 text-sm font-normal">Tools read in this chat</DropdownMenuLabel>
-            {TOOL_KEYS.length === 0 && (
-              <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{counts.connected === 0 ? 'No tools are connected yet.' : "Your Inhouse agent can't read any of your tools right now."}</DropdownMenuLabel>
-            )}
-            {TOOL_KEYS.map(k => {
-              const on = !toolOff[k]
-              return (
-                <DropdownMenuCheckboxItem key={k} checked={on} className={OWN_MARK}
-                  onSelect={e => e.preventDefault()} onCheckedChange={() => patch({ toolOff: { ...toolOff, [k]: on } })}>
-                  <LogoTile k={k} size="sm" />
-                  <span className="flex-1 text-base">{toolDetail(data, k).name}</span>
-                  <SwitchLook on={on} small />
-                </DropdownMenuCheckboxItem>
-              )
-            })}
-            <DropdownMenuSeparator className="mx-1.5 my-1" />
-            <DropdownMenuItem className="px-2.5 py-2 text-sm font-strong" onSelect={() => go('apps')}>Manage tools →</DropdownMenuItem>
+            {toolItems}
           </DropdownMenuContent>
-        </DropdownMenu>
-        <div className="flex-1" />
-        <DropdownMenu modal={false} open={pop === 'model'} onOpenChange={onOpen('model')}>
+        </DropdownMenu>}
+        <div className="min-w-0 flex-1" />
+        {!slim && <DropdownMenu modal={false} open={pop === 'model'} onOpenChange={onOpen('model')}>
           <Tip label="Model">
             <DropdownMenuTrigger asChild>
               <button type="button" aria-label={`Model: ${modelLabel}`}
-                className={cn('flex h-8 items-center gap-1 rounded-full pr-2 pl-3 text-sm whitespace-nowrap text-foreground-2 hover:bg-accent', pop === 'model' && 'bg-accent')}>
+                className={cn('flex h-8 flex-none items-center gap-1 rounded-full pr-2 pl-3 text-sm whitespace-nowrap text-foreground-2 hover:bg-accent', pop === 'model' && 'bg-accent')}>
                 {modelLabel}<Icon name="expand_more" size={17} className="text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
           </Tip>
           <DropdownMenuContent {...menuProps} align="end" alignOffset={-46} className={cn(MENU, phone ? 'w-menu-mode-phone' : 'w-menu-mode')}>
-            <DropdownMenuRadioGroup aria-label="Model" value={sel} onValueChange={id => patch({ modelSel: id })}>
-              {modes.map(m => (
-                <DropdownMenuRadioItem key={m.id} value={m.id} className={cn(OWN_MARK, 'py-2')}>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-base font-medium">{m.label}</span>
-                    <span className="block text-xs text-muted-foreground">{m.model} · {m.sub}</span>
-                  </span>
-                  {sel === m.id && <Icon name="check" size={18} className="text-foreground" />}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
+            <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
             <div className="mt-1 border-t border-divider px-2.5 pt-2 pb-1.5 text-xs text-muted-foreground">Admins choose which models the team can use, in Settings.</div>
           </DropdownMenuContent>
-        </DropdownMenu>
-        <Tip label="Dictate">
-          <button type="button" aria-label="Dictate" onClick={() => notConnected('Dictation')}
-            className={cn(ROUND, 'bg-secondary text-foreground-2 hover:bg-fill-hover')}>
-            <Icon name="mic" size={19} />
-          </button>
-        </Tip>
+        </DropdownMenu>}
+        {!slim && (
+          <Tip label="Dictate">
+            <button type="button" aria-label="Dictate" onClick={() => notConnected('Dictation')}
+              className={cn(ROUND, 'bg-secondary text-foreground-2 hover:bg-fill-hover')}>
+              <Icon name="mic" size={19} />
+            </button>
+          </Tip>
+        )}
+        {/* While the answer streams Stop keeps Send's place, and a typed message gets its own button beside it: it
+            waits above the box for the answer to end (H8). Editing sends at once, in place of the old question. */}
+        {running && canSend && (
+          <Tip label={editing ? 'Send' : 'Send when this answer ends'}>
+            <button type="button" aria-label={editing ? 'Send' : 'Queue message'} onClick={send} className={cn(ROUND, 'size-9 bg-secondary text-foreground-2 hover:bg-fill-hover')}>
+              <Icon name={editing ? 'arrow_upward' : 'schedule_send'} size={19} weight={400} />
+            </button>
+          </Tip>
+        )}
         {running ? (
           <Tip label="Stop">
-            <button type="button" aria-label="Stop" onClick={() => stopRun()} className={SEND}>
+            <button type="button" data-composer-send aria-label="Stop" onClick={() => stopRun()} className={SEND}>
               <Icon name="stop" size={19} weight={400} fill />
             </button>
           </Tip>
         ) : (
           <Tip label="Send">
-            <button type="button" aria-label="Send" onClick={send} disabled={!canSend} className={SEND}>
+            <button type="button" data-composer-send aria-label="Send" onClick={send} disabled={!canSend} className={SEND}>
               <Icon name="arrow_upward" size={19} weight={400} />
             </button>
           </Tip>
         )}
       </div>
     </div>
+  )
+}
+
+/** The model choices, in the model menu and, on a phone, in "+". */
+function ModelItems({ modes, sel, onPick }: { modes: { id: string; label: string; model: string; sub: string }[]; sel: string; onPick: (id: string) => void }) {
+  return (
+    <DropdownMenuRadioGroup aria-label="Model" value={sel} onValueChange={onPick}>
+      {modes.map(m => (
+        <DropdownMenuRadioItem key={m.id} value={m.id} className={cn(OWN_MARK, 'py-2')}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-medium">{m.label}</span>
+            <span className="block text-xs text-muted-foreground">{m.model} · {m.sub}</span>
+          </span>
+          {sel === m.id && <Icon name="check" size={18} className="text-foreground" />}
+        </DropdownMenuRadioItem>
+      ))}
+    </DropdownMenuRadioGroup>
   )
 }
 

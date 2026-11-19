@@ -24,7 +24,8 @@ const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msgs = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
 const stop = (page: Page) => page.locator('[data-composer]').getByRole('button', { name: 'Stop', exact: true })
-const thinkingRow = (page: Page) => page.locator('main').getByRole('status')
+// The visible thinking line, and any live region with words in it (the empty ones stay mounted so they can announce).
+const thinkingRow = (page: Page) => page.locator('main').locator('[data-thinking]').or(page.locator('main').getByRole('status').filter({ hasText: /\S/ }))
 const openSide = (page: Page, title: string) => side(page).getByRole('button', { name: title, exact: true }).click()
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
 /** Holds the clock: an answer under way stays under way until `resume`. Half a second ahead, so the clock can't have passed it first. */

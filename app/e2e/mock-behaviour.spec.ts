@@ -243,10 +243,10 @@ test('Mock: a failed answer keeps the routine the earlier one made, and Try agai
 test('Mock: an off-script question gets the "can\'t answer from your tools" answer, never "sample data"', async ({ page }) => {
   await start(page)
   await askFromToday(page, 'What is the weather like in Lisbon?')
-  // The D8 words: what it can't answer, then the six tools by name. The suggested questions follow as chips, so the
-  // turn's last message is the chips and the text is the one before it.
-  const answer = msgs(page).nth(-2)
-  await expect(msgs(page).last().getByRole('button', { name: 'Which orders are stuck over 3 days?' })).toBeVisible()
+  // The D8 words: what it can't answer, then the six tools by name. One card per answer (D2): the suggested questions
+  // sit as chips inside the same card, after the text.
+  const answer = msgs(page).last()
+  await expect(answer.getByRole('button', { name: 'Which orders are stuck over 3 days?' })).toBeVisible()
   await expect(answer).toContainText("can't answer that from your tools yet")
   await expect(answer).toContainText('Shopify, Amazon, ShipBob, Xero, Gorgias and Meta Ads')
   await expect(log(page)).not.toContainText(/\bdemo\b|\bmock\b/i)
