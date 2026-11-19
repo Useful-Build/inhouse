@@ -1,6 +1,6 @@
 # P1: the agent seam (`fleet/agent-seam`)
 
-Status: draft, 2026-11-19. Phase plan under the backend plan (`docs/plans/2026-11-19-backend.md`, "Phases" and
+Status: draft, 2026-11-19, revised after the Sonnet and Opus review. Phase plan under the backend plan (`docs/plans/2026-11-19-backend.md`, "Phases" and
 "Phase schedule (waves)"). Common rules for every phase (landing, reviews, seats, scrub) are in that schedule section
 and aren't repeated here.
 
@@ -30,8 +30,9 @@ In:
   returns. `src/agent/types.ts` re-exports the inferred types, so each type is defined once.
 - **The contract suite on the mock** (Vitest): every read, write and run event parsed through the schema; stable
   snapshots; notices; optimistic rollback.
-- **The product client stub** `src/agent/http/`: implements `AgentClient`, reads return `loading` and writes reject
-  with `AgentError('unavailable')`. P2 fills it in.
+- **The product client stub** `src/agent/http/`: implements `AgentClient`; reads return `loading` and writes reject
+  with `AgentError('unavailable')`. `unavailable` joins the error code enum now (C3 adds the rest in P2). The product
+  shell shows one "Not connected yet" screen in place of the pages when the client reports it. P2 fills the client in.
 
 Out: any backend, route or Worker change (P2); C2 to C7 and C9 (P2, P3, P6); deploying the product build anywhere.
 
@@ -43,6 +44,8 @@ Out: any backend, route or Worker change (P2); C2 to C7 and C9 (P2, P3, P6); dep
   Plan step and updates the briefs below if a path moved.
 - No input from Wasim beyond approving this plan, which is also his OK for the sensitive paths named below
   (`app/e2e/`, `app/scripts/`, `app/vitest.config.ts`, `app/playwright.config.ts`, `.github/workflows/ci.yml`).
+- **Test model (Wasim, 2026-11-19):** every test, eval, smoke or check in this phase that calls a real model runs on
+  Sonnet 5.5 (`claude-sonnet-5-5`) at medium effort; everything else uses the scripted model. P1 calls no model.
 
 ## Design notes
 
@@ -62,8 +65,11 @@ Out: any backend, route or Worker change (P2); C2 to C7 and C9 (P2, P3, P6); dep
   Mon, Nov 16, 2026.
 - **The product build check** (`scripts/check-product-build.mjs`): scans the product output for canary strings (the
   sample brand's name, every person's name from `sample-data/`, a canary constant exported by `mock.ts`, the
-  `DemoControls` method names) and fails on any hit. It runs the same scan on the demo build and fails if the canaries
+  `DemoControls` marker constant) and fails on any hit. Canaries are unique strings only (the brand name, the two
+  marker constants, distinctive full names), never common words or method names that libraries also use. It runs the same scan on the demo build and fails if the canaries
   are missing there, so the check can't pass by scanning the wrong folder.
+- **One formatting place, enforced.** `scripts/check-format.mjs` fails on `toLocale*`, `Intl.DateTimeFormat` or
+  `Intl.NumberFormat` outside `src/lib/format.ts` and `src/agent/clock.ts`; `lint:tokens` runs it.
 - **zod** is the one new runtime dependency (latest major, exact version in the lockfile). Types only reach the demo
   bundle (`z.infer` is erased); the mock doesn't parse at run time, so hardening's bundle budget holds. The real client
   parses at the boundary from P2.
@@ -81,10 +87,10 @@ the light lock; Playwright runs in CI.
 
 | Id | Role, model, effort | Job | Owns | Waits for |
 |---|---|---|---|---|
-| W1 | opus-worker (Opus 5.5, medium) | Shared schema for the whole current contract, then C1 across types, mock, sample data and the UI. Field inventory first (each field marked instant, money, schedule, duration or display text, in the PR body). A differential test: for every sample value, the old display string equals the new formatter's output. | `app/shared/contract/**` (except `index.ts`), `src/agent/types.ts`, `src/agent/mock.ts`, `src/agent/data.ts`, `src/agent/clock.ts`, `src/agent/sample-data/**`, `src/lib/format.ts`, `src/lib/format.property.test.ts`, and the formatting call sites in `src/screens/**`, `src/overlays/**`, `src/ui/**`, `src/state/derive.ts` | PR0 |
-| W2 | sonnet-worker (Sonnet 5.5, medium) | C10 part 1: `e2e/support/` (fixture, mock client), the lint rule in `scripts/check-app-rules.mjs` (no `inhouse.demo.` storage keys and no sample-data imports in `e2e/` outside `e2e/support/`), then migrate batch A: `e2e/[a-m]*.spec.ts` and the helpers `states.ts`, `page-text.ts`, `pages-polish-checks.ts`, `today-approvals-helpers.ts`. Lands the support layer as its own first PR so W3 can start. | `app/e2e/support/**`, `app/scripts/check-app-rules.mjs`, batch A files | PR0 |
-| W3 | sonnet-worker (Sonnet 5.5, medium) | C10 part 2: batch B, `e2e/[n-z]*.spec.ts` (with `visual.spec.ts`) and `e2e/ship/*.spec.ts`. No baseline file changes. | batch B files | W2's support PR merged |
-| W4 | sonnet-worker (Sonnet 5.5, medium) | C8: `DemoControls`, the two client entry files, the HTTP stub, `store.ts` off the mock, the dev switcher, `?demo`, Reset demo and the tour reading `demo`; the product build check script. | `src/agent/index.ts`, `src/agent/client.demo.ts`, `src/agent/client.product.ts`, `src/agent/demo-controls.ts`, `src/agent/http/**`, `src/state/store.ts`, `src/shell/DevSwitcher.tsx`, `src/shell/demo.ts`, `scripts/check-product-build.mjs`; `src/agent/mock.ts` only for the `DemoControls` move | W1 merged (both touch `mock.ts`) |
+| W1 | opus-worker (Opus 5.5, medium) | Shared schema for the whole current contract, then C1 across types, mock, sample data and the UI. First commit: the field inventory (each field marked instant, money, schedule, duration or display text, in the PR body) and a golden file of today's display strings for every sample value, captured before any formatter changes. Then a differential test: the new formatter's output equals the golden file. The format lint rule. | `app/shared/contract/**` (except `index.ts`), `src/agent/types.ts`, `src/agent/mock.ts`, `src/agent/data.ts`, `src/agent/clock.ts`, `src/agent/sample-data/**`, `src/lib/format.ts`, `src/lib/format.*.test.ts`, the golden file, `scripts/check-format.mjs`, and the formatting call sites in `src/screens/**`, `src/overlays/**`, `src/ui/**`, `src/components/**`, `src/state/derive.ts` and `src/state/store.ts` | PR0 |
+| W2 | sonnet-worker (Sonnet 5.5, medium) | C10 part 1: `e2e/support/` (fixture, mock client), the lint rule in `scripts/check-app-rules.mjs` (no `inhouse.demo.` storage keys and no sample-data imports in `e2e/` outside `e2e/support/`), then migrate batch A: `e2e/[a-m]*.spec.ts`. The support layer and the shared helpers (`states.ts`, `page-text.ts`, `pages-polish-checks.ts`, `today-approvals-helpers.ts`, which batch B imports) land together as W2's first PR, so W3 starts on settled helpers. | `app/e2e/support/**`, `app/scripts/check-app-rules.mjs`, the four helpers, batch A files | PR0 |
+| W3 | sonnet-worker (Sonnet 5.5, medium) | C10 part 2: batch B, `e2e/[n-z]*.spec.ts` (with `visual.spec.ts`) and `e2e/ship/*.spec.ts`. No baseline file changes; a helper change it needs goes to W2. | batch B files | W2's first PR (support layer and helpers) merged |
+| W4 | sonnet-worker (Sonnet 5.5, medium) | C8: `DemoControls`, the two client entry files, the HTTP stub, the "Not connected yet" screen, `store.ts` off the mock, the dev switcher, `?demo`, Reset demo and the tour reading `demo`; the product build check script. Starts after W1, so its edits to files W1 also touched are sequential. | `src/agent/index.ts`, `src/agent/client.demo.ts`, `src/agent/client.product.ts`, `src/agent/demo-controls.ts`, `src/agent/http/**`, `src/state/store.ts`, `src/shell/**`, the demo-reading call sites in `src/App.tsx`, `src/ErrorBoundary.tsx`, `src/overlays/{CommandPalette,Menus,ProblemPanel}.tsx`, `src/screens/{Settings,Tools,Chats,Usage}.tsx`, `src/components/Composer.tsx`, `scripts/check-product-build.mjs`; `src/agent/mock.ts` only for the `DemoControls` move | W1 merged (shared files above) |
 | W5 | sonnet-worker (Sonnet 5.5, medium) | The contract suite on the mock: targets list, schema parse of every `read()` value, every `RunEvent` from `ask()` and every write result; stable snapshot identity between changes; notices; optimistic rollback on a forced failure (the Cap reached scenario and an injected `AgentError`). | `src/agent/contract/**` | W1 merged; rebases onto W4's `reset()` once W4 merges |
 
 Sensitive pieces: none in P1 (no auth, money movement, schema migration or concurrency). W1 is Opus because it's a
@@ -99,7 +105,8 @@ wide typed refactor where a missed field shows only in a screenshot.
   product build on its own port and runs `e2e/product/*.spec.ts`), `.github/workflows/ci.yml` (a step that runs
   `build:product` and the product build check).
 - `e2e/product/no-demo.spec.ts` (written by the orchestrator after W4: the product build shows no sample name, no demo
-  switches, ignores `?demo`, and shows the unavailable state).
+  switches, ignores `?demo`, and shows the "Not connected yet" screen).
+- `app/package.json`'s `lint:tokens` line gains `check-format.mjs` when W1 lands it.
 - `AGENTS.md` (layout: `shared/`, `src/agent/http/`, `e2e/support/`; commands: `build:product`), `app/README.md`,
   `.agents/skills/verify/feature-map.md` and `SKILL.md`, this plan's status.
 - `e2e/ship/agent-seam.spec.ts` (the ship spec below).
@@ -133,8 +140,9 @@ wide typed refactor where a missed field shows only in a screenshot.
    with the reason (C10).
 3. Every instant in the contract is `{ iso, ms }`, every amount `{ minor, currency }`, every schedule time
    `{ hour, minute }`; no screen formats a time or amount outside `src/lib/format.ts`.
-4. The differential test shows the old and new display strings equal for every sample value, and a property test shows
-   `format` is stable across `iso` and `ms` for the same instant.
+4. The differential test shows the new formatter's output equal to the golden file of old display strings for every
+   sample value; a property test shows `format` gives the same text from `iso` and from `ms` for the same instant;
+   `npm run lint` fails on a locale formatting call outside `format.ts` and `clock.ts`.
 5. Every type the `AgentClient` returns is inferred from a schema in `app/shared/contract/`; no hand-written duplicate
    remains in `types.ts`.
 6. The contract suite passes on the mock: every `read()` value, every run event and every write result parses; a
@@ -143,8 +151,8 @@ wide typed refactor where a missed field shows only in a screenshot.
    from `src/agent/mock*`.
 8. `npm run build:product` succeeds, and the product build check passes on it and fails on the demo build (proving
    the canaries); CI runs both.
-9. The `product` Playwright project passes: no sample name, no demo switches, `?demo` ignored, the unavailable state
-   shown.
+9. The `product` Playwright project passes: no sample name, no demo switches, `?demo` ignored, the "Not connected yet"
+   screen shown.
 10. `npm run lint` fails on an `inhouse.demo.` storage key or a sample-data import in a spec outside `e2e/support/`;
     none remain.
 11. Initial JS stays under hardening's bundle budget for the demo build.
