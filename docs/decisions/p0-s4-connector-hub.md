@@ -65,7 +65,9 @@ deployed. Slack's own hosted MCP server runs behind the gateway, with OAuth held
   against the expected one. The MCP TypeScript SDK's client is used for the proxy only.
 - **Read-only by default.** The hub proxies Slack's hosted MCP server behind its own tool list. Slack marks 14 of its
   27 tools as reads and 13 as writes. Without a grant the hub lists only the reads; write tools appear only with a
-  per-run grant the server sets and the model can't. A direct write call with no grant is refused by the hub.
+  per-run grant the server sets and the model can't. A direct write call with no grant is refused by the hub. In
+  the product the grant goes only to the server's outbox and `notification_send` path, never to the runner
+  (confirmed, Wasim 2026-11-19).
 - **Least scopes:** 5 of Slack's 30 cover Watch and notifications in public channels: `search:read.public`,
   `channels:read`, `channels:history`, `users:read` and `chat:write`. Private channel and DM reads are a privacy choice
   per brand. Still to check in P5: whether Slack hides a tool whose scopes are missing or lists it and fails the call.
@@ -92,6 +94,10 @@ Findings:
 
 Decision (Wasim, 2026-11-19): one internal Slack app per brand at first, a Marketplace app later.
 
+**Recheck on Sonnet.** Every model result in this record ran on Haiku 5.5, the Slack search miss included. Tests and
+evals that call a real model now run on Sonnet 5.5 at medium (Wasim, 2026-11-19), so P5 reruns these cases on Sonnet
+before blaming the engineering (the tool description, the hub or the search fallback).
+
 ## Why not self-hosted Executor
 
 - Its image is on ghcr.io, which Cloudflare Containers can't pull from, and its database and keys live on a disk that
@@ -113,7 +119,8 @@ Decision (Wasim, 2026-11-19): one internal Slack app per brand at first, a Marke
   fixture and never reseed per run. Dated refunds are made on their day.
 
 - Slack (P5): its hosted MCP server behind the hub, read-only by default, writes only with a per-run grant the model
-  can't set. Each brand's app gets the 5 least scopes above. The hub lists only the tools the brand's policy allows
+  can't set, given only to the outbox and `notification_send` path (confirmed, Wasim 2026-11-19). P5 reruns the
+  Haiku cases on Sonnet 5.5 at medium first. Each brand's app gets the 5 least scopes above. The hub lists only the tools the brand's policy allows
   (Slack's full list costs 13K to 99K input tokens a question), and private-channel search is a per-brand hub policy.
   Search needs a better tool description or a hub fallback (retry single keywords, or read the brand's listed
   channels), and the supplier-delay case joins the eval set. With token rotation on, the refresh path saves the new
