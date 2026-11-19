@@ -1,7 +1,7 @@
 // The four models, the Models settings page, and scrolling that keeps side menus put.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { settled } from './settled.js'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/today') {
   await page.addInitScript(() => {
@@ -14,7 +14,7 @@ async function start(page: Page, hash = '#/today') {
 }
 
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
-const keep = async (page: Page, name: string, fullPage = false) => { await settled(page); await page.screenshot({ path: `${out}/${name}.png`, fullPage }) }
+const keep = async (page: Page, name: string, fullPage = false) => { await atRest(page); await page.screenshot({ path: `${out}/${name}.png`, fullPage }) }
 const picker = (page: Page, label: string) => page.getByRole('button', { name: `Model: ${label}` })
 const effort = (page: Page, mode: string, value: string) => page.getByRole('combobox', { name: `How hard it thinks: ${mode}: ${value}` })
 const modeSwitch = (page: Page, mode: string) => page.getByRole('switch', { name: `${mode}: the team can use this model` })
@@ -154,7 +154,7 @@ test('Scrolling at 1440: the settings menu, the Library places panel and the sid
 for (const [name, hash] of [['today', '#/today'], ['approvals', '#/approvals'], ['routines', '#/routines'], ['activity', '#/activity'], ['tools', '#/tools'], ['tool-shopify', '#/tools/shopify'], ['skills', '#/skills'], ['usage', '#/usage'], ['chat', '#/chats/refunds'], ['chats-all', '#/chats/all']] as const) {
   test(`Scrolling at 1440: the sidebar stays put on ${name}`, async ({ page }) => {
     await start(page, hash)
-    await settled(page)
+    await atRest(page)
     const sidebar = page.getByRole('complementary', { name: 'Sidebar' })
     const before = await box(sidebar)
     await page.locator('main').evaluate(el => { el.scrollTop = el.scrollHeight })

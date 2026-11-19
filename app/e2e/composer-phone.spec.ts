@@ -3,7 +3,7 @@
 import { expect, test } from '@playwright/test'
 
 test('Phone: the chat composer stays above the safe area, and opening a chat leaves it unfocused', async ({ page }) => {
-  await page.clock.install() // app time is driven by the test, so waiting for it is not a sleep
+  await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await page.addInitScript(() => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()

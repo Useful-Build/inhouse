@@ -3,7 +3,7 @@
 // loading states. Screenshots go to the report.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { settled } from './settled.js'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/library', width = 1440, scenario = 'Normal', theme = 'light') {
   await page.setViewportSize({ width, height: width < 800 ? 844 : 900 })
@@ -18,7 +18,7 @@ async function start(page: Page, hash = '#/library', width = 1440, scenario = 'N
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
 }
 
-const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const places = (page: Page) => page.getByRole('navigation', { name: 'Library places' })
 const items = (page: Page) => page.getByRole('list', { name: 'Files' }).getByRole('listitem')
 const tab = (page: Page, name: string) => page.getByRole('radiogroup', { name: 'File type' }).getByRole('radio', { name: new RegExp(`^${name} \\d+$`) })

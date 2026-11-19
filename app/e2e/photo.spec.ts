@@ -3,7 +3,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import path from 'node:path'
-import { settled } from './settled.js'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/settings/you-general') {
   await page.addInitScript(() => {
@@ -21,7 +21,7 @@ const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' }
 const settingsButton = (page: Page) => side(page).getByRole('button', { name: /account and settings/i })
 const sidebarImg = (page: Page) => settingsButton(page).locator('img')
 const uploaded = 'img[src^="data:image/jpeg"]'
-const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const toast = (page: Page) => page.getByRole('status').filter({ hasText: /PNG, JPG or WebP|over 5 MB/ })
 
 async function resetDemo(page: Page) {

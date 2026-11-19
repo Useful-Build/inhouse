@@ -2,7 +2,7 @@
 // Each test starts from a clean demo state at a given stage and scenario.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { settled } from './settled.js'
+import { atRest } from './states.js'
 
 async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today') {
   await page.addInitScript(([s, sc]) => {
@@ -93,18 +93,19 @@ test('Chat: the stuck-orders question always gives the same table and a 6-step, 
   await expect(trace).toContainText('Tokens')
   await expect(trace).toContainText('18.2k')
   await trace.getByRole('button', { name: 'Replay', exact: true }).click()
-  await settled(page)
+  await atRest(page)
   await page.screenshot({ path: test.info().outputPath('trace-replay.png') })
 })
 
 test('Chat: Stop ends a run and says nothing was changed', async ({ page }) => {
-  await page.clock.install() // app time is driven by the test, so waiting for it is not a sleep
+  await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await start(page, 'Act', 'Normal', '#/chats')
   await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('Why did refunds jump this week?')
   await page.keyboard.press('Enter')
   await page.locator('[data-composer]').getByRole('button', { name: 'Stop' }).click()
   await expect(page.getByText('You stopped your Inhouse agent. Nothing was changed.')).toBeVisible()
   await page.clock.runFor(30_000)
+  await expect(page.getByText('You stopped your Inhouse agent. Nothing was changed.')).toBeVisible()
   await expect(page.getByText(/Refund requests rose from 14/)).toHaveCount(0)
 })
 

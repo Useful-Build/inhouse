@@ -6,7 +6,7 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today', stage = 'Act', scenario = 'Normal') {
-  // App time is driven by the tests (the session save, answers), so waiting for it is not a sleep.
+  // Time keeps flowing; runFor adds app time on top (the session save, answers), so no real sleep.
   await page.clock.install()
   await page.addInitScript(([s, sc]) => {
     if (sessionStorage.getItem('e2e-seeded')) return
@@ -95,7 +95,6 @@ test('Memory: the Library view survives a reload', async ({ page }) => {
 })
 
 test('Memory: a chat answering when the page reloads keeps its question and says the answer stopped', async ({ page }) => {
-  await page.clock.install()
   await start(page, '#/chats/payout')
   await chatBox(page).fill(Q)
   await page.keyboard.press('Enter')
@@ -171,7 +170,6 @@ test('Memory: a message added to a sample chat survives a reload on First day an
 })
 
 test('Memory: the demo clock never runs backwards after a reload, even with nothing written before it', async ({ page }) => {
-  await page.clock.install()
   await start(page)
   // Half an hour into the demo: the first answer is stamped about 8:30 AM.
   await page.clock.fastForward('30:00')

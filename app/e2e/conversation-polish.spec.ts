@@ -15,7 +15,7 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash: string) {
-  // App time is driven by the tests (answers, the session save, toasts), so waiting for it is not a sleep.
+  // Time keeps flowing; runFor adds app time on top (answers, the session save, toasts), so no real sleep.
   await page.clock.install()
   await page.addInitScript(() => {
     if (sessionStorage.getItem('e2e-seeded')) return
@@ -90,8 +90,10 @@ test.describe('desktop', () => {
     expect(open.full - open.h).toBeLessThanOrEqual(1)
     expect(open.h).toBeGreaterThan(fold.h * 3)
     expect(await text.innerText()).toContain('Note 20: order #4819')
+    // A late or smooth scroll is not in getAnimations: move app time on, then check the view held over a window.
     await settled(page)
-    expect(await scroller(page).evaluate(el => el.scrollTop)).toBe(top)
+    await page.clock.runFor(500)
+    await expect.poll(() => scroller(page).evaluate(el => el.scrollTop), { intervals: [100, 100, 100] }).toBe(top)
     await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible()
     await shot(page, 'long-message-open')
 

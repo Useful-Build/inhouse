@@ -290,18 +290,19 @@ test('Mock: the weekly report notification opens the chat that holds the report'
 })
 
 test('Links: First day picked with a sample chat open falls back quietly, with no "may have been deleted" notice', async ({ page }) => {
-  await page.clock.install() // app time is driven by the test, so waiting for it is not a sleep
+  await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await start(page, '#/chats/refunds')
   await expect(msgs(page).first()).toBeVisible()
   await demoTo(page, { scenario: 'First day' })
   await expect.poll(() => page.evaluate(() => location.hash)).not.toContain('refunds')
   // The notice would show just after the fallback: give it the time before checking there is none.
   await page.clock.runFor(1000)
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible() // the page is drawn, so no toast is a real absence
   await expect(page.locator('[data-toast]').filter({ hasText: 'may have been deleted' })).toHaveCount(0)
 })
 
 test("Links: an unknown page, tool, settings tab or chat lands where it did and says so; #/chats doesn't", async ({ page }) => {
-  await page.clock.install() // app time is driven by the test, so waiting for it is not a sleep
+  await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await start(page, '#/nope')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   await expect(page.locator('[data-toast]').filter({ hasText: "That page doesn't exist. You're on Today." })).toBeVisible()
@@ -324,5 +325,6 @@ test("Links: an unknown page, tool, settings tab or chat lands where it did and 
   await page.evaluate(() => { location.hash = '#/chats' })
   await expect(page.getByRole('log', { name: 'Conversation' })).toBeVisible()
   await page.clock.runFor(500)
+  await expect(page.getByRole('log', { name: 'Conversation' })).toBeVisible()
   await expect(page.locator('[data-toast]')).toHaveCount(0)
 })

@@ -2,7 +2,7 @@
 // other screens, focus returns, chat URLs, and the Library's selection, Undo, Escape, counts and data check.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { settled } from './settled.js'
+import { atRest } from './states.js'
 
 async function start(page: Page, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = '#/today') {
   await page.addInitScript(([s]) => {
@@ -16,7 +16,7 @@ async function start(page: Page, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = 
 
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
 /** A screenshot kept next to the report, under a fixed name. */
-const keep = async (page: Page, name: string, fullPage = false) => { await settled(page); await page.screenshot({ path: `${out}/${name}.png`, fullPage }) }
+const keep = async (page: Page, name: string, fullPage = false) => { await atRest(page); await page.screenshot({ path: `${out}/${name}.png`, fullPage }) }
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const main = (page: Page) => page.locator('main')
 const hash = (page: Page) => page.evaluate(() => location.hash)

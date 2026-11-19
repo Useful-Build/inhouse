@@ -1,6 +1,6 @@
 // Phone: the composer's placeholder fits the box at 390 and 360 px.
 import { expect, test } from '@playwright/test'
-import { settled } from './settled.js'
+import { atRest } from './states.js'
 
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
 
@@ -23,7 +23,7 @@ for (const width of [390, 360]) {
       return { text: g.measureText(el.placeholder).width, box: el.clientWidth }
     })
     expect(r.text, `placeholder ${Math.round(r.text)}px in a ${r.box}px box`).toBeLessThanOrEqual(r.box)
-    await settled(page)
+    await atRest(page)
     await page.screenshot({ path: `${out}/composer-${width}.png` })
   })
 }

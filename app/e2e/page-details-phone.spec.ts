@@ -2,7 +2,7 @@
 // holds the sort and the type.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { settled } from './settled.js'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash: string) {
   await page.addInitScript(() => {
@@ -13,7 +13,7 @@ async function start(page: Page, hash: string) {
   })
   await page.goto('/?demo' + hash)
 }
-const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const noSideways = (page: Page) => page.evaluate(() => [document.documentElement, document.querySelector('main')!].every(e => e.scrollWidth - e.clientWidth <= 1))
 
 test('Phone: Settings opens on its menu, a page replaces it, and Back returns to the menu', async ({ page }) => {

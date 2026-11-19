@@ -1,7 +1,7 @@
 // Library: sidebar slot, tabs and counts, places, search, views, the viewer and its link back, Select, Delete and Undo.
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { settled } from './settled.js'
+import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/library') {
   await page.addInitScript(() => {
@@ -20,7 +20,7 @@ const tab = (page: Page, name: string) => tabs(page).getByRole('radio', { name: 
 const places = (page: Page) => page.getByRole('navigation', { name: 'Library places' })
 const cards = (page: Page) => page.getByRole('list', { name: 'Files' }).getByRole('listitem')
 const view = (page: Page, name: string) => page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name })
-const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
+const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const countOf = async (page: Page, name: string) => Number((await tab(page, name).innerText()).replace(/\D/g, ''))
 
 test('Library is in the sidebar right after Today, and Chats is not', async ({ page }) => {

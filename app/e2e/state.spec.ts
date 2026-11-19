@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test'
 import { everything } from './page-text.js'
 
 async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today', fakeClock = false) {
-  // The 10 s hold and the toasts run on app timers, so a test that waits for them installs the clock first and moves it itself.
+  // The 10 s hold and the toasts run on app timers: a test that waits for them installs the clock first (time keeps flowing) and adds app time with runFor.
   if (fakeClock) await page.clock.install()
   await page.addInitScript(([s, sc]) => {
     if (sessionStorage.getItem('e2e-seeded')) return
@@ -59,9 +59,9 @@ test('Act: Undo in the toast during the hold cancels the send', async ({ page })
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
 
   await page.clock.runFor(11_000)
-  await expect(sentToast(page)).toHaveCount(0)
   await expect(badge(page)).toContainText('6')
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
+  await expect(sentToast(page)).toHaveCount(0)
   await expect(card(page, KESTREL)).not.toContainText('Approved by Sam')
 })
 
@@ -106,8 +106,8 @@ test('Act: Reset demo during the hold clears the approval and nothing is sent', 
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
 
   await page.clock.runFor(11_000)
-  await expect(sentToast(page)).toHaveCount(0)
   await expect(badge(page)).toContainText('6')
+  await expect(sentToast(page)).toHaveCount(0)
 })
 
 test('Act: two tabs, closing the one that started the hold still sends the reorder, and the other tab says so', async ({ page, context }) => {
