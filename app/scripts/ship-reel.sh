@@ -37,7 +37,7 @@ while IFS=$'\t' read -r project title video; do
   done
   printf '%s' "$view" > "$work/view-$n.txt"
   printf '%s' "${sha:0:7}" > "$work/sha-$n.txt"
-  ffmpeg -nostdin -loglevel error -y -f lavfi -i "color=c=0x111111:s=${W}x${H}:d=2:r=$FPS" \
+  ffmpeg -nostdin -loglevel error -y -f lavfi -i "color=c=0x111111:s=${W}x${H}:d=3:r=$FPS" \
     -vf "${filter}drawtext=expansion=none:fontfile=$font:textfile=$work/view-$n.txt:fontcolor=0xbbbbbb:fontsize=32:x=(w-text_w)/2:y=h-200,drawtext=expansion=none:fontfile=$font:textfile=$work/sha-$n.txt:fontcolor=0x888888:fontsize=28:x=(w-text_w)/2:y=h-150,format=yuv420p" \
     -an -c:v libx264 -preset veryfast "$work/card-$n.mp4"
   ffmpeg -nostdin -loglevel error -y -i "$results/$video" \

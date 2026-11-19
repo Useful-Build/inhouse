@@ -27,12 +27,12 @@ const shipUse = (width: number, height: number) => ({
   video: { mode: 'on' as const, size: { width, height } },
   trace: 'on' as const,
   screenshot: 'off' as const,
-  launchOptions: { slowMo: 250 },
+  launchOptions: { slowMo: 1600 }, // a pause after every action so a person can follow; under ~3 s (a 4 s toast is checked)
 })
 const shipProjects: PlaywrightTestProject[] = process.env.SHIP
   ? [
-      { name: 'ship-desktop', use: shipUse(1440, 900), testMatch: /e2e[\\/]ship[\\/].*\.spec\.ts$/, timeout: 120_000 },
-      { name: 'ship-phone', use: { ...shipUse(390, 844), hasTouch: true, isMobile: false }, testMatch: /e2e[\\/]ship[\\/].*\.spec\.ts$/, timeout: 120_000 },
+      { name: 'ship-desktop', use: shipUse(1440, 900), testMatch: /e2e[\\/]ship[\\/].*\.spec\.ts$/, timeout: 300_000 },
+      { name: 'ship-phone', use: { ...shipUse(390, 844), hasTouch: true, isMobile: false }, testMatch: /e2e[\\/]ship[\\/].*\.spec\.ts$/, timeout: 300_000 },
     ]
   : []
 // BASE_URL: run against a deployed preview. No local server then.
