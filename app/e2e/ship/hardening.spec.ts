@@ -6,7 +6,7 @@ import type { Locator, Page } from '@playwright/test'
 const phone = () => test.info().project.name === 'ship-phone'
 
 /** Seeds the demo once per browser session, then loads `url` as a first visit (a full load, not a hash change). */
-async function start(page: Page, url: string, heading: string) {
+async function start(page: Page, url: string, heading: string | RegExp) {
   await page.addInitScript(() => {
     if (sessionStorage.getItem('e2e-seeded')) return
     localStorage.clear()
@@ -18,7 +18,11 @@ async function start(page: Page, url: string, heading: string) {
 }
 
 const main = (page: Page) => page.getByRole('main')
-const h1 = (page: Page, name: string) => page.getByRole('heading', { level: 1, name, exact: true })
+const h1 = (page: Page, name: string | RegExp) => page.getByRole('heading', { level: 1, name, exact: typeof name === 'string' })
+/** Today's heading greets the person ("Good morning, Sam. ..."), not the page name. */
+const TODAY = /^Good (morning|afternoon|evening)/
+/** Library opens on its All files view. */
+const LIBRARY = 'All files'
 const team = (page: Page) => page.getByRole('dialog', { name: 'Your Inhouse team' })
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
 
@@ -30,7 +34,7 @@ async function sidebar(page: Page) {
   return side
 }
 
-async function goTo(page: Page, name: string, heading = name) {
+async function goTo(page: Page, name: string, heading: string | RegExp = name === 'Today' ? TODAY : name) {
   const side = await sidebar(page)
   await side.getByRole('button', { name, exact: true }).click()
   await expect(h1(page, heading)).toBeVisible()
@@ -58,8 +62,19 @@ async function expectIconsDrawn(scope: Locator, atLeast = 3) {
   }))
   expect(shown.length).toBeGreaterThanOrEqual(atLeast)
   expect(shown.filter(i => i.width > i.size * 1.6), 'icons drawn as text').toEqual([])
-  // No visible text on its own reads as an icon name (folder_open, task_alt): a glyph never shows its letters.
-  await expect(scope.getByText(/^[a-z]+(_[a-z]+)+$/)).toHaveCount(0)
+  // Outside the icons, no visible text reads as an icon name (folder_open, task_alt): a glyph never shows its letters.
+  const leaked = await scope.evaluate(root => {
+    const out: string[] = []
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const text = n.textContent?.trim() ?? ''
+      const el = n.parentElement
+      if (!el || el.closest('.ms') || !/^[a-z]+(_[a-z]+)+$/.test(text)) continue
+      if (el.getBoundingClientRect().width > 0) out.push(text)
+    }
+    return out
+  })
+  expect(leaked, 'icon names shown as text').toEqual([])
 }
 
 async function paletteTheme(page: Page, to: 'dark' | 'light') {
@@ -71,13 +86,13 @@ async function paletteTheme(page: Page, to: 'dark' | 'light') {
 }
 
 test('S1: Icons draw the same after the font was cut to 84 KB: Today, sidebar, Library, a toast, dark and back', async ({ page }) => {
-  await start(page, '/?demo#/today', 'Today')
+  await start(page, '/?demo#/today', TODAY)
   await expectIconsDrawn(main(page), 1)
   await expect.poll(() => page.evaluate(() => document.fonts.check("20px 'Material Symbols Rounded'"))).toBe(true)
   const side = await sidebar(page)
   await expectIconsDrawn(side, 5)
   await side.getByRole('button', { name: 'Library', exact: true }).click()
-  await expect(h1(page, 'Library')).toBeVisible()
+  await expect(h1(page, LIBRARY)).toBeVisible()
   await expectIconsDrawn(main(page), 1)
   // A toast: forgetting a memory line shows one with its own icon.
   await accountItem(page, 'Your settings')
@@ -94,13 +109,13 @@ test('S1: Icons draw the same after the font was cut to 84 KB: Today, sidebar, L
 })
 
 test('S2: Heavy pages load on first visit without a crash, with the heading in focus and the tab titled', async ({ page }) => {
-  await start(page, '/?demo#/today', 'Today')
+  await start(page, '/?demo#/today', TODAY)
   await goTo(page, 'Usage')
   await expect(page).toHaveTitle(/Usage/)
   if (!phone()) await expect(h1(page, 'Usage')).toBeFocused()
-  await goTo(page, 'Library')
+  await goTo(page, 'Library', LIBRARY)
   await expect(page).toHaveTitle(/Library/)
-  if (!phone()) await expect(h1(page, 'Library')).toBeFocused()
+  if (!phone()) await expect(h1(page, LIBRARY)).toBeFocused()
   await accountItem(page, 'Your settings')
   // Settings shows its own title on a phone (the menu) and the first tab's on a desktop.
   const settings = h1(page, phone() ? 'Settings' : 'General')
@@ -126,7 +141,8 @@ test('S4: One broken screen keeps the rest of the app working', async ({ page })
   const side = await sidebar(page)
   await side.getByRole('button', { name: 'Today', exact: true }).click()
   await expect(page).toHaveURL(/#\/today$/)
-  await expect(page.getByRole('complementary', { name: 'Sidebar' })).toBeVisible()
+  // On a phone the drawer closes after a pick; on desktop the sidebar stays.
+  if (!phone()) await expect(page.getByRole('complementary', { name: 'Sidebar' })).toBeVisible()
   await expect(main(page).getByRole('alert')).toBeVisible()
   // Message the team opens the team window on Report a bug, with a line about the crash.
   await main(page).getByRole('button', { name: 'Message the team', exact: true }).click()
