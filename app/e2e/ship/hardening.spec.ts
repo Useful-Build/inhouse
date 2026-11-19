@@ -87,8 +87,8 @@ async function paletteTheme(page: Page, to: 'dark' | 'light') {
 
 test('S1: Icons draw the same after the font was cut to 84 KB: Today, sidebar, Library, a toast, dark and back', async ({ page }) => {
   await start(page, '/?demo#/today', TODAY)
-  await expectIconsDrawn(main(page), 1)
   await expect.poll(() => page.evaluate(() => document.fonts.check("20px 'Material Symbols Rounded'"))).toBe(true)
+  await expectIconsDrawn(main(page), 1)
   const side = await sidebar(page)
   await expectIconsDrawn(side, 5)
   await side.getByRole('button', { name: 'Library', exact: true }).click()
@@ -100,6 +100,8 @@ test('S1: Icons draw the same after the font was cut to 84 KB: Today, sidebar, L
   await main(page).getByRole('button', { name: 'Forget', exact: true }).first().click()
   const forgotten = toast(page, 'Forgotten. Your Inhouse agent will no longer use this.')
   await expect(forgotten).toBeVisible()
+  // Pointing at the toast holds it, as it would for a person reading it, so it stays while it's checked.
+  await forgotten.hover()
   await expectIconsDrawn(forgotten, 1)
   // Dark and back: the icons still draw.
   await paletteTheme(page, 'dark')
@@ -132,7 +134,7 @@ test('S3: A deep link opens straight onto a lazy page, and Back to Today works',
   await expect(page).toHaveURL(/#\/today$/)
 })
 
-test('S4: One broken screen keeps the rest of the app working', async ({ page }) => {
+test('S4: A broken screen shows its own error inside the app, and the sidebar and Message the team still work', async ({ page }) => {
   await start(page, '/?demo&crash=screen#/usage', '')
   const crashed = main(page).getByRole('alert')
   await expect(crashed.getByRole('heading', { name: 'Something went wrong.' })).toBeVisible()
