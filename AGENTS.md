@@ -47,11 +47,13 @@ Rules are in `app/DESIGN_SYSTEM.md` (base-owned) and `app/DESIGN_APP.md` (this a
 - `lint:tokens` runs `scripts/check-tokens.mjs` (no color literals outside `src/ui-base.css` and `src/index.css`) and `scripts/check-app-rules.mjs` (no arbitrary Tailwind values outside `src/components/ui/`, no literal inline styles in `.tsx`).
 - A new `--app-*` token goes in `src/index.css` (`:root` and `.dark`, mapped in `@theme inline`) and in `src/lib/merge-config.ts` so `cn()` keeps it.
 - Never edit `src/ui-base.css` or `src/components/ui/` (except `icon.tsx`). An app-only look goes in a `src/ui` wrapper. Screens use `src/ui`, icons go through `<Icon name="..." />`.
+- Menus, dialogs, popovers, sheets, tooltips and accordions are Radix components.
+- Dark is decided per token, not inverted. Check every change in light and dark, on desktop and on a 390px phone.
 - A change meant to show runs `npm run test:visual:linux:update`, and the new baselines are committed with it.
 
 ## How changes land here
 
-- **CI gates:** the `ci` check (from `ci.yml`: `e2e` shards, which also run typecheck and lint) must be green to merge. The `pr-gates` job (Verified trailer, flagged check changes) runs on every PR. `baselines.yml` and `motion.yml` are manual only.
+- **CI gates:** `ci.yml` runs on every PR into `main` and `fleet/**` and in the merge queue: typecheck, lint, build and every Playwright project, in the Playwright image (that's why the baselines are Linux). The `ci` check must be green to merge. The `pr-gates` job (Verified trailer, flagged check changes) runs on every PR. `baselines.yml` and `motion.yml` are manual only.
 - **Deploys:** nothing deploys on merge. `npm run deploy` (in `app/`) is run by hand.
 - **After merge:** none.
 - **Sensitive paths (need Wasim's OK):** `.github/workflows/`, `app/playwright.config.ts`, `app/e2e/` specs and helpers, `app/e2e/visual.spec.ts-snapshots/`, `app/scripts/` (the lint checks), `app/wrangler.jsonc`.

@@ -105,8 +105,8 @@ jobs:
         run: |
           missing=""
           for c in $(git log --no-merges --format=%H "$BASE..$HEAD"); do
-            git log -1 --format=%B "$c" | git interpret-trailers --parse |
-              grep -qiE '^Verified:[[:space:]]*[^[:space:]]' ||
+            t=$(git log -1 --format=%B "$c" | git interpret-trailers --parse)
+            grep -qiE '^Verified:[[:space:]]*[^[:space:]]' <<< "$t" ||
               missing="$missing$(git log -1 --format='%h %s' "$c")"$'\n'
           done
           if [ -n "$missing" ]; then
