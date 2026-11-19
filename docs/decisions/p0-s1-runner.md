@@ -74,6 +74,14 @@ the store 3.5 s; cold after destroy 4.1 to 5.8 s, boot 0.7 to 1.3 s.
 ## Verdict
 
 The runner design holds on `ctx.container` and the `default` policy, with the rules below. Size on standard-4.
+The runner pool (standard-4, max(2, ceil(peak concurrent runs / 25)), fill-first) was decided by Wasim on 2026-11-19.
+
+## Alternatives considered
+
+Cloudflare's largest container is standard-4 (4 vCPU, 12 GiB), which is also the per-instance cap. Bigger single
+containers exist elsewhere: AWS Fargate up to 32 vCPU and 244 GB, Google Cloud Run up to 8 vCPU and 32 GiB, and plain
+VMs at any size (docs read 2026-11-19). We stay on Cloudflare with a pool. Cost follows total vCPU either way, and one
+big container is a single point of failure that every deploy or crash would cut at once.
 
 ## What it changes in the plan
 
@@ -107,3 +115,5 @@ The runner design holds on `ctx.container` and the `default` policy, with the ru
 - https://code.claude.com/docs/en/hooks (deferring a tool call)
 - https://code.claude.com/docs/en/agent-sdk/typescript (`sessionId`, `sessionStoreFlush`, `deferred_tool_use`)
 - https://code.claude.com/docs/en/agent-sdk/hosting, /agent-sdk/secure-deployment, /agent-sdk/user-input
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html (Fargate task sizes)
+- https://cloud.google.com/run/docs/configuring/services/cpu and /memory-limits (Cloud Run limits)

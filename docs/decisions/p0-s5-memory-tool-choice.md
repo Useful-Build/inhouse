@@ -45,7 +45,7 @@ them?
    keys. Suggest one key: the inventory tool takes `sku` only.
 3. **Memory as a reflex.** The "search memory before answering about suppliers, policies, preferences or decisions"
    rule made the agent search memory in 28 chats that weren't about recall. Always right, about one extra turn each.
-   Soften the rule.
+   Soften the rule (decided, Wasim 2026-11-19).
 4. Grader fixes before the set becomes the real suite: R10, T02 (accept the fact in the person's language) and the T08
    stub data.
 
@@ -60,7 +60,8 @@ names is sound.
   Still to add: routine creation, cost per conversation, injection and exfiltration sets.
 - 94% on Sonnet 5.5 medium is the baseline to beat, not the model choice.
 - Suggest `sku` as the only key on the inventory tool (connector design, P4).
-- Soften the memory-first prompt rule.
+- Soften the memory-first prompt rule: search memory when the question could depend on saved context, not on every
+  chat. Decided, Wasim 2026-11-19. P3's eval checks that recall doesn't drop.
 - The product FTS5 search runs the same vocabulary-gap cases. Semantic search isn't shown to be needed.
 
 ## Docs read (2026-11-19)
