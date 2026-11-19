@@ -60,9 +60,10 @@
     "job": [
       [
         "Answering questions",
-        "Chats and Slack",
+        "Chats",
         38.1,
-        268
+        268,
+        "Chats and {channel}"
       ],
       [
         "Drafting work",
@@ -92,9 +93,10 @@
     "model": [
       [
         "Sonnet 5.5",
-        "Fast · answers, drafted work, chats in Slack",
+        "Fast · answers and drafted work",
         46.4,
-        268
+        268,
+        "Fast · answers, drafted work, chats in {channel}"
       ],
       [
         "Haiku 5.5",
@@ -215,9 +217,10 @@
       "job": [
         [
           "Answering questions",
-          "Chats and Slack",
+          "Chats",
           121.49,
-          855
+          855,
+          "Chats and {channel}"
         ],
         [
           "Drafting work",
@@ -247,9 +250,10 @@
       "model": [
         [
           "Sonnet 5.5",
-          "Fast · answers, drafted work, chats in Slack",
+          "Fast · answers and drafted work",
           147.96,
-          855
+          855,
+          "Fast · answers, drafted work, chats in {channel}"
         ],
         [
           "Haiku 5.5",

@@ -79,7 +79,7 @@ export function Sidebar() {
           </span>
           <div className="mr-1 min-w-0 flex-1">
             <div className="truncate text-base font-semibold tracking-card">Inhouse</div>
-            <div className="truncate text-xs text-muted-foreground">Northline Outdoor</div>
+            <div className="truncate text-xs text-muted-foreground">{ctx.data.meta.brand.name}</div>
           </div>
           <IconButton icon="edit_square" label="New chat" shortcut={SHORTCUTS.newChat} size={18} onClick={() => newChat()} variant="chrome" />
         </div>

@@ -1,7 +1,7 @@
 // Usage: spend against the cap, daily bars, totals and breakdown.
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { capStatus } from '../state/derive'
+import { activeChannel, capStatus } from '../state/derive'
 import { DEMO_START, fmtCount } from '../agent/clock'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
@@ -70,10 +70,10 @@ export function Usage() {
     : cap
       ? 'Cap reached today. Routines and jobs are paused until an admin raises it.'
       : `Admins get an email at ${usage.alertAt}%. Your Inhouse agent pauses routines and jobs at the cap.`
-  // Slack is a channel only from its stage (Act) and once connected: before that, questions come from chats alone
-  // ("Chats and Slack" is "Chats", "answers, drafted work, chats in Slack" is "answers and drafted work").
-  const slack = ctx.data.tools.channels.some(c => c.key === 'slack' && ctx.S >= c.need)
-  const rows = usage.breakdown[tab].map(r => (slack ? r : { ...r, sub: r.sub.replace(/^Chats and Slack$/, 'Chats').replace(/, ([^,·]+), chats in Slack$/, ' and $1') }))
+  // A channel counts only from its stage (Act) and once connected: before that, questions come from chats alone, so a
+  // row shows its plain `sub`. Once one is, rows that name it show `subWithChannel` with the channel's name.
+  const channel = activeChannel(ctx)
+  const rows = usage.breakdown[tab].map(r => (channel && r.subWithChannel ? { ...r, sub: r.subWithChannel.replaceAll('{channel}', channel.name) } : r))
   const stats: [string, string][] = [
     ['Conversations', fmtCount(usage.conversations)],
     ['Questions asked', fmtCount(usage.questionsAsked)],

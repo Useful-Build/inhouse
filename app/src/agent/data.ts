@@ -22,7 +22,7 @@ import libraryRaw from '@sample/library.json'
 import { keepTimesTogether, minuteOfTime } from './clock'
 import type {
   ActivityLine, CatalogTool, Effort, LibraryFile, LibraryKind, LibraryPlace, MemoryLine, ModelMode, Problem, RoutineDef, SkillDef, SkillSuggestion, StageIndex,
-  TablePart, ToolChannel, ToolDetail, Trace, TraceStep, TraceStepKind, UsageRow,
+  Attachment, TablePart, ToolChannel, ToolDetail, Trace, TraceStep, TraceStepKind, UsageRow,
 } from './types'
 
 // Every shown time in the sample data keeps its digits and AM or PM on one line ("5:41\u00a0AM"), like fmtTime.
@@ -62,6 +62,20 @@ export const problemById = (id: string): ProblemSeed => {
   return p
 }
 
+/** The sample records the composer can attach, checked once at load. */
+const loadAttachExamples = (): (Attachment & { sources: string[]; label?: string })[] => {
+  const out = (toolsJson.attachExamples ?? []) as (Attachment & { sources: string[]; label?: string })[]
+  for (const a of out) {
+    for (const k of ['name', 'meta', 'icon'] as const) {
+      if (typeof a[k] !== 'string' || !a[k]) throw new Error(`Tools data: an attach example is missing "${k}".`)
+    }
+    if (a.label !== undefined && (typeof a.label !== 'string' || !a.label)) throw new Error(`Tools data: the attach example "${a.name}" needs "label" to be a non-empty string.`)
+    if (Array.isArray(a.sources) && a.sources.length === 0) throw new Error(`Tools data: the attach example "${a.name}" needs at least one entry in "sources".`)
+    if (!Array.isArray(a.sources) || a.sources.some(k => !Object.hasOwn(toolsJson.details, k))) throw new Error(`Tools data: the attach example "${a.name}" needs "sources" to be a list of known tool keys.`)
+  }
+  return out
+}
+
 /** The channels, checked once at load (decision D6: Slack is a channel from Act, not a tool the agent reads). */
 const loadChannels = (): ToolChannel[] => {
   const out = toolsJson.channels as unknown as ToolChannel[]
@@ -82,6 +96,7 @@ const loadChannels = (): ToolChannel[] => {
 export const tools = {
   connected: toolsJson.connected,
   channels: loadChannels(),
+  attachExamples: loadAttachExamples(),
   beingConnected: toolsJson.beingConnected,
   lastRead: toolsJson.lastRead as Record<string, string> & { default: string },
   catalog: (toolsJson.catalog as CatalogTool[]).map(t => (t.need === undefined ? t : { ...t, need: needOf(`the tool "${t.k}"`, t.need) })),
@@ -94,6 +109,7 @@ export const seedRoutine = routinesJson.createdInSeedChat
 
 export const skills = (skillsJson.skills as SkillDef[]).map(x => ({ ...x, need: needOf(`the skill "${x.n}"`, x.need) }))
 export const skillSuggestions = skillsJson.suggested as SkillSuggestion[]
+export const skillSuggestionsTitle = skillsJson.suggestedTitle
 
 /** A recorded trace's key in traces.json: one per seeded or scripted answer, plus the morning check and a draft. */
 export type TraceKey = string
@@ -124,7 +140,7 @@ export const seedTable = (chatJson.seedThread.turns[1] as { agent: { type: strin
 
 type UsageBreakdown = Record<'person' | 'job' | 'model' | 'tool', UsageRow[]>
 const usageRows = (b: Record<string, unknown[]>) => Object.fromEntries(
-  Object.entries(b).map(([k, rows]) => [k, (rows as [string, string, number, number][]).map(([name, sub, dollars, conversations]) => ({ name, sub, dollars, conversations }))]),
+  Object.entries(b).map(([k, rows]) => [k, (rows as [string, string, number, number, string?][]).map(([name, sub, dollars, conversations, subWithChannel]) => ({ name, sub, dollars, conversations, ...(subWithChannel ? { subWithChannel } : {}) }))]),
 ) as UsageBreakdown
 
 export const usage = {
@@ -175,6 +191,11 @@ export const usageHistory = (usageHistoryJson.months as RawMonth[]).map(m => ({
   breakdown: usageRows(m.breakdown),
 }))
 
+/** Each job the agent may finish has a stable id (its Run limits toggle is saved as `l:<id>`), checked once at load. */
+for (const j of peopleJson.runLimits.jobsAgentMayFinish as { id?: unknown }[]) {
+  if (typeof j.id !== 'string' || !j.id) throw new Error('Sample data: a job in runLimits.jobsAgentMayFinish has no id.')
+}
+if (new Set(peopleJson.runLimits.jobsAgentMayFinish.map(j => j.id)).size !== peopleJson.runLimits.jobsAgentMayFinish.length) throw new Error('Sample data: runLimits.jobsAgentMayFinish has a repeated id.')
 export const people = peopleJson
 
 const memLines = (group: string, rows: { text: string; source: string }[]): MemoryLine[] =>

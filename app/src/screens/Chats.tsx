@@ -320,6 +320,7 @@ function Thread() {
     const turnIds = b.ms.map(x => x.id)
     const again = question && (() => regenerate([question.id, ...(ask0?.between ?? []), ...turnIds, ...tail], { text: question.text, quote: question.quote, atts: question.atts }))
     const S = ctx.S
+    const sendChannel = ctx.data.tools.channels[0]
     const items: { icon: string; t: string; go: () => void; destructive?: boolean; sep?: boolean; locked?: boolean; disabled?: boolean }[] = [
       // A phone's row keeps Copy, the steps and "···": the rest of the row moves into the menu (D3), the thumbs as a
       // radio pair after these.
@@ -328,7 +329,7 @@ function Thread() {
         ...(again ? [{ icon: 'refresh', t: 'Regenerate', go: again, disabled: thinking }] : []),
       ] : []),
       { icon: 'graphic_eq', t: 'Read aloud', sep: phone, go: () => readAloud(txt) },
-      { icon: 'tag', t: 'Send to Slack', go: () => { if (S >= 1) showToast("Send to Slack isn't connected in this demo.", { icon: 'info', ms: 4000 }) }, locked: S < 1 },
+      ...(sendChannel ? [{ icon: 'tag', t: `Send to ${sendChannel.name}`, go: () => { if (S >= sendChannel.need) showToast(`Send to ${sendChannel.name} isn't connected in this demo.`, { icon: 'info', ms: 4000 }) }, locked: S < sendChannel.need }] : []),
       { icon: 'call_split', t: 'Branch from here', sep: true, go: () => { branchChat(msgs.slice(0, i + 1)); showToast('Started a new chat from this point') } },
       { icon: 'flag', t: 'Report a wrong answer', go: () => openTeam('bug', 'This answer looks wrong: "' + txt.slice(0, 120) + '"') },
       // Undo works from any chat: the store finds this chat wherever it is by then (M5).
