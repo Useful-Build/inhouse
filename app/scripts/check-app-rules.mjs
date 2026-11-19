@@ -6,9 +6,10 @@
 //   2. inline `style` props in .tsx that carry a literal (a number, a quoted string, a var(--...)), also as a fallback
 //      (`?? 20`, `|| 20`, `&& 20`) or a ternary branch. Values computed at runtime (a bar's height from data, a
 //      position from state) are fine.
-//   3. fixed waits in the E2E specs (e2e/**/*.ts): `waitForTimeout(` and a promise whose body calls `setTimeout`
-//      (`new Promise(r => setTimeout(r, 500))`), `timers/promises`, `scheduler.wait(`. Wait for a condition (an `expect` or `expect.poll`), or move time with
-//      the Clock API (`page.clock.install()`, `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine.
+//   3. fixed waits in the E2E specs (e2e/**/*.ts): `waitForTimeout(`, any `setTimeout` or `setInterval` (a promise
+//      holding one, an alias, `promisify`), the `timers` module in any form, `scheduler.wait(`, `Atomics.wait`. Wait
+//      for a condition (an `expect` or `expect.poll`), or move time with the Clock API (`page.clock.install()`,
+//      `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine. No allow list.
 // Exceptions live in scripts/check-app-rules.allow.json, each with a reason. An entry nothing uses fails too.
 // Run: npm run lint:tokens (part of npm run lint).
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -186,20 +187,15 @@ const stripComments = (src, blank = false) => {
   }
   return out
 }
-// Line numbers (1-based) of every `new Promise(` (or `new Promise<T>(`) whose argument list, by paren depth, holds setTimeout or setInterval.
-const promiseTimers = blanked => {
-  const lines = []
-  for (const m of blanked.matchAll(/\bnew\s+Promise\s*(?:<[^>()]*>\s*)?\(/g)) {
-    let d = 0, k = m.index + m[0].length - 1
-    for (; k < blanked.length; k++) { if (blanked[k] === '(') d++; else if (blanked[k] === ')' && --d === 0) break }
-    if (/\b(?:setTimeout|setInterval)\b/.test(blanked.slice(m.index + m[0].length, k))) lines.push(blanked.slice(0, m.index).split('\n').length)
-  }
-  return lines
-}
+// Timers outside the test's own timeout: any setTimeout or setInterval (called, aliased, promisified, handed to a
+// promise) except `test.setTimeout(...)` and `page.clock.*`. Run on code with strings blanked.
+const TIMERS = /(?<!\b(?:test|clock)\s*\.\s*)\bset(?:Timeout|Interval)\b/
+// Run on code with strings kept (a module name is a string).
 const FIXED_WAITS = [
   /\bwaitForTimeout\b/, // page.waitForTimeout(...) and page['waitForTimeout'](...)
-  /timers\/promises/, // any import of it: static, dynamic import(), namespace
+  /['"`](?:node:)?timers(?:\/promises)?['"`]/, // the timers module in any form: import, import(), require()
   /\bscheduler\s*\.\s*wait\s*\(/,
+  /\bAtomics\s*\.\s*wait\b/,
 ]
 if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
   const text = readFileSync(file, 'utf8'), code = stripComments(text), lines = text.split('\n')
@@ -210,7 +206,8 @@ if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
     waits.push([`e2e/${relative(e2eDir, file)}`, ln, `e2e/${relative(e2eDir, file)}:${ln}  ${lines[ln - 1].trim()}`])
   }
   for (const re of FIXED_WAITS) for (const m of code.matchAll(new RegExp(re.source, re.flags + 'g'))) add(code.slice(0, m.index).split('\n').length)
-  for (const ln of promiseTimers(stripComments(text, true))) add(ln)
+  const blanked = stripComments(text, true)
+  for (const m of blanked.matchAll(new RegExp(TIMERS.source, 'g'))) add(blanked.slice(0, m.index).split('\n').length)
 }
 waits.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]))
 for (let i = 0; i < waits.length; i++) waits[i] = waits[i][2]

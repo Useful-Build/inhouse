@@ -152,7 +152,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          paths=(app/e2e app/playwright.config.ts app/vitest.config.ts app/scripts .github/workflows
+          paths=(app/e2e app/playwright.config.ts app/vitest.config.ts app/scripts .github/workflows .github/rulesets
             ':(glob)app/src/**/*.property.test.ts')
           files=$(git -c core.quotepath=off diff --name-status --diff-filter=MDR "$BASE...$HEAD" -- "${paths[@]}")
           [ -z "$files" ] && exit 0
