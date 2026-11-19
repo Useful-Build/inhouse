@@ -218,7 +218,7 @@ for (const width of [1440, 768, 390]) {
     const h1 = (await page.getByRole('heading', { level: 1 }).boundingBox())!
     if (width >= 1024) expect(nav.x + nav.width, 'places at the left').toBeLessThanOrEqual(h1.x + 1)
     else expect(nav.y + nav.height, 'places above the files').toBeLessThanOrEqual(h1.y + 1)
-    expect(await noSideways(page)).toBe(true)
+    await expect.poll(() => noSideways(page)).toBe(true)
 
     // The selected place looks like the selected row of the side menu.
     if (!phone) {
@@ -307,7 +307,7 @@ test('Phone: a long file name shows whole in the viewer, and a code file scrolls
   // The long line is wider than the block, and the block scrolls to it.
   expect(await code.evaluate(e => e.scrollWidth > e.clientWidth + 1), 'a long line overflows the block').toBe(true)
   expect(await code.evaluate(e => { e.scrollLeft = 40; return e.scrollLeft }), 'the block scrolls sideways').toBeGreaterThan(0)
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
   await shot(page, 'library-viewer-code-390')
 })
 
@@ -340,6 +340,6 @@ test('Loading shows placeholders where the files will be, at 1440 and 390', asyn
   await shot(page, 'library-loading')
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('status').filter({ hasText: 'Loading files' })).toBeAttached()
-  expect(await noSideways(page)).toBe(true)
+  await expect.poll(() => noSideways(page)).toBe(true)
   await shot(page, 'library-loading-390')
 })
