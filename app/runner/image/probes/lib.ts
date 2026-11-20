@@ -9,6 +9,8 @@ import { spawn } from 'node:child_process'
 import { createScriptedModel, type MessagesRequest, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
 
 export const PROBE_MODEL = 'claude-sonnet-5-5'
+/** The plugin the direct `plugins-not-off` variant adds: one we don't ship. */
+export const EXTRA_PLUGIN = 'probe-extra'
 export const RUN_TOKEN_HEADER = 'x-inhouse-run-token'
 
 // ---------------------------------------------------------------------------------------------------------------------

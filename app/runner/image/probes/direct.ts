@@ -4,12 +4,15 @@
 //
 // Input: PROBE_DIRECT (JSON, below). Output: one JSON line per thing seen on stdout (init, permission asks, the result).
 import type { CanUseTool, Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createQueryGuards } from '../../src/guards/options.ts'
 import { hostAddresses } from '../../src/proxy/proc-net.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
 import type { RunConfig } from '../../src/protocol/local.ts'
 import type { RunContext } from '../../src/session/seam.ts'
-import { PROBE_MODEL } from './lib.ts'
+import { EXTRA_PLUGIN, PROBE_MODEL } from './lib.ts'
 
 export type DirectVariant =
   /** The guarded options as production builds them: an agent run without the root (run.ts's fallback path). */
@@ -28,6 +31,10 @@ export type DirectVariant =
   | 'strict-off'
   /** The bundled skills not turned off (test-only): a typed /code-review must then expand. */
   | 'skills-not-off'
+  /** The same, and the `skills` allowlist taken out too (test-only): nothing of ours stands between /code-review and the CLI. */
+  | 'skills-open'
+  /** The built-in plugins not turned off, and a plugin we don't ship added (test-only): init must list more than ours. */
+  | 'plugins-not-off'
 
 export type DirectInput = { variant: DirectVariant; prompt: string; webFetchDomains: string[]; ip?: string; mcpUrl?: string }
 
@@ -90,6 +97,19 @@ switch (input.variant) {
   case 'skills-not-off':
     delete (options.settings as { skillOverrides?: unknown }).skillOverrides
     break
+  case 'skills-open':
+    delete (options.settings as { skillOverrides?: unknown }).skillOverrides
+    delete options.skills
+    break
+  case 'plugins-not-off': {
+    delete (options.settings as { enabledPlugins?: unknown }).enabledPlugins
+    // In the session user's own temp folder (emptied at release).
+    const extra = mkdtempSync(join(tmpdir(), 'probe-plugin-'))
+    mkdirSync(join(extra, '.claude-plugin'))
+    writeFileSync(join(extra, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: EXTRA_PLUGIN, version: '0.0.0', description: 'Probe only' }))
+    options.plugins = [...(options.plugins ?? []), { type: 'local', path: extra }]
+    break
+  }
 }
 
 try {

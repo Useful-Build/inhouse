@@ -30,6 +30,7 @@ import { productionHostDeps } from '../../src/server/production.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { DirectInput, DirectVariant } from './direct.ts'
 import {
+  EXTRA_PLUGIN,
   PROBE_MODEL,
   facts,
   newScript,
@@ -486,7 +487,18 @@ async function probeFacts() {
     record('init.skills-exactly-allowed', JSON.stringify([...init.skills].sort()) === JSON.stringify([...ALLOWED_SKILLS].sort()), `skills ${JSON.stringify(init.skills)}, allowed ${JSON.stringify(ALLOWED_SKILLS)}`)
     const plugins = init.plugins.map((p) => p.name).sort()
     fact('init.plugins', JSON.stringify(plugins))
-    record('init.plugins-ours-plus-sec-default', JSON.stringify(plugins) === JSON.stringify([PLUGIN_NAME, 'sec-default'].sort()), JSON.stringify(plugins))
+    // Exactly ours. `sec-default` is never listed without managed settings (P0 S2's record; the same on 0.3.328).
+    // Guard off: the built-in plugins not turned off and one we don't ship added; init must then list the one we don't
+    // ship, so the check can see a plugin that isn't ours.
+    const offRun = await direct('plugins-not-off', { prompt: 'Run the probe.', webFetchDomains: [] }, { steps: [] })
+    const offPlugins = (offRun.lines.find((l) => l.type === 'init')?.plugins as string[] | undefined) ?? []
+    fact('init.plugins-guard-off', JSON.stringify(offPlugins))
+    const offSeen = offPlugins.some((n) => n.split('@')[0] === EXTRA_PLUGIN)
+    record(
+      'init.plugins-only-ours',
+      JSON.stringify(plugins) === JSON.stringify([PLUGIN_NAME]) && offSeen,
+      `${JSON.stringify(plugins)} | guard off (built-ins on, ${EXTRA_PLUGIN} added): ${offSeen ? JSON.stringify(offPlugins) : `NOT SEEN: ${JSON.stringify(offPlugins)}`}`,
+    )
     fact('init.slash_commands', JSON.stringify(init.slash_commands))
     const offOnes = init.slash_commands.filter((c) => (BUNDLED_SKILLS_OFF as readonly string[]).includes(c.replace(/^\//, '')))
     record('init.no-turned-off-command', offOnes.length === 0, JSON.stringify(offOnes))
@@ -507,17 +519,43 @@ async function probeLongTmpdir() {
   record('long-tmpdir.wiped-at-release', left.out.trim() === '', `left: ${left.out.trim() || 'nothing'}`)
 }
 
-const expanded = (requests: unknown[]) => {
+/**
+ * A typed skill the CLI runs goes to the model; one it refuses ends without a model request (the CLI answers it
+ * itself). So the detector is "the typed command reached the model", and each run says what it saw.
+ */
+const seen = (requests: unknown[], name: string) => {
   const t = JSON.stringify(requests)
-  return t.includes('<command-name>/code-review</command-name>') || t.includes('<command-message>code-review')
+  return `model requests ${requests.length}, expansion marker ${t.includes(`<command-name>/${name}</command-name>`) || t.includes(`<command-message>${name}`)}`
 }
+const resultTextOf = (r: Run) =>
+  (r.via === 'root' ? sdkMessages(r.events).filter((m) => m.type === 'result').map((m) => m.result) : r.lines.filter((l) => l.type === 'result').map((l) => l.text))
+    .map((x) => String(x ?? '').slice(0, 200))
+    .join(' | ')
 
 async function probeCodeReview() {
   const r = await startRun({ chatId: 'p-cr', prompt: '/code-review', script: { steps: [] } }).done
-  const t = terminalOf(r)
-  fact('code-review.typed', `model requests ${r.state.requests.length}, end ${JSON.stringify(t)?.slice(0, 300)}, sdk results ${JSON.stringify(sdkMessages(r.events).filter((m) => m.type === 'result').map((m) => String(m.result ?? '').slice(0, 200)))}`)
-  const off = await direct('skills-not-off', { prompt: '/code-review', webFetchDomains: [] }, { steps: [] })
-  record('code-review.refused', !expanded(r.state.requests) && expanded(off.state.requests), `agent expanded: ${expanded(r.state.requests)} | guard off (skillOverrides removed): ${expanded(off.state.requests) ? 'expanded' : 'NOT EXPANDED: the probe cannot detect this'}`)
+  fact('code-review.typed', `${seen(r.state.requests, 'code-review')}, end ${JSON.stringify(terminalOf(r))?.slice(0, 200)}, result ${resultTextOf(r)}`)
+  // Controls. The nearest: a skill we keep, typed the same way through the same guards, must reach the model. The
+  // real one: /code-review with nothing of ours in the way (overrides removed; then the allowlist too).
+  const dv = await startRun({ chatId: 'p-dv', prompt: '/dataviz', script: { steps: [] } }).done
+  fact('code-review.control-dataviz-typed', `${seen(dv.state.requests, 'dataviz')}, result ${resultTextOf(dv)}`)
+  const offs = []
+  for (const variant of ['skills-not-off', 'skills-open'] as const) {
+    const off = await direct(variant, { prompt: '/code-review', webFetchDomains: [] }, { steps: [] })
+    const res = off.lines.filter((l) => l.type === 'result').map((l) => String(l.text ?? '').slice(0, 200)).join(' | ')
+    fact(`code-review.guard-off.${variant}`, `${seen(off.state.requests, 'code-review')}, result ${res}`)
+    offs.push(off.state.requests.length > 0)
+  }
+  const reached = r.state.requests.length > 0
+  const control = offs.some(Boolean)
+  if (reached || control) {
+    const ended = terminalOf(r)?.type === 'finished'
+    record('code-review.refused', !reached && ended && control, `agent: ${reached ? 'REACHED THE MODEL' : `no model request, run ${ended ? 'finished' : 'did not finish'}`} | guard off: ${control ? 'reached the model' : 'never'}`)
+  } else {
+    // No run makes /code-review reach the model on this CLI, so a refusal can't be told from a command that never runs:
+    // printed as unproven, never as a pass.
+    fact('code-review.refused', `UNPROVEN: /code-review reaches the model in no run, guards on or off (dataviz typed: ${dv.state.requests.length > 0 ? 'reaches it' : 'does not either'})`)
+  }
 }
 
 async function probeIsolation() {
@@ -551,8 +589,11 @@ async function probeIsolation() {
   await runCommand('sh', ['-c', `echo CANARY_A_HOME > ${aOwn.home}/secret`], { uid: aUser.uid, gid: aUser.gid })
   const aTmpSecret = () => [join(aOwn.tmp, 'secret'), ...readdirSync(aOwn.tmp).map((d) => join(aOwn.tmp, d, 'secret'))].find((f) => existsSync(f)) ?? join(aOwn.tmp, 'secret')
 
+  // B's session by uid, as A's: the one session process of a pool uid other than A's (only A and B run now). Its working
+  // folder can't be the match: root reads another uid's /proc/<pid>/cwd only with CAP_SYS_PTRACE.
+  const poolUids = new Set(pool.map((u) => u.uid))
   let bSession: Proc | undefined
-  const findB = () => (bSession ??= procs().find((p) => p.cwd === sessionPaths('p-iso-b').workDir && /session\/main\.mjs|probes\/direct\.mjs/.test(p.cmdline)))
+  const findB = () => (bSession ??= procs().find((p) => poolUids.has(p.uid) && p.uid !== holder.uid && /session\/main\.mjs|probes\/direct\.mjs/.test(p.cmdline)))
   const split = (t: string) => [t.slice(0, 20), t.slice(20)]
   const filesProbes = (): ShellProbe[] => [
     { name: 'ls-work', cmd: 'ls -la /work' },
@@ -579,8 +620,12 @@ async function probeIsolation() {
           `env | grep -F -f "$TMPDIR/pat"; grep -rlsF --exclude=pat -f "$TMPDIR/pat" /proc/[0-9]*/environ /proc/[0-9]*/cmdline . "$HOME" /tmp /var/tmp /dev/shm /etc /run 2>/dev/null | head; echo searched`,
       },
       {
+        // The channel is fd 3 (session -> root) and fd 4 (root -> session) of each session process: B's own and A's,
+        // through /proc (a link shown, or an open that works), and whether Bash itself holds either fd.
         name: 'channel',
-        cmd: `env | grep NODE_CHANNEL; ls -l /proc/${findB()?.pid}/fd 2>&1 | head -5; echo probe > /proc/${findB()?.pid}/fd/1 && echo WROTE; timeout 2 head -c 1 /proc/${findB()?.pid}/fd/0 && echo READ0; ls -l /proc/self/fd /proc/$PPID/fd 2>&1 | grep -c socket`,
+        cmd:
+          `env | grep NODE_CHANNEL; for p in ${aSession?.pid ?? 'none'} ${findB()?.pid ?? 'none'}; do for f in 3 4; do readlink /proc/$p/fd/$f; ` +
+          `( exec 9<>/proc/$p/fd/$f ) 2>/dev/null && echo "OPEN$f"; done; done 2>&1; for f in 3 4; do readlink /proc/$$/fd/$f; done; echo checked`,
       },
     ]
   }
@@ -612,6 +657,8 @@ async function probeIsolation() {
   const files = filesProbes()
   // Guard off: root reads the same, while A is still up (its release empties its home and temp folder).
   const off = await rootShell(shellScript(files))
+  // Guard off for the channel: A's own uid, outside the sandbox, sees both channel fds of A's session (A is still up).
+  const chOff = aSession ? await runCommand('sh', ['-c', `for f in 3 4; do readlink /proc/${aSession.pid}/fd/$f; done 2>&1`], { uid: aUser.uid, gid: aUser.gid }) : { code: null, out: "A's session not found" }
   const offReadable = [`${wa}/inputs/secret.txt`, aTmpSecret(), `${aOwn.home}/secret`].every((p) => existsSync(p) && canary(readFileSync(p, 'utf8')))
   // A file A couldn't make (its sandbox may not let it write /tmp) can't be judged: printed as a fact instead.
   const observeOnly = ['ls-work', 'ls-users', 'ps', 'proc-holder', 'proc-a-session', 'proc-all', ...(existsSync('/tmp/iso-a-secret') ? [] : ['cat-a-tmp', 'grep-shared'])]
@@ -650,7 +697,7 @@ async function probeIsolation() {
   const tok = parseShell(result(rb, 10)?.text ?? '')
   if (rb.via === 'direct') {
     record('token.not-reachable', false, 'needs the root path (the token lives only in the root): sessions through the root crash, see root.session-starts')
-    record('channel.not-reachable', false, "needs the root path (the session's stdin and stdout channel): see root.session-starts")
+    record('channel.not-reachable', false, "needs the root path (the session's channel on fds 3 and 4): see root.session-starts")
     fact('token.direct-view', tok.get('token')?.out ?? 'no output')
     return
   }
@@ -662,9 +709,14 @@ async function probeIsolation() {
   rmSync('/tmp/probe-tok-cwd', { recursive: true, force: true })
   const ch = tok.get('channel')
   fact('channel.bash-view', ch?.out ?? 'no output')
-  const chLeak = (t: string) => /socket:\[|WROTE|READ0|NODE_CHANNEL_FD=/.test(t)
-  const chOff = await runCommand('bash', ['-c', `ls -l /proc/${aSession?.pid ?? 1}/fd`])
-  record('channel.not-reachable', ch !== undefined && !chLeak(ch.out) && rb.events.every((e) => !(e.type === 'failed' && e.reason === 'protocol')), `agent: ${ch?.out.slice(0, 200)}, run end ${JSON.stringify(terminalOf(rb))?.slice(0, 120)} | root's view of a session's fds: ${chLeak(chOff.out) ? 'sockets seen' : chOff.out.slice(0, 120)}`)
+  fact('channel.sessions', `A ${aSession?.pid} uid ${aSession?.uid}, B ${bSession?.pid} uid ${bSession?.uid}`)
+  const chLeak = (t: string) => /(socket|pipe):\[|OPEN[34]|NODE_CHANNEL_FD=/.test(t)
+  const chOffSeen = chOff.out.split('\n').filter((l) => /(socket|pipe):\[/.test(l)).length === 2
+  record(
+    'channel.not-reachable',
+    aSession !== undefined && bSession !== undefined && bSession.uid !== aSession.uid && ch !== undefined && ch.out.includes('checked') && !chLeak(ch.out) && chOffSeen && rb.events.every((e) => !(e.type === 'failed' && e.reason === 'protocol')),
+    `agent: ${ch?.out.replace(/\n/g, ' ').slice(0, 300)}, run end ${JSON.stringify(terminalOf(rb))?.slice(0, 120)} | guard off (A's uid, A's fds 3 and 4): ${chOffSeen ? 'both seen' : `NOT SEEN: ${chOff.out.slice(0, 120)}`}`,
+  )
   fact('umask.in-agent-bash', `A's files: ${ra.state.results.get(ra.state.ids[0]!)?.text.split('\n')[0] ?? ''}`)
 }
 
@@ -709,6 +761,8 @@ const directUsers: Record<DirectVariant, string> = {
   'strict-on': 's45',
   'strict-off': 's46',
   'skills-not-off': 's47',
+  'skills-open': 's58',
+  'plugins-not-off': 's59',
 }
 /** Agent runs' pool users while they go direct: one per chat, from s20 up (the root hands out s00 up). */
 const agentUsers = new Map<string, PoolUser>()
@@ -948,6 +1002,8 @@ await egress.close()
 
 const failed = outcomes.filter((o) => !o.ok)
 console.log(`\n${outcomes.length - failed.length} of ${outcomes.length} probes passed, ${facts.length} facts`)
+const unproven = facts.filter((f) => f.value.startsWith('UNPROVEN'))
+if (unproven.length > 0) console.log(`UNPROVEN (not counted as passing): ${unproven.map((f) => f.name).join(', ')}`)
 if (failed.length > 0) {
   console.log(`FAILED: ${failed.map((f) => f.name).join(', ')}`)
   console.log('--- root log (last 80 lines)')
