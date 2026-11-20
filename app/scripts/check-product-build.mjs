@@ -2,13 +2,14 @@
 //   node scripts/check-product-build.mjs                      checks dist-product/ (must pass) and dist/ (must fail)
 //   node scripts/check-product-build.mjs --product DIR --demo DIR   other build folders
 // The product build ships no sample data, mock code, demo controls or demo clock. Three parts, each run on both builds:
-//   1. Canary strings in the client output: the sample brand's and people's names (read from src/agent/sample-data/) and a
+//   1. Canary strings in the client output: the sample brand's and people's names, the brand's email domain and the user's
+//      email (read from src/agent/sample-data/) and a
 //      marker constant each from mock.ts, demo-controls.ts and demo-clock.ts. Unique strings only, never common words or
 //      method names a library also uses.
 //   2. The module graph: the build writes every module id it bundled to <build>/client-modules.json (vite.config.ts,
 //      writeModuleList). Fails when a module under src/agent/sample-data/, or mock, demo-controls, demo-clock or client.demo,
 //      is in it. A string scan alone can't prove a tree-shaken or renamed import is gone.
-//   3. Copied files: no library/ or avatars/ file in the client output (the demo-only public files, public-demo/).
+//   3. Copied files: no file of public-demo/ (the demo-only public files; its top-level entries make the pattern) in the client output.
 // The same three parts run on the demo build and must each FAIL there: a check that passes on the demo scanned the wrong
 // folder or looks for the wrong thing, so it can't go green by accident. Exit code 0 only when the product build is clean
 // and every part caught the demo.
@@ -44,7 +45,14 @@ const sampleNames = () => {
   if (full.length < 3) fail(`only ${full.length} sample names found in src/agent/sample-data/ to use as canaries; the data's shape changed.`)
   return full
 }
-const CANARIES = [...sampleNames(), ...MARKERS]
+// The sample brand's email domain and the signed-in person's address: unique strings the product has no reason to carry.
+const sampleEmails = () => {
+  const meta = readJson('meta.json')
+  const found = [meta.brand?.emailDomain, meta.currentUser?.email].filter(e => typeof e === 'string' && e.trim())
+  if (found.length < 2) fail('src/agent/sample-data/meta.json has no brand.emailDomain or currentUser.email to use as canaries.')
+  return found.map(e => e.trim())
+}
+const CANARIES = [...sampleNames(), ...sampleEmails(), ...MARKERS]
 
 // ---------- a build's files ----------
 const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(d => (d.isDirectory() ? walk(join(dir, d.name)) : [join(dir, d.name)]))
@@ -79,9 +87,19 @@ function moduleGraph({ modules }) {
   return modules.filter(id => FORBIDDEN.test(id)).map(id => `module ${id}`)
 }
 
-/** 3. The demo-only public files (public-demo/library, public-demo/avatars) copied into the output. */
+/**
+ * 3. The demo-only public files (everything under public-demo/) copied into the output. The pattern comes from public-demo/'s
+ * own top-level entries, so a new folder there is covered; and any output file at the same path as a public-demo/ file fails.
+ */
+const PUBLIC_DEMO = join(root, 'public-demo')
+if (!existsSync(PUBLIC_DEMO)) fail('public-demo/ is missing: the copied-files check has nothing to compare against.')
+const publicDemoTop = readdirSync(PUBLIC_DEMO)
+if (publicDemoTop.length === 0) fail('public-demo/ is empty: the copied-files check has nothing to compare against.')
+const publicDemoFiles = new Set(walk(PUBLIC_DEMO).map(f => relative(PUBLIC_DEMO, f).split(sep).join('/')))
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const DEMO_ONLY_TOP = new RegExp(`^(${publicDemoTop.map(escapeRe).join('|')})(/|$)`)
 function copiedFiles({ clientDir, files }) {
-  return files.map(f => relative(clientDir, f).split(sep).join('/')).filter(p => /^(library|avatars)\//.test(p)).map(p => `file ${p}`)
+  return files.map(f => relative(clientDir, f).split(sep).join('/')).filter(p => DEMO_ONLY_TOP.test(p) || publicDemoFiles.has(p)).map(p => `file ${p}`)
 }
 
 const PARTS = [

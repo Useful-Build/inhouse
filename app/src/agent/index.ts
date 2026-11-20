@@ -1,10 +1,19 @@
 // The one place the app picks its agent. `@client` is the demo entry or the product entry, chosen by the build mode
 // (vite.config.ts; tsconfig.app.json and vitest.config.ts name the demo one). Nothing else imports the mock.
 import entry from '@client'
+import type { ClientEntry, DemoControls } from './client-entry'
+import type { AgentClient } from './types'
+import { setNow } from '../state/display'
 
-export const agent = entry.agent
+// Typed as the interface, not as the entry's own (narrower) type: the demo entry's `agent` is a MockAgent and its `demo`
+// is never null, so a consumer reading those would type-check a call the product build throws on.
+const client: ClientEntry = entry
+// display.ts reads "now" from here when asked, so no import order matters (the mock imports display).
+setNow(client.now)
+
+export const agent: AgentClient = client.agent
 /** The demo's switches, or null in the product build. */
-export const demo = entry.demo
+export const demo: DemoControls | null = client.demo
 /** Now as epoch ms: the demo clock in the demo, the real clock in the product. */
 export const now = entry.now
 export * from './types'

@@ -18,20 +18,18 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { store.set(k, v) },
   removeItem: (k: string) => { store.delete(k) },
 })
-// The client entry first: display.ts reads the clock from it, and the entry builds the mock, which imports display (a cycle that
-// only works when the entry starts it).
-await import('../agent')
 const { MockAgent } = await import('../agent/mock')
 const { instantOf } = await import('./format')
 const { DEMO_LATEST, DEMO_START, demoNow } = await import('../agent/demo-clock')
 const { capStatus, defaultModeId, lastRunLine, sinceLine, toolView, usageSummary, whenOf } = await import('../state/derive')
 const { checkField } = await import('../screens/settings/content')
 const F = await import('./format')
-const { display, nowOf } = await import('../state/display')
+const { display, nowOf, setNow } = await import('../state/display')
 const d = display()
 
 /** Now on the demo clock: what relative labels ("Today", "Yesterday") are measured from. */
-const now = () => nowOf(agent.getSnapshot())
+setNow(() => demoNow(agent.getSnapshot().demoStartedAt).getTime())
+const now = () => nowOf()
 // Each call site's own helper from format.ts, so this checks the code the screen runs: fmtUsageMoney and fmtSpentOfCap
 // (src/screens/Usage.tsx), fmtNextRun (src/screens/chat/Parts.tsx), fmtAuditDay, fmtCapSetting and fmtSpentSetting
 // (src/screens/settings/content.ts), traceTicks (src/overlays/TraceWindow.tsx) and fmtAnswerBar (src/screens/Chats.tsx).

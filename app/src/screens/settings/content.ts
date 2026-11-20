@@ -125,7 +125,7 @@ export function settingsPage(tab: string, env: Env): Page {
   const { auditLog, memory, meta, people, skills, usage } = data
   const me = meta.currentUser
   const d0 = display()
-  const now = nowOf(agent)
+  const now = nowOf()
   const forgetRows = (lines: MemoryLine[]) =>
     lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 1, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
