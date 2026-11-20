@@ -24,3 +24,7 @@ export async function squarePhoto(file: File): Promise<string> {
     bmp.close()
   }
 }
+
+/** The photo an avatar shows: the member's own, else (only for the signed-in person) the one `me()` carries, since a Member may not list the team. */
+export const pickPhoto = (memberPhoto: string | null | undefined, isSelf: boolean, mePhotoUrl: string | null | undefined): string | null =>
+  memberPhoto || (isSelf ? mePhotoUrl ?? null : null)

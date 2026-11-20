@@ -7,6 +7,8 @@ import type { Theme } from '../../lib/theme'
 import { plainSpaces } from '../../agent/clock'
 import { calendarOf, fmtAuditDay, fmtCapSetting, fmtDayWord, fmtMoney, fmtNearDay, fmtSpentSetting, fmtTime, fmtWhen, moneyOf } from '../../lib/format'
 import { display, nowOf } from '../../state/display'
+import { AUDIT_CSV_HEADER, csvCell } from '../../../shared/csv'
+import { grantStatus } from './grant-status'
 
 export type RowKind = 'select' | 'text' | 'value' | 'button' | 'toggle' | 'mode' | 'photo' | 'grant'
 export interface Row {
@@ -30,6 +32,11 @@ export interface Row {
   switchTip?: string
   /** A small tag shown beside the control (for example "Not an approver"). */
   tag?: string
+  tagVariant?: 'warning' | 'muted'
+  /** What the setting is when nothing was saved, as the row shows it ("the default" in a stale-save notice). */
+  defaultValue?: string
+  /** A button whose request is in flight: it waits. */
+  busy?: boolean
   /** Runs after a `select` row's value was saved. */
   onChange?: (value: string) => void
   /** Extra words the settings search matches. */
@@ -122,15 +129,15 @@ export interface Env {
   removeMember: (id: string) => void
   /** Whether Data and access shows the grant (status, hours, End now) instead of the demo's one switch. */
   grantUi: boolean
+  /** Whether the viewer sees the support grant at all: an Admin or the Inhouse team (route 16), or anyone in the demo. */
+  showGrant: boolean
+  /** The audit log's next page is being read. */
+  loadingMore: boolean
   /** The next page of the audit log. */
   loadMore: (list: 'audit' | 'members') => void
   /** Downloads the audit log from where the client says (`auditExportUrl()`), or null when the file is built here. */
   exportFromServer: (() => void) | null
 }
-
-/** Where a support grant stands, as text: none, live until a time, or ended at a time. */
-const grantStatus = (g: AgentData['people']['supportGrant'], d0: ReturnType<typeof display>): string =>
-  !g ? 'Off' : g.live ? `Live until ${fmtTime(g.endsAt, d0)}` : `Ended ${fmtTime(g.endedAt ?? g.endsAt, d0)}`
 
 const withAvatar = (row: Row, who: string, at: 'row' | 'control' = 'row'): Row => ({ ...row, avatar: { who, at } })
 
@@ -179,8 +186,8 @@ export function settingsPage(tab: string, env: Env): Page {
 
   // Dropdowns and text fields show what was saved, else the default given here.
   const saved = agent.settings
-  const sel = (title: string, desc: string, key: string, def: string, options: string[], need = 0) => SEL(title, desc, key, saved[key] ?? def, options, need)
-  const txt = (title: string, desc: string, key: string, def: string, need = 0) => TXT(title, desc, key, saved[key] ?? def, need)
+  const sel = (title: string, desc: string, key: string, def: string, options: string[], need = 0) => ({ ...SEL(title, desc, key, saved[key] ?? def, options, need), defaultValue: def })
+  const txt = (title: string, desc: string, key: string, def: string, need = 0) => ({ ...TXT(title, desc, key, saved[key] ?? def, need), defaultValue: def })
   const modes = thinkingModes(data, saved)
   const modeLabels = modes.filter(m => m.on).map(m => m.label)
   const defaultMode = modes.find(m => m.id === defaultModeId(data, saved))?.label ?? modeLabels[0]
@@ -212,6 +219,7 @@ export function settingsPage(tab: string, env: Env): Page {
   const grant = people.supportGrant
   const self = people.members.find(m => m.id === me.id)
 
+  const supportRow: Row = { ...R('Inhouse team access', 'Alex and the team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', env.grantUi ? 'grant' : 'toggle', env.grantUi ? grantStatus(grant, now, d0) : '', 0, 'd:support', true), can: 'grantSupport', on: !!grant?.live, toggle: next => env.setSupport(next, grant?.id) }
   const pages: Record<string, Page> = {
     'you-general': { title: 'General', sections: [
       { label: 'Profile', rows: [withAvatar({ title: 'Photo', desc: '', kind: 'photo', value: '', need: 0 }, me.id), txt('Name', 'Shown to your team and in approvals.', 'g:name', me.name), R('Email', 'Used to sign in.', 'value', env.me ? env.me.email ?? '' : me.email), R('Role', 'Admins can change team settings.', 'value', `${self?.title ?? me.title} · ${env.me ? ROLE_NAMES[env.me.role] : me.role}`)] },
@@ -246,9 +254,9 @@ export function settingsPage(tab: string, env: Env): Page {
         const label = roleLabel(m)
         const first = m.name.split(' ')[0]
         const named = namedOnRules(m.id)
-        return withAvatar({ ...SEL(m.name, [m.email, m.title].filter(Boolean).join(' · '), `p:${m.id}`, m.role === 'admin' ? 'Admin' : 'Member', ['Admin', 'Member']), display: label === 'Approver' ? label : undefined, can: 'changeRole', save: v => env.setRole(m.id, v === 'Admin' ? 'admin' : 'member'), onChange: v => demoted(m, v), confirm: v => removesAdmin(m, v),
+        return withAvatar({ ...SEL(m.name, [m.email, m.title].filter(Boolean).join(' · '), `p:${m.id}`, m.role === 'admin' ? 'Admin' : 'Member', ['Admin', 'Member']), display: label === 'Approver' ? label : undefined, tag: m.status === 'invited' ? 'Invited' : undefined, tagVariant: 'muted', can: 'changeRole', save: v => env.setRole(m.id, v === 'Admin' ? 'admin' : 'member'), onChange: v => demoted(m, v), confirm: v => removesAdmin(m, v),
           remove: m.id === me.id ? undefined : { label: `Remove ${m.name}`, title: `Remove ${m.name}?`, text: `${first} loses access to Inhouse.${named > 0 ? ` ${first} stays named on ${named} approval ${named === 1 ? 'rule' : 'rules'}, tagged "Not an approver".` : ''} The audit log keeps what ${first} did.`, action: 'Remove', go: () => env.removeMember(m.id) } }, m.id)
-      }), { ...R('Invite someone', 'They log in with their work email.', 'button', 'Invite', 0, undefined, undefined, env.invite), can: 'invite' }] },
+      }), { ...R('Invite someone', 'They sign in with their work email.', 'button', 'Invite', 0, undefined, undefined, env.invite), can: 'invite' }] },
     ] },
     'team-approvals': { title: 'Who approves what', sections: [
       { label: 'Rules', rows: people.approvalRules.map((r, i) => withAvatar({ ...SEL(r.what, r.detail, `a:${i}`, r.approver, approverIds, 1), labels: approverLabels, tag: people.members.find(m => m.id === r.approver)?.status === 'removed' ? 'Not an approver' : undefined }, r.approver, 'control')) },
@@ -265,7 +273,7 @@ export function settingsPage(tab: string, env: Env): Page {
     'team-data': { title: 'Data and access', sections: [
       { label: 'Where your data stays', rows: [R('Your tools', 'Orders, customers and money stay in your own tools. Your Inhouse agent reads what a job needs.', 'value', 'Stays in each tool'), R('Inhouse agent', 'Chats, memory, routines and logs are stored on your own Cloudflare account.', 'value', 'Your Cloudflare'), R('AI models', 'Questions go to Anthropic through your own account.', 'value', 'Your Anthropic')] },
       { label: 'How long things are kept', rows: [sel('Chats', 'Older chats are deleted automatically.', 'd:chats', '12 months', RETENTION), sel('Activity and steps', 'Every step it took, kept for checking later.', 'd:steps', '12 months', RETENTION), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
-      { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', `${team.length} members`), { ...R('Inhouse team access', 'Alex and the team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', env.grantUi ? 'grant' : 'toggle', env.grantUi ? grantStatus(grant, d0) : '', 0, 'd:support', true), can: 'grantSupport', on: !!grant?.live, toggle: next => env.setSupport(next, grant?.id) }, R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
+      { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', `${team.length} members`), ...(env.showGrant ? [supportRow] : []), R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
       { label: 'Take it with you', rows: [R('Export everything', 'Chats, memory, routines, skills and logs as one download.', 'button', 'Export', 0, undefined, undefined, () => env.toast("Export isn't connected in this demo.", 4000, 'info')), R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
     ] },
     'team-audit': { title: 'Audit log', sections: [
@@ -273,13 +281,12 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Earlier', rows: auditLog.filter(e => auditDay(e) === 'Earlier').map(auditRow) },
       // Day one and while loading: nothing was changed yet.
       { label: '', rows: [], empty: auditLog.length === 0 && pausedRow.length === 0 ? (env.data.status === 'loading' ? 'Still loading. Changes show here in a moment.' : 'Nothing changed yet. Changes to settings, rules and people show here.') : undefined },
-      { label: '', rows: data.more.audit ? [R('Older changes', 'Showing the most recent changes.', 'button', 'Load more', 0, undefined, undefined, () => env.loadMore('audit'))] : [] },
+      { label: '', rows: data.more.audit ? [{ ...R('Older changes', 'Showing the most recent changes.', 'button', 'Load more', 0, undefined, undefined, () => env.loadMore('audit')), busy: env.loadingMore }] : [] },
       { label: 'Keep a copy', rows: [{ ...R('Download the log', 'Every change to settings, rules, people, tools and memory. Kept for 12 months. Nobody can edit it.', 'button', 'Download CSV', 0, undefined, undefined, () => {
         if (env.exportFromServer) return env.exportFromServer()
-        const q = (v: string) => `"${v.replaceAll('"', '""')}"`
         // A plain space in every cell: the no-break space before AM or PM is for the screen, not a spreadsheet.
-        const lines = [['When', 'Who', 'What', 'Detail'], ...auditLog.map(e => [`${auditDay(e)} ${fmtWhen(e.at, now, d0)}`, e.who, e.what, e.detail].map(plainSpaces))]
-        env.download('inhouse-audit-log.csv', lines.map(l => l.map(q).join(',')).join('\n') + '\n', 'text/csv')
+        const lines = [[...AUDIT_CSV_HEADER], ...auditLog.map(e => [`${auditDay(e)} ${fmtWhen(e.at, now, d0)}`, e.who, e.what, e.detail].map(plainSpaces))]
+        env.download('inhouse-audit-log.csv', lines.map(l => l.map(csvCell).join(',')).join('\n') + '\n', 'text/csv')
         env.toast('Audit log downloaded', 4000)
       }), can: 'exportAudit' }] },
     ] },

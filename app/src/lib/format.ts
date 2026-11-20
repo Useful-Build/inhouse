@@ -33,6 +33,8 @@ export const instantOf = (ms: number): Instant => {
 
 /** The device's own time zone: what the demo shows times in. */
 export const deviceTimeZone = (): string => new Intl.DateTimeFormat().resolvedOptions().timeZone
+/** Whether this browser takes `timeZone` as a time zone id. */
+export const isTimeZone = (timeZone: string): boolean => { try { new Intl.DateTimeFormat('en-US', { timeZone }); return true } catch { return false } }
 
 // ---------- the calendar in a time zone ----------
 

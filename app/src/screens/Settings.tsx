@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 import { agent, demo } from '../agent'
-import type { ResourceKey, SupportGrant } from '../agent'
+import type { SupportGrant } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
@@ -13,7 +13,9 @@ import { Badge } from '@/components/ui/badge'
 import { GRANT_HOURS } from '../../shared/contract/keys'
 import { LoadError } from '../ui/retry'
 import { InviteDialog } from './settings/InviteDialog'
-import { allowance } from './settings/allowance'
+import { allowance, pageResources } from './settings/allowance'
+import { readParts } from './settings/read-text'
+import { single } from './settings/single'
 import { tell } from './settings/write'
 import { Input } from '@/components/ui/input'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
@@ -46,11 +48,6 @@ function PhotoControl({ personId, locked }: { personId: string; locked: boolean 
   )
 }
 
-/** The lists each page reads, so a failed read says what couldn't load and offers Retry (C3). */
-const PAGE_RESOURCES: Record<string, ResourceKey[]> = {
-  'team-members': ['members'], 'team-approvals': ['rules', 'members'], 'team-audit': ['audit'], 'team-data': ['grants', 'members'],
-  'you-memory': ['memory'], 'team-memory': ['memory'],
-}
 const RESOURCE_NAMES: Record<string, string> = {
   members: 'the team', rules: 'the approval rules', audit: 'the audit log', grants: 'who can get in', memory: 'what your Inhouse agent remembers',
 }
@@ -95,7 +92,7 @@ function PlainField({ row, disabled }: { row: Row; disabled: boolean }) {
       <Input {...fieldProps(row, disabled)} value={draft} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
         onChange={e => {
           setDraft(e.target.value)
-          if (e.target.value.trim() && e.target.value.length <= 80) { tell(agent.setSetting(row.key!, e.target.value)); toastSaved() }
+          if (e.target.value.trim() && e.target.value.length <= 80) { tell(agent.setSetting(row.key!, e.target.value), row); toastSaved() }
         }} />
       {error && <p id={errorId} className="m-0 w-55 max-w-full text-sm text-destructive-text">{error}</p>}
     </div>
@@ -116,7 +113,7 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
     if ('error' in r) { setError(r.error); return }
     setError(null)
     if (r.value === row.value) { setDraft(r.value); return }
-    tell(agent.setSetting(row.key!, r.value))
+    tell(agent.setSetting(row.key!, r.value), row)
     // Saved once, not while typing, so it says so straight away.
     useUi.getState().showToast('Saved', { icon: 'check', ms: 2000, key: 'saved' })
   }
@@ -133,11 +130,9 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
 /** A team setting's value as text, on a phone: on its own line under the row's description, whatever the kind. */
 function ReadValue({ row, on }: { row: Row; on: boolean }) {
   // A part never breaks inside, and the dot goes with the part after it, so no line starts or ends on a stranded dot.
-  const parts = (...p: string[]) => p.map((t, i) => <span key={t} className="whitespace-nowrap">{i > 0 && '\u00b7 '}{t}</span>).flatMap((e, i) => i > 0 ? [' ', e] : [e])
-  const shown = row.kind === 'mode' ? parts(row.value, row.switchOn ? 'team can use it' : 'turned off')
-    : row.kind === 'toggle' ? (on ? 'On' : 'Off')
-    : row.kind === 'select' ? parts(row.labels?.[row.value] ?? row.value, ...(row.tag ? [row.tag] : []))
-    : row.value
+  const parts = (p: string[]) => p.map((t, i) => <span key={t} className="whitespace-nowrap">{i > 0 && '\u00b7 '}{t}</span>).flatMap((e, i) => i > 0 ? [' ', e] : [e])
+  const text = readParts(row, on)
+  const shown = typeof text === 'string' ? text : parts(text)
   return shown ? <div className="mt-1.5 text-base text-pretty text-foreground-2">{shown}</div> : null
 }
 
@@ -150,15 +145,18 @@ function descNode(desc: string) {
 function GrantControl({ row, grant }: { row: Row; grant: SupportGrant | null }) {
   const [hours, setHours] = useState('24 hours')
   const label = (h: number) => `${h} ${h === 1 ? 'hour' : 'hours'}`
+  // One request at a time: a second click while Grant or End now is saving does nothing.
+  const [busy, setBusy] = useState(false)
+  const run = useRef(single((start: () => Promise<unknown>) => { const p = start(); tell(p); return p }, setBusy)).current
   return (
     <div className="flex flex-wrap items-center justify-end gap-2.5">
       <span className="text-base text-foreground-2">{row.value}</span>
       {grant?.live
-        ? <Button variant="outline" size="lg" onClick={() => tell(agent.endSupportGrant(grant.id))}>End now</Button>
+        ? <Button variant="outline" size="lg" disabled={busy} onClick={() => run(() => agent.endSupportGrant(grant.id))}>End now</Button>
         : (
           <>
             <Select label="Give access for" value={hours} options={GRANT_HOURS.map(label)} onChange={setHours} minWidth={110} />
-            <Button variant="outline" size="lg" onClick={() => tell(agent.grantSupport(GRANT_HOURS.find(h => label(h) === hours)!))}>Grant</Button>
+            <Button variant="outline" size="lg" disabled={busy} onClick={() => run(() => agent.grantSupport(GRANT_HOURS.find(h => label(h) === hours)!))}>Grant</Button>
           </>
         )}
     </div>
@@ -172,7 +170,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
   if (readOnly && row.kind !== 'button' && row.kind !== 'photo') return null
   switch (row.kind) {
     case 'select': {
-      const save = (v: string) => { if (row.save) row.save(v); else tell(agent.setSetting(row.key!, v)); row.onChange?.(v) }
+      const save = (v: string) => { if (row.save) row.save(v); else tell(agent.setSetting(row.key!, v), row); row.onChange?.(v) }
       // A row with labels shows them and saves the value behind the one picked (an unknown saved value shows as it is).
       const shown = (v: string) => row.labels?.[v] ?? v
       const valueOf = (label: string) => Object.keys(row.labels ?? {}).find(k => row.labels![k] === label) ?? label
@@ -183,7 +181,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
         else save(v)
       }} />
       return row.tag
-        ? <span className="inline-flex flex-wrap items-center justify-end gap-2.5"><Badge variant="warning">{row.tag}</Badge>{select}</span>
+        ? <span className="inline-flex flex-wrap items-center justify-end gap-2.5"><Badge variant={row.tagVariant ?? 'warning'}>{row.tag}</Badge>{select}</span>
         : select
     }
     case 'text':
@@ -191,7 +189,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
     case 'value':
       return row.value ? <span className="text-right text-base text-foreground-2">{row.value}</span> : null
     case 'button':
-      return <Button variant="outline" disabled={locked || !row.onClick} onClick={row.onClick} size="lg">{row.value}</Button>
+      return <Button variant="outline" disabled={locked || !row.onClick || row.busy} onClick={row.onClick} size="lg">{row.value}</Button>
     case 'toggle':
       return <Switch on={on} label={row.title} onChange={locked ? undefined : onToggle} />
     case 'mode':
@@ -201,11 +199,11 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
           <div className="flex flex-col gap-1.5">
             {/* Below the card's @xl width the rows wrap and the section's top caption is hidden, so the first picker carries it. */}
             {caption && <span className="text-xs text-muted-foreground @xl:hidden">{caption}</span>}
-            <Select label={`How hard it thinks: ${row.title}`} value={row.value} options={row.options ?? []} onChange={v => tell(agent.setSetting(row.key!, v))} disabled={!effortOk} />
+            <Select label={`How hard it thinks: ${row.title}`} value={row.value} options={row.options ?? []} onChange={v => tell(agent.setSetting(row.key!, v), row)} disabled={!effortOk} />
           </div>
           {/* The switch's visible label: whether the team can use this model. */}
           <span className="inline-flex h-9.5 items-center gap-2">
-            <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={switchOk ? () => tell(agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null)) : undefined} />
+            <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={switchOk ? () => tell(agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null), row) : undefined} />
             <span aria-hidden="true" className="w-6 text-sm text-foreground-3">{row.switchOn ? 'On' : 'Off'}</span>
           </span>
         </div>
@@ -238,6 +236,10 @@ export function Settings() {
   const { setTab, phone, stage } = ui
   const me = useSyncExternalStore(agent.subscribe, agent.me)
   const [inviting, setInviting] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const more = useRef(single((list: 'audit' | 'members') => agent.loadMore(list), setLoadingMore)).current
+  // The grant (route 16) is for an Admin and the Inhouse team; the demo shows its switch to everyone. Until `me()` loads the product shows none.
+  const showGrant = demo !== null || (!!me && (me.can.grantSupport || me.role === 'inhouse'))
   const contentRef = useRef<HTMLDivElement>(null)
   const [ask, setAsk] = useState<Ask | null>(null)
   // A "Saved" still waiting for typing to stop doesn't follow the person off the page.
@@ -288,7 +290,9 @@ export function Settings() {
     },
     // The demo keeps its one switch for Inhouse team access (Data and access looks as it always did); the product shows the grant.
     grantUi: demo === null,
-    loadMore: list => { agent.loadMore(list).catch(() => undefined) },
+    showGrant,
+    loadingMore,
+    loadMore: list => { more(list) },
     exportFromServer: agent.auditExportUrl() ? () => { window.location.assign(agent.auditExportUrl()!) } : null,
   }
   const page = settingsPage(setTab, env)
@@ -349,7 +353,7 @@ export function Settings() {
               </div>
             )
             : <PageHeader title={page.title} className="mb-1" />}
-          {(PAGE_RESOURCES[setTab] ?? []).filter(k => data.resources[k].status === 'error').map(k => (
+          {pageResources(setTab, showGrant).filter(k => data.resources[k].status === 'error').map(k => (
             <LoadError key={k} what={RESOURCE_NAMES[k] ?? k} error={data.resources[k].error} onRetry={() => { agent.retry(k).catch(() => undefined) }} />
           ))}
           {hidesControls && (
@@ -375,7 +379,7 @@ export function Settings() {
                   const locked = S < row.need
                   const on = !locked && (row.on ?? st.toggles[row.key ?? ''] ?? row.def ?? false)
                   // A value shown as text (a team page on a phone) sits under the description, in the title's column.
-                  const al = allowance(row, me?.can)
+                  const al = allowance(row, me?.can, demo === null)
                   const denied = !al.control
                   const asText = (readOnly || denied) && row.kind !== 'button' && row.kind !== 'photo'
                   return (
@@ -389,7 +393,7 @@ export function Settings() {
                         </div>
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
-                      <Control readOnly={readOnly || denied} denied={denied} effortOk={al.effort} switchOk={al.switch} grant={data.people.supportGrant} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : tell(agent.setToggle(row.key!, !on)))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
+                      <Control readOnly={readOnly || denied} denied={denied} effortOk={al.effort} switchOk={al.switch} grant={data.people.supportGrant} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : tell(agent.setToggle(row.key!, !on), row))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
                       {row.remove && me?.can.remove !== false && !readOnly && <Button variant="outline" size="lg" aria-label={row.remove.label} onClick={() => setAsk({ title: row.remove!.title, text: row.remove!.text, action: row.remove!.action, go: row.remove!.go })}>Remove</Button>}
                     </div>
                   )

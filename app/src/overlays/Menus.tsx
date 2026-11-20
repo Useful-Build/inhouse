@@ -10,6 +10,7 @@ import { Avatar, EmptyState, Icon, IconTile, MenuItem } from '../ui'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PHONE_QUERY } from '../components/Composer'
+import { signOutAction } from './account'
 
 type Notice = AgentNotification & { go: () => void }
 /** A role as the menu names it. */
@@ -91,8 +92,8 @@ export function AccountMenu({ children }: { children: ReactNode }) {
     ['campaign', 'Send feedback', () => openTeam('feedback')],
     // The product signs out through Access (`signOutUrl()`); the demo has no sign-in.
     ['logout', 'Sign out', () => {
-      const url = agent.signOutUrl()
-      if (url) { window.location.assign(url); return }
+      const out = signOutAction(agent.signOutUrl())
+      if ('go' in out) { window.location.assign(out.go); return }
       patch({ pop: null, sideOpen: false }); showToast("Sign out isn't connected in this demo.", { icon: 'info', ms: 4000 })
     }],
   ]

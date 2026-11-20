@@ -22,12 +22,13 @@ describe('allowance', () => {
     const can = canOf(on)
     for (const k of CAN_KEYS) expect(allowance(row({ key: 'p:m_x', can: k }), can).control).toBe(can[k])
   })
-  test.prop([fc.boolean(), fc.boolean()])('a model row: the effort needs technical, the switch also takes switchModelOff', (tech, off) => {
-    const a = allowance(row({ kind: 'mode', key: 'tm:fable:effort' }), canOf([...(tech ? ['editTechnical'] : []), ...(off ? ['switchModelOff'] : [])]))
-    expect(a).toEqual({ control: tech || off, effort: tech, switch: tech || off })
+  test.prop([fc.boolean(), fc.boolean(), fc.boolean()])('a model row: effort needs technical; without it the switch only turns a model off, so only while it is on', (tech, off, on) => {
+    const a = allowance(row({ kind: 'mode', key: 'tm:fable:effort', switchOn: on }), canOf([...(tech ? ['editTechnical'] : []), ...(off ? ['switchModelOff'] : [])]))
+    expect(a).toEqual({ control: tech || off, effort: tech, switch: tech || (off && on) })
   })
-  test('without me() nothing is taken away', () => {
+  test('without me() the demo takes nothing away, and the product allows nothing', () => {
     expect(allowance(row({ key: 't:tone' }), undefined)).toEqual({ control: true, effort: true, switch: true })
+    expect(allowance(row({ key: 't:tone' }), undefined, true)).toEqual({ control: false, effort: false, switch: false })
   })
 })
 

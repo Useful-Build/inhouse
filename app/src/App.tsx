@@ -9,6 +9,7 @@ import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
 import { NotConnected } from './shell/NotConnected'
 import { notOnTeam } from './shell/not-on-team'
+import { mayWriteHash } from './shell/route-sync'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -185,6 +186,8 @@ function applyRoute(r: Route, first: boolean) {
 const initialRoute = fromHash(location.hash)
 if (initialRoute) applyRoute(initialRoute, true)
 /** The first link named a page that doesn't exist: App says so once it has mounted. */
+/** Where the app was when its hash was last written (see shell/route-sync.ts). */
+let lastNav = ''
 const bootUnknownPage = !initialRoute && hasSlug(location.hash)
 
 function useHashRoute() {
@@ -249,7 +252,12 @@ function useHashRoute() {
     if (chatUnknown) return // replaced above
     const h = toHash(page, appKey, setTab, chatKey, menu)
     // An open Library file keeps its own link (#/library/<id>, see screens/library/route.ts).
-    if (location.hash === h || (page === 'library' && location.hash.startsWith(`${h}/`))) return
+    if (location.hash === h || (page === 'library' && location.hash.startsWith(`${h}/`))) { lastNav = `${page}|${appKey}|${setTab}|${chatKey}|${menu}`; return }
+    // A hash someone else just set is read by the hashchange listener; writing now (a phone-width resize re-runs this effect) would put the old page back over it.
+    const nav = `${page}|${appKey}|${setTab}|${chatKey}|${menu}`
+    const navChanged = nav !== lastNav
+    lastNav = nav
+    if (!mayWriteHash(navChanged, location.hash, h, !!fromHash(location.hash))) return
     // A hash that only needs tidying (none, unknown, no tab) replaces the entry. A real move adds one.
     // So does a new chat getting its id when the first question is asked: Back skips the empty chat.
     const cur = fromHash(location.hash)
