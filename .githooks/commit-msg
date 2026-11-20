@@ -1,0 +1,9 @@
+#!/bin/sh
+# Refuses a commit whose Verified: trailer `git interpret-trailers --parse` can't print (pr-gates checks every
+# commit). Merge commits are exempt. Installed by app's `prepare` script (core.hooksPath).
+git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && exit 0
+if git stripspace --strip-comments < "$1" | git interpret-trailers --parse | grep -q '^Verified: ..*'; then
+  exit 0
+fi
+echo "commit-msg: no parseable 'Verified: <checks>' trailer. Put it in the last paragraph, one line, directly above Co-Authored-By (no blank line)." >&2
+exit 1
