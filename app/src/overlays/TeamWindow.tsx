@@ -1,4 +1,4 @@
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
 import type { RequestType } from '../state/store'
 import { useCtx, useUi } from '../state/store'
 import { goingLive, teamRequestLine, userName } from '../state/derive'
@@ -58,7 +58,8 @@ export function TeamWindow() {
     }]
   })
   const requests = [
-    ...st.teamRequests.map(q => ({ icon: q.icon, title: q.title, ...teamRequestLine(q, now, true), ...SEEDED_STYLE[1] })),
+    // The demo says "just now" for what was sent here; the product says how long ago (`fmtAgo`).
+    ...st.teamRequests.map(q => ({ icon: q.icon, title: q.title, ...teamRequestLine(q, now, demo !== null), ...SEEDED_STYLE[1] })),
     ...seeded,
   ]
   // The sender is the signed-in person, by the name in Settings.
