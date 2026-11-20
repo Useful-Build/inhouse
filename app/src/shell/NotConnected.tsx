@@ -1,8 +1,8 @@
 import { useEffect } from 'react'
 
 /**
- * The product build while its client has no data (the HTTP stub, until P2 connects it): one screen in place of the pages
- * (App.tsx). The demo never shows it: its Loading scenario keeps its own skeletons.
+ * The product build while its client has no data yet (the first read, `meta`, is loading): one screen in place of the
+ * pages (App.tsx, start-screen.ts). The demo never shows it: its Loading scenario keeps its own skeletons.
  */
 export function NotConnected() {
   useEffect(() => { document.title = 'Not connected yet · Inhouse' }, [])

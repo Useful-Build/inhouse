@@ -9,13 +9,14 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
-- Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts` and `e2e/ship/hardening.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview, never in CI's normal run.
+- Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts`: on the test build, `build=test`), never in CI's normal run.
 - Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
-- Audit log: the download is checked on desktop only (its content in `sample-data.spec.ts`); the phone check sees the button.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
-- Export everything and Sign out are stubs: specs check they say so and change nothing.
+- Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; `e2e/real/sign-out.spec.ts` checks the account menu goes to that path on the test build (no Access there); the real Access logout is checked on the candidate deploy (pending).
+- The WebSocket under the enforced CSP is P3's: P2 has no WebSocket route, so `connect-src 'self'` is checked for fetch only (`e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo).
+- "A failed audit write leaves no change" (Acceptance 6) is proven only by the server unit tests on the vitest workerd (compat 2026-11-11), not on the test build's: forcing an audit write to fail there needs test code in the deployable bundle.
 
 ## Today
 
@@ -300,6 +301,60 @@ Product build: Not connected yet
   Selector: heading "Not connected yet", the product project (`E2E_PRODUCT=1`)
   Expected: one "Not connected yet" screen in place of every page; no sample name, no demo switches or Reset demo, `?demo` ignored (the demo clock's absence is proved by `scripts/check-product-build.mjs`)
   Covered:  e2e/product/no-demo.spec.ts
+
+Test build: the product Worker's API and app (P2)
+  Path:     `npm run build:product-test`, then `/api/*` with no Access JWT, and `/` in a browser
+  Selector: the `api` project (status and body), the `real-desktop` and `real-phone` projects (heading "Not connected yet")
+  Expected: every `/api/*` path (an unknown one too) answers 401 `{"error":{"code":"unauthorized"}}` with the security headers and `no-store`; the app loads under the enforced CSP with no violation
+  Covered:  e2e/api/skeleton.spec.ts, e2e/real/skeleton.spec.ts
+
+Backend core: account menu, name and role (P2, test build)
+  Path:     sign in as a seeded person -> sidebar -> account and settings
+  Selector: menu "Account" (name, `<email> · <role>`), items Your settings, Team settings, Sign out
+  Expected: the menu shows the signed-in person's own name, email and role (Admin, Member or Inhouse team); Sign out goes to Access's logout (not checked in e2e)
+  Covered:  e2e/ship/backend-core.spec.ts (S1, S5, S7, S8)
+
+Backend core: Members page, invite and remove (P2, test build)
+  Path:     Settings -> Members
+  Selector: button "Invite", dialog "Invite someone", "Remove <name>", tag "Invited"
+  Expected: an invite shows the person with the Invited tag; their first sign-in binds it and lands as a Member with the invited name; a removed member's next request is refused; a Member sees no Invite or Remove (the audit log and its download are theirs by the access matrix); on a phone the page is read-only (Invite only)
+  Covered:  e2e/ship/backend-core.spec.ts (S5, S8, S9), e2e/api/members.spec.ts
+
+Backend core: Settings, typed and with conflicts (P2, test build)
+  Path:     Settings -> General (Time zone), Spending cap
+  Selector: dropdown "Time zone", field "Monthly cap", toast "Someone changed this"
+  Expected: a setting saves on the Worker and survives a reload; two tabs on one setting: the second save is refused and shows what the setting is now; a Member sees team settings as text
+  Covered:  e2e/ship/backend-core.spec.ts (S2, S5, S6), e2e/api/revisions-paging.spec.ts
+
+Backend core: photo (P2, test build)
+  Path:     Settings -> General -> Photo
+  Selector: file input "Photo file", Remove, the avatar in the account menu
+  Expected: a PNG, JPEG or WebP under the cap uploads to R2 and shows in the avatar after a reload; the Worker serves it with `nosniff`
+  Covered:  e2e/ship/backend-core.spec.ts (S4), e2e/api/photo.spec.ts
+
+Backend core: audit log and its CSV (P2, test build)
+  Path:     Settings -> Audit log -> Download CSV
+  Selector: rows (person, what, detail, time), button "Download CSV"
+  Expected: a change shows as a line with the person's name and the time; the CSV has the header When, Who, What, Detail and the same lines; the download is offered to a Member too (matrix rows 19 and 20); nothing can edit or delete a line
+  Covered:  e2e/ship/backend-core.spec.ts (S3, S5, S7), e2e/api/audit.spec.ts
+
+Backend core: Who can get in, support grants (P2, test build)
+  Path:     Settings -> Data and access -> Who can get in
+  Selector: row "Inhouse team access", dropdown "Give access for", buttons "Grant" and "End now"
+  Expected: an Admin gives the Inhouse team access for 1, 4, 24 or 72 hours; while it is live the Inhouse team reads the audit log; after End now the audit log is refused and baseline reads still load; the audit log keeps the grant, its use and its end; on a phone the row is read-only
+  Covered:  e2e/ship/backend-core.spec.ts (S7), e2e/api/grants.spec.ts
+
+Backend core: "You're not on this team" (P2, test build)
+  Path:     sign in as someone who wasn't invited, or was removed -> any URL
+  Selector: heading "You're not on this team", button "Sign out"
+  Expected: one screen in place of every page, with a Sign out link to Access (not checked in e2e)
+  Covered:  e2e/ship/backend-core.spec.ts (S9)
+
+Test build and release smoke (P2)
+  Path:     `npm run build:product-test` -> `wrangler dev`; `e2e/smoke/` against the test build (CI) or a release (`SMOKE_BASE_URL`)
+  Selector: the `api`, `real-desktop`, `real-phone` and `smoke` projects; `ship.yml` with `build=test`
+  Expected: the API specs, the CSP-guarded browser specs and the read-only smoke pass; the ship recording of S1 to S9 runs on the test build (S10, the demo, is `agent-seam.spec.ts` with `build=demo`) and never against a release
+  Covered:  e2e/api/*.spec.ts, e2e/real/skeleton.spec.ts, e2e/smoke/product.spec.ts, e2e/ship/backend-core.spec.ts
 
 Demo upgrade: a stored demo
   Path:     a browser holding the demo as the build before the agent seam saved it -> open Today

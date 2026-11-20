@@ -1,6 +1,7 @@
 // The agent's state a person changes (persisted, resettable), and what a write returns.
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
+import { MemberIdSchema } from './members.ts'
 import { RoutineCardSchema } from './chat.ts'
 import { RoutineRunSchema } from './routine.ts'
 import { SkillDefSchema } from './skill.ts'
@@ -10,8 +11,8 @@ const flags = z.record(z.string(), z.literal(true))
 export const ApprovalRecordSchema = z.object({
   /** When it was approved, on the agent's clock (the demo clock in the demo). */
   at: InstantSchema,
-  /** Who approved it: the person's name at approval time. */
-  by: z.string(),
+  /** Who approved it: the member's id. The name shown comes from the members list. */
+  by: MemberIdSchema,
   /** When it was approved on the real clock: the 10 s hold counts from it across reloads. The same as `at` outside the demo. */
   loggedAt: InstantSchema,
   /** Draft title at approval time (partial-aware). History keeps it even if the stage or undo state changes later. */
@@ -40,8 +41,8 @@ export type ApproveResult = z.infer<typeof ApproveResultSchema>
 export const TeamRequestSchema = z.object({ icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(), statusAt: InstantSchema.optional() })
 export type TeamRequest = z.infer<typeof TeamRequestSchema>
 
-/** When and by whom something was done: `at` on the agent's clock, `by` the person's name then. */
-export const StampRecordSchema = z.object({ at: InstantSchema, by: z.string() })
+/** When and by whom something was done: `at` on the agent's clock, `by` the member's id. */
+export const StampRecordSchema = z.object({ at: InstantSchema, by: MemberIdSchema })
 export type StampRecord = z.infer<typeof StampRecordSchema>
 
 /** Why a problem left Today and Approvals: snoozed until tomorrow, not a problem, or a draft not to send. */
@@ -53,8 +54,8 @@ export const SetAsideRecordSchema = z.object({
   reason: SetAsideReasonSchema,
   /** When, on the agent's clock (the demo clock in the demo). */
   at: InstantSchema,
-  /** Who set it aside: the person's name then. */
-  by: z.string(),
+  /** Who set it aside: the member's id. */
+  by: MemberIdSchema,
   /** When, on the real clock: orders two set asides at the same demo minute. The same as `at` outside the demo. */
   loggedAt: InstantSchema,
 })

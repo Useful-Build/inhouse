@@ -52,8 +52,10 @@ function scrollAreaOf(el: HTMLElement | null) {
  * Escape closes, and focus goes back to the button. Typing on the closed button does nothing (Radix would pick a
  * match straight away), and Escape in the open list stays with the list.
  */
-export function Select({ value, options, onChange, label, disabled, align = 'right', minWidth = 150, style, className }: {
+export function Select({ value, options, onChange, label, disabled, align = 'right', minWidth = 150, style, className, display }: {
   value: string; options: string[]; onChange: (v: string) => void; label: string; disabled?: boolean; align?: 'left' | 'right'; minWidth?: number; style?: CSSProperties; className?: string
+  /** What the button says when that isn't the value's own name (a member's role: "Approver" while the value is Member). The list still offers the options. */
+  display?: string
 }) {
   const trigger = useRef<HTMLButtonElement>(null)
   const [area, setArea] = useState<HTMLElement | null>(null)
@@ -78,10 +80,10 @@ export function Select({ value, options, onChange, label, disabled, align = 'rig
       onValueChange={v => { if (v !== value) onChange(v) }}
       onOpenChange={open => { if (open) place() }}>
       {/* disabled:opacity-100 cancels ui-base's fade: a locked Select keeps its look, like every non-primary button. */}
-      <SelectTrigger ref={trigger} aria-label={`${label}: ${value}`} className={cn('max-w-full flex-none disabled:opacity-100', className)} style={{ minWidth, ...style }}
+      <SelectTrigger ref={trigger} aria-label={`${label}: ${display ?? value}`} className={cn('max-w-full flex-none disabled:opacity-100', className)} style={{ minWidth, ...style }}
         // A printable key other than Space would pick a match while the list is closed. Radix skips its own handler when this one prevents it.
         onKeyDown={e => { if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) e.preventDefault() }}>
-        <SelectValue>{value}</SelectValue>
+        <SelectValue>{display ?? value}</SelectValue>
       </SelectTrigger>
       <SelectContent aria-label={label}
         // Radix hears Escape on the document in the capture phase; stopping it there keeps it from the App's own Escape
