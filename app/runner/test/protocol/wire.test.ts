@@ -25,7 +25,9 @@ import { describe, expect } from 'vitest'
 import {
   ACCEPTED_VERSIONS,
   OUTPUT_SCHEMA_MAX_BYTES,
+  STRUCTURED_MAX_DEPTH,
   STRUCTURED_OUTPUT_MAX_BYTES,
+  jsonDepth,
   ATTACHMENTS_MAX,
   AuditPost,
   PUSH_BATCH_MAX_BYTES,
@@ -520,7 +522,9 @@ describe('push, audit, status and admission', () => {
 })
 
 // Structured output (R3 follow-up). Ways it could fail: a schema or an output over its cap passes; an outputFormat with
-// another type, or an extra key, passes; a structuredOutput key with no value passes; the failure code is missing.
+// another type, or an extra key, passes; a cap counted in characters rather than UTF-8 bytes lets multibyte text past it;
+// a schema or an output nested past 64 levels passes (the local channel would then refuse it), or a deep one throws; the
+// failure code is missing.
 describe('structured output on the wire', () => {
   const first = fixture('run-start.first.json')
   const ok = (v: Record<string, unknown>) => RunStart.safeParse(v).success
@@ -545,6 +549,42 @@ describe('structured output on the wire', () => {
     for (const v of [{ a: 1 }, [1, 2], 'text', 0, false, null]) expect(body({ ...f, structuredOutput: v }), JSON.stringify(v)).toBe(true)
     expect(body({ ...f, structuredOutput: sized(STRUCTURED_OUTPUT_MAX_BYTES) })).toBe(true)
     expect(body({ ...f, structuredOutput: sized(STRUCTURED_OUTPUT_MAX_BYTES + 1) })).toBe(false)
+  })
+
+  // #151 review round 1: multibyte at the caps, and the depth cap.
+  const multibyte = (bytes: number) => ({ a: 'é'.repeat((bytes - 8) / 2) })
+  const multibyteOver = (bytes: number) => ({ a: `${'é'.repeat((bytes - 8) / 2)}x` })
+  const nest = (n: number): unknown => (n === 0 ? 1 : [nest(n - 1)])
+  const nestObject = (n: number): Record<string, unknown> => ({ a: n === 1 ? 1 : nestObject(n - 1) })
+
+  it('the schema cap counts UTF-8 bytes: multibyte at 16 KB passes, one byte over fails', () => {
+    expect(JSON.stringify(multibyteOver(OUTPUT_SCHEMA_MAX_BYTES)).length).toBeLessThan(OUTPUT_SCHEMA_MAX_BYTES)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: multibyte(OUTPUT_SCHEMA_MAX_BYTES) } })).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: multibyteOver(OUTPUT_SCHEMA_MAX_BYTES) } })).toBe(false)
+  })
+
+  it('the output cap counts UTF-8 bytes: multibyte at 64 KB passes, one byte over fails', () => {
+    const f = { type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }
+    expect(JSON.stringify(multibyteOver(STRUCTURED_OUTPUT_MAX_BYTES)).length).toBeLessThan(STRUCTURED_OUTPUT_MAX_BYTES)
+    expect(RunEventBody.safeParse({ ...f, structuredOutput: multibyte(STRUCTURED_OUTPUT_MAX_BYTES) }).success).toBe(true)
+    expect(RunEventBody.safeParse({ ...f, structuredOutput: multibyteOver(STRUCTURED_OUTPUT_MAX_BYTES) }).success).toBe(false)
+  })
+
+  it('depth: a schema or an output 64 levels deep passes, 65 fails; 5000 deep is refused, never thrown', () => {
+    const f = { type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: nestObject(64) } })).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: nestObject(65) } })).toBe(false)
+    expect(RunEventBody.safeParse({ ...f, structuredOutput: nest(64) }).success).toBe(true)
+    expect(RunEventBody.safeParse({ ...f, structuredOutput: nest(65) }).success).toBe(false)
+    let deep: Record<string, unknown> = { type: 'object' }
+    for (let i = 0; i < 5000; i++) deep = { not: deep }
+    expect(() => RunStart.safeParse({ ...first, outputFormat: { type: 'json_schema', schema: deep } })).not.toThrow()
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: deep } })).toBe(false)
+    expect(jsonDepth(nest(64))).toBe(64)
+    expect(jsonDepth(nest(65))).toBe(65)
+    expect(jsonDepth(nest(200))).toBe(STRUCTURED_MAX_DEPTH + 1)
+    expect(jsonDepth('x')).toBe(0)
+    expect(jsonDepth({})).toBe(1)
   })
 
   it('a failed run can say structured_output', () => {

@@ -1267,6 +1267,9 @@ const shmRows = () => readFileSync('/proc/sysvipc/shm', 'utf8').split('\n').slic
  * through only when the run asks for structured output. Asked: a valid answer arrives as `finished.structuredOutput`,
  * and answers that never match the schema end the run `failed structured_output`. Not asked: StructuredOutput isn't
  * among the tools at all, and a call to it doesn't produce structured output.
+ * What `not-asked` proves: end to end, with no outputFormat, the tool is absent and no output comes back. What it
+ * doesn't: that the guards' `tools` entry is what gates it (the SDK may add the tool only with outputFormat anyway);
+ * that rule is pinned by test/guards/options.test.ts, not here.
  */
 async function probeStructured() {
   if (VIA !== 'root') return record('structured.via-root', false, `runs go ${VIA}`)
