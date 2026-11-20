@@ -54,9 +54,12 @@
 	// `wrangler dev` (S6, docs/decisions/p3-local-containers.md), so the container path is proven on a deployment (Q2).
 	// Deploys ignore this block. https://developers.cloudflare.com/workers/wrangler/configuration/ (dev.enable_containers, read 2026-11-20)
 	"dev": { "enable_containers": false },
-	// The Worker's secrets, set with `wrangler secret put` (never here); deploy fails while one is missing. AI_GATEWAY_TOKEN
-	// is the authenticated gateway's token (p3-design section 8.2). https://developers.cloudflare.com/workers/wrangler/configuration/ (read 2026-11-20)
-	"secrets": { "required": ["AI_GATEWAY_TOKEN"] },
+	// The Worker's secrets, set with `wrangler secret put` (never here); deploy fails while one is missing, instead of
+	// deploying a Worker that answers every API call 503. AUDIT_HASH_KEY redacts audited values (server/db/stores.ts);
+	// AI_GATEWAY_TOKEN is the authenticated gateway's token (p3-design section 8.2). Under `wrangler dev` only these keys
+	// are read from the local secrets file, and a missing one is a warning, not a failure.
+	// https://developers.cloudflare.com/workers/wrangler/configuration/ (secrets, read 2026-11-20)
+	"secrets": { "required": ["AUDIT_HASH_KEY", "AI_GATEWAY_TOKEN"] },
 	"vars": {
 		// JSON text, filled by the ops repo: { teamDomain, apps: [{ name, origin, aud }], serviceTokens } (p2-design section 2).
 		// Empty here, so a release that doesn't fill it fails the config check.

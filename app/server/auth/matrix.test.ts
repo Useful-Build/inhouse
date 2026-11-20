@@ -392,6 +392,17 @@ describe('P3 auth: release, smoke and ownerObject', () => {
     }
   })
 
+  it('release is refused on a row that lists it but isn\'t open (the class guard, not only the services list)', () => {
+    // Synthetic rows: no committed row lists release outside `open`, so only these pin the guard.
+    for (const cls of ['brand_data', 'baseline', 'technical', 'personal', 'report'] as const) {
+      for (const method of ['GET', 'POST'] as const) {
+        const r: AccessRow = { method, pattern: '/x', class: cls, allow: ['member', 'admin'], services: ['release'] }
+        expect(checkAccess(principals.release(), r, { ownerId: 'm_a' }, NOW), `${method} ${cls}`).toEqual({ refused: 'forbidden' })
+      }
+    }
+    expect(checkAccess(principals.release(), { method: 'POST', pattern: '/x', class: 'open', allow: [], services: ['release'] }, undefined, NOW)).toEqual({ ok: true })
+  })
+
   it('release and monitor reach nothing a person does; a person and Inhouse never reach drain or warm-up', () => {
     for (const r of DESIGN_ROWS.filter(x => RELEASE_ROWS.includes(key(x)))) {
       for (const p of [principals.member(), principals.admin(), principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), principals.smoke(), principals.monitor()]) {

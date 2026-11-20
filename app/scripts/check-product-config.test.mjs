@@ -118,7 +118,7 @@ describe('check-product-config', () => {
     const product = JSON.parse(stripJsonc(readFileSync(template, 'utf8')))
     expect(checkPool(product)).toEqual([])
     expect(product.vars.AI_GATEWAY_ID).toBe('')
-    expect(product.secrets.required).toContain('AI_GATEWAY_TOKEN')
+    expect(product.secrets.required).toEqual(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN'])
   })
   test('the two Worker configs carry the same pool: RUNNER_POOL 2, one Runner container of standard-4 with 6 instances from ./runner/Dockerfile', () => {
     for (const c of [testConfig(), JSON.parse(stripJsonc(readFileSync(template, 'utf8')))]) {
