@@ -82,6 +82,14 @@ describe('route 29: send a turn', () => {
     expect((await send(sendPriced, alice, live, { clientTurnKey: key(), text: 'hi', model: 'gpt' })).body).toEqual({ error: { code: 'invalid' } })
   })
 
+  it('the same attachment twice is 400 invalid at the send, before admission (failure 2)', async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const att = { fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'a.pdf' }
+    const r = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'sonnet', attachments: [att, { ...att, name: 'b.pdf' }] })
+    expect(r).toMatchObject({ status: 400, body: { error: { code: 'invalid' } }, objects: [] })
+  })
+
   it('an unpriced model, or one switched off, is model_off (failure 2)', async () => {
     const id = `c-${uniq()}`
     await chat(id, alice)
