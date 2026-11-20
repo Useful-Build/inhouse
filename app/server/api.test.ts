@@ -11,7 +11,7 @@ import { unwiredStores } from './testing/auth-fixtures.ts'
 const handler = vi.fn(async () => new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' } }))
 const checkOrigin = vi.fn<ApiParts['checkOrigin']>()
 const parts: ApiParts = {
-  authenticate: async (_r, _e, _s, _n, requestId) => ({ principal: { kind: 'person', memberId: 'm_probe', role: 'member', subject: 's', requestId } }),
+  authenticate: async (_r, _e, _s, _n, requestId) => ({ principal: { kind: 'person', memberId: 'm_probe', role: 'member', subject: 's', requestId, expMs: 4_102_444_800_000 } }),
   checkOrigin,
   checkAccess: () => ({ ok: true }),
   stores: () => unwiredStores,

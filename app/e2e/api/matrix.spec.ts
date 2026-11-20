@@ -1,5 +1,5 @@
 // The access matrix, from outside: every row against every principal (Admin, Member A, Member B, Inhouse without a
-// grant, Inhouse with a live grant, `smoke`, `monitor`). The expectation is worked out here from the design's classes
+// grant, Inhouse with a live grant, `smoke`, `monitor`, and P3's `release`). The expectation is worked out here from the design's classes
 // (p2-design section 3), not by the Worker's own `checkAccess`, so the two can disagree and fail. The requests change
 // nothing (cases.ts): a caller the matrix lets through gets the handler's 400 or 404, a refused one 403 before it.
 // Rows come from access-matrix.ts, so a new row is swept as soon as it has a case, and routes.spec.ts fails until it has.
@@ -10,9 +10,10 @@ import { caseFor } from './cases.ts'
 import { actor, appOrigin, call, endLiveGrants, expectError, matrixRows, me, rowKey, someKey } from './kit.ts'
 import type { CallOptions, Row, Who } from './kit.ts'
 import { auditMax, auditAfter } from './db.ts'
+import { AuditArgsSchema } from '../../shared/contract/audit.ts'
 
 type Principal = Who | 'inhouseGrant'
-const PRINCIPALS: Principal[] = ['admin', 'memberA', 'memberB', 'inhouse', 'inhouseGrant', 'smoke', 'monitor']
+const PRINCIPALS: Principal[] = ['admin', 'memberA', 'memberB', 'inhouse', 'inhouseGrant', 'smoke', 'monitor', 'release']
 const rows = matrixRows()
 
 type Verdict = { allowed: true } | { allowed: false; reason?: string }
@@ -21,8 +22,8 @@ type Verdict = { allowed: true } | { allowed: false; reason?: string }
 function verdict(row: Row, who: Principal): Verdict {
   const design = caseFor(row).design
   const read = row.method === 'GET'
-  if (who === 'smoke' || who === 'monitor') {
-    // A service token reaches only the rows that name it: monitor `open`, smoke some GET rows.
+  if (who === 'smoke' || who === 'monitor' || who === 'release') {
+    // A service token reaches only the rows that name it: monitor and release `open` rows, smoke its own chat rows (P3).
     return { allowed: design.services.includes(who) }
   }
   if (design.class === 'open') return { allowed: false }
@@ -152,7 +153,13 @@ test.describe('what the rows alone do not say', () => {
     const alex = actor('inhouse')
     try {
       const mark = auditMax()
-      const reads = designGets('brand_data')
+      // The routes a support.access line can name today (the audit contract's closed list). P3's chat reads join it in
+      // W1's first PR; until then an Inhouse read of one is 503 with no line ("no line, no data", p3-design section 3).
+      const logged = (route: string) => AuditArgsSchema.safeParse({ action: 'support.access', grantId: made.json.id, method: 'GET', route }).success
+      const unlogged = designGets('brand_data').filter(r => !logged(r.pattern))
+      for (const row of unlogged) expectError(await call(request, alex, 'GET', caseFor(row).path), 503, 'unavailable')
+      expect(auditAfter(mark).filter(l => l.action === 'support.access'), 'an unlogged read writes no line').toEqual([])
+      const reads = designGets('brand_data').filter(r => logged(r.pattern))
       for (const row of reads) {
         const r = await call(request, alex, 'GET', caseFor(row).path)
         expect(r.status, `${row.pattern}: ${r.text}`).toBe(caseFor(row).passes)
@@ -181,7 +188,7 @@ test.describe('what the rows alone do not say', () => {
     expect(health.status, health.text).toBe(200)
     expect(health.json.ok).toBe(true)
     expect(health.json.signals.map((s: { name: string }) => s.name)).toEqual(expect.arrayContaining(['d1', 'migrations']))
-    for (const who of ['admin', 'memberA', 'memberB', 'inhouse', 'smoke'] as const) {
+    for (const who of ['admin', 'memberA', 'memberB', 'inhouse', 'smoke', 'release'] as const) {
       expectError(await call(request, actor(who), 'GET', '/api/health'), 403, 'forbidden')
     }
     for (const row of rows.filter(r => r.pattern !== '/api/health')) {

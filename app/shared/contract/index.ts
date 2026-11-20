@@ -25,3 +25,7 @@ export * from './grants.ts'
 export * from './paging.ts'
 export * from './me.ts'
 export * from './requests.ts'
+// P3 (PR0's placeholders, filled by their owners).
+export * from './runs.ts'
+export * from './chats.ts'
+export * from './attachments.ts'

@@ -14,9 +14,11 @@ type Role = 'member' | 'admin' | 'inhouse'
 export interface Design {
   class: 'open' | 'baseline' | 'brand_data' | 'personal' | 'technical' | 'report'
   allow: readonly Role[]
-  services: readonly ('monitor' | 'smoke')[]
+  services: readonly ('monitor' | 'smoke' | 'release')[]
   /** Row 12 only: an Admin may write, through the object rule. */
   adminWrite: boolean
+  /** P3: a chat read, each object one member's (p3-design section 3). */
+  ownerObject: boolean
 }
 
 export interface RouteCase {
@@ -33,7 +35,12 @@ export interface RouteCase {
 const NO_MEMBER = 'm_e2e_nobody'
 const NO_GRANT = 'g_e2e_nobody'
 
-const d = (cls: Design['class'], allow: Role[], services: Design['services'] = [], adminWrite = false): Design => ({ class: cls, allow, services, adminWrite })
+const d = (cls: Design['class'], allow: Role[], services: Design['services'] = [], adminWrite = false, ownerObject = false): Design => ({ class: cls, allow, services, adminWrite, ownerObject })
+/** P3's chat reads (p3-design section 3): `ownerObject`. */
+const owned = (allow: Role[], services: Design['services'] = []): Design => d('brand_data', allow, services, false, true)
+/** P3 PR0: every P3 route is a stub answering 503 `not_built` until its owner builds it (then its case moves to the real status). */
+const STUB = 503
+const NO_CHAT = 'c_e2e_nobody'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -60,6 +67,36 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/audit/export.csv': { design: d('brand_data', ALL), path: '/api/audit/export.csv', passes: 200 },
   // Class 'report' is the agreed change from PR0b (server/auth/matrix.ts:15): both hosts post it, never a service token.
   'POST /api/client-error': { design: d('report', ALL), path: '/api/client-error', json: {}, passes: 204 },
+  // P3, p3-design section 3's table, written out by hand.
+  'GET /api/chats': { design: owned(ALL, ['smoke']), path: '/api/chats', passes: STUB },
+  'POST /api/chats': { design: d('personal', PEOPLE, ['smoke']), path: '/api/chats', json: {}, passes: STUB },
+  'GET /api/chats/:id': { design: owned(ALL, ['smoke']), path: `/api/chats/${NO_CHAT}`, passes: STUB },
+  'PUT /api/chats/:id/title': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/title`, json: {}, passes: STUB },
+  'PUT /api/chats/:id/pin': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/pin`, json: {}, passes: STUB },
+  'POST /api/chats/delete': { design: d('personal', PEOPLE), path: '/api/chats/delete', json: {}, passes: STUB },
+  'POST /api/chats/restore': { design: d('personal', PEOPLE), path: '/api/chats/restore', json: {}, passes: STUB },
+  'POST /api/chats/:id/turns': { design: d('personal', PEOPLE, ['smoke']), path: `/api/chats/${NO_CHAT}/turns`, json: {}, passes: STUB },
+  'POST /api/turns/:turnId/interrupt': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/interrupt', json: {}, passes: STUB },
+  'POST /api/turns/:turnId/stop': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/stop', json: {}, passes: STUB },
+  'GET /api/runs/active': { design: owned(ALL, ['smoke']), path: '/api/runs/active', passes: STUB },
+  'GET /api/traces/:id': { design: owned(ALL), path: '/api/traces/r_e2e_nobody', passes: STUB },
+  'GET /api/socket': { design: owned(ALL, ['smoke']), path: '/api/socket?v=1', passes: STUB },
+  'GET /api/pause': { design: d('baseline', ALL), path: '/api/pause', passes: STUB },
+  // Item 19 (2026-11-20): the Inhouse team pauses and resumes too (an audited emergency pause), with no grant.
+  'POST /api/pause': { design: d('baseline', ['admin', 'inhouse']), path: '/api/pause', json: {}, passes: STUB },
+  'POST /api/resume': { design: d('baseline', ['admin', 'inhouse']), path: '/api/resume', json: {}, passes: STUB },
+  'GET /api/models': { design: d('baseline', ALL, ['smoke']), path: '/api/models', passes: STUB },
+  'POST /api/chats/:id/attachments': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/attachments`, bytes: { content: Buffer.from('x'), contentType: 'application/octet-stream' }, passes: STUB },
+  'GET /api/chats/:id/files': { design: owned(ALL), path: `/api/chats/${NO_CHAT}/files`, passes: STUB },
+  'GET /api/files/:fileId': { design: d('brand_data', ALL), path: '/api/files/f_e2e_nobody', passes: STUB },
+  'GET /api/usage': { design: d('baseline', ALL), path: '/api/usage', passes: STUB },
+  'GET /api/memory': { design: d('brand_data', ALL), path: '/api/memory', passes: STUB },
+  'PUT /api/memory/personal/:id/forgotten': { design: d('personal', PEOPLE), path: '/api/memory/personal/mem_e2e_nobody/forgotten', json: {}, passes: STUB },
+  'PUT /api/memory/brand/:id/forgotten': { design: d('brand_data', ['admin']), path: '/api/memory/brand/mem_e2e_nobody/forgotten', json: {}, passes: STUB },
+  'POST /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', json: {}, passes: STUB },
+  'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: STUB },
+  'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: STUB },
+  'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: STUB },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */

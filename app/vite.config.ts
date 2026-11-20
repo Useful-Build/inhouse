@@ -213,6 +213,9 @@ export default defineConfig(({ mode }) => {
         // The test issuer (W1) only in the test build; every other build gets the switched-off stand-in, so the module
         // never enters their graph (server/auth/issuer-off.ts; check-product-build.mjs proves it).
         '@test-issuer': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/auth/test-issuer.ts' : './server/auth/issuer-off.ts', import.meta.url)),
+        // The scripted model (P3, app/test/scripted-model/) the same way: only the test build's Worker can import it; every
+        // other build gets server/model/scripted-off.ts (check-product-build.mjs proves it).
+        '@scripted-model': fileURLToPath(new URL(mode === PRODUCT_TEST ? './test/scripted-model/index.ts' : './server/model/scripted-off.ts', import.meta.url)),
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },

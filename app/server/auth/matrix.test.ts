@@ -12,17 +12,18 @@ import type { Principal } from './principal.ts'
 import { ADMIN_WRITE_OBJECT, AccessRefusedError, canFor, canRowsProblems, checkAccess, objectGate, rowFor } from './matrix.ts'
 import type { AccessObject, AccessRow, CanRows } from './matrix.ts'
 import { CanKeySchema } from '../../shared/contract/me.ts'
-import { DESIGN_CAN_ROWS, DESIGN_ROWS, principals } from '../testing/auth-fixtures.ts'
+import { DESIGN_CAN_ROWS, DESIGN_ROWS, SMOKE_MEMBER, principals } from '../testing/auth-fixtures.ts'
 
 const NOW = Date.parse('2026-11-20T10:00:00.000Z')
 const row = fc.constantFrom(...DESIGN_ROWS)
 const grant = fc.option(fc.record({ id: fc.constant('g_1'), endsAtMs: fc.integer({ min: NOW - 2, max: NOW + 2 }) }), { nil: null })
 const memberId = fc.constantFrom('m_a', 'm_b', 'm_smoke')
 const principal: fc.Arbitrary<Principal> = fc.oneof(
-  fc.record({ kind: fc.constant('person' as const), memberId, role: fc.constantFrom('member' as const, 'admin' as const), subject: fc.constant('s'), requestId: fc.constant('r') }),
-  fc.record({ kind: fc.constant('inhouse' as const), memberId: fc.constant('m_ih'), subject: fc.constant('s'), grant, requestId: fc.constant('r') }),
+  fc.record({ kind: fc.constant('person' as const), memberId, role: fc.constantFrom('member' as const, 'admin' as const), subject: fc.constant('s'), requestId: fc.constant('r'), expMs: fc.constant(NOW + 600_000) }),
+  fc.record({ kind: fc.constant('inhouse' as const), memberId: fc.constant('m_ih'), subject: fc.constant('s'), grant, requestId: fc.constant('r'), expMs: fc.constant(NOW + 600_000) }),
   fc.constant(principals.smoke()),
   fc.constant(principals.monitor()),
+  fc.constant(principals.release()),
 )
 // A valid `tm:<id>:on` with something before or after it (`xtm:a:on`, `tm:a:onx`, a trailing newline): the anchors.
 const anchorBreaking = fc.tuple(fc.constantFrom('', 'x', ' ', '\n', 'tm:', ':'), fc.constantFrom('tm:gpt:on', 'tm:a:on'), fc.constantFrom('', 'x', ' ', '\n', ':on', ':'))
@@ -84,13 +85,26 @@ describe('checkAccess properties', () => {
     expect(ok(checkAccess(principals.admin(), row12, { settingKey: key, value }, NOW))).toBe(isSwitchKey(key) && (value === 'off' || value === 'on'))
   })
 
-  test.prop([principal, row, object])('Inhouse never writes brand_data or personal, and a baseline row only where it lists inhouse; monitor only reads open rows; smoke only reads', (p, r, o) => {
+  // Changed in P3 (p3-design section 3): "smoke only reads" became "smoke only on rows that list it, never open or
+  // report"; release reaches only open rows that list it. Changed for decision 19: Inhouse may write a baseline row
+  // that lists it.
+  test.prop([principal, row, object])('Inhouse never writes brand_data or personal, and a baseline row only where it lists inhouse; monitor only reads open rows; smoke and release only where listed', (p, r, o) => {
     const d = checkAccess(p, r, o, NOW)
     if (!('ok' in d)) return
     if (p.kind === 'inhouse') expect(r.method === 'GET' || r.class === 'technical' || r.class === 'report' || (r.class === 'baseline' && r.allow.includes('inhouse'))).toBe(true)
     if (p.kind === 'service' && p.name === 'monitor') expect(r.class === 'open' && r.method === 'GET').toBe(true)
-    if (p.kind === 'service') expect(r.method).toBe('GET')
+    if (p.kind === 'service' && p.name === 'release') expect(r.class).toBe('open')
+    if (p.kind === 'service' && p.name === 'smoke') expect(r.class !== 'open' && r.class !== 'report').toBe(true)
+    if (p.kind === 'service') expect(r.services).toContain(p.name)
     if (r.class === 'open') expect(p.kind).toBe('service')
+  })
+
+  test.prop([principal, row, object])('on an ownerObject row a person or smoke passes only with its own object; Inhouse only with a live grant', (p, r, o) => {
+    fc.pre(r.ownerObject === true)
+    const d = checkAccess(p, r, o, NOW)
+    if (!ok(d)) return
+    if (p.kind === 'inhouse') expect(p.grant !== null && p.grant.endsAtMs > NOW).toBe(true)
+    else expect(o?.ownerId).toBe('memberId' in p ? p.memberId : Symbol('none'))
   })
 
   test.prop([principal, fc.integer({ min: NOW - 2, max: NOW + 2 })])('canFor agrees with checkAccess for every key', (p, now) => {
@@ -161,32 +175,64 @@ describe('checkAccess cases', () => {
 /**
  * Every row against every principal, written by hand from decisions 19 and 27a (the Inhouse team holds every Admin
  * control but granting itself access; a brand's audit log needs a live grant; personal stays the owner's). Columns:
- * Member, Admin, Inhouse without a grant, Inhouse with a live grant, smoke, monitor. `ok` passes; `obj` passes only
- * through requireObject; `no` is a bare forbidden; `grant` is grant_required; `audit` passes with the support.access duty.
+ * Member, Admin, Inhouse without a grant, Inhouse with a live grant, smoke, monitor, release. `ok` passes; `obj` passes
+ * only through requireObject; `no` is a bare forbidden; `grant` is grant_required; `audit` passes with the
+ * support.access duty. Rows 22 to 49 are p3-design section 3's table: a person (and smoke where listed) reaches an
+ * `ownerObject` or `personal` row only through the owner check; Inhouse under a grant reads an `ownerObject` row with
+ * no owner; pause and resume are Admin and Inhouse (item 19); drain and warm-up are release's only.
  */
 type Want = 'ok' | 'obj' | 'no' | 'grant' | 'audit'
-const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want]> = {
-  'GET /api/health': ['no', 'no', 'no', 'no', 'no', 'ok'],
-  'GET /api/me': ['ok', 'ok', 'ok', 'ok', 'ok', 'no'],
-  'GET /api/members': ['ok', 'ok', 'ok', 'ok', 'no', 'no'],
-  'POST /api/members/invites': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
-  'PUT /api/members/:id/role': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
-  'DELETE /api/members/:id': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
-  'GET /api/settings/personal': ['obj', 'obj', 'no', 'no', 'obj', 'no'],
-  'PUT /api/settings/personal/:key': ['obj', 'obj', 'no', 'no', 'no', 'no'],
-  'GET /api/settings/brand': ['ok', 'ok', 'ok', 'ok', 'ok', 'no'],
-  'PUT /api/settings/brand/:key': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
-  'GET /api/settings/technical': ['ok', 'ok', 'ok', 'ok', 'no', 'no'],
-  'PUT /api/settings/technical/:key': ['no', 'obj', 'ok', 'ok', 'no', 'no'],
-  'PUT /api/photo': ['obj', 'obj', 'no', 'no', 'no', 'no'],
-  'DELETE /api/photo': ['obj', 'obj', 'no', 'no', 'no', 'no'],
-  'GET /api/members/:id/photo': ['ok', 'ok', 'ok', 'ok', 'no', 'no'],
-  'GET /api/grants': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
-  'POST /api/grants': ['no', 'ok', 'no', 'no', 'no', 'no'],
-  'POST /api/grants/:id/end': ['no', 'ok', 'no', 'no', 'no', 'no'],
-  'GET /api/audit': ['ok', 'ok', 'grant', 'audit', 'no', 'no'],
-  'GET /api/audit/export.csv': ['ok', 'ok', 'grant', 'audit', 'no', 'no'],
-  'POST /api/client-error': ['ok', 'ok', 'ok', 'ok', 'no', 'no'],
+const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]> = {
+  'GET /api/health': ['no', 'no', 'no', 'no', 'no', 'ok', 'no'],
+  'GET /api/me': ['ok', 'ok', 'ok', 'ok', 'ok', 'no', 'no'],
+  'GET /api/members': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'POST /api/members/invites': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'PUT /api/members/:id/role': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'DELETE /api/members/:id': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/settings/personal': ['obj', 'obj', 'no', 'no', 'obj', 'no', 'no'],
+  'PUT /api/settings/personal/:key': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/settings/brand': ['ok', 'ok', 'ok', 'ok', 'ok', 'no', 'no'],
+  'PUT /api/settings/brand/:key': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/settings/technical': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'PUT /api/settings/technical/:key': ['no', 'obj', 'ok', 'ok', 'no', 'no', 'no'],
+  'PUT /api/photo': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'DELETE /api/photo': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/members/:id/photo': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/grants': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'POST /api/grants': ['no', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/grants/:id/end': ['no', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/audit': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/audit/export.csv': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/client-error': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  // P3, rows 22 to 49 (p3-design section 3).
+  'GET /api/chats': ['obj', 'obj', 'grant', 'audit', 'obj', 'no', 'no'],
+  'POST /api/chats': ['obj', 'obj', 'no', 'no', 'obj', 'no', 'no'],
+  'GET /api/chats/:id': ['obj', 'obj', 'grant', 'audit', 'obj', 'no', 'no'],
+  'PUT /api/chats/:id/title': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'PUT /api/chats/:id/pin': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/chats/delete': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/chats/restore': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/chats/:id/turns': ['obj', 'obj', 'no', 'no', 'obj', 'no', 'no'],
+  'POST /api/turns/:turnId/interrupt': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/turns/:turnId/stop': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/runs/active': ['obj', 'obj', 'grant', 'audit', 'obj', 'no', 'no'],
+  'GET /api/traces/:id': ['obj', 'obj', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/socket': ['obj', 'obj', 'grant', 'audit', 'obj', 'no', 'no'],
+  'GET /api/pause': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'POST /api/pause': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'POST /api/resume': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/models': ['ok', 'ok', 'ok', 'ok', 'ok', 'no', 'no'],
+  'POST /api/chats/:id/attachments': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/chats/:id/files': ['obj', 'obj', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/files/:fileId': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/usage': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/memory': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'PUT /api/memory/personal/:id/forgotten': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'PUT /api/memory/brand/:id/forgotten': ['no', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  'GET /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  'POST /api/ops/warmup': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  'POST /api/chats/:id/session/reset': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
@@ -195,6 +241,7 @@ const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
 const COLUMNS: readonly [string, () => Principal][] = [
   ['member', () => principals.member()], ['admin', () => principals.admin()], ['inhouse', () => principals.inhouse()],
   ['inhouse with a grant', () => principals.inhouse({ id: 'g', endsAtMs: NOW + 1 })], ['smoke', principals.smoke], ['monitor', principals.monitor],
+  ['release', principals.release],
 ]
 
 describe('every row against every principal (the hand-written oracle)', () => {
@@ -238,8 +285,8 @@ const shadowProblems = (table: readonly { method: string; pattern: string }[]) =
   return problems
 }
 
-/** The closed list of `open` rows (matrix.ts): only the health check. */
-const OPEN_ROWS = ['GET /api/health']
+/** The closed list of `open` rows (matrix.ts): the health check, and P3's drain and warm-up (p3-design section 3). */
+const OPEN_ROWS = ['GET /api/health', 'POST /api/ops/drain', 'GET /api/ops/drain', 'POST /api/ops/warmup']
 const openProblems = (rows: readonly AccessRow[]) => {
   const keys = rows.filter(x => x.class === 'open').map(x => `${x.method} ${x.pattern}`)
   return [...keys.filter(k => !OPEN_ROWS.includes(k)).map(k => `${k} is open`), ...OPEN_ROWS.filter(k => !keys.includes(k)).map(k => `${k} is not open`)]
@@ -268,10 +315,10 @@ describe('the invariant checks catch a bad row', () => {
     expect(reportProblems(demoted)).toEqual(['POST /api/client-error is not report'])
     expect(reportProblems(DESIGN_ROWS)).toEqual([])
   })
-  it('open on GET /api/members, or health not open', () => {
+  it('open on GET /api/members, or health, drain or warm-up not open', () => {
     const members = rowFor(DESIGN_ROWS, 'GET', '/api/members')!
     expect(openProblems(DESIGN_ROWS.map(r => (r === members ? { ...r, class: 'open' as const } : r)))).toEqual(['GET /api/members is open'])
-    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open'])
+    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open', 'POST /api/ops/drain is not open', 'GET /api/ops/drain is not open', 'POST /api/ops/warmup is not open'])
     expect(openProblems(DESIGN_ROWS)).toEqual([])
   })
   it('a route that shadows another: GET /api/members/:id beside GET /api/members/invites', () => {
@@ -305,7 +352,7 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
     it('every row has exactly one route (routes.ts)', () => {
       for (const x of rows) expect(routes.filter(r => r.method === x.method && r.pattern === x.pattern), `${x.method} ${x.pattern}`).toHaveLength(1)
     })
-    it('the open rows are exactly GET /api/health (a closed list)', () => {
+    it('the open rows are exactly health, drain and warm-up (a closed list)', () => {
       expect(openProblems(rows)).toEqual([])
     })
     it('no row lets Inhouse write brand_data or personal, and no personal row allows Inhouse', () => {
@@ -331,11 +378,17 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
     it('the report rows are exactly POST /api/client-error (a closed list), naming no service', () => {
       expect(reportProblems(rows)).toEqual([])
     })
-    it('monitor only on open rows, smoke only on GET rows', () => {
+    // Changed in P3: "smoke only on GET rows" became "smoke never on open or report rows" (p3-design section 3).
+    it('monitor only on open GET rows, release only on open rows, smoke never on open or report rows; each open row names one service', () => {
       for (const x of rows) {
-        if (x.services?.includes('monitor')) expect(x.class).toBe('open')
-        if (x.services?.includes('smoke')) expect(x.method).toBe('GET')
+        if (x.services?.includes('monitor')) expect(x.class === 'open' && x.method === 'GET').toBe(true)
+        if (x.services?.includes('release')) expect(x.class).toBe('open')
+        if (x.services?.includes('smoke')) expect(x.class !== 'open' && x.class !== 'report').toBe(true)
+        if (x.class === 'open') expect(x.services ?? []).toHaveLength(1)
       }
+    })
+    it('ownerObject only on brand_data rows', () => {
+      for (const x of rows) if (x.ownerObject) expect(x.class, `${x.method} ${x.pattern}`).toBe('brand_data')
     })
     if (canRows) {
       it('every CanKey maps to exactly one existing row', () => {
@@ -373,5 +426,104 @@ describe('canRowsProblems', () => {
   it('fails on a doubled row', () => {
     const invite = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
     expect(canRowsProblems([...DESIGN_ROWS, invite], DESIGN_CAN_ROWS)).toEqual(['invite → POST /api/members/invites matches 2 rows'])
+  })
+})
+
+// P3 (p3-design section 3), each failure mode against literal rows written here, never read from the matrix.
+describe('P3 auth: release, smoke and ownerObject', () => {
+  const key = (r: AccessRow) => `${r.method} ${r.pattern}`
+  /** The rows the release job may call, and the ones smoke may call, as section 3's table lists them. */
+  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'POST /api/ops/warmup']
+  const SMOKE_ROWS = [
+    'GET /api/me', 'GET /api/settings/personal', 'GET /api/settings/brand',
+    'GET /api/chats', 'POST /api/chats', 'GET /api/chats/:id', 'POST /api/chats/:id/turns', 'GET /api/runs/active', 'GET /api/socket', 'GET /api/models',
+  ]
+  const OWNER_OBJECT_ROWS = ['GET /api/chats', 'GET /api/chats/:id', 'GET /api/runs/active', 'GET /api/traces/:id', 'GET /api/socket', 'GET /api/chats/:id/files']
+  const withObject = (p: Principal, r: AccessRow, o?: AccessObject) => {
+    const gate = objectGate(p, r, NOW)
+    const d = checkAccess(p, r, undefined, NOW)
+    if ('refused' in d) return false
+    if (!d.objectCheck) return true
+    try { gate.requireObject(o ?? {}) } catch { return false }
+    return gate.passed
+  }
+
+  for (const rows of [DESIGN_ROWS, accessMatrix]) {
+    const name = rows === DESIGN_ROWS ? 'the design rows' : 'server/access-matrix.ts'
+    it(`${name}: a release token reaches exactly drain and warm-up, any method, with no object`, () => {
+      expect(rows.filter(r => ok(checkAccess(principals.release(), r, undefined, NOW))).map(key)).toEqual(RELEASE_ROWS)
+    })
+    it(`${name}: smoke reaches exactly its rows, and on personal and ownerObject rows only its own object`, () => {
+      expect(rows.filter(r => withObject(principals.smoke(), r, { ownerId: SMOKE_MEMBER })).map(key)).toEqual(SMOKE_ROWS)
+      for (const r of rows.filter(x => SMOKE_ROWS.includes(key(x)))) {
+        const d = checkAccess(principals.smoke(), r, undefined, NOW)
+        const owned = r.class === 'personal' || r.ownerObject === true
+        expect(d, key(r)).toEqual(owned ? { ok: true, objectCheck: 'required' } : { ok: true })
+        if (owned) expect(checkAccess(principals.smoke(), r, { ownerId: 'm_a' }, NOW), key(r)).toEqual({ refused: 'forbidden', reason: 'not_owner' })
+      }
+    })
+    it(`${name}: the ownerObject rows are the chat reads, and each asks persons for the object`, () => {
+      expect(rows.filter(r => r.ownerObject).map(key)).toEqual(OWNER_OBJECT_ROWS)
+      for (const r of rows.filter(x => x.ownerObject)) {
+        for (const p of [principals.member('m_a'), principals.admin('m_a')]) {
+          expect(checkAccess(p, r, undefined, NOW), key(r)).toEqual({ ok: true, objectCheck: 'required' })
+          expect(checkAccess(p, r, { ownerId: 'm_a' }, NOW), key(r)).toEqual({ ok: true })
+          expect(checkAccess(p, r, { ownerId: 'm_b' }, NOW), key(r)).toEqual({ refused: 'forbidden', reason: 'not_owner' })
+          expect(checkAccess(p, r, {}, NOW), key(r)).toEqual({ refused: 'forbidden', reason: 'not_owner' })
+        }
+      }
+    })
+  }
+
+  it('an Admin gets no more than a Member on another member\'s chat (BD11)', () => {
+    const r = rowFor(DESIGN_ROWS, 'GET', '/api/chats/:id')!
+    expect(withObject(principals.admin('m_admin'), r, { ownerId: 'm_member' })).toBe(false)
+    expect(withObject(principals.member('m_member'), r, { ownerId: 'm_member' })).toBe(true)
+  })
+
+  it('Inhouse under a live grant passes an ownerObject row without an owner, with the audit duty; without one never', () => {
+    const r = rowFor(DESIGN_ROWS, 'GET', '/api/chats/:id')!
+    const live = principals.inhouse({ id: 'g', endsAtMs: NOW + 1 })
+    expect(checkAccess(live, r, undefined, NOW)).toEqual({ ok: true, audit: 'support.access' })
+    const gate = objectGate(live, r, NOW)
+    gate.requireObject({ ownerId: 'm_member' })
+    expect(gate.passed).toBe(true)
+    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW }), r, undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
+    expect(checkAccess(principals.inhouse(null), r, undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
+  })
+
+  // Changed for decision 19 (feat/inhouse-admin-controls): a baseline write listing Inhouse lets it through, with or
+  // without a grant, and with no support.access duty (pause is not brand data).
+  it('Inhouse on pause and resume: listed (item 19), allowed with or without a grant', () => {
+    for (const rows of [DESIGN_ROWS, accessMatrix]) {
+      for (const pattern of ['/api/pause', '/api/resume']) {
+        const r = rowFor(rows, 'POST', pattern)!
+        expect(r.allow).toEqual(['admin', 'inhouse'])
+        expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), r, undefined, NOW)).toEqual({ ok: true })
+        expect(checkAccess(principals.inhouse(null), r, undefined, NOW)).toEqual({ ok: true })
+        expect(checkAccess(principals.member(), r, undefined, NOW)).toEqual({ refused: 'forbidden' })
+        expect(checkAccess(principals.admin(), r, undefined, NOW)).toEqual({ ok: true })
+      }
+    }
+  })
+
+  it('release is refused on a row that lists it but isn\'t open (the class guard, not only the services list)', () => {
+    // Synthetic rows: no committed row lists release outside `open`, so only these pin the guard.
+    for (const cls of ['brand_data', 'baseline', 'technical', 'personal', 'report'] as const) {
+      for (const method of ['GET', 'POST'] as const) {
+        const r: AccessRow = { method, pattern: '/x', class: cls, allow: ['member', 'admin'], services: ['release'] }
+        expect(checkAccess(principals.release(), r, { ownerId: 'm_a' }, NOW), `${method} ${cls}`).toEqual({ refused: 'forbidden' })
+      }
+    }
+    expect(checkAccess(principals.release(), { method: 'POST', pattern: '/x', class: 'open', allow: [], services: ['release'] }, undefined, NOW)).toEqual({ ok: true })
+  })
+
+  it('release and monitor reach nothing a person does; a person and Inhouse never reach drain or warm-up', () => {
+    for (const r of DESIGN_ROWS.filter(x => RELEASE_ROWS.includes(key(x)))) {
+      for (const p of [principals.member(), principals.admin(), principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), principals.smoke(), principals.monitor()]) {
+        expect(checkAccess(p, r, { ownerId: 'memberId' in p ? p.memberId : 'x' }, NOW), `${p.kind} ${key(r)}`).toEqual({ refused: 'forbidden' })
+      }
+    }
+    expect(checkAccess(principals.release(), rowFor(DESIGN_ROWS, 'GET', '/api/health')!, undefined, NOW)).toEqual({ refused: 'forbidden' })
   })
 })
