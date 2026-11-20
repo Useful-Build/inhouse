@@ -136,9 +136,10 @@ describe('claim before await (4.2.1, 4.4)', () => {
     const a = ok(await h.submit('c1', 'key-bar03'))
     await settle()
     h.core.onMemberRemoved(MEMBER)
-    answer.resolve({ admitted: 'runner-1' })
+    answer.resolve({ admitted: 'runner-0' })
     await settle()
-    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-1', a.turnId]])
+    // The pool named runner-0 on the turn before it awaited the admission, so the fence stopped it there, once.
+    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-0', a.turnId]])
     expect(typesOf(h.events(a.runId)).filter(t => t === 'turn.started')).toEqual([])
   }))
 
@@ -198,9 +199,10 @@ describe('placement answers (obligations 6, 7, 9)', () => {
     const a = ok(await h.submit('c1', 'key-amb03'))
     await settle()
     h.push(a.turnId, ev.started())
-    answer.resolve({ admitted: 'runner-2' })
+    answer.resolve({ admitted: 'runner-0' })
     await settle()
-    expect(h.turn(a.turnId)).toMatchObject({ state: 'live', runner: 'runner-2' })
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'live', runner: 'runner-0' })
+    expect(h.pool.calls.filter(c => c.method === 'stop')).toEqual([])
     expect(typesOf(h.events(a.runId)).filter(t => t === 'turn.started')).toHaveLength(1)
   }))
 
@@ -216,6 +218,65 @@ describe('placement answers (obligations 6, 7, 9)', () => {
     expect(h.core.checkRunToken(hash, 'model')).toMatchObject({ turnId: a.turnId })
     expect(h.turn(a.turnId)).toMatchObject({ state: 'live', pool_queued: 0 })
     expect(h.events(a.runId).filter(e => e.type === 'notice')).toEqual([])
+  }))
+
+  // H1 of #153's review: a late answer must never take the token (or the runner) from the attempt that ran.
+  const tokenOf = (h: Parameters<Parameters<typeof inAgent>[0]>[0], turnId: string) =>
+    h.sql.exec<{ token_hash: string }>('SELECT token_hash FROM run_tokens WHERE turn_id = ? ORDER BY issued_at_ms DESC LIMIT 1', turnId).one().token_hash
+  const cp2 = { mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1 }
+  for (const late of [{ admitted: 'runner-0' }, { ambiguous: 'runner-0' }] as const) {
+    it(`the terminal event before a late ${Object.keys(late)[0]} answer: the grace keeps its token, nothing is stopped`, () => inAgent(async h => {
+      const answer = deferred<typeof late>()
+      h.pool.placeAnswer = () => answer.promise
+      const a = ok(await h.submit('c1', `key-h1${Object.keys(late)[0].slice(0, 3)}`))
+      await settle()
+      h.push(a.turnId, ev.started(), ev.text('a'), ev.checkpoint(2, 'u2', 1), ev.success())
+      expect(h.turn(a.turnId).state).toBe('ending')
+      answer.resolve(late)
+      await settle()
+      await h.tick(0)
+      expect(h.core.checkRunToken(tokenOf(h, a.turnId), 'events')).toMatchObject({ turnId: a.turnId })
+      expect(h.pool.calls.filter(c => c.method === 'stop')).toEqual([])
+      h.push(a.turnId, ev.released(cp2))
+      expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'done' })
+      expect(h.sql.exec('SELECT session FROM chat_state').one().session).toBe('resumable')
+    }))
+  }
+
+  it('a stop after a push and before the answer: stopped once by the fence, the grace keeps store and events', () => inAgent(async h => {
+    const answer = deferred<{ admitted: string }>()
+    h.pool.placeAnswer = () => answer.promise
+    const a = ok(await h.submit('c1', 'key-h1stp'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.text('a'))
+    expect(h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })).toEqual({ ok: true })
+    answer.resolve({ admitted: 'runner-0' })
+    await settle()
+    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-0', a.turnId]])
+    expect(h.core.checkRunToken(tokenOf(h, a.turnId), 'store')).toMatchObject({ turnId: a.turnId })
+    h.push(a.turnId, ev.checkpoint(2, 'u2', 1), ev.failed('stopped'), ev.released(cp2))
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped' })
+    expect(h.sql.exec('SELECT session FROM chat_state').one().session).toBe('resumable')
+  }))
+
+  it("a requeued attempt's late ambiguous answer: that runner is stopped, the new attempt is left alone", () => inAgent(async h => {
+    const first = deferred<{ ambiguous: string }>()
+    h.pool.placeAnswer = () => first.promise
+    const a = ok(await h.submit('c1', 'key-h1req'))
+    await settle()
+    const oldHash = tokenOf(h, a.turnId)
+    h.pool.runnerTurns.set('runner-0', [a.turnId])
+    h.pool.placeAnswer = () => new Promise(() => {})
+    h.nextRunner.name = 'runner-1'
+    h.core.containerExited('runner-0', 1)
+    await settle()
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'starting', runner: 'runner-1', requeues: 1 })
+    // L1: the old attempt's token is revoked by the requeue.
+    expect(h.core.checkRunToken(oldHash, 'model')).toEqual({ refused: 'revoked' })
+    first.resolve({ ambiguous: 'runner-0' })
+    await settle()
+    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-0', a.turnId]])
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'starting', runner: 'runner-1' })
   }))
 
   it('ambiguous, then unknown twice 30 s apart: stopped there and requeued, then placed again', () => inAgent(async h => {

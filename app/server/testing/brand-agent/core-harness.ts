@@ -39,6 +39,8 @@ export interface Harness {
   sql: SqlStorage
   clock: { now: number }
   pool: FakeRunnerPool
+  /** The runner the pool names on the turn before it awaits an admission (like W2's pool). */
+  nextRunner: { name: string }
   usage: FakeUsageLedger
   files: FakeFileLedger
   tokens: RunTokens
@@ -69,6 +71,17 @@ export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> 
     const sql = state.storage.sql
     const clock = { now: T0 }
     const pool = new FakeRunnerPool()
+    const nextRunner = { name: 'runner-0' }
+    // Like W2's pool (pool.ts `place`): the runner is written on the turn, fenced by gen, before the admission is
+    // awaited, and cleared again on a definite refusal or a queue (an ambiguous answer keeps it). `nextRunner` names it.
+    const fakePlace = pool.place.bind(pool)
+    pool.place = async (rs, gen) => {
+      const pick = nextRunner.name
+      sql.exec('UPDATE turns SET runner = ? WHERE turn_id = ? AND gen = ?', pick, rs.runId, gen)
+      const a = await fakePlace(rs, gen)
+      if ('queued' in a || 'refused' in a) sql.exec('UPDATE turns SET runner = NULL WHERE turn_id = ? AND gen = ? AND runner = ?', rs.runId, gen, pick)
+      return a
+    }
     const usage = new FakeUsageLedger()
     const files = new FakeFileLedger()
     const alarm: AlarmPort = { get: async () => null, set: async () => {}, delete: async () => {} }
@@ -87,7 +100,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> 
         newSessionId: () => `00000000-0000-4000-8000-${String(++sessions).padStart(12, '0')}`,
       })
       const h: Harness = {
-        core, sql, clock, pool, usage, files, tokens, sched,
+        core, sql, clock, pool, nextRunner, usage, files, tokens, sched,
         restart: () => { const n = build(); n.core.ensureSeeds(); return n },
         async tick(ms) {
           clock.now += ms
