@@ -2,16 +2,11 @@
 // team pages Inhouse agent, Data and access and Audit log read as text (decision D4) while their buttons still work;
 // Help opens from the account menu and fits. The desktop flows are in settings-your-pages.spec.ts,
 // settings-agent-data.spec.ts and help-account-menu.spec.ts.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, hash: string) {
+  await fx.seed({ stage: 'Act' })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -42,8 +37,8 @@ async function openFromMenu(page: Page, name: string) {
   await expect(h1(page, name)).toBeVisible()
 }
 
-test('Phone: Notifications and Memory keep their controls, and a change survives a reload', async ({ page }) => {
-  await start(page, '#/today')
+test('Phone: Notifications and Memory keep their controls, and a change survives a reload', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   await openFromMenu(page, 'Notifications')
   await expect(page.getByRole('note')).toHaveCount(0)
   const weekly = main(page).getByRole('switch', { name: 'Weekly report', exact: true })
@@ -70,8 +65,8 @@ test('Phone: Notifications and Memory keep their controls, and a change survives
   await expect(main(page).getByRole('combobox', { name: 'Approvals waiting: Once an hour', exact: true })).toBeVisible()
 })
 
-test('Phone: Inhouse agent, Data and access and Audit log read as text, and their buttons still work', async ({ page }) => {
-  await start(page, '#/today')
+test('Phone: Inhouse agent, Data and access and Audit log read as text, and their buttons still work', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   await openFromMenu(page, 'Inhouse agent')
   await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(main(page).getByRole('combobox')).toHaveCount(0)
@@ -106,8 +101,8 @@ test('Phone: Inhouse agent, Data and access and Audit log read as text, and thei
   await noSidewaysScroll(page)
 })
 
-test('Phone: Help opens from the account menu, a guide opens and the window fits 390 px', async ({ page }) => {
-  await start(page, '#/today')
+test('Phone: Help opens from the account menu, a guide opens and the window fits 390 px', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   await page.getByRole('button', { name: 'Menu' }).click()
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /account and settings/i }).click()
   await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Help and guides' }).click()

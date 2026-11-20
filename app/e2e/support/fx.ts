@@ -54,6 +54,8 @@ export type Saved = {
   } & Record<string, unknown>
   /** The demo's run turns: [turn id, info]. */
   runs: [string, { trace: string }][]
+  /** The app's saved theme preference. Missing when none is saved (System). */
+  theme?: Theme
   /** The app's UI session (open chats, queued messages). */
   session: {
     chats?: Record<string, { extras: { role: string; text?: string; part?: { type: string } }[] }>

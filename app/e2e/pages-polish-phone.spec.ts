@@ -1,17 +1,12 @@
 // PR 7, Pages and windows, at 390: the same checks as pages-polish.spec.ts, plus team settings that read as text
 // (decision D4) and an Activity row that fits.
-import { expect, test } from './csp.js'
+import { expect, test } from './support/fx.js'
 import { pagesPolish } from './pages-polish-checks.js'
 
 pagesPolish(test, 'phone')
 
-test('Phone: team settings read as text with a note, your own settings keep their controls, Activity rows fit', async ({ page }) => {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+test('Phone: team settings read as text with a note, your own settings keep their controls, Activity rows fit', async ({ page, fx }) => {
+  await fx.seed({ stage: 'Act' })
   await page.goto('/?demo#/settings/team-spend')
   await expect(page.getByRole('note')).toContainText('Change these on a computer.')
   await expect(page.getByRole('textbox', { name: 'Monthly cap' })).toHaveCount(0)
