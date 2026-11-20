@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { pageOf } from './paging.ts'
 import { GrantHoursSchema, GrantIdSchema } from './grants.ts'
+import { RunIdSchema } from './chat-ids.ts'
 import { MemberIdSchema, MemberRoleSchema } from './members.ts'
 import { SettingKeySchema, SettingScopeSchema, SettingValueSchema, settingSpec } from './settings.ts'
 
@@ -16,6 +17,8 @@ export const AuditActionSchema = z.enum([
   'member.invited', 'member.reinvited', 'member.bound', 'member.restored', 'member.role_changed', 'member.removed',
   'inhouse.first_sign_in', 'setting.changed', 'photo.changed', 'photo.removed', 'grant.created', 'grant.ended',
   'grant.expired', 'support.access',
+  // P3 (p3-design sections 3, 4.10 and 4.11): an Admin's or the Inhouse team's pause and resume, and an Inhouse socket attach.
+  'agent.paused', 'agent.resumed', 'support.attach',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -23,7 +26,12 @@ export type AuditAction = z.infer<typeof AuditActionSchema>
 export const RedactedValueSchema = z.object({ len: z.number().int().min(0), hash: z.string().regex(/^[0-9a-f]{32}$/) }).strict()
 
 /** The pattern of a `brand_data` GET route (p2-design.md section 3), never a concrete path: no ids, query, names or emails. */
-const RoutePatternSchema = z.enum(['/api/members', '/api/members/:id/photo', '/api/audit', '/api/audit/export.csv'])
+const RoutePatternSchema = z.enum([
+  '/api/members', '/api/members/:id/photo', '/api/audit', '/api/audit/export.csv',
+  // P3's brand_data GET routes (p3-design section 3: rows 22, 24, 32, 33, 34, 40, 41, 43).
+  '/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files',
+  '/api/files/:fileId', '/api/memory',
+])
 const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
@@ -52,6 +60,10 @@ const otherLines = [
   line('grant.ended', { grantId: GrantIdSchema }),
   line('grant.expired', { grantId: GrantIdSchema }),
   line('support.access', { grantId: GrantIdSchema, method: z.literal('GET'), route: RoutePatternSchema }),
+  line('agent.paused', {}),
+  line('agent.resumed', {}),
+  /** An Inhouse socket attach to a run, written before any of its frames are sent (p3-design 4.10). */
+  line('support.attach', { grantId: GrantIdSchema, runId: RunIdSchema }),
 ] as const
 
 /**

@@ -11,5 +11,9 @@ export const UNAUTHORIZED = 'unauthorized' satisfies AgentErrorCode
 /** The reasons the client code names (same reason as above: no snake_case string in src/). */
 export const REASON = {
   badType: 'bad_type', wrongScope: 'wrong_scope', alreadyMember: 'already_member', lastAdmin: 'last_admin', grantLive: 'grant_live', notInvited: 'not_invited', removed: 'removed',
+  // P3: the refusals the chat client tells apart (p3-design sections 4.3 and 4.9).
+  paused: 'paused', draining: 'draining', modelOff: 'model_off', turnEnded: 'turn_ended', providerChanged: 'provider_changed',
+  queueFull: 'queue_full', keyReused: 'key_reused', sessionDamaged: 'session_damaged', waitingAnswer: 'waiting_answer',
+  poolFull: 'pool_full', budgetBusy: 'budget_busy', tooMany: 'too_many', badName: 'bad_name',
 } as const satisfies Record<string, ErrorReason>
 export const RATE_LIMITED = 'rate_limited' satisfies AgentErrorCode

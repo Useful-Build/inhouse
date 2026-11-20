@@ -272,6 +272,7 @@ export function sampleValue(key: string, n: 0 | 1): string | boolean {
     case 'text': return n === 0 ? 'Sample text one' : 'Sample text two'
     case 'cap': return n === 0 ? '$10' : '$20'
     case 'member': throw new Error(`${key} takes a member id`)
+    case 'hostlist': return n === 0 ? 'example.com' : 'docs.example.com'
   }
 }
 

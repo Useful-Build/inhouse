@@ -29,6 +29,9 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'grant.ended': { action: 'grant.ended', grantId: g },
   'grant.expired': { action: 'grant.expired', grantId: g },
   'support.access': { action: 'support.access', grantId: g, method: 'GET', route: '/api/members/:id/photo' },
+  'agent.paused': { action: 'agent.paused' },
+  'agent.resumed': { action: 'agent.resumed' },
+  'support.attach': { action: 'support.attach', grantId: g, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -96,5 +99,20 @@ describe('setting.changed (failure 3)', () => {
     expect(ok({ action: 'setting.changed', scope: 'brand', key: 'g:theme', value: 'Dark' })).toBe(false)
     expect(ok({ action: 'setting.changed', scope: 'brand', key: 'p:sam', value: 'Admin' })).toBe(false)
     expect(ok({ action: 'setting.changed', scope: 'brand', key: 'd:support', value: true })).toBe(false)
+  })
+})
+
+describe('P3 lines (W1 first PR)', () => {
+  it('take every P3 brand_data GET pattern and nothing concrete', () => {
+    for (const route of ['/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files', '/api/files/:fileId', '/api/memory']) {
+      expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(true)
+    }
+    for (const route of ['/api/chats/c1', '/api/chats?limit=5', '/api/usage', '/api/pause']) expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(false)
+  })
+  it('support.attach names a grant and a run id only', () => {
+    expect(ok({ action: 'support.attach', grantId: g, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' })).toBe(true)
+    expect(ok({ action: 'support.attach', grantId: g, runId: 'chat-1' })).toBe(false)
+    expect(ok({ action: 'support.attach', grantId: g, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', chatId: 'c1' })).toBe(false)
+    expect(ok({ action: 'agent.paused', by: m })).toBe(false)
   })
 })
