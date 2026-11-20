@@ -5,6 +5,7 @@ import { create } from 'zustand'
 import { agent, demo as demoControls, now } from '../agent'
 import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, Scenario, SetAsideReason, Stage } from '../agent/types'
 import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
+import { productStage } from './stage'
 import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/upgrade-times'
 import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
@@ -579,7 +580,7 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
 
 export const useUi = create<UiState & UiActions>()((set, get) => {
   // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: its stage comes
-  // from the client in P2, so `stage` and `scenario` here are placeholders there.
+  // from the client's `stage` setting (`useCtx`, `./stage`), so `stage` here is a placeholder there, and so is `scenario`.
   const demo = demoControls ? loadDemo() : DEFAULT_DEMO
   demoControls?.setDemo({ stage: demo.stage, scenario: demo.scenario })
   const session = restoreSession(loadSession())
@@ -1198,7 +1199,9 @@ export const useAgentData = (): AgentData => useSyncExternalStore(agent.subscrib
 export function useCtx(): Ctx {
   const agentState = useAgentState()
   const data = useAgentData()
-  const stage = useUi(s => s.stage)
+  const demoStage = useUi(s => s.stage)
+  // The demo's switch drives the stage there; on the product it is the agent's technical `stage` setting.
+  const stage = demoControls ? demoStage : productStage(agentState.settings)
   return useMemo(() => ({ S: stageIndex(stage), agent: agentState, data }), [stage, agentState, data])
 }
 
