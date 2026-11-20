@@ -5,5 +5,6 @@ import { appOrigin, expect, test } from '../support/test-build/index.js'
 test('The test build serves the product app with its CSP', async ({ page }) => {
   const res = await page.goto(`${appOrigin('brand')}/`)
   expect(res?.headers()['content-security-policy']).toContain("default-src 'self'")
-  await expect(page.getByRole('heading', { level: 1, name: 'Not connected yet', exact: true })).toBeVisible()
+  // Not signed in, so the Worker answers the first read 401: the signed-out screen.
+  await expect(page.getByRole('heading', { level: 1, name: 'Your sign-in ended', exact: true })).toBeVisible()
 })

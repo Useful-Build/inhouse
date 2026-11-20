@@ -9,7 +9,9 @@
 //  - a read a Member can't make (the grants) that is asked for anyway, or `me()` that arrives after the page is ready;
 //  - `loadMore` that fetches the same page twice when called twice;
 //  - a request that leaves the app's origin, carries a cookie it shouldn't, or sends a body in the wrong type;
-//  - the stub parts (a run, the library) that stop refusing.
+//  - the stub parts (a run, the library) that stop refusing;
+//  - a failed first read (`meta`) that the shell shows as "Not connected yet": a 401 must be the signed-out screen, any
+//    other failure the load error, and Retry must bring the app back without a reload.
 import { fc, test as fcTest } from '@fast-check/vitest'
 import { describe, expect, test, vi } from 'vitest'
 import { AgentDataSchema, AgentStateSchema, MeSchema } from '../../../shared/contract'
@@ -17,6 +19,7 @@ import { CAN_KEYS } from '../../../shared/contract/keys'
 import type { AgentClient, AgentNotice } from '../types'
 import { AgentError } from '../types'
 import { HttpAgent } from './client'
+import { startScreen } from '../../shell/start-screen'
 
 const ME_ID = 'm_sam'
 const iso = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
@@ -1120,5 +1123,55 @@ describe('the parts that stay the stub until their phase', () => {
     expect(agent.listFiles()).toBe(agent.listFiles())
     expect(agent.listNotifications()).toBe(agent.listNotifications())
     expect(agent.getTrace('any')).toBeNull()
+  })
+})
+
+describe('the first read failing: the screen the shell shows (start-screen.ts)', () => {
+  /** A failure of `GET /api/me` that is not about who the person is: a refusal by status, or no answer at all. */
+  const failure = fc.oneof(
+    fc.constantFrom(500, 502, 503, 429, 400, 404).map(status => ({ kind: 'status' as const, status })),
+    fc.constant({ kind: 'network' as const, status: 0 }),
+  )
+
+  fcTest.prop([failure])('a 5xx, a refusal or a lost connection is the load error with its kind, and Retry brings the app', async f => {
+    let failing = true
+    const s = server(reads())
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (failing && String(input).endsWith('/api/me')) return f.kind === 'network' ? Promise.reject(new TypeError('failed to fetch')) : Promise.resolve(new Response('{}', { status: f.status }))
+      return s.fetch(input, init)
+    }
+    const agent = new HttpAgent({ fetch, now: () => 5000 })
+    await agent.whenLoaded()
+    expect(startScreen(agent.read())).toBe('load-error')
+    expect(agent.read().resources.meta).toMatchObject({ status: 'error', error: expect.any(String) })
+    expect(agent.read().resources.meta.error).not.toBe('unauthorized')
+    failing = false
+    await agent.retry('meta')
+    expect(startScreen(agent.read())).toBe('app')
+    expect(agent.read().status).toBe('ready')
+    expect(agent.read().resources.members.status).toBe('ready')
+  })
+
+  test('a 401 on me() is the signed-out screen, not "Not connected yet"', async () => {
+    const { agent } = await loaded({ 'GET /api/me': refusal(401, 'unauthorized') })
+    expect(startScreen(agent.read())).toBe('signed-out')
+  })
+
+  test('a 403 not invited or removed stays "You\'re not on this team"', async () => {
+    for (const reason of ['not_invited', 'removed']) {
+      const { agent } = await loaded({ 'GET /api/me': refusal(403, 'forbidden', { reason }) })
+      expect(startScreen(agent.read())).toBe('not-on-team')
+    }
+  })
+
+  test('a 401 mid-session swaps the app for the signed-out screen', async () => {
+    const { agent } = await loaded({ ...reads(), 'PUT /api/settings/personal/g:theme': refusal(401, 'unauthorized') })
+    expect(startScreen(agent.read())).toBe('app')
+    await errorOf(agent.setSetting('g:theme', 'Light'))
+    expect(startScreen(agent.read())).toBe('signed-out')
+  })
+
+  test('before the first answer it is "Not connected yet"', () => {
+    expect(startScreen(new HttpAgent({ fetch: server({}).fetch }).read())).toBe('not-connected')
   })
 })
