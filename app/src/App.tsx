@@ -10,6 +10,7 @@ import { Toasts } from './shell/Toasts'
 import { NotConnected } from './shell/NotConnected'
 import { notOnTeam } from './shell/not-on-team'
 import { createHashSync } from './shell/route-sync'
+import { hashBar } from './shell/hash-bar'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -188,10 +189,9 @@ if (initialRoute) applyRoute(initialRoute, true)
 /** The first link named a page that doesn't exist: App says so once it has mounted. */
 const bootUnknownPage = !initialRoute && hasSlug(location.hash)
 
-const hashSync = createHashSync(
-  { hash: () => location.hash, state: () => history.state, replace: (st, h) => history.replaceState(st, '', h), push: (st, h) => history.pushState(st, '', h) },
-  { toHash: p => toHash(p.page as Page, p.appKey, p.setTab, p.chatKey, p.menu), fromHash, takeReplaceEntry, fromMenuState: FROM_SETTINGS_MENU },
-)
+const hashSync = createHashSync(hashBar, {
+  toHash: p => toHash(p.page as Page, p.appKey, p.setTab, p.chatKey, p.menu), fromHash, takeReplaceEntry, fromMenuState: FROM_SETTINGS_MENU,
+})
 
 function useHashRoute() {
   const page = useUi(s => s.page)
@@ -217,10 +217,10 @@ function useHashRoute() {
     const apply = () => {
       const r = fromHash(location.hash)
       const ui = useUi.getState()
-      hashSync.adopt()
+      hashBar.adopt()
       if (r) { applyRoute(r, false); return }
       const named = hasSlug(location.hash)
-      history.replaceState(null, '', toHash(ui.page, ui.appKey, ui.setTab, ui.chatList ? 'all' : openChatKey(ui, agent.read()) ?? 'new', ui.phone && ui.setMenu))
+      hashBar.replace(toHash(ui.page, ui.appKey, ui.setTab, ui.chatList ? 'all' : openChatKey(ui, agent.read()) ?? 'new', ui.phone && ui.setMenu))
       if (named) notFound(ui.page === 'app' ? toolName(agent.read().tools, ui.appKey) ?? 'Tools' : ui.page === 'settings' ? settingsLabel(ui.setTab) : PAGE_LABEL[ui.page])
     }
     window.addEventListener('hashchange', apply)
@@ -234,7 +234,7 @@ function useHashRoute() {
       // that exists but isn't in this scenario (First day or Loading picked from the demo switches).
       const named = fromHash(location.hash)?.chat
       if (named && named !== 'all' && named !== 'new' && (!agent.allChatIds().includes(named) || agent.getSnapshot().chatDeleted[named])) useUi.getState().showToast("That chat isn't available. It may have been deleted.", { icon: 'info', key: 'route-notice' })
-      history.replaceState(null, '', toHash('chats', appKey, setTab, fallbackChat ?? 'new'))
+      hashBar.replace(toHash('chats', appKey, setTab, fallbackChat ?? 'new'))
       if (fallbackChat) useUi.getState().openChat(fallbackChat) // restores what was added to it, if anything
       else useUi.getState().newChat()
     }
@@ -242,20 +242,20 @@ function useHashRoute() {
   useEffect(() => {
     // An unknown tool or settings tab (a stale or typed link) is replaced in place, so it adds no history entry.
     if (page === 'app' && !toolName(data.tools, appKey)) {
-      history.replaceState(null, '', toHash('apps', appKey, setTab, chatKey))
+      hashBar.replace(toHash('apps', appKey, setTab, chatKey))
       useUi.getState().patch({ page: 'apps' })
       notFound('Tools')
       return
     }
     if (page === 'settings' && !SETTINGS_TABS.includes(setTab)) {
-      history.replaceState(null, '', toHash('settings', appKey, SETTINGS_DEFAULT, chatKey))
+      hashBar.replace(toHash('settings', appKey, SETTINGS_DEFAULT, chatKey))
       useUi.getState().patch({ setTab: SETTINGS_DEFAULT })
       notFound(settingsLabel(SETTINGS_DEFAULT))
       return
     }
     if (chatUnknown) return // replaced above
     // The hash follows the app unless someone else just set one (see shell/route-sync.ts).
-    hashSync.sync({ page, appKey, setTab, chatKey, menu, phone, chatIsNew })
+    hashSync.sync({ page, appKey, setTab, chatKey, menu, phone, chatIsNew, defaultChat: defaultChatId(data) })
   }, [page, appKey, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
 }
 
