@@ -1,16 +1,11 @@
 // Page actions (PR 6): Approvals edit, don't send, approve all low-risk and sort; Today snooze and dismiss with counts that
 // agree everywhere, survive a reload and clear on Reset demo; approving a set-aside problem anywhere clears it, and Activity logs
 // each set-aside; Tools requests open the team window; Usage bars by keyboard.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today') {
-  await page.addInitScript(([s, sc]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Always', animateMark: true }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, scenario])
+async function start(page: Page, fx: Fx, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today') {
+  await fx.seed({ stage, scenario, demo: { ambient: 'Always', animateMark: true } })
   await page.goto('/?demo' + hash)
 }
 
@@ -47,8 +42,8 @@ const ALL = Object.values(D)
 /** The draft titles on Approvals, top to bottom. */
 const draftOrder = async (page: Page) => (await page.getByRole('heading', { level: 2 }).allInnerTexts()).filter(t => ALL.includes(t))
 
-test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all low-risk with one Undo, and sort', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/approvals')
+test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all low-risk with one Undo, and sort', async ({ fx, page }) => {
+  await start(page, fx, 'Act', 'Normal', '#/approvals')
   await expect(waiting(page)).toHaveText(/·\s6$/)
   await expect(badge(page)).toContainText('6')
 
@@ -111,8 +106,8 @@ test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all l
   await shot(page, 'approvals-newest-first')
 })
 
-test('Today: snooze one card and dismiss another; Today, Approvals and the badge agree, after a reload too, until Reset demo', async ({ page }) => {
-  await start(page, 'Act')
+test('Today: snooze one card and dismiss another; Today, Approvals and the badge agree, after a reload too, until Reset demo', async ({ fx, page }) => {
+  await start(page, fx, 'Act')
   const h1 = page.getByRole('heading', { level: 1 })
   await expect(h1).toContainText('6 things need you. A fix is drafted for each.')
   await expect(page.getByRole('article')).toHaveCount(6)
@@ -167,8 +162,8 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
   await expect(badge(page)).toContainText('6')
 })
 
-test('Tools: Request a tool opens the team window; a disconnected tool has its own Reconnect; Pause access has Undo', async ({ page }) => {
-  await start(page, 'Act', 'Tool disconnected', '#/tools')
+test('Tools: Request a tool opens the team window; a disconnected tool has its own Reconnect; Pause access has Undo', async ({ fx, page }) => {
+  await start(page, fx, 'Act', 'Tool disconnected', '#/tools')
   await page.getByRole('button', { name: 'Request a tool' }).click()
   const team = page.getByRole('dialog', { name: /Your Inhouse team/ })
   await expect(team).toBeVisible()
@@ -191,8 +186,8 @@ test('Tools: Request a tool opens the team window; a disconnected tool has its o
   await expect(page.getByRole('button', { name: 'Pause access' })).toBeVisible()
 })
 
-test('Usage: the daily bars are one tab stop; arrows, Home and End move between days with the tooltip', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/usage')
+test('Usage: the daily bars are one tab stop; arrows, Home and End move between days with the tooltip', async ({ fx, page }) => {
+  await start(page, fx, 'Act', 'Normal', '#/usage')
   const bars = page.getByRole('grid', { name: 'Daily cost' }).getByRole('gridcell')
   // Usage loads on first visit (its own chunk): count once its bars are in.
   await expect(bars.first()).toBeVisible()
@@ -229,8 +224,8 @@ test('Usage: the daily bars are one tab stop; arrows, Home and End move between 
 const go = (page: Page, hash: string) => page.evaluate(h => { location.hash = h }, hash)
 const actRow = (page: Page, text: string | RegExp) => page.locator('button[data-activity-row]').filter({ hasText: text })
 
-test('A set-aside problem approved from the chat card or the Library\'s approval link is a normal approval everywhere; Activity logs each set-aside with Undo', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/approvals')
+test('A set-aside problem approved from the chat card or the Library\'s approval link is a normal approval everywhere; Activity logs each set-aside with Undo', async ({ fx, page }) => {
+  await start(page, fx, 'Act', 'Normal', '#/approvals')
 
   // Don't send the ShipBob draft: Activity logs it, and its detail is searchable.
   await moreItem(page, D.stuck, "Don't send")
@@ -302,8 +297,8 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await expect(badge(page)).toContainText('4')
 })
 
-test('Counts leave set-aside problems out: Watch notifications and Approvals, an empty Today, and Act once every draft is approved or set aside', async ({ page }) => {
-  await start(page, 'Watch')
+test('Counts leave set-aside problems out: Watch notifications and Approvals, an empty Today, and Act once every draft is approved or set aside', async ({ fx, page }) => {
+  await start(page, fx, 'Watch')
   const h1 = page.getByRole('heading', { level: 1 })
   const snooze = async (title: string) => {
     await card(page, title).getByRole('button', { name: 'More' }).click()

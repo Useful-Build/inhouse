@@ -1,15 +1,10 @@
 // Shared by route-title-focus.spec.ts (desktop) and route-title-focus-phone.spec.ts (390 px): the document title per
 // route, focus on the page's h1 after a route change (not on first load), a lazy route opening, and a deep link to one.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, hash: string) {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -32,8 +27,8 @@ export function routeTitleFocusTests(phone: boolean) {
   }
   const h1 = (page: Page, name: string | RegExp) => page.getByRole('heading', { level: 1, name })
 
-  test('First load sets the title and leaves focus alone; a route change names the page and focuses its h1', async ({ page }) => {
-    await start(page, '#/today')
+  test('First load sets the title and leaves focus alone; a route change names the page and focuses its h1', async ({ fx, page }) => {
+    await start(page, fx, '#/today')
     await expect(h1(page, /./)).toBeVisible()
     await expect(page).toHaveTitle('Today · Inhouse')
     await expect(page.locator('h1').first()).not.toBeFocused()
@@ -57,8 +52,8 @@ export function routeTitleFocusTests(phone: boolean) {
     await expect(h1(page, 'Usage')).toBeFocused()
   })
 
-  test('A lazy route loads a chunk of its own when opened', async ({ page }) => {
-    await start(page, '#/today')
+  test('A lazy route loads a chunk of its own when opened', async ({ fx, page }) => {
+    await start(page, fx, '#/today')
     await expect(h1(page, /./)).toBeVisible()
     // Vite names a lazy chunk after its module: assets/Usage-<hash>.js.
     const usageChunk = page.waitForRequest(r => /\/assets\/Usage-[^/]*\.js$/.test(r.url()))
@@ -67,10 +62,10 @@ export function routeTitleFocusTests(phone: boolean) {
     await expect(h1(page, 'Usage')).toBeVisible()
   })
 
-  test('A deep link to a lazy route loads it directly', async ({ page }) => {
+  test('A deep link to a lazy route loads it directly', async ({ fx, page }) => {
     const errors: string[] = []
     page.on('pageerror', e => errors.push(e.message))
-    await start(page, '#/usage')
+    await start(page, fx, '#/usage')
     await expect(h1(page, 'Usage')).toBeVisible()
     await expect(page).toHaveTitle('Usage · Inhouse')
     // A first load doesn't move focus.

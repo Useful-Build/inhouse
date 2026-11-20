@@ -1,16 +1,11 @@
 // "Report a bug" from the ⌘K palette: the team window opens on the bug type, Send waits for words, sending closes the
 // window, shows the confirmation and lists the report among the open requests. (`tour.spec.ts` checks the account
 // menu's item opens the window; `navigation.spec.ts` checks Send for a plain request.)
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx) {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -18,8 +13,8 @@ async function start(page: Page) {
 const palette = (page: Page) => page.getByRole('dialog', { name: 'Search' })
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 
-test('Palette: Report a bug opens the bug window, Send waits for words, then the window closes and the confirmation shows', async ({ page }) => {
-  await start(page)
+test('Palette: Report a bug opens the bug window, Send waits for words, then the window closes and the confirmation shows', async ({ fx, page }) => {
+  await start(page, fx)
 
   await page.keyboard.press('ControlOrMeta+k')
   await expect(palette(page)).toBeVisible()

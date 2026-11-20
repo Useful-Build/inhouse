@@ -1,17 +1,12 @@
 // State that has to survive or reverse: the 10 s send hold across a reload, Undo, Reset, and the Run Undo and Pause paths.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { everything } from './page-text.js'
 
-async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today', fakeClock = false) {
+async function start(page: Page, fx: Fx, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today', fakeClock = false) {
   // The 10 s hold and the toasts run on app timers: a test that waits for them installs the clock first (time keeps flowing) and adds app time with runFor.
   if (fakeClock) await page.clock.install()
-  await page.addInitScript(([s, sc]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Always', animateMark: true }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, scenario])
+  await fx.seed({ stage, scenario, demo: { ambient: 'Always', animateMark: true } })
   await page.goto('/?demo' + hash)
 }
 
@@ -30,8 +25,8 @@ async function approveKestrel(page: Page) {
   return toast
 }
 
-test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Undo is gone', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/today', true)
+test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Undo is gone', async ({ fx, page }) => {
+  await start(page, fx, 'Act', 'Normal', '#/today', true)
   await approveKestrel(page)
   await page.clock.runFor(3000)
   await page.reload()
@@ -50,8 +45,8 @@ test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Un
   await page.screenshot({ path: test.info().outputPath('state-reload-sent.png') })
 })
 
-test('Act: Undo in the toast during the hold cancels the send', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/today', true)
+test('Act: Undo in the toast during the hold cancels the send', async ({ fx, page }) => {
+  await start(page, fx, 'Act', 'Normal', '#/today', true)
   const toast = await approveKestrel(page)
   await expect(badge(page)).toContainText('5')
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
@@ -65,8 +60,8 @@ test('Act: Undo in the toast during the hold cancels the send', async ({ page })
   await expect(card(page, KESTREL)).not.toContainText('Approved by Sam')
 })
 
-test('Run: Undo on a handled card sends it back to you, and the toast Undo restores it', async ({ page }) => {
-  await start(page, 'Run')
+test('Run: Undo on a handled card sends it back to you, and the toast Undo restores it', async ({ fx, page }) => {
+  await start(page, fx, 'Run')
   const heading = page.getByRole('heading', { level: 1 })
   await expect(heading).toContainText('4 handled before you woke up. 3 need you.')
 
@@ -82,8 +77,8 @@ test('Run: Undo on a handled card sends it back to you, and the toast Undo resto
   await expect(card(page, '11 returns are not restocked')).toContainText('Handled by Inhouse agent')
 })
 
-test('Run: Pause, then Undo in the toast, puts Inhouse agent back to running', async ({ page }) => {
-  await start(page, 'Run')
+test('Run: Pause, then Undo in the toast, puts Inhouse agent back to running', async ({ fx, page }) => {
+  await start(page, fx, 'Run')
   await expect(page.getByText('Inhouse agent is running', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Pause', exact: true }).click()
   await expect(page.getByText('Inhouse agent is paused', { exact: true })).toBeVisible()
@@ -95,8 +90,8 @@ test('Run: Pause, then Undo in the toast, puts Inhouse agent back to running', a
   await expect(page.getByText('Inhouse agent is paused', { exact: true })).toHaveCount(0)
 })
 
-test('Act: Reset demo during the hold clears the approval and nothing is sent', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/today', true)
+test('Act: Reset demo during the hold clears the approval and nothing is sent', async ({ fx, page }) => {
+  await start(page, fx, 'Act', 'Normal', '#/today', true)
   await approveKestrel(page)
   await expect(badge(page)).toContainText('5')
 
@@ -110,10 +105,10 @@ test('Act: Reset demo during the hold clears the approval and nothing is sent', 
   await expect(sentToast(page)).toHaveCount(0)
 })
 
-test('Act: two tabs, closing the one that started the hold still sends the reorder, and the other tab says so', async ({ page, context }) => {
+test('Act: two tabs, closing the one that started the hold still sends the reorder, and the other tab says so', async ({ fx, page, context }) => {
   // Only page A seeds storage. Page B joins the same browser context and must not clear it.
   // The clock belongs to the context, so tab B shares it with tab A.
-  await start(page, 'Act', 'Normal', '#/today', true)
+  await start(page, fx, 'Act', 'Normal', '#/today', true)
   await approveKestrel(page)
 
   const other = await context.newPage()
@@ -131,26 +126,26 @@ test('Act: two tabs, closing the one that started the hold still sends the reord
   await other.screenshot({ path: test.info().outputPath('state-two-tabs-sent.png') })
 })
 
-test('Deep links: an unknown page lands on Today and an unknown tool on the Tools list, with no extra history entries', async ({ page, context }) => {
+test('Deep links: an unknown page lands on Today and an unknown tool on the Tools list, with no extra history entries', async ({ fx, page, context, baseURL }) => {
   const historyLength = (p: Page) => p.evaluate(() => history.length)
   const hash = (p: Page) => p.evaluate(() => location.hash)
 
   // Cold loads of a stale link end with the same history as a clean link.
-  await start(page, 'Act', 'Normal', '#/today')
+  await start(page, fx, 'Act', 'Normal', '#/today')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   const reference = await context.newPage()
-  await start(reference, 'Act', 'Normal', '#/today')
+  await start(reference, fxFor(reference, baseURL), 'Act', 'Normal', '#/today')
   await expect(reference.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   const clean = await historyLength(reference)
 
   const nope = await context.newPage()
-  await start(nope, 'Act', 'Normal', '#/nope')
+  await start(nope, fxFor(nope, baseURL), 'Act', 'Normal', '#/nope')
   await expect(nope.getByRole('heading', { level: 1 })).toContainText('6 things need you.')
   await expect.poll(() => hash(nope)).toBe('#/today')
   expect(await historyLength(nope)).toBe(clean)
 
   const bogus = await context.newPage()
-  await start(bogus, 'Act', 'Normal', '#/tools/bogus')
+  await start(bogus, fxFor(bogus, baseURL), 'Act', 'Normal', '#/tools/bogus')
   await expect(bogus.getByRole('heading', { level: 1 })).toHaveText('Tools')
   await expect.poll(() => hash(bogus)).toBe('#/tools')
   expect(await historyLength(bogus)).toBe(clean)
@@ -168,8 +163,8 @@ test('Deep links: an unknown page lands on Today and an unknown tool on the Tool
   expect(await historyLength(page)).toBe(before + 2)
 })
 
-test('Chats: New chat right after asking leaves the new chat empty, and the old answer never shows up', async ({ page }) => {
-  await start(page, 'Act', 'Normal', '#/today', true)
+test('Chats: New chat right after asking leaves the new chat empty, and the old answer never shows up', async ({ fx, page }) => {
+  await start(page, fx, 'Act', 'Normal', '#/today', true)
   await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('Why did refunds jump this week?')
   await page.keyboard.press('Enter')
   await page.getByRole('button', { name: 'New chat' }).click()
@@ -185,24 +180,18 @@ test('Chats: New chat right after asking leaves the new chat empty, and the old 
   await page.screenshot({ path: test.info().outputPath('state-new-chat-empty.png') })
 })
 
-test('Saved storage holding old values (persona name, morning email settings, removed message ids) loads cleanly', async ({ page }) => {
+test('Saved storage holding old values (persona name, morning email settings, removed message ids) loads cleanly', async ({ page, fx }) => {
   const problems: string[] = []
   page.on('console', m => { if (m.type() === 'error' || (m.type() === 'warning' && m.text().startsWith('Inhouse demo'))) problems.push(`${m.type()}: ${m.text()}`) })
   page.on('pageerror', e => problems.push(`pageerror: ${e.message}`))
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Run', scenario: 'Normal', ambient: 'When Ava works', animateMark: true }))
-    // The key the app reads now (v2), holding values earlier versions saved.
-    localStorage.setItem('inhouse.demo.v2', JSON.stringify({
-      approved: {}, sent: {}, undone: {}, edits: {}, paused: null, requestedTools: {}, requestedSkills: {}, toolPaused: {}, forgot: {},
-      toggles: { 'n:email': true, 'n:weekend': false, 'n:slack': true },
-      settings: { 'n:email': 'Email and Slack', 'n:at': '07:00', 'n:weekend': 'Off', 't:name': 'Ava', 't:signs': 'The Northline team' },
-      routinesExtra: [], skillsExtra: [], teamRequests: [], readNotices: {},
-      libraryDeleted: { 'm-10': true, 'm-11': true, 'm-12': true, 'm-13': true, 'm-14': true, 'm-17': true },
-      setAside: {}, routinesDeleted: {}, routineRuns: [], chatTitles: {}, chatPinned: {}, chatDeleted: {}, demoStartedAt: Date.now(),
-    }))
-    sessionStorage.setItem('e2e-seeded', '1')
+  // The saved state the app reads now, holding values earlier versions saved.
+  await fx.seedSaved({ stage: 'Run', demo: { ambient: 'When Ava works', animateMark: true } }, {
+    approved: {}, sent: {}, undone: {}, edits: {}, paused: null, requestedTools: {}, requestedSkills: {}, toolPaused: {}, forgot: {},
+    toggles: { 'n:email': true, 'n:weekend': false, 'n:slack': true },
+    settings: { 'n:email': 'Email and Slack', 'n:at': '07:00', 'n:weekend': 'Off', 't:name': 'Ava', 't:signs': 'The Northline team' },
+    routinesExtra: [], skillsExtra: [], teamRequests: [], readNotices: {},
+    libraryDeleted: { 'm-10': true, 'm-11': true, 'm-12': true, 'm-13': true, 'm-14': true, 'm-17': true },
+    setAside: {}, routinesDeleted: {}, routineRuns: [], chatTitles: {}, chatPinned: {}, chatDeleted: {}, demoStartedAt: Date.now(),
   })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('handled before you woke up')
@@ -227,6 +216,6 @@ test('Saved storage holding old values (persona name, morning email settings, re
   await page.reload()
   await expect(page.getByRole('heading', { level: 1, name: 'Routines' })).toBeVisible()
   // It was read, not ignored: the old settings are still in the saved state.
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('inhouse.demo.v2') ?? '{}').settings?.['n:at'])).toBe('07:00')
+  expect((await fx.saved()).demo.settings?.['n:at']).toBe('07:00')
   expect(problems, 'console errors on a start from the old values').toEqual([])
 })

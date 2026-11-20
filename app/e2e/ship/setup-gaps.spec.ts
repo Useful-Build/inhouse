@@ -1,18 +1,13 @@
 // Ship spec for the setup project: the feature-map coverage it added (Notifications, Memory, Inhouse agent, Data and
 // access, Audit log, Help). Recorded at 1440x900 and 390x844. Every page is opened through the UI, as a person would.
 // On a phone the team pages read as text (their selects and fields are hidden) and Settings opens through a menu.
-import { expect, test } from '../csp.js'
+import { expect, test, type Fx } from '../support/fx.js'
 import type { Page } from '@playwright/test'
 
 const phone = () => test.info().project.name === 'ship-phone'
 
-async function start(page: Page) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx) {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -38,8 +33,8 @@ async function pickPage(page: Page, name: string) {
   await expect(h1(page, name)).toBeVisible()
 }
 
-test('S1: Notifications: change when approvals alert you, reload, the choice is kept', async ({ page }) => {
-  await start(page)
+test('S1: Notifications: change when approvals alert you, reload, the choice is kept', async ({ fx, page }) => {
+  await start(page, fx)
   await accountItem(page, 'Your settings')
   await pickPage(page, 'Notifications')
   await combo(page, 'Approvals waiting: Right away').click()
@@ -50,8 +45,8 @@ test('S1: Notifications: change when approvals alert you, reload, the choice is 
   await expect(combo(page, 'Approvals waiting: Once an hour')).toBeVisible()
 })
 
-test('S2: Memory: forget a personal memory line, Undo brings it back', async ({ page }) => {
-  await start(page)
+test('S2: Memory: forget a personal memory line, Undo brings it back', async ({ fx, page }) => {
+  await start(page, fx)
   await accountItem(page, 'Your settings')
   await pickPage(page, 'Memory')
   const line = main(page).getByText('You like numbers in a table, most urgent first.', { exact: true })
@@ -67,8 +62,8 @@ test('S2: Memory: forget a personal memory line, Undo brings it back', async ({ 
   await expect(forgets).toHaveCount(3)
 })
 
-test('S3: Inhouse agent: change the tone, then Open memory goes to Team memory', async ({ page }) => {
-  await start(page)
+test('S3: Inhouse agent: change the tone, then Open memory goes to Team memory', async ({ fx, page }) => {
+  await start(page, fx)
   await accountItem(page, 'Team settings')
   await pickPage(page, 'Inhouse agent')
   if (phone()) {
@@ -85,8 +80,8 @@ test('S3: Inhouse agent: change the tone, then Open memory goes to Team memory',
   await expect(page).toHaveURL(/#\/settings\/team-memory$/)
 })
 
-test('S4: Data and access: change how long chats are kept; Ask the team opens with the delete request written', async ({ page }) => {
-  await start(page)
+test('S4: Data and access: change how long chats are kept; Ask the team opens with the delete request written', async ({ fx, page }) => {
+  await start(page, fx)
   await accountItem(page, 'Team settings')
   await pickPage(page, 'Data and access')
   if (phone()) {
@@ -107,8 +102,8 @@ test('S4: Data and access: change how long chats are kept; Ask the team opens wi
   await expect(team(page).getByRole('textbox', { name: 'Your request' })).toHaveValue('Please delete the Inhouse agent and its data for Northline Outdoor.')
 })
 
-test('S5: Audit log: pause the Inhouse agent, the audit log shows it at the top; resume', async ({ page }) => {
-  await start(page)
+test('S5: Audit log: pause the Inhouse agent, the audit log shows it at the top; resume', async ({ fx, page }) => {
+  await start(page, fx)
   await accountItem(page, 'Team settings')
   await pickPage(page, 'Run limits')
   await main(page).getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
@@ -129,8 +124,8 @@ test('S5: Audit log: pause the Inhouse agent, the audit log shows it at the top;
   await expect(paused).toHaveCount(0)
 })
 
-test('S6: Help and guides: open a guide, then ask the team a question and see it listed', async ({ page }) => {
-  await start(page)
+test('S6: Help and guides: open a guide, then ask the team a question and see it listed', async ({ fx, page }) => {
+  await start(page, fx)
   await accountItem(page, 'Help and guides')
   const help = page.getByRole('dialog', { name: 'Help and guides' })
   await expect(help).toBeVisible()
