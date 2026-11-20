@@ -176,6 +176,13 @@ function serverScan(dir) {
   return hits
 }
 const productWorker = workerDir(productDir, 'product')
+// P3 W3: the deployable config binds Workers AI (the egress's AI Gateway, p3-design 8.2); the product e2e server runs on
+// a copy without it (playwright.config.ts), so this is where the binding is proven to ship.
+const productConfig = JSON.parse(readFileSync(join(productWorker, 'wrangler.json'), 'utf8'))
+if (productConfig?.ai?.binding !== 'AI') {
+  bad = true
+  console.error(`FAIL  AI binding: the deployable Worker's wrangler.json (${relative(root, productWorker)}) has no "ai": { "binding": "AI" }.`)
+} else console.log('ok    AI binding: the deployable Worker binds Workers AI as AI.')
 const inServer = serverScan(productWorker)
 if (inServer.length) {
   bad = true
