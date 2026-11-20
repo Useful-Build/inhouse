@@ -80,7 +80,7 @@ export interface TurnRow {
   interrupt_asked: number; budget_wait_since_ms: number | null; requeues: number; fenced: number
   grace_until_ms: number | null; ending_since_ms: number | null; watch_json: string | null; saw_checkpoint: number
   mirror_error: number; deferred_json: string | null; start_json: string | null; settled: number; ledger_hold_micro: number
-  start_hold_micro: number; ledger_fails: number; ledger_retry_at_ms: number | null; parts_n: number
+  start_hold_micro: number; ledger_fails: number; ledger_retry_at_ms: number | null; runner_cost_micro: number | null; parts_n: number
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
   created_at_ms: number; started_at_ms: number | null; ended_at_ms: number | null
 }
@@ -723,6 +723,8 @@ export class AgentCore {
         return false
       case 'finished':
       case 'failed':
+        // The runner's own cost estimate, beside the tally at settle (design 9: logged, never booked).
+        if (ev.type === 'finished') this.sql.exec('UPDATE turns SET runner_cost_micro = ? WHERE turn_id = ?', Math.round(ev.costUsd * 1_000_000), t.turn_id)
         this.terminal(t, ev)
         return false
       case 'released': {

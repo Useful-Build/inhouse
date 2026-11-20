@@ -18,7 +18,8 @@
 //   sibling closes), `closed_at_ms` (the trace's end of a call); `turns.ledger_hold_micro` (4.1: the ledger's last
 //   answer), `start_hold_micro` (the reserve's answer, the floor of every close's hold), `ledger_fails` and
 //   `ledger_retry_at_ms` (a ledger call that failed is sent again from the `call-lease` task, never given up);
-//   `chat_state.damaged_at_ms` (the `session_damaged` signal counts damage in the last 24 hours).
+//   `chat_state.damaged_at_ms` (the `session_damaged` signal counts damage in the last 24 hours); `turns.runner_cost_micro`
+//   (the terminal event's `costUsd`, passed to settle as a cross-check only, never booked).
 
 export function createAgentTables(sql: SqlStorage): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, owner_id TEXT NOT NULL,
@@ -39,7 +40,8 @@ export function createAgentTables(sql: SqlStorage): void {
     fenced INTEGER NOT NULL DEFAULT 0, grace_until_ms INTEGER, ending_since_ms INTEGER, watch_json TEXT,
     saw_checkpoint INTEGER NOT NULL DEFAULT 0, mirror_error INTEGER NOT NULL DEFAULT 0, deferred_json TEXT,
     start_json TEXT, settled INTEGER NOT NULL DEFAULT 0, ledger_hold_micro INTEGER NOT NULL DEFAULT 0,
-    start_hold_micro INTEGER NOT NULL DEFAULT 0, ledger_fails INTEGER NOT NULL DEFAULT 0, ledger_retry_at_ms INTEGER, parts_n INTEGER NOT NULL DEFAULT 0,
+    start_hold_micro INTEGER NOT NULL DEFAULT 0, ledger_fails INTEGER NOT NULL DEFAULT 0, ledger_retry_at_ms INTEGER,
+    runner_cost_micro INTEGER, parts_n INTEGER NOT NULL DEFAULT 0,
     steps_n INTEGER NOT NULL DEFAULT 0, count_tokens_calls INTEGER NOT NULL DEFAULT 0,
     outcome TEXT, failure TEXT, cancel_why TEXT,
     pos_from INTEGER, pos_to INTEGER, d1_flushed INTEGER NOT NULL DEFAULT 0,

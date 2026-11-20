@@ -60,11 +60,11 @@ interface QueueRow {
 interface TurnMoney {
   [k: string]: SqlStorageValue
   state: string; reserved: number; settled: number; ledger_hold_micro: number; start_hold_micro: number
-  ledger_retry_at_ms: number | null; ledger_fails: number
+  ledger_retry_at_ms: number | null; ledger_fails: number; runner_cost_micro: number | null
 }
 type ExtendArgs = { need: number }
 type CloseArgs = { actual: number; hold: number }
-type SettleArgs = { micro: number; release: boolean; atMs: number }
+type SettleArgs = { micro: number; release: boolean; atMs: number; runnerCostMicro: number | null }
 type ExtendAnswer = Awaited<ReturnType<UsageLedgerPort['extend']>>
 
 export interface GateDeps {
@@ -101,7 +101,7 @@ export class ModelGate {
   }
   private money(turnId: string): TurnMoney | null {
     return this.sql.exec<TurnMoney>(
-      'SELECT state, reserved, settled, ledger_hold_micro, start_hold_micro, ledger_retry_at_ms, ledger_fails FROM turns WHERE turn_id = ?', turnId,
+      'SELECT state, reserved, settled, ledger_hold_micro, start_hold_micro, ledger_retry_at_ms, ledger_fails, runner_cost_micro FROM turns WHERE turn_id = ?', turnId,
     ).toArray()[0] ?? null
   }
   /** Closed calls at their price (cut ones at their cut price, freed ones at 0). */
@@ -383,7 +383,7 @@ export class ModelGate {
         return { actual: c.micro ?? 0, hold: Math.max(this.tally(turnId) + this.openWorst(turnId), t.start_hold_micro) }
       }
       case 'settle':
-        return { micro: this.tally(turnId), release: this.count('turn_id = ?', turnId) === 0, atMs: this.d.now() }
+        return { micro: this.tally(turnId), release: this.count('turn_id = ?', turnId) === 0, atMs: this.d.now(), runnerCostMicro: t.runner_cost_micro }
     }
   }
 
@@ -395,7 +395,7 @@ export class ModelGate {
       case 'settle': {
         const s = args as SettleArgs
         if (s.release) await u.release(q.turn_id, s.atMs)
-        else await u.settle(q.turn_id, s.micro, s.atMs)
+        else await u.settle(q.turn_id, s.micro, s.atMs, s.runnerCostMicro)
         return null
       }
     }

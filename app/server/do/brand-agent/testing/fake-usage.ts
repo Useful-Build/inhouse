@@ -71,8 +71,8 @@ export class FakeUsageLedger implements UsageLedgerPort {
     this.spent += micro
     this.setHold(turnId, 0)
   }
-  async settle(turnId: string, micro: number, nowMs: number) {
-    this.calls.push({ method: 'settle', args: [turnId, micro, nowMs] })
+  async settle(turnId: string, micro: number, nowMs: number, runnerCostMicro: number | null = null) {
+    this.calls.push({ method: 'settle', args: [turnId, micro, nowMs, runnerCostMicro] })
     this.finalize(turnId, micro)
   }
   async release(turnId: string, nowMs: number) {

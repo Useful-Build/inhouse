@@ -442,6 +442,9 @@ describe('waits: money, order, bounds (8.2 rules 1 and 3)', () => {
     h.push(t, ...fullAnswer('done', 2))
     await h.tick(0)
     expect(ledger(h)).toEqual([['close', 'c1', 100_000, 250_000], ['settle', 100_000]])
+    // The runner's own estimate ($0.01 in the success fixture) rides beside the tally; the booking is the tally.
+    expect(h.usage.calls.find(c => c.method === 'settle')!.args[3]).toBe(10_000)
+    expect(h.usage.booked.get(t)).toBe(100_000)
   }))
 
   it('a wait past 5 minutes in all (slot, money, a slow extend) answers 503 for that call; the turn goes on', () => inAgent(async h => {
