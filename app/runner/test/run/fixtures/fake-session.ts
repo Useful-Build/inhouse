@@ -48,10 +48,12 @@ const end = () => void channel.close().then(() => process.exit(0))
 const event = (e: unknown) => send({ type: 'event', event: e })
 const finished = () => event({ type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} })
 
+// The audit expiry's clock (src/protocol/local.ts monotonicMs; that module loads zod, which this fixture keeps out).
+const mono = () => Number(process.hrtime.bigint() / 1_000_000n)
 const auditEntry = (i: number) => ({ hook: 'PreToolUse', toolName: 'Bash', toolUseId: `toolu_${i}`, decision: 'allow', input: { command: `echo ${i}` } })
 const auditWaiters = new Map<number, (reply: unknown) => void>()
 let nextAudit = 0
-const sendAudit = (entry: unknown, expiresAt = Date.now() + 10_000) =>
+const sendAudit = (entry: unknown, expiresAt = mono() + 10_000) =>
   new Promise<unknown>((resolve) => {
     const id = nextAudit++
     auditWaiters.set(id, resolve)
@@ -276,7 +278,7 @@ channel.onMessage((line) => {
       })()
       break
     case 'audit-bad':
-      send({ type: 'audit', id: 0, expiresAt: Date.now() + 10_000, entry: { hook: 'PreToolUse', toolName: 'Bash', decision: 'allow', input: 'x'.repeat(20_000) } })
+      send({ type: 'audit', id: 0, expiresAt: mono() + 10_000, entry: { hook: 'PreToolUse', toolName: 'Bash', decision: 'allow', input: 'x'.repeat(20_000) } })
       break
     case 'audit-on-stop':
       event({ type: 'sdk', message: { type: 'waiting' }, truncated: false })
@@ -289,7 +291,7 @@ channel.onMessage((line) => {
       })
       break
     case 'audit-expired':
-      void sendAudit(auditEntry(0), Date.now() - 1).then((reply) => {
+      void sendAudit(auditEntry(0), mono() - 1).then((reply) => {
         event({ type: 'sdk', message: { type: 'audits', replies: [reply] }, truncated: false })
         finished()
         end()

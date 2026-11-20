@@ -14,7 +14,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { SDK_MESSAGE_MAX_BYTES } from '../../../shared/protocol/index.ts'
 import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '../protocol/ndjson.ts'
-import { capSdkMessage, parseSessionMessage, type RootMessage, type RunConfig } from '../protocol/local.ts'
+import { capSdkMessage, monotonicMs, parseSessionMessage, type RootMessage, type RunConfig } from '../protocol/local.ts'
 import type { SessionUser } from '../session/seam.ts'
 import type { RunStream } from './run-stream.ts'
 
@@ -136,7 +136,7 @@ export function hostSession(opts: {
       // Acked only once the entry is on the Worker's stream; otherwise the session's hook must not let the call run.
       if (!opts.canWrite()) return nack(m.id, 'the run has ended or the Worker has gone')
       // It sat in the pipe past the time the hook waits (the root wasn't reading): the call was refused already.
-      if (Date.now() >= m.expiresAt) return nack(m.id, 'the entry expired before the root read it')
+      if (monotonicMs() >= m.expiresAt) return nack(m.id, 'the entry expired before the root read it')
       stream.emit({ type: 'audit', entry: m.entry })
       return send({ type: 'audit_ack', id: m.id })
     }

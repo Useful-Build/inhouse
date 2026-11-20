@@ -58,13 +58,18 @@ function split(rel: string) {
   return { folders: parts.slice(0, -1), name: parts.at(-1)! }
 }
 
-/** Walks the real folders under `root` (never a symlinked one): regular files, and everything else. */
-async function walk(root: Dir, limit: number): Promise<{ files: string[]; others: string[]; truncated: boolean }> {
+/**
+ * Walks the real folders under `root` (never a symlinked one): regular files, everything else, and the folders that
+ * couldn't be opened (no permission, say). Throws `Cut` once `signal` aborts.
+ */
+async function walk(root: Dir, limit: number, signal?: AbortSignal): Promise<{ files: string[]; others: string[]; unreadable: string[]; truncated: boolean }> {
   const files: string[] = []
   const others: string[] = []
+  const unreadable: string[] = []
   const stack = ['']
   let seen = 0
   while (stack.length > 0) {
+    if (signal?.aborted) throw new Cut()
     const rel = stack.pop()!
     let entries
     try {
@@ -75,19 +80,20 @@ async function walk(root: Dir, limit: number): Promise<{ files: string[]; others
         await closeDir(dir)
       }
     } catch (e) {
-      // Swapped for a symlink since its parent was listed: never followed, nothing under it saved.
-      if (e instanceof NotFollowed && rel !== '') others.push(rel)
+      // Swapped for a symlink since its parent was listed: never followed, nothing under it saved. Any other failure
+      // (a folder the agent made unreadable) is named too, so nothing under it goes missing without a notice.
+      if (rel !== '') (e instanceof NotFollowed ? others : unreadable).push(rel)
       continue
     }
     for (const e of entries) {
-      if (++seen > limit) return { files, others, truncated: true }
+      if (++seen > limit) return { files, others, unreadable, truncated: true }
       const p = rel === '' ? e.name : `${rel}/${e.name}`
       if (e.isDirectory()) stack.push(p)
       else if (e.isFile()) files.push(p)
       else others.push(p) // symlinks, sockets, fifos: never followed, never saved
     }
   }
-  return { files, others, truncated: false }
+  return { files, others, unreadable, truncated: false }
 }
 
 /** `outputs/`, opened as a real folder; null (logged) when it's missing, a symlink or not a folder. */
@@ -155,8 +161,12 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
   const base = deps.proxyUrl.replace(/\/$/, '')
   const { cwd, caps, log } = deps
 
-  /** Makes the work folder's `inputs/` and `outputs/`, then brings in the chat's files that aren't here yet. */
-  async function restore(): Promise<Extract<FileEvent, { type: 'files_restored' }>> {
+  /**
+   * Makes the work folder's `inputs/` and `outputs/`, then brings in the chat's files that aren't here yet. Returns the
+   * event and every left-out name (the event's list is capped). Throws `Cut` once `signal` aborts (a stop), leaving no
+   * half-written temp file behind.
+   */
+  async function restore(signal?: AbortSignal): Promise<{ event: Extract<FileEvent, { type: 'files_restored' }>; leftOut: string[] }> {
     const tops = new Map<string, Dir>()
     try {
       for (const top of [INPUTS, OUTPUTS]) {
@@ -164,13 +174,14 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
         // Must be a real folder: a symlinked `inputs/` or `outputs/` fails the restore (and the run, as `files`).
         tops.set(top, await openDir(join(cwd, top)))
       }
-      const res = await deps.fetch(`${base}/files/`, { method: 'GET' })
+      const res = await untilAborted(deps.fetch(`${base}/files/`, { method: 'GET', signal }), signal)
       if (!res.ok) throw new Error(`file listing: ${res.status}`)
-      const listing = FileListing.parse(await res.json())
+      const listing = FileListing.parse(await untilAborted(res.json(), signal))
       let restored = 0
       let bytes = 0
       const leftOut: string[] = []
       for (const f of listing.files) {
+        if (signal?.aborted) throw new Cut()
         const url = filesPath(f.path)
         if (localPath(cwd, f.path) === null || url === null) {
           log({ type: 'file_restore_skipped', reason: 'bad path', bytes: f.bytes })
@@ -198,15 +209,22 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
             leftOut.push(f.path)
             continue
           }
-          const got = await deps.fetch(`${base}${url}`, { method: 'GET' })
+          const got = await untilAborted(deps.fetch(`${base}${url}`, { method: 'GET', signal }), signal)
           if (!got.ok) throw new Error(`file download: ${got.status}`)
-          const body = new Uint8Array(await got.arrayBuffer())
+          const body = new Uint8Array(await untilAborted(got.arrayBuffer(), signal))
           // The listing's size is what the budget counted; a body past it would overrun the cap.
           if (body.length !== f.bytes) throw new Error(`file download: ${body.length} bytes, listed as ${f.bytes}`)
           // A fresh random name, created exclusively (a file or symlink planted there fails it, never written
           // through), then renamed over the target (which replaces a symlink there rather than following it).
           const tmp = `.restoring-${randomBytes(12).toString('hex')}`
-          await writeFile(inDir(dir, tmp), body, { flag: 'wx' })
+          try {
+            await writeFile(inDir(dir, tmp), body, { flag: 'wx', signal })
+          } catch (e) {
+            // Cut (or failed) part-way: the half-written temp file goes. EEXIST means it was never ours to remove.
+            if ((e as NodeJS.ErrnoException).code !== 'EEXIST') await unlink(inDir(dir, tmp)).catch(() => undefined)
+            if (signal?.aborted) throw new Cut()
+            throw e
+          }
           try {
             await rename(inDir(dir, tmp), inDir(dir, name))
           } catch (e) {
@@ -220,7 +238,7 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
           for (const d of opened) await closeDir(d)
         }
       }
-      return { type: 'files_restored', restored, bytes, leftOut: capLeftOut(leftOut) }
+      return { event: { type: 'files_restored', restored, bytes, leftOut: capLeftOut(leftOut) }, leftOut }
     } finally {
       for (const d of tops.values()) await closeDir(d)
     }
@@ -245,24 +263,26 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
     const root = await openOutputs(cwd, log)
     if (root === null) return true
     try {
-      const { files, others, truncated } = await walk(root, OUTPUTS_MAX_WALK)
+      const { files, others, unreadable, truncated } = await walk(root, OUTPUTS_MAX_WALK, signal)
       if (truncated) log({ type: 'outputs_walk_truncated', limit: OUTPUTS_MAX_WALK })
       for (const o of others.sort()) {
         const path = `${OUTPUTS}/${o}`.slice(0, 1024)
         if (!handled.has(path)) await refuse({ type: 'file_refused', path, reason: 'type_not_allowed' })
       }
+      for (const u of unreadable.sort()) {
+        const path = `${OUTPUTS}/${u}`.slice(0, 1024)
+        if (!handled.has(path)) await refuse({ type: 'file_refused', path, reason: 'save_failed' })
+      }
       for (const rel of files.sort()) {
         if (signal?.aborted) return false
         const path = `${OUTPUTS}/${rel}`
         if (handled.has(path.slice(0, 1024))) continue
-        try {
-          await saveOne(root, rel, path, before, refuse, emit, signal)
-        } catch (e) {
-          if (e instanceof Cut) return false
-          throw e
-        }
+        await saveOne(root, rel, path, before, refuse, emit, signal)
       }
       return true
+    } catch (e) {
+      if (e instanceof Cut) return false
+      throw e
     } finally {
       await closeDir(root)
       if (unsent > 0) {
@@ -301,6 +321,8 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
       if (st.nlink > 1) return refuse({ type: 'file_refused', path, reason: 'type_not_allowed', bytes: st.size })
       if (st.size > caps.maxFileBytes) return refuse({ type: 'file_refused', path, reason: 'too_large', bytes: st.size })
       if (count >= caps.maxFilesPerTurn) return refuse({ type: 'file_refused', path, reason: 'too_many', bytes: st.size })
+      // The deadline is checked before the read and before the hash, not only between files: a big file takes a while.
+      if (signal?.aborted) throw new Cut()
       let body: Uint8Array
       try {
         body = await readFileIn(dir, name, st)
@@ -308,6 +330,7 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
         // It changed while being read (or went away, or was swapped): what was checked isn't what would be saved.
         return refuse({ type: 'file_refused', path, reason: 'save_failed', bytes: st.size })
       }
+      if (signal?.aborted) throw new Cut()
       const contentType = sniffType(body, rel)
       if (!caps.allowedTypes.includes(contentType)) return refuse({ type: 'file_refused', path, reason: 'type_not_allowed', bytes: body.length })
       count++

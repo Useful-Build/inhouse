@@ -4,10 +4,11 @@
 // - an entry over the cap, or one that fails the schema, reaches the stream (or crashes the root);
 // - a session sends audit as a plain event, skipping the ack;
 // - an entry sent after the run ended goes unanswered, so the hook waits out its timeout while the root's grace runs;
-// - an entry read after the session stopped waiting for it (it sat in the pipe) is written as if its call ran.
+// - an entry read after the session stopped waiting for it (it sat in the pipe) is written as if its call ran;
+// - the root's wall clock steps (NTP, set by hand) and an expired entry is acked, or a fresh one nacked.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RunEvent } from '../../../shared/protocol/index.ts'
 import { openRun, postRun, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
 import { spawnFixture } from './support/test-seams.ts'
@@ -61,6 +62,21 @@ describe('audit entries', () => {
     const report = events.find((e) => e.type === 'sdk' && e.message.type === 'audits')
     expect(report!.type === 'sdk' && report!.message.replies).toEqual([{ type: 'audit_nack', id: 0, error: 'the entry expired before the root read it' }])
     expect(ends(events)).toEqual([expect.objectContaining({ type: 'finished' })])
+  })
+
+  it.each([
+    ['back', -3_600_000, 'audit-expired', { type: 'audit_nack', id: 0, error: 'the entry expired before the root read it' }],
+    ['forward', 3_600_000, 'audit:1', { type: 'audit_ack', id: 0 }],
+  ])("the root's wall clock stepped an hour %s changes no expiry", async (_how, offset, prompt, reply) => {
+    const real = Date.now.bind(Date)
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => real() + offset)
+    try {
+      const events = await postRun(root, runStart({ prompt }))
+      const report = events.find((e) => e.type === 'sdk' && e.message.type === 'audits')
+      expect(report!.type === 'sdk' && report!.message.replies).toEqual([reply])
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('an entry that fails the schema (input over the cap) ends the session as protocol; nothing of it reaches the stream', async () => {

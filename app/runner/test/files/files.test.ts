@@ -11,18 +11,38 @@
 //   folder itself, a folder under it, the restore's temp name, the target (and a symlink there passes the skip check);
 // - a hard link to a file elsewhere is saved, or the read isn't checked against what lstat saw;
 // - thousands of refusals or left-out names flood the stream or break the schema;
-// - HTML or SVG behind a comment, a processing instruction or another tag sniffs as text.
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+// - HTML or SVG behind a comment, a processing instruction or another tag sniffs as text;
+// - a folder under outputs/ that can't be opened (chmod 000) is skipped without a notice;
+// - a FIFO swapped in between lstat and the open hangs the read;
+// - a Markdown or text file that opens with a tag is taken for HTML;
+// - a stop's deadline is checked only between files (not in the walk, nor between a read and its upload), or a restore
+//   ignores it, or a cut restore leaves a half-written temp file.
+import { execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
-import { afterEach, beforeEach, describe, expect } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import { RunEventBody, type FileCaps } from '../../../shared/protocol/index.ts'
 import { LEFT_OUT_MAX, REFUSALS_MAX, capLeftOut, createFiles, filesPath, localPath, snapshotOutputs } from '../../src/files/files.ts'
 import { closeDir, openDir, readFileIn } from '../../src/files/safe-dir.ts'
 import { sniffType } from '../../src/files/sniff.ts'
 import { badProxyPath } from '../../src/proxy/server.ts'
 import { PROXY_URL, fakeEgress, type FakeEgress } from '../run/support/fake-egress.ts'
+
+// Runs right after each read of a file being saved, so a test can cut a save between the read and the hash.
+const afterRead = vi.hoisted(() => ({ fn: null as (() => void) | null }))
+vi.mock('../../src/files/safe-dir.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/files/safe-dir.ts')>()
+  return {
+    ...real,
+    readFileIn: async (...args: Parameters<typeof real.readFileIn>) => {
+      const body = await real.readFileIn(...args)
+      afterRead.fn?.()
+      return body
+    },
+  }
+})
 
 const PDF = Buffer.from('%PDF-1.7\n%test\n')
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
@@ -44,6 +64,7 @@ beforeEach(() => {
   egress = fakeEgress()
 })
 afterEach(() => {
+  afterRead.fn = null
   rmSync(cwd, { recursive: true, force: true })
   rmSync(elsewhere, { recursive: true, force: true })
 })
@@ -205,12 +226,80 @@ describe('symlinks and links the agent planted (saving)', () => {
     }
   })
 
+  // As root the chmod doesn't stop the open.
+  ;(process.getuid?.() === 0 ? it.skip : it)('a folder under outputs/ that cannot be opened is refused with a notice', async () => {
+    out('a.pdf', PDF)
+    out('locked/b.pdf', PDF)
+    chmodSync(join(cwd, 'outputs', 'locked'), 0o000)
+    try {
+      expect(await saveAll()).toEqual([
+        { type: 'file_refused', path: 'outputs/locked', reason: 'save_failed' },
+        { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+      ])
+    } finally {
+      chmodSync(join(cwd, 'outputs', 'locked'), 0o755)
+    }
+  })
+
+  it('a FIFO swapped in between lstat and the open is refused at once, never waited on', async () => {
+    out('a.pdf', PDF)
+    const seen = lstatSync(join(cwd, 'outputs', 'a.pdf'))
+    rmSync(join(cwd, 'outputs', 'a.pdf'))
+    execFileSync('mkfifo', [join(cwd, 'outputs', 'a.pdf')])
+    const dir = await openDir(join(cwd, 'outputs'))
+    try {
+      await expect(readFileIn(dir, 'a.pdf', seen)).rejects.toThrow(/not the file/)
+    } finally {
+      await closeDir(dir)
+    }
+  })
+
   it(`past ${REFUSALS_MAX} refusals, the rest are counted in one file_refused_more`, async () => {
     for (let i = 0; i < REFUSALS_MAX + 10; i++) out(`x-${String(i).padStart(3, '0')}.exe`, Buffer.from([0x4d, 0x5a, 0, 0]))
     const events = await saveAll()
     expect(events).toHaveLength(REFUSALS_MAX + 1)
     expect(events.at(-1)).toEqual({ type: 'file_refused_more', count: 10 })
     for (const e of events) expect(RunEventBody.safeParse(e).success).toBe(true)
+  })
+})
+
+describe("a stop's deadline", () => {
+  it('cuts a save inside the walk, and between a read and its upload; a later save sends what it did not', async () => {
+    out('a.pdf', PDF)
+    symlinkSync(elsewhere, join(cwd, 'outputs', 'link'))
+    const { f } = files()
+    const events: RunEventBody[] = []
+    const emit = (e: RunEventBody) => void events.push(e)
+    // Cut before the walk: nothing is looked at, nothing said.
+    expect(await f.save(new Map(), emit, AbortSignal.abort())).toBe(false)
+    expect(events).toEqual([])
+    // Cut once a.pdf has been read: it's never sent.
+    const mid = new AbortController()
+    afterRead.fn = () => mid.abort()
+    expect(await f.save(new Map(), emit, mid.signal)).toBe(false)
+    afterRead.fn = null
+    expect(egress.calls.filter((c) => c.startsWith('PUT'))).toEqual([])
+    expect(await f.save(new Map(), emit)).toBe(true)
+    expect(events).toEqual([
+      { type: 'file_refused', path: 'outputs/link', reason: 'type_not_allowed' },
+      { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+    ])
+  })
+
+  it('cuts a restore mid-write, and leaves no temp file behind', async () => {
+    const big = new Uint8Array(8 * 1024 * 1024).fill(0x61)
+    egress.files.set('inputs/big.txt', { body: big })
+    const cut = new AbortController()
+    const real = egress.fetch
+    egress.fetch = async (url, init) => {
+      const res = await real(url, init)
+      if (!url.endsWith('/files/inputs/big.txt')) return res
+      const body = await res.arrayBuffer()
+      // The cut lands on the next turn of the event loop, once the write has begun.
+      return { ok: true, status: 200, arrayBuffer: async () => (setImmediate(() => cut.abort()), body) } as unknown as Response
+    }
+    await expect(files(caps({ maxRestoreBytes: big.length })).f.restore(cut.signal)).rejects.toThrow()
+    expect(readdirSync(join(cwd, 'inputs'))).toEqual([])
   })
 })
 
@@ -221,12 +310,13 @@ describe('restoring the chat files', () => {
     egress.files.set('outputs/big.pdf', { body: new Uint8Array(900) })
     egress.files.set('inputs/later.pdf', { body: new Uint8Array(PDF) })
     const r = await files(caps({ maxRestoreBytes: PDF.length * 2 + 4 })).f.restore()
-    expect(r).toEqual({ type: 'files_restored', restored: 3, bytes: PDF.length * 2 + 4, leftOut: ['outputs/big.pdf'] })
+    expect(r.leftOut).toEqual(['outputs/big.pdf'])
+    expect(r.event).toEqual({ type: 'files_restored', restored: 3, bytes: PDF.length * 2 + 4, leftOut: ['outputs/big.pdf'] })
     expect(readFileSync(join(cwd, 'inputs', 'brief one.pdf'))).toEqual(PDF)
     // A second restore: everything here already, nothing downloaded again.
     const gets = () => egress.calls.filter((c) => c.startsWith('GET /files/') && c !== 'GET /files/').length
     const before = gets()
-    expect(await files(caps({ maxRestoreBytes: PDF.length * 2 + 4 })).f.restore()).toMatchObject({ restored: 0 })
+    expect((await files(caps({ maxRestoreBytes: PDF.length * 2 + 4 })).f.restore()).event).toMatchObject({ restored: 0 })
     expect(gets()).toBe(before)
   })
 
@@ -239,7 +329,7 @@ describe('restoring the chat files', () => {
   it.each(['../escape.pdf', 'outputs/../../escape.pdf', '/etc/passwd', 'other/x.pdf', 'inputs/a\\b.pdf', 'inputs'])('never writes a listed path outside inputs/ and outputs/: %s', async (bad) => {
     egress.files.set(bad, { body: new Uint8Array(PDF) })
     const { f, logs } = files()
-    expect(await f.restore()).toMatchObject({ restored: 0 })
+    expect((await f.restore()).event).toMatchObject({ restored: 0 })
     expect(logs).toContainEqual(expect.objectContaining({ type: 'file_restore_skipped' }))
     expect(localPath(cwd, bad)).toBeNull()
   })
@@ -256,7 +346,7 @@ describe('restoring the chat files', () => {
     symlinkSync(elsewhere, join(cwd, 'inputs', 'sub'))
     egress.files.set('inputs/sub/a.pdf', { body: new Uint8Array(PDF) })
     const { f, logs } = files()
-    expect(await f.restore()).toMatchObject({ restored: 0 })
+    expect((await f.restore()).event).toMatchObject({ restored: 0 })
     expect(existsSync(join(elsewhere, 'a.pdf'))).toBe(false)
     expect(logs).toContainEqual(expect.objectContaining({ type: 'file_restore_skipped', reason: 'symlink on the way' }))
   })
@@ -270,7 +360,7 @@ describe('restoring the chat files', () => {
     writeFileSync(join(elsewhere, 'same-size'), Buffer.alloc(PDF.length))
     symlinkSync(join(elsewhere, 'same-size'), join(cwd, 'outputs', 'a.pdf'))
     egress.files.set('outputs/a.pdf', { body: new Uint8Array(PDF) })
-    expect(await files().f.restore()).toMatchObject({ restored: 1 })
+    expect((await files().f.restore()).event).toMatchObject({ restored: 1 })
     expect(readFileSync(join(elsewhere, 'victim'), 'utf8')).toBe('untouched')
     expect(readFileSync(join(elsewhere, 'same-size'))).toEqual(Buffer.alloc(PDF.length))
     expect(lstatSync(join(cwd, 'outputs', 'a.pdf')).isFile()).toBe(true)
@@ -304,10 +394,18 @@ describe('sniffType', () => {
   it('reads types from bytes', () => {
     expect(sniffType(PDF, 'x.png')).toBe('application/pdf')
     expect(sniffType(PNG, 'x.pdf')).toBe('image/png')
-    expect(sniffType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), 'x.txt')).toBe('image/svg+xml')
-    expect(sniffType(Buffer.from('<!DOCTYPE html><p>'), 'x.txt')).toBe('text/html')
+    expect(sniffType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), 'page.html')).toBe('image/svg+xml')
+    expect(sniffType(Buffer.from('<!DOCTYPE html><p>'), 'page.html')).toBe('text/html')
     expect(sniffType(Buffer.from('{"a":1}'), 'x.json')).toBe('application/json')
     expect(sniffType(Buffer.from([0xff, 0xfe, 0x00]), 'x.txt')).toBe('application/octet-stream')
+  })
+
+  it('a .md or .txt file that opens with a tag stays text (served with nosniff and the sandbox CSP)', () => {
+    expect(sniffType(Buffer.from('<div align="center">\n\n# Title\n'), 'README.md')).toBe('text/markdown')
+    expect(sniffType(Buffer.from('<p>notes</p>'), 'notes.txt')).toBe('text/plain')
+    expect(sniffType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), 'X.TXT')).toBe('text/plain')
+    expect(sniffType(Buffer.from('<p>notes</p>'), 'notes.html')).toBe('text/html')
+    expect(sniffType(Buffer.from([0xff, 0xfe, 0x00]), 'x.md')).toBe('application/octet-stream')
   })
 
   it.each([
@@ -322,7 +420,7 @@ describe('sniffType', () => {
     ['<pre>not a marker</pre>', 'text/plain'],
     ['a < b and <b> later', 'text/plain'],
   ])('sniffs markup behind comments, instructions and other tags: %s', (text, type) => {
-    expect(sniffType(Buffer.from(text), 'x.txt')).toBe(type)
+    expect(sniffType(Buffer.from(text), 'page.html')).toBe(type)
   })
 
   it('tells an xlsx from a plain zip by its parts', () => {

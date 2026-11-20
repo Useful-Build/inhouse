@@ -51,9 +51,13 @@ function textType(bytes: Uint8Array, name: string): string {
   } catch {
     return 'application/octet-stream'
   }
+  const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase()
+  // A text file named as text stays text even when it opens with a tag (Markdown often does): it's served with nosniff
+  // and the sandbox CSP, so a browser never runs it as HTML.
+  if (ext === 'txt') return 'text/plain'
+  if (ext === 'md' || ext === 'markdown') return 'text/markdown'
   const markup = markupType(text)
   if (markup !== null) return markup
-  const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase()
   if (ext === 'json') {
     try {
       JSON.parse(text)
@@ -63,7 +67,6 @@ function textType(bytes: Uint8Array, name: string): string {
     }
   }
   if (ext === 'csv') return 'text/csv'
-  if (ext === 'md' || ext === 'markdown') return 'text/markdown'
   return 'text/plain'
 }
 
