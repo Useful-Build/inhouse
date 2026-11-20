@@ -5,18 +5,24 @@
 //
 // The container's only way out is `egress.internal` (the runner's EGRESS_URL), intercepted here; every other HTTP and
 // HTTPS host is refused and logged. The egress checks each call's run token against the runs this harness started,
-// then serves the four routes: `/model/*` from the scripted model (the run's scenario), `/store/*` and `/files/*` from
-// this object's storage, scoped to the run's chat.
+// then serves the routes: `/model/*` from the scripted model (the run's scenario), `/store/*` and `/files/*` from this
+// object's storage, scoped to the run's chat, and protocol v2's `/events/` (the runner pushes the run's events; acked
+// by seq) and `/audit/` (each blocking audit entry; 204).
+//
+// Protocol v2: the runner answers `POST /runs` with `202 { accepted }` and pushes the run's events to `/events/`. The
+// harness turns those pushes back into the NDJSON answer its callers read (s6-check.mjs, image/cold-start.mjs), in
+// seq order, ending at the run's `released` event; the run's token stays valid until then.
 //
 // The orchestrator drives it with plain HTTP:
 //   POST /runs                    { scenario, chatId, prompt, resume?, sessionId?, fileCaps? } -> the run's NDJSON
+//                                 (the pushed events, `released` last), or the runner's refusal as it answered
 //   POST /runs/:runId/stop        and /interrupt
 //   GET  /health, GET /protocol   the runner's own
 //   PUT  /files/:chatId/<path>    seed a chat file (an attachment under inputs/)
 //   GET  /model-log               the scripted model's requests and misses (a miss fails the check)
 //   POST /restart?mode=sigterm|destroy
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers'
-import { FileListing, PROTOCOL_HEADER, PROTOCOL_VERSION, RunStart, StoreAppend, StoreListSubkeys, StoreLoad, type FileCaps } from '../../../shared/protocol/index.ts'
+import { AuditPost, FileListing, PROTOCOL_HEADER, PROTOCOL_VERSION, PushBatch, RunStart, StoreAppend, StoreListSubkeys, StoreLoad, encodeRunEvent, type FileCaps } from '../../../shared/protocol/index.ts'
 import { createScriptedModel } from '../../../test/scripted-model/index.ts'
 import { HARNESS_MODEL, SCENARIOS } from '../../../test/scripted-model/scenarios.ts'
 import { forScriptedModel, localOnlyRefusal } from './guards.ts'
@@ -34,6 +40,8 @@ const DEFAULT_CAPS: FileCaps = {
 }
 
 type RunInfo = { runId: string; chatId: string; scenario: string }
+/** A run's NDJSON answer to its caller: the pushed events go out here, deduped by seq. */
+type RunSink = { writer: WritableStreamDefaultWriter<Uint8Array>; next: number }
 
 /** The container's egress: checks the run token, then hands the call to the harness object. */
 export class HarnessEgress extends WorkerEntrypoint<Env, { name: string }> {
@@ -60,6 +68,7 @@ export class RunnerHarness extends DurableObject<Env> {
   #model = createScriptedModel(SCENARIOS)
   /** Run tokens of the runs this object started (memory only, like the real token table's role). */
   #tokens = new Map<string, RunInfo>()
+  #sinks = new Map<string, RunSink>()
   #booting: Promise<void> | undefined
 
   get #c() {
@@ -157,15 +166,46 @@ export class RunnerHarness extends DurableObject<Env> {
       fileCaps: body.fileCaps ?? DEFAULT_CAPS,
     })
     this.#tokens.set(runToken, { runId: start.runId, chatId, scenario: body.scenario })
+    // The sink is ready before the runner can push (it may push before its 202 reaches us).
+    const pipe = new TransformStream<Uint8Array, Uint8Array>()
+    this.#sinks.set(start.runId, { writer: pipe.writable.getWriter(), next: 0 })
     const res = await this.#runner('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(start) })
-    if (!res.body) {
+    if (res.status !== 202) {
+      // Refused (409, 503, 400 ...): nothing was admitted, so no push will come. The runner's answer as it was.
       this.#tokens.delete(runToken)
+      void this.#sinks.get(start.runId)?.writer.close().catch(() => undefined)
+      this.#sinks.delete(start.runId)
       return res
     }
-    // The token stays valid while the run's stream is open, then goes.
-    const [out, watch] = res.body.tee()
-    this.ctx.waitUntil(new Response(watch).arrayBuffer().catch(() => undefined).finally(() => this.#tokens.delete(runToken)))
-    return new Response(out, { status: res.status, headers: { 'content-type': res.headers.get('content-type') ?? 'application/x-ndjson', 'x-run-id': start.runId, 'x-session-id': start.sessionId } })
+    await res.body?.cancel()
+    // The token stays valid until the run's `released` arrives (/events/ below).
+    return new Response(pipe.readable, { status: 200, headers: { 'content-type': 'application/x-ndjson', 'x-run-id': start.runId, 'x-session-id': start.sessionId } })
+  }
+
+  /** `POST /events/`: the run's pushed events, written to its caller in seq order; acked up to the last one held. */
+  #events(token: string, run: RunInfo, body: unknown): Response {
+    const parsed = PushBatch.safeParse(body)
+    if (!parsed.success || parsed.data.turnId !== run.runId) {
+      console.log(JSON.stringify({ egress: 'refused', reason: 'bad push batch', runId: run.runId }))
+      return new Response('{"error":"bad push batch"}', { status: 400 })
+    }
+    const sink = this.#sinks.get(run.runId) ?? { writer: null, next: 0 }
+    let released = false
+    for (const e of parsed.data.events) {
+      if (e.seq < sink.next) continue
+      if (e.seq > sink.next) return new Response('{"error":"seq gap"}', { status: 409 })
+      // The caller may have hung up: the run goes on, and its events are dropped here.
+      void sink.writer?.write(new TextEncoder().encode(encodeRunEvent(e))).catch(() => undefined)
+      sink.next++
+      if (e.type === 'released') released = true
+    }
+    if (sink.writer) this.#sinks.set(run.runId, sink as RunSink)
+    if (released) {
+      void sink.writer?.close().catch(() => undefined)
+      this.#sinks.delete(run.runId)
+      this.#tokens.delete(token)
+    }
+    return Response.json({ ackSeq: sink.next - 1, stop: false })
   }
 
   /** The egress routes, for the run whose token the call carries. Called by `HarnessEgress`. */
@@ -182,6 +222,14 @@ export class RunnerHarness extends DurableObject<Env> {
 
     if (route === 'model') {
       return this.#model.handle(forScriptedModel(request, sub), run.scenario)
+    }
+    if (route === 'events' && request.method === 'POST') return this.#events(token!, run, await request.json())
+    if (route === 'audit' && request.method === 'POST') {
+      // The durable audit ACK: the harness keeps no record, it only lets the hook go on (a log line for the check).
+      const post = AuditPost.safeParse(await request.json())
+      if (!post.success) return new Response('{"error":"bad audit entry"}', { status: 400 })
+      console.log(JSON.stringify({ audit: post.data.entry.toolName, decision: post.data.entry.decision, n: post.data.n }))
+      return new Response(null, { status: 204 })
     }
     if (route === 'store' && request.method === 'POST') return this.#store(run.chatId, sub, await request.json())
     if (route === 'files') return this.#files(run.chatId, request, rest)
