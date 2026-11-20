@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+// Run: `node app/runner/harness/s6-check.mjs <out dir> [port]` (Docker up, harness `npm ci` done); its CI job was removed after S6 (docs/decisions/p3-local-containers.md; the job is in git history at e48242e).
 // Spike S6: one chat end to end with the runner image under `wrangler dev`, the SDK sandbox on, one OS user per
 // session. Starts the harness, runs three scripted chats, watches the container's processes and fails on any miss.
 // Run from anywhere, with the harness's `npm ci` done and Docker up:
 //   node app/runner/harness/s6-check.mjs <out dir> [port]
-// The CI job `runner-dev` runs it on a GitHub runner; on the Mac it needs Rosetta 2 (see the P3 plan, S6) and the
+// On a GitHub runner the sandbox can't start (S6); on the Mac it needs Rosetta 2 (see the P3 plan, S6) and the
 // heavy lock. Everything it saw goes to <out dir>: wrangler.log, container.log, the runs' NDJSON, ps.log, facts.json,
 // summary.json. It stops wrangler dev and removes every container that came up while it ran.
 import { execFileSync, spawn } from 'node:child_process'
