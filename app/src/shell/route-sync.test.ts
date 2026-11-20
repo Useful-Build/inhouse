@@ -105,8 +105,8 @@ describe('the app\'s own out-of-band writes keep the record true (failure 4)', (
   it('the Library closing a direct file link: its replace, then a rail move pushes', () => {
     const b = bar('#/library/f1')
     b.sync.sync(place({ page: 'library' }))
+    // dropFileEntry triggers no route-effect sync of its own, so the next sync is the rail move.
     b.hashBar.replace('#/library')
-    b.sync.sync(place({ page: 'library' }))
     b.sync.sync(place({ page: 'today' }))
     expect(b.entries).toEqual(['#/library', '#/today'])
   })
@@ -137,6 +137,12 @@ describe('a real move still writes, and only the same place is "here" (failure 5
     b.sync.sync(place({ page: 'chats', chatKey: 'c9', chatIsNew: true }))
     b.setHash('#/chats/new')
     b.sync.sync(place({ page: 'chats', chatKey: 'c9', chatIsNew: true, phone: true }))
+    expect(b.entries).toEqual(['#/chats/new'])
+  })
+  it('treats a bare #/chats as here when there are no chats (it opens a new chat), and replaces it', () => {
+    const b = bar('#/today')
+    b.setHash('#/chats')
+    b.sync.sync(place({ page: 'chats', chatKey: 'new', defaultChat: null }))
     expect(b.entries).toEqual(['#/chats/new'])
   })
   it('still replaces #/chats/new when the app gives its own new chat an id', () => {

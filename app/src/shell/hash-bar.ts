@@ -1,5 +1,5 @@
 // The app's one address bar: the browser's, with a record of what the app wrote (see route-sync.ts). Every write of the hash
-// goes through `hashBar`; no other file calls history.replaceState or history.pushState (hash-bar.test.ts).
+// goes through `hashBar`; no other file calls history.replaceState or history.pushState (build-support/route-sync-wiring.test.ts).
 import { createHashBar } from './route-sync'
 
 export const hashBar = createHashBar({

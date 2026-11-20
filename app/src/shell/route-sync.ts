@@ -10,7 +10,7 @@
 // One writer: every write of the hash by the app (this sync, App's tidying of an unknown link, the Library's own moves, the
 // error screen) goes through the `HashBar`, which records what it wrote. A raw `history.replaceState` anywhere else would
 // leave that record stale, and `sync` would then take the app's own address for someone else's and swallow every move
-// until the next hashchange. `hash-bar.test.ts` fails when a raw write appears.
+// until the next hashchange. `build-support/route-sync-wiring.test.ts` fails when a raw write appears.
 
 
 export interface Place { page: string; appKey: string; setTab: string; chatKey: string; menu: boolean; phone: boolean; chatIsNew: boolean; defaultChat: string | null }
@@ -56,7 +56,7 @@ const samePlace = (cur: Parsed, p: Place) => cur.page === p.page && (cur.appKey 
  * chat that has an id, names somewhere else, and a hash like that is the person's, to be read.
  */
 const namesHere = (cur: Parsed, p: Place): boolean =>
-  samePlace(cur, p) && (p.page !== 'chats' || (cur.chat === undefined ? p.chatKey === p.defaultChat : cur.chat === p.chatKey))
+  samePlace(cur, p) && (p.page !== 'chats' || (cur.chat === undefined ? p.chatKey === (p.defaultChat ?? 'new') : cur.chat === p.chatKey))
 
 export function createHashSync(bar: HashBar, deps: SyncDeps) {
   return {
