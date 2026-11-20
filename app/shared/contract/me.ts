@@ -27,10 +27,11 @@ export const CanSchema = z.strictObject(
 export type Can = z.infer<typeof CanSchema>
 
 /** A live support grant (BD7), shown to the Inhouse team only. */
-export const MeGrantSchema = z.object({ id: z.string().min(1), endsAt: InstantSchema })
+export const MeGrantSchema = z.strictObject({ id: z.string().min(1), endsAt: InstantSchema })
 export type MeGrant = z.infer<typeof MeGrantSchema>
 
-export const MeSchema = z.object({
+/** Strict: an unknown key fails. `grant` is null unless `role` is `inhouse`. */
+export const MeSchema = z.strictObject({
   memberId: z.string().min(1),
   name: z.string(),
   /** Null for a service member (`smoke`), which has no email. */
@@ -41,5 +42,5 @@ export const MeSchema = z.object({
   photoUrl: z.string().nullable(),
   /** The live support grant for an Inhouse principal; always null for anyone else. */
   grant: MeGrantSchema.nullable(),
-})
+}).refine(m => m.grant === null || m.role === 'inhouse', { path: ['grant'], message: 'only the Inhouse team sees a grant' })
 export type Me = z.infer<typeof MeSchema>

@@ -3,6 +3,8 @@
 // `unavailable` and logs one line: the Worker fails closed, never open. This schema is what the Worker accepts at run
 // time, test build included (`http://*.localhost` origins); what a deployable config must also meet (https only, an
 // Access team domain, no workers.dev or preview hosts) is scripts/check-product-config.mjs.
+// `safeParse` never throws, whatever the input: every cross-field check runs in one `superRefine` that returns early
+// when the shape is already wrong (zod 4 runs later refinements after an earlier one failed).
 import { z } from 'zod'
 
 /** An origin with nothing after it: `https://host[:port]`, as `new URL(x).origin` prints it. */
@@ -18,7 +20,8 @@ const OriginSchema = z.string().refine(s => {
 /** An Access application's audience tag: 64 lower-case hex. */
 const AudSchema = z.string().regex(/^[0-9a-f]{64}$/, { message: 'aud must be 64 lower-case hex' })
 
-export const AccessAppSchema = z.object({
+/** Unknown keys fail closed. */
+export const AccessAppSchema = z.strictObject({
   /** `brand` is the brand's app (people, `smoke`, `monitor`); `inhouse` is the Inhouse team's app. */
   name: z.enum(['brand', 'inhouse']),
   /** Where the app is served; the request's host must equal this origin's host, and `Origin` must equal it exactly. */
@@ -28,16 +31,35 @@ export const AccessAppSchema = z.object({
 })
 export type AccessApp = z.infer<typeof AccessAppSchema>
 
-export const AccessConfigSchema = z.object({
+/** Unknown keys fail closed. */
+export const AccessConfigSchema = z.strictObject({
   /** The JWT issuer and the JWKS's home (`<teamDomain>/cdn-cgi/access/certs`); a bare https origin. */
   teamDomain: OriginSchema.refine(s => s.startsWith('https://'), { message: 'teamDomain must be https' }),
   /** Exactly one `brand` and one `inhouse` app, on different hosts with different `aud` tags. */
-  apps: z.array(AccessAppSchema).length(2)
-    .refine(a => new Set(a.map(x => x.name)).size === 2, { message: 'apps must be one brand and one inhouse' })
-    .refine(a => new URL(a[0].origin).host !== new URL(a[1].origin).host, { message: 'apps share a host' })
-    .refine(a => a[0].aud !== a[1].aud, { message: 'apps share an aud' }),
-  /** Service token `common_name` (its client id, `<id>.access`) → which service it is. Unknown ones are 401. */
-  serviceTokens: z.record(z.string().min(1), z.enum(['monitor', 'smoke'])),
+  apps: z.array(AccessAppSchema),
+  /**
+   * Service token `common_name` (its client id, `<id>.access`) → which service it is; unknown ones are 401. A `Map`,
+   * so a client id such as `toString` or `__proto__` can never reach the prototype.
+   */
+  serviceTokens: z.record(z.string().min(1), z.enum(['monitor', 'smoke'])).transform(o => new Map(Object.entries(o))),
+}).superRefine((c, ctx) => {
+  if (!Array.isArray(c.apps) || c.apps.length !== 2) {
+    ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps must be exactly one brand and one inhouse' })
+    return
+  }
+  const [a, b] = c.apps
+  // Field checks may have failed already (zod still runs this): read the origins without trusting them.
+  const host = (origin: unknown) => {
+    try {
+      return new URL(String(origin)).host
+    } catch {
+      return null
+    }
+  }
+  if (a?.name === b?.name) ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps must be one brand and one inhouse' })
+  const [ha, hb] = [host(a?.origin), host(b?.origin)]
+  if (ha !== null && ha === hb) ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps share a host' })
+  if (a?.aud === b?.aud) ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps share an aud' })
 })
 export type AccessConfig = z.infer<typeof AccessConfigSchema>
 
