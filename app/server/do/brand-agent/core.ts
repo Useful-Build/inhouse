@@ -178,6 +178,10 @@ export class AgentCore {
     // A retried POST answers what the first one did, before any other rule (4.3).
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
+    // The runner refuses a start that names an attachment twice; route 29's schema refuses it, and so does the engine
+    // for callers that skip the schema (L9).
+    const ids = t.input.attachments.map(a => a.fileId)
+    if (new Set(ids).size !== ids.length) return refuse('invalid')
     let files: ChatFile[] = []
     if (t.input.attachments.length > 0) {
       const found = await this.d.ports.files.inputsOf(t.chatId, t.input.attachments.map(a => a.fileId))
