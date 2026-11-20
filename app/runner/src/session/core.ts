@@ -15,7 +15,7 @@
 // It also carries R2's blocking audit hook: `audit(entry)` resolves once the root has the entry on the Worker's stream.
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import { AuditEntry, DEFERRED_INPUT_MAX_BYTES, SDK_MESSAGE_MAX_BYTES, jsonBytes } from '../../../shared/protocol/index.ts'
+import { AuditEntry, DEFERRED_INPUT_MAX_BYTES, SDK_MESSAGE_MAX_BYTES, STRUCTURED_MAX_DEPTH, STRUCTURED_OUTPUT_MAX_BYTES, jsonBytes, jsonDepth } from '../../../shared/protocol/index.ts'
 import { createFiles, snapshotOutputs } from '../files/files.ts'
 import { RootMessage, capSdkMessage, monotonicMs, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import { LOCAL_MAX_DEPTH, deeperThan, type LineResult } from '../protocol/ndjson.ts'
@@ -97,6 +97,8 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     env: { ...env, ...modelEnv(config) },
     abortController,
     systemPrompt: config.systemPrompt,
+    // Structured output: the SDK adds its StructuredOutput tool (the guards let it through only with this set).
+    ...(config.outputFormat ? { outputFormat: { type: config.outputFormat.type, schema: config.outputFormat.schema } } : {}),
     ...(proxy ? { mcpServers: { [INHOUSE_SERVER]: { type: 'http', url: `${proxy.replace(/\/$/, '')}/mcp/` } } } : {}),
     model: config.model,
     effort: config.effort,
@@ -429,10 +431,17 @@ export async function runSession(deps: {
     // An unstopped query that ended (with a result, or after writing to the store) without the SDK ever loading the main
     // transcript: nothing proved the resume ran on the expected transcript. A stop or an interrupt keeps its own end.
     terminal = { type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' }
+  } else if (result !== null && result.subtype === 'error_max_structured_output_retries') {
+    // The SDK ran out of attempts at output matching the schema (it throws after this result; that's this, not a crash).
+    terminal = { type: 'failed', reason: 'structured_output', message: 'the agent could not produce output matching the schema' }
   } else if (result !== null && (!threw || stopping || abort.signal.aborted)) {
     // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept).
     terminal = finishedEvent(result)
     const deferred = result.subtype === 'success' ? result.deferred_tool_use : undefined
+    // Asked for structured output: any end that would be a clean `finished` (is_error false, whatever the subtype) carries
+    // it, within the caps, or the run fails `structured_output`. A deferred call has no answer yet (it comes on the
+    // resume), and an error result (is_error) keeps its own end. A result seen before a racing stop still wins here.
+    if (config.outputFormat && !deferred && terminal.type === 'finished' && !terminal.isError) terminal = withStructuredOutput(terminal, result)
     if (deferred) {
       if (jsonBytes(deferred.input) > DEFERRED_INPUT_MAX_BYTES) terminal = { type: 'failed', reason: 'sdk_error', message: 'a deferred call whose input is over the cap' }
       else if (turn.only(deferred.id)) await emit({ type: 'deferred', toolUseId: deferred.id, toolName: deferred.name, input: deferred.input })
@@ -462,6 +471,16 @@ export async function runSession(deps: {
   if (!filesDone) log({ type: 'files_save_cut', why: "the stop's deadline" })
   clearTimeout(deadlineTimer)
   await emit(terminal)
+}
+
+/** A clean end asked for structured output: a success's value on the terminal event, or `failed structured_output`. */
+function withStructuredOutput(terminal: Extract<SessionEvent, { type: 'finished' }>, result: Result): Extract<SessionEvent, { type: 'finished' | 'failed' }> {
+  const value = result.subtype === 'success' ? (result as { structured_output?: unknown }).structured_output : undefined
+  if (value === undefined) return { type: 'failed', reason: 'structured_output', message: `the run ended (${result.subtype}) without the structured output it was asked for` }
+  if (jsonDepth(value) > STRUCTURED_MAX_DEPTH) return { type: 'failed', reason: 'structured_output', message: `the structured output nests deeper than ${STRUCTURED_MAX_DEPTH} levels` }
+  const bytes = jsonBytes(value)
+  if (bytes > STRUCTURED_OUTPUT_MAX_BYTES) return { type: 'failed', reason: 'structured_output', message: `the structured output is ${bytes} bytes, over the ${STRUCTURED_OUTPUT_MAX_BYTES}-byte cap` }
+  return { ...terminal, structuredOutput: value }
 }
 
 function finishedEvent(result: Result): Extract<SessionEvent, { type: 'finished' }> {

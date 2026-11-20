@@ -63,6 +63,55 @@ export const Effort = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
 export const PROMPT_MAX_CHARS = 200_000
 /** The system prompt cap, in UTF-8 bytes. */
 export const SYSTEM_PROMPT_MAX_BYTES = 64 * 1024
+/** The cap on a structured-output JSON Schema (`RunStart.outputFormat.schema`), as JSON bytes. */
+export const OUTPUT_SCHEMA_MAX_BYTES = 16 * 1024
+/** The cap on a run's structured output (`finished.structuredOutput`), as JSON bytes; over it the run fails `structured_output`. */
+export const STRUCTURED_OUTPUT_MAX_BYTES = 64 * 1024
+/**
+ * The deepest nesting (arrays and objects) a structured-output schema or value may have. The local channel refuses a
+ * line nested past 256 levels (the runner's LOCAL_MAX_DEPTH), so a deeper value would fail the run `protocol` and lose
+ * finished work: capped well below it.
+ */
+export const STRUCTURED_MAX_DEPTH = 64
+
+/**
+ * How deep a JSON value nests: 0 for a scalar, 1 for `{}` or `[]`, one more per level. Iterative, so it never throws
+ * (however deep the value), and stops counting past `limit` (returns `limit + 1`).
+ */
+export function jsonDepth(value: unknown, limit = STRUCTURED_MAX_DEPTH): number {
+  let max = 0
+  const stack: [unknown, number][] = [[value, 0]]
+  while (stack.length > 0) {
+    const [v, d] = stack.pop()!
+    if (v === null || typeof v !== 'object') continue
+    const depth = d + 1
+    if (depth > limit) return limit + 1
+    if (depth > max) max = depth
+    for (const child of Array.isArray(v) ? v : Object.values(v)) stack.push([child, depth])
+  }
+  return max
+}
+
+/** Within the caps for structured output: at most `maxBytes` as JSON and `STRUCTURED_MAX_DEPTH` deep. Never throws. */
+export function structuredWithinCaps(value: unknown, maxBytes: number): boolean {
+  try {
+    return jsonDepth(value) <= STRUCTURED_MAX_DEPTH && jsonBytes(value) <= maxBytes
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Structured output (the Agent SDK's `outputFormat`): the run's answer is a JSON value matching `schema` (JSON Schema
+ * draft-07, as the SDK validates it), returned by the SDK's `StructuredOutput` tool.
+ */
+export const OutputFormat = z.strictObject({
+  type: z.literal('json_schema'),
+  schema: z
+    .record(z.string(), z.unknown())
+    .refine((v) => structuredWithinCaps(v, OUTPUT_SCHEMA_MAX_BYTES), { message: `schema over ${OUTPUT_SCHEMA_MAX_BYTES} bytes or ${STRUCTURED_MAX_DEPTH} levels deep` }),
+})
+export type OutputFormat = z.infer<typeof OutputFormat>
 /** The most attachments one run start names. */
 export const ATTACHMENTS_MAX = 10
 /**
@@ -128,6 +177,11 @@ export const RunStartFields = z.strictObject({
    */
   webFetchDomains: z.array(Hostname).max(200).nullable(),
   fileCaps: FileCaps,
+  /**
+   * Optional (v2, additive): the run answers with structured output. The runner gives the SDK the format and lets its
+   * `StructuredOutput` tool through only then; the answer comes back as `finished.structuredOutput`.
+   */
+  outputFormat: OutputFormat.optional(),
 })
 
 /** Cross-field rules shared by `RunStart` and the runner's run config (the same fields less the token). */
@@ -167,8 +221,14 @@ export const RUN_REFUSAL_STATUS: Readonly<Record<RunRefusalCode, 409 | 503>> = {
 /** The largest SDK message passed through whole in an `sdk` event; a bigger one arrives as a stub with `truncated`. */
 export const SDK_MESSAGE_MAX_BYTES = 256 * 1024
 
-/** `files`: the chat's files couldn't be brought into the work folder, so the run didn't start its query. */
-export const FailureReason = z.enum(['session_crashed', 'protocol', 'store', 'files', 'interrupted', 'stopped', 'timeout', 'sdk_error'])
+/**
+ * `files`: the chat's files couldn't be brought into the work folder, so the run didn't start its query.
+ * `structured_output`: the run was asked for structured output and has none it can give (the SDK ran out of retries,
+ * the run ended without one, or it is over `STRUCTURED_OUTPUT_MAX_BYTES` or `STRUCTURED_MAX_DEPTH`). A result the SDK
+ * already gave wins over a stop that races it: such a run ends `structured_output` (or `finished`), not `stopped`, so
+ * the Worker must not assume a stop always yields `stopped`.
+ */
+export const FailureReason = z.enum(['session_crashed', 'protocol', 'store', 'files', 'interrupted', 'stopped', 'timeout', 'sdk_error', 'structured_output'])
 export type FailureReason = z.infer<typeof FailureReason>
 
 /** `bad_name`: a name the files route can't carry (a `#` or `\`, a `.` or `..` segment, an unpaired surrogate). */
@@ -289,6 +349,11 @@ export const RunEventBody = z.discriminatedUnion('type', [
     numTurns: z.int().nonnegative(),
     costUsd: z.number().nonnegative(),
     usage: Usage,
+    /** The run's structured output (only when `RunStart.outputFormat` was set), validated by the SDK against its schema. */
+    structuredOutput: z
+      .unknown()
+      .refine((v) => structuredWithinCaps(v, STRUCTURED_OUTPUT_MAX_BYTES), { message: `structured output over ${STRUCTURED_OUTPUT_MAX_BYTES} bytes or ${STRUCTURED_MAX_DEPTH} levels deep` })
+      .optional(),
   }),
   z.strictObject({ type: z.literal('failed'), reason: FailureReason, message: z.string().max(2000) }),
 ])
