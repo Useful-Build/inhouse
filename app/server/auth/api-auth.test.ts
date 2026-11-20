@@ -12,6 +12,8 @@ import type { AuthStores } from './index.ts'
 import { mintPerson, mintService } from './test-issuer-mint.ts'
 import { buildMe, meHandler } from './me-handler.ts'
 import { MeSchema } from '../../shared/contract/me.ts'
+import { accessMatrix } from '../access-matrix.ts'
+import { reportClientError, routes } from '../routes.ts'
 import { BRAND, DESIGN_CAN_ROWS, DESIGN_ROWS, INHOUSE, MONITOR_ID, SMOKE_ID, TEAM, authEnv, fakeStores, issuer } from '../testing/auth-fixtures.ts'
 import type { Issuer } from '../testing/auth-fixtures.ts'
 
@@ -310,5 +312,83 @@ describe('a WebSocket upgrade', () => {
     expect(res.webSocket).toBeTruthy()
     expect(res.headers.get('Content-Security-Policy')).toContain("default-src 'self'")
     expect(res.headers.get('Cache-Control')).toBe('no-store')
+  })
+})
+
+describe('the committed route table (server/routes.ts)', () => {
+  const committed = () => {
+    const { parts, env } = setup()
+    const committedParts: ApiParts = { ...parts, routes, accessMatrix }
+    return (origin: string, path: string, init: RequestInit = {}) => api(committedParts, new Request(`${origin}${path}`, init), env, ctx, 'req-1')
+  }
+  it('answers GET /api/me with a schema-valid Me whose can comes from the committed rows', async () => {
+    const res = await committed()(BRAND.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': await as('admin') } })
+    expect(res.status).toBe(200)
+    const me = MeSchema.parse(await res.json())
+    expect(me).toMatchObject({ memberId: 'm_admin', role: 'admin', can: { invite: true, switchModelOff: true, editTechnical: false } })
+  })
+  it('answers every route without a handler yet with 503 unavailable, after access (a Member still gets 403 on an admin row)', async () => {
+    const call = committed()
+    const member = await as('member')
+    const admin = await as('admin')
+    for (const r of accessMatrix.filter(x => x.pattern !== '/api/me' && x.pattern !== '/api/client-error' && x.class !== 'open')) {
+      const res = await call(BRAND.origin, concrete(r.pattern), { method: r.method, headers: { 'Cf-Access-Jwt-Assertion': r.allow.includes('admin') ? admin : member, Origin: BRAND.origin } })
+      expect(res.status, `${r.method} ${r.pattern}`).toBe(503)
+      expect(await res.json()).toEqual({ error: { code: 'unavailable' } })
+    }
+    expect((await call(BRAND.origin, '/api/members/invites', { method: 'POST', headers: { 'Cf-Access-Jwt-Assertion': member, Origin: BRAND.origin } })).status).toBe(403)
+  })
+  it('wires POST /api/client-error to the reporter (204, logged as client_error)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const res = await committed()(BRAND.origin, '/api/client-error', { method: 'POST', body: '{"kind":"error"}', headers: { 'Cf-Access-Jwt-Assertion': await as('member'), Origin: BRAND.origin, 'Sec-Fetch-Site': 'same-origin' } })
+      expect(res.status).toBe(204)
+      expect(error.mock.calls.some(([line]) => (line as { event?: string }).event === 'client_error')).toBe(true)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+  it('answers GET /api/health for monitor with 503 unavailable: intended, until W2 PR 3 replaces the stub with the health handler', async () => {
+    const monitor = await mintService({ key: good.key.privateJwk, iss: TEAM, aud: BRAND.aud, clientId: MONITOR_ID })
+    const res = await committed()(BRAND.origin, '/api/health', { headers: { 'Cf-Access-Jwt-Assertion': monitor } })
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ error: { code: 'unavailable' } })
+  })
+})
+
+describe("row 21's error bodies (reportClientError, p2-design section 4)", () => {
+  // The reporter's rate limit is per IP and per isolate, so each case posts from its own address.
+  const post = (ip: string, body: string, headers: Record<string, string> = {}) =>
+    reportClientError(new Request(`${BRAND.origin}/api/client-error`, { method: 'POST', body, headers: { 'CF-Connecting-IP': ip, ...headers } }))
+  const errorOf = async (res: Response) => ({ status: res.status, body: await res.json(), noStore: res.headers.get('Cache-Control') })
+  it('400 becomes invalid', async () => {
+    expect(await errorOf(await post('192.0.2.1', 'not json'))).toEqual({ status: 400, body: { error: { code: 'invalid' } }, noStore: 'no-store' })
+  })
+  it('403 becomes forbidden', async () => {
+    expect(await errorOf(await post('192.0.2.2', '{}', { 'Sec-Fetch-Site': 'cross-site' }))).toEqual({ status: 403, body: { error: { code: 'forbidden' } }, noStore: 'no-store' })
+  })
+  it('413 becomes invalid with reason too_large', async () => {
+    expect(await errorOf(await post('192.0.2.3', 'x'.repeat(9 * 1024)))).toEqual({ status: 400, body: { error: { code: 'invalid', reason: 'too_large' } }, noStore: 'no-store' })
+  })
+  it('429 becomes rate_limited and keeps Retry-After', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      let res = await post('192.0.2.4', '{}')
+      for (let i = 0; i < 20 && res.status !== 429; i++) res = await post('192.0.2.4', '{}')
+      expect(res.headers.get('Retry-After')).toBe('60')
+      expect(await errorOf(res)).toEqual({ status: 429, body: { error: { code: 'rate_limited' } }, noStore: 'no-store' })
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+  it('any other status passes through (204)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const res = await post('192.0.2.5', '{}')
+      expect(res.status).toBe(204)
+      expect(await res.text()).toBe('')
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })
