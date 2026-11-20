@@ -30,7 +30,7 @@ const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' }
 
 test('A demo stored by the build before the seam opens with its chat, draft, model pick and approval mid-hold intact', async ({ fx, page }) => {
   expect(demoEntry, 'the fixture holds the demo state').toBeDefined()
-  const [approvalId, approval] = Object.entries(demoState.approved as Record<string, { ms: number; title: string }>)[0]
+  const [approvalId, approval] = Object.entries(demoState.approved as Record<string, { ms: number; title: string; by: string; atMin: number }>)[0]
   // The card's aria-label is its problem's title: problem `stock` in src/agent/sample-data/problems.json, which the
   // fixture's approval is for (copied: a spec reads sample data only through `fx`).
   expect(approvalId).toBe('stock')
@@ -78,7 +78,10 @@ test('A demo stored by the build before the seam opens with its chat, draft, mod
   expect(Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).not.toContain(approvalId)
   await page.clock.runFor(12_000)
   await expect(approved).not.toContainText('going out')
-  await expect(approved).toContainText('Approved by')
+  // The card shows the approval's converted time: the fixture's `atMin` 480 (8:00 AM) is now an instant that reads 8:00 AM
+  // in the device's time zone, next to the approver's first name.
+  expect(approval.atMin).toBe(480)
+  await expect(approved).toContainText(`Approved by ${approval.by.split(' ')[0]} at 8:00 AM`)
   await expect.poll(async () => Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).toContain(approvalId)
   // The CSP guard's teardown waits one animation frame per page, and a paused fake clock holds animation frames too.
   await page.clock.resume()
