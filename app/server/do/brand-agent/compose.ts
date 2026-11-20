@@ -6,8 +6,8 @@ import type { BrandAgentParts, BrandAgentPorts, FileLedgerPort, RunnerPoolPort, 
 import { fileStore } from '../../files-io/store.ts'
 import type { StoredFile } from '../../files-io/store.ts'
 import type { ChatFile } from './ports.ts'
-import { FakeRunnerPool } from './testing/fake-pool.ts'
 import { FakeUsageLedger } from './testing/fake-usage.ts'
+import { runnerPool } from '../runner/pool.ts'
 
 /** The ports the BrandAgent runs on, built once per object from its env. */
 export function composePorts(env: Env, parts: BrandAgentParts): BrandAgentPorts {
@@ -21,8 +21,8 @@ export function composePorts(env: Env, parts: BrandAgentParts): BrandAgentPorts 
 }
 
 // ---------- W2's anchor (p3-w2.md): RunnerPoolPort ----------
-function poolPort(_env: Env, _parts: BrandAgentParts): RunnerPoolPort {
-  return new FakeRunnerPool()
+function poolPort(env: Env, parts: BrandAgentParts): RunnerPoolPort {
+  return runnerPool(env, parts)
 }
 
 // ---------- W3's anchor (p3-w3.md): FileLedgerPort ----------
