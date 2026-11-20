@@ -46,49 +46,52 @@ const text = (min: number, max: number) => z.string().trim().min(min).max(max)
 /** The money field's saved text: whole US dollars or two-digit cents, no grouping, above $0 and up to $100,000 ("$320", "$300.50"). */
 const capText = z.string().regex(/^\$\d{1,6}(\.\d{2})?$/).refine(v => { const n = Number(v.slice(1)); return n > 0 && n <= 100_000 }, 'Out of range')
 
-const spec = (scope: SettingScope, value: z.ZodType<SettingValue>, auditSafe = true): SettingSpec => ({ scope, value, auditSafe })
+/** A setting logged redacted (`{ len, hash }`): the default, so a new key is never logged verbatim by accident. */
+const spec = (scope: SettingScope, value: z.ZodType<SettingValue>): SettingSpec => ({ scope, value, auditSafe: false })
+/** A setting logged verbatim: only for a closed enum or a switch, which can never hold a name or an email. */
+const safe = (scope: SettingScope, value: z.ZodType<SettingValue>): SettingSpec => ({ scope, value, auditSafe: true })
 
 /** Keys matched exactly. */
 const EXACT: Record<string, SettingSpec> = {
   // personal
-  'g:name': spec('personal', text(1, 80), false),
-  'g:theme': spec('personal', z.enum(THEMES)),
-  'g:lang': spec('personal', z.enum(LANGUAGES)),
-  'g:size': spec('personal', z.enum(TEXT_SIZES)),
-  'n:wait': spec('personal', z.enum(WAIT_ALERTS)),
+  'g:name': spec('personal', text(1, 80)),
+  'g:theme': safe('personal', z.enum(THEMES)),
+  'g:lang': safe('personal', z.enum(LANGUAGES)),
+  'g:size': safe('personal', z.enum(TEXT_SIZES)),
+  'n:wait': safe('personal', z.enum(WAIT_ALERTS)),
   // Free text until the server holds a closed list of channel names (a later phase makes it an enum): redacted in the log.
-  'n:channel': spec('personal', text(1, 80), false),
-  'n:slack': spec('personal', bool),
-  'n:weekly': spec('personal', bool),
-  'm:learn': spec('personal', bool),
+  'n:channel': spec('personal', text(1, 80)),
+  'n:slack': safe('personal', bool),
+  'n:weekly': safe('personal', bool),
+  'm:learn': safe('personal', bool),
   // brand
-  'g:tz': spec('brand', z.enum(TIME_ZONE_IDS)),
-  'm:ask': spec('brand', bool),
-  's:cap': spec('brand', capText),
-  's:alert': spec('brand', z.enum(ALERT_AT)),
-  's:currency': spec('brand', z.enum(CURRENCIES)),
+  'g:tz': safe('brand', z.enum(TIME_ZONE_IDS)),
+  'm:ask': safe('brand', bool),
+  's:cap': safe('brand', capText),
+  's:alert': safe('brand', z.enum(ALERT_AT)),
+  's:currency': safe('brand', z.enum(CURRENCIES)),
   // technical
-  'stage': spec('technical', z.enum(STAGES)),
-  't:tone': spec('technical', z.enum(TONES)),
-  't:signs': spec('technical', text(1, 80), false),
+  'stage': safe('technical', z.enum(STAGES)),
+  't:tone': safe('technical', z.enum(TONES)),
+  't:signs': spec('technical', text(1, 80)),
   // Free text until the server holds a closed list of model mode labels (a later phase makes it an enum): redacted in the log.
-  'g:mode': spec('technical', text(1, 80), false),
-  'l:daily': spec('technical', z.enum(DAILY_LIMITS)),
-  'l:restock': spec('technical', z.enum(RESTOCK_LIMITS)),
-  'd:chats': spec('technical', z.enum(RETENTION)),
-  'd:steps': spec('technical', z.enum(RETENTION)),
-  'd:2fa': spec('technical', bool),
+  'g:mode': spec('technical', text(1, 80)),
+  'l:daily': safe('technical', z.enum(DAILY_LIMITS)),
+  'l:restock': safe('technical', z.enum(RESTOCK_LIMITS)),
+  'd:chats': safe('technical', z.enum(RETENTION)),
+  'd:steps': safe('technical', z.enum(RETENTION)),
+  'd:2fa': safe('technical', bool),
 }
 
 /** An id inside a key (a model, a run-limit job). */
 const ID = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}'
 /** Keys with an id in them, tried after the exact keys (so `l:daily` is never read as the job `daily`). */
 const PATTERNS: [RegExp, SettingSpec][] = [
-  [new RegExp(`^tm:${ID}:effort$`), spec('technical', z.enum(EFFORT_LABELS))],
-  [new RegExp(`^tm:${ID}:on$`), spec('technical', z.enum(['off', 'on']))],
-  [new RegExp(`^l:${ID}$`), spec('technical', bool)],
+  [new RegExp(`^tm:${ID}:effort$`), safe('technical', z.enum(EFFORT_LABELS))],
+  [new RegExp(`^tm:${ID}:on$`), safe('technical', z.enum(['off', 'on']))],
+  [new RegExp(`^l:${ID}$`), safe('technical', bool)],
   // An approval rule's approver: a member id or anyone (P6 builds the page).
-  [/^a:(0|[1-9]\d{0,3})$/, spec('brand', z.union([MemberIdSchema, z.literal('anyone')]))],
+  [/^a:(0|[1-9]\d{0,3})$/, safe('brand', z.union([MemberIdSchema, z.literal('anyone')]))],
 ]
 
 /**
