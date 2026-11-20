@@ -1,5 +1,4 @@
 // The team, who approves what, and the limits on what the agent does by itself.
-import './jitless.ts'
 import { z } from 'zod'
 import { MemberIdSchema, MemberRecordSchema } from './members.ts'
 import { SupportGrantSchema } from './grants.ts'

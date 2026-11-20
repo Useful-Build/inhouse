@@ -1,7 +1,6 @@
 // Who is signed in, and what they may do (p2-design sections 3 and 11). W1 owns this file in P2. The server builds it
 // in `GET /api/me` (server/auth/me-handler.ts) from the verified principal; `can` comes from the same access-matrix rows
 // that `checkAccess` reads, so the UI never offers an action the server refuses.
-import './jitless.ts'
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 

@@ -1,5 +1,4 @@
 // `read()`: the read-only snapshot of everything the UI reads besides AgentState.
-import './jitless.ts'
 import { z } from 'zod'
 import { AgentMetaSchema } from './meta.ts'
 import { ProblemSchema } from './problem.ts'

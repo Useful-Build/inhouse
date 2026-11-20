@@ -1,5 +1,4 @@
 // What the agent remembers, for the team and for the signed-in person.
-import './jitless.ts'
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 

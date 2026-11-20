@@ -1,5 +1,4 @@
 // A run's recorded steps (`getTrace`).
-import './jitless.ts'
 import { z } from 'zod'
 import { DurationMsSchema, MoneySchema } from './common.ts'
 

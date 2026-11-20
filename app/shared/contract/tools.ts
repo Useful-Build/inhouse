@@ -1,5 +1,4 @@
 // The tools the agent reads, the channels it posts to and the tool catalog.
-import './jitless.ts'
 import { z } from 'zod'
 import { InstantSchema, StageIndexSchema } from './common.ts'
 import { AttachmentSchema } from './chat.ts'

@@ -1,5 +1,4 @@
 // Values every resource shares: the stages, the demo scenarios, a model's effort and the error codes.
-import './jitless.ts'
 import { z } from 'zod'
 
 export const StageSchema = z.enum(['Watch', 'Act', 'Run'])

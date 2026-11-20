@@ -41,7 +41,8 @@ describe('the error body', () => {
 
 describe('zod code generation', () => {
   // The product's CSP has no `unsafe-eval`: zod 4 probes `new Function` when an object schema is built unless jitless is set (jitless.ts).
-  it('is off once the contract is loaded', () => {
+  it('is off once jitless.ts has run', async () => {
+    await import('./jitless.ts')
     expect(z.config().jitless).toBe(true)
   })
 })

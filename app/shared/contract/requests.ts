@@ -1,5 +1,4 @@
 // The inputs of the client's calls that carry options, as zod schemas (from #58's review): the client's types are inferred from these.
-import './jitless.ts'
 import { z } from 'zod'
 import { EffortSchema, ScenarioSchema, StageSchema } from './common.ts'
 import { AttachmentSchema } from './chat.ts'

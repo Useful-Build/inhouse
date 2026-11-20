@@ -1,5 +1,4 @@
 // Spend against the monthly cap, by day and by person, job, model and tool.
-import './jitless.ts'
 import { z } from 'zod'
 import { MoneySchema } from './common.ts'
 
