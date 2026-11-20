@@ -26,7 +26,11 @@ const TOKEN_ENV = {
   monitor: { id: 'MONITOR_CLIENT_ID', secret: 'MONITOR_CLIENT_SECRET' },
 } as const
 
-/** The health route's body (server/ops/health.ts `HealthBody`; the server owns the type, so the shape is checked here). */
+/**
+ * The health route's body, a copy of server/ops/health.ts `HealthBody`. It can't be tied to that type at compile time:
+ * importing it (even type-only) pulls the Worker's types into tsconfig.node.json (which typechecks e2e/), where
+ * `Env`, `R2Bucket` and the rest don't exist. server/ops/health.test.ts holds the server's side of the shape.
+ */
 const HealthSchema = z.object({
   version: z.string().nullable(),
   ok: z.boolean(),
@@ -89,10 +93,16 @@ test.describe('release smoke (read only)', () => {
     expectSecure(r, 'monitor /api/me')
   })
 
+  test('smoke: /api/health is 403 forbidden (health is `monitor` only)', async ({ request }) => {
+    const r = await read(request, 'smoke', '/api/health')
+    expectError(r, 403, 'forbidden')
+    expectSecure(r, 'smoke /api/health')
+  })
+
   test('no token: /api/me is 401', async ({ request }) => {
     const r = await read(request, 'nobody', '/api/me')
     if (RELEASE_URL) {
-      // On a release Access answers an unauthenticated request itself, before the Worker runs (a plain 403, or a
+      // On a release this accepts any refusal in front of the Worker. Access answers an unauthenticated request itself, before the Worker runs (a plain 403, or a
       // sign-in redirect), so the Worker's 401 and its headers aren't there to check. What counts is that nothing is served.
       expect([301, 302, 303, 307, 401, 403], `status ${r.status}`).toContain(r.status)
       expect(r.json?.memberId, 'no member data without a token').toBeUndefined()
