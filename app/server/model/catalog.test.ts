@@ -20,8 +20,9 @@ describe('the catalogue', () => {
       ['sonnet', 'Fast', 'claude-sonnet-5-5', 'medium'], ['haiku', 'Instant', 'claude-haiku-5-5', 'low'],
     ])
   })
-  it('refuses every model until W3 prices it (fail closed)', () => {
-    for (const m of CATALOG) expect(resolveModel(m.id, {}), m.id).toEqual(OFF)
+  it('prices every model, so each one runs while it is on (W3 filled the prices)', () => {
+    for (const m of CATALOG) expect(resolveModel(m.id, {}), m.id).toMatchObject({ model: { id: m.id } })
+    for (const m of CATALOG) expect(resolveModel(m.id, { [`tm:${m.id}:on`]: 'off' }), m.id).toEqual(OFF)
   })
 })
 
