@@ -65,7 +65,7 @@ const rows = (stub: Stub) => inObject(stub, s =>
 // ---------- the reference model (no code shared with scheduler.ts) ----------
 
 type Outcome = { result: 'done' | 'throw' | { retryIn: number }; during: null | { reschedule: number } | { cancel: true } | { replace: number } | { other: string; dueIn: number } }
-interface RefTask { kind: string; due: number; attempts: number; state: 'ready' | 'quarantined'; gen: number }
+interface RefTask { kind: string; due: number; attempts: number; state: 'ready' | 'quarantined'; gen: number; why?: 'unknown' | 'attempts' }
 const KNOWN = new Set(['a', 'b', 'grant-expiry', 'authority-sweep'])
 
 class Reference {
@@ -74,7 +74,8 @@ class Reference {
   schedule(id: string, kind: string, due: number) { this.tasks.set(id, { kind, due, attempts: 0, state: 'ready', gen: ++this.gen }) }
   ensure(id: string, kind: string, due: number) {
     const t = this.tasks.get(id)
-    if (!t || (t.state === 'quarantined' && t.kind === kind)) this.schedule(id, kind, due)
+    // Only a task quarantined as an unknown kind comes back; one quarantined for its failures stays.
+    if (!t || (t.state === 'quarantined' && t.why === 'unknown' && t.kind === kind)) this.schedule(id, kind, due)
   }
   cancel(id: string) { this.tasks.delete(id) }
   earliest(): number | null {
@@ -96,7 +97,7 @@ class Reference {
       if (due.length === 0) break
       const [id, t] = due[0]
       ran.push(id)
-      if (!KNOWN.has(t.kind)) { t.state = 'quarantined'; continue }
+      if (!KNOWN.has(t.kind)) { t.state = 'quarantined'; t.why = 'unknown'; continue }
       called.push(id)
       const startGen = t.gen, startAttempts = t.attempts
       const o = outcome()
@@ -110,6 +111,7 @@ class Reference {
       cur.attempts += 1
       cur.due = o.result === 'throw' ? now + Math.min(30_000 * 2 ** startAttempts, 3_600_000) : now + o.result.retryIn
       cur.state = cur.attempts >= 10 ? 'quarantined' : 'ready'
+      if (cur.state === 'quarantined') cur.why = 'attempts'
     }
     return called
   }
@@ -256,10 +258,10 @@ describe('a crash between a handler\'s success and its delete (failure 6)', () =
     }
     const h = await harness({ handlers: { a: handler }, afterHandler: () => { if (crash) { crash = false; throw new Error('crashed') } } })
     await inObject(h.stub, async () => { h.sched.schedule({ id: 'c', kind: 'a', dueAtMs: T }); await h.sched.settled() })
-    // The pass fails after the handler: the task stays, and the alarm is left at it.
+    // The pass fails after the handler: the task stays, and the alarm is left no sooner than the fallback delay.
     expect(await runDurableObjectAlarm(h.stub)).toBe(true)
     expect(await rows(h.stub)).toHaveLength(1)
-    expect(await alarmAt(h.stub)).toBe(T)
+    expect(await alarmAt(h.stub)).toBe(T + 30_000)
     // After a restart the new scheduler sets the alarm again from the table.
     const again = await h.restart({ afterHandler: undefined })
     await inObject(h.stub, () => again.syncAlarm())
@@ -411,6 +413,81 @@ describe('ensure (failure 3)', () => {
     await inObject(h.stub, async () => { h.sched.ensure({ id: 'seed', kind: 'usage-sweep', dueAtMs: T + 9 }); await h.sched.settled() })
     expect(await rows(h.stub)).toEqual([{ id: 'seed', kind: 'usage-sweep', due_at_ms: T + 9, attempts: 0, state: 'ready' }])
     expect(await alarmAt(h.stub)).toBe(T + 9)
+  })
+})
+
+describe('a pass that keeps failing (failure 4)', () => {
+  it('moves the alarm forward by the fallback delay each time, never to a past time', async () => {
+    let calls = 0
+    const h = await harness({ handlers: { a: async () => { calls++; return { done: true } } }, afterHandler: () => { throw new Error('crashed') } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'p', kind: 'a', dueAtMs: T - 1_000 }); await h.sched.settled() })
+    for (let i = 1; i <= 3; i++) {
+      expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+      expect(await alarmAt(h.stub), `pass ${i}`).toBe(h.clock.now + 30_000)
+      h.clock.now += 30_000
+    }
+    expect(calls).toBe(3)
+  })
+})
+
+describe('a failed commit (failure 4)', () => {
+  /** A trigger that makes every delete from due_tasks fail, as a storage error would. */
+  const block = (sql: SqlStorage) => sql.exec("CREATE TRIGGER block_delete BEFORE DELETE ON due_tasks BEGIN SELECT RAISE(ABORT, 'blocked'); END")
+  it('arms no sooner than the fallback delay, and the next pass starts clean', async () => {
+    let h!: Harness<{ nowMs: number }>
+    h = await harness({ handlers: { a: async () => ({ done: true }) } })
+    await inObject(h.stub, async s => {
+      block(s.storage.sql)
+      h.sched.schedule({ id: 'c', kind: 'a', dueAtMs: T })
+      h.sched.schedule({ id: 'later', kind: 'a', dueAtMs: T + 30_005 })
+      await h.sched.settled()
+    })
+    // The delete fails: the task stays due at T, but the alarm waits 30 s.
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([
+      { id: 'c', kind: 'a', due_at_ms: T, attempts: 0, state: 'ready' },
+      { id: 'later', kind: 'a', due_at_ms: T + 30_005, attempts: 0, state: 'ready' },
+    ])
+    expect(await alarmAt(h.stub)).toBe(T + 30_000)
+    // Storage is back: this pass succeeds, so the alarm is the earliest task again, not another fallback.
+    await inObject(h.stub, s => s.storage.sql.exec('DROP TRIGGER block_delete'))
+    h.clock.now = T + 30_000
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([{ id: 'later', kind: 'a', due_at_ms: T + 30_005, attempts: 0, state: 'ready' }])
+    expect(await alarmAt(h.stub)).toBe(T + 30_005)
+  })
+})
+
+describe('ensure and quarantine (failure 3)', () => {
+  it('never revives a task quarantined after 10 failures', async () => {
+    const h = await harness({ handlers: { a: async (_t, ctx) => ({ retryAtMs: ctx.nowMs, error: 'poison' }) } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'poison', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    for (let i = 0; i < 10; i++) { expect(await runDurableObjectAlarm(h.stub)).toBe(true); h.clock.now += 1 }
+    const quarantined = [{ id: 'poison', kind: 'a', due_at_ms: h.clock.now - 1, attempts: 10, state: 'quarantined' }]
+    expect(await rows(h.stub)).toEqual(quarantined)
+    await inObject(h.stub, async () => { h.sched.ensure({ id: 'poison', kind: 'a', dueAtMs: T + 99 }); await h.sched.settled() })
+    expect(await rows(h.stub)).toEqual(quarantined)
+    expect(await inObject(h.stub, () => h.sched.quarantinedCount())).toBe(1)
+    expect(await alarmAt(h.stub)).toBeNull()
+  })
+  it('never revives a task whose own error text reads like an unknown kind', async () => {
+    const h = await harness({ handlers: { a: async (_t, ctx) => ({ retryAtMs: ctx.nowMs, error: 'Unknown kind of file' }) } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'text', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    for (let i = 0; i < 10; i++) { expect(await runDurableObjectAlarm(h.stub)).toBe(true); h.clock.now += 1 }
+    await inObject(h.stub, async () => { h.sched.ensure({ id: 'text', kind: 'a', dueAtMs: T + 99 }); await h.sched.settled() })
+    expect(await rows(h.stub)).toEqual([{ id: 'text', kind: 'a', due_at_ms: h.clock.now - 1, attempts: 10, state: 'quarantined' }])
+  })
+  it('revives an unknown-kind task with its attempts reset', async () => {
+    const h = await harness({ handlers: { a: async (_t, ctx) => ({ retryAtMs: ctx.nowMs, error: 'not yet' }) } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'late', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    for (let i = 0; i < 3; i++) { expect(await runDurableObjectAlarm(h.stub)).toBe(true); h.clock.now += 1 }
+    // A start without the handler (it isn't built yet): the task is quarantined as an unknown kind, attempts kept.
+    await h.restart({ handlers: {} })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([{ id: 'late', kind: 'a', due_at_ms: h.clock.now - 1, attempts: 3, state: 'quarantined' }])
+    const again = await h.restart({ handlers: { a: async () => ({ done: true }) } })
+    await inObject(h.stub, async () => { again.ensure({ id: 'late', kind: 'a', dueAtMs: T + 50 }); await again.settled() })
+    expect(await rows(h.stub)).toEqual([{ id: 'late', kind: 'a', due_at_ms: T + 50, attempts: 0, state: 'ready' }])
   })
 })
 

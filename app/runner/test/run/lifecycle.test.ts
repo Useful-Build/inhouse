@@ -17,6 +17,7 @@ import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { RunStatus, type RunEvent } from '../../../shared/protocol/index.ts'
 import { pickToken } from '../../src/server/app.ts'
+import { realTimers, type Timers } from '../../src/server/pusher.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
 import { gate, spawnFixture, testSessionUsers } from './support/test-seams.ts'
 
@@ -402,9 +403,21 @@ describe('released (protocol v2): the last event of every run, with the checkpoi
   })
 
   it("a root timeout: the session's later checkpoint still rides in released", async () => {
-    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { stopGraceMs: 2000, runTimeoutMs: 300 }), async (root) => {
+    // The run's timeout fires when the test says, once the session is in its query (its sdk event reached the egress).
+    // With a real 300 ms timer it raced the session's start: on a busy host it could fire before the session had its
+    // run, and the run then rightly ended with no query and no checkpoint (seen on CI, run 44794810540).
+    const RUN_TIMEOUT = 987_654
+    let fireTimeout: (() => void) | undefined
+    const timers: Timers = {
+      ...realTimers,
+      setTimeout: (fn, ms) => (ms === RUN_TIMEOUT ? ((fireTimeout = fn), 'held-run-timeout') : realTimers.setTimeout(fn, ms)),
+      clearTimeout: (h) => (h === 'held-run-timeout' ? undefined : realTimers.clearTimeout(h)),
+    }
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { stopGraceMs: 2000, runTimeoutMs: RUN_TIMEOUT, timers }), async (root) => {
       const start = runStart({ prompt: 'cp:wait' })
       const run = openRun(root, start)
+      await waitFor(() => fireTimeout !== undefined && run.events.some((e) => e.type === 'sdk'), 'the session in its query')
+      fireTimeout!()
       const events = await run.done
       expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'timeout' })
       // The checkpoint came after the terminal event: not on the stream (one end), but in released.

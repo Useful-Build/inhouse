@@ -2,7 +2,7 @@
 import type { AddressInfo } from 'node:net'
 import { AuditPost, PROTOCOL_HEADER, PROTOCOL_VERSION, PushBatch, RunAdmission, type RunEvent, type RunStart } from '../../../../shared/protocol/index.ts'
 import { createRoot, type Root } from '../../../src/server/app.ts'
-import type { PushFetch } from '../../../src/server/pusher.ts'
+import type { PushFetch, Timers } from '../../../src/server/pusher.ts'
 import type { SpawnSession } from '../../../src/server/session-host.ts'
 import { cleanup, testSessionUsers, type TestUsers } from './test-seams.ts'
 
@@ -97,7 +97,7 @@ export type TestRoot = Root & { url: string; logs: Record<string, unknown>[]; us
 
 export async function startTestRoot(
   spawnSession: SpawnSession,
-  opts: { stopGraceMs?: number; runTimeoutMs?: number; users?: TestUsers; egress?: TestEgress; pushLingerMs?: number; pushHeartbeatMs?: number; pushMaxBytes?: number } = {},
+  opts: { stopGraceMs?: number; runTimeoutMs?: number; users?: TestUsers; egress?: TestEgress; pushLingerMs?: number; pushHeartbeatMs?: number; pushMaxBytes?: number; timers?: Timers } = {},
 ): Promise<TestRoot> {
   const logs: Record<string, unknown>[] = []
   const users = opts.users ?? testSessionUsers()
@@ -109,6 +109,7 @@ export async function startTestRoot(
     egressUrl: 'http://egress.internal',
     fetch: egress.fetch,
     pushLingerMs: opts.pushLingerMs,
+    timers: opts.timers,
     pushHeartbeatMs: opts.pushHeartbeatMs,
     pushMaxBytes: opts.pushMaxBytes,
     stopGraceMs: opts.stopGraceMs ?? 2000,

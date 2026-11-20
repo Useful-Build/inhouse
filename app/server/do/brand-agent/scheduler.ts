@@ -24,8 +24,9 @@ export interface Scheduler {
   /** Upsert: sets the kind, due time and payload, a new generation, attempts 0 and `ready` (a quarantined task too). */
   schedule(t: { id: string; kind: string; dueAtMs: number; payload?: unknown }): void
   /**
-   * Insert only if no task has this id; never moves an existing ready one. A quarantined task of the same kind is
-   * revived (new generation, attempts 0, `ready`), so a seed whose handler was missing comes back once it exists.
+   * Insert only if no task has this id; never moves an existing ready one. A task of the same kind quarantined as an
+   * unknown kind is revived (new generation, attempts 0, `ready`), so a seed whose handler was missing comes back once
+   * it exists. One quarantined after 10 failures stays quarantined (its signal stays red until someone fixes it).
    */
   ensure(t: { id: string; kind: string; dueAtMs: number; payload?: unknown }): void
   cancel(id: string): void
@@ -126,8 +127,10 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
    * Sets the alarm to the earliest ready task now, in the caller's turn. Storage operations apply in the order they're
    * issued, so the last change leaves the alarm current; `pending` only collects the results for `settled()`.
    */
-  const changed = () => {
-    const at = earliest()
+  /** `notBefore`: after a failed pass, never arm earlier than this (no hot loop without backoff). */
+  const changed = (notBefore?: number) => {
+    const first = earliest()
+    const at = first === null || notBefore === undefined ? first : Math.max(first, notBefore)
     const op = at === null ? o.alarm.delete() : o.alarm.set(at)
     pending.push(op.catch(err => {
       failure ??= err
@@ -173,6 +176,7 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
   }
 
   /** One pass: up to 20 due tasks or 10 s, each at most once. */
+  let degraded = false
   const pass = async () => {
     const started = o.now()
     const ran = new Set<string>()
@@ -207,6 +211,7 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
       try {
         applied = commit(task, result)
       } catch (err) {
+        degraded = true
         console.error({ event: 'due_task_commit_failed', kind: task.kind, error: errorText(err) })
       }
       if (applied && !('done' in result) && task.attempts + 1 >= MAX_ATTEMPTS) {
@@ -223,7 +228,8 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
     },
     ensure(t) {
       insert(t, `UPDATE SET gen = excluded.gen, due_at_ms = excluded.due_at_ms, payload_json = excluded.payload_json,
-        attempts = 0, state = 'ready', last_error = NULL WHERE due_tasks.state = 'quarantined' AND due_tasks.kind = excluded.kind`)
+        attempts = 0, state = 'ready', last_error = NULL WHERE due_tasks.state = 'quarantined' AND due_tasks.kind = excluded.kind
+          AND due_tasks.last_error = 'unknown kind ' || due_tasks.kind`)
       changed()
     },
     cancel(id) {
@@ -231,15 +237,18 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
       changed()
     },
     async alarm() {
+      degraded = false
       try {
         await pass()
       } catch (err) {
         // A pass that failed part way (storage, a test's injected crash) leaves its task as it was: it runs again.
+        degraded = true
         console.error({ event: 'scheduler_pass_failed', error: errorText(err) })
       }
-      // Always leave an alarm: the earliest ready task, else one a little later if setting that failed.
+      // Always leave an alarm: the earliest ready task (after a failure, no sooner than the fallback delay), else the
+      // fallback alone if setting that failed.
       try {
-        changed()
+        changed(degraded ? o.now() + FALLBACK_ALARM_MS : undefined)
         await settled()
       } catch (err) {
         console.error({ event: 'scheduler_alarm_fallback', error: errorText(err) })
