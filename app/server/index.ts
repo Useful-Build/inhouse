@@ -4,12 +4,13 @@
 import { accessMatrix } from './access-matrix.ts'
 import { api } from './api.ts'
 import type { ApiParts } from './api.ts'
-import { authenticate, checkAccess, checkOrigin, unwiredStores } from './auth/index.ts'
+import { authenticate, checkAccess, checkOrigin } from './auth/index.ts'
+import { openStores } from './db/stores.ts'
 import { apiError } from './http.ts'
 import { routes } from './routes.ts'
 
-// `stores`: fail-closed stand-ins until W2's D1 data layer lands (the orchestrator's wiring commit swaps them in).
-const parts: ApiParts = { authenticate, checkOrigin, checkAccess, stores: () => unwiredStores, routes, accessMatrix }
+// `stores`: W2's D1 data layer (server/db/). A handler reaches D1 and R2 only through them (routes.ts, STORE_BINDINGS).
+const parts: ApiParts = { authenticate, checkOrigin, checkAccess, stores: env => openStores(env), routes, accessMatrix }
 
 export default {
   async fetch(request, env, ctx) {
