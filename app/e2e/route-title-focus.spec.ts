@@ -1,17 +1,12 @@
 // Route titles, focus on the page heading and the lazy routes (desktop). Production plan H3: P-2, A-10.
-import { expect, test } from './csp.js'
+import { expect, test } from './support/fx.js'
 import { routeTitleFocusTests } from './route-title-focus.js'
 
 routeTitleFocusTests(false)
 
 // An old tab opening a lazy route after a deploy: its chunk is gone, so the tab reloads once and the draft survives.
-test('A lazy chunk that fails to load reloads the tab once and keeps the composer draft', async ({ page }) => {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+test('A lazy chunk that fails to load reloads the tab once and keeps the composer draft', async ({ page, fx }) => {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   let loads = 0
   page.on('load', () => { loads++ })
   await page.goto('/?demo#/today')

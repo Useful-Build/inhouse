@@ -1,15 +1,10 @@
 // PR 5, navigation on a phone (390 px): the top bar names Today and chats, not a page with its own h1, the palette opens from its button and fits the
 // screen, and the toast's Undo and a Switch take 44px taps.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
-async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, hash: string) {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -35,9 +30,9 @@ const atLeast44 = async (el: Locator) => {
   expect(b.h, 'hit area height').toBeGreaterThanOrEqual(44)
 }
 
-test("Phone: the top bar doesn't repeat a page's own h1, and names Today and an open chat", async ({ page }) => {
+test("Phone: the top bar doesn't repeat a page's own h1, and names Today and an open chat", async ({ fx, page }) => {
   const title = header(page).locator('[data-topbar-title]')
-  await start(page, '#/library')
+  await start(page, fx, '#/library')
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
   let before = (await page.getByRole('heading', { level: 1 }).first().textContent()) ?? ''
   await expect(title).toHaveText('')
@@ -66,8 +61,8 @@ test("Phone: the top bar doesn't repeat a page's own h1, and names Today and an 
   await expect(title).toHaveText('Today')
 })
 
-test('Phone: the palette opens from its button, fits the screen and opens a page', async ({ page }) => {
-  await start(page, '#/today')
+test('Phone: the palette opens from its button, fits the screen and opens a page', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   await page.getByRole('button', { name: 'Menu' }).click()
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Search' }).click()
   const palette = page.getByRole('dialog', { name: 'Search' })
@@ -87,8 +82,8 @@ test('Phone: the palette opens from its button, fits the screen and opens a page
   await expect(page.getByRole('heading', { level: 1, name: 'Usage' })).toBeVisible()
 })
 
-test("Phone: the toast's Undo and a Switch take 44px taps", async ({ page }) => {
-  await start(page, '#/today')
+test("Phone: the toast's Undo and a Switch take 44px taps", async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   await page.getByRole('article').first().getByRole('button', { name: 'More' }).click()
   await page.getByRole('menu', { name: 'Card actions' }).getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
   const undo = page.locator('[data-toast]').getByRole('button', { name: 'Undo', exact: true })
@@ -105,8 +100,8 @@ test("Phone: the toast's Undo and a Switch take 44px taps", async ({ page }) => 
   await atLeast44(page.getByRole('dialog', { name: 'Demo switches' }).getByRole('switch'))
 })
 
-test('Phone: Skip to content is the first Tab stop and moves focus into main', async ({ page }) => {
-  await start(page, '#/activity')
+test('Phone: Skip to content is the first Tab stop and moves focus into main', async ({ fx, page }) => {
+  await start(page, fx, '#/activity')
   await page.keyboard.press('Tab')
   const skip = page.getByRole('link', { name: 'Skip to content' })
   await expect(skip).toBeFocused()
@@ -116,13 +111,8 @@ test('Phone: Skip to content is the first Tab stop and moves focus into main', a
   await shot(page, 'phone-skip-link')
 })
 
-test('Phone: every Activity time sits on one line in its column', async ({ page }) => {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Run', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+test('Phone: every Activity time sits on one line in its column', async ({ page, fx }) => {
+  await fx.seed({ stage: 'Run', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/activity')
   // Run shows the most lines, "10:12 AM" the widest time.
   const times = page.locator('[data-activity-row] > span:first-child')

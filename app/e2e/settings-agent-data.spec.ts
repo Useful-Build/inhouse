@@ -1,18 +1,13 @@
 // Settings > Inhouse agent, Data and access and Audit log (desktop: on a phone these team pages are read-only, see
 // settings-pages-phone.spec.ts). Each control does what it says; the picks the app keeps survive a reload and Reset demo
 // clears them. The audit log's download is checked in sample-data.spec.ts.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 type Stage = 'Watch' | 'Act' | 'Run'
 
-async function start(page: Page, stage: Stage, hash: string) {
-  await page.addInitScript(s => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, stage)
+async function start(page: Page, fx: Fx, stage: Stage, hash: string) {
+  await fx.seed({ stage })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -34,8 +29,8 @@ async function resetDemo(page: Page) {
   await page.getByRole('button', { name: 'Close demo switches' }).click()
 }
 
-test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset demo clears them; its links open Team memory and Skills', async ({ page }) => {
-  await start(page, 'Act', '#/settings/team-agent')
+test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset demo clears them; its links open Team memory and Skills', async ({ fx, page }) => {
+  await start(page, fx, 'Act', '#/settings/team-agent')
   await expect(h1(page, 'Inhouse agent')).toBeVisible()
   const signs = main(page).getByRole('textbox', { name: 'Signs emails as', exact: true })
   await expect(combo(page, 'Tone: Friendly and short')).toBeVisible()
@@ -67,8 +62,8 @@ test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset dem
   await expect(signs).toHaveValue('The Northline team')
 })
 
-test('Data and access: retention and access switches are saved, survive a reload and Reset demo clears them; Export and delete answer', async ({ page }) => {
-  await start(page, 'Act', '#/settings/team-data')
+test('Data and access: retention and access switches are saved, survive a reload and Reset demo clears them; Export and delete answer', async ({ fx, page }) => {
+  await start(page, fx, 'Act', '#/settings/team-data')
   await expect(h1(page, 'Data and access')).toBeVisible()
   await expect(combo(page, 'Chats: 12 months')).toBeVisible()
   await expect(combo(page, 'Activity and steps: 12 months')).toBeVisible()
@@ -122,8 +117,8 @@ test('Data and access: retention and access switches are saved, survive a reload
   await expect(sw(page, 'Two-step sign-in')).toBeChecked()
 })
 
-test('Audit log: pausing the agent adds a row at the top that survives a reload, and Resume takes it away', async ({ page }) => {
-  await start(page, 'Act', '#/settings/team-audit')
+test('Audit log: pausing the agent adds a row at the top that survives a reload, and Resume takes it away', async ({ fx, page }) => {
+  await start(page, fx, 'Act', '#/settings/team-audit')
   await expect(h1(page, 'Audit log')).toBeVisible()
   const paused = main(page).getByText('Sam Mercer paused your Inhouse agent', { exact: true })
   const seeded = main(page).getByText('Sam Mercer changed an approval rule', { exact: true })

@@ -2,17 +2,12 @@
 // toast with one Undo, a sent notice or any other notice never takes another toast's Undo, hover and focus pause the countdowns, the close button dismisses, and on a
 // phone the stack sits above the chat's composer. Screenshots of each state are attached to the report.
 // Time runs on Playwright's clock (`runFor`, and a held clock while a stack is built), so no check races a countdown.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash = '#/today') {
+async function start(page: Page, fx: Fx, hash = '#/today') {
   await page.clock.install()
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fx.seed({ stage: 'Act' })
   await page.goto('/?demo' + hash)
 }
 
@@ -38,8 +33,8 @@ async function deleteRoutine(page: Page, name: string) {
   await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0)
 }
 
-test('Toasts: two approvals five seconds apart share one toast, and its one Undo takes back both', async ({ page }) => {
-  await start(page)
+test('Toasts: two approvals five seconds apart share one toast, and its one Undo takes back both', async ({ fx, page }) => {
+  await start(page, fx)
   await approveOnCard(page, PO)
   await expect(toast(page, HELD)).toHaveCount(1)
   await page.clock.runFor(5000)
@@ -63,8 +58,8 @@ test('Toasts: two approvals five seconds apart share one toast, and its one Undo
   await shot(page, 'toasts-two-approvals-undone')
 })
 
-test("Toasts: the first approval's sent notice shows on its own; the shared toast keeps its Undo for the second until it goes out", async ({ page }) => {
-  await start(page)
+test("Toasts: the first approval's sent notice shows on its own; the shared toast keeps its Undo for the second until it goes out", async ({ fx, page }) => {
+  await start(page, fx)
   await approveOnCard(page, PO)
   await page.clock.runFor(5000)
   await approveOnCard(page, STUCK)
@@ -84,8 +79,8 @@ test("Toasts: the first approval's sent notice shows on its own; the shared toas
   await expect(toast(page, 'Message sent to ShipBob about #4821')).toHaveCount(0)
 })
 
-test('Toasts: delete two routines and undo both; a notice never pushes out an Undo', async ({ page }) => {
-  await start(page, '#/routines')
+test('Toasts: delete two routines and undo both; a notice never pushes out an Undo', async ({ fx, page }) => {
+  await start(page, fx, '#/routines')
   await expect(page.getByRole('heading', { level: 1, name: 'Routines' })).toBeVisible()
   await deleteRoutine(page, 'Monday reorder list')
   await deleteRoutine(page, 'Amazon payout check')
@@ -134,8 +129,8 @@ test('Toasts: delete two routines and undo both; a notice never pushes out an Un
   await page.clock.resume()
 })
 
-test('Toasts: a held approval is never pushed out, not even by four Undo toasts after it', async ({ page }) => {
-  await start(page)
+test('Toasts: a held approval is never pushed out, not even by four Undo toasts after it', async ({ fx, page }) => {
+  await start(page, fx)
   await hold(page)
   await approveOnCard(page, PO)
   await expect(toast(page, HELD)).toHaveCount(1)
@@ -153,8 +148,8 @@ test('Toasts: a held approval is never pushed out, not even by four Undo toasts 
   await page.clock.resume()
 })
 
-test('Toasts: after a keyboard Undo or Dismiss, focus goes to the next toast, then to the page', async ({ page }) => {
-  await start(page)
+test('Toasts: after a keyboard Undo or Dismiss, focus goes to the next toast, then to the page', async ({ fx, page }) => {
+  await start(page, fx)
   await hold(page)
   for (const title of [PO, STUCK]) {
     await card(page, title).getByRole('button', { name: 'More' }).click()
@@ -179,8 +174,8 @@ test('Toasts: after a keyboard Undo or Dismiss, focus goes to the next toast, th
   await page.clock.resume()
 })
 
-test('Toasts: hover pauses the countdown, leaving resumes it, and the close button dismisses', async ({ page }) => {
-  await start(page)
+test('Toasts: hover pauses the countdown, leaving resumes it, and the close button dismisses', async ({ fx, page }) => {
+  await start(page, fx)
   await card(page, PO).getByRole('button', { name: 'More' }).click()
   await page.getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
   const snoozed = toast(page, 'Snoozed until tomorrow')
@@ -211,8 +206,8 @@ test('Toasts: hover pauses the countdown, leaving resumes it, and the close butt
   await expect(toasts(page)).toHaveCount(0)
 })
 
-test('Toasts: when the focused toast leaves on its own, focus goes to the newest toast, not the page', async ({ page }) => {
-  await start(page)
+test('Toasts: when the focused toast leaves on its own, focus goes to the newest toast, not the page', async ({ fx, page }) => {
+  await start(page, fx)
   await approveOnCard(page, PO)
   const held = toast(page, HELD)
   await expect(held).toHaveCount(1)
@@ -228,8 +223,8 @@ test('Toasts: when the focused toast leaves on its own, focus goes to the newest
 test.describe('Toasts on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
 
-  test('the stack sits above the composer in a chat, and Undo and close are tap-size', async ({ page }) => {
-    await start(page, '#/chats/refunds')
+  test('the stack sits above the composer in a chat, and Undo and close are tap-size', async ({ fx, page }) => {
+    await start(page, fx, '#/chats/refunds')
     await page.locator('main').getByRole('button', { name: 'More' }).last().click({ force: true })
     await page.getByRole('menuitem', { name: 'Delete' }).click()
     const deleted = toast(page, 'Message deleted')

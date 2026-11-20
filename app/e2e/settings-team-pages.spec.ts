@@ -1,18 +1,13 @@
 // Settings > Stage and plan, Team memory and Run limits (desktop: on a phone these team pages are read-only). Each
 // control does what it says; the picks the app keeps (forgotten lines, switches, dropdowns, pause) survive a reload and
 // Reset demo clears them. Stage and plan keeps nothing: it shows the stage and opens the team window.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 type Stage = 'Watch' | 'Act' | 'Run'
 
-async function start(page: Page, stage: Stage, hash: string) {
-  await page.addInitScript(s => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, stage)
+async function start(page: Page, fx: Fx, stage: Stage, hash: string) {
+  await fx.seed({ stage })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -39,8 +34,8 @@ const STAGE_ROWS: [Stage, string, string | RegExp, string][] = [
   ['Run', 'Run: your Inhouse agent handles agreed jobs by itself, within your limits.', 'You have every stage. Money and customer actions still wait for a person.', 'None'],
 ]
 for (const [stage, current, next, nextName] of STAGE_ROWS) {
-  test(`Stage and plan at ${stage}: names the stage and the next one, and Book a check-in opens the team window`, async ({ page }) => {
-    await start(page, stage, '#/settings/team-plan')
+  test(`Stage and plan at ${stage}: names the stage and the next one, and Book a check-in opens the team window`, async ({ fx, page }) => {
+    await start(page, fx, stage, '#/settings/team-plan')
     await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan', exact: true })).toBeVisible()
     await expect(row(page, 'Current stage')).toContainText(current)
     await expect(row(page, 'Current stage').getByText(stage, { exact: true })).toBeVisible()
@@ -59,8 +54,8 @@ for (const [stage, current, next, nextName] of STAGE_ROWS) {
   })
 }
 
-test('Team memory at Watch: the lines and the switch are locked until Act', async ({ page }) => {
-  await start(page, 'Watch', '#/settings/team-memory')
+test('Team memory at Watch: the lines and the switch are locked until Act', async ({ fx, page }) => {
+  await start(page, fx, 'Watch', '#/settings/team-memory')
   await expect(main(page).getByText('Kestrel Supply ships in 14 days and wants purchase orders as a PDF.')).toBeVisible()
   await expect(main(page).getByRole('button', { name: 'Forget', exact: true })).toHaveCount(7)
   await expect(main(page).locator('button:not([disabled])', { hasText: /^Forget$/ })).toHaveCount(0)
@@ -68,8 +63,8 @@ test('Team memory at Watch: the lines and the switch are locked until Act', asyn
   await expect(main(page).getByRole('button', { name: 'Teach in a chat', exact: true })).toBeDisabled()
 })
 
-test('Team memory: Forget (with Undo) and the rule switch work, survive a reload and Reset demo clears them; Teach in a chat opens a chat', async ({ page }) => {
-  await start(page, 'Act', '#/settings/team-memory')
+test('Team memory: Forget (with Undo) and the rule switch work, survive a reload and Reset demo clears them; Teach in a chat opens a chat', async ({ fx, page }) => {
+  await start(page, fx, 'Act', '#/settings/team-memory')
   const first = 'Kestrel Supply ships in 14 days and wants purchase orders as a PDF.'
   const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
   const ask = main(page).getByRole('switch', { name: 'Ask before saving a team rule' })
@@ -115,16 +110,16 @@ test('Team memory: Forget (with Undo) and the rule switch work, survive a reload
 
 const JOBS = ['Restock returns', 'Chase late suppliers', 'Nudge ShipBob on stuck orders', 'Pause oversold variants']
 
-test('Run limits at Act: the job switches and limits are locked until Run, Pause still works', async ({ page }) => {
-  await start(page, 'Act', '#/settings/team-limits')
+test('Run limits at Act: the job switches and limits are locked until Run, Pause still works', async ({ fx, page }) => {
+  await start(page, fx, 'Act', '#/settings/team-limits')
   for (const job of JOBS) await expect(main(page).getByRole('switch', { name: job, exact: true })).toBeDisabled()
   await expect(main(page).getByRole('combobox', { name: /^Daily limit: / })).toBeDisabled()
   await expect(main(page).getByRole('combobox', { name: /^Largest restock: / })).toBeDisabled()
   await expect(main(page).getByRole('button', { name: 'Pause Inhouse agent', exact: true })).toBeEnabled()
 })
 
-test('Run limits: switches, limits and Pause work, survive a reload and Reset demo clears them', async ({ page }) => {
-  await start(page, 'Run', '#/settings/team-limits')
+test('Run limits: switches, limits and Pause work, survive a reload and Reset demo clears them', async ({ fx, page }) => {
+  await start(page, fx, 'Run', '#/settings/team-limits')
   const job = (name: string) => main(page).getByRole('switch', { name, exact: true })
   const daily = (value: string) => main(page).getByRole('combobox', { name: `Daily limit: ${value}`, exact: true })
   const restock = (value: string) => main(page).getByRole('combobox', { name: `Largest restock: ${value}`, exact: true })

@@ -4,7 +4,7 @@
 // Overlays: bell, account menu, Help (every guide), team window, Needs you panels, Activity (every row, every trace it
 // opens, plain and technical), the chat trace windows, Library viewers and the Delete confirm, the chat hover actions
 // and "More" menu, the composer menus, every Settings dropdown and the Demo switches panel.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 import { everything } from './page-text.js'
 
@@ -64,14 +64,9 @@ async function accountMenu(page: Page, phone: boolean) {
 }
 
 /** Seed Watch / Normal, then pick the stage and scenario in the ?demo switcher itself, as a person would. */
-async function start(page: Page, size: typeof SIZES[number], stage: Stage, scenario: Scenario) {
+async function start(page: Page, fx: Fx, size: typeof SIZES[number], stage: Stage, scenario: Scenario) {
   await page.setViewportSize({ width: size.width, height: size.height })
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Watch', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fx.seed({ stage: 'Watch', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/today')
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   const panel = page.getByRole('dialog', { name: 'Demo switches' })
@@ -91,9 +86,9 @@ for (const size of SIZES) {
       const phone = size.width < 600
       const label = `${size.name} · ${stage} · ${scenario}`
 
-      test(`${label}: routes and Settings dropdowns show no "Ava" and no "morning email"`, async ({ page }) => {
+      test(`${label}: routes and Settings dropdowns show no "Ava" and no "morning email"`, async ({ fx, page }) => {
         test.setTimeout(120_000)
-        await start(page, size, stage, scenario)
+        await start(page, fx, size, stage, scenario)
 
         for (const [route, marker] of ROUTES) {
           await go(page, route)
@@ -130,9 +125,9 @@ for (const size of SIZES) {
         }
       })
 
-      test(`${label}: overlays, Activity, traces, Library, chats and menus show no "Ava" and no "morning email"`, async ({ page }) => {
+      test(`${label}: overlays, Activity, traces, Library, chats and menus show no "Ava" and no "morning email"`, async ({ fx, page }) => {
         test.setTimeout(240_000)
-        await start(page, size, stage, scenario)
+        await start(page, fx, size, stage, scenario)
         const main = page.getByRole('main')
         // On day one and while loading the agent has no notifications and no Library files yet (PR 3, M16).
         const noData = scenario === 'First day' || scenario === 'Loading'
