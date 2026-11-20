@@ -23,6 +23,8 @@ export interface PhotoStoreDeps {
   hook?: AuditHook
   /** Tests only: runs just before the D1 batch of an upload or a removal (to fail it, or to win a race against it). */
   beforeBatch?: () => Promise<void>
+  /** Tests only: runs right after the D1 batch has committed, before the answer is made (to land another write in between). */
+  afterBatch?: () => Promise<void>
 }
 
 const randomPart = () => [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('')
@@ -30,7 +32,7 @@ const randomPart = () => [...crypto.getRandomValues(new Uint8Array(16))].map(b =
 /** Another write changed the photo first: the key the row holds now. */
 export type PhotoConflict = { conflict: { photoKey: string | null; rev: number } }
 
-export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: PhotoStoreDeps) {
+export function photoStore({ db, files: bucket, hook = s => s, beforeBatch, afterBatch }: PhotoStoreDeps) {
   const write = (stmts: Stmt[]) => runBatch(db, stmts.map(s => (s.sql.startsWith('INSERT INTO audit_log') ? hook(s) : s)))
   // Every R2 call goes through `storage`: a failure is a StoreUnavailableError (503), as D1's are (sql.ts).
   const files = {
@@ -57,12 +59,13 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
       const key = photoKey(input.memberId, randomPart())
       await files.put(key, input.bytes, input.type)
       let changes: number
+      let rev: number | undefined
       try {
         await beforeBatch?.()
         const stamp = writeStamp(at.requestId)
         const [change] = await write([
           stmt(
-            "UPDATE members SET photo_key = ?, rev = rev + 1, req_id = ? WHERE id = ? AND kind = 'person' AND status = 'active' AND photo_key IS ?",
+            "UPDATE members SET photo_key = ?, rev = rev + 1, req_id = ? WHERE id = ? AND kind = 'person' AND status = 'active' AND photo_key IS ? RETURNING rev",
             key, stamp, input.memberId, before.photo_key,
           ),
           auditInsert(
@@ -71,6 +74,8 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
           ),
         ])
         changes = change.meta.changes
+        // The rev this write itself left, from the statement's own result: a read after the batch could be another write's.
+        rev = (change.results as { rev: number }[])[0]?.rev
       } catch (err) {
         // The batch may have committed before the error reached us: delete the new object only once the row is known
         // not to point to it (if the row can't be read, keep it: an orphan beats a member row pointing at nothing).
@@ -78,10 +83,12 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
         if (now !== undefined && now?.photo_key !== key) await files.delete(key)
         if (now?.photo_key === key) {
           if (before.photo_key) await dropOld(before.photo_key)
+          // The one place the rev is read again: the reply was lost, so there is no result to take it from.
           return { ok: true, rev: now.rev }
         }
         throw err
       }
+      await afterBatch?.()
       if (changes === 0) {
         await files.delete(key)
         const now = await keyOf(input.memberId)
@@ -89,7 +96,8 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
       }
       if (before.photo_key) await dropOld(before.photo_key)
       // The row's rev after this write (the write moved it): the caller sends it as `ifRev` on its next write to the row.
-      return { ok: true, rev: (await keyOf(input.memberId))?.rev ?? before.rev + 1 }
+      if (rev === undefined) throw new Error('set: the update returned no rev')
+      return { ok: true, rev }
     },
 
     /**
@@ -104,7 +112,7 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
       const stamp = writeStamp(at.requestId)
       const [change] = await write([
         stmt(
-          "UPDATE members SET photo_key = NULL, rev = rev + 1, req_id = ? WHERE id = ? AND kind = 'person' AND photo_key = ?",
+          "UPDATE members SET photo_key = NULL, rev = rev + 1, req_id = ? WHERE id = ? AND kind = 'person' AND photo_key = ? RETURNING rev",
           stamp, memberId, before.photo_key,
         ),
         auditInsert(
@@ -112,12 +120,15 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
           { table: 'members', where: 'id = ?', params: [memberId], stamp },
         ),
       ])
+      await afterBatch?.()
       if (change.meta.changes === 0) {
         const now = await keyOf(memberId)
         return { conflict: { photoKey: now?.photo_key ?? null, rev: now?.rev ?? before.rev } }
       }
       await dropOld(before.photo_key)
-      return { removed: true, rev: (await keyOf(memberId))?.rev ?? before.rev + 1 }
+      const rev = (change.results as { rev: number }[])[0]?.rev
+      if (rev === undefined) throw new Error('remove: the update returned no rev')
+      return { removed: true, rev }
     },
 
     /** A person's photo as stored: its bytes and the type recorded at upload, or null (no such person, or no photo). */

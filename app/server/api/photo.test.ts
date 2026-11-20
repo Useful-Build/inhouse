@@ -194,6 +194,27 @@ describe('after the commit, and races (fix round 1)', () => {
   })
 })
 
+describe("the answer's rev is the photo write's own (fix round 4)", () => {
+  /** A name save from another device: it lands right after the photo's batch has committed, before the answer is made. */
+  const otherWrite = async () => { await db.prepare('UPDATE members SET rev = rev + 1 WHERE id = ?').bind(me).run() }
+  it('an upload answers with the rev its own write left, not a later write\'s', async () => {
+    const before = await revOf()
+    const racing = openStores(env, undefined, { afterPhotoBatch: otherWrite })
+    const res = await putPhoto(photoCtx(bytesOf(PNG) as Uint8Array<ArrayBuffer>, { 'Content-Type': 'image/png' }, racing))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ photoUrl: `/api/members/${me}/photo`, rev: before + 1 })
+    expect(await revOf(), 'the other write did land').toBe(before + 2)
+  })
+  it('a removal answers with the rev its own write left, not a later write\'s', async () => {
+    await put(bytesOf(PNG), 'image/png')
+    const before = await revOf()
+    const racing = openStores(env, undefined, { afterPhotoBatch: otherWrite })
+    const res = await deletePhoto(photoCtx(null, {}, racing))
+    expect(await res.json()).toEqual({ photoUrl: null, rev: before + 1 })
+    expect(await revOf()).toBe(before + 2)
+  })
+})
+
 describe('the Content-Length check and the count, each on its own (fix round 1)', () => {
   it('a small lying Content-Length with a large streamed body is refused by the count', async () => {
     const big = bytesOf(PNG, MAX_PHOTO_BYTES + 4096)
