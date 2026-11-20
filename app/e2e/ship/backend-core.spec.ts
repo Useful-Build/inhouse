@@ -78,30 +78,42 @@ async function openAs(context: BrowserContext, page: Page, who: Who) {
 
 // One browser context per person: a second person's tab never shares a context (and so never its sign-in header) with the
 // first, so a background request from either tab can't go out as the wrong person. The test's own `context` and `page` are
-// the first person (they carry the video). The others are closed after the test. They have no video and no CSP guard: the
+// the first person (they carry the test's video). Each other person records their own video at the project's size; after
+// the test it is attached as `video-<who>` (not `video`: the reel takes a test's first attachment named `video`, which
+// must stay the first person's). They have no CSP guard: that is a fixture on the test's own context (e2e/csp.ts), and the
 // `real` project's specs guard every page of the product.
-const opened: BrowserContext[] = []
-test.afterEach(async () => { for (const c of opened.splice(0)) await c.close() })
+const opened: { context: BrowserContext; label: string }[] = []
+test.afterEach(async () => {
+  for (const { context, label } of opened.splice(0)) {
+    const videos = context.pages().map(p => p.video()).filter(v => v !== null)
+    await context.close()
+    for (const [i, v] of videos.entries()) await test.info().attach(`video-${label}${videos.length > 1 ? `-${i + 1}` : ''}`, { path: await v.path(), contentType: 'video/webm' })
+  }
+})
 
-/** A new context shaped like the project's (viewport, touch). */
-async function newContext(browser: Browser, headers?: Record<string, string>): Promise<BrowserContext> {
+/** A new context shaped like the project's (viewport, touch), recording its video. `label` names whose it is. */
+async function newContext(browser: Browser, label: string, headers?: Record<string, string>): Promise<BrowserContext> {
   const { viewport, hasTouch, isMobile, userAgent, deviceScaleFactor } = test.info().project.use
-  const context = await browser.newContext({ viewport, hasTouch, isMobile, userAgent, deviceScaleFactor, ...(headers ? { extraHTTPHeaders: headers } : {}) })
-  opened.push(context)
+  const size = viewport ?? { width: 1440, height: 900 }
+  const context = await browser.newContext({
+    viewport, hasTouch, isMobile, userAgent, deviceScaleFactor, ...(headers ? { extraHTTPHeaders: headers } : {}),
+    recordVideo: { dir: test.info().outputPath(`video-${label}`), size },
+  })
+  opened.push({ context, label })
   return context
 }
 
 /** A new page for a seeded person, on their app, loaded. */
-async function pageFor(browser: Browser, who: Who): Promise<{ context: BrowserContext; page: Page }> {
-  const context = await newContext(browser)
+async function pageFor(browser: Browser, who: Who, label: string): Promise<{ context: BrowserContext; page: Page }> {
+  const context = await newContext(browser, label)
   const page = await context.newPage()
   await openAs(context, page, who)
   return { context, page }
 }
 
 /** A new page for someone who isn't seeded (the test issuer mints any subject; its email is `<subject>@example.test`), on the brand app. */
-async function pageForSubject(browser: Browser, subject: string): Promise<Page> {
-  const context = await newContext(browser, await signIn(subject, 'brand'))
+async function pageForSubject(browser: Browser, subject: string, label: string): Promise<Page> {
+  const context = await newContext(browser, label, await signIn(subject, 'brand'))
   const page = await context.newPage()
   await page.goto(`${appOrigin('brand')}/`)
   return page
@@ -114,9 +126,10 @@ async function auditCounts(page: Page) {
   do {
     const r = await api(page, 'GET', `/api/audit?limit=100${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`)
     expect(r.status).toBe(200)
-    for (const line of r.json.items as { what: string }[]) {
+    for (const line of r.json.items as { what: string; detail: string }[]) {
       if (line.what === 'gave the Inhouse team access') counts.gave++
-      else if (line.what === 'looked at brand data') counts.looked++
+      // Only the reads of the audit log Alex opened (a grant also covers his other reads of brand data).
+      else if (line.what === 'looked at brand data' && line.detail === 'The audit log') counts.looked++
       else if (/^ended the Inhouse team.s access$/.test(line.what)) counts.ended++
     }
     cursor = r.json.nextCursor
@@ -124,17 +137,24 @@ async function auditCounts(page: Page) {
   return counts
 }
 
-/** A member by email, looked up through every page of the list. */
-async function findMember(page: Page, email: string): Promise<{ id: string; rev: number }> {
+/** Every member, through every page of the list. */
+async function allMembers(page: Page): Promise<{ id: string; rev: number; email: string }[]> {
+  const members: { id: string; rev: number; email: string }[] = []
   let cursor: string | null = null
   do {
     const r = await api(page, 'GET', `/api/members?limit=100${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`)
     expect(r.status).toBe(200)
-    const found = (r.json.items as { id: string; rev: number; email: string }[]).find(m => m.email === email)
-    if (found) return found
+    members.push(...r.json.items)
     cursor = r.json.nextCursor
   } while (cursor !== null)
-  throw new Error(`${email} is not in the member list.`)
+  return members
+}
+
+/** A member by email. */
+async function findMember(page: Page, email: string): Promise<{ id: string; rev: number }> {
+  const found = (await allMembers(page)).find(m => m.email === email)
+  if (!found) throw new Error(`${email} is not in the member list.`)
+  return found
 }
 
 /** A request from inside the page: same origin, so it carries the page's sign-in and its Origin (the API refuses a write without it). */
@@ -300,8 +320,13 @@ test('S5: As a Member, the team pages are read-only and an admin-only action isn
   await settingsPage(page, 'Team settings', 'Audit log')
   await expect(main(page).getByRole('button', { name: 'Download CSV' })).toBeVisible()
   // And nothing is checked only in the page: the same invite, sent straight to the Worker as a Member, is refused.
-  const refused = await api(page, 'POST', '/api/members/invites', { name: 'Ship refused', email: `refused-${crypto.randomUUID().slice(0, 8)}@example.test`, role: 'member' })
+  const refusedEmail = `refused-${crypto.randomUUID().slice(0, 8)}@example.test`
+  const refused = await api(page, 'POST', '/api/members/invites', { name: 'Ship refused', email: refusedEmail, role: 'member' })
   expect(refused.status).toBe(403)
+  // The role's refusal (an Origin failure would carry a reason), and nothing was written.
+  expect(refused.json.error.code).toBe('forbidden')
+  expect(refused.json.error.reason).toBeUndefined()
+  expect((await allMembers(page)).some(m => m.email === refusedEmail), 'no member was made').toBe(false)
 })
 
 test('S6: Two tabs edit the same setting; the second save shows a conflict with the current value', async ({ context, page }) => {
@@ -345,7 +370,7 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   await expect(access).toContainText('Live until')
 
   // The Inhouse team member, on the Inhouse app and in their own browser: the audit log is open to them while the grant is live.
-  const { context: alexContext, page: alex } = await pageFor(browser, 'inhouse')
+  const { context: alexContext, page: alex } = await pageFor(browser, 'inhouse', 'Inhouse team')
   await expect(await accountMenu(alex)).toContainText('Inhouse team')
   await closeMenu(alex)
   await settingsPage(alex, 'Team settings', 'Audit log')
@@ -389,7 +414,7 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   const after = await auditCounts(page)
   expect(after.gave, 'one grant line more').toBe(before.gave + 1)
   expect(after.ended, 'one end line more').toBe(before.ended + 1)
-  expect(after.looked, 'the Inhouse team\'s reads while it was live').toBeGreaterThan(before.looked)
+  expect(after.looked, 'the Inhouse team\'s opening of the audit log while it was live').toBeGreaterThan(before.looked)
   await settingsPage(page, 'Team settings', 'Audit log')
   // On the page: the newest line is the end (nothing else wrote after it), and the grant and its use are on it.
   await expect(main(page).locator('div.py-4').first()).toContainText(new RegExp(`${people.admin.name} ended the Inhouse team.s access`))
@@ -406,7 +431,7 @@ test('S8: The Admin invites a person; their first sign-in lands as a Member with
   await expect(main(page).getByText(who.name, { exact: true })).toBeVisible()
   if (!phone()) await expect(row(page, who.name)).toContainText('Invited')
 
-  const theirs = await pageForSubject(browser, who.subject)
+  const theirs = await pageForSubject(browser, who.subject, 'invitee')
   await ready(theirs)
   const menu = await accountMenu(theirs)
   await expect(menu).toContainText(who.name)
@@ -416,7 +441,7 @@ test('S8: The Admin invites a person; their first sign-in lands as a Member with
 test('S9: A person who wasn\'t invited sees "You\'re not on this team". A removed member\'s next request is refused', async ({ browser, context, page, request }) => {
   // Never invited.
   const stranger = newPerson('stranger')
-  const outsider = await pageForSubject(browser, stranger.subject)
+  const outsider = await pageForSubject(browser, stranger.subject, 'not invited')
   await expect(h1(outsider)).toHaveText("You're not on this team")
   await expect(main(outsider)).toContainText('Ask an admin to invite you')
 
@@ -425,7 +450,7 @@ test('S9: A person who wasn\'t invited sees "You\'re not on this team". A remove
   await openAs(context, page, 'admin')
   await settingsPage(page, 'Team settings', 'Members')
   await invite(page, leaver)
-  const theirs = await pageForSubject(browser, leaver.subject)
+  const theirs = await pageForSubject(browser, leaver.subject, 'removed member')
   await ready(theirs)
   await expect(await accountMenu(theirs)).toContainText(leaver.name)
 
