@@ -69,7 +69,7 @@ export type Root = {
   liveCount(): number
   /**
    * Bytes of a live run's events written but not yet taken by the Worker's connection; null for no such run or no
-   * stream yet. Bounded by backpressure: past the response's high-water mark the session's stdout isn't read.
+   * stream yet. Bounded by backpressure: past the response's high-water mark the session's channel isn't read.
    */
   bufferedBytes(runId: string): number | null
   /** The SIGTERM path: refuses new runs (503), stops every run, starting ones included, and resolves once each has ended. */
