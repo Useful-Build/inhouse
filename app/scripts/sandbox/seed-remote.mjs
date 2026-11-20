@@ -1,9 +1,12 @@
 // Seeds a sandbox D1 with the invented brand (server/seed/), for a per-PR test deployment or the candidate. Run in app/,
 // after `wrangler d1 migrations apply <name> --remote`:
-//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/sandbox/seed-remote.mjs --config <sandbox config> --database <name>
-// In order, and nothing remote before the checks pass:
-//   1. names.mjs must pass <name> (sandbox-wide rule), before anything else runs;
-//   2. the config must pass check-product-config.mjs --sandbox, and bind <name> as a D1 database;
+//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/sandbox/seed-remote.mjs (--per-pr <N> | --candidate) \
+//     --config <sandbox config> --database <name>
+// The caller states the mode, as for the config check. In order, and nothing remote before the checks pass:
+//   1. <name> must be PR N's D1 name (names.mjs's perPrNames), or for the candidate a sandbox name that is no PR's,
+//      before anything else runs;
+//   2. the config must pass check-product-config.mjs --sandbox in the same mode, and bind <name> as a D1 database. The
+//      config's path is made absolute once, and that one path goes to the lock and to wrangler;
 //   3. the seed renders to SQL here, with no network: server/migrations/ applied to an in-memory SQLite, then
 //      server/seed/seed.ts's seedBrand run against it through a D1-shaped wrapper that records every write statement
 //      that committed, in order. Replayed on a database migrated the same way, those writes leave the same rows (every id,
@@ -16,11 +19,11 @@
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { checkSandboxConfig, stripJsonc } from '../check-product-config.mjs'
-import { SandboxNameError, assertSandboxName } from './names.mjs'
+import { checkSandboxConfig, parseSandboxMode, stripJsonc } from '../check-product-config.mjs'
+import { SandboxNameError, assertCandidateName, perPrNames } from './names.mjs'
 
 const appDir = fileURLToPath(new URL('../../', import.meta.url))
 const MIGRATIONS = join(appDir, 'server/migrations')
@@ -103,15 +106,19 @@ export async function renderSeedSql({ hashKey, nowMs }) {
   const writes = []
   const d1 = recordingD1(db, writes)
   const seeded = await seedBrand(d1, openStores({ DB: d1, FILES: undefined, AUDIT_HASH_KEY: hashKey }), nowMs)
-  return { sql: writes.map(w => `${renderStmt(w)};`), seeded, db }
+  // renderStmt ends each statement with its own ';'.
+  return { sql: writes.map(w => renderStmt(w)), seeded, db }
 }
 
-const usageText = 'usage: CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/sandbox/seed-remote.mjs --config <sandbox config> --database <name>'
+const usageText = 'usage: CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/sandbox/seed-remote.mjs (--per-pr <N> | --candidate) --config <sandbox config> --database <name>'
 class Usage extends Error {}
 class Refused extends Error {}
 
-function parseArgs(argv) {
-  const flags = {}
+function parseArgs(all) {
+  let mode
+  let argv
+  try { ({ mode, rest: argv } = parseSandboxMode(all)) } catch (err) { throw new Usage(err.message) }
+  const flags = { mode }
   for (let i = 0; i < argv.length; i += 2) {
     const name = /^--(config|database)$/.exec(argv[i])?.[1]
     if (!name || Object.hasOwn(flags, name) || i + 1 >= argv.length) throw new Usage(`unexpected argument ${JSON.stringify(argv[i])}`)
@@ -131,18 +138,23 @@ function wrangler(args) {
 }
 
 async function main(argv) {
-  const { config: configPath, database } = parseArgs(argv)
-  // 1. The name first: nothing else runs for a name outside the sandbox.
-  try { assertSandboxName(database) } catch (err) {
-    if (err instanceof SandboxNameError) throw new Refused(err.message)
-    throw err
+  const { mode, config: givenPath, database } = parseArgs(argv)
+  // 1. The name first: nothing else runs for a name outside this mode's.
+  if (mode.perPr !== undefined) {
+    if (database !== perPrNames(mode.perPr).d1) throw new Refused(`${JSON.stringify(database)} is not PR ${mode.perPr}'s D1 name (${perPrNames(mode.perPr).d1})`)
+  } else {
+    try { assertCandidateName(database) } catch (err) {
+      if (err instanceof SandboxNameError) throw new Refused(err.message)
+      throw err
+    }
   }
+  const configPath = resolve(givenPath)
   // 2. The config passes the lock and binds this database.
   let config
   try { config = JSON.parse(stripJsonc(readFileSync(configPath, 'utf8'))) } catch (err) { throw new Usage(`can't read ${configPath} as JSONC: ${err.message}`) }
   let failures
   try {
-    failures = checkSandboxConfig(config, { accountId: process.env.CF_SANDBOX_ACCOUNT_ID, zone: process.env.SBX_ZONE })
+    failures = checkSandboxConfig(config, { accountId: process.env.CF_SANDBOX_ACCOUNT_ID, zone: process.env.SBX_ZONE, mode, configDir: dirname(configPath) })
   } catch (err) {
     if (err instanceof SandboxNameError) throw new Usage(err.message)
     throw err

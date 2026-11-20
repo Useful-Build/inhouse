@@ -1,17 +1,14 @@
-// check-product-config --sandbox fixture: PR 7's config in the shape the vite plugin's generated wrangler.json takes
-// (its bookkeeping keys and every binding kind present but empty), so the lock's "other keys must be empty" rule
-// doesn't refuse a real build's output. Invented account id and zone.
+// check-product-config --sandbox fixture: PR 7's config as the ops repo's config.mjs writes it from the vite plugin's
+// generated wrangler.json: every binding kind present but empty and the plugin's own rules kept, its config paths
+// dropped and `migrations_dir` rebased beside the config (raw-vite-output.jsonc is the shape before). Invented values.
 {
-	"configPath": "/tmp/build/app/wrangler.test.jsonc",
-	"userConfigPath": "/tmp/build/app/wrangler.test.jsonc",
-	"topLevelName": "inhouse-sbx-pr7",
 	"definedEnvironments": [],
 	"legacy_env": true,
 	"compatibility_date": "2026-11-13",
 	"compatibility_flags": [],
 	"jsx_factory": "React.createElement",
 	"jsx_fragment": "React.Fragment",
-	"rules": [],
+	"rules": [{ "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }],
 	"name": "inhouse-sbx-pr7",
 	"main": "index.js",
 	"account_id": "0123456789abcdef0123456789abcdef",
@@ -25,7 +22,7 @@
 	"queues": { "producers": [], "consumers": [] },
 	"connect": [],
 	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-sbx-pr7-files" }],
-	"d1_databases": [{ "binding": "DB", "database_name": "inhouse-sbx-pr7-db", "migrations_dir": "/tmp/build/app/server/migrations" }],
+	"d1_databases": [{ "binding": "DB", "database_name": "inhouse-sbx-pr7-db", "migrations_dir": "migrations" }],
 	"vectorize": [],
 	"ai_search_namespaces": [],
 	"ai_search": [],

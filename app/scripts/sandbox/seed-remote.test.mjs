@@ -11,7 +11,7 @@
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import { stripJsonc } from '../check-product-config.mjs'
@@ -36,8 +36,9 @@ if (args.includes('--command')) console.log(JSON.stringify([{ results: [{ n: ${p
 `)
   return { fake, calls: () => readFileSync(log, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) }
 }
-const run = (args, fake, env = ENV) =>
-  spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env, SEED_REMOTE_WRANGLER_FOR_TESTS: fake } })
+const PR12 = ['--per-pr', '12']
+const run = (args, fake, env = ENV, cwd = undefined) =>
+  spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8', env: { PATH: process.env.PATH, ...env, SEED_REMOTE_WRANGLER_FOR_TESTS: fake } })
 const configWith = change => {
   const c = JSON.parse(stripJsonc(readFileSync(fixture, 'utf8')))
   change(c)
@@ -47,48 +48,67 @@ const configWith = change => {
 }
 
 describe('refuses before any wrangler call (failure 1)', () => {
-  for (const name of ['inhouse-app', 'live-product-db', 'wasimjalali-com', '', 'inhouse-sbx-pr12-db\n', 'INHOUSE-SBX-PR12-DB', 'xinhouse-sbx-pr12-db']) {
-    test(`a non-sandbox database ${JSON.stringify(name)}`, () => {
+  for (const name of ['inhouse-app', 'live-product-db', 'wasimjalali-com', '', 'inhouse-sbx-pr12-db\n', 'INHOUSE-SBX-PR12-DB', 'xinhouse-sbx-pr12-db', 'inhouse-sbx-db', 'inhouse-sbx-pr13-db', 'inhouse-sbx-pr12-files']) {
+    test(`a database that is not PR 12's: ${JSON.stringify(name)}`, () => {
       const w = fakeWrangler(0)
-      const r = run(['--config', fixture, '--database', name], w.fake)
+      const r = run([...PR12, '--config', fixture, '--database', name], w.fake)
       expect(r.status).toBe(1)
-      expect(r.stderr).toContain('is not a sandbox name')
+      expect(r.stderr).toContain("is not PR 12's D1 name (inhouse-sbx-pr12-db)")
       expect(w.calls()).toEqual([])
     })
   }
+  for (const name of ['inhouse-sbx-pr12-db', 'live-product-db', 'inhouse-app']) {
+    test(`a database that is not the candidate's: ${name}`, () => {
+      const w = fakeWrangler(0)
+      const r = run(['--candidate', '--config', fixture, '--database', name], w.fake)
+      expect(r.status).toBe(1)
+      expect(r.stderr).toMatch(/is a per-PR name, not the candidate's|is not a sandbox name/)
+      expect(w.calls()).toEqual([])
+    })
+  }
+  test('PR 12\'s config in PR 13\'s mode', () => {
+    const w = fakeWrangler(0)
+    const r = run(['--per-pr', '13', '--config', fixture, '--database', 'inhouse-sbx-pr13-db'], w.fake)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('is not PR 13\'s worker name')
+    expect(w.calls()).toEqual([])
+  })
   test('a config the lock refuses (another account)', () => {
     const w = fakeWrangler(0)
-    const r = run(['--config', configWith(c => { c.account_id = 'fedcba9876543210fedcba9876543210' }), '--database', 'inhouse-sbx-pr12-db'], w.fake)
+    const r = run([...PR12, '--config', configWith(c => { c.account_id = 'fedcba9876543210fedcba9876543210' }), '--database', 'inhouse-sbx-pr12-db'], w.fake)
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('account_id is missing or is not the sandbox account')
     expect(w.calls()).toEqual([])
   })
-  test('a sandbox database the config does not bind', () => {
+  test('a PR 12 database the config does not bind', () => {
     const w = fakeWrangler(0)
-    const r = run(['--config', fixture, '--database', 'inhouse-sbx-db'], w.fake)
+    const r = run([...PR12, '--config', configWith(c => { c.d1_databases = [] }), '--database', 'inhouse-sbx-pr12-db'], w.fake)
     expect(r.status).toBe(1)
-    expect(r.stderr).toContain('binds no D1 named inhouse-sbx-db')
+    expect(r.stderr).toContain('binds no D1 named inhouse-sbx-pr12-db')
     expect(w.calls()).toEqual([])
   })
 })
 
 describe('usage (failure 4)', () => {
-  test('exits 2 on missing or repeated arguments, a missing hash key or a missing sandbox environment, calling nothing', () => {
+  test('exits 2 on a missing mode, missing or repeated arguments, a missing hash key or a missing sandbox environment, calling nothing', () => {
     const w = fakeWrangler(0)
     expect(run([], w.fake).status).toBe(2)
-    expect(run(['--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
-    expect(run(['--config', fixture, '--database'], w.fake).status).toBe(2)
-    expect(run(['--config', fixture, '--database', 'inhouse-sbx-pr12-db', '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
-    expect(run(['--config', configWith(c => { delete c.vars.AUDIT_HASH_KEY }), '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
-    expect(run(['--config', fixture, '--database', 'inhouse-sbx-pr12-db'], w.fake, {}).status).toBe(2)
+    expect(run(['--config', fixture, '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
+    expect(run(['--per-pr', '0', '--config', fixture, '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
+    expect(run([...PR12, '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
+    expect(run([...PR12, '--config', fixture, '--database'], w.fake).status).toBe(2)
+    expect(run([...PR12, '--config', fixture, '--database', 'inhouse-sbx-pr12-db', '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
+    expect(run([...PR12, '--config', configWith(c => { delete c.vars.AUDIT_HASH_KEY }), '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
+    expect(run([...PR12, '--config', fixture, '--database', 'inhouse-sbx-pr12-db'], w.fake, {}).status).toBe(2)
     expect(w.calls()).toEqual([])
   })
 })
 
 describe('the remote steps (failure 3)', () => {
-  test('checks the database is empty, then executes the rendered file on that database, remotely, with the config', () => {
+  test('checks the database is empty, then executes the rendered file on that database, remotely, with the config\'s absolute path', () => {
     const w = fakeWrangler(0)
-    const r = run(['--config', fixture, '--database', 'inhouse-sbx-pr12-db'], w.fake)
+    // A relative --config, from the fixture's own folder: wrangler (which runs in app/) must get the absolute path.
+    const r = run([...PR12, '--config', 'pass-per-pr.jsonc', '--database', 'inhouse-sbx-pr12-db'], w.fake, ENV, dirname(fixture))
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
     const calls = w.calls()
@@ -101,10 +121,12 @@ describe('the remote steps (failure 3)', () => {
     expect(calls[1].args.slice(8)).toEqual(['--yes'])
     expect(calls[1].sql).toContain("'sam@example.test'")
     expect(calls[1].sql).toContain("'s:cap'")
+    expect(calls[1].sql).not.toContain(';;')
+    expect(calls[1].sql.trim().endsWith(';')).toBe(true)
   })
   test('refuses a database that already has people, without seeding', () => {
     const w = fakeWrangler(3)
-    const r = run(['--config', fixture, '--database', 'inhouse-sbx-pr12-db'], w.fake)
+    const r = run([...PR12, '--config', fixture, '--database', 'inhouse-sbx-pr12-db'], w.fake)
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('already has 3 people')
     expect(w.calls()).toHaveLength(1)

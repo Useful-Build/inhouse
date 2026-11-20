@@ -9,7 +9,8 @@
 import { fc, test as propTest } from '@fast-check/vitest'
 import { describe, expect, test } from 'vitest'
 import {
-  SandboxNameError, assertPerPrName, assertSandboxHost, assertSandboxName, isPerPrName, isSandboxName, prNumberOf,
+  SandboxNameError, assertCandidateName, assertPerPrName, assertPrNumber, assertSandboxHost, assertSandboxName, isPerPrName,
+  isSandboxName, perPrNames, prNumberOf,
 } from './names.mjs'
 
 const ZONE = 'zone.example.test'
@@ -60,6 +61,26 @@ describe('the sandbox-wide rule (failures 1, 4)', () => {
   for (const name of SANDBOX) {
     test(`accepts ${name}`, () => expect(assertSandboxName(name)).toBe(name))
   }
+})
+
+describe('PR numbers, PR names and the candidate rule (failures 1, 2)', () => {
+  test('perPrNames gives PR 12 its literal names, and refuses anything but a PR number', () => {
+    expect(perPrNames(12)).toEqual({
+      worker: 'inhouse-sbx-pr12', d1: 'inhouse-sbx-pr12-db', r2: 'inhouse-sbx-pr12-files', container: 'inhouse-sbx-pr12',
+      image: 'inhouse-sbx-pr12', brand: 'inhouse-sbx-pr12-brand', team: 'inhouse-sbx-pr12-team',
+    })
+    expect(perPrNames(999999).d1).toBe('inhouse-sbx-pr999999-db')
+    for (const pr of [0, -1, 1.5, 1_000_000, '12', NaN, undefined, null]) {
+      expect(() => assertPrNumber(pr), String(pr)).toThrow(SandboxNameError)
+      expect(() => perPrNames(pr), String(pr)).toThrow(SandboxNameError)
+    }
+  })
+  test('the candidate rule takes shared sandbox names only', () => {
+    for (const name of ['inhouse-sbx-db', 'inhouse-sbx-files', 'inhouse-sbx-product', 'inhouse-sbx-brand']) expect(assertCandidateName(name)).toBe(name)
+    for (const name of ['inhouse-sbx-pr12', 'inhouse-sbx-pr12-db', 'inhouse-app', '', 'inhouse-sbx-DB']) expect(() => assertCandidateName(name), name).toThrow(SandboxNameError)
+    expect(assertSandboxHost('inhouse-sbx-brand.zone.example.test', 'zone.example.test', 'candidate')).toBe('inhouse-sbx-brand.zone.example.test')
+    expect(() => assertSandboxHost('inhouse-sbx-pr12-brand.zone.example.test', 'zone.example.test', 'candidate')).toThrow(/per-PR name/)
+  })
 })
 
 describe('hosts (failure 3)', () => {

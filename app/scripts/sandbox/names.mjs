@@ -41,6 +41,26 @@ export function assertPerPrName(name, pr) {
   return name
 }
 
+/** Throws unless `pr` is a PR number a per-PR name can carry (1..999999). Returns it. */
+export function assertPrNumber(pr) {
+  if (!Number.isInteger(pr) || pr < 1 || pr > 999_999) throw new SandboxNameError(`${show(pr)} is not a PR number (1 to 999999)`)
+  return pr
+}
+
+/** The exact names of PR `pr`'s test deployment (the brief's naming; the ops repo's deploy and cleanup use these). */
+export function perPrNames(pr) {
+  assertPrNumber(pr)
+  const worker = `inhouse-sbx-pr${pr}`
+  return { worker, d1: `${worker}-db`, r2: `${worker}-files`, container: worker, image: worker, brand: `${worker}-brand`, team: `${worker}-team` }
+}
+
+/** Throws unless `name` is a shared sandbox name: sandbox-wide but no PR's. Returns the name. */
+export function assertCandidateName(name) {
+  assertSandboxName(name)
+  if (isPerPrName(name)) throw new SandboxNameError(`${show(name)} is a per-PR name, not the candidate's`)
+  return name
+}
+
 /** Throws unless `name` is a sandbox name (per-PR or shared). Returns the name. */
 export function assertSandboxName(name) {
   if (!isSandboxName(name)) throw new SandboxNameError(`${show(name)} is not a sandbox name (inhouse-sbx-...)`)
@@ -54,7 +74,8 @@ export function assertZone(zone) {
 }
 
 /**
- * Throws unless `host` is `<name>.<zone>` with <name> passing `rule` ('per-pr', optionally for PR `pr`, or 'sandbox').
+ * Throws unless `host` is `<name>.<zone>` with <name> passing `rule` ('per-pr', optionally for PR `pr`; 'sandbox'; or
+ * 'candidate', a sandbox name that is no PR's).
  * Returns the host.
  */
 export function assertSandboxHost(host, zone, rule, pr) {
@@ -65,6 +86,7 @@ export function assertSandboxHost(host, zone, rule, pr) {
   try {
     if (rule === 'per-pr') assertPerPrName(label, pr)
     else if (rule === 'sandbox') assertSandboxName(label)
+    else if (rule === 'candidate') assertCandidateName(label)
     else throw new Error(`assertSandboxHost: unknown rule ${show(rule)}`)
   } catch (err) {
     if (err instanceof SandboxNameError) throw new SandboxNameError(`host ${show(host)}: ${err.message}`)

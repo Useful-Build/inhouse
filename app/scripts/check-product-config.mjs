@@ -16,36 +16,54 @@
 //   - a service token maps to anything but `monitor` or `smoke`;
 //   - a brand origin is on `workers.dev` (preview URLs live there too: `<version>-<worker>.<subdomain>.workers.dev`);
 //   - `workers_dev` or `preview_urls` isn't explicitly false (wrangler turns both on when they're left out);
-//   - any Worker, D1, R2, container, Durable Object script, service or image name, route or Access host carries
-//     `inhouse-sbx-` (a sandbox config never passes as a product one).
+//   - any string anywhere in it (a name, a host, a var) carries `inhouse-sbx-` (a sandbox config never passes as a
+//     product one);
+//   - any key at any depth is `__proto__`, `constructor` or `prototype` (both modes; see below).
 //
 // Sandbox mode (P3 PR0 item 12), the prefix lock for the sandbox, which shares its Cloudflare account with live products:
-//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox <config path>
-// Both variables are required (exit 2 without them). A config whose Worker `name` passes the per-PR rule
-// (scripts/sandbox/names.mjs) is a per-PR test deployment; any other is the candidate. It refuses a config when:
-//   - the Worker `name` isn't a sandbox name, or any D1, R2, container or image name isn't one; in a per-PR config,
-//     every one of them must be a per-PR name of the Worker's own PR (a PR's code never binds the candidate's data);
-//   - a D1 binding has a `database_id` or `preview_database_id`, or an R2 binding a `preview_bucket_name`: wrangler then
-//     binds by the checked name alone (deploy finds or makes the database by `database_name`; wrangler 4.162.0's D1
-//     provisioning), so an id can't point the Worker at a live product's database;
-//   - a route or custom domain isn't exactly `<sandbox name>.<SBX_ZONE>` (with the `/path` a route may add), names a
-//     `zone_id` or another `zone_name`; or an INHOUSE_ACCESS origin isn't `https://<sandbox name>.<SBX_ZONE>`;
+//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --per-pr <N> <config path>
+//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --candidate <config path>
+// The caller states the mode (never inferred from the config, which a PR writes). Both variables are required (exit 2
+// without them). Names come from scripts/sandbox/names.mjs. It refuses a config when:
+//   - per-PR: the Worker, D1, R2, container and image names aren't exactly PR N's (`inhouse-sbx-pr<N>`, `-db`, `-files`)
+//     and every host isn't `inhouse-sbx-pr<N>-brand` or `-team` on SBX_ZONE; candidate: any of them is a per-PR name or
+//     not a sandbox name (a PR's code never binds the candidate's data, and the candidate never binds a PR's);
+//   - any key at any depth is `__proto__`, `constructor` or `prototype`: JSON.parse keeps `__proto__` as an own key, but
+//     wrangler's JSONC parser sets the object's prototype from it, so a value hidden there would pass this check and
+//     still reach wrangler (reproduced on wrangler 4.162.0);
+//   - a D1 binding has a key but `binding`, `database_name` and `migrations_dir` (so no `database_id`: wrangler then
+//     binds by the checked name alone, finding or making the database by `database_name` in wrangler 4.162.0's D1
+//     provisioning), or an R2 binding a key but `binding`, `bucket_name` and `jurisdiction`; or more than one of either;
+//   - a route or custom domain isn't exactly a sandbox host (with the `/path` a route may add), names a `zone_id` or
+//     another `zone_name`; or an INHOUSE_ACCESS origin isn't `https://<sandbox host>`;
 //   - `account_id` is missing or isn't CF_SANDBOX_ACCOUNT_ID;
 //   - an `ai` binding is present (the sandbox runs the scripted model only, no spend);
-//   - a container has no `max_instances` (wrangler's default is 20) or more than 2, no explicit `name`, an
-//     `image_build_context`, or an `image` that isn't `registry.cloudflare.com/<CF_SANDBOX_ACCOUNT_ID>/<sandbox name>:<tag>`
-//     (a pushed image: the deploy never builds from a Dockerfile);
-//   - a Durable Object binding names another Worker's script, or `build` has a `command` (wrangler would run it);
-//   - any other top-level key holds anything but empty values (services, KV, queues, tail consumers and every other
-//     binding kind could reach a live product's resources; this list fails closed on keys added later);
+//   - containers: more than one, a key but `class_name`, `name`, `image`, `max_instances` and `instance_type` (so no
+//     `image_build_context` or `images`), `max_instances` missing (wrangler's default is 20) or not 1 or 2, or an `image`
+//     that isn't `registry.cloudflare.com/<CF_SANDBOX_ACCOUNT_ID>/<name>:<tag>` or that exists as a file beside the
+//     config (wrangler builds any image path that exists, relative to the config's folder);
+//   - a path leaves the build folder: `main` and a D1 `migrations_dir` must be plain relative paths (no `..`, not
+//     absolute) and `assets.directory` exactly `../client` (the vite plugin's client folder beside the Worker's);
+//   - a Durable Object binding has a key but `name` and `class_name` (no other Worker's `script_name`); a migration step
+//     a key but `tag`, `new_classes`, `new_sqlite_classes`, `renamed_classes` and `deleted_classes` (no
+//     `transferred_classes`, which moves another Worker's objects); `build` a key but `watch_dir` (no `command`);
+//     `observability` a key but `enabled`, `head_sampling_rate`, `logs` and `traces` (those two only `enabled`,
+//     `head_sampling_rate`, `invocation_logs` and `persist`: no `destinations`); `rules` anything but the vite
+//     plugin's own ESModule rule; `python_modules` anything but wrangler's default;
+//   - any other top-level key holds anything but empty values (services, KV, queues, tail consumers, aliases, a tsconfig,
+//     the vite plugin's config paths and every other kind: this list fails closed on keys added later);
 //   - `env` is set, or `workers_dev` or `preview_urls` isn't explicitly false;
 //   - per-PR: vars.INHOUSE_TEST_BUILD isn't "1" (Q2's one exception: the test issuer in a deployed build, sandbox only);
 //   - candidate: any product rule above but the `inhouse-sbx-` one fails (it is the product build, rehearsed).
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { SandboxNameError, assertPerPrName, assertSandboxHost, assertSandboxName, assertZone, prNumberOf } from './sandbox/names.mjs'
+import {
+  SandboxNameError, assertCandidateName, assertPrNumber, assertSandboxHost, assertZone, perPrNames,
+} from './sandbox/names.mjs'
 
-const USAGE = 'usage: node scripts/check-product-config.mjs [--sandbox] <wrangler config path>\n' +
+const USAGE = 'usage: node scripts/check-product-config.mjs <wrangler config path>\n' +
+  '       node scripts/check-product-config.mjs --sandbox (--per-pr <N> | --candidate) <wrangler config path>\n' +
   '       (--sandbox reads CF_SANDBOX_ACCOUNT_ID and SBX_ZONE from the environment)'
 const usage = msg => {
   console.error(`check-product-config: ${msg}\n${USAGE}`)
@@ -95,7 +113,7 @@ const SECRET_LIKE = /(SECRET|TOKEN|PASSWORD|PRIVATE|_KEY)$/i
 
 /** Every reason this config may not deploy as a product (empty: it may). */
 export function checkConfig(config) {
-  return [...productRules(config), ...sandboxNamesIn(config)]
+  return [...forbiddenKeys(config), ...productRules(config), ...sandboxStrings(config)]
 }
 
 /** The product rules but the `inhouse-sbx-` one (the candidate in the sandbox is checked against these too). */
@@ -162,34 +180,22 @@ function productRules(config) {
   return failures
 }
 
-/** Every Cloudflare name and host a config acts on, as [where, value]. Values are whatever the config holds. */
-function namesIn(config) {
-  const out = []
-  const list = v => (Array.isArray(v) ? v : [])
-  out.push(['name', config.name])
-  list(config.d1_databases).forEach((d, i) => out.push([`d1_databases[${i}].database_name`, d?.database_name]))
-  list(config.r2_buckets).forEach((b, i) => {
-    out.push([`r2_buckets[${i}].bucket_name`, b?.bucket_name])
-    if (b?.preview_bucket_name !== undefined) out.push([`r2_buckets[${i}].preview_bucket_name`, b.preview_bucket_name])
+const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype'])
+/** Every key at any depth that wrangler's parser would read differently from JSON.parse, or that names a prototype. */
+function forbiddenKeys(value, path = 'config') {
+  if (!value || typeof value !== 'object') return []
+  return Object.keys(value).flatMap(key => {
+    const at = Array.isArray(value) ? `${path}[${key}]` : `${path}.${key}`
+    if (FORBIDDEN.has(key)) return [`${at} is a forbidden key (wrangler's parser would set a prototype from it, or read it as one)`]
+    return forbiddenKeys(value[key], at)
   })
-  list(config.containers).forEach((c, i) => {
-    out.push([`containers[${i}].name`, c?.name])
-    out.push([`containers[${i}].image`, c?.image])
-  })
-  list(config.durable_objects?.bindings).forEach((d, i) => {
-    if (d?.script_name !== undefined) out.push([`durable_objects.bindings[${i}].script_name`, d.script_name])
-  })
-  list(config.services).forEach((s, i) => out.push([`services[${i}].service`, s?.service]))
-  routesOf(config).forEach(([where, r]) => out.push([where, typeof r === 'string' ? r : r?.pattern]))
-  accessOrigins(config).forEach(([where, origin]) => out.push([where, origin]))
-  return out
 }
 
-/** The product's reverse lock: no sandbox name or host. */
-function sandboxNamesIn(config) {
-  return namesIn(config)
-    .filter(([, v]) => typeof v === 'string' && /inhouse-sbx-/i.test(v))
-    .map(([where, v]) => `${where} is a sandbox name or host (${JSON.stringify(v)}): a product config never carries inhouse-sbx-`)
+/** The product's reverse lock: no string anywhere carries `inhouse-sbx-`. */
+function sandboxStrings(value, path = 'config') {
+  if (typeof value === 'string') return /inhouse-sbx-/i.test(value) ? [`${path} carries inhouse-sbx- (a sandbox name or host): a product config never does`] : []
+  if (!value || typeof value !== 'object') return []
+  return Object.keys(value).flatMap(key => sandboxStrings(value[key], Array.isArray(value) ? `${path}[${key}]` : `${path}.${key}`))
 }
 
 /** [where, route] for `routes` and `route`. */
@@ -210,111 +216,161 @@ function accessOrigins(config) {
 }
 
 /**
- * Top-level keys a sandbox config may fill. Each one wrangler or the vite plugin's generated config uses, and either
- * checked below or unable to reach another Worker's resources. Every other key must be empty.
+ * Top-level keys a sandbox config may fill: each is checked below, or is the Worker's own setting and can't reach
+ * another Worker's resources or a file outside the build. Every other key must be empty.
  */
 const SANDBOX_KEYS = new Set([
   // Checked below.
   'name', 'account_id', 'workers_dev', 'preview_urls', 'vars', 'd1_databases', 'r2_buckets', 'containers', 'durable_objects',
-  'routes', 'route', 'build',
-  // The Worker's own code, assets and settings.
-  '$schema', 'main', 'compatibility_date', 'compatibility_flags', 'assets', 'version_metadata', 'migrations', 'observability',
-  'upload_source_maps', 'limits', 'triggers', 'logpush', 'keep_vars', 'rules', 'no_bundle', 'minify', 'keep_names',
-  'find_additional_modules', 'base_dir', 'preserve_file_names', 'tsconfig', 'jsx_factory', 'jsx_fragment', 'define', 'alias',
-  'python_modules', 'send_metrics', 'dev',
-  // The vite plugin's bookkeeping in its generated wrangler.json.
-  'configPath', 'userConfigPath', 'topLevelName', 'definedEnvironments', 'targetEnvironment', 'legacy_env',
+  'migrations', 'routes', 'route', 'build', 'main', 'assets', 'observability', 'rules', 'python_modules',
+  // The Worker's own settings.
+  '$schema', 'compatibility_date', 'compatibility_flags', 'version_metadata', 'upload_source_maps', 'limits', 'triggers',
+  'logpush', 'keep_vars', 'no_bundle', 'minify', 'keep_names', 'preserve_file_names', 'jsx_factory', 'jsx_fragment',
+  'send_metrics', 'legacy_env', 'dev',
 ])
-const isEmpty = v => v === undefined || v === null ||
+const isEmpty = v => v === undefined || v === null || v === false || v === '' ||
   (Array.isArray(v) ? v.length === 0 : typeof v === 'object' && Object.values(v).every(isEmpty))
 const IMAGE_TAG = /^(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})$/
 const ACCOUNT_ID = /^[0-9a-f]{32}$/
+/** The vite plugin's `rules` in its generated wrangler.json, and wrangler's default `python_modules`. */
+const VITE_RULES = JSON.stringify([{ type: 'ESModule', globs: ['**/*.js', '**/*.mjs'] }])
+const DEFAULT_PYTHON_MODULES = JSON.stringify({ exclude: ['**/*.pyc'] })
+const D1_KEYS = new Set(['binding', 'database_name', 'migrations_dir'])
+const R2_KEYS = new Set(['binding', 'bucket_name', 'jurisdiction'])
+const CONTAINER_KEYS = new Set(['class_name', 'name', 'image', 'max_instances', 'instance_type'])
+const DO_KEYS = new Set(['name', 'class_name'])
+const MIGRATION_KEYS = new Set(['tag', 'new_classes', 'new_sqlite_classes', 'renamed_classes', 'deleted_classes'])
+const OBSERVABILITY_KEYS = new Set(['enabled', 'head_sampling_rate', 'logs', 'traces'])
+const OBSERVABILITY_PART_KEYS = new Set(['enabled', 'head_sampling_rate', 'invocation_logs', 'persist'])
+
+/** A relative path that stays inside its folder: no `..` segment, not absolute, no backslash or NUL. */
+const isInsidePath = p => typeof p === 'string' && p !== '' && !isAbsolute(p) && !/^[A-Za-z]:/.test(p) &&
+  !/[\\\0]/.test(p) && !p.split('/').includes('..')
 
 /**
  * Every reason this config may not deploy to the sandbox (empty: it may). `accountId` and `zone` are the sandbox's own
- * (CF_SANDBOX_ACCOUNT_ID, SBX_ZONE); a bad one throws, since no config could pass against it.
+ * (CF_SANDBOX_ACCOUNT_ID, SBX_ZONE); `mode` is `{ perPr: N }` or `{ candidate: true }`, from the caller; `configDir` is
+ * the folder the config file sits in (wrangler resolves an image path against it). A bad argument throws, since no
+ * config could pass against it.
  */
-export function checkSandboxConfig(config, { accountId, zone }) {
+export function checkSandboxConfig(config, { accountId, zone, mode, configDir }) {
   if (typeof accountId !== 'string' || !ACCOUNT_ID.test(accountId)) throw new SandboxNameError('CF_SANDBOX_ACCOUNT_ID must be 32 lowercase hex')
   assertZone(zone)
-  const failures = []
-  const pr = prNumberOf(config.name)
-  const perPr = pr !== null
-  /** The rule every name meets: the Worker's own PR's per-PR names, or (candidate) any sandbox name. */
-  const nameOk = (where, v) => {
-    try {
-      if (perPr) assertPerPrName(v, pr)
-      else assertSandboxName(v)
-    } catch (err) {
+  const perPr = mode?.perPr !== undefined
+  if (perPr === (mode?.candidate === true)) throw new SandboxNameError('give exactly one mode: { perPr: N } or { candidate: true }')
+  if (perPr) assertPrNumber(mode.perPr)
+  if (typeof configDir !== 'string' || !isAbsolute(configDir)) throw new SandboxNameError('configDir must be an absolute folder')
+  const names = perPr ? perPrNames(mode.perPr) : null
+  const failures = [...forbiddenKeys(config)]
+  const fail = msg => failures.push(msg)
+  /** A name this mode allows for `kind` (one of perPrNames' keys). */
+  const nameOk = (where, v, kind) => {
+    if (perPr) {
+      if (v !== names[kind]) fail(`${where}: ${JSON.stringify(v)} is not PR ${mode.perPr}'s ${kind} name (${names[kind]})`)
+      return
+    }
+    try { assertCandidateName(v) } catch (err) {
       if (!(err instanceof SandboxNameError)) throw err
-      failures.push(`${where}: ${err.message}`)
+      fail(`${where}: ${err.message}`)
     }
   }
   const hostOk = (where, host) => {
-    try {
-      assertSandboxHost(host, zone, perPr ? 'per-pr' : 'sandbox', perPr ? pr : undefined)
-    } catch (err) {
+    if (perPr) {
+      if (host !== `${names.brand}.${zone}` && host !== `${names.team}.${zone}`) fail(`${where}: host ${JSON.stringify(host)} is not PR ${mode.perPr}'s brand or team host on the sandbox zone`)
+      return
+    }
+    try { assertSandboxHost(host, zone, 'candidate') } catch (err) {
       if (!(err instanceof SandboxNameError)) throw err
-      failures.push(`${where}: ${err.message}`)
+      fail(`${where}: ${err.message}`)
     }
   }
-  const list = (key) => {
+  const list = key => {
     const v = config[key]
     if (v === undefined) return []
     if (Array.isArray(v)) return v
-    failures.push(`${key} must be a list`)
+    fail(`${key} must be a list`)
     return []
+  }
+  const onlyKeys = (where, value, allowed) => {
+    if (value === undefined) return
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return fail(`${where} must be an object`)
+    for (const k of Object.keys(value)) if (!allowed.has(k) && !FORBIDDEN.has(k)) fail(`${where}.${k} is set: a sandbox config may not use it`)
   }
 
   for (const [key, value] of Object.entries(config)) {
-    if (key === 'env' || key === 'ai') continue // each has its own rule below
-    if (!SANDBOX_KEYS.has(key) && !isEmpty(value)) failures.push(`${key} is set: a sandbox config may not use it (it could reach resources outside the sandbox)`)
+    if (key === 'env' || key === 'ai' || FORBIDDEN.has(key)) continue // each has its own rule
+    if (!SANDBOX_KEYS.has(key) && !isEmpty(value)) fail(`${key} is set: a sandbox config may not use it (it could reach resources or files outside the sandbox)`)
   }
-  if (Object.hasOwn(config, 'env')) failures.push('env is set: a deployable config has no env blocks (each could override what this checks)')
-  nameOk('name', config.name)
-  if (config.account_id !== accountId) failures.push('account_id is missing or is not the sandbox account (CF_SANDBOX_ACCOUNT_ID)')
-  if (config.ai !== undefined && config.ai !== null) failures.push('ai is set: the sandbox runs the scripted model only (no AI binding, no spend)')
-  if (config.workers_dev !== false) failures.push('workers_dev must be false (left out, wrangler turns it on)')
-  if (config.preview_urls !== false) failures.push('preview_urls must be false (left out, wrangler turns it on)')
-  if (config.build?.command !== undefined) failures.push('build.command is set: wrangler would run it in the job that holds the token')
+  if (Object.hasOwn(config, 'env')) fail('env is set: a deployable config has no env blocks (each could override what this checks)')
+  nameOk('name', config.name, 'worker')
+  if (config.account_id !== accountId) fail('account_id is missing or is not the sandbox account (CF_SANDBOX_ACCOUNT_ID)')
+  if (config.ai !== undefined && config.ai !== null) fail('ai is set: the sandbox runs the scripted model only (no AI binding, no spend)')
+  if (config.workers_dev !== false) fail('workers_dev must be false (left out, wrangler turns it on)')
+  if (config.preview_urls !== false) fail('preview_urls must be false (left out, wrangler turns it on)')
+  if (config.main !== undefined && !isInsidePath(config.main)) fail('main must be a relative path inside the build folder (no .., not absolute)')
+  onlyKeys('build', config.build, new Set(['watch_dir']))
+  if (config.assets !== undefined) {
+    onlyKeys('assets', config.assets, new Set(['binding', 'directory', 'not_found_handling', 'html_handling', 'run_worker_first']))
+    if (config.assets?.directory !== undefined && config.assets.directory !== '../client') fail('assets.directory must be ../client (the vite plugin\'s client folder)')
+  }
+  if (config.rules !== undefined && !isEmpty(config.rules) && JSON.stringify(config.rules) !== VITE_RULES) fail('rules may only be the vite plugin\'s ESModule rule')
+  if (config.python_modules !== undefined && JSON.stringify(config.python_modules) !== DEFAULT_PYTHON_MODULES) fail('python_modules may only be wrangler\'s default')
+  if (config.observability !== undefined) {
+    onlyKeys('observability', config.observability, OBSERVABILITY_KEYS)
+    for (const part of ['logs', 'traces']) onlyKeys(`observability.${part}`, config.observability?.[part], OBSERVABILITY_PART_KEYS)
+  }
 
-  list('d1_databases').forEach((d, i) => {
-    nameOk(`d1_databases[${i}].database_name`, d?.database_name)
-    for (const k of ['database_id', 'preview_database_id']) {
-      if (d?.[k] !== undefined) failures.push(`d1_databases[${i}].${k} is set: a sandbox D1 binds by its checked database_name only`)
-    }
+  const d1 = list('d1_databases')
+  if (d1.length > 1) fail('d1_databases has more than one database')
+  d1.forEach((d, i) => {
+    onlyKeys(`d1_databases[${i}]`, d, D1_KEYS)
+    nameOk(`d1_databases[${i}].database_name`, d?.database_name, 'd1')
+    if (d?.migrations_dir !== undefined && !isInsidePath(d.migrations_dir)) fail(`d1_databases[${i}].migrations_dir must be a relative path inside the build folder (no .., not absolute)`)
   })
-  list('r2_buckets').forEach((b, i) => {
-    nameOk(`r2_buckets[${i}].bucket_name`, b?.bucket_name)
-    if (b?.preview_bucket_name !== undefined) failures.push(`r2_buckets[${i}].preview_bucket_name is set: a sandbox config has no preview bucket`)
+  const r2 = list('r2_buckets')
+  if (r2.length > 1) fail('r2_buckets has more than one bucket')
+  r2.forEach((b, i) => {
+    onlyKeys(`r2_buckets[${i}]`, b, R2_KEYS)
+    nameOk(`r2_buckets[${i}].bucket_name`, b?.bucket_name, 'r2')
   })
   const registry = `registry.cloudflare.com/${accountId}/`
-  list('containers').forEach((c, i) => {
+  const containers = list('containers')
+  if (containers.length > 1) fail('containers has more than one container')
+  containers.forEach((c, i) => {
     const where = `containers[${i}]`
-    if (c?.name === undefined) failures.push(`${where} has no name (wrangler would make one from the Worker and class names)`)
-    else nameOk(`${where}.name`, c.name)
+    onlyKeys(where, c, CONTAINER_KEYS)
+    if (c?.name === undefined) fail(`${where} has no name (wrangler would make one from the Worker and class names)`)
+    else nameOk(`${where}.name`, c.name, 'container')
     if (!Number.isInteger(c?.max_instances) || c.max_instances < 1 || c.max_instances > 2) {
-      failures.push(`${where}.max_instances must be 1 or 2 (left out, wrangler's default is 20)`)
+      fail(`${where}.max_instances must be 1 or 2 (left out, wrangler's default is 20)`)
     }
-    if (c?.image_build_context !== undefined) failures.push(`${where}.image_build_context is set: the sandbox deploys a pushed image, never a build`)
     const image = typeof c?.image === 'string' ? c.image : ''
     const repo = image.startsWith(registry) ? /^[^:@]*/.exec(image.slice(registry.length))[0] : null
     if (repo === null || !IMAGE_TAG.test(image.slice(registry.length + repo.length))) {
-      failures.push(`${where}.image must be registry.cloudflare.com/<CF_SANDBOX_ACCOUNT_ID>/<sandbox name>:<tag> (a pushed image, not a Dockerfile)`)
-    } else nameOk(`${where}.image`, repo)
+      fail(`${where}.image must be registry.cloudflare.com/<CF_SANDBOX_ACCOUNT_ID>/<name>:<tag> (a pushed image, not a Dockerfile)`)
+    } else {
+      nameOk(`${where}.image`, repo, 'image')
+      // wrangler builds any `image` that exists as a path relative to the config's folder (isDockerfile, 4.162.0).
+      if (existsSync(resolve(configDir, image))) fail(`${where}.image exists as a file beside the config: wrangler would build it`)
+    }
   })
-  const dos = config.durable_objects?.bindings
-  ;(Array.isArray(dos) ? dos : []).forEach((d, i) => {
-    if (d?.script_name !== undefined && d.script_name !== config.name) failures.push(`durable_objects.bindings[${i}].script_name names another Worker`)
-  })
+  const dos = config.durable_objects
+  if (dos !== undefined) {
+    onlyKeys('durable_objects', dos, new Set(['bindings']))
+    const bindings = dos?.bindings
+    if (bindings !== undefined && !Array.isArray(bindings)) fail('durable_objects.bindings must be a list')
+    ;(Array.isArray(bindings) ? bindings : []).forEach((d, i) => onlyKeys(`durable_objects.bindings[${i}]`, d, DO_KEYS))
+  }
+  list('migrations').forEach((m, i) => onlyKeys(`migrations[${i}]`, m, MIGRATION_KEYS))
   for (const [where, r] of routesOf(config)) {
     const route = typeof r === 'string' ? { pattern: r } : r
     if (typeof route?.pattern !== 'string') {
-      failures.push(`${where} has no pattern`)
+      fail(`${where} has no pattern`)
       continue
     }
-    if (route.zone_id !== undefined) failures.push(`${where}.zone_id is set: name the sandbox zone with zone_name`)
-    if (route.zone_name !== undefined && route.zone_name !== zone) failures.push(`${where}.zone_name is not the sandbox zone`)
+    onlyKeys(where, route, new Set(['pattern', 'custom_domain', 'zone_name', 'zone_id']))
+    if (route.zone_id !== undefined) fail(`${where}.zone_id is set: name the sandbox zone with zone_name`)
+    if (route.zone_name !== undefined && route.zone_name !== zone) fail(`${where}.zone_name is not the sandbox zone`)
     // A Custom Domain's pattern is the bare host; a route's may add a path.
     const slash = route.pattern.indexOf('/')
     const host = route.custom_domain === true || slash === -1 ? route.pattern : route.pattern.slice(0, slash)
@@ -323,28 +379,38 @@ export function checkSandboxConfig(config, { accountId, zone }) {
   for (const [where, origin] of accessOrigins(config)) {
     let url
     try { url = new URL(origin) } catch { url = null }
-    if (!url || url.protocol !== 'https:' || url.origin !== origin) failures.push(`${where} must be a bare https:// origin`)
+    if (!url || url.protocol !== 'https:' || url.origin !== origin) fail(`${where} must be a bare https:// origin`)
     else hostOk(where, url.hostname)
   }
 
   if (perPr) {
-    if (config.vars?.INHOUSE_TEST_BUILD !== '1') failures.push('vars.INHOUSE_TEST_BUILD must be "1" in a per-PR test deployment')
-    if (accessOrigins(config).length === 0) failures.push('vars.INHOUSE_ACCESS must list the per-PR hosts as its app origins')
+    if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in a per-PR test deployment')
+    if (accessOrigins(config).length === 0) fail('vars.INHOUSE_ACCESS must list the per-PR hosts as its app origins')
   } else {
-    for (const f of productRules(config)) if (!failures.includes(f)) failures.push(f)
+    for (const f of productRules(config)) if (!failures.includes(f)) fail(f)
   }
   return failures
 }
 
+/** The sandbox mode from the command line's flags (after --sandbox), or throws a usage message. */
+export function parseSandboxMode(args) {
+  if (args[0] === '--candidate') return { mode: { candidate: true }, rest: args.slice(1) }
+  if (args[0] === '--per-pr' && /^[1-9][0-9]{0,5}$/.test(args[1] ?? '')) return { mode: { perPr: Number(args[1]) }, rest: args.slice(2) }
+  throw new Error('--sandbox needs --per-pr <N> (1 to 999999) or --candidate')
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const args = process.argv.slice(2)
+    let args = process.argv.slice(2)
     const sandbox = args[0] === '--sandbox'
-    if (sandbox) args.shift()
+    let mode
+    if (sandbox) {
+      try { ({ mode, rest: args } = parseSandboxMode(args.slice(1))) } catch (err) { usage(err.message) }
+    }
     if (args.length !== 1 || args[0].startsWith('--')) usage('give exactly one config path')
     let sandboxEnv
     if (sandbox) {
-      sandboxEnv = { accountId: process.env.CF_SANDBOX_ACCOUNT_ID, zone: process.env.SBX_ZONE }
+      sandboxEnv = { accountId: process.env.CF_SANDBOX_ACCOUNT_ID, zone: process.env.SBX_ZONE, mode, configDir: dirname(resolve(args[0])) }
       if (!sandboxEnv.accountId || !ACCOUNT_ID.test(sandboxEnv.accountId)) usage('--sandbox needs CF_SANDBOX_ACCOUNT_ID (32 lowercase hex)')
       try { assertZone(sandboxEnv.zone) } catch { usage('--sandbox needs SBX_ZONE (a lowercase domain name)') }
     }
@@ -354,7 +420,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     try { config = JSON.parse(stripJsonc(text)) } catch (err) { usage(`${args[0]} isn't valid JSONC: ${err.message}`) }
     if (!config || typeof config !== 'object' || Array.isArray(config)) usage(`${args[0]} isn't a config object`)
     const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : checkConfig(config)
-    const where = sandbox ? ' to the sandbox' : ''
+    const where = sandbox ? ` to the sandbox (${mode.candidate ? 'candidate' : `PR ${mode.perPr}`})` : ''
     if (failures.length) {
       console.error(`check-product-config: ${args[0]} may not deploy${where}:\n${failures.map(f => `  - ${f}`).join('\n')}`)
       process.exit(1)
