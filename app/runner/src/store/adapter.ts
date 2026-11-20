@@ -16,7 +16,7 @@ import { StoreLoadResult, StoreSubkeys, type StoreKey } from '../../../shared/pr
 export type Fetch = (url: string, init: { method: string; headers?: Record<string, string>; body?: string | Uint8Array; signal?: AbortSignal }) => Promise<Response>
 
 /** One batch of the run. Once the store confirms it, its entries are dropped: only its uuids are kept, for the check. */
-type Batch = { key: SessionKey; entries: SessionStoreEntry[] | null; uuids: string[]; part: string; confirmed: boolean }
+type Batch = { key: SessionKey; entries: SessionStoreEntry[] | null; uuids: string[]; part: string; confirmed: boolean; sdkRejected: boolean }
 
 export type CheckpointResult = { ok: true; entries: number; repaired: number } | { ok: false; error: string; repaired: number }
 
@@ -43,6 +43,12 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
   const unconfirmed = new Map<string, Batch>()
   /** Confirmed batches by their key and uuids: a retry that comes after a repair confirmed it keeps its part too. */
   const confirmedByUuids = new Map<string, Batch>()
+  /**
+   * Batches without uuids that a repair (or a retry after it) confirmed while the SDK's last append of them was
+   * rejected, by their content: the SDK's retry is still to come and keeps the part. Taken out by that retry, so the
+   * same content after it (two identical lines with no uuid) is a new batch with its own part.
+   */
+  const awaitingRetry = new Map<string, Batch>()
   const inFlight = new Set<Promise<unknown>>()
   let counter = 0
 
@@ -70,21 +76,34 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
   const store: SessionStore = {
     append(key, entries) {
       // The SDK re-sends a batch only after a rejection, so the same content while unconfirmed is that retry, and the
-      // same uuids after it was confirmed (by a repair) is that retry too. The same content without uuids after it was
-      // confirmed is a new batch (two identical lines with no uuid, say): its own part.
+      // same uuids after it was confirmed (by a repair) is that retry too. Without uuids, the same content after a repair
+      // confirmed it is that retry only while the SDK's last append of it was rejected; otherwise (two identical lines
+      // with no uuid, say) it's a new batch with its own part.
       const id = JSON.stringify([keyId(key), entries])
       const uuids = entries.map((e) => e.uuid).filter((u): u is string => typeof u === 'string')
       let b = unconfirmed.get(id)
       if (b === undefined) {
         const u = uuidKey({ key, uuids })
-        b = u === null ? undefined : confirmedByUuids.get(u)
+        b = u === null ? awaitingRetry.get(id) : confirmedByUuids.get(u)
+        if (u === null) awaitingRetry.delete(id)
       }
       if (b === undefined) {
-        b = { key, entries, uuids, part: partId(now(), ++counter), confirmed: false }
+        b = { key, entries, uuids, part: partId(now(), ++counter), confirmed: false, sdkRejected: false }
         batches.push(b)
         unconfirmed.set(id, b)
       }
-      return track(send(b, id, entries))
+      const batch = b
+      return track(
+        send(batch, id, entries).then(
+          () => void (batch.sdkRejected = false),
+          (e: unknown) => {
+            batch.sdkRejected = true
+            // Confirmed already (by a repair): the SDK's next retry of this content keeps the part.
+            if (batch.confirmed && batch.uuids.length === 0) awaitingRetry.set(id, batch)
+            throw e
+          },
+        ),
+      )
     },
     async load(key) {
       const r = StoreLoadResult.parse(await post('load', { key: wireKey(key) }))
@@ -102,6 +121,7 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
     for (const [id, b] of [...unconfirmed]) {
       try {
         await send(b, id, b.entries!)
+        if (b.uuids.length === 0 && b.sdkRejected) awaitingRetry.set(id, b)
         repaired++
       } catch (e) {
         return { ok: false, error: `repair of part ${b.part} failed: ${errorText(e)}`, repaired }

@@ -5,7 +5,7 @@
 // - two identical batches (no uuid) collapse into one part;
 // - `checkpoint` passes while an append is still in flight, or while the store is missing an entry it said it took;
 // - a repair or a load that fails throws out of `checkpoint` instead of reporting it;
-// - an SDK retry that comes after the repair confirmed its batch lands as a second copy.
+// - an SDK retry that comes after the repair confirmed its batch lands as a second copy (a batch with no uuids too).
 import type { SessionKey, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
@@ -82,6 +82,22 @@ describe('checkpoint and repair', () => {
     await a.store.append(key, batch)
     expect(egress.entries(key)).toEqual(batch)
     expect(await a.checkpoint()).toEqual({ ok: true, entries: 1, repaired: 0 })
+  })
+
+  it('a batch with no uuids that the SDK retries after the repair keeps its part; the same content after that is new', async () => {
+    const egress = fakeEgress()
+    egress.fail = (_m, p) => (p === '/store/append' ? 503 : null)
+    const a = createStoreAdapter({ fetch: egress.fetch, proxyUrl: PROXY_URL })
+    const title = [{ type: 'custom-title', title: 'x' }]
+    await expect(a.store.append(key, title)).rejects.toThrow()
+    egress.fail = () => null
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 0, repaired: 1 })
+    // The SDK's own retry, landing after the repair confirmed the batch: the same part, so one copy.
+    await a.store.append(key, title)
+    expect(egress.entries(key)).toEqual(title)
+    // The SDK saw that one succeed: the same content again is a second batch.
+    await a.store.append(key, title)
+    expect(egress.entries(key)).toEqual([...title, ...title])
   })
 
   it('a dropped batch is re-sent under its own part, so it lands in its place, not at the end', async () => {

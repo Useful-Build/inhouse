@@ -10,7 +10,9 @@
 // - after a stop, a slow files save runs out the root's grace before the checkpoint (the run loses it, its cost and a
 //   deferred call's waiting state);
 // - an audit entry carries no expiry, so the root writes one the hook already refused on its timeout;
-// - the note on left-out files grows with the number of files.
+// - the note on left-out files grows with the number of files, or counts the event's "and N more" as a name;
+// - a stop's deadline doesn't cut a hanging checkpoint, or a query that ends after it still waits on the checkpoint;
+// - a stop during the restore waits for it (past the stop's deadline).
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,8 +22,9 @@ import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { fc, it } from '@fast-check/vitest'
 import { afterAll, describe, expect } from 'vitest'
 import { LOCAL_MAX_DEPTH, LineReader, encodeLine, type LineResult } from '../../src/protocol/ndjson.ts'
+import { LEFT_OUT_MAX } from '../../src/files/files.ts'
 import { AUDIT_ACK_MARGIN_MS, LEFT_OUT_NOTE_MAX_CHARS, SDK_MESSAGE_MAX_DEPTH, leftOutNote, runSession, type QueryFn } from '../../src/session/core.ts'
-import { parseSessionMessage } from '../../src/protocol/local.ts'
+import { monotonicMs, parseSessionMessage } from '../../src/protocol/local.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards, RunContext } from '../../src/session/seam.ts'
 import { GuardsMissingError, productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
@@ -533,6 +536,80 @@ describe('the run lifecycle', () => {
     expect(h.logs).toContainEqual({ type: 'files_save_cut', why: "the stop's deadline" })
   })
 
+  it("a stop's deadline cuts a hanging checkpoint: mirror_error, then one terminal", async () => {
+    const egress = fakeEgress()
+    const real = egress.fetch
+    // The checkpoint's load never answers.
+    egress.fetch = (url, init) => (url.endsWith('/store/load') ? new Promise<Response>(() => {}) : real(url, init))
+    const g = gate()
+    const q = scriptedQuery(async function* ({ options }) {
+      await options.sessionStore!.append({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' }, [{ type: 'user', uuid: 'u1' }])
+      yield assistant
+      await g.promise
+    })
+    const h = harness(q.query, testQueryGuards, { egress })
+    h.deliver({ type: 'run', config: config() })
+    await waitForTicks(() => h.events().length > 0)
+    h.deliver({ type: 'stop', endWithinMs: 100 })
+    g.open()
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'mirror_error', 'failed'])
+    expect(h.events()[1]).toEqual({ type: 'mirror_error', message: "the store's checkpoint did not finish before the stop's deadline" })
+    expect(h.events().at(-1)).toMatchObject({ reason: 'stopped' })
+  })
+
+  it("a query that ends after the stop's deadline: no checkpoint wait, mirror_error, then one terminal", async () => {
+    const endWithinMs = 50
+    const g = gate()
+    const q = scriptedQuery(async function* ({ options }) {
+      await options.sessionStore!.append({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' }, [{ type: 'user', uuid: 'u1' }])
+      yield assistant
+      await g.promise
+    })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await waitForTicks(() => h.events().length > 0)
+    h.deliver({ type: 'stop', endWithinMs })
+    // Same delay, set after the session's deadline timer: Node fires it after that one (timers of one duration run in
+    // the order they were set), so the query ends only once the deadline has passed.
+    setTimeout(() => g.open(), endWithinMs)
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'mirror_error', 'failed'])
+    expect(h.events().at(-1)).toMatchObject({ reason: 'stopped' })
+  })
+
+  it('a stop during a slow restore cuts it at once: stopped, with no query', async () => {
+    const egress = fakeEgress()
+    egress.files.set('inputs/a.txt', { body: new TextEncoder().encode('a') })
+    const real = egress.fetch
+    let gets = 0
+    // The download never answers: only the stop can end the restore.
+    egress.fetch = (url, init) => (url.endsWith('/files/inputs/a.txt') ? (gets++, new Promise<Response>(() => {})) : real(url, init))
+    const q = fakeQuery([result])
+    const h = harness(q.query, testQueryGuards, { egress })
+    h.deliver({ type: 'run', config: config({ fileCaps: { maxFileBytes: 10, maxFilesPerTurn: 1, maxRestoreBytes: 10, allowedTypes: ['text/plain'] } }) })
+    await waitForTicks(() => gets === 1)
+    h.deliver({ type: 'stop', endWithinMs: 60_000 })
+    await h.done
+    expect(q.calls).toHaveLength(0)
+    expect(h.events()).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped before the query started' }])
+  })
+
+  it(`past ${LEFT_OUT_MAX} left-out files, the note still counts every one (the event's "and N more" is not a name)`, async () => {
+    const egress = fakeEgress()
+    const total = LEFT_OUT_MAX + 200
+    for (let i = 0; i < total; i++) egress.files.set(`inputs/${i}.txt`, { body: new Uint8Array(2) })
+    const q = fakeQuery([result])
+    const h = harness(q.query, testQueryGuards, { egress })
+    h.deliver({ type: 'run', config: config({ prompt: 'go', fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 1, allowedTypes: [] } }) })
+    await h.done
+    const text = (await promptText(q.calls[0]!.prompt)).text
+    const m = /work folder: (.*), and (\d+) more\]$/.exec(text)
+    expect(m).not.toBeNull()
+    expect(m![1]).not.toMatch(/more/)
+    expect(m![1]!.split(', ').length + Number(m![2])).toBe(total)
+  })
+
   it('the note on left-out files stays under its cap, saying how many more', () => {
     const names = Array.from({ length: 5000 }, (_, i) => `inputs/file-${i}.pdf`)
     const note = leftOutNote(names)
@@ -594,9 +671,10 @@ describe('the audit transport (session side)', () => {
   it('each entry says when the hook stops waiting for it, less the margin for the ack', async () => {
     const { h, q, audit } = held()
     await waitForTicks(() => audit() !== undefined)
-    const t0 = Date.now()
+    // On the monotonic clock both ends share (a wall clock can step between them).
+    const t0 = monotonicMs()
     void audit()(entry).catch(() => undefined)
-    const t1 = Date.now()
+    const t1 = monotonicMs()
     const sent = audits(h.sent)[0]
     expect(sent.expiresAt).toBeGreaterThanOrEqual(t0 + 10_000 - AUDIT_ACK_MARGIN_MS)
     expect(sent.expiresAt).toBeLessThanOrEqual(t1 + 10_000 - AUDIT_ACK_MARGIN_MS)

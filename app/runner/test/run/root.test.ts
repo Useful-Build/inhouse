@@ -6,7 +6,8 @@
 // - a request with an unaccepted protocol version is served; the previous version is refused;
 // - an oversized SDK message is passed through whole;
 // - a stop never ends a session that ignores it;
-// - a run raced by a stop or a crash ends twice, or with a seq gap.
+// - a run raced by a stop or a crash ends twice, or with a seq gap;
+// - after a timeout ends the stream, the session's files pass still uploads files the stream never names.
 import type { ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import http from 'node:http'
@@ -121,6 +122,22 @@ describe('a session that misbehaves', () => {
 })
 
 describe('streams', () => {
+  it("once a run's stream has ended (its timeout), the proxy takes no more files for it; the store stays open", async () => {
+    // A session that ignores the timeout's stop, so it's still live (and could still upload) when we look.
+    const short = await startTestRoot(spawnFixture('fake-session.ts'), { runTimeoutMs: 30, stopGraceMs: 3000 })
+    try {
+      const start = runStart({ prompt: 'hang', runToken: 'tok_timed_out_files_0001' })
+      const run = openRun(short, start)
+      await waitFor(() => run.events.some((e) => e.type === 'failed'), 'the timeout')
+      const uid = short.users.uids.get(start.chatId)!
+      expect(short.tokenForUid(uid, 'store')).toBe('tok_timed_out_files_0001')
+      expect(short.tokenForUid(uid, 'files')).toBeNull()
+      await run.done
+    } finally {
+      await short.close()
+    }
+  })
+
   it('an oversized SDK message arrives as a truncated stub', async () => {
     const events = await postRun(root, runStart({ prompt: 'big' }))
     const sdk = events.find((e) => e.type === 'sdk')

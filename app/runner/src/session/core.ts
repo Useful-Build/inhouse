@@ -17,7 +17,7 @@ import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/c
 import { z } from 'zod'
 import { AuditEntry, DEFERRED_INPUT_MAX_BYTES, SDK_MESSAGE_MAX_BYTES, jsonBytes } from '../../../shared/protocol/index.ts'
 import { createFiles, snapshotOutputs } from '../files/files.ts'
-import { RootMessage, capSdkMessage, type RunConfig, type SessionEvent } from '../protocol/local.ts'
+import { RootMessage, capSdkMessage, monotonicMs, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import { LOCAL_MAX_DEPTH, deeperThan, type LineResult } from '../protocol/ndjson.ts'
 import { createStoreAdapter, type Fetch } from '../store/adapter.ts'
 import type { QueryGuards } from './seam.ts'
@@ -85,7 +85,10 @@ export function streamingPrompt(text: string, done: Promise<void>): AsyncIterabl
 /** The most characters of file names in the note on what was left out; past it the note says how many more. */
 export const LEFT_OUT_NOTE_MAX_CHARS = 2000
 
-/** What the agent is told about the chat's files that weren't brought in (names up to a length cap). */
+/**
+ * What the agent is told about the chat's files that weren't brought in (names up to a length cap). `leftOut` is every
+ * name, uncapped (not the event's list, whose last name may be its "and N more").
+ */
 export function leftOutNote(leftOut: string[]): string {
   const shown: string[] = []
   let chars = 0
@@ -194,7 +197,7 @@ export async function runSession(deps: {
     if (ended || channelClosed) return Promise.reject(new Error('audit refused: the run has ended'))
     const id = nextAudit++
     const timeout = deps.auditTimeoutMs ?? AUDIT_TIMEOUT_MS
-    const expiresAt = Date.now() + timeout - Math.min(AUDIT_ACK_MARGIN_MS, Math.floor(timeout / 2))
+    const expiresAt = monotonicMs() + timeout - Math.min(AUDIT_ACK_MARGIN_MS, Math.floor(timeout / 2))
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => settleAudit(id, 'no answer from the root in time'), timeout)
       audits.set(id, { resolve, reject, timer })
@@ -294,10 +297,12 @@ export async function runSession(deps: {
   const files = createFiles({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl, cwd: deps.cwd, caps: config.fileCaps, log })
   let leftOut: string[]
   try {
-    const restored = await files.restore()
+    // A stop cuts the restore at once: no query will run, and the run must end within the stop's deadline.
+    const restored = await files.restore(stopCut.signal)
     leftOut = restored.leftOut
-    if (restored.restored > 0 || restored.leftOut.length > 0) await emit(restored)
+    if (restored.event.restored > 0 || restored.event.leftOut.length > 0) await emit(restored.event)
   } catch (e) {
+    if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
     log({ type: 'files_restore_failed', error: message(e).slice(0, 300) })
     return emit({ type: 'failed', reason: 'files', message: "the chat's files could not be brought into the work folder" })
   }

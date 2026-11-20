@@ -38,6 +38,8 @@ type LiveRun = {
   gone: boolean
   /** The run's NDJSON response, once its headers are out. */
   res: ServerResponse | null
+  /** The run's event stream, once its headers are out. */
+  stream: RunStream | null
 }
 
 export type RootDeps = {
@@ -59,8 +61,11 @@ export type RootDeps = {
 
 export type Root = {
   server: http.Server
-  /** The live run's token for a session uid; null when there's none, or more than one (never guess). */
-  tokenForUid(uid: number): string | null
+  /**
+   * The live run's token for a session uid; null when there's none, or more than one (never guess). For the `files`
+   * route, null too once the run's stream has ended.
+   */
+  tokenForUid(uid: number, route?: string): string | null
   liveCount(): number
   /**
    * Bytes of a live run's events written but not yet taken by the Worker's connection; null for no such run or no
@@ -88,7 +93,13 @@ export function createRoot(deps: RootDeps): Root {
   const ending = new Set<Promise<void>>()
   let stopping = false
 
-  const tokenForUid = (uid: number): string | null => pickToken(runs.values(), uid)
+  const tokenForUid = (uid: number, route?: string): string | null => {
+    const token = pickToken(runs.values(), uid)
+    // Once the run's stream has ended (its timeout, say), no file is saved for it: one uploaded now would have no
+    // `file_saved` on the stream. The store stays open, so the session's checkpoint still lands.
+    if (token !== null && route === 'files' && [...runs.values()].find((r) => r.uid === uid)!.stream?.ended) return null
+    return token
+  }
 
   const release = async (live: LiveRun, user: SessionUser) => {
     try {
@@ -121,6 +132,7 @@ export function createRoot(deps: RootDeps): Root {
       interruptRequested: false,
       gone: false,
       res: null,
+      stream: null,
     }
     runs.set(config.runId, live)
     chats.add(config.chatId)
@@ -184,6 +196,7 @@ export function createRoot(deps: RootDeps): Root {
       if (res.destroyed || res.writableEnded) return
       if (!res.write(encodeRunEvent(e)) && !discarding()) live.handle?.pause()
     })
+    live.stream = stream
     res.on('drain', () => live.handle?.resume())
     stream.emit({ type: 'started', sessionId: config.sessionId, resume: config.resume })
     const end = async () => {

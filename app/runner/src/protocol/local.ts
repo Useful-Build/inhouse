@@ -39,13 +39,21 @@ export const SessionMessage = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('event'), event: z.unknown() }),
   /**
    * A blocking audit entry: the root writes it to the stream, then answers `audit_ack` or `audit_nack` with this id.
-   * `expiresAt` (epoch ms, the same clock on both ends) is when the session stops waiting, less a margin for the ack to
+   * `expiresAt` (`monotonicMs()`, a clock both ends share) is when the session stops waiting, less a margin for the ack to
    * travel: an entry the root reads at or after it (it sat in the pipe while the root wasn't reading) is nacked and
    * never written, so the stream never says `allow` for a call that the hook refused on its timeout.
    */
   z.strictObject({ type: z.literal('audit'), id: z.int().nonnegative(), expiresAt: z.number().nonnegative(), entry: AuditEntry }),
 ])
 export type SessionMessage = z.infer<typeof SessionMessage>
+
+/**
+ * Milliseconds on the host's monotonic clock: Node's `process.hrtime` (libuv's `uv_hrtime`) reads CLOCK_MONOTONIC on
+ * Linux, one clock for every process on the host (clock_gettime(2)), and mach_absolute_time on macOS, likewise
+ * system-wide. The root and its sessions share it, and unlike `Date.now()` it never steps (NTP, a clock set by hand), so
+ * an audit entry's expiry means the same thing on both ends of the local channel.
+ */
+export const monotonicMs = (): number => Number(process.hrtime.bigint() / 1_000_000n)
 
 export type SessionEvent = Exclude<RunEventBody, { type: 'started' | 'audit' }>
 export type ParsedSessionMessage = { type: 'ready' } | { type: 'event'; event: SessionEvent } | { type: 'audit'; id: number; expiresAt: number; entry: AuditEntry }
