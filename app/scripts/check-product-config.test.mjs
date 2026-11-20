@@ -37,6 +37,8 @@ const RULE_TEXT = {
   'version-metadata-missing': 'version_metadata needs a binding name',
   'secret-var-named': 'vars.AUDIT_HASH_KEY looks like a secret',
   'secret-var-pattern': 'vars.SESSION_TOKEN looks like a secret',
+  'sbx-name': 'name is a sandbox name or host ("inhouse-sbx-product")',
+  'sbx-host': 'INHOUSE_ACCESS.apps[0].origin is a sandbox name or host',
 }
 
 describe('check-product-config', () => {
