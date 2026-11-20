@@ -13,7 +13,7 @@
 //   can swap a folder for a symlink under root's path walk), or a kill that failed before any session ran closes a chat;
 // - the pool reader accepts a missing member, a root or system uid, a login shell, or a shared uid or gid.
 import { fc, it } from '@fast-check/vitest'
-import { describe, expect } from 'vitest'
+import { describe, expect, vi } from 'vitest'
 import { InvalidSessionKeyError } from '../../src/guards/paths.ts'
 import { SessionFolderParkedError, SessionPoolExhaustedError, SessionReleaseError, createSessionPool, poolUserName, readPool, type PoolUser, type SessionHost } from '../../src/guards/users.ts'
 import type { SessionUser } from '../../src/session/seam.ts'
@@ -131,23 +131,38 @@ describe('the session pool', () => {
     },
   )
 
-  it('release resolves only after the kill, the park and the wipe; then the uid is free', async () => {
+  it('release reports completion and frees the uid only after the kill, park and wipe', async () => {
     const order: string[] = []
+    const logged: Record<string, unknown>[] = []
+    const wiping = Promise.withResolvers<void>()
+    const finishWipe = Promise.withResolvers<void>()
+    let allocated = false
     const host: SessionHost = {
       killAll: async () => void order.push('kill'),
-      wipeUserFiles: async () => void order.push('wipe'),
+      wipeUserFiles: async () => {
+        order.push('wipe')
+        if (allocated) {
+          wiping.resolve()
+          await finishWipe.promise
+        }
+      },
       prepareFolder: async (k) => (order.push('prepare'), { workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => void order.push('park'),
     }
-    const p = createSessionPool(pool(1), host)
+    const p = createSessionPool(pool(1), host, (e) => (order.push('logged'), void logged.push(e)))
     const u = await p.allocate('a')
     expect(u).toEqual({ uid: 30000, gid: 30000, user: 's00', home: '/work/a/.home', workDir: '/work/a' })
     expect(order).toEqual(['kill', 'wipe', 'prepare'])
+    allocated = true
     order.length = 0
     const released = p.release('a', u).then(() => order.push('resolved'))
+    await wiping.promise
     expect(p.state().free).toEqual([])
+    expect(logged).toEqual([])
+    finishWipe.resolve()
     await released
-    expect(order).toEqual(['kill', 'park', 'wipe', 'resolved'])
+    expect(order).toEqual(['kill', 'park', 'wipe', 'logged', 'resolved'])
+    expect(logged).toEqual([{ type: 'session_user_released', uid: 30000, sessionKey: 'a' }])
     expect(p.state().free).toEqual([30000])
   })
 
@@ -215,7 +230,8 @@ describe('the session pool', () => {
       prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => {},
     }
-    const p = createSessionPool(pool(3), host, () => {})
+    const logged: Record<string, unknown>[] = []
+    const p = createSessionPool(pool(3), host, (e) => void logged.push(e))
     // The kill fails in allocate: this uid never ran in the folder, so nothing of it has the folder open.
     failKill = true
     await expect(p.allocate('a')).rejects.toThrow(/survived/)
@@ -224,6 +240,7 @@ describe('the session pool', () => {
     // Every process is dead, a file is left: the uid is quarantined, the folder is safe to hand to another.
     failWipe = true
     await expect(p.release('a', u)).rejects.toThrow(/left a file/)
+    expect(logged.filter((e) => e.uid === u.uid)).toEqual([expect.objectContaining({ type: 'session_user_quarantined', sessionKey: 'a', error: 'left a file' })])
     failWipe = false
     expect(p.state().parkedForGood).toEqual([])
     expect(p.quarantined()).toBe(2)
@@ -241,6 +258,28 @@ describe('the session pool', () => {
     await expect(p.release('b', a1)).rejects.toThrow(SessionReleaseError)
     await expect(p.release('a', { ...a1, uid: 1 })).rejects.toThrow(SessionReleaseError)
     await expect(p.allocate('../x')).rejects.toThrow(InvalidSessionKeyError)
+  })
+
+  it('a failed allocate whose reclaim succeeds frees the uid without a release event', async () => {
+    const logged: Record<string, unknown>[] = []
+    let failPrepare = true
+    const host: SessionHost = {
+      killAll: async () => {},
+      wipeUserFiles: async () => {},
+      prepareFolder: async (k) => {
+        if (failPrepare) throw new Error('prepare failed')
+        return { workDir: `/work/${k}`, home: `/work/${k}/.home` }
+      },
+      parkFolder: async () => {},
+    }
+    const p = createSessionPool(pool(1), host, (e) => void logged.push(e))
+    await expect(p.allocate('a')).rejects.toThrow(/prepare failed/)
+    // Only a release that ran a session is announced: observers wait on that event for a run's uid.
+    expect(logged).toEqual([])
+    expect(p.state().free).toEqual([30000])
+    expect(p.quarantined()).toBe(0)
+    failPrepare = false
+    await expect(p.allocate('a')).resolves.toMatchObject({ uid: 30000 })
   })
 
   it('a key allocated mid-release waits and gets a freshly prepared user, not the one being torn down', async () => {
@@ -265,8 +304,8 @@ describe('the session pool', () => {
     expect(prepared).toEqual([30000])
     openKill()
     await releasing
-    // The second allocate's own kill check.
-    await new Promise((r) => setImmediate(r))
+    // The second allocate's own kill check, once it has started (kills: the first allocate, the release, this one).
+    await vi.waitFor(() => expect(kills.length).toBe(3))
     openKill()
     await again
     expect(prepared).toEqual([30000, 30000])

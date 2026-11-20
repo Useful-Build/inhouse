@@ -166,6 +166,10 @@ export function createRoot(deps: RootDeps): Root {
       user = await deps.users.allocate(config.chatId)
     } catch (e) {
       deps.log({ type: 'session_user_failed', runId: live.runId, error: errorText(e) })
+      // A refusal the Worker can route on (the pool is full, or this chat's folder is parked for good): 503 with the
+      // code, before the stream starts. Anything else is the runner's fault: 500.
+      const code = (e as { code?: unknown } | null)?.code
+      if (code === 'session_pool_exhausted' || code === 'session_folder_parked') return json(res, 503, { error: code })
       return json(res, 500, { error: 'could not set up the session user' })
     }
     if (user.uid === 0 || user.gid === 0) {

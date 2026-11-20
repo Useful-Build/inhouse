@@ -286,6 +286,12 @@ export async function runSession(deps: {
   })
   channel.send({ type: 'ready' })
 
+  /** A step before the query failed (the guards, the outputs snapshot): logged, and the run ends typed, never as a crash. */
+  const setupFailed = (step: string, e: unknown) => {
+    log({ type: 'session_setup_failed', step, error: message(e).slice(0, 300) })
+    return emit({ type: 'failed', reason: 'sdk_error', message: 'the session could not be set up' })
+  }
+
   const config = await Promise.race([
     runConfig,
     new Promise<null>((r) => abort.signal.addEventListener('abort', () => r(null), { once: true })),
@@ -294,7 +300,17 @@ export async function runSession(deps: {
   // A stop that came with the run (or while it was being read): end it without calling query().
   if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
 
-  // 1. The chat's files.
+  // 1. The guarded options, before anything touches the work folder: a guard that refuses this run ends it here, typed,
+  // with the folder as the host left it.
+  const store = createStoreAdapter({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl })
+  let options: Options
+  try {
+    options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort, store.store), config, { audit })
+  } catch (e) {
+    return setupFailed('guards', e)
+  }
+
+  // 2. The chat's files.
   const files = createFiles({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl, cwd: deps.cwd, caps: config.fileCaps, log })
   let leftOut: string[]
   try {
@@ -309,13 +325,16 @@ export async function runSession(deps: {
   }
   if (ended) return
   if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
-  const before = await snapshotOutputs(deps.cwd, log)
+  let before: Awaited<ReturnType<typeof snapshotOutputs>>
+  try {
+    before = await snapshotOutputs(deps.cwd, log)
+  } catch (e) {
+    return setupFailed('outputs_snapshot', e)
+  }
 
-  // 2. The query.
-  const store = createStoreAdapter({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl })
+  // 3. The query.
   const text = config.prompt !== '' && leftOut.length > 0 ? `${config.prompt}\n\n${leftOutNote(leftOut)}` : config.prompt
   const prompt = text === '' ? '' : streamingPrompt(text, inputDone)
-  const options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort, store.store), config, { audit })
   const turn = new TurnToolUses()
   let result: Result | null = null
   let thrown: unknown = null
@@ -346,7 +365,7 @@ export async function runSession(deps: {
   endInput()
   if (ended) return
 
-  // 3. The end: the deferred call, files, the store, then the one terminal event.
+  // 4. The end: the deferred call, files, the store, then the one terminal event.
   let terminal: Extract<SessionEvent, { type: 'finished' | 'failed' }>
   if (result !== null && (!threw || stopping || abort.signal.aborted)) {
     // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept).

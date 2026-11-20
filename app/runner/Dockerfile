@@ -32,7 +32,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # The session user pool, made here so nothing writes /etc/passwd at run time: s00..s63, each with its own uid and group
-# (30000 up), no login shell and no home outside the work tree (the runner sets HOME to the session folder's .home).
+# (30000 up), no login shell and no home in /etc/passwd (the runner sets HOME to the user's own folder under /users).
 RUN set -eu; for n in $(seq 0 63); do \
       name=$(printf 's%02d' "$n"); id=$((30000 + n)); \
       groupadd --gid "$id" "$name"; \
@@ -46,11 +46,23 @@ COPY runner/package.json runner/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY --from=build /runner/dist ./dist
 # Our skills, as a plugin: root-owned and read-only. /work is 0711: bwrap and each session reach the session's own
-# folder, but no session can list the chat ids. The wipe runs find and ipcrm (findutils, util-linux: always installed).
+# folder, but no session can list the chat ids. /users holds each pool user's own home and temp folder, made by the
+# runner (src/guards/host.ts): it lists only the pool's names. The wipe runs find and ipcrm (findutils, util-linux:
+# always installed).
 COPY runner/image/plugin /opt/inhouse/plugin
+# The CLI as each session starts it: image/bin/claude sets the session's process limit (RLIMIT_NPROC, prlimit from
+# util-linux), then runs the SDK's own CLI for this platform, linked here as claude-cli (the build fails if it's missing).
+COPY runner/image/bin/claude /opt/inhouse/bin/claude
+RUN cli="/opt/runner/node_modules/@anthropic-ai/claude-agent-sdk-linux-$(node -p process.arch)/claude" \
+ && test -x "$cli" && test -x /usr/bin/prlimit \
+ && ln -s "$cli" /opt/inhouse/bin/claude-cli
+# The sandbox's seccomp filter (Unix sockets blocked, `allowAllUnixSockets: false`) needs nothing here: the pinned CLI
+# carries its own apply-seccomp (the container probe saw it run with no global @anthropic-ai/sandbox-runtime, and
+# checks a sandboxed command can't make a Unix socket).
 RUN chown -R root:root /opt/runner /opt/inhouse \
  && chmod -R go-w,a+rX /opt/runner /opt/inhouse \
- && mkdir -m 0711 /work
+ && mkdir -m 0711 /work \
+ && mkdir -m 0755 /users
 
 # The root runner runs as root: it starts each session as that session's own pool user.
 EXPOSE 8080

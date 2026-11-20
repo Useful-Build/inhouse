@@ -145,6 +145,35 @@ jobs:
             sleep 1
           done
           echo "::error::The runner never answered /health"; docker logs runner; exit 1
+      # P3 R2's guards, proven in the container (app/runner/image/probes/run.ts): the real root runner with the scripted
+      # model behind a fake egress, the agent's Bash and file tools under the real sandbox, and the host's wipes. Each
+      # probe prints PROBE PASS|FAIL and each kernel fact FACT; any FAIL fails the step. Not part of the image: the
+      # bundle is mounted read-only.
+      #
+      # The sandbox is bubblewrap run by a session user, and inside it the CLI's seccomp helper makes one more user
+      # namespace for its own PID and mount namespace. A GitHub runner stops that in two places a Cloudflare container
+      # doesn't have. Each setting below takes one of them off, none changes what a session user may do inside the
+      # image, and PR #78 shows what each one stops when it's left out (and what Cloudflare gives instead):
+      # - Ubuntu's AppArmor, on the runner's host. `apparmor_restrict_unprivileged_userns` gives an unprivileged user
+      #   namespace no capabilities (`bwrap: setting up uid map: Permission denied`; the engine's sandboxing docs name
+      #   this sysctl). And the profile the host ships for /usr/bin/bwrap (bwrap-userns-restrict) attaches by path, to
+      #   the bwrap inside a container too, and takes every capability from what bwrap runs: the helper's namespace
+      #   then holds none, and every sandboxed command dies on `apply-seccomp: write /proc/self/setgroups`. The sysctl
+      #   doesn't reach a named profile, so the profile is unloaded.
+      # - Docker's wrapping of the probe container: its seccomp profile refuses a non-root user's namespaces, its
+      #   AppArmor profile refuses bwrap's mounts, and its masked /proc paths make the kernel refuse a fresh /proc.
+      # The host serves probe.txt on the bridge gateway: a private address outside the container for the egress probes.
+      - name: Probe setup
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+          if [ -e /etc/apparmor.d/bwrap-userns-restrict ]; then sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict; fi
+          sh image/probes/build.sh "$RUNNER_TEMP/probes"
+          mkdir -p "$RUNNER_TEMP/gw" && echo GW_OK > "$RUNNER_TEMP/gw/probe.txt"
+          nohup python3 -m http.server 18080 --bind 0.0.0.0 --directory "$RUNNER_TEMP/gw" > /dev/null 2>&1 &
+      - name: The guards in the container
+        run: |
+          docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+            -v "$RUNNER_TEMP/probes:/opt/runner/probes:ro" -e PROBE_GW_PORT=18080 inhouse-runner:ci node /opt/runner/probes/run.mjs
 
   ci:
     needs: [e2e, runner]

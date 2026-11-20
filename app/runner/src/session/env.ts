@@ -1,8 +1,7 @@
 // The whole environment a session process (and so the CLI and Bash under it) sees. Built here and nowhere else.
 // It has no token, no key and no secret: every credentialed call goes to the root's loopback proxy, which finds the
 // caller's OS user and adds that run's token. The function takes no token, so it can't put one in.
-import { join } from 'node:path'
-import { TMP } from '../guards/paths.ts'
+import { userPaths } from '../guards/paths.ts'
 import type { SessionUser } from './seam.ts'
 
 /** The CLI wants an API key to be set; the proxy drops it and the Worker's egress adds the real one. Not a secret. */
@@ -17,12 +16,11 @@ export function sessionEnv(user: SessionUser, proxyPort: number): Record<string,
   return {
     PATH: '/usr/local/bin:/usr/bin:/bin',
     HOME: user.home,
-    // Temp files stay in the session's own 0700 folder, never in the shared /tmp (R2's guards deny /tmp to Read). The
-    // folder's name is the one the host makes it under (guards/paths.ts). The engine's docs (CLAUDE_CODE_TMPDIR) say
-    // sandboxed Bash gets a short fallback `$TMPDIR` under the system default instead when its temp path is long, so a
-    // long chat id may put Bash's temp files in /tmp/claude-<uid>: the release wipe clears the uid's files there, and
-    // PR B's probe reads a real session's `$TMPDIR`.
-    TMPDIR: join(user.workDir, TMP),
+    // Temp files stay in the user's own 0700 folder, never in the shared /tmp (R2's guards deny /tmp to Read). It's the
+    // one the host makes for the pool user (guards/paths.ts), named by the user and not the chat id, so it's short for
+    // any chat id: the sandbox keeps its bridge sockets in it, and a Unix socket path holds 107 bytes. Sandboxed Bash
+    // gets `$TMPDIR/claude-<uid>` as its own `$TMPDIR` (the engine's docs, CLAUDE_CODE_TMPDIR).
+    TMPDIR: userPaths(user.user).tmp,
     USER: user.user,
     LOGNAME: user.user,
     LANG: 'C.UTF-8',
