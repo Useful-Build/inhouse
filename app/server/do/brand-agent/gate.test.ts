@@ -504,6 +504,22 @@ describe('waits: money, order, bounds (8.2 rules 1 and 3)', () => {
     expect(h.usage.booked.get(t)).toBe(50_000)
   }))
 
+  // The egress prices its own cut at max(admitted worst, running tally) (egress/model.ts `close('cut')`; search results past
+  // the allowance can pass the worst case); a lease's cut must book the same price for the same call.
+  it('a lease cut prices like the egress cut: max(admitted worst, last running tally)', () => inAgent(async h => {
+    const t = (await liveTurn(h)).turnId
+    ask(h, t, 'c1', 50_000)
+    ask(h, t, 'c2', 50_000)
+    await settle()
+    await h.core.renewModelCall(t, 'c1', U(0))
+    await h.core.renewModelCall(t, 'c2', U(0))
+    // c1's running tally passed its worst case (80k > 50k); c2's didn't (20k < 50k). Both invocations die.
+    await h.core.renewModelCall(t, 'c1', U(80_000))
+    await h.core.renewModelCall(t, 'c2', U(20_000))
+    await h.tick(60 * SEC)
+    expect(ledger(h)).toEqual([['close', 'c1', 80_000, 250_000], ['close', 'c2', 50_000, 250_000]])
+  }))
+
   it('a release after its lease closed the call prices it once', () => inAgent(async h => {
     const t = (await liveTurn(h)).turnId
     ask(h, t, 'c1', 100_000)
