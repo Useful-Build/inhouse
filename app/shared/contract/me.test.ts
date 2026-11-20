@@ -41,4 +41,23 @@ describe('MeSchema', () => {
   it('rejects approver as a role (approving is a job, not a role)', () => {
     expect(MeSchema.safeParse({ ...valid, role: 'approver' }).success).toBe(false)
   })
+
+  const grant = { id: 'g_1', endsAt: { iso: new Date(at).toISOString(), ms: at } }
+  it('rejects a grant for anyone but the Inhouse team', () => {
+    for (const role of ['member', 'admin']) expect(MeSchema.safeParse({ ...valid, role, grant }).success).toBe(false)
+  })
+  it('rejects wrong shapes of grant, photoUrl and email, and a malformed endsAt', () => {
+    const inhouse = { ...valid, role: 'inhouse' }
+    for (const g of [{}, { id: 'g_1' }, { ...grant, extra: 1 }, { id: '', endsAt: grant.endsAt }, 'g_1',
+      { id: 'g_1', endsAt: { iso: 'not a date', ms: at } }, { id: 'g_1', endsAt: { iso: new Date(at).toISOString(), ms: at + 1 } },
+      { id: 'g_1', endsAt: at }]) {
+      expect(MeSchema.safeParse({ ...inhouse, grant: g }).success).toBe(false)
+    }
+    for (const photoUrl of [undefined, 5, {}]) expect(MeSchema.safeParse({ ...valid, photoUrl }).success).toBe(false)
+    for (const email of [undefined, 5, {}]) expect(MeSchema.safeParse({ ...valid, email }).success).toBe(false)
+  })
+  it('rejects an unknown top-level key', () => {
+    expect(MeSchema.safeParse({ ...valid, isAdmin: true }).success).toBe(false)
+  })
 })
+

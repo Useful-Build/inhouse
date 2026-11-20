@@ -1,6 +1,6 @@
 // The access matrix's types (p2-design section 3). The rows live in server/access-matrix.ts (orchestrator only), one
-// per route in server/routes.ts; `checkAccess` reads a route's row and `canFor` reads the same rows for `me().can`, so
-// the UI's `can` never disagrees with the server.
+// per route in server/routes.ts, beside the `CanRows` map; `checkAccess` reads a route's row and `canFor` reads the
+// same rows for `me().can`, so the UI's `can` never disagrees with the server.
 import type { CanKey } from '../../shared/contract/me.ts'
 import type { Principal } from './principal.ts'
 import type { Method } from '../routes.ts'
@@ -25,7 +25,11 @@ export interface AccessRow {
   readonly allow: readonly ('member' | 'admin' | 'inhouse')[]
   /** Service tokens the row lets through: `monitor` only on `open` rows, `smoke` only on GET rows. */
   readonly services?: readonly ('monitor' | 'smoke')[]
-  /** A `technical` row an Admin may write, but only where the object check passes (`tm:<id>:on` set to `'off'`). */
+  /**
+   * A `technical` row an Admin may write, but only through the object rule (`tm:<id>:on` set to `'off'`). Such a row
+   * lists `admin` in `allow` too (row 12: `allow: ['inhouse', 'admin'], adminWrite: true`); `allow` alone never lets
+   * an Admin write it.
+   */
   readonly adminWrite?: true
 }
 
@@ -39,13 +43,43 @@ export interface AccessObject {
   value?: unknown
 }
 
-export type AccessDecision = { ok: true } | { refused: 'forbidden'; reason: string }
+/** The `forbidden` reasons p2-design section 4 lets the body name; any other refusal is a bare `forbidden`. */
+export type ForbiddenReason = 'grant_required' | 'admin_read_only' | 'not_owner'
 
 /**
- * Whether `principal` may use `row` at `nowMs` (a grant ending exactly at `nowMs` isn't live). Pure: the
- * `support.access` audit line an Inhouse read of brand data needs is written by the caller after `{ ok: true }`.
+ * - `audit: 'support.access'`: set by `checkAccess` exactly for Inhouse on `brand_data`; api.ts writes that line from
+ *   the decision before the handler runs (never re-derives it).
+ * - `objectCheck: 'required'`: the row's rule needs the object (a `personal` row, an Admin on an `adminWrite` row) and
+ *   none was given; api.ts hands the handler `requireObject`, and a 2xx from a handler that never called it becomes
+ *   500 and one log line.
  */
-export type CheckAccess = (principal: Principal, row: AccessRow, nowMs: number, object?: AccessObject) => AccessDecision
+export type AccessDecision =
+  | { ok: true; audit?: 'support.access'; objectCheck?: 'required' }
+  | { refused: 'forbidden'; reason?: ForbiddenReason }
+
+/**
+ * Whether `principal` may use `row` at `nowMs` (a grant ending exactly at `nowMs` isn't live). Pure. api.ts calls it
+ * with `object` undefined before the handler; `requireObject` calls it again with the object.
+ */
+export type CheckAccess = (principal: Principal, row: AccessRow, object: AccessObject | undefined, nowMs: number) => AccessDecision
+
+/**
+ * What a handler on an `objectCheck: 'required'` row must call once it knows the object: runs `checkAccess` with it
+ * and throws an `AccessRefused` (api.ts answers 403 `forbidden` with its reason) when refused.
+ */
+export type RequireObject = (object: AccessObject) => void
+
+/** What `RequireObject` throws. */
+export interface AccessRefused extends Error {
+  readonly code: 'forbidden'
+  readonly reason?: ForbiddenReason
+}
+
+/**
+ * Each `CanKey`'s row (the values live beside the rows in server/access-matrix.ts). `as: 'adminWrite'` evaluates the
+ * row with the object an Admin's allowed write has (`{ settingKey: 'tm:<id>:on', value: 'off' }`).
+ */
+export type CanRows = Record<CanKey, { readonly method: Method; readonly pattern: string; readonly as?: 'adminWrite' }>
 
 /** `me().can`: each `CanKey` evaluated through `checkAccess` on its row. */
-export type CanFor = (principal: Principal, rows: readonly AccessRow[], nowMs: number) => Record<CanKey, boolean>
+export type CanFor = (principal: Principal, rows: readonly AccessRow[], canRows: CanRows, nowMs: number) => Record<CanKey, boolean>
