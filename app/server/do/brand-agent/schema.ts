@@ -13,7 +13,14 @@
 // - `chat_state.checkpoint_last_uuid_index`: R3's `lastUuidIndex` (#132), passed back in `expect`;
 // - `turn_effects`: 4.2.6's awaited side effects (file confirms), one at a time per turn, keyed `(turn_id, seq)`;
 // - `turn_trace`: audit and step records for the trace (route 33), never parts;
-// - `authority`: the object's removed-member and ended-grant sets (4.3, 4.10).
+// - `authority`: the object's removed-member and ended-grant sets (4.3, 4.10);
+// - PR 2b, the model gate (8.2): `model_calls` and `ledger_queue` as 4.1, plus `model_calls.n` (the turn's arrival
+//   order: FIFO without trusting the clock), `money_wait` (sent back to wait for money: decided again only once a
+//   sibling closes), `closed_at_ms` (the trace's end of a call); `turns.ledger_hold_micro` (4.1: the ledger's last
+//   answer), `start_hold_micro` (the reserve's answer, the floor of every close's hold), `ledger_fails` and
+//   `ledger_retry_at_ms` (a ledger call that failed is sent again from the `call-lease` task, never given up);
+//   `chat_state.damaged_at_ms` (the `session_damaged` signal counts damage in the last 24 hours); `turns.runner_cost_micro`
+//   (the terminal event's `costUsd`, passed to settle as a cross-check only, never booked).
 
 export function createAgentTables(sql: SqlStorage): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, owner_id TEXT NOT NULL,
@@ -33,7 +40,9 @@ export function createAgentTables(sql: SqlStorage): void {
     interrupt_asked INTEGER NOT NULL DEFAULT 0, budget_wait_since_ms INTEGER, requeues INTEGER NOT NULL DEFAULT 0,
     fenced INTEGER NOT NULL DEFAULT 0, grace_until_ms INTEGER, ending_since_ms INTEGER, watch_json TEXT,
     saw_checkpoint INTEGER NOT NULL DEFAULT 0, mirror_error INTEGER NOT NULL DEFAULT 0, deferred_json TEXT,
-    start_json TEXT, settled INTEGER NOT NULL DEFAULT 0, parts_n INTEGER NOT NULL DEFAULT 0,
+    start_json TEXT, settled INTEGER NOT NULL DEFAULT 0, ledger_hold_micro INTEGER NOT NULL DEFAULT 0,
+    start_hold_micro INTEGER NOT NULL DEFAULT 0, ledger_fails INTEGER NOT NULL DEFAULT 0, ledger_retry_at_ms INTEGER,
+    runner_cost_micro INTEGER, parts_n INTEGER NOT NULL DEFAULT 0,
     steps_n INTEGER NOT NULL DEFAULT 0, count_tokens_calls INTEGER NOT NULL DEFAULT 0,
     outcome TEXT, failure TEXT, cancel_why TEXT,
     pos_from INTEGER, pos_to INTEGER, d1_flushed INTEGER NOT NULL DEFAULT 0,
@@ -48,7 +57,7 @@ export function createAgentTables(sql: SqlStorage): void {
     session_id TEXT, provider TEXT,
     session TEXT NOT NULL DEFAULT 'none' CHECK (session IN ('none', 'resumable', 'waiting', 'damaged')),
     checkpoint_main_entries INTEGER, checkpoint_last_uuid TEXT, checkpoint_last_uuid_index INTEGER, waiting_json TEXT,
-    next_pos INTEGER NOT NULL DEFAULT 0, last_at_ms INTEGER NOT NULL, last_input_tokens INTEGER)`)
+    next_pos INTEGER NOT NULL DEFAULT 0, last_at_ms INTEGER NOT NULL, last_input_tokens INTEGER, damaged_at_ms INTEGER)`)
   sql.exec('CREATE TABLE IF NOT EXISTS flags (key TEXT PRIMARY KEY, value)')
   sql.exec(`CREATE TABLE IF NOT EXISTS turn_effects (turn_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
     json TEXT NOT NULL, PRIMARY KEY (turn_id, seq))`)
@@ -56,4 +65,17 @@ export function createAgentTables(sql: SqlStorage): void {
     json TEXT NOT NULL, PRIMARY KEY (turn_id, n))`)
   sql.exec(`CREATE TABLE IF NOT EXISTS authority (kind TEXT NOT NULL CHECK (kind IN ('member', 'grant')), id TEXT NOT NULL,
     at_ms INTEGER NOT NULL, PRIMARY KEY (kind, id))`)
+  sql.exec(`CREATE TABLE IF NOT EXISTS model_calls (turn_id TEXT NOT NULL, call_id TEXT NOT NULL, n INTEGER NOT NULL,
+    model TEXT NOT NULL, input_tokens INTEGER NOT NULL, max_tokens INTEGER NOT NULL, modifiers_json TEXT NOT NULL,
+    worst_micro INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('waiting', 'deciding', 'granted', 'inflight', 'done', 'cut', 'freed')),
+    money_wait INTEGER NOT NULL DEFAULT 0, arrived_at_ms INTEGER NOT NULL, admitted_at_ms INTEGER, granted_at_ms INTEGER,
+    lease_until_ms INTEGER, closed_at_ms INTEGER, close_sent INTEGER NOT NULL DEFAULT 0,
+    close_answered INTEGER NOT NULL DEFAULT 0, usage_json TEXT, micro INTEGER,
+    PRIMARY KEY (turn_id, call_id), UNIQUE (turn_id, n))`)
+  sql.exec('CREATE INDEX IF NOT EXISTS model_calls_state ON model_calls(state)')
+  sql.exec(`CREATE TABLE IF NOT EXISTS ledger_queue (turn_id TEXT NOT NULL, n INTEGER NOT NULL,
+    op TEXT NOT NULL CHECK (op IN ('extend', 'close', 'settle')), call_id TEXT, args_json TEXT,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'sent', 'answered')), answer_json TEXT, PRIMARY KEY (turn_id, n))`)
+  sql.exec("CREATE INDEX IF NOT EXISTS ledger_queue_open ON ledger_queue(state) WHERE state != 'answered'")
 }

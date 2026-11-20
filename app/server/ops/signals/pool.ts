@@ -10,8 +10,8 @@ const fromPool = (name: string, pick: keyof PoolHealth): Signal => ({
   check: async ({ env }) => (await brandAgent(env).poolHealth())[pick],
 })
 
-/** An idle pool (no container started, nothing queued) reads green on all three. */
-export const poolSignals: readonly Signal[] = [
+/** Listed by signals/index.ts. An idle pool (no container started, nothing queued) reads green on all three. */
+export const POOL_SIGNALS: readonly Signal[] = [
   fromPool('pool_protocol', 'protocol'),
   fromPool('pool_restarts', 'restarts'),
   fromPool('pool_shortfall', 'shortfall'),

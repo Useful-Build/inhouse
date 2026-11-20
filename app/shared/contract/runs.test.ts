@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { RunStartFields } from '../protocol/index.ts'
 import {
   AttachmentRefSchema, ChatEventSchema, ChatFrameEnvelopeSchema, ChatIdSchema, CreateChatInputSchema, PauseStateSchema,
-  SendTurnInputSchema, StoredMessageSchema, TurnFailureSchema, acceptsChatVersion, composeTurnPrompt,
+  SendTurnInputSchema, StoredMessageSchema, TurnFailureSchema, ActiveRunsSchema, acceptsChatVersion, composeTurnPrompt,
 } from './index.ts'
 
 const runId = 'r_0123456789abcdefABCDEF'
@@ -19,12 +19,14 @@ const turnId = 't_0123456789abcdefABCDEF'
 const at = { iso: '2026-11-20T10:00:00.000Z', ms: Date.parse('2026-11-20T10:00:00.000Z') }
 
 describe('turn failures (failure 1)', () => {
-  it('are exactly the twelve the design lists', () => {
+  // `model_off` (A3, 2026-11-20, from #153's review): the turn's model was switched off (or lost its price) while it
+  // waited; W1 PR 2b rechecks at start.
+  it('are exactly the twelve the design lists, plus model_off', () => {
     expect([...TurnFailureSchema.options].sort()).toEqual([
-      'budget_busy', 'cap_reached', 'files', 'max_turns', 'pool_full', 'protocol', 'sdk_error', 'session_crashed', 'store',
-      'timeout', 'turn_budget', 'unknown',
+      'budget_busy', 'cap_reached', 'files', 'max_turns', 'model_off', 'pool_full', 'protocol', 'sdk_error', 'session_crashed',
+      'store', 'timeout', 'turn_budget', 'unknown',
     ])
-    for (const r of ['budget_busy', 'max_turns', 'turn_budget']) {
+    for (const r of ['budget_busy', 'max_turns', 'turn_budget', 'model_off']) {
       expect(ChatEventSchema.safeParse({ type: 'turn.finished', turnId, outcome: 'failed', reason: r }).success, r).toBe(true)
     }
   })
@@ -116,5 +118,19 @@ describe('a send names each attachment once (route 29, the runner refuses an att
   it('refuses the same id twice, whatever the names; takes two ids with one name', () => {
     expect(SendTurnInputSchema.safeParse({ ...send, attachments: [a, { ...a, name: 'b.pdf' }] }).success).toBe(false)
     expect(SendTurnInputSchema.safeParse({ ...send, attachments: [a, b] }).success).toBe(true)
+  })
+})
+
+// Route 32's answer (A4, 2026-11-20): `{ runs: ActiveRun[] }`. Ways it can fail: a bare array, a run id that isn't one,
+// or a missing `live` parses.
+describe('route 32: the active runs envelope', () => {
+  it('parses { runs } and refuses a bare array or a malformed run', () => {
+    const run = { runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', chatId: 'c_AAAAAAAAAAAAAAAAAAAAAA', lastSeq: 6, live: false }
+    expect(ActiveRunsSchema.parse({ runs: [run] })).toEqual({ runs: [run] })
+    expect(ActiveRunsSchema.parse({ runs: [] })).toEqual({ runs: [] })
+    expect(ActiveRunsSchema.safeParse([run]).success).toBe(false)
+    expect(ActiveRunsSchema.safeParse({ runs: [{ ...run, runId: 't_AAAAAAAAAAAAAAAAAAAAAA' }] }).success).toBe(false)
+    const { live: _live, ...noLive } = run
+    expect(ActiveRunsSchema.safeParse({ runs: [noLive] }).success).toBe(false)
   })
 })

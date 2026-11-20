@@ -8,7 +8,8 @@ import { grantExpiry } from './grant-expiry.ts'
 import { runAdvance } from './run-advance.ts'
 import { turnWatch } from './turn-watch.ts'
 import { auditCopy } from '../../../audit-copy.ts'
-import { usageSweep } from '../../../usage/sweep.ts'
+import { createUsageSweep } from '../../../usage/sweep.ts'
+import { turnCalls } from '../turn-calls.ts'
 import { poolRetry } from '../../runner/pool-retry.ts'
 
 export const taskHandlers: Readonly<Record<string, TaskHandler>> = {
@@ -21,7 +22,8 @@ export const taskHandlers: Readonly<Record<string, TaskHandler>> = {
   'flush-turn': flushTurn,
   // W4
   'audit-copy': auditCopy,
-  'usage-sweep': usageSweep,
+  // W1 PR 2b gives the sweep the BrandAgent's reader over `model_calls` (A4-approved line).
+  'usage-sweep': createUsageSweep(turnCalls),
   // W2
   'pool-retry': poolRetry,
 }

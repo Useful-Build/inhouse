@@ -83,8 +83,8 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/chats/:id/turns': { design: d('personal', PEOPLE, ['smoke']), path: `/api/chats/${NO_CHAT}/turns`, json: {}, passes: 400 },
   'POST /api/turns/:turnId/interrupt': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/interrupt', json: {}, passes: 404 },
   'POST /api/turns/:turnId/stop': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/stop', json: {}, passes: 404 },
-  'GET /api/runs/active': { design: owned(ALL, ['smoke']), path: '/api/runs/active', passes: STUB },
-  'GET /api/traces/:id': { design: owned(ALL), path: '/api/traces/r_e2e_nobody', passes: STUB },
+  'GET /api/runs/active': { design: owned(ALL, ['smoke']), path: '/api/runs/active', passes: 200 },
+  'GET /api/traces/:id': { design: owned(ALL), path: '/api/traces/r_e2e_nobody', passes: 404 },
   'GET /api/socket': { design: owned(ALL, ['smoke']), path: '/api/socket?v=1', passes: STUB },
   'GET /api/pause': { design: d('baseline', ALL), path: '/api/pause', passes: 200 },
   // Item 19 (2026-11-20): the Inhouse team pauses and resumes too (an audited emergency pause), with no grant.

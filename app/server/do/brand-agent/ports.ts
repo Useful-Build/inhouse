@@ -104,7 +104,8 @@ export interface UsageLedgerPort {
   extend(turnId: string, callId: string, needMicro: number): Promise<({ ok: true } | { refused: 'cap_reached' | 'turn_budget' | 'held' }) & { ledgerHold: number }>
   /** Record a call's actual cost and set the turn's hold to `holdMicro`; a no-op once the turn is final. */
   close(turnId: string, callId: string, actualMicro: number, holdMicro: number): Promise<{ ledgerHold: number }>
-  settle(turnId: string, micro: number, nowMs: number): Promise<void>
+  /** Final, from the tally only (design 9); the runner's own cost estimate is logged beside it, never added. */
+  settle(turnId: string, micro: number, nowMs: number, runnerCostMicro?: number | null): Promise<void>
   release(turnId: string, nowMs: number): Promise<void>
 }
 
@@ -235,7 +236,8 @@ export interface BrandAgentRpc {
   /** The runs a caller may attach to, in its scope. */
   activeRuns(scope: RunScope): Promise<ActiveRun[]>
   /** A run's or a turn's trace; null when it isn't there or isn't in the scope. */
-  trace(id: string, scope: RunScope): Promise<Trace | null>
+  /** Not `trace`: workerd keeps that name for the tail-worker handler, so an RPC call to it is refused. */
+  getTrace(id: string, scope: RunScope): Promise<Trace | null>
   onMemberRemoved(memberId: string): Promise<void>
   onGrantEnded(grantId: string): Promise<void>
   /** A Runner's container exited: the pool names that runner's turns once per generation, and the BrandAgent fences them. */
