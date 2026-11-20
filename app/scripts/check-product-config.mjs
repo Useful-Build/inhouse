@@ -24,7 +24,10 @@
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --per-pr <N> <config path>
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --candidate <config path>
 // The caller states the mode (never inferred from the config, which a PR writes). Both variables are required (exit 2
-// without them). Names come from scripts/sandbox/names.mjs. It refuses a config when:
+// without them). The config must be plain JSON, read with JSON.parse alone: a comment or anything JSON.parse refuses
+// exits 2. (Two JSONC readers can disagree on where a comment ends: wrangler's ends `//` at a bare \r too, so a
+// comment-stripping read could hide config from this check that wrangler then applies.) Names come from
+// scripts/sandbox/names.mjs. It refuses a config when:
 //   - per-PR: the Worker, D1, R2, container and image names aren't exactly PR N's (`inhouse-sbx-pr<N>`, `-db`, `-files`)
 //     and every host isn't `inhouse-sbx-pr<N>-brand` or `-team` on SBX_ZONE; candidate: any of them is a per-PR name or
 //     not a sandbox name (a PR's code never binds the candidate's data, and the candidate never binds a PR's);
@@ -46,7 +49,8 @@
 //     absolute) and `assets.directory` exactly `../client` (the vite plugin's client folder beside the Worker's);
 //   - a Durable Object binding has a key but `name` and `class_name` (no other Worker's `script_name`); a migration step
 //     a key but `tag`, `new_classes`, `new_sqlite_classes`, `renamed_classes` and `deleted_classes` (no
-//     `transferred_classes`, which moves another Worker's objects); `build` a key but `watch_dir` (no `command`);
+//     `transferred_classes`, which moves another Worker's objects), class lists that aren't lists of names, or a
+//     `renamed_classes` item that isn't exactly `{ from, to }` (no `from_script`); `build` a key but `watch_dir` (no `command`);
 //     `observability` a key but `enabled`, `head_sampling_rate`, `logs` and `traces` (those two only `enabled`,
 //     `head_sampling_rate`, `invocation_logs` and `persist`: no `destinations`); `rules` anything but the vite
 //     plugin's own ESModule rule; `python_modules` anything but wrangler's default;
@@ -70,7 +74,7 @@ const usage = msg => {
   process.exit(2)
 }
 
-/** JSONC to JSON: drops comments and trailing commas outside strings. */
+/** JSONC to JSON: drops comments and trailing commas outside strings. Product mode only (hand-written templates). */
 export function stripJsonc(text) {
   let out = ''
   for (let i = 0; i < text.length; i++) {
@@ -81,8 +85,9 @@ export function stripJsonc(text) {
       out += text.slice(i, j + 1)
       i = j
     } else if (c === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++
-      out += '\n'
+      // A line comment ends at \n or \r, as wrangler's JSONC parser (jsonc-parser's isLineBreak) ends it.
+      while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i++
+      out += text[i] ?? ''
     } else if (c === '/' && text[i + 1] === '*') {
       const end = text.indexOf('*/', i + 2)
       if (end === -1) throw new Error('unterminated /* comment')
@@ -92,7 +97,7 @@ export function stripJsonc(text) {
       let j = i + 1
       for (;;) {
         while (j < text.length && /\s/.test(text[j])) j++
-        if (text.startsWith('//', j)) { while (j < text.length && text[j] !== '\n') j++ }
+        if (text.startsWith('//', j)) { while (j < text.length && text[j] !== '\n' && text[j] !== '\r') j++ }
         else if (text.startsWith('/*', j)) {
           const end = text.indexOf('*/', j + 2)
           if (end === -1) throw new Error('unterminated /* comment')
@@ -361,7 +366,19 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     if (bindings !== undefined && !Array.isArray(bindings)) fail('durable_objects.bindings must be a list')
     ;(Array.isArray(bindings) ? bindings : []).forEach((d, i) => onlyKeys(`durable_objects.bindings[${i}]`, d, DO_KEYS))
   }
-  list('migrations').forEach((m, i) => onlyKeys(`migrations[${i}]`, m, MIGRATION_KEYS))
+  list('migrations').forEach((m, i) => {
+    const where = `migrations[${i}]`
+    onlyKeys(where, m, MIGRATION_KEYS)
+    const isNames = v => Array.isArray(v) && v.every(x => typeof x === 'string')
+    for (const k of ['new_classes', 'new_sqlite_classes', 'deleted_classes']) {
+      if (m?.[k] !== undefined && !isNames(m[k])) fail(`${where}.${k} must be a list of class names`)
+    }
+    if (m?.renamed_classes !== undefined) {
+      const ok = Array.isArray(m.renamed_classes) && m.renamed_classes.every(r => r && typeof r === 'object' && !Array.isArray(r) &&
+        Object.keys(r).length === 2 && typeof r.from === 'string' && typeof r.to === 'string')
+      if (!ok) fail(`${where}.renamed_classes items must be exactly { from, to } (class names in this Worker)`)
+    }
+  })
   for (const [where, r] of routesOf(config)) {
     const route = typeof r === 'string' ? { pattern: r } : r
     if (typeof route?.pattern !== 'string') {
@@ -392,6 +409,16 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   return failures
 }
 
+/** A sandbox config: plain JSON only (no comments), a JSON object. Throws a message for a usage error otherwise. */
+export function readSandboxConfig(path) {
+  let text
+  try { text = readFileSync(path, 'utf8') } catch { throw new Error(`can't read ${path}`) }
+  let config
+  try { config = JSON.parse(text) } catch (err) { throw new Error(`${path} isn't plain JSON (sandbox configs have no comments): ${err.message}`) }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error(`${path} isn't a config object`)
+  return config
+}
+
 /** The sandbox mode from the command line's flags (after --sandbox), or throws a usage message. */
 export function parseSandboxMode(args) {
   if (args[0] === '--candidate') return { mode: { candidate: true }, rest: args.slice(1) }
@@ -414,11 +441,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       if (!sandboxEnv.accountId || !ACCOUNT_ID.test(sandboxEnv.accountId)) usage('--sandbox needs CF_SANDBOX_ACCOUNT_ID (32 lowercase hex)')
       try { assertZone(sandboxEnv.zone) } catch { usage('--sandbox needs SBX_ZONE (a lowercase domain name)') }
     }
-    let text
-    try { text = readFileSync(args[0], 'utf8') } catch { usage(`can't read ${args[0]}`) }
     let config
-    try { config = JSON.parse(stripJsonc(text)) } catch (err) { usage(`${args[0]} isn't valid JSONC: ${err.message}`) }
-    if (!config || typeof config !== 'object' || Array.isArray(config)) usage(`${args[0]} isn't a config object`)
+    if (sandbox) {
+      try { config = readSandboxConfig(args[0]) } catch (err) { usage(err.message) }
+    } else {
+      let text
+      try { text = readFileSync(args[0], 'utf8') } catch { usage(`can't read ${args[0]}`) }
+      try { config = JSON.parse(stripJsonc(text)) } catch (err) { usage(`${args[0]} isn't valid JSONC: ${err.message}`) }
+      if (!config || typeof config !== 'object' || Array.isArray(config)) usage(`${args[0]} isn't a config object`)
+    }
     const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : checkConfig(config)
     const where = sandbox ? ` to the sandbox (${mode.candidate ? 'candidate' : `PR ${mode.perPr}`})` : ''
     if (failures.length) {

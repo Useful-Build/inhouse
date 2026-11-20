@@ -1,6 +1,3 @@
-// check-product-config --sandbox fixture: PR 7's config in the vite plugin's raw output shape (@cloudflare/vite-plugin
-// 1.69.1's getOutputConfig, with the sandbox names already filled). The lock refuses it on exactly the parts the ops
-// repo's config.mjs must rewrite: the plugin's config paths and a migrations_dir that leaves the build folder.
 {
 	"configPath": "/tmp/build/app/wrangler.test.jsonc",
 	"userConfigPath": "/tmp/build/app/wrangler.test.jsonc",
@@ -11,7 +8,15 @@
 	"compatibility_flags": [],
 	"jsx_factory": "React.createElement",
 	"jsx_fragment": "React.Fragment",
-	"rules": [{ "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }],
+	"rules": [
+		{
+			"type": "ESModule",
+			"globs": [
+				"**/*.js",
+				"**/*.mjs"
+			]
+		}
+	],
 	"name": "inhouse-sbx-pr7",
 	"main": "index.js",
 	"account_id": "0123456789abcdef0123456789abcdef",
@@ -20,12 +25,28 @@
 		"INHOUSE_TEST_BUILD": "1",
 		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://test-issuer.invalid\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://inhouse-sbx-pr7-brand.zone.example.test\",\"aud\":\"b1a2c3d4e5f60718293a4b5c6d7e8f90b1a2c3d4e5f60718293a4b5c6d7e8f90\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse-sbx-pr7-team.zone.example.test\",\"aud\":\"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"}],\"serviceTokens\":{}}"
 	},
-	"durable_objects": { "bindings": [] },
+	"durable_objects": {
+		"bindings": []
+	},
 	"kv_namespaces": [],
-	"queues": { "producers": [], "consumers": [] },
+	"queues": {
+		"producers": [],
+		"consumers": []
+	},
 	"connect": [],
-	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-sbx-pr7-files" }],
-	"d1_databases": [{ "binding": "DB", "database_name": "inhouse-sbx-pr7-db", "migrations_dir": "../../server/migrations" }],
+	"r2_buckets": [
+		{
+			"binding": "FILES",
+			"bucket_name": "inhouse-sbx-pr7-files"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "inhouse-sbx-pr7-db",
+			"migrations_dir": "../../server/migrations"
+		}
+	],
 	"vectorize": [],
 	"ai_search_namespaces": [],
 	"ai_search": [],
@@ -36,7 +57,9 @@
 	"artifacts": [],
 	"services": [],
 	"analytics_engine_datasets": [],
-	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"version_metadata": {
+		"binding": "CF_VERSION_METADATA"
+	},
 	"unsafe_hello_world": [],
 	"flagship": [],
 	"ratelimits": [],
@@ -44,20 +67,49 @@
 	"workers_dev": false,
 	"preview_urls": false,
 	"routes": [
-		{ "pattern": "inhouse-sbx-pr7-brand.zone.example.test", "custom_domain": true },
-		{ "pattern": "inhouse-sbx-pr7-team.zone.example.test", "custom_domain": true }
+		{
+			"pattern": "inhouse-sbx-pr7-brand.zone.example.test",
+			"custom_domain": true
+		},
+		{
+			"pattern": "inhouse-sbx-pr7-team.zone.example.test",
+			"custom_domain": true
+		}
 	],
 	"migrations": [],
 	"exports": {},
-	"build": { "watch_dir": "./src" },
+	"build": {
+		"watch_dir": "./src"
+	},
 	"no_bundle": true,
 	"dispatch_namespaces": [],
-	"logfwdr": { "bindings": [] },
-	"observability": { "enabled": true },
-	"python_modules": { "exclude": ["**/*.pyc"] },
+	"logfwdr": {
+		"bindings": []
+	},
+	"observability": {
+		"enabled": true
+	},
+	"python_modules": {
+		"exclude": [
+			"**/*.pyc"
+		]
+	},
 	"define": {},
 	"cloudchamber": {},
 	"send_email": [],
-	"dev": { "ip": "localhost", "local_protocol": "http", "upstream_protocol": "http", "enable_containers": true, "generate_types": false },
-	"assets": { "binding": "ASSETS", "directory": "../client", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*"] }
+	"dev": {
+		"ip": "localhost",
+		"local_protocol": "http",
+		"upstream_protocol": "http",
+		"enable_containers": true,
+		"generate_types": false
+	},
+	"assets": {
+		"binding": "ASSETS",
+		"directory": "../client",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	}
 }

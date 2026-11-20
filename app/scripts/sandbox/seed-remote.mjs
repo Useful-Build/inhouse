@@ -6,7 +6,8 @@
 //   1. <name> must be PR N's D1 name (names.mjs's perPrNames), or for the candidate a sandbox name that is no PR's,
 //      before anything else runs;
 //   2. the config must pass check-product-config.mjs --sandbox in the same mode, and bind <name> as a D1 database. The
-//      config's path is made absolute once, and that one path goes to the lock and to wrangler;
+//      config's path is made absolute once, and that one path goes to the lock and to wrangler; the config is read as
+//      plain JSON, as the lock reads it;
 //   3. the seed renders to SQL here, with no network: server/migrations/ applied to an in-memory SQLite, then
 //      server/seed/seed.ts's seedBrand run against it through a D1-shaped wrapper that records every write statement
 //      that committed, in order. Replayed on a database migrated the same way, those writes leave the same rows (every id,
@@ -22,7 +23,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { checkSandboxConfig, parseSandboxMode, stripJsonc } from '../check-product-config.mjs'
+import { checkSandboxConfig, parseSandboxMode, readSandboxConfig } from '../check-product-config.mjs'
 import { SandboxNameError, assertCandidateName, perPrNames } from './names.mjs'
 
 const appDir = fileURLToPath(new URL('../../', import.meta.url))
@@ -151,7 +152,7 @@ async function main(argv) {
   const configPath = resolve(givenPath)
   // 2. The config passes the lock and binds this database.
   let config
-  try { config = JSON.parse(stripJsonc(readFileSync(configPath, 'utf8'))) } catch (err) { throw new Usage(`can't read ${configPath} as JSONC: ${err.message}`) }
+  try { config = readSandboxConfig(configPath) } catch (err) { throw new Usage(err.message) }
   let failures
   try {
     failures = checkSandboxConfig(config, { accountId: process.env.CF_SANDBOX_ACCOUNT_ID, zone: process.env.SBX_ZONE, mode, configDir: dirname(configPath) })

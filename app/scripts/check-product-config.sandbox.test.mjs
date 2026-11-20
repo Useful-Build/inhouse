@@ -11,7 +11,9 @@
 //  6. a binding kind the lock doesn't know about passes;
 //  7. a value hides where JSON.parse and wrangler's parser disagree (`__proto__`), at any depth;
 //  8. a path points outside the build folder (wrangler would upload or build what it finds there);
-//  9. it runs with the sandbox's account, zone or mode unset or malformed instead of stopping (exit 2).
+//  9. it runs with the sandbox's account, zone or mode unset or malformed instead of stopping (exit 2);
+// 10. its reader and wrangler's disagree on where a comment ends (a bare \r), so config hides from the check.
+// 11. a migration step's values carry what its keys don't (a `from_script` inside `renamed_classes`).
 // Oracles: the literal pass fixtures in check-product-config-fixtures/sandbox/ and one literal change per rule below,
 // each with the failure text it must print. Every case runs the script as CI and the ops repo do.
 import { spawnSync } from 'node:child_process'
@@ -30,7 +32,7 @@ const ENV = { CF_SANDBOX_ACCOUNT_ID: ACCOUNT, SBX_ZONE: ZONE }
 const PR12 = ['--sandbox', '--per-pr', '12']
 const CANDIDATE = ['--sandbox', '--candidate']
 const run = (args, env = ENV) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env } })
-const load = name => JSON.parse(stripJsonc(readFileSync(`${fixtures}sandbox/${name}`, 'utf8')))
+const load = name => JSON.parse(readFileSync(`${fixtures}sandbox/${name}`, 'utf8'))
 const tmp = mkdtempSync(join(tmpdir(), 'sandbox-config-'))
 let n = 0
 /** Writes the config (or, given `text`, the config's compact JSON passed through it) to a fresh folder. */
@@ -93,6 +95,11 @@ const PER_PR_CASES = [
   ['__proto__ in assets', c => c, 'config.assets.__proto__ is a forbidden key', after('"directory":"../client"', '"__proto__":{"directory":"/"}')],
   ['a constructor key', c => { c.vars.constructor = 'x' }, 'config.vars.constructor is a forbidden key'],
   ['a prototype key', c => { c.migrations[0].prototype = {} }, 'config.migrations[0].prototype is a forbidden key'],
+  // 11: migration step values.
+  ['a rename from another Worker', c => { c.migrations.push({ tag: 'v2', renamed_classes: [{ from: 'Live', from_script: 'live-product', to: 'RunnerContainer' }] }) }, 'migrations[1].renamed_classes items must be exactly { from, to }'],
+  ['a rename without a target', c => { c.migrations.push({ tag: 'v2', renamed_classes: [{ from: 'Old' }] }) }, 'migrations[1].renamed_classes items must be exactly { from, to }'],
+  ['a class list of objects', c => { c.migrations[0].new_sqlite_classes = [{ name: 'RunnerContainer', script: 'live-product' }] }, 'migrations[0].new_sqlite_classes must be a list of class names'],
+  ['a class list that is a string', c => { c.migrations.push({ tag: 'v2', deleted_classes: 'Live' }) }, 'migrations[1].deleted_classes must be a list of class names'],
   // 8: paths.
   ['main outside the build', c => { c.main = '../../../../proc/self/environ' }, 'main must be a relative path inside the build folder'],
   ['main absolute', c => { c.main = '/proc/self/environ' }, 'main must be a relative path inside the build folder'],
@@ -150,19 +157,19 @@ const PER_PR_CASES = [
 ]
 
 describe('check-product-config --sandbox --per-pr: PR 12', () => {
-  test('passes pass-per-pr.jsonc with exit 0', () => {
-    const r = run([...PR12, `${fixtures}sandbox/pass-per-pr.jsonc`])
+  test('passes pass-per-pr.json with exit 0', () => {
+    const r = run([...PR12, `${fixtures}sandbox/pass-per-pr.json`])
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('may deploy to the sandbox (PR 12)')
   })
-  test('passes pass-per-pr-generated.jsonc (config.mjs\'s rewrite of the vite output) as PR 7', () => {
-    const r = run(['--sandbox', '--per-pr', '7', `${fixtures}sandbox/pass-per-pr-generated.jsonc`])
+  test('passes pass-per-pr-generated.json (config.mjs\'s rewrite of the vite output) as PR 7', () => {
+    const r = run(['--sandbox', '--per-pr', '7', `${fixtures}sandbox/pass-per-pr-generated.json`])
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
   })
   test('refuses the raw vite output on exactly what config.mjs must rewrite', () => {
-    const r = run(['--sandbox', '--per-pr', '7', `${fixtures}sandbox/raw-vite-output.jsonc`])
+    const r = run(['--sandbox', '--per-pr', '7', `${fixtures}sandbox/raw-vite-output.json`])
     expect(r.status).toBe(1)
     expect(failureLines(r)).toEqual([
       '  - configPath is set: a sandbox config may not use it (it could reach resources or files outside the sandbox)',
@@ -173,7 +180,7 @@ describe('check-product-config --sandbox --per-pr: PR 12', () => {
   })
   for (const [name, change, text, textChange] of PER_PR_CASES) {
     test(`refuses ${name} with exit 1 and names it`, () => {
-      const config = load('pass-per-pr.jsonc')
+      const config = load('pass-per-pr.json')
       change(config)
       const r = run([...PR12, write(config, textChange)])
       expect(r.status).toBe(1)
@@ -181,7 +188,7 @@ describe('check-product-config --sandbox --per-pr: PR 12', () => {
     })
   }
   test('refuses a container image that exists as a file beside the config (wrangler would build it)', () => {
-    const config = load('pass-per-pr.jsonc')
+    const config = load('pass-per-pr.json')
     const file = write(config)
     const dir = join(file, '..', 'registry.cloudflare.com', ACCOUNT)
     mkdirSync(dir, { recursive: true })
@@ -194,7 +201,7 @@ describe('check-product-config --sandbox --per-pr: PR 12', () => {
 
 describe('the caller states the mode (failure 5)', () => {
   test('PR 12\'s config fails as PR 13\'s, on every name and host', () => {
-    const r = run(['--sandbox', '--per-pr', '13', `${fixtures}sandbox/pass-per-pr.jsonc`])
+    const r = run(['--sandbox', '--per-pr', '13', `${fixtures}sandbox/pass-per-pr.json`])
     expect(r.status).toBe(1)
     const lines = failureLines(r)
     for (const where of ['name', 'd1_databases[0].database_name', 'r2_buckets[0].bucket_name', 'containers[0].name', 'containers[0].image', 'routes[0].pattern', 'routes[1].pattern', 'INHOUSE_ACCESS.apps[0].origin', 'INHOUSE_ACCESS.apps[1].origin']) {
@@ -202,14 +209,14 @@ describe('the caller states the mode (failure 5)', () => {
     }
   })
   test('a per-PR config fails as the candidate, on its per-PR names and the product rules', () => {
-    const r = run([...CANDIDATE, `${fixtures}sandbox/pass-per-pr.jsonc`])
+    const r = run([...CANDIDATE, `${fixtures}sandbox/pass-per-pr.json`])
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('name: "inhouse-sbx-pr12" is a per-PR name, not the candidate\'s')
     expect(r.stderr).toContain('d1_databases[0].database_name: "inhouse-sbx-pr12-db" is a per-PR name')
     expect(r.stderr).toContain('vars.INHOUSE_TEST_BUILD is set')
   })
   test('the candidate fails as a PR\'s', () => {
-    const r = run([...PR12, `${fixtures}sandbox/pass-candidate.jsonc`])
+    const r = run([...PR12, `${fixtures}sandbox/pass-candidate.json`])
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('name: "inhouse-sbx-product" is not PR 12\'s worker name (inhouse-sbx-pr12)')
     expect(r.stderr).toContain('vars.INHOUSE_TEST_BUILD must be "1"')
@@ -217,8 +224,8 @@ describe('the caller states the mode (failure 5)', () => {
 })
 
 describe('check-product-config --sandbox --candidate', () => {
-  test('passes pass-candidate.jsonc with exit 0', () => {
-    const r = run([...CANDIDATE, `${fixtures}sandbox/pass-candidate.jsonc`])
+  test('passes pass-candidate.json with exit 0', () => {
+    const r = run([...CANDIDATE, `${fixtures}sandbox/pass-candidate.json`])
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('may deploy to the sandbox (candidate)')
@@ -235,7 +242,7 @@ describe('check-product-config --sandbox --candidate', () => {
   ]
   for (const [name, change, text] of CANDIDATE_CASES) {
     test(`refuses ${name}`, () => {
-      const config = load('pass-candidate.jsonc')
+      const config = load('pass-candidate.json')
       change(config)
       const r = run([...CANDIDATE, write(config)])
       expect(r.status).toBe(1)
@@ -245,7 +252,7 @@ describe('check-product-config --sandbox --candidate', () => {
 })
 
 describe('neither mode passes the other\'s config (failure 5)', () => {
-  for (const pass of ['pass-per-pr.jsonc', 'pass-per-pr-generated.jsonc', 'pass-candidate.jsonc']) {
+  for (const pass of ['pass-per-pr.json', 'pass-per-pr-generated.json', 'pass-candidate.json']) {
     test(`product mode refuses sandbox/${pass} on its sandbox strings`, () => {
       const r = run([`${fixtures}sandbox/${pass}`])
       expect(r.status).toBe(1)
@@ -264,7 +271,10 @@ describe('neither mode passes the other\'s config (failure 5)', () => {
   test('sandbox mode refuses the product pass fixture and the test build config', () => {
     for (const file of [`${fixtures}pass.jsonc`, fileURLToPath(new URL('../wrangler.test.jsonc', import.meta.url)), fileURLToPath(new URL('../wrangler.product.jsonc', import.meta.url))]) {
       for (const mode of [PR12, CANDIDATE]) {
-        const r = run([...mode, file])
+        // As written (JSONC, with comments): not even read.
+        expect(run([...mode, file]).status, file).toBe(2)
+        // As plain JSON: refused on its names and account.
+        const r = run([...mode, write(JSON.parse(stripJsonc(readFileSync(file, 'utf8'))))])
         expect(r.status, file).toBe(1)
         expect(r.stderr).toContain('name: "inhouse-product"')
         expect(r.stderr).toContain('account_id is missing')
@@ -273,8 +283,36 @@ describe('neither mode passes the other\'s config (failure 5)', () => {
   })
 })
 
+describe('comments (failure 10)', () => {
+  const text = readFileSync(`${fixtures}sandbox/pass-per-pr.json`, 'utf8')
+  const fileOf = t => {
+    const dir = join(tmp, `t${++n}`)
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'wrangler.json'), t)
+    return join(dir, 'wrangler.json')
+  }
+  const hidden = '"build":{"command":"echo pwned"},"services":[{"binding":"LIVE","service":"live-product"}],'
+  test('sandbox mode reads plain JSON only: a comment, or a bare-\\r comment that hides config from a JSONC reader, exits 2', () => {
+    for (const t of [`// a comment\n${text}`, text.replace('{', `{ // x\r${hidden}`), text.replace('{', '{ /* x */')]) {
+      const r = run([...PR12, fileOf(t)])
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain("isn't plain JSON (sandbox configs have no comments)")
+      expect(r.stdout).toBe('')
+    }
+  })
+  test('product mode ends a // comment at a bare \\r, as wrangler does, so the config after it is checked', () => {
+    expect(JSON.parse(stripJsonc('{"a": 1, // c\r"b": 2}'))).toEqual({ a: 1, b: 2 })
+    expect(JSON.parse(stripJsonc('{"a": 1 // c\r, "b": 2}'))).toEqual({ a: 1, b: 2 })
+    expect(JSON.parse(stripJsonc('{"a": [1, // c\r]}'))).toEqual({ a: [1] })
+    const product = readFileSync(`${fixtures}pass.jsonc`, 'utf8')
+    const r = run([fileOf(product.replace('"main"', '// note\r"env": { "x": {} },\n\t"main"'))])
+    expect(r.status).toBe(1)
+    expect(failureLines(r)).toEqual([expect.stringContaining('env is set')])
+  })
+})
+
 describe('usage (failure 9)', () => {
-  const file = `${fixtures}sandbox/pass-per-pr.jsonc`
+  const file = `${fixtures}sandbox/pass-per-pr.json`
   test('exits 2 without, or with a malformed, account id or zone', () => {
     for (const env of [{}, { SBX_ZONE: ZONE }, { CF_SANDBOX_ACCOUNT_ID: ACCOUNT }, { ...ENV, CF_SANDBOX_ACCOUNT_ID: ACCOUNT.toUpperCase() },
       { ...ENV, CF_SANDBOX_ACCOUNT_ID: `${ACCOUNT}0` }, { ...ENV, SBX_ZONE: 'Zone.example.test' }, { ...ENV, SBX_ZONE: 'example' }, { ...ENV, SBX_ZONE: `${ZONE}.` }]) {

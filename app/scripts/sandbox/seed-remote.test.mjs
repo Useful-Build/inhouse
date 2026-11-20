@@ -14,11 +14,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { stripJsonc } from '../check-product-config.mjs'
 import { applyMigrations, freshDb, recordingD1, renderSeedSql } from './seed-remote.mjs'
 
 const script = fileURLToPath(new URL('./seed-remote.mjs', import.meta.url))
-const fixture = fileURLToPath(new URL('../check-product-config-fixtures/sandbox/pass-per-pr.jsonc', import.meta.url))
+const fixture = fileURLToPath(new URL('../check-product-config-fixtures/sandbox/pass-per-pr.json', import.meta.url))
 const ENV = { CF_SANDBOX_ACCOUNT_ID: '0123456789abcdef0123456789abcdef', SBX_ZONE: 'zone.example.test' }
 const dir = mkdtempSync(join(tmpdir(), 'seed-remote-test-'))
 
@@ -40,7 +39,7 @@ const PR12 = ['--per-pr', '12']
 const run = (args, fake, env = ENV, cwd = undefined) =>
   spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8', env: { PATH: process.env.PATH, ...env, SEED_REMOTE_WRANGLER_FOR_TESTS: fake } })
 const configWith = change => {
-  const c = JSON.parse(stripJsonc(readFileSync(fixture, 'utf8')))
+  const c = JSON.parse(readFileSync(fixture, 'utf8'))
   change(c)
   const file = join(dir, `config-${Math.random().toString(16).slice(2)}.json`)
   writeFileSync(file, JSON.stringify(c))
@@ -100,6 +99,10 @@ describe('usage (failure 4)', () => {
     expect(run([...PR12, '--config', fixture, '--database', 'inhouse-sbx-pr12-db', '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
     expect(run([...PR12, '--config', configWith(c => { delete c.vars.AUDIT_HASH_KEY }), '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
     expect(run([...PR12, '--config', fixture, '--database', 'inhouse-sbx-pr12-db'], w.fake, {}).status).toBe(2)
+    // A config with a comment: sandbox configs are plain JSON, read as the lock reads them.
+    const commented = join(dir, 'commented.json')
+    writeFileSync(commented, `// x\r"build":{"command":"echo pwned"},\n${readFileSync(fixture, 'utf8')}`)
+    expect(run([...PR12, '--config', commented, '--database', 'inhouse-sbx-pr12-db'], w.fake).status).toBe(2)
     expect(w.calls()).toEqual([])
   })
 })
@@ -108,7 +111,7 @@ describe('the remote steps (failure 3)', () => {
   test('checks the database is empty, then executes the rendered file on that database, remotely, with the config\'s absolute path', () => {
     const w = fakeWrangler(0)
     // A relative --config, from the fixture's own folder: wrangler (which runs in app/) must get the absolute path.
-    const r = run([...PR12, '--config', 'pass-per-pr.jsonc', '--database', 'inhouse-sbx-pr12-db'], w.fake, ENV, dirname(fixture))
+    const r = run([...PR12, '--config', 'pass-per-pr.json', '--database', 'inhouse-sbx-pr12-db'], w.fake, ENV, dirname(fixture))
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
     const calls = w.calls()
