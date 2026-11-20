@@ -29,7 +29,7 @@ const TOKEN_ENV = {
 /**
  * The health route's body, a copy of server/ops/health.ts `HealthBody`. It can't be tied to that type at compile time:
  * importing it (even type-only) pulls the Worker's types into tsconfig.node.json (which typechecks e2e/), where
- * `Env`, `R2Bucket` and the rest don't exist. server/ops/health.test.ts holds the server's side of the shape.
+ * `Env`, `R2Bucket` and the rest don't exist. server/ops/health.test.ts checks the server's side of the shape.
  */
 const HealthSchema = z.object({
   version: z.string().nullable(),
