@@ -6,7 +6,8 @@ import { fc, test } from '@fast-check/vitest'
 import { SignJWT, UnsecuredJWT, createLocalJWKSet, importJWK } from 'jose'
 import type { JWTVerifyGetKey } from 'jose'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { authenticate, authenticateUpgrade, checkOrigin, remoteKeys } from './authenticate.ts'
+import { authenticate, authenticateUpgrade, checkOrigin, remoteKeys, testIssuerBranch } from './authenticate.ts'
+import * as issuerOff from './issuer-off.ts'
 import type { AuthOutcome } from './authenticate.ts'
 import { TEST_ISSUER, mintPerson, mintService } from './test-issuer-mint.ts'
 import { BRAND, INHOUSE, MONITOR_ID, SMOKE_ID, SMOKE_MEMBER, TEAM, authEnv, config, fakeStores, issuer, req } from '../testing/auth-fixtures.ts'
@@ -217,6 +218,12 @@ describe('the test-issuer gate (the compiled-in flag through the seam; vitest de
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect((await run(await testToken(), BRAND.origin, { env: testEnv(), keys: null, testBuild: true })).out).toEqual({ refused: 'unavailable' })
     expect(warn.mock.calls).toEqual([[{ event: 'auth_refused', class: 'keys_unavailable', requestId: 'req-1' }]])
+  })
+  it('issuer off (every build but the test build): no branch at all, even with a key set given and the JWKS var', async () => {
+    expect(testIssuerBranch(testEnv(good.key.jwks), good.keys, issuerOff)).toBeNull()
+    expect(testIssuerBranch(testEnv(good.key.jwks), undefined, issuerOff)).toBeNull()
+    // The real module still swaps (so the null above is the off issuer, not the seam).
+    expect(testIssuerBranch(testEnv(good.key.jwks), good.keys)).toEqual({ issuer: TEST_ISSUER, keySet: good.keys })
   })
   it('flag on but INHOUSE_TEST_BUILD unset: the team domain stays the issuer', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})

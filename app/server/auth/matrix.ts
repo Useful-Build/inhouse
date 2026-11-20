@@ -225,17 +225,26 @@ export class StoresClosedError extends Error {
 export function closedAfterRefusal<T extends object>(stores: T, refused: () => boolean): T {
   // A blank target, so a frozen store or a class instance (private fields, prototype methods) wraps as well: each
   // method still runs with the real object as `this`.
+  // `has`, `ownKeys` and `getOwnPropertyDescriptor` forward too (each property reported configurable, as the blank
+  // target requires), so `in`, `Object.keys` and a spread work; a spread copies the wrapped values, so it closes too.
   const target = stores
-  return new Proxy(Object.create(null) as T, {
-    get(_, prop) {
-      const value: unknown = Reflect.get(target, prop, target)
-      if (typeof value === 'function') {
-        return (...args: unknown[]) => {
-          if (refused()) throw new StoresClosedError()
-          return (value as (...a: unknown[]) => unknown).apply(target, args)
-        }
+  const wrapped = (prop: string | symbol): unknown => {
+    const value: unknown = Reflect.get(target, prop, target)
+    if (typeof value === 'function') {
+      return (...args: unknown[]) => {
+        if (refused()) throw new StoresClosedError()
+        return (value as (...a: unknown[]) => unknown).apply(target, args)
       }
-      return value !== null && typeof value === 'object' ? closedAfterRefusal(value, refused) : value
+    }
+    return value !== null && typeof value === 'object' ? closedAfterRefusal(value, refused) : value
+  }
+  return new Proxy(Object.create(null) as T, {
+    get: (_, prop) => wrapped(prop),
+    has: (_, prop) => Reflect.has(target, prop),
+    ownKeys: () => Reflect.ownKeys(target),
+    getOwnPropertyDescriptor(_, prop) {
+      const d = Reflect.getOwnPropertyDescriptor(target, prop)
+      return d && { value: wrapped(prop), writable: false, enumerable: d.enumerable, configurable: true }
     },
     set: () => false,
     defineProperty: () => false,

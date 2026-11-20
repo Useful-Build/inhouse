@@ -36,7 +36,7 @@ function setup(o: { access?: unknown; stores?: ReturnType<typeof fakeStores>; ha
   }
   const env = { ...baseEnv, ...authEnv(o.access) } as Env
   const call = (origin: string, path: string, init: RequestInit = {}) => api(parts, new Request(`${origin}${path}`, init), env, ctx, 'req-1')
-  return { call, calls: s.calls, parts }
+  return { call, calls: s.calls, parts, env }
 }
 const as = async (who: 'admin' | 'member' | 'inhouse') =>
   mintPerson({ key: good.key.privateJwk, iss: TEAM, aud: who === 'inhouse' ? INHOUSE.aud : BRAND.aud, sub: who, email: `${who}@example.test` })
@@ -156,6 +156,26 @@ describe('the object check', () => {
     })
     expect(res.status).toBe(403)
   })
+  it('a spread of the stores still reaches a method, and still closes at the refusal', async () => {
+    const s = fakeStores({ people: { admin: { role: 'admin' } } })
+    let seen: { keys: string[]; has: boolean; before: unknown; after: unknown } | undefined
+    const { call } = setup({ stores: s, handlers: { 'PUT /api/settings/technical/:key': async c => {
+      const spread = { ...c.stores! }
+      const members = { ...spread.members }
+      const before = await members.profile('m_x')
+      try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
+      let after: unknown
+      try { await members.profile('m_y') } catch (err) { after = err }
+      seen = { keys: Object.keys(c.stores!).sort(), has: 'audit' in c.stores!, before, after }
+      return apiJson({})
+    } } })
+    const res = await call(BRAND.origin, '/api/settings/technical/tm:gpt:on', { method: 'PUT', headers: { 'Cf-Access-Jwt-Assertion': await as('admin'), Origin: BRAND.origin } })
+    expect(res.status).toBe(403)
+    expect(seen?.keys).toEqual(['audit', 'grants', 'members'])
+    expect(seen?.has).toBe(true)
+    expect(seen?.before).toMatchObject({ name: 'Name m_x' })
+    expect(seen?.after).toBeInstanceOf(StoresClosedError)
+  })
   it('leaves the stores open while no check has refused', async () => {
     const res = await put(async c => {
       const before = await c.stores!.members.profile('m_x')
@@ -256,6 +276,24 @@ describe('a report row', () => {
       expect(res.status, who).toBe(204)
       expect(seen).toEqual({ stores: undefined, has: false })
     }
+  })
+})
+
+describe("a handler's env", () => {
+  it('has no D1 or R2 binding, even cast, but keeps the other bindings', async () => {
+    let seen: Record<string, unknown> | undefined
+    const { call, env } = setup({ handlers: { 'GET /api/me': async c => { seen = c.env as unknown as Record<string, unknown>; return apiJson({}) } } })
+    // The env api() was given has both, so the test isn't empty.
+    expect(env.DB).toBeTruthy()
+    expect(env.FILES).toBeTruthy()
+    const res = await call(BRAND.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': await as('member') } })
+    expect(res.status).toBe(200)
+    expect(seen?.DB).toBeUndefined()
+    expect(seen?.FILES).toBeUndefined()
+    expect('DB' in seen!).toBe(false)
+    expect(seen?.INHOUSE_ACCESS).toBe(env.INHOUSE_ACCESS)
+    expect(Object.keys(seen!).sort()).toEqual(Object.keys(env).filter(k => k !== 'DB' && k !== 'FILES').sort())
+    expect(Object.isFrozen(seen)).toBe(true)
   })
 })
 

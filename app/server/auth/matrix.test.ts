@@ -149,6 +149,41 @@ describe('checkAccess cases', () => {
   })
 })
 
+/** Rows outside technical and report that list Inhouse on a non-GET method. */
+const inhouseWriteProblems = (rows: readonly AccessRow[]) =>
+  rows.filter(x => x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report' && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
+
+/** The closed list of `report` rows (matrix.ts): only the error reporter's POST. */
+const REPORT_ROWS = ['POST /api/client-error']
+const reportProblems = (rows: readonly AccessRow[]) => {
+  const report = rows.filter(x => x.class === 'report')
+  const keys = report.map(x => `${x.method} ${x.pattern}`)
+  const problems = keys.filter(k => !REPORT_ROWS.includes(k)).map(k => `${k} is report`)
+  // An empty table (access-matrix.ts until PR0b) has no routes yet; a filled one needs every listed row as report.
+  if (rows.length) for (const k of REPORT_ROWS) if (!keys.includes(k)) problems.push(`${k} is not report`)
+  for (const x of report) if ((x.services ?? []).length) problems.push(`${x.method} ${x.pattern} names a service`)
+  return problems
+}
+
+describe('the invariant checks catch a bad row', () => {
+  it('report on POST /api/members/invites, client-error not report, or a report row naming a service', () => {
+    const invites = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
+    const bad = DESIGN_ROWS.map(r => (r === invites ? { ...r, class: 'report' as const } : r))
+    expect(reportProblems(bad)).toEqual(['POST /api/members/invites is report'])
+    const withService = DESIGN_ROWS.map(r => (r.class === 'report' ? { ...r, services: ['smoke' as const] } : r))
+    expect(reportProblems(withService)).toEqual(['POST /api/client-error names a service'])
+    const demoted = DESIGN_ROWS.map(r => (r.class === 'report' ? { ...r, class: 'baseline' as const } : r))
+    expect(reportProblems(demoted)).toEqual(['POST /api/client-error is not report'])
+    expect(reportProblems(DESIGN_ROWS)).toEqual([])
+  })
+  it('a non-GET brand_data, baseline or personal row listing inhouse', () => {
+    const invites = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
+    const bad = DESIGN_ROWS.map(r => (r === invites ? { ...r, allow: [...r.allow, 'inhouse' as const] } : r))
+    expect(inhouseWriteProblems(bad)).toEqual(['POST /api/members/invites'])
+    expect(inhouseWriteProblems(DESIGN_ROWS)).toEqual([])
+  })
+})
+
 /** The section 3 invariants, run on a set of rows and its CanRows. */
 function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows | null) {
   describe(`matrix invariants: ${name}`, () => {
@@ -171,14 +206,11 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
         if (x.adminWrite) expect(x.allow).toContain('admin')
       }
     })
-    it('no non-GET row outside technical and report lists inhouse; a report row is POST and names no service', () => {
-      for (const x of rows) {
-        if (x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report') expect(x.allow, `${x.method} ${x.pattern}`).not.toContain('inhouse')
-        if (x.class === 'report') {
-          expect(x.method).toBe('POST')
-          expect(x.services ?? []).toEqual([])
-        }
-      }
+    it('no non-GET row outside technical and report lists inhouse', () => {
+      expect(inhouseWriteProblems(rows)).toEqual([])
+    })
+    it('the report rows are exactly POST /api/client-error (a closed list), naming no service', () => {
+      expect(reportProblems(rows)).toEqual([])
     })
     it('monitor only on open rows, smoke only on GET rows', () => {
       for (const x of rows) {

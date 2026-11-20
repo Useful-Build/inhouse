@@ -8,8 +8,8 @@ import { AccessRefusedError, closedAfterRefusal, objectGate } from './auth/index
 import type { AuthStores, authenticate, checkAccess, checkOrigin } from './auth/index.ts'
 import { SECURITY_HEADERS, apiError } from './http.ts'
 import { respond, withSecurityHeaders } from '../shared/security-headers.ts'
-import { matchRoute } from './routes.ts'
-import type { Route } from './routes.ts'
+import { STORE_BINDINGS, matchRoute } from './routes.ts'
+import type { HandlerEnv, Route } from './routes.ts'
 
 export interface ApiParts {
   authenticate: typeof authenticate
@@ -19,6 +19,15 @@ export interface ApiParts {
   stores: (env: Env) => AuthStores
   routes: readonly Route[]
   accessMatrix: readonly AccessRow[]
+}
+
+/**
+ * The handler's env: a new frozen object with every binding but `STORE_BINDINGS` (`DB`, `FILES`), so a handler that
+ * casts its `env` still finds no D1 or R2 binding on it.
+ */
+export function handlerEnv(env: Env): HandlerEnv {
+  const drop: readonly string[] = STORE_BINDINGS
+  return Object.freeze(Object.fromEntries(Object.entries(env).filter(([k]) => !drop.includes(k)))) as HandlerEnv
 }
 
 export async function api(parts: ApiParts, request: Request, env: Env, ctx: ExecutionContext, requestId: string): Promise<Response> {
@@ -66,7 +75,7 @@ export async function api(parts: ApiParts, request: Request, env: Env, ctx: Exec
   let response: Response
   try {
     response = await found.route.handler({
-      request, env, ctx, principal, params: found.params, requestId, nowMs, stores: handlerStores, access: { requireObject: gate.requireObject },
+      request, env: handlerEnv(env), ctx, principal, params: found.params, requestId, nowMs, stores: handlerStores, access: { requireObject: gate.requireObject },
     })
   } catch (err) {
     // A refusal answers 403 whatever the handler threw after it (a closed store's StoresClosed included).

@@ -5,7 +5,11 @@
 type Real = typeof import('./test-issuer.ts')
 
 export const TEST_ISSUER_CANARY: string = ''
-/** No issuer: authenticate.ts never reaches the test branch in this build, and an empty `iss` matches no token. */
+/**
+ * No issuer. authenticate.ts never reaches the test branch in this build, and if it did, `testIssuerBranch` answers 503
+ * on an empty issuer before any verify. (An empty `iss` is not "matches nothing": jose 6.2.15 checks the issuer option
+ * with `!== undefined`, so `''` would demand `iss === ''`.)
+ */
 export const TEST_ISSUER: string = ''
 export const testIssuerKeys: Real['testIssuerKeys'] = () => {
   throw new Error('The test issuer is not in this build.')

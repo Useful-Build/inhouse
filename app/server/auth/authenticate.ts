@@ -68,12 +68,28 @@ function isKeySetFailure(err: unknown): boolean {
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v !== ''
 
+/** `@test-issuer`'s exports, as `testIssuerBranch` reads them. */
+export interface TestIssuerModule {
+  TEST_ISSUER: string
+  testIssuerKeys: (env: { TEST_ISSUER_JWKS?: string }) => JWTVerifyGetKey
+}
+
+/**
+ * The test branch's issuer and key set (`keys` overrides the set), or null when the test issuer is off (issuer-off.ts:
+ * an empty `TEST_ISSUER`). Null answers 503 before any verify, so the off build relies neither on jose's handling of
+ * an empty `iss` (it checks `issuer !== undefined`, so `''` would demand `iss === ''`) nor on the off key set throwing.
+ */
+export function testIssuerBranch(env: AuthEnv, keys: JWTVerifyGetKey | undefined, mod: TestIssuerModule = { TEST_ISSUER, testIssuerKeys }): { issuer: string; keySet: JWTVerifyGetKey } | null {
+  if (mod.TEST_ISSUER === '') return null
+  return { issuer: mod.TEST_ISSUER, keySet: keys ?? mod.testIssuerKeys(env) }
+}
+
 /**
  * The request's principal or its refusal. `keys` replaces the key set (tests: a local one, no network). Test build
  * only (compiled in AND `INHOUSE_TEST_BUILD === '1'`): the test issuer's iss and keys instead of the team domain's.
  * `compiledTestBuild` is a seam for the unit tests (vitest defines the flag false): the API passes nothing, so it's the
- * compile-time flag; and outside the test build `@test-issuer` is issuer-off.ts, whose empty `iss` and throwing key
- * set mean even `true` here trusts nothing (503).
+ * compile-time flag; and outside the test build `@test-issuer` is issuer-off.ts, so even `true` here trusts nothing:
+ * `testIssuerBranch` answers 503 before any verify.
  */
 export async function authenticate(request: Request, env: AuthEnv, stores: AuthStores, nowMs: number, requestId: string, keys?: JWTVerifyGetKey, compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__): Promise<AuthOutcome> {
   const config = loadAccessConfig(env.INHOUSE_ACCESS)
@@ -89,8 +105,9 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
   let keySet = keys
   try {
     if (compiledTestBuild && env.INHOUSE_TEST_BUILD === '1') {
-      issuer = TEST_ISSUER
-      keySet ??= testIssuerKeys(env)
+      const test = testIssuerBranch(env, keys)
+      if (!test) return refuse({ refused: 'unavailable' }, 'test_issuer_off', requestId)
+      ;({ issuer, keySet } = test)
     }
     keySet ??= remoteKeys(config.teamDomain)
   } catch {
