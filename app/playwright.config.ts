@@ -35,7 +35,8 @@ const productURL = `http://localhost:${productPort}`
 // other project ignores both folders. They run against dist-product-test/ (npm run build:product-test) under
 // `wrangler dev` with a fresh local D1 (migrated and seeded first) and this run's test issuer key.
 // Run: npm run build:product-test && E2E_TEST_BUILD=1 E2E_PREBUILT=1 npx playwright test --project=api --project=real-desktop --project=real-phone
-const testBuild = /e2e[\\/](api|real)[\\/]/
+// e2e/smoke/ (the `smoke` project, below) is ignored by every other project the same way, so it joins this pattern.
+const testBuild = /e2e[\\/](api|real|smoke)[\\/]/
 const testBuildOn = !!process.env.E2E_TEST_BUILD
 const testBuildPortNumber = testBuildPort()
 const visualMatch = noVisual ? { testIgnore: /.*/ } : { testMatch: /visual\.spec/, testIgnore: [ship, product, testBuild] }
@@ -78,6 +79,11 @@ const testBuildProjects: PlaywrightTestProject[] = testBuildOn
       { name: 'real-desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } }, testMatch: /e2e[\\/]real[\\/].*\.spec\.ts$/ },
       { name: 'real-phone', use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: false }, testMatch: /e2e[\\/]real[\\/].*\.spec\.ts$/ },
     ]
+  : []
+// The release smoke (e2e/smoke/, request only, read only): on the test build with E2E_TEST_BUILD=1 (CI), or against a
+// release with SMOKE_BASE_URL (then also set BASE_URL, which keeps the demo server from starting). See the spec's header.
+const smokeProject: PlaywrightTestProject[] = testBuildOn || process.env.SMOKE_BASE_URL
+  ? [{ name: 'smoke', testMatch: /e2e[\\/]smoke[\\/].*\.spec\.ts$/ }]
   : []
 // E2E_PREBUILT (CI): serve the build already in dist/ instead of building again.
 const demoServer = {
@@ -148,6 +154,7 @@ export default defineConfig({
     ...productProject,
     // Run: see testBuild above.
     ...testBuildProjects,
+    ...smokeProject,
   ],
   webServer: webServers.length ? webServers : undefined,
 })
