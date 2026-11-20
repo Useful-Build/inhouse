@@ -9,7 +9,7 @@ import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
 import { NotConnected } from './shell/NotConnected'
 import { notOnTeam } from './shell/not-on-team'
-import { mayWriteHash } from './shell/route-sync'
+import { createHashSync } from './shell/route-sync'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -186,9 +186,12 @@ function applyRoute(r: Route, first: boolean) {
 const initialRoute = fromHash(location.hash)
 if (initialRoute) applyRoute(initialRoute, true)
 /** The first link named a page that doesn't exist: App says so once it has mounted. */
-/** Where the app was when its hash was last written (see shell/route-sync.ts). */
-let lastNav = ''
 const bootUnknownPage = !initialRoute && hasSlug(location.hash)
+
+const hashSync = createHashSync(
+  { hash: () => location.hash, state: () => history.state, replace: (st, h) => history.replaceState(st, '', h), push: (st, h) => history.pushState(st, '', h) },
+  { toHash: p => toHash(p.page as Page, p.appKey, p.setTab, p.chatKey, p.menu), fromHash, takeReplaceEntry, fromMenuState: FROM_SETTINGS_MENU },
+)
 
 function useHashRoute() {
   const page = useUi(s => s.page)
@@ -214,6 +217,7 @@ function useHashRoute() {
     const apply = () => {
       const r = fromHash(location.hash)
       const ui = useUi.getState()
+      hashSync.adopt()
       if (r) { applyRoute(r, false); return }
       const named = hasSlug(location.hash)
       history.replaceState(null, '', toHash(ui.page, ui.appKey, ui.setTab, ui.chatList ? 'all' : openChatKey(ui, agent.read()) ?? 'new', ui.phone && ui.setMenu))
@@ -250,24 +254,8 @@ function useHashRoute() {
       return
     }
     if (chatUnknown) return // replaced above
-    const h = toHash(page, appKey, setTab, chatKey, menu)
-    // An open Library file keeps its own link (#/library/<id>, see screens/library/route.ts).
-    if (location.hash === h || (page === 'library' && location.hash.startsWith(`${h}/`))) { lastNav = `${page}|${appKey}|${setTab}|${chatKey}|${menu}`; return }
-    // A hash someone else just set is read by the hashchange listener; writing now (a phone-width resize re-runs this effect) would put the old page back over it.
-    const nav = `${page}|${appKey}|${setTab}|${chatKey}|${menu}`
-    const navChanged = nav !== lastNav
-    lastNav = nav
-    if (!mayWriteHash(navChanged, location.hash, h, !!fromHash(location.hash))) return
-    // A hash that only needs tidying (none, unknown, no tab) replaces the entry. A real move adds one.
-    // So does a new chat getting its id when the first question is asked: Back skips the empty chat.
-    const cur = fromHash(location.hash)
-    // On a phone the settings menu and a settings page are two entries; desktop tidies #/settings into its page.
-    const sameMenu = !(page === 'settings' && phone) || (cur?.setMenu ?? menu) === menu
-    const tidy = !cur || (cur.page === page && (cur.appKey ?? appKey) === appKey && (cur.setTab ?? setTab) === setTab && (cur.chat ?? chatKey) === chatKey && sameMenu)
-      || (page === 'chats' && cur.page === 'chats' && cur.chat === 'new' && chatIsNew)
-    // A settings page opened from the phone menu remembers it, so its Back button can step back instead of adding an entry.
-    if (takeReplaceEntry() || tidy) history.replaceState(history.state, '', h)
-    else history.pushState(phone && page === 'settings' && !menu && cur?.page === 'settings' && cur.setMenu ? FROM_SETTINGS_MENU : null, '', h)
+    // The hash follows the app unless someone else just set one (see shell/route-sync.ts).
+    hashSync.sync({ page, appKey, setTab, chatKey, menu, phone, chatIsNew })
   }, [page, appKey, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
 }
 
