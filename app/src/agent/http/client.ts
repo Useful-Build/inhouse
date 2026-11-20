@@ -111,6 +111,7 @@ export class HttpAgent implements AgentClient {
   /** The schemas, once the chunk has loaded (it starts loading with the client). */
   private k: Contract | null = null
   private dataCache = new WeakMap<Slices, { live: boolean; data: AgentData }>()
+  private lastBuilt: { s: Slices; live: boolean; data: AgentData } | null = null
   private loading: Promise<void> | null = null
   private paging = new Set<'audit' | 'members'>()
   private expiry: ReturnType<typeof setTimeout> | undefined
@@ -154,8 +155,12 @@ export class HttpAgent implements AgentClient {
     const live = g ? isLive(g, this.now()) : false
     const hit = this.dataCache.get(this.s)
     if (hit && hit.live === live) return hit.data
-    const data = this.build(live)
+    // A change to what read() doesn't carry (a setting, a switch) leaves its object alone, so nothing re-renders for it.
+    const last = this.lastBuilt
+    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'res'] as const).every(k => last.s[k] === this.s[k])
+    const data = same ? last.data : this.build(live)
     this.dataCache.set(this.s, { live, data })
+    this.lastBuilt = { s: this.s, live, data }
     return data
   }
   private build(live: boolean): AgentData {

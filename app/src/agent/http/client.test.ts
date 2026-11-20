@@ -222,6 +222,15 @@ describe('writes', () => {
     expect(heard).toEqual([])
   })
 
+  test('a setting or a switch leaves read() as it was (nothing it carries changed), and a member change does not', async () => {
+    const { agent } = await loaded({ ...reads(), [put('n:slack')]: { body: record('n:slack', true, 1) }, 'PUT /api/members/m_dana/role': { body: member('m_dana', { role: 'admin', rev: 2 }) } })
+    const data = agent.read()
+    await agent.setToggle('n:slack', true)
+    expect(agent.read()).toBe(data)
+    await agent.setMemberRole('m_dana', 'admin')
+    expect(agent.read()).not.toBe(data)
+  })
+
   test('each scope has its own route, by the key', async () => {
     const paths: string[] = []
     const all = (k: string, v: unknown): Answer => ({ body: record(k, v, 1) })
