@@ -235,7 +235,8 @@ export interface BrandAgentRpc {
   /** The runs a caller may attach to, in its scope. */
   activeRuns(scope: RunScope): Promise<ActiveRun[]>
   /** A run's or a turn's trace; null when it isn't there or isn't in the scope. */
-  trace(id: string, scope: RunScope): Promise<Trace | null>
+  /** Not `trace`: workerd keeps that name for the tail-worker handler, so an RPC call to it is refused. */
+  getTrace(id: string, scope: RunScope): Promise<Trace | null>
   onMemberRemoved(memberId: string): Promise<void>
   onGrantEnded(grantId: string): Promise<void>
   /** A Runner's container exited: the pool names that runner's turns once per generation, and the BrandAgent fences them. */

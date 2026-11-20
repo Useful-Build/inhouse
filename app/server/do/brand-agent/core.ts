@@ -29,6 +29,10 @@ import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
 import { ModelGate } from './gate.ts'
 import { turnCalls } from './turn-calls.ts'
+import { activeRuns, runsHealth, traceOf } from './runs-read.ts'
+import type { RunScope, RunsHealth } from './ports.ts'
+import type { ActiveRun } from '../../../shared/contract/runs.ts'
+import type { Trace } from '../../../shared/contract/trace.ts'
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst } from './ports.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
@@ -625,6 +629,12 @@ export class AgentCore {
   leaseTask(turnId: string): Promise<TaskResult> {
     return this.gate.leaseTask(turnId)
   }
+
+  // ---------- reads (routes 32, 33; the runs signal; runs-read.ts) ----------
+
+  activeRuns(scope: RunScope): ActiveRun[] { return activeRuns(this.sql, scope) }
+  readTrace(id: string, scope: RunScope): Trace | null { return traceOf(this.sql, id, scope, this.d.now()) }
+  runsHealth(quarantined: number): RunsHealth { return runsHealth(this.sql, this.d.now(), quarantined) }
 
   // ---------- the model gate (8.2; the egress's calls) ----------
 

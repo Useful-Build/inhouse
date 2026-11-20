@@ -106,13 +106,13 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async resetSession(chatId: string, by: Actor): Promise<{ ok: true } | Refusal> {
     return this.core.resetSession(chatId, by)
   }
-  /** Route 32: PR 2b. */
-  async activeRuns(_scope: RunScope): Promise<ActiveRun[]> {
-    throw new Error('activeRuns: not built (PR 2b)')
+  /** Route 32: live runs and ended ones with a turn not yet in D1, in the scope. */
+  async activeRuns(scope: RunScope): Promise<ActiveRun[]> {
+    return this.core.activeRuns(scope)
   }
-  /** Route 33: PR 2b. */
-  async trace(_id: string, _scope: RunScope): Promise<Trace | null> {
-    throw new Error('trace: not built (PR 2b)')
+  /** Route 33: a run's or a turn's trace, null when it isn't there or isn't in the scope. */
+  async getTrace(id: string, scope: RunScope): Promise<Trace | null> {
+    return this.core.readTrace(id, scope)
   }
 
   // ---------- authority (4.10; the sockets are PR 4's) ----------
@@ -130,9 +130,9 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async poolHealth(): Promise<PoolHealth> {
     return this.ports.pool.health()
   }
-  /** The runs signal: PR 2b. */
+  /** The runs signal (ops/signals/runs.ts): failures, stuck turns, damaged sessions, quarantined tasks. */
   async runsHealth(): Promise<RunsHealth> {
-    throw new Error('runsHealth: not built (PR 2b)')
+    return this.core.runsHealth(this.sched.quarantinedCount())
   }
   async drain(): Promise<DrainState> {
     return this.core.drain()

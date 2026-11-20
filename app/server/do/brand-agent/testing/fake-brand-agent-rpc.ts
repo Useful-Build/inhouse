@@ -86,7 +86,7 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   async getPause() { this.log('getPause'); return this.pauseState }
   async resetSession(chatId: string, by: Actor) { this.log('resetSession', chatId, by); return ok }
   async activeRuns(scope: RunScope): Promise<ActiveRun[]> { this.log('activeRuns', scope); return [] }
-  async trace(id: string, scope: RunScope): Promise<Trace | null> { this.log('trace', id, scope); return null }
+  async getTrace(id: string, scope: RunScope): Promise<Trace | null> { this.log('getTrace', id, scope); return null }
   async onMemberRemoved(memberId: string) { this.log('onMemberRemoved', memberId) }
   async onGrantEnded(grantId: string) { this.log('onGrantEnded', grantId) }
   async containerExited(runner: string, gen: number) { this.log('containerExited', runner, gen) }
