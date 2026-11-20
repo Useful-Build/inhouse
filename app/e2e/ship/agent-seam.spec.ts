@@ -96,8 +96,10 @@ test('S1: Today opens at the morning start with the same six things and the same
   await expect(morning).toContainText(/6:00\s*AM/)
   await expect(main(page).locator('section').filter({ hasText: 'Fri, Nov 13' }).first()).toBeVisible()
   // A file made this morning: its time reads from the demo clock in the Library list (desktop only: the list's time column
-  // is hidden on a phone). The viewer's date line is a fixed instant; S6's "Yesterday" group is the day proof.
+  // is hidden on a phone; the Library opens in Masonry, so pick List first). The viewer's date line is a fixed instant;
+  // S6's "Yesterday" group is the day proof.
   await goTo(page, 'Library')
+  if (!phone()) await page.getByLabel('View').getByLabel('List', { exact: true }).click()
   if (!phone()) await expect(page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: 'stuck-orders-over-3-days.csv' }).first()).toContainText(/7:43\s*AM/)
   await page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: 'stuck-orders-over-3-days.csv' }).first().click()
   await expect(page.getByRole('dialog', { name: 'File: stuck-orders-over-3-days.csv' })).toContainText(/Mon, Nov 16, 7:43\s*AM/)
