@@ -44,8 +44,8 @@ export type ErrorBody = z.infer<typeof ErrorBodySchema>
 export const ResourceKeySchema = z.enum(RESOURCE_KEYS)
 export type ResourceKey = z.infer<typeof ResourceKeySchema>
 
-/** Where one resource stands: loading, ready, or failed with the error's code. */
-export const ResourceStatusSchema = z.object({ status: z.enum(['loading', 'ready', 'error']), error: AgentErrorCodeSchema.optional() })
+/** Where one resource stands: loading, ready, or failed with the error's code (and its reason: `not_invited` and `removed` show "You're not on this team"). */
+export const ResourceStatusSchema = z.object({ status: z.enum(['loading', 'ready', 'error']), error: AgentErrorCodeSchema.optional(), reason: ErrorReasonSchema.optional() })
 export type ResourceStatus = z.infer<typeof ResourceStatusSchema>
 
 /** Two strings shown side by side: a label and its value, or a text and its source number. */
