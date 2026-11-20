@@ -13,3 +13,5 @@ const run = script => execFileSync('npm', ['run', script], { cwd: appDir, stdio:
 run('test-build:migrate')
 if (existsSync(new URL('../../../server/seed/run.ts', import.meta.url))) run('test-build:seed')
 else console.warn('test-build: no server/seed/run.ts yet (W2 adds it), so the local D1 is migrated but not seeded.')
+// W6: one grant that already ended, for the API specs' expiry check (no clock hook on a request path).
+execFileSync('node', ['e2e/support/test-build/expired-grant.ts'], { cwd: appDir, stdio: 'inherit' })
