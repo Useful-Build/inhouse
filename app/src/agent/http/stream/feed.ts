@@ -28,22 +28,21 @@ export interface Pushed {
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** The envelope's fields, checked by hand: null when it isn't one. */
-function envelopeOf(raw: unknown): { v: number; runId: string; seq: number; at: { iso: string; ms: number }; event: unknown } | null {
-  if (!isRec(raw)) return null
-  const { v, runId, seq, at, event } = raw
-  if (typeof v !== 'number' || !Number.isInteger(v)) return null
-  if (typeof runId !== 'string' || typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) return null
-  if (!isRec(at) || typeof at.iso !== 'string' || typeof at.ms !== 'number') return null
-  return { v, runId, seq, at: { iso: at.iso, ms: at.ms }, event }
-}
+/** Frames that may wait ahead of the next seq: a replay sends 500 at a time, so this is room for several. A frame past it is dropped; the gap stays and a re-attach fills it. */
+const AHEAD_MAX = 2000
+
+/** What waits for its turn: the frame's place, and its event when the rest of the envelope read (null when it didn't: an unreadable event). */
+interface Waiting { seq: number; at: { iso: string; ms: number } | null; event: unknown }
+
+const isInstantLike = (v: unknown): v is { iso: string; ms: number } => isRec(v) && typeof v.iso === 'string' && typeof v.ms === 'number'
 
 export class RunFeed {
   private last = 0
-  private ahead = new Map<number, NonNullable<ReturnType<typeof envelopeOf>>>()
+  private ahead = new Map<number, Waiting>()
   private skipLogged = false
   private reloading = false
-
+  /** The contiguous seq a re-attach was already asked from: one ask per gap, however many frames land beyond it. */
+  private askedFrom: number | null = null
   readonly runId: string
   private readonly parts: FeedParts
   constructor(runId: string, parts: FeedParts, fromSeq = 0) { this.runId = runId; this.parts = parts; this.last = fromSeq }
@@ -55,26 +54,42 @@ export class RunFeed {
   push(raw: unknown): Pushed {
     const out: FeedOut[] = []
     if (this.reloading) return { out, reattachFrom: null }
-    const env = envelopeOf(raw)
-    // A frame that isn't an envelope at all can't be placed: drop it (the next frame's gap re-attaches if one was lost).
-    if (!env || env.runId !== this.runId) return { out, reattachFrom: null }
-    if (!this.parts.accepts(env.v)) {
+    if (!isRec(raw)) return { out, reattachFrom: null }
+    // The version is read first, before anything else in the frame: one this build doesn't accept asks for a reload.
+    if (typeof raw.v !== 'number' || !Number.isInteger(raw.v)) return { out, reattachFrom: null }
+    if (!this.parts.accepts(raw.v)) {
       this.reloading = true
       return { out: [{ kind: 'reload' }], reattachFrom: null }
     }
-    // Seen already: dropped. A gap that is still open still asks to be filled.
-    if (env.seq <= this.last || this.ahead.has(env.seq)) return { out, reattachFrom: this.ahead.size > 0 ? this.last : null }
-    this.ahead.set(env.seq, env)
+    // A frame that can't be placed (another run, no seq) is dropped. One that can be placed but whose envelope doesn't read is an
+    // unreadable event: its seq advances, it is skipped and logged once, and nothing re-attaches for it (design section 2).
+    const { runId, seq } = raw
+    if (runId !== this.runId || typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) return { out, reattachFrom: null }
+    // Seen already: dropped. A gap that is still open asks once, not again.
+    if (seq <= this.last || this.ahead.has(seq)) return { out, reattachFrom: this.ask() }
+    if (this.ahead.size >= AHEAD_MAX && seq > this.last + 1) return { out, reattachFrom: this.ask() }
+    const placed = typeof raw.chatId === 'string' && isInstantLike(raw.at)
+    this.ahead.set(seq, { seq, at: placed ? (raw.at as { iso: string; ms: number }) : null, event: raw.event })
     for (let next = this.ahead.get(this.last + 1); next; next = this.ahead.get(this.last + 1)) {
       this.ahead.delete(next.seq)
       this.last = next.seq
-      const event = this.parts.parseEvent(next.event)
-      if (event) out.push({ kind: 'event', runId: this.runId, seq: next.seq, at: next.at, event })
+      const event = next.at ? this.parts.parseEvent(next.event) : null
+      if (event && next.at) out.push({ kind: 'event', runId: this.runId, seq: next.seq, at: next.at, event })
       else if (!this.skipLogged) { this.skipLogged = true; this.parts.logSkip?.(next.seq) }
     }
-    return { out, reattachFrom: this.ahead.size > 0 ? this.last : null }
+    return { out, reattachFrom: this.ask() }
   }
 
-  /** The socket dropped, or the server's `attached` says it holds more than this feed has: where to attach from. */
-  reattachFrom(): number { return this.last }
+  /** The seq to attach from while a gap is open, once per gap; null when nothing waits or it was asked already. */
+  private ask(): number | null {
+    if (this.ahead.size === 0 || this.askedFrom === this.last) return null
+    this.askedFrom = this.last
+    return this.last
+  }
+
+  /** The socket dropped, or the server's `attached` says it holds more than this feed has: where to attach from. A new attach may be asked for again. */
+  reattachFrom(): number {
+    this.askedFrom = null
+    return this.last
+  }
 }

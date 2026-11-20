@@ -34,8 +34,15 @@ function tab(stream: Stream, log: string[] = []) {
   let view = emptyView()
   const delivered: number[] = []
   const outcomes: string[] = []
+  /** The contiguous seqs a re-attach was asked from: at most once each until the tab itself attaches again. */
+  const asks = new Set<number>()
   const take = (f: Frame) => {
     const r = feed.push(f)
+    if (r.reattachFrom !== null) {
+      expect(r.reattachFrom, 'it asks from the last contiguous seq').toBe(feed.contiguous)
+      expect(asks.has(r.reattachFrom), `one ask per gap, not again for ${r.reattachFrom}`).toBe(false)
+      asks.add(r.reattachFrom)
+    }
     for (const o of r.out) {
       if (o.kind === 'reload') { outcomes.push('reload'); continue }
       delivered.push(o.seq)
@@ -43,7 +50,7 @@ function tab(stream: Stream, log: string[] = []) {
     }
     return r
   }
-  return { feed, take, get view() { return view }, delivered, outcomes }
+  return { feed, take, asks, get view() { return view }, delivered, outcomes }
 }
 
 /** The server's replay: every frame after `from`, at most `cut` of them (a connection that drops mid-replay). */
@@ -83,10 +90,11 @@ describe('a flaky connection never changes what the chat shows', () => {
         // A frame ahead of the next one waits, and the feed asks to attach again from where it is contiguous.
         const f = s.frames[next + o.by]
         const ahead = f.seq > t.feed.contiguous + 1
-        const r = t.take(f)
-        if (ahead) expect(r.reattachFrom, 'a frame ahead asks to attach from the last contiguous seq').toBe(t.feed.contiguous)
+        t.take(f)
+        if (ahead) expect(t.asks.has(t.feed.contiguous), 'a frame ahead has asked to attach from the last contiguous seq').toBe(true)
       } else if (o.op === 'reconnect') {
         const from = t.feed.reattachFrom()
+        t.asks.clear()
         asked.push(from)
         replay(s, from, o.cut).forEach(f => t.take(f))
         next = Math.max(next, Math.min(s.frames.length, from + o.cut))
@@ -169,5 +177,56 @@ describe('the version rule, one frame at a time', () => {
     const r = feed()
     expect(r.push({ ...f[0], v: 2, seq: 99, event: 'not even an object' }).out).toEqual([{ kind: 'reload' }])
     expect(r.contiguous, 'its seq did not move the feed').toBe(0)
+  })
+})
+
+describe('an envelope that places but does not read', () => {
+  const s = STREAMS[0]
+  const f = s.frames
+  test('is an unreadable event: its seq advances, it is skipped, logged once, and nothing asks to attach again', () => {
+    const log: string[] = []
+    const feed = new RunFeed(s.runId, parts(log))
+    const broken = (seq: number, patch: Record<string, unknown>) => ({ ...f[seq - 1], ...patch })
+    const results = [
+      feed.push(f[0]),
+      feed.push(broken(2, { at: 'yesterday' })), // no instant
+      feed.push(broken(3, { chatId: 7 })), // no chat id
+      feed.push(f[3]),
+    ]
+    expect(results.every(r => r.reattachFrom === null), 'no re-attach for any of them').toBe(true)
+    expect(feed.contiguous, 'the seq moved past both').toBe(4)
+    expect(log).toEqual(['skip 2'])
+    expect(results.flatMap(r => r.out).map(o => (o.kind === 'event' ? o.seq : 0))).toEqual([1, 4])
+  })
+  test('a frame with no place at all (another run, no seq) is dropped, and the version is still read first', () => {
+    const feed = new RunFeed(s.runId, parts())
+    expect(feed.push({ ...f[0], seq: 'one' }).out).toEqual([])
+    expect(feed.push({ ...f[0], seq: 0 }).out).toEqual([])
+    expect(feed.push({ v: 1 }).out).toEqual([])
+    expect(feed.contiguous).toBe(0)
+    expect(feed.push({ v: 2, anything: 'at all' }).out, 'a newer version reloads whatever else is wrong with the frame').toEqual([{ kind: 'reload' }])
+  })
+})
+
+describe('one re-attach per gap', () => {
+  const s = STREAMS[0]
+  test('frames landing beyond an open gap ask once, and again only after the tab attached itself', () => {
+    const feed = new RunFeed(s.runId, parts())
+    const asks = [s.frames[2], s.frames[3], s.frames[4], s.frames[2]].map(f => feed.push(f).reattachFrom)
+    expect(asks).toEqual([0, null, null, null])
+    expect(feed.reattachFrom(), 'the tab attaches from where it is contiguous').toBe(0)
+    expect(feed.push(s.frames[5]).reattachFrom, 'a new attach that still leaves a gap may ask again').toBe(0)
+    feed.push(s.frames[0]); feed.push(s.frames[1])
+    expect(feed.contiguous, 'the gap closed and the waiting frames followed').toBe(6)
+  })
+  test('a frame ahead of a full waiting room is dropped, and the gap still asks', () => {
+    const feed = new RunFeed(s.runId, parts())
+    const at = s.frames[0].at
+    const mk = (seq: number) => ({ ...s.frames[0], seq, at, event: { type: 'future.event' } })
+    for (let seq = 2; seq < 2 + 2000; seq++) feed.push(mk(seq))
+    const r = feed.push(mk(5000))
+    expect(r.out).toEqual([])
+    feed.push(mk(1))
+    expect(feed.contiguous, 'everything that was kept followed seq 1').toBe(2001)
   })
 })
