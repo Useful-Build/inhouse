@@ -87,13 +87,12 @@ skill before any UI change. Repo specifics:
   problem is; what was tried (each round and model, and its result); why it still isn't fixed; whether it's a
   must-have or a nice-to-have for the task or the app; whether it's an edge case or the main case. Wasim decides. This
   replaces the change loop's three-round limit in this repo.
-- **CI rounds count too (Wasim, 2026-11-20).** A worker that fixes and pushes against its own CI stops after its
-  second fix push if the same check is still red, and reports back; it never pushes a third. The orchestrator then
-  runs the escalation above. Rounds are counted per check, not per error: a new error on the same check is still a
-  round. A worker never changes the CI environment (host settings, sysctls, runner config) to get a check green
-  without naming it in its report, and the review decides whether it stays. One exception: a brief marked as a spike,
-  whose job is to find out how an environment behaves, states its own budget (for example 4 rounds); spending it
-  means report back, not escalate.
+- **CI rounds (Wasim, 2026-11-20).** A worker fixing its own CI stops and reports back once a check it's fixing is
+  still red after its second fix push; the orchestrator then escalates as above. Rounds count per check: a new error
+  on the same check, or a re-run without a push, is still a round; a check that first goes red after a push starts at
+  round 1. A change to the CI environment (host settings, sysctls, runner config) is never a worker's fix: the worker
+  proposes it in its report and the orchestrator decides with the PR's review. A spike brief may set a larger budget
+  (for example 4 rounds); once it's spent the worker reports back and the escalation above runs from there.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.
