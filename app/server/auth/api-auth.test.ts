@@ -141,7 +141,7 @@ describe('the object check', () => {
     const { call } = setup({ stores: s, handlers: { 'PUT /api/settings/technical/:key': async c => {
       try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
       try {
-        await c.stores!.audit.supportAccess({ kind: 'inhouse', memberId: 'm_x', subject: 's', grant: null, requestId: c.requestId }, { method: 'PUT', route: '/x', nowMs: c.nowMs })
+        await c.stores!.audit.supportAccess({ kind: 'inhouse', memberId: 'm_x', subject: 's', grant: null, requestId: c.requestId, expMs: 4_102_444_800_000 }, { method: 'PUT', route: '/x', nowMs: c.nowMs })
       } catch (err) { thrown = err }
       return apiJson({ wrote: true })
     } } })
@@ -223,10 +223,10 @@ describe('me', () => {
   const profile = { name: 'A Person', email: 'a@example.test', photoKey: 'photos/1' }
   it('builds a schema-valid Me for every principal with a member row', () => {
     const withRows: Parameters<typeof buildMe>[0][] = [
-      { kind: 'person', memberId: 'm_member', role: 'member', subject: 's', requestId: 'r' },
-      { kind: 'person', memberId: 'm_admin', role: 'admin', subject: 's', requestId: 'r' },
-      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: { id: 'g', endsAtMs: NOW + 1 }, requestId: 'r' },
-      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: null, requestId: 'r' },
+      { kind: 'person', memberId: 'm_member', role: 'member', subject: 's', requestId: 'r', expMs: 4_102_444_800_000 },
+      { kind: 'person', memberId: 'm_admin', role: 'admin', subject: 's', requestId: 'r', expMs: 4_102_444_800_000 },
+      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: { id: 'g', endsAtMs: NOW + 1 }, requestId: 'r', expMs: 4_102_444_800_000 },
+      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: null, requestId: 'r', expMs: 4_102_444_800_000 },
       { kind: 'service', name: 'smoke', memberId: 'm_smoke', requestId: 'r' },
     ]
     for (const p of withRows) {

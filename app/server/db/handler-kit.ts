@@ -22,7 +22,7 @@ export function storesOf(c: Pick<ApiCtx, 'stores'>): Stores {
 /** The member id a write is made by. Every route that writes allows only principals with a member row. */
 export function writer(c: ApiCtx): At {
   const p = c.principal
-  if (p.kind === 'service' && p.name === 'monitor') throw new Error('monitor writes nothing')
+  if (p.kind === 'service' && (p.name === 'monitor' || p.name === 'release')) throw new Error(`${p.name} writes nothing here`)
   return { actorId: p.memberId, requestId: c.requestId, nowMs: c.nowMs }
 }
 

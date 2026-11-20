@@ -20,6 +20,9 @@
 //      canary (INHOUSE_TEST_ISSUER_CANARY_7f3c) and no `test-issuer` module in its graph (<build>/server-modules.json).
 //      Its proof is the test build (dist-product-test/), where the canary MUST always be found: with no canary there
 //      the scan proves nothing, and the check fails.
+//      P3 PR0: the same for the scripted model (app/test/scripted-model/, `@scripted-model` in vite.config.ts): its canary
+//      (SCRIPTED_MODEL_CANARY) and its modules never in the deployable Worker. Its proof in the test build is required
+//      as soon as any server source imports `@scripted-model` (W3 wires it into the egress); until then it's a note.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -139,6 +142,15 @@ for (const [name, run] of PARTS) {
 // ---------- 4. the server bundle scan ----------
 const SERVER_CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
 const TEST_ISSUER_MODULE = /test-issuer/
+/** app/test/scripted-model/index.ts's SCRIPTED_MODEL_CANARY (check-product-build.test.mjs keeps the two equal). */
+const SCRIPTED_CANARY = 'inhouse-scripted-model-canary-7f3c9b21'
+const SCRIPTED_MODULE = /(^|\/)test\/scripted-model\//
+/** Whether any server source (tests aside) imports the scripted model through its alias. */
+function serverImportsScripted() {
+  if (!existsSync(serverDir)) return false
+  return walk(serverDir).filter(f => /\.(ts|mts|js|mjs)$/.test(f) && !/\.test\.[a-z]+$/.test(f))
+    .some(f => /(from\s+|import\s*\(\s*)['"]@scripted-model['"]/.test(readFileSync(f, 'utf8')))
+}
 /** The Worker folder of a product build: the one subfolder (not client/) holding a wrangler.json. */
 function workerDir(dir, label) {
   if (!existsSync(dir)) fail(`${label} build folder ${dir} doesn't exist. Run its build first.`)
@@ -152,21 +164,23 @@ function workerDir(dir, label) {
 function serverScan(dir) {
   const hits = []
   for (const f of walk(dir).filter(f => TEXT.test(f))) {
-    if (readFileSync(f, 'utf8').includes(SERVER_CANARY)) hits.push(`"${SERVER_CANARY}" in ${relative(root, f)}`)
+    const text = readFileSync(f, 'utf8')
+    if (text.includes(SERVER_CANARY)) hits.push(`"${SERVER_CANARY}" in ${relative(root, f)}`)
+    if (text.includes(SCRIPTED_CANARY)) hits.push(`"${SCRIPTED_CANARY}" in ${relative(root, f)}`)
   }
   const list = join(dir, '..', 'server-modules.json')
   if (!existsSync(list)) fail(`${relative(root, list)} is missing. vite.config.ts's writeServerModuleList writes it in product builds.`)
   const modules = JSON.parse(readFileSync(list, 'utf8'))
   if (!Array.isArray(modules) || !modules.some(id => /(^|\/)server\/index\.ts$/.test(id))) fail(`${relative(root, list)} doesn't list server/index.ts: it's not the product Worker's graph.`)
-  for (const id of modules) if (TEST_ISSUER_MODULE.test(id)) hits.push(`module ${id}`)
+  for (const id of modules) if (TEST_ISSUER_MODULE.test(id) || SCRIPTED_MODULE.test(id)) hits.push(`module ${id}`)
   return hits
 }
 const productWorker = workerDir(productDir, 'product')
 const inServer = serverScan(productWorker)
 if (inServer.length) {
   bad = true
-  console.error(`FAIL  server bundle: the deployable Worker (${relative(root, productWorker)}) has the test issuer:\n${show(inServer)}`)
-} else console.log(`ok    server bundle: no test issuer in the deployable Worker (${relative(root, productWorker)}).`)
+  console.error(`FAIL  server bundle: the deployable Worker (${relative(root, productWorker)}) has the test issuer or the scripted model:\n${show(inServer)}`)
+} else console.log(`ok    server bundle: no test issuer and no scripted model in the deployable Worker (${relative(root, productWorker)}).`)
 const testWorker = workerDir(productTestDir, 'product-test')
 const inTest = serverScan(testWorker)
 // The proof is always required: the test build must carry the canary, or the scan proves nothing.
@@ -174,5 +188,11 @@ if (!inTest.some(h => h.includes(SERVER_CANARY))) {
   bad = true
   console.error(`FAIL  server bundle: no "${SERVER_CANARY}" in the test build (${relative(root, testWorker)}), so the scan proves nothing.`)
 } else console.log(`ok    server bundle: caught the test build (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
+if (serverImportsScripted()) {
+  if (!inTest.some(h => h.includes(SCRIPTED_CANARY))) {
+    bad = true
+    console.error(`FAIL  server bundle: the server imports @scripted-model but the test build (${relative(root, testWorker)}) has no "${SCRIPTED_CANARY}", so the scan proves nothing.`)
+  } else console.log('ok    server bundle: caught the scripted model in the test build.')
+} else console.log('note  scripted model: no server source imports @scripted-model yet, so the test build need not carry its canary.')
 
 process.exit(bad ? 1 : 0)
