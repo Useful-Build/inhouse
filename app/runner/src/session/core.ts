@@ -349,6 +349,10 @@ export async function runSession(deps: {
       log({ type: 'resume_refused', why })
       abort.abort()
     },
+    // `query_started` goes on the SDK's first store call, not when query() is called: until the SDK touches the store,
+    // the transcript is as the last checkpoint left it, and a run that ends before that (a stop, an interrupt, an SDK
+    // error before the resume's load) leaves the chat's session as it was (`released.queryRan: false`).
+    onFirstCall: () => void channel.send({ type: 'query_started' }),
   })
   let options: Options
   try {
@@ -386,8 +390,6 @@ export async function runSession(deps: {
   let result: Result | null = null
   let thrown: unknown = null
   let threw = false
-  // From here the transcript may change: the root tells the Worker (`released.queryRan`).
-  await channel.send({ type: 'query_started' })
   try {
     q = deps.query({ prompt, options })
     // A stop or interrupt that came while the query was being set up.
@@ -417,10 +419,15 @@ export async function runSession(deps: {
   // 4. The end: the deferred call, files, the store, then the one terminal event.
   let terminal: Extract<SessionEvent, { type: 'finished' | 'failed' }>
   const check = store.resumeCheck()
+  // A resume that ended before the SDK touched the store (stopped, interrupted or an SDK error before its first load):
+  // the transcript is untouched, so the run ends as it ended, with no checkpoint and no mirror error, and the chat keeps
+  // its last good state.
+  const untouchedResume = check.state === 'pending' && !store.touched()
   if (resumeRefused !== null || check.state === 'failed') {
     terminal = { type: 'failed', reason: 'store', message: `the store doesn't hold the transcript to resume: ${resumeRefused ?? (check.state === 'failed' ? check.error : '')}`.slice(0, 2000) }
-  } else if (check.state === 'pending') {
-    // The SDK never loaded the main transcript: nothing proved the resume ran on the expected transcript.
+  } else if (check.state === 'pending' && (result !== null || !untouchedResume)) {
+    // The query got a result, or wrote to the store, without the SDK loading the main transcript: nothing proved the
+    // resume ran on the expected transcript.
     terminal = { type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' }
   } else if (result !== null && (!threw || stopping || abort.signal.aborted)) {
     // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept).
@@ -439,8 +446,9 @@ export async function runSession(deps: {
   // Without a stop: files, then the checkpoint. A stop (before or during the save) cuts the save; the checkpoint goes
   // first, then the rest of the files, both within the stop's deadline.
   let filesDone = stopping ? false : await files.save(before, emit, stopCut.signal)
-  const cp = await settleOrCut(store.checkpoint(), deadlineCut.signal)
-  if (cp === null) await emit({ type: 'mirror_error', message: "the store's checkpoint did not finish before the stop's deadline" })
+  const cp = untouchedResume ? null : await settleOrCut(store.checkpoint(), deadlineCut.signal)
+  if (untouchedResume) log({ type: 'checkpoint_skipped', why: 'the resume ended before the SDK touched the store' })
+  else if (cp === null) await emit({ type: 'mirror_error', message: "the store's checkpoint did not finish before the stop's deadline" })
   else {
     if (cp.value.repaired > 0) log({ type: 'store_repaired', batches: cp.value.repaired })
     // Protocol v2's checkpoint reports the store's whole main transcript (the adapter loads the SDK's main key when this

@@ -577,15 +577,16 @@ describe('the run lifecycle', () => {
 
   // #132's interim rule (a resume that wrote nothing was always a mirror_error) is replaced by the real load: a resume
   // that loaded its transcript and wrote nothing checkpoints the store's state (the resume verification tests below).
-  // One that never loaded it can't say: a mirror_error, and the run fails `store`.
-  it('the store: a resume that never loaded its transcript is a mirror_error, not a checkpoint, and fails store', async () => {
+  // One whose query got a result without ever calling the store fails `store` (nothing proved the transcript), but the
+  // store is untouched: no checkpoint and no mirror error, so the chat keeps its last good state.
+  it('the store: a resume that got a result without touching the store fails store, with no checkpoint or mirror error', async () => {
     const q = fakeQuery([result])
     const h = harness(q.query)
     h.deliver({ type: 'run', config: config({ resume: true, expect: { mainEntries: 4, lastUuid: 'u', lastUuidIndex: 3 } }) })
     await h.done
-    expect(types(h.events())).toEqual(['sdk', 'mirror_error', 'failed'])
-    expect(h.events()[1]).toEqual({ type: 'mirror_error', message: 'a resume that never loaded its transcript' })
-    expect(h.events()[2]).toMatchObject({ reason: 'store' })
+    expect(types(h.events())).toEqual(['sdk', 'failed'])
+    expect(h.events()[1]).toEqual({ type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' })
+    expect(h.sent).not.toContainEqual({ type: 'query_started' })
   })
 
   it('the store: when the repair fails too, mirror_error and no checkpoint; the run still finishes with its cost', async () => {
@@ -722,17 +723,87 @@ describe('the run lifecycle', () => {
     expect(h.sent).not.toContainEqual({ type: 'query_started' })
   })
 
-  it('query_started goes to the root before the query is called', async () => {
-    let sentBefore: unknown[] = []
+  it("query_started goes to the root on the SDK's first store call, not when the query is called", async () => {
+    let sentAtQuery: unknown[] = []
+    let sentAfterLoad: unknown[] = []
     const holder: { h?: ReturnType<typeof harness> } = {}
-    const q = scriptedQuery(async function* () {
-      sentBefore = [...holder.h!.sent]
+    const q = scriptedQuery(async function* ({ options }) {
+      sentAtQuery = [...holder.h!.sent]
+      await options.sessionStore!.load({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' })
+      sentAfterLoad = [...holder.h!.sent]
       yield result
     })
     holder.h = harness(q.query)
     holder.h.deliver({ type: 'run', config: config() })
     await holder.h.done
-    expect(sentBefore).toContainEqual({ type: 'query_started' })
+    expect(sentAtQuery).not.toContainEqual({ type: 'query_started' })
+    expect(sentAfterLoad.filter((m) => JSON.stringify(m) === '{"type":"query_started"}')).toHaveLength(1)
+    expect(holder.h.sent.filter((m) => JSON.stringify(m) === '{"type":"query_started"}')).toHaveLength(1)
+  })
+
+  // #137 review round 1 (high): a resume that ends before the SDK's first store call keeps its own terminal, sends no
+  // query_started, and emits no checkpoint or mirror error (the root's released is then { checkpoint: null,
+  // queryRan: false }: lifecycle.test.ts proves that end to end with this core). Each failed on 52bd866.
+  describe('a resume that ends before the SDK touched the store', () => {
+    const resumeConfig = () => config({ resume: true, prompt: 'go on', expect: { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 } })
+    /** A query that waits (before any store call) until interrupted or aborted. */
+    function waitingQuery(opts: { interruptThrows: boolean }) {
+      let wake!: () => void
+      const woken = new Promise<void>((r) => (wake = r))
+      const calls: unknown[] = []
+      const query: QueryFn = (params) => {
+        calls.push(params)
+        const signal = params.options.abortController!.signal
+        signal.addEventListener('abort', () => wake(), { once: true })
+        return Object.assign(
+          (async function* () {
+            await woken
+            if (signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+          })(),
+          {
+            interrupt: async () => {
+              if (opts.interruptThrows) throw new Error('needs streaming input')
+              wake()
+            },
+          },
+        ) as unknown as ReturnType<QueryFn>
+      }
+      return { query, calls }
+    }
+    const noStoreTrace = (h: ReturnType<typeof harness>) => {
+      expect(h.events().filter((e: { type: string }) => e.type === 'checkpoint' || e.type === 'mirror_error')).toEqual([])
+      expect(h.sent).not.toContainEqual({ type: 'query_started' })
+    }
+
+    it('a stop: failed stopped', async () => {
+      const q = waitingQuery({ interruptThrows: false })
+      const h = harness(q.query)
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await waitForTicks(() => q.calls.length === 1)
+      h.deliver({ type: 'stop', endWithinMs: 60_000 })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'stopped', message: 'stopped' })
+      noStoreTrace(h)
+    })
+
+    it('an interrupt (falling back to the abort signal): failed interrupted', async () => {
+      const q = waitingQuery({ interruptThrows: true })
+      const h = harness(q.query)
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await waitForTicks(() => q.calls.length === 1)
+      h.deliver({ type: 'interrupt' })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'interrupted', message: 'interrupted' })
+      noStoreTrace(h)
+    })
+
+    it('an SDK error: failed sdk_error', async () => {
+      const h = harness(fakeQuery([result], { throwAt: 0 }).query)
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'sdk_error', message: 'the CLI exited' })
+      noStoreTrace(h)
+    })
   })
 
   it(`past ${LEFT_OUT_MAX} left-out files, the note still counts every one (the event's "and N more" is not a name)`, async () => {

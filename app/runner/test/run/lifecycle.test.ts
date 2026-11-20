@@ -468,3 +468,35 @@ describe('GET /runs/:id', () => {
     })
   })
 })
+
+// #137 review round 1 (high): the real session core under the root (fixtures/core-session.ts). A resume that ends
+// before the SDK's first store call leaves the transcript untouched: its own terminal, no checkpoint, no mirror error,
+// and released { checkpoint: null, queryRan: false }, so the Worker keeps the chat's last good state.
+describe('released from the real core: a resume that ends before the SDK touched the store', () => {
+  const resume = (prompt: string) =>
+    runStart({ prompt, resume: true, chatId: `chat-core-${prompt}`, expect: { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }, fileCaps: { maxFileBytes: 10, maxFilesPerTurn: 1, maxRestoreBytes: 10, allowedTypes: ['text/plain'] } })
+  const cases: [string, string, 'stop' | 'interrupt' | null, Record<string, unknown>, Record<string, unknown>][] = [
+    ['stopped before the first load', 'stop-before-load', 'stop', { type: 'failed', reason: 'stopped' }, { checkpoint: null, queryRan: false }],
+    ['interrupted before the first load', 'interrupt-before-load', 'interrupt', { type: 'failed', reason: 'interrupted' }, { checkpoint: null, queryRan: false }],
+    ['an SDK error before the first load', 'error-before-load', null, { type: 'failed', reason: 'sdk_error' }, { checkpoint: null, queryRan: false }],
+    ['stopped during the file restore', 'restore-stop', 'stop', { type: 'failed', reason: 'stopped' }, { checkpoint: null, queryRan: false }],
+    // The control: once the SDK has loaded the transcript, the run did touch the store, and its checkpoint is the store's.
+    ['stopped after the first load', 'load-then-stop', 'stop', { type: 'failed', reason: 'stopped' }, { checkpoint: { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }, queryRan: true }],
+  ]
+  it.each(cases)('%s', async (_, prompt, act, terminal, released) => {
+    await withRoot(await startTestRoot(spawnFixture('core-session.ts'), { stopGraceMs: 5000 }), async (root) => {
+      const start = resume(prompt)
+      const run = openRun(root, start)
+      await run.admitted
+      if (act !== null) {
+        // The core has reached its wait (the fixture writes `waiting` in its folder there).
+        await waitFor(() => existsSync(join(root.users.dirs.get(start.chatId)!, 'waiting')), 'the core waiting')
+        expect(await post(root, `/runs/${start.runId}/${act}`)).toBe(202)
+      }
+      const events = await run.done
+      expect(events.at(-1)).toMatchObject(terminal)
+      expect(events.filter((e) => e.type === 'checkpoint' || e.type === 'mirror_error').map((e) => e.type)).toEqual(released.queryRan ? ['checkpoint'] : [])
+      expect(await run.released).toEqual({ runId: start.runId, seq: events.length, type: 'released', ...released })
+    })
+  })
+})

@@ -39,6 +39,8 @@ export type StoreAdapter = {
   checkpoint(): Promise<CheckpointResult>
   /** Where a resume's check stands (`ok` for a run that isn't a resume). */
   resumeCheck(): ResumeCheck
+  /** The SDK has called the store (any append, load or listing): from then on the run may change the transcript. */
+  touched(): boolean
 }
 
 /** Why `entries` (the main transcript, as loaded) doesn't hold what `expect` says it must; null when it does. */
@@ -77,6 +79,8 @@ export function createStoreAdapter(deps: {
   expect?: ResumeExpect | null
   /** Called once when a resume's check fails (the session aborts its query). */
   onResumeRefused?: (error: string) => void
+  /** Called once, on the SDK's first store call (before it runs): the session tells the root (`released.queryRan`). */
+  onFirstCall?: () => void
 }): StoreAdapter {
   const base = `${deps.proxyUrl.replace(/\/$/, '')}/store`
   const now = deps.now ?? Date.now
@@ -97,6 +101,12 @@ export function createStoreAdapter(deps: {
   let check: ResumeCheck = deps.expect ? { state: 'pending' } : { state: 'ok' }
   /** The main transcript's key, from the SDK's own load or append (the SDK derives its project key). */
   let mainKey: SessionKey | null = null
+  let touched = false
+  const touch = () => {
+    if (touched) return
+    touched = true
+    deps.onFirstCall?.()
+  }
 
   const post = async (op: string, body: unknown): Promise<unknown> => {
     const res = await deps.fetch(`${base}/${op}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -121,6 +131,7 @@ export function createStoreAdapter(deps: {
 
   const store: SessionStore = {
     append(key, entries) {
+      touch()
       // The SDK re-sends a batch only after a rejection, so the same content while unconfirmed is that retry, and the
       // same uuids after it was confirmed (by a repair) is that retry too. Without uuids, the same content after a repair
       // confirmed it is that retry only while the SDK's last append of it was rejected; otherwise (two identical lines
@@ -152,6 +163,7 @@ export function createStoreAdapter(deps: {
       )
     },
     async load(key) {
+      touch()
       const r = StoreLoadResult.parse(await post('load', { key: wireKey(key) }))
       const entries = r.entries as SessionStoreEntry[] | null
       if (key.subpath === undefined) {
@@ -166,6 +178,7 @@ export function createStoreAdapter(deps: {
       return entries
     },
     async listSubkeys(key) {
+      touch()
       return StoreSubkeys.parse(await post('list-subkeys', { key: { projectKey: key.projectKey, sessionId: key.sessionId } })).subkeys
     },
   }
@@ -219,7 +232,7 @@ export function createStoreAdapter(deps: {
     return { ok: true, entries: checked, repaired, main }
   }
 
-  return { store, checkpoint, resumeCheck: () => check }
+  return { store, checkpoint, resumeCheck: () => check, touched: () => touched }
 }
 
 function wireKey(k: SessionKey): StoreKey {
