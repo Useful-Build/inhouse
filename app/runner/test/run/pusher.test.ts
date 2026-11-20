@@ -3,6 +3,7 @@
 //   (a loss, a repeat, a reorder), or a resent batch differs from the first send of it;
 // - a second batch goes while an earlier one is unacked (a resend could overtake it and look like a seq gap);
 // - a quiet run gets no heartbeat for 30 s (the Worker's watchdog fails it), or gets one after its terminal event;
+// - a batch's body passes the egress's byte cap when the buffer has run past its own;
 // - a slow egress lets the buffer grow without bound, or a full buffer drops events instead of pausing the session;
 // - a 410 is retried, or events after it are still sent;
 // - an ack with stop is acted on twice, or stops the pushing (the checkpoint, terminal and released must still go);
@@ -10,7 +11,7 @@
 // - the pusher never finishes after `released` is acked, or finishes before.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import { PushBatch, type RunEvent } from '../../../shared/protocol/index.ts'
+import { PUSH_BATCH_MAX_BYTES, PushBatch, type RunEvent } from '../../../shared/protocol/index.ts'
 import { HEARTBEAT_MS, LINGER_MS, createPusher, type PushFetch, type Timers } from '../../src/server/pusher.ts'
 
 /** A fake clock: timers fire only when the test advances it. */
@@ -251,6 +252,28 @@ describe('the pusher', () => {
     expect(base.held.map((e) => e.seq)).toEqual([...Array(30).keys()])
     expect(calls.full).toEqual([true, false])
     expect(p.bufferedBytes()).toBe(0)
+  })
+
+  it('a buffer run past its cap still goes in batches under the egress body cap (PUSH_BATCH_MAX_BYTES), all delivered in order', async () => {
+    const clock = fakeClock()
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const base = fakeEgress(() => 'ok')
+    const egress = {
+      fetch: (async (url, init) => {
+        await held
+        return base.fetch(url, init)
+      }) as PushFetch,
+    }
+    const { p } = pusherOn(clock, egress)
+    // 60 events of about 200 KB: about 12 MB queued behind a held push (a stopping session is read on past the cap).
+    const big = (seq: number) => ev(seq, { type: 'sdk', message: { type: 'assistant', blob: 'b'.repeat(200 * 1024) }, truncated: false })
+    for (let s = 0; s < 60; s++) p.push(big(s))
+    release()
+    for (let i = 0; i < 40 && base.held.length < 60; i++) await clock.advance(LINGER_MS)
+    expect(base.held.map((e) => e.seq)).toEqual([...Array(60).keys()])
+    for (const b of base.bodies) expect(new TextEncoder().encode(b).length).toBeLessThanOrEqual(PUSH_BATCH_MAX_BYTES)
+    expect(base.bodies.length).toBeGreaterThan(5)
   })
 
   it('a 410 drops the batch, says gone once, sends nothing after it and finishes', async () => {

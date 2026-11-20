@@ -3,7 +3,7 @@
 // (src/session/channel.ts; src/protocol/ndjson.ts frames them); both ends parse every message through these schemas. A line that is unreadable, oversized or fails to parse ends that session
 // with a `failed` event (reason `protocol`); it never crashes the root.
 import { z } from 'zod'
-import { AuditEntry, RunEventBody, RunStartFields, checkRunStart } from '../../../shared/protocol/index.ts'
+import { AuditEntry, RunEventBody, RunStartFields, SdkEventUncapped, checkRunStart } from '../../../shared/protocol/index.ts'
 
 /**
  * What a session process gets for its run: the run start without the run token. Strict, so a `runToken` field is a
@@ -31,10 +31,14 @@ export type RootMessage = z.infer<typeof RootMessage>
 
 /**
  * The event bodies a session may send. `started`, `heartbeat` and `released` are the root's own; `audit` comes only as
- * an `audit` message (acked).
+ * an `audit` message (acked). An `sdk` event's message isn't capped yet (the wire's cap would refuse a big one): the
+ * root caps it.
  */
 const ROOT_ONLY = new Set(['started', 'audit', 'heartbeat', 'released'])
-export const SessionEventBody = RunEventBody.refine((e) => !ROOT_ONLY.has(e.type), { message: 'a session never sends started, audit, heartbeat or released as an event' })
+export const SessionEventBody = z.union([
+  SdkEventUncapped,
+  RunEventBody.refine((e) => !ROOT_ONLY.has(e.type), { message: 'a session never sends started, audit, heartbeat or released as an event' }),
+])
 
 /** Session -> root. */
 export const SessionMessage = z.discriminatedUnion('type', [

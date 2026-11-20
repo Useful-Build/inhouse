@@ -154,7 +154,13 @@ export function createPusher(opts: {
 
   function trySend() {
     if (!shouldSend()) return
-    const take = pending.splice(0, PUSH_BATCH_MAX_EVENTS)
+    // At most 200 events, and at most the buffer's cap in event bytes (so the body stays under PUSH_BATCH_MAX_BYTES,
+    // the egress's cap): the buffer itself can run past its cap (pausing is after the fact, and a stopping session is
+    // read on), so a batch is cut by bytes too. One event always goes.
+    let n = 0
+    let sum = 0
+    while (n < pending.length && n < PUSH_BATCH_MAX_EVENTS && (n === 0 || sum + pending[n]!.bytes <= PUSH_BUFFER_MAX_BYTES)) sum += pending[n++]!.bytes
+    const take = pending.splice(0, n)
     const events = take.map((p) => p.event)
     const batch: PushBatch = { turnId: opts.runId, events }
     inFlight = { events, bytes: take.reduce((n, p) => n + p.bytes, 0), body: JSON.stringify(batch) }
