@@ -5,7 +5,7 @@
 import type { BrandAgentParts, BrandAgentPorts, FileLedgerPort, RunnerPoolPort, UsageLedgerPort } from './ports.ts'
 import { FakeFileLedger } from './testing/fake-files.ts'
 import { FakeRunnerPool } from './testing/fake-pool.ts'
-import { FakeUsageLedger } from './testing/fake-usage.ts'
+import { createUsageLedger } from '../../usage/ledger.ts'
 
 /** The ports the BrandAgent runs on, built once per object from its env. */
 export function composePorts(env: Env, parts: BrandAgentParts): BrandAgentPorts {
@@ -29,6 +29,7 @@ function filesPort(_env: Env): FileLedgerPort {
 }
 
 // ---------- W4's anchor (p3-w4.md): UsageLedgerPort ----------
-function usagePort(_env: Env): UsageLedgerPort {
-  return new FakeUsageLedger()
+// The D1 ledger (usage/ledger.ts). Its `settle` also takes the runner's cost as a 4th argument (stored, never added).
+function usagePort(env: Env): UsageLedgerPort {
+  return createUsageLedger({ db: env.DB })
 }

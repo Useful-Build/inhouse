@@ -24,17 +24,20 @@ export function Usage() {
   const ctx = useCtx()
   const { usageMonths } = ctx.data
   const monthIdx = useUi(s => s.usageMonth)
-  const month = usageMonths[monthIdx] ?? usageMonths[0]
+  // The real client fills `usageMonths` once route 42 answers; until then the snapshot's `usage` stands in.
+  const month = usageMonths[monthIdx] ?? usageMonths[0] ?? ctx.data.usage
   const thisMonth = month === usageMonths[0]
   // The cap and alert level saved in Settings (Spending cap) apply to this month only. Finished months keep the ones
   // recorded for them. A cap never changes what was spent: only "reached" compares the two.
   const status = capStatus(ctx)
   const usage = thisMonth ? { ...month, cap: status.cap, alertAt: status.alertAt } : month
-  // Every month listed is in the year the client's clock is in (the demo's year in the demo).
+  // A month the server sent carries its own year (`monthKey`); the demo's months are in the year the client's clock is in.
   const year = calendarOf(nowOf(), display()).year
-  const monthLabels = usageMonths.map(m => `${m.month} ${year}`)
+  const monthLabels = usageMonths.map(m => `${m.month} ${m.monthKey?.slice(0, 4) ?? year}`)
   const mon = usage.month.slice(0, 3)
-  const cap = thisMonth && status.reached
+  // At the cap: the server's live mark when it judged the cap this page shows (P3, route 42); otherwise (the demo, or a
+  // cap just changed in Settings and not read back yet) the page's own comparison of spend and cap.
+  const cap = thisMonth && (month.capReached !== undefined && month.cap.minor === status.cap.minor ? month.capReached : status.reached)
   const tab = useUi(s => s.usageTab)
   const patch = useUi(s => s.patch)
   const phone = useUi(s => s.phone)
