@@ -14,6 +14,8 @@ import { PROBE_MODEL } from './lib.ts'
 export type DirectVariant =
   /** The guarded options as production builds them: an agent run without the root (run.ts's fallback path). */
   | 'plain'
+  /** The same with HOME outside the session folder (test-only: the diagnosis of bwrap and `$HOME/.claude`). */
+  | 'home-outside'
   /** canUseTool and a stub inhouse MCP server (one tool, one resource): which of the four tools register. */
   | 'four-tools'
   /** The audit transport refuses every entry: the call must be blocked. */
@@ -29,7 +31,7 @@ export type DirectVariant =
   /** The bundled skills not turned off (test-only): a typed /code-review must then expand. */
   | 'skills-not-off'
 
-export type DirectInput = { variant: DirectVariant; prompt: string; webFetchDomains: string[]; ip?: string; mcpUrl?: string }
+export type DirectInput = { variant: DirectVariant; prompt: string; webFetchDomains: string[]; ip?: string; mcpUrl?: string; home?: string }
 
 const say = (o: unknown) => process.stdout.write(`${JSON.stringify(o)}\n`)
 
@@ -69,6 +71,9 @@ const allowAll: CanUseTool = async (tool, toolInput) => {
 }
 const net = options.sandbox!.network!
 switch (input.variant) {
+  case 'home-outside':
+    options.env = { ...options.env, HOME: input.home! }
+    break
   case 'four-tools':
     options.canUseTool = allowAll
     break
