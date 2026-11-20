@@ -11,7 +11,7 @@
 //  - a request that leaves the app's origin, carries a cookie it shouldn't, or sends a body in the wrong type;
 //  - the stub parts (a run, the library) that stop refusing.
 import { fc, test as fcTest } from '@fast-check/vitest'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { AgentDataSchema, AgentStateSchema, MeSchema } from '../../../shared/contract'
 import { CAN_KEYS } from '../../../shared/contract/keys'
 import type { AgentClient, AgentNotice } from '../types'
@@ -466,7 +466,6 @@ describe('writes to one record go one at a time', () => {
     const seen: unknown[] = []
     agent.subscribe(() => seen.push(agent.getSnapshot().toggles['n:weekly']))
     await Promise.all([agent.setToggle('n:weekly', false), agent.setToggle('n:weekly', true)])
-    expect(seen.every(v => v === true || seen.indexOf(v) === 0 || v === false)).toBe(true)
     expect(seen.at(-1)).toBe(true)
     // After the second change was applied, the value never goes back to the first write's.
     const second = seen.indexOf(true, 1)
@@ -539,6 +538,206 @@ describe('writes to one record go one at a time', () => {
     expect(agent.getSnapshot().toggles['n:weekly']).toBeUndefined()
     expect(agent.getSnapshot().toggles['n:slack']).toBe(true)
     expect(heard).toHaveLength(1)
+  })
+})
+
+describe('queued writes that are refused go back to what the server last confirmed', () => {
+  const lost = refusal(503, 'unavailable')
+  const key = 'PUT /api/settings/personal/g:theme'
+
+  test('two switches or settings queued, both refused with nothing to show: the loaded value', async () => {
+    const { agent, heard } = await loaded({ ...reads({ settings: { personal: [record('g:theme', 'Dark', 3)] } }), [key]: lost })
+    const a = errorOf(agent.setSetting('g:theme', 'Light'))
+    const b = errorOf(agent.setSetting('g:theme', 'System'))
+    expect(agent.getSnapshot().settings['g:theme']).toBe('System')
+    await Promise.all([a, b])
+    expect(agent.getSnapshot().settings['g:theme']).toBe('Dark')
+    expect(heard).toHaveLength(2)
+  })
+
+  test('two role changes queued, both refused: the loaded role', async () => {
+    const { agent } = await loaded({ ...reads(), 'PUT /api/members/m_dana/role': lost })
+    await Promise.all([errorOf(agent.setMemberRole('m_dana', 'admin')), errorOf(agent.setMemberRole('m_dana', 'member'))])
+    expect(agent.read().people.members.find(m => m.id === 'm_dana')).toMatchObject({ role: 'member', rev: 1 })
+    const both = await loaded({ ...reads(), 'PUT /api/members/m_dana/role': lost })
+    await Promise.all([errorOf(both.agent.setMemberRole('m_dana', 'admin')), errorOf(both.agent.setMemberRole('m_dana', 'admin'))])
+    expect(both.agent.read().people.members.find(m => m.id === 'm_dana')?.role).toBe('member')
+  })
+
+  test('two removals queued, both refused: the person is still there', async () => {
+    const { agent } = await loaded({ ...reads(), 'DELETE /api/members/m_dana?ifRev=1': lost })
+    await Promise.all([errorOf(agent.removeMember('m_dana')), errorOf(agent.removeMember('m_dana'))])
+    expect(agent.read().people.members.find(m => m.id === 'm_dana')?.status).toBe('active')
+  })
+
+  test('two photos queued, both refused: the loaded photo', async () => {
+    const own = `/api/members/${ME_ID}/photo`
+    const { agent } = await loaded({ ...reads({ me: me({ photoUrl: own }), members: [member(ME_ID, { role: 'admin', photo: own })] }), 'PUT /api/photo': lost })
+    await Promise.all([errorOf(agent.setPhoto(ME_ID, 'data:image/png;base64,iVBORw0KGgo=')), errorOf(agent.setPhoto(ME_ID, 'data:image/png;base64,iVBORw0KGgoAAAA='))])
+    expect(agent.me()?.photoUrl).toBe(own)
+    expect(agent.read().people.members.find(m => m.id === ME_ID)?.photo).toBe(own)
+  })
+
+  test('two grants queued, both refused: no grant', async () => {
+    const { agent } = await loaded({ ...reads(), 'POST /api/grants': lost })
+    await Promise.all([errorOf(agent.grantSupport(1)), errorOf(agent.grantSupport(4))])
+    expect(agent.read().people.supportGrant).toBeNull()
+  })
+
+  test('the first refused and the second saved: the second\'s value', async () => {
+    const answers: Answer[] = [lost, { body: record('g:theme', 'System', 4) }]
+    const { agent } = await loaded({ ...reads({ settings: { personal: [record('g:theme', 'Dark', 3)] } }), [key]: () => answers.shift()! })
+    await Promise.all([errorOf(agent.setSetting('g:theme', 'Light')), agent.setSetting('g:theme', 'System')])
+    expect(agent.getSnapshot().settings['g:theme']).toBe('System')
+  })
+
+  test('the first saved and the second refused: the first\'s value', async () => {
+    const answers: Answer[] = [{ body: record('g:theme', 'Light', 4) }, lost]
+    const { agent } = await loaded({ ...reads({ settings: { personal: [record('g:theme', 'Dark', 3)] } }), [key]: () => answers.shift()! })
+    await Promise.all([agent.setSetting('g:theme', 'Light'), errorOf(agent.setSetting('g:theme', 'System'))])
+    expect(agent.getSnapshot().settings['g:theme']).toBe('Light')
+  })
+
+  test('a role change refused while a photo is queued on the same member: each goes back on its own field', async () => {
+    const own = `/api/members/${ME_ID}/photo`
+    const { agent } = await loaded({
+      ...reads({ me: me({ photoUrl: null }), members: [member(ME_ID, { role: 'admin' }), member('m_dana')] }),
+      [`PUT /api/members/${ME_ID}/role`]: lost, 'PUT /api/photo': { body: { photoUrl: own } },
+      'GET /api/members': { body: { items: [member(ME_ID, { role: 'admin', photo: own, rev: 2 }), member('m_dana')], nextCursor: null } },
+    })
+    await Promise.all([errorOf(agent.setMemberRole(ME_ID, 'member')), agent.setPhoto(ME_ID, 'data:image/png;base64,iVBORw0KGgo=')])
+    const mine = agent.read().people.members.find(m => m.id === ME_ID)!
+    expect(mine.role, 'the refused role change is taken back').toBe('admin')
+    expect(mine.photo, 'the photo that saved stays').toBe(own)
+  })
+})
+
+describe('a refused write leaves a later queued write on the same field showing', () => {
+  /** The second request of a path waits on `release`; the first is answered at once with `first`. */
+  function held(routes: Record<string, Answer | ((r: Req) => Answer)>, path: string, first: Answer, second: Answer) {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const s = server(routes)
+    let n = 0
+    const fetchIt: typeof fetch = async (i, init) => {
+      if (String(i).endsWith(path) && (init?.method ?? 'GET') !== 'GET') {
+        if (n++ === 0) return new Response(JSON.stringify(first.body ?? {}), { status: first.status ?? 200 })
+        await gate
+        return new Response(JSON.stringify(second.body ?? {}), { status: second.status ?? 200 })
+      }
+      return s.fetch(i, init)
+    }
+    return { fetch: fetchIt, release }
+  }
+
+  test('photos: the first refused, the second still in flight: the second\'s picture is on screen', async () => {
+    const own = `/api/members/${ME_ID}/photo`
+    const PNG2 = 'data:image/png;base64,iVBORw0KGgoAAAA='
+    const h = held(reads({ me: me({ photoUrl: null }), members: [member(ME_ID, { role: 'admin' })] }), '/api/photo', refusal(503, 'unavailable'), { body: { photoUrl: own } })
+    const agent = new HttpAgent({ fetch: h.fetch })
+    await agent.whenLoaded()
+    const first = errorOf(agent.setPhoto(ME_ID, 'data:image/png;base64,iVBORw0KGgo='))
+    const second = agent.setPhoto(ME_ID, PNG2)
+    expect(((await first) as AgentError).code).toBe('unavailable')
+    expect(agent.me()?.photoUrl, 'the second change stays on screen while it saves').toBe(PNG2)
+    h.release()
+    await second
+    expect(agent.me()?.photoUrl).toBe(own)
+  })
+
+  test('grants: the first refused, the second still in flight: the second\'s grant is on screen', async () => {
+    const h = held(reads(), '/api/grants', refusal(503, 'unavailable'), { status: 201, body: grant({ id: 'g_2', endsAt: iso(5000 + 4 * 3_600_000), createdAt: iso(5000) }) })
+    const agent = new HttpAgent({ fetch: h.fetch, now: () => 5000 })
+    await agent.whenLoaded()
+    const first = errorOf(agent.grantSupport(1))
+    const second = agent.grantSupport(4)
+    await first
+    expect(agent.read().people.supportGrant, 'the second grant stays on screen while it saves').not.toBeNull()
+    expect(agent.read().people.supportGrant!.endsAt.ms).toBe(5000 + 4 * 3_600_000)
+    h.release()
+    await second
+    expect(agent.read().people.supportGrant?.id).toBe('g_2')
+  })
+})
+
+describe('one member row is one lane', () => {
+  test('a name saved while a photo uploads: both save, no notice, the name carries the rev the photo left', async () => {
+    let rev = 1
+    const sent: number[] = []
+    const { agent, heard } = await loaded({
+      ...reads({ members: [member(ME_ID, { role: 'admin', rev: 1 })], settings: { personal: [record('g:name', 'Sam Mercer', 1)] } }),
+      'GET /api/members': () => ({ body: { items: [member(ME_ID, { role: 'admin', rev })], nextCursor: null } }),
+      'PUT /api/photo': () => { rev++; return { body: { photoUrl: `/api/members/${ME_ID}/photo` } } },
+      'PUT /api/settings/personal/g:name': r => {
+        const b = JSON.parse(r.body!) as { value: string; ifRev: number }
+        sent.push(b.ifRev)
+        if (b.ifRev !== rev) return refusal(409, 'conflict', { current: record('g:name', 'x', rev) })
+        rev++
+        return { body: record('g:name', b.value, rev) }
+      },
+    })
+    await Promise.all([agent.setPhoto(ME_ID, 'data:image/png;base64,iVBORw0KGgo='), agent.setSetting('g:name', 'Sam B')])
+    expect(sent).toEqual([2])
+    expect(heard).toEqual([])
+  })
+
+  test('a name save refused with the record as it is: the next queued name save sends that rev, though the team read did not move', async () => {
+    const sent: number[] = []
+    const answers: Answer[] = [refusal(409, 'conflict', { current: record('g:name', 'Elsewhere', 9) }), { body: record('g:name', 'Sam C', 10) }]
+    const { agent, heard } = await loaded({
+      ...reads({ members: [member(ME_ID, { role: 'admin', rev: 1 })], settings: { personal: [record('g:name', 'Sam Mercer', 1)] } }),
+      'PUT /api/settings/personal/g:name': r => { sent.push((JSON.parse(r.body!) as { ifRev: number }).ifRev); return answers.shift()! },
+    })
+    await Promise.all([errorOf(agent.setSetting('g:name', 'Sam B')), agent.setSetting('g:name', 'Sam C')])
+    expect(sent).toEqual([1, 9])
+    expect(heard).toHaveLength(1)
+  })
+
+  test('a role change and a photo on one member are one queue: the role sends the rev the photo left', async () => {
+    let rev = 1
+    const sent: number[] = []
+    const { agent, heard } = await loaded({
+      ...reads({ me: me(), members: [member(ME_ID, { role: 'admin', rev: 1 }), member('m_dana')] }),
+      'GET /api/members': () => ({ body: { items: [member(ME_ID, { role: 'admin', rev }), member('m_dana')], nextCursor: null } }),
+      'PUT /api/photo': () => { rev++; return { body: { photoUrl: `/api/members/${ME_ID}/photo` } } },
+      [`PUT /api/members/${ME_ID}/role`]: r => {
+        const b = JSON.parse(r.body!) as { role: string; ifRev: number }
+        sent.push(b.ifRev)
+        if (b.ifRev !== rev) return refusal(409, 'conflict', { current: member(ME_ID, { rev }) })
+        rev++
+        return { body: member(ME_ID, { role: b.role, rev }) }
+      },
+    })
+    await Promise.all([agent.setPhoto(ME_ID, 'data:image/png;base64,iVBORw0KGgo='), agent.setMemberRole(ME_ID, 'member')])
+    expect(sent).toEqual([2])
+    expect(heard).toEqual([])
+  })
+})
+
+describe('a request that never answers', () => {
+  test('is given up after the time limit: the lane is released, the change goes back, one notice, and the next write goes through', async () => {
+    vi.useFakeTimers()
+    try {
+      const r = reads({ settings: { personal: [record('g:theme', 'Dark', 3)] } })
+      const s = server(r)
+      let puts = 0
+      const fetchIt: typeof fetch = (i, init) => {
+        if ((init?.method ?? 'GET') === 'GET') return s.fetch(i, init)
+        if (puts++ > 0) return Promise.resolve(new Response(JSON.stringify(record('g:theme', 'System', 4)), { status: 200 }))
+        return new Promise<Response>((_, reject) => { init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)) })
+      }
+      const agent = new HttpAgent({ fetch: fetchIt, timeoutMs: 30_000 })
+      const heard: AgentNotice[] = []
+      agent.onNotice(n => heard.push(n))
+      await agent.whenLoaded()
+      const first = errorOf(agent.setSetting('g:theme', 'Light'))
+      const second = agent.setSetting('g:theme', 'System')
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(((await first) as AgentError).code).toBe('unavailable')
+      await second
+      expect(agent.getSnapshot().settings['g:theme']).toBe('System')
+      expect(heard).toHaveLength(1)
+    } finally { vi.useRealTimers() }
   })
 })
 

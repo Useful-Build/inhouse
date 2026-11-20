@@ -17,6 +17,8 @@ export interface TransportOptions {
   fetch?: typeof fetch
   /** Extra headers per request. Under Node the contract target puts `Cf-Access-Jwt-Assertion` and `Origin` here, as Access and the browser would. */
   headers?: () => Promise<Record<string, string>> | Record<string, string>
+  /** How long a request may take before it is given up (ms). 30 s: longer than any Worker and D1 round trip takes, short enough that a write queued behind a hung one isn't held for minutes. */
+  timeoutMs?: number
   /** How the schemas chunk loads (a test makes it fail). */
   loadContract?: () => Promise<Contract>
 }
@@ -54,11 +56,13 @@ export class Transport {
   private readonly origin: string
   private readonly doFetch: typeof fetch
   private readonly extra: TransportOptions['headers']
+  private readonly timeoutMs: number
   constructor(o: TransportOptions = {}) {
     this.origin = o.origin ?? ''
     // `fetch` called through the globalThis binding: a bare reference loses its receiver in some browsers.
     this.doFetch = o.fetch ?? ((input, init) => globalThis.fetch(input, init))
     this.extra = o.headers
+    this.timeoutMs = o.timeoutMs ?? 30_000
     this.contract = o.loadContract ?? loadContract
   }
 
@@ -88,15 +92,28 @@ export class Transport {
     const headers: Record<string, string> = { Accept: 'application/json', ...(await this.extra?.()) }
     let body: BodyInit | undefined
     if (bytes) { headers['Content-Type'] = bytes.type; body = bytes.data as BodyInit } else if (json !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(json) }
-    let res: Response
+    // A request that never answers is given up: a write waiting behind it (its record's queue) would otherwise wait for ever.
+    // The timer is `setTimeout`, not `AbortSignal.timeout`, so a test with fake timers can move it on.
+    const ctl = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; ctl.abort() }, this.timeoutMs)
     try {
-      res = await this.doFetch(this.origin + path, { method, headers, body, credentials: 'same-origin', redirect: 'manual' })
-    } catch {
-      throw new AgentError('offline', MESSAGE.offline)
-    }
-    // Access answering with a redirect to its login page: the sign-in is gone.
-    if (res.type === 'opaqueredirect') throw new AgentError('unauthorized', MESSAGE.unauthorized)
-    const text = await res.text().catch(() => '')
+      let res: Response
+      try {
+        res = await this.doFetch(this.origin + path, { method, headers, body, credentials: 'same-origin', redirect: 'manual', signal: ctl.signal })
+      } catch {
+        // Nothing came back: a timeout is the server not answering (told as `unavailable`, as a 5xx is), anything else is the connection.
+        throw timedOut ? new AgentError('unavailable', MESSAGE.unavailable) : new AgentError('offline', MESSAGE.offline)
+      }
+      // Access answering with a redirect to its login page: the sign-in is gone.
+      if (res.type === 'opaqueredirect') throw new AgentError('unauthorized', MESSAGE.unauthorized)
+      const text = await res.text().catch(() => '')
+      if (timedOut) throw new AgentError('unavailable', MESSAGE.unavailable)
+      return await this.answer(res, text, k)
+    } finally { clearTimeout(timer) }
+  }
+
+  private async answer(res: Response, text: string, k: Promise<Contract>): Promise<unknown> {
     let data: unknown
     try { data = text ? JSON.parse(text) : undefined } catch { data = undefined }
     if (res.ok) return data

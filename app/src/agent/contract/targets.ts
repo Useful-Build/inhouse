@@ -67,6 +67,8 @@ export interface Fixtures {
   /** One setting key with three valid values, for the stale-write property. */
   choices: { key: string; values: [string, string, string] }
   photoDataUrl: string
+  /** What a member's `photo` reads as after `setPhoto(personId, photoDataUrl)`: the demo keeps the picture as sent, the product serves it from `/api/members/<id>/photo`. */
+  photoAfterSet: string
   teamRequest: TeamRequest
   newChat: { id: string; title: string }
   /** A title with spaces round it: `renameChat` trims it to `paddedTitleTrimmed`. */
@@ -270,6 +272,7 @@ function mockTarget(): ContractTarget {
       links: { auditExport: null, signOut: null },
       choices: { key: 'g:tz', values: ['Europe/London', 'America/Chicago', 'Australia/Sydney'] },
       photoDataUrl: 'data:image/png;base64,AAAA',
+      photoAfterSet: 'data:image/png;base64,AAAA',
       teamRequest: { icon: 'build', title: 'Connect Klaviyo', sub: 'From Settings', at: { iso: '2026-11-19T14:04:00.000Z', ms: Date.UTC(2026, 10, 19, 14, 4) }, status: 'Requested' },
       newChat: { id: 'contract-chat-1', title: 'A new chat' },
       paddedTitle: '  Padded   title  ',

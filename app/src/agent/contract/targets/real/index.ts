@@ -5,6 +5,7 @@
 // It serves exactly the P2 methods. Its client is the product's `HttpAgent` with two additions a browser doesn't need: the
 // test issuer's sign-in header and an `Origin` on every request (Node sends neither by itself), and a clock the suite can
 // move on (`advance`), which only the client's own notion of "now" follows (a grant stops being live at its end).
+import { settingRow } from '../../../../../shared/contract/settings-table'
 import { HttpAgent } from '../../../http/client'
 import type { AgentClient, AgentErrorCode, ResourceKey } from '../../../types'
 import type { ContractTarget, WriteMethod } from '../../targets'
@@ -27,11 +28,22 @@ const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
   'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
 ])
 
-/** The route each served write method sends to: the verbs and the path. */
-const ROUTE: Partial<Record<WriteMethod, [string[], RegExp]>> = {
-  setSetting: [['PUT'], /^\/api\/settings\/(personal|brand|technical)\/[^/]+$/], setToggle: [['PUT'], /^\/api\/settings\/(personal|brand|technical)\/[^/]+$/],
-  setPhoto: [['PUT', 'DELETE'], /^\/api\/photo$/], inviteMember: [['POST'], /^\/api\/members\/invites$/], setMemberRole: [['PUT'], /^\/api\/members\/[^/]+\/role$/],
-  removeMember: [['DELETE'], /^\/api\/members\/[^/]+$/], grantSupport: [['POST'], /^\/api\/grants$/], endSupportGrant: [['POST'], /^\/api\/grants\/[^/]+\/end$/],
+/** The route a served write method's call sends to: its verbs and the exact path (the key or the id in it too), from the call's arguments. */
+function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path: string } | null {
+  const enc = (v: unknown) => encodeURIComponent(String(v))
+  switch (method) {
+    case 'setSetting': case 'setToggle': {
+      const row = settingRow(String(args[0]))
+      return row ? { verbs: ['PUT'], path: `/api/settings/${row.scope}/${enc(args[0])}` } : null
+    }
+    case 'setPhoto': return { verbs: ['PUT', 'DELETE'], path: '/api/photo' }
+    case 'inviteMember': return { verbs: ['POST'], path: '/api/members/invites' }
+    case 'setMemberRole': return { verbs: ['PUT'], path: `/api/members/${enc(args[0])}/role` }
+    case 'removeMember': return { verbs: ['DELETE'], path: `/api/members/${enc(args[0])}` }
+    case 'grantSupport': return { verbs: ['POST'], path: '/api/grants' }
+    case 'endSupportGrant': return { verbs: ['POST'], path: `/api/grants/${enc(args[0])}/end` }
+    default: return null
+  }
 }
 
 const STATUS: Record<AgentErrorCode, number> = {
@@ -50,7 +62,7 @@ function realTarget(origin: string): ContractTarget {
   // What the target does to the client's requests, the way a failing network or server would.
   let clockOffset = 0
   let failAllSaves = false
-  let forced: { code: AgentErrorCode; method: WriteMethod } | null = null
+  let forced: { code: AgentErrorCode; verbs: string[]; path: string } | null = null
   const armedErrors = new Map<string, AgentErrorCode>()
   const armedReads = new Set<ResourceKey>()
   let staleGrantEnd = false
@@ -59,8 +71,8 @@ function realTarget(origin: string): ContractTarget {
     const url = new URL(String(input), origin)
     const method = (init?.method ?? 'GET').toUpperCase()
     if (method !== 'GET' && failAllSaves) return refusal('unavailable')
-    // An armed refusal answers the next request of the armed method's own route (so a write to another record, made meanwhile, isn't refused).
-    if (forced !== null && ROUTE[forced.method]?.[0].includes(method) && ROUTE[forced.method]?.[1].test(url.pathname)) { const code = forced.code; forced = null; return refusal(code) }
+    // An armed refusal answers the next request to the armed call's own URL (the key or id in it too), so a write to another record, made meanwhile, isn't refused.
+    if (forced !== null && forced.verbs.includes(method) && forced.path === url.pathname) { const code = forced.code; forced = null; return refusal(code) }
     if (method === 'GET') {
       for (const resource of armedReads) {
         if (READ_PATH[resource] === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
@@ -86,7 +98,8 @@ function realTarget(origin: string): ContractTarget {
       return (...args: unknown[]) => {
         const code = armedErrors.get(prop)
         if (!code) return method(...args)
-        forced = { code, method: prop as WriteMethod }
+        const route = routeOf(prop as WriteMethod, args)
+        forced = route ? { code, ...route } : null
         const done = method(...args) as Promise<unknown>
         const clear = () => { forced = null }
         done.then(clear, clear)
@@ -135,6 +148,8 @@ function realTarget(origin: string): ContractTarget {
       invite: { name: 'Robin Example', email: 'robin@example.test', title: 'Operations', role: 'member' },
       links,
       photoDataUrl: PNG_1X1,
+      // Filled in by `reset()` with the Admin's photo URL.
+      photoAfterSet: '',
       teamRequest: { icon: 'build', title: 'Connect Klaviyo', sub: 'From Settings', at: { iso: '2026-11-19T14:04:00.000Z', ms: Date.UTC(2026, 10, 19, 14, 4) }, status: 'Requested' },
       newChat: { id: 'contract-chat-1', title: 'A new chat' },
       paddedTitle: '  Padded   title  ',
@@ -158,6 +173,7 @@ function realTarget(origin: string): ContractTarget {
       await endLiveGrant(s)
       await resetSettings(s)
       this.fixtures.personId = seeded.admin
+      this.fixtures.photoAfterSet = `/api/members/${encodeURIComponent(seeded.admin)}/photo`
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }
       this.fixtures.otherMemberId = seeded.leo
       hung = false

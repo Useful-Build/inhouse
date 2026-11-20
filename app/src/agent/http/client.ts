@@ -254,6 +254,7 @@ export class HttpAgent implements AgentClient {
     if (this.s.me && !this.s.me.can.grantSupport && this.s.me.role !== 'inhouse') return this.setStatus('grants', { status: 'ready' })
     try {
       const { items } = await this.http.call({ method: 'GET', path: '/api/grants', schema: 'grants' })
+      this.confirmed.set('grant', items[0] ?? null)
       this.patch({ grant: items[0] ?? null, res: { ...this.s.res, grants: { status: 'ready' } } })
       this.watchExpiry()
     } catch (e) {
@@ -306,8 +307,7 @@ export class HttpAgent implements AgentClient {
   private async refreshMembers() {
     try {
       const page = await this.http.call({ method: 'GET', path: '/api/members', schema: 'members' })
-      page.items.forEach(m => this.confirmed.set(`member:${m.id}`, m))
-      this.patch({ members: page.items.reduce(replaceById, this.s.members) })
+      this.commit(page.items.reduce((st, m) => this.takeMember(st, m), this.s))
     } catch (e) { this.afterRefreshFailed(e, 'the team') }
   }
   private async refreshMe() {
@@ -346,16 +346,21 @@ export class HttpAgent implements AgentClient {
 
   /**
    * Optimistic write. `apply` shows the change at once; `send` saves it; `done` folds the answer in. On failure the change
-   * is taken back (the earlier slices themselves when nothing else changed since, so identities come back), `onConflict`
-   * puts the server's current record in, and the call rejects after one notice.
+   * is taken back, `onConflict` puts the server's current record in, and the call rejects after one notice.
    *
-   * Writes to one record (`lane`) go one at a time: a write sends after the earlier write on that record has answered, and
-   * builds its request in `send`, so it carries the rev that answer (or refusal) left. Writes to other records don't wait.
-   * `others` tells `done`, `undo` and `onConflict` that a later write to the same record is queued, whose change is
-   * on screen: they then take in only what the server said (the rev), not a value that would undo it.
+   * `lane`: writes that share one record's `rev` (a member's row, a setting) go one at a time. A write sends after the earlier
+   * write in its lane has answered, and builds its request in `send`, so it carries the rev that answer (or refusal) left.
+   * Lanes don't wait for each other.
+   *
+   * `field`: what on screen the write changes (a setting, a member's role, a member's photo, the grant). `others` tells
+   * `done`, `undo` and `onConflict` that a later write to the same field is queued, whose change is on screen: they then take
+   * in only what the server said (the rev), not a value that would undo it. With none queued, a refusal goes back to the
+   * field's last server-confirmed value, never to the state this write found (which may hold an earlier, unsaved write).
+   * The very objects come back only for a write that found nothing queued before it and saw nothing change since.
    */
   private write<T>(o: {
     lane?: string
+    field?: string
     apply: (s: Slices) => Slices
     send: () => Promise<T>
     done: (s: Slices, answer: T, others: boolean) => Slices
@@ -367,9 +372,10 @@ export class HttpAgent implements AgentClient {
     this.commit(o.apply(before))
     const mine = this.s
     const lane = o.lane
+    const field = o.field ?? lane
     const prior = lane ? this.lanes.get(lane) : undefined
-    if (lane) this.depth.set(lane, (this.depth.get(lane) ?? 0) + 1)
-    const others = () => lane !== undefined && (this.depth.get(lane) ?? 0) > 1
+    if (field) this.depth.set(field, (this.depth.get(field) ?? 0) + 1)
+    const others = () => field !== undefined && (this.depth.get(field) ?? 0) > 1
     const run = (async () => {
       await prior
       try {
@@ -377,18 +383,18 @@ export class HttpAgent implements AgentClient {
         this.commit(o.done(this.s, answer, others()))
         await o.after?.()
       } catch (e) {
-        if (this.s === mine) this.commit(before); else this.commit(o.undo(this.s, before, others()))
+        if (!prior && this.s === mine) this.commit(before); else this.commit(o.undo(this.s, before, others()))
         const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
         if (err.current && o.onConflict) this.commit(o.onConflict(this.s, err.current, others()))
         throw this.fail(err)
       } finally {
-        if (lane) this.depth.set(lane, (this.depth.get(lane) ?? 1) - 1)
+        if (field) { const n = (this.depth.get(field) ?? 1) - 1; if (n > 0) this.depth.set(field, n); else this.depth.delete(field) }
       }
     })()
     if (lane) {
       const tail = run.then(() => undefined, () => undefined)
       this.lanes.set(lane, tail)
-      void tail.then(() => { if (this.lanes.get(lane) === tail) { this.lanes.delete(lane); this.depth.delete(lane) } })
+      void tail.then(() => { if (this.lanes.get(lane) === tail) this.lanes.delete(lane) })
     }
     return guard(run)
   }
@@ -415,18 +421,23 @@ export class HttpAgent implements AgentClient {
     const value = typeof raw === 'string' && row.rule.t === 'text' ? raw.trim() : raw
     if (!k.BODIES.settingWrite.safeParse({ value, ifRev: 0 }).success) return this.refuseLocal('invalid', `That isn't a value for "${key}".`, REASON.badType)
     const record = `setting:${key}`
+    // The name is on the member's row, so it shares that row's queue (and its rev) with the photo and the role.
+    const meId = this.s.me?.memberId
+    const lane = key === 'g:name' && meId ? `member:${meId}` : record
     const put = (s: Slices, rec: { value: SettingValue; rev: number }, others: boolean): Slices => {
       this.confirmed.set(record, rec.value)
-      const revs = { ...s.revs, [key]: rec.rev }
+      let next: Slices = { ...s, revs: { ...s.revs, [key]: rec.rev } }
       // A later write to this key is on screen: its value stays, and this answer only moves the rev it will send.
-      return others ? { ...s, revs } : { ...this.withValue(s, key, rec.value), revs }
+      if (!others) next = this.withValue(next, key, rec.value)
+      return key === 'g:name' && meId ? this.bumpRev(next, meId, rec.rev) : next
     }
     return this.write({
-      lane: record,
+      lane,
+      field: record,
       apply: s => this.withValue(s, key, value),
       send: () => {
-        // Read when it is sent: after the write before it on this key has answered. The name is on the member's row, so its rev is the member's.
-        const ifRev = key === 'g:name' ? this.s.members.find(m => m.id === this.s.me?.memberId)?.rev ?? this.s.revs[key] ?? 0 : this.s.revs[key] ?? 0
+        // Read when it is sent: after the write before it in the queue has answered. The name's rev is the member row's latest known one.
+        const ifRev = key === 'g:name' && meId ? this.s.members.find(m => m.id === meId)?.rev ?? this.s.revs[key] ?? 0 : this.s.revs[key] ?? 0
         return this.http.call({ method: 'PUT', path: `/api/settings/${row.scope}/${encodeURIComponent(key)}`, schema: 'setting', json: k.BODIES.settingWrite.parse({ value, ifRev }) })
       },
       done: (s, rec, others) => (others || this.valueOf(s, key) === value ? put(s, rec, others) : { ...s, revs: { ...s.revs, [key]: rec.rev } }),
@@ -462,13 +473,23 @@ export class HttpAgent implements AgentClient {
       ...s, me: s.me && { ...s.me, photoUrl: photo }, members: s.members.map(x => (x.id === memberId ? { ...x, photo } : x)),
     })
     const was = this.s.members.find(x => x.id === memberId)?.photo ?? me.photoUrl
+    const confirmPhoto = (photo: string | null) => {
+      const c = this.confirmed.get(`member:${memberId}`) as MemberRecord | undefined
+      if (c) this.confirmed.set(`member:${memberId}`, { ...c, photo })
+    }
+    const confirmedPhoto = (): string | null => (this.confirmed.get(`member:${memberId}`) as MemberRecord | undefined)?.photo ?? was
     return this.write({
-      lane: 'photo',
+      lane: `member:${memberId}`,
+      field: `member:${memberId}:photo`,
       apply: s => photoAs(s, dataUrl),
       send: () => this.http.call({ method: bytes ? 'PUT' : 'DELETE', path: '/api/photo', schema: 'photo', ...(bytes ? { bytes } : {}) }),
-      done: (s, r) => photoAs(s, r.photoUrl),
-      undo: s => photoAs(s, was),
-      onConflict: (s, current) => photoAs(s, typeof current.photoUrl === 'string' ? current.photoUrl : null),
+      done: (s, r, others) => { confirmPhoto(r.photoUrl); return others ? s : photoAs(s, r.photoUrl) },
+      undo: (s, _before, others) => (others ? s : photoAs(s, confirmedPhoto())),
+      onConflict: (s, current, others) => {
+        const photo = typeof current.photoUrl === 'string' ? current.photoUrl : null
+        confirmPhoto(photo)
+        return others ? s : photoAs(s, photo)
+      },
       after: () => this.refreshMembers(),
     })
   })
@@ -476,20 +497,30 @@ export class HttpAgent implements AgentClient {
   // ----- the team -----
 
   private serverMember = (id: string) => this.s.members.find(m => m.id === id)
-  private memberAs = (id: string, f: (m: MemberRecord) => MemberRecord) => (s: Slices): Slices => ({ ...s, members: s.members.map(m => (m.id === id ? f(m) : m)) })
-  /** The server's record for a member comes in whole, or (a later write to the member is on screen) only its rev does. */
-  private takeMember = (s: Slices, m: MemberRecord, others: boolean): Slices => {
+  private depthOf = (field: string) => this.depth.get(field) ?? 0
+  /** A member's rev only ever goes up: a later answer (the photo's refresh, a name save) may already have moved it. */
+  private bumpRev = (s: Slices, id: string, rev: number): Slices => ({ ...s, members: s.members.map(m => (m.id === id && m.rev < rev ? { ...m, rev } : m)) })
+  /**
+   * The server's record for a member comes in. A field with a write on screen that isn't done yet (a queued role, a photo
+   * in flight, `own` still counting itself) keeps what the screen shows; the rev and every other field come from the server.
+   */
+  private takeMember = (s: Slices, m: MemberRecord, own?: 'role' | 'status' | 'photo'): Slices => {
     this.confirmed.set(`member:${m.id}`, m)
-    return others ? this.memberAs(m.id, x => ({ ...x, rev: m.rev }))(s) : { ...s, members: replaceById(s.members, m) }
+    const cur = s.members.find(x => x.id === m.id)
+    if (!cur) return { ...s, members: [...s.members, m] }
+    const keep = (f: 'role' | 'status' | 'photo') => this.depthOf(`member:${m.id}:${f}`) > (own === f ? 1 : 0)
+    const next: MemberRecord = { ...m, role: keep('role') ? cur.role : m.role, status: keep('status') ? cur.status : m.status, photo: keep('photo') ? cur.photo : m.photo }
+    return { ...s, members: replaceById(s.members, next), me: s.me && s.me.memberId === m.id && !keep('photo') ? { ...s.me, photoUrl: next.photo } : s.me }
   }
-  /** A refused member write goes back to what the server last confirmed, unless a later write to the member is on screen. */
-  private untakeMember = (id: string) => (s: Slices, _before: Slices, others: boolean): Slices => {
+  /** A refused member write: its field goes back to what the server last confirmed, unless a later write to that field is on screen. */
+  private untakeMember = (id: string, field: 'role' | 'status') => (s: Slices, _before: Slices, others: boolean): Slices => {
     const was = this.confirmed.get(`member:${id}`) as MemberRecord | undefined
-    return others || !was || !s.members.some(m => m.id === id) ? s : { ...s, members: replaceById(s.members, was) }
+    return others || !was || !s.members.some(m => m.id === id) ? s : this.memberAs(id, m => ({ ...m, [field]: was[field] }))(s)
   }
-  private conflictMember = (k: Contract) => (s: Slices, current: Record<string, unknown>, others: boolean): Slices => {
+  private memberAs = (id: string, f: (m: MemberRecord) => MemberRecord) => (s: Slices): Slices => ({ ...s, members: s.members.map(m => (m.id === id ? f(m) : m)) })
+  private conflictMember = (k: Contract, own: 'role' | 'status') => (s: Slices, current: Record<string, unknown>): Slices => {
     const rec = k.ANSWERS.member.safeParse(current)
-    return rec.success ? this.takeMember(s, rec.data, others) : s
+    return rec.success ? this.takeMember(s, rec.data, own) : s
   }
 
   private seq = 0
@@ -510,11 +541,12 @@ export class HttpAgent implements AgentClient {
     if (!k.BODIES.role.safeParse(role).success) return this.refuseLocal('invalid', 'A member is an Admin or a Member.')
     return this.write({
       lane: `member:${id}`,
+      field: `member:${id}:role`,
       apply: this.memberAs(id, m => ({ ...m, role })),
       send: () => this.http.call({ method: 'PUT', path: `/api/members/${encodeURIComponent(id)}/role`, schema: 'member', json: k.BODIES.roleChange.parse({ role, ifRev: this.serverMember(id)?.rev ?? 0 }) }),
-      done: (s, m, others) => this.takeMember(s, m, others),
-      undo: this.untakeMember(id),
-      onConflict: this.conflictMember(k),
+      done: (s, m) => this.takeMember(s, m, 'role'),
+      undo: this.untakeMember(id, 'role'),
+      onConflict: this.conflictMember(k, 'role'),
       // Changing your own role changes what you may do.
       after: id === this.s.me?.memberId ? () => this.refreshMe() : undefined,
     })
@@ -522,11 +554,12 @@ export class HttpAgent implements AgentClient {
 
   removeMember = this.needs((k, id: string): Promise<void> => this.write({
     lane: `member:${id}`,
+    field: `member:${id}:status`,
     apply: this.memberAs(id, m => ({ ...m, status: 'removed' })),
     send: () => this.http.call({ method: 'DELETE', path: `/api/members/${encodeURIComponent(id)}?ifRev=${this.serverMember(id)?.rev ?? 0}`, schema: 'member' }),
-    done: (s, m, others) => this.takeMember(s, m, others),
-    undo: this.untakeMember(id),
-    onConflict: this.conflictMember(k),
+    done: (s, m) => this.takeMember(s, m, 'status'),
+    undo: this.untakeMember(id, 'status'),
+    onConflict: this.conflictMember(k, 'status'),
   }))
 
   // ----- support access -----
@@ -539,13 +572,12 @@ export class HttpAgent implements AgentClient {
       id: `g_${PENDING}`, createdBy: this.s.me?.memberId ?? `m_${PENDING}`, createdAt: instantOf(at), endsAt: instantOf(at + body.data.hours * 3_600_000),
       endedAt: null, endedBy: null, rev: 1, live: true,
     }
-    const was = this.s.grant
     return this.write({
       lane: 'grant',
       apply: s => ({ ...s, grant: temp }),
       send: () => this.http.call({ method: 'POST', path: '/api/grants', schema: 'grant', json: body.data }),
-      done: (s, g) => ({ ...s, grant: g }),
-      undo: s => ({ ...s, grant: was }),
+      done: (s, g, others) => { this.confirmed.set('grant', g); return others ? s : { ...s, grant: g } },
+      undo: (s, _before, others) => (others ? s : { ...s, grant: (this.confirmed.get('grant') as SupportGrant | undefined) ?? null }),
       after: async () => this.watchExpiry(),
     })
   })
@@ -569,9 +601,13 @@ export class HttpAgent implements AgentClient {
           throw g?.success && !g.data.live ? new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND], { current: e instanceof AgentError ? e.current : undefined }) : e
         })
       },
-      done: (s, g) => ({ ...s, grant: g }),
-      undo: s => ({ ...s, grant: was }),
-      onConflict: (s, current) => { const g = k.ANSWERS.grant.safeParse(current); return g.success ? { ...s, grant: g.data } : s },
+      done: (s, g, others) => { this.confirmed.set('grant', g); return others ? s : { ...s, grant: g } },
+      undo: (s, _before, others) => (others ? s : { ...s, grant: (this.confirmed.get('grant') as SupportGrant | undefined) ?? null }),
+      onConflict: (s, current, others) => {
+        const g = k.ANSWERS.grant.safeParse(current)
+        if (g.success) this.confirmed.set('grant', g.data)
+        return g.success && !others ? { ...s, grant: g.data } : s
+      },
       after: async () => this.watchExpiry(),
     })
   })

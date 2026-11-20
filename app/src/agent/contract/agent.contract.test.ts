@@ -584,8 +584,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(c.getSnapshot().settings[fx.settingKey]).toBeUndefined()
       const photoOf = () => c.read().people.members.find(m => m.id === fx.personId)?.photo
       await c.setPhoto(fx.personId, fx.photoDataUrl)
-      // The demo keeps the picture as sent; the product serves it from its own URL: either way a photo reads as one.
-      expect(photoOf(), 'the photo reads after it is set').toEqual(expect.any(String))
+      expect(photoOf(), 'the photo reads as the target says it does once set').toBe(fx.photoAfterSet)
       await c.setPhoto(fx.personId, null)
       expect(photoOf(), 'a removed photo no longer reads as the photo').toBeNull()
       expect(Object.keys(c.getSnapshot().settings).filter(k => k.startsWith('photo:')), 'a photo is not a setting').toEqual([])
@@ -889,8 +888,14 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       const w = probe()
       await t.injectError(w.method, 'forbidden')
       await expect(w.run()).rejects.toBeInstanceOf(AgentError)
-      await t.client.setToggle(fx.toggleKey, false)
-      expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(false)
+      // Another method, on another route where the target serves one: the refusal belongs to the method, not to what it touches.
+      if (t.serves('setMemberRole')) {
+        await t.client.setMemberRole(fx.otherMemberId, 'admin')
+        expect(t.client.read().people.members.find(m => m.id === fx.otherMemberId)?.role).toBe('admin')
+      } else {
+        await t.client.setToggle(fx.toggleKey, false)
+        expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(false)
+      }
       await t.injectError(w.method, null)
       await w.run()
       expect(w.shown(t.client.getSnapshot())).toBe(true)
