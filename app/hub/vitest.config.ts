@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config'
 // worker's seat without workerd. `workers`: workerd through the Cloudflare plugin on the TEST config, for what needs
 // the runtime (Durable Object storage, the Worker's exports). CI runs both (`npm test`). `live`: the Shopify recorder
 // and the nightly against the real read fixture store (`npm run test:live`), never in `npm test` or CI. Globals, because
-// its files live in app/test/, where CI has no node_modules to resolve `vitest` from.
+// its files live in app/test/, where CI has no node_modules to resolve `vitest` from (they type the two globals they use).
 export default defineConfig({
   test: {
     projects: [

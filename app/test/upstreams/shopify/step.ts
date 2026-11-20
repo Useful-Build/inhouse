@@ -24,14 +24,19 @@ import {
 } from '../../../hub/connectors/shopify/documents'
 import { buildQuery } from '../../../hub/connectors/shopify/search'
 import { ok } from '../../../hub/index/errors'
-import { CASES, type LiveCase } from '../../connectors/shopify/cases'
+import { CASES, casesFor, windowSource, type LiveCase, type WindowSource } from '../../connectors/shopify/cases'
 import { hubReadClient } from '../../connectors/shopify/client'
 import { captureRequest, firstDifference, hasNext, normalise, pageInput, runCase, toolFor } from '../../connectors/shopify/run'
 import { checkDataset, type Dataset } from './dataset'
 import { createShopifyUpstream, TEST_CLIENT_ID, TEST_CLIENT_SECRET } from './server'
 
 export type Pass = 'orders' | 'refunds' | 'returns' | 'products'
-type Step = { kind: 'scopes' } | { kind: 'pass'; pass: Pass; after: string | null } | { kind: 'case'; name: string; page: number }
+type Step =
+  | { kind: 'scopes' }
+  | { kind: 'pass'; pass: Pass; after: string | null }
+  // Expands into one case step per case once the window dates are known (after the passes in record mode).
+  | { kind: 'cases' }
+  | { kind: 'case'; name: string; page: number }
 type State = {
   v: 1
   mode: 'record' | 'check'
@@ -41,6 +46,8 @@ type State = {
   nodes: Record<Pass, unknown[]>
   currency: string | null
   cases: Record<string, unknown[]>
+  /** The dates the window cases are cut from; null until known. */
+  windows: WindowSource | null
   costs: number[]
 }
 
@@ -67,6 +74,8 @@ const PASS_QUERY: Partial<Record<Pass, string>> = {
 const PASS_ROOT: Record<Pass, 'orders' | 'products'> = { orders: 'orders', refunds: 'orders', returns: 'orders', products: 'products' }
 
 const caseByName = (cases: readonly LiveCase[], name: string) => cases.find(c => c.name === name) ?? stop(`unknown case ${name}`)
+/** The fixed cases plus the window cases cut from the run's dates. */
+const allCases = (s: State, base: readonly LiveCase[]) => (s.windows ? casesFor(s.windows, base) : [...base])
 
 const statePath = (dir: string) => join(dir, 'state.json')
 const readState = (dir: string): State => {
@@ -83,6 +92,7 @@ function need(env: StepEnv, key: string): string {
 
 async function requestFor(s: State, step: Step, cases: readonly LiveCase[]): Promise<{ query: string; variables: Record<string, unknown>; label: string }> {
   if (step.kind === 'scopes') return { query: RECORD_SCOPES, variables: {}, label: 'RecordScopes' }
+  if (step.kind === 'cases') return stop('internal: an unexpanded cases step')
   if (step.kind === 'pass') {
     const variables: Record<string, unknown> = { first: RECORDER.pages[step.pass] }
     if (step.after) variables.after = step.after
@@ -103,7 +113,18 @@ function curlCommand(file: string): string {
   )
 }
 
-async function writeNext(dir: string, s: State, cases: readonly LiveCase[]): Promise<string> {
+async function writeNext(dir: string, s: State, base: readonly LiveCase[]): Promise<string> {
+  if (s.queue[0]?.kind === 'cases') {
+    s.queue.shift()
+    s.windows ??= windowSource({
+      orders: (s.nodes.orders as { id: string; processedAt: string }[]).map(o => ({
+        processedAt: o.processedAt,
+        refunds: ((s.nodes.refunds as { id: string; refunds: { createdAt: string | null }[] }[]).find(r => r.id === o.id)?.refunds ?? []),
+      })),
+    })
+    s.queue.unshift(...allCases(s, base).map((c): Step => ({ kind: 'case', name: c.name, page: 0 })))
+  }
+  const cases = allCases(s, base)
   const step = s.queue.shift()
   if (!step) {
     s.current = null
@@ -190,7 +211,8 @@ function ingestBody(s: State, step: Step, data: Record<string, any>): void {
     }
     return
   }
-  ;(s.cases[step.name] ??= []).push(data)
+  if (step.kind === 'cases') stop('internal: an unexpanded cases step')
+  ;(s.cases[(step as { name: string }).name] ??= []).push(data)
 }
 
 /** Maps a case's recorded live pages through the tool, as the live script would see them. */
@@ -226,6 +248,13 @@ export function buildDataset(s: State, recordedOn: string): { dataset: Dataset; 
   const returns = new Map((s.nodes.returns as { id: string; returns: unknown }[]).map(n => [n.id, n.returns]))
   const orderIds = new Set((s.nodes.orders as { id: string }[]).map(o => o.id))
   for (const id of [...refunds.keys(), ...returns.keys()]) if (!orderIds.has(id)) stop('a refunded or returned order is missing from the orders pass')
+  // The refunds and returns passes find orders by search filters. An order the orders pass shows as refunded or returned
+  // that neither pass found would be recorded without its refunds or returns: fail rather than record that.
+  const zero = /^-?0+(\.0+)?$/
+  for (const o of s.nodes.orders as { id: string; totalRefundedSet: { shopMoney: { amount: string } }; returnStatus: string }[]) {
+    if (!zero.test(o.totalRefundedSet.shopMoney.amount) && !refunds.has(o.id)) stop('an order with refunds is missing from the refunds pass (its search filter missed it)')
+    if (o.returnStatus !== 'NO_RETURN' && !returns.has(o.id)) stop('an order with returns is missing from the returns pass (its search filter missed it)')
+  }
   const orders = (s.nodes.orders as Record<string, unknown>[]).map(o => ({
     ...o,
     refunds: refunds.get(o.id as string) ?? [],
@@ -283,6 +312,18 @@ export function scrubScan(text: string, shop: string, originals: readonly string
   if (/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(text)) stop('scrub: an email-shaped string is in the output')
   if (/\+\d[\d ]{6,16}\d|\(\d{3}\)\s?\d{3}-\d{4}|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b/.test(text)) stop('scrub: a phone-shaped string is in the output')
   for (const n of originals) if (n.length >= 6 && text.includes(n)) stop('scrub: an original gid number is in the output')
+  // Unformatted, UK and international numbers: 9 or more digits in a row once spaces, dots, dashes and parentheses go,
+  // in any string value but ids, amounts, prices and instants.
+  const skip = new Set(['id', 'amount', 'price'])
+  const instant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+  const walk = (v: unknown, key: string): void => {
+    if (Array.isArray(v)) v.forEach(x => walk(x, key))
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, k)
+    else if (typeof v === 'string' && !skip.has(key) && !instant.test(v) && /\d{9,}/.test(v.replace(/[\s.()-]/g, ''))) {
+      stop('scrub: a phone-shaped run of digits is in the output')
+    }
+  }
+  walk(JSON.parse(text), '')
 }
 
 /** Runs every case through the tool on the live responses and on a fake over `dataset`; one line per case. */
@@ -329,8 +370,10 @@ export async function runStep(env: StepEnv, opts: { cases?: readonly LiveCase[];
     mkdirSync(dir, { recursive: true })
     const queue: Step[] = [{ kind: 'scopes' }]
     if (mode === 'record') for (const pass of ['orders', 'refunds', 'returns', 'products'] as const) queue.push({ kind: 'pass', pass, after: null })
-    for (const c of cases) queue.push({ kind: 'case', name: c.name, page: 0 })
-    const s: State = { v: 1, mode, n: 0, current: null, queue, nodes: { orders: [], refunds: [], returns: [], products: [] }, currency: null, cases: {}, costs: [] }
+    queue.push({ kind: 'cases' })
+    // Check mode cuts the window cases from the committed recording; record mode from its own passes.
+    const windows = mode === 'check' ? windowSource(checkDataset(opts.committed ?? (await loadCommitted()))) : null
+    const s: State = { v: 1, mode, n: 0, current: null, queue, nodes: { orders: [], refunds: [], returns: [], products: [] }, currency: null, cases: {}, windows, costs: [] }
     return writeNext(dir, s, cases)
   }
   const s = readState(dir)
@@ -349,7 +392,7 @@ export async function runStep(env: StepEnv, opts: { cases?: readonly LiveCase[];
     s.costs.push(cost as number)
     ingestBody(s, current, body.data!)
     if (current.kind === 'case') {
-      const c = caseByName(cases, current.name)
+      const c = caseByName(allCases(s, cases), current.name)
       const mapped = await mapLivePages(c, s.cases[c.name]!)
       if (current.page + 1 < (c.pages ?? 1) && hasNext(mapped.at(-1))) s.queue.unshift({ kind: 'case', name: c.name, page: current.page + 1 })
     }
@@ -363,7 +406,7 @@ export async function runStep(env: StepEnv, opts: { cases?: readonly LiveCase[];
       const built = buildDataset(s, opts.today ?? new Date().toISOString().slice(0, 10))
       const text = JSON.stringify(built.dataset, null, 1)
       scrubScan(text, shop, built.originals)
-      const diff = await differential(s, built.dataset, cases, built)
+      const diff = await differential(s, built.dataset, allCases(s, cases), built)
       writeFileSync(join(dir, 'differential.txt'), diff.lines.join('\n') + '\n')
       mkdirSync(out, { recursive: true })
       writeFileSync(
@@ -375,7 +418,7 @@ export async function runStep(env: StepEnv, opts: { cases?: readonly LiveCase[];
       return `recorded ${built.dataset.orders.length} orders and ${built.dataset.products.length} products; differential ${diff.equal ? 'all equal' : 'has differences'} (differential.txt)`
     }
     const committed = opts.committed ?? (await loadCommitted())
-    const diff = await differential(s, checkDataset(committed), cases)
+    const diff = await differential(s, checkDataset(committed), allCases(s, cases))
     writeFileSync(join(dir, 'differential.txt'), diff.lines.join('\n') + '\n')
     return `check: differential ${diff.equal ? 'all equal' : 'has differences'} (differential.txt)`
   }

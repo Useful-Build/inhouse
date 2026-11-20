@@ -77,10 +77,15 @@ export const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v))
 // costliest characters for JSON (a quote, an astral code point, a control character, a two-byte letter), every
 // nullable present, every number at its widest.
 export const WORST = {
-  str: (n: number) => '"🏕\u0001é'.repeat(n),
+  /** Exactly `cap` JSON bytes of four-byte code points, then costly overflow the cap must cut. Every cap is a multiple of 4. */
+  str: (cap: number) => {
+    if (cap % 4 !== 0) throw new Error('caps are multiples of 4')
+    return '🏕'.repeat(cap / 4) + '\u0001"é🏕'.repeat(20)
+  },
   id: `gid://shopify/${'A'.repeat(32)}/${'9'.repeat(20)}`,
   money: { shopMoney: { amount: '-90071992547409.91', currencyCode: 'USD' } },
-  instant: '9999-12-31T23:59:59.999Z',
+  // Year 10000 once in UTC: `iso` becomes '+010000-…' (27 bytes), the widest a 4-digit-year input can produce.
+  instant: '9999-12-31T23:59:59.999-23:59',
   enum: 'A'.repeat(40),
   int: -2147483648,
   cursor: 'A'.repeat(512),
@@ -88,11 +93,12 @@ export const WORST = {
 const rep = <T>(n: number, f: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => f(i))
 const W = WORST
 const L = D.LIMITS
+const CAPS = D.CAPS
 const more = { hasNextPage: true }
 const page = { hasNextPage: true, endCursor: W.cursor }
 const core = () => ({
   id: W.id,
-  name: W.str(100),
+  name: W.str(CAPS.orderName),
   processedAt: W.instant,
   cancelledAt: W.instant,
   displayFinancialStatus: W.enum,
@@ -103,20 +109,20 @@ const core = () => ({
 })
 const refundNode = (lines: number) => ({
   createdAt: W.instant,
-  note: W.str(500),
+  note: W.str(CAPS.refundNoteGet),
   totalRefundedSet: W.money,
-  refundLineItems: { nodes: rep(lines, () => ({ quantity: W.int, restockType: W.enum, lineItem: { sku: W.str(200) } })), pageInfo: more },
+  refundLineItems: { nodes: rep(lines, () => ({ quantity: W.int, restockType: W.enum, lineItem: { sku: W.str(CAPS.sku) } })), pageInfo: more },
 })
 const returnNode = (lines: number) => ({
-  name: W.str(100),
+  name: W.str(CAPS.returnName),
   status: W.enum,
   createdAt: W.instant,
   returnLineItems: {
     nodes: rep(lines, () => ({
       quantity: W.int,
       unprocessedQuantity: W.int,
-      returnReasonDefinition: { name: W.str(200) },
-      fulfillmentLineItem: { lineItem: { sku: W.str(200) } },
+      returnReasonDefinition: { name: W.str(CAPS.reason) },
+      fulfillmentLineItem: { lineItem: { sku: W.str(CAPS.sku) } },
     })),
     pageInfo: more,
   },
@@ -134,7 +140,7 @@ export const MAXIMAL: Record<string, { input: unknown; data: unknown }> = {
         nodes: rep(L.ordersSearch.maxFirst, () => ({
           ...core(),
           currentSubtotalLineItemsQuantity: 2147483647,
-          lineItems: { nodes: rep(L.ordersSearch.lines, () => ({ sku: W.str(200), currentQuantity: W.int })), pageInfo: more },
+          lineItems: { nodes: rep(L.ordersSearch.lines, () => ({ sku: W.str(CAPS.sku), currentQuantity: W.int })), pageInfo: more },
         })),
         pageInfo: page,
       },
@@ -150,8 +156,8 @@ export const MAXIMAL: Record<string, { input: unknown; data: unknown }> = {
             name: WORST_NAME,
             lineItems: {
               nodes: rep(L.orderGet.lines, () => ({
-                sku: W.str(200),
-                title: W.str(400),
+                sku: W.str(CAPS.sku),
+                title: W.str(CAPS.title),
                 currentQuantity: W.int,
                 unfulfilledQuantity: W.int,
                 originalUnitPriceSet: W.money,
@@ -171,8 +177,8 @@ export const MAXIMAL: Record<string, { input: unknown; data: unknown }> = {
       orders: {
         nodes: rep(L.refundsSearch.maxFirst, () => ({
           id: W.id,
-          name: W.str(100),
-          refunds: rep(L.refundsSearch.refunds + 1, () => refundNode(L.refundsSearch.refundLines)),
+          name: W.str(CAPS.orderName),
+          refunds: rep(L.refundsSearch.scan, () => refundNode(L.refundsSearch.refundLines)),
         })),
         pageInfo: page,
       },
@@ -184,7 +190,7 @@ export const MAXIMAL: Record<string, { input: unknown; data: unknown }> = {
       orders: {
         nodes: rep(L.returnsSearch.maxFirst, () => ({
           id: W.id,
-          name: W.str(100),
+          name: W.str(CAPS.orderName),
           returns: { nodes: rep(L.returnsSearch.returns, () => returnNode(L.returnsSearch.returnLines)), pageInfo: more },
         })),
         pageInfo: page,
@@ -198,12 +204,12 @@ export const MAXIMAL: Record<string, { input: unknown; data: unknown }> = {
       products: {
         nodes: rep(L.productsSearch.maxFirst, () => ({
           id: W.id,
-          title: W.str(400),
+          title: W.str(CAPS.title),
           status: W.enum,
           totalInventory: W.int,
           tracksInventory: true,
           variants: {
-            nodes: rep(L.productsSearch.variants, () => ({ id: W.id, sku: W.str(200), title: W.str(200), price: '-90071992547409.91' })),
+            nodes: rep(L.productsSearch.variants, () => ({ id: W.id, sku: W.str(CAPS.sku), title: W.str(CAPS.variantTitle), price: '-90071992547409.91' })),
             pageInfo: more,
           },
         })),
@@ -218,13 +224,13 @@ export const MAXIMAL: Record<string, { input: unknown; data: unknown }> = {
         nodes: rep(L.inventoryLevelsGet.first, () => ({
           id: W.id,
           sku: WORST_SKU,
-          title: W.str(200),
-          product: { title: W.str(400) },
+          title: W.str(CAPS.variantTitle),
+          product: { title: W.str(CAPS.title) },
           inventoryItem: {
             tracked: true,
             inventoryLevels: {
               nodes: rep(L.inventoryLevelsGet.levels, () => ({
-                location: { name: W.str(200) },
+                location: { name: W.str(CAPS.location) },
                 quantities: D.QUANTITY_NAMES.map(name => ({ name, quantity: W.int })),
               })),
               pageInfo: more,

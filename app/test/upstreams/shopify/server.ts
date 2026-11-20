@@ -286,6 +286,22 @@ function unb64url(s: string): string {
   return atob(pad + '='.repeat((4 - (pad.length % 4)) % 4))
 }
 
+/** Each clause's kind and field must suit the root, checked before any row is read (so an empty dataset still errors). */
+function checkClauses(root: string, clauses: Clause[]): void {
+  const ok = (c: Clause): boolean => {
+    if (root === 'orders') {
+      if (c.kind === 'range') return true
+      if (c.kind === 'any') return c.of.every(ok)
+      if (c.kind !== 'eq') return false
+      if (c.field === 'fulfillment_status') return Object.hasOwn(FULFILLMENT, c.value)
+      return c.field === 'financial_status' || c.field === 'return_status' || c.field === 'sku' || c.field === 'name'
+    }
+    if (root === 'products') return c.kind === 'phrase' || c.kind === 'below' || (c.kind === 'eq' && c.field === 'status')
+    return c.kind === 'eq' && c.field === 'sku' && !c.negate
+  }
+  for (const c of clauses) if (!ok(c)) throw new GqlError(`${root} can't filter on ${c.kind === 'eq' || c.kind === 'range' || c.kind === 'below' ? c.field : c.kind}`, 'INVALID_SEARCH')
+}
+
 function resolveRoot(d: Dataset, f: Field, variables: Record<string, unknown>) {
   const first = argValue(f, 'first', variables)
   if (typeof first !== 'number' || !Number.isInteger(first) || first < 1 || first > MAX_FIRST) {
@@ -300,6 +316,7 @@ function resolveRoot(d: Dataset, f: Field, variables: Record<string, unknown>) {
   const key = sort.keys[sortKey]
   if (!key) throw new GqlError(`${f.name}: sortKey ${sortKey} isn't recorded`, 'BAD_REQUEST')
   const reverse = argValue(f, 'reverse', variables) === true
+  checkClauses(f.name, parsed.clauses)
 
   let rows: Row[]
   if (f.name === 'orders') rows = d.orders.filter(o => parsed.clauses.every(c => orderMatches(o, c))) as unknown as Row[]
@@ -319,14 +336,17 @@ function resolveRoot(d: Dataset, f: Field, variables: Record<string, unknown>) {
   let offset = 0
   const after = argValue(f, 'after', variables)
   if (after !== undefined && after !== null) {
-    let c: { o?: unknown; h?: unknown }
+    let c: unknown
     try {
-      c = JSON.parse(unb64url(String(after))) as { o?: unknown; h?: unknown }
+      c = JSON.parse(unb64url(String(after)))
     } catch {
       throw new GqlError('invalid cursor', 'BAD_REQUEST')
     }
-    if (c.h !== scanHash || typeof c.o !== 'number' || !Number.isInteger(c.o) || c.o < 0) throw new GqlError('cursor from another query', 'BAD_REQUEST')
-    offset = c.o
+    // A cursor that decodes to JSON null, a number or an array is invalid too, never a TypeError.
+    if (typeof c !== 'object' || c === null || Array.isArray(c)) throw new GqlError('invalid cursor', 'BAD_REQUEST')
+    const { o, h } = c as { o?: unknown; h?: unknown }
+    if (h !== scanHash || typeof o !== 'number' || !Number.isInteger(o) || o < 0) throw new GqlError('cursor from another query', 'BAD_REQUEST')
+    offset = o
   }
   const nodes = rows.slice(offset, offset + first)
   const end = offset + nodes.length

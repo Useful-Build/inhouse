@@ -3,9 +3,8 @@
   "compilerOptions": {
     "target": "es2024",
     "lib": ["ES2024"],
-    // Env and the Workers runtime from `npm run types`; cloudflare:test for the workerd test project; vitest/globals for
-    // the live project's files in app/test/, which can't resolve `vitest` themselves in CI.
-    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types", "vitest/globals"],
+    // Env and the Workers runtime from `npm run types`; cloudflare:test for the workerd test project.
+    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types"],
     "module": "preserve",
     "moduleResolution": "bundler",
     "verbatimModuleSyntax": true,

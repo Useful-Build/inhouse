@@ -9,7 +9,7 @@ import { RESULT_BUDGET_BYTES } from '../../../hub/connectors/shopify/shape'
 import { parseShopifyConfig, type Upstream } from '../../../hub/signin/providers/shopify'
 import { checkDataset } from '../../upstreams/shopify/dataset'
 import { createShopifyUpstream, TEST_CLIENT_ID, TEST_CLIENT_SECRET } from '../../upstreams/shopify/server'
-import { CASES, type LiveCase } from './cases'
+import { casesFor, windowSource, type LiveCase } from './cases'
 import { hubReadClient } from './client'
 import { firstDifference, normalise, runCase } from './run'
 
@@ -31,7 +31,9 @@ export async function runLive(
   const config = parseShopifyConfig(env)
   if (!config) throw new Error('live: the Shopify settings are invalid')
   const print = deps.print ?? (line => console.log(line))
-  const cases = deps.cases ?? CASES
+  const committed = checkDataset(deps.committed)
+  // The fixed cases plus the window cases cut from the recording's own dates.
+  const cases = deps.cases ?? casesFor(windowSource(committed))
   const failures: string[] = []
   const fail = (line: string) => {
     failures.push(line)
@@ -47,7 +49,7 @@ export async function runLive(
   print('grant: ok, scopes match')
 
   const recorded = hubReadClient(
-    createShopifyUpstream(checkDataset(deps.committed)),
+    createShopifyUpstream(committed),
     { shop: 'example-fixture', clientId: TEST_CLIENT_ID, clientSecret: TEST_CLIENT_SECRET },
     shopifyConnector.scopes,
     SHOPIFY_API_VERSION,

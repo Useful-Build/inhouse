@@ -99,10 +99,15 @@ describe('bounds over arbitrary data at every cap', () => {
   for (const name of Object.keys(TOOLS)) {
     test.prop([fc.integer()], { numRuns: 60 })(`${name}: arrays within caps, JSON under 24 KiB`, async seed => {
       const { input, data } = MAXIMAL[name]!
-      const r = await call(name, input, dataClient(vary(data, prng(seed))))
-      // A varied name can stop order_get matching; a varied string can't fail the mapping.
+      const varied = vary(data, prng(seed)) as any
+      // Keep the key the tool matches on, so order_get and inventory_levels_get return data under the property.
+      if (name === 'order_get' && varied.orders.nodes[0]) varied.orders.nodes[0].name = (input as { name: string }).name
+      if (name === 'inventory_levels_get') for (const n of varied.productVariants.nodes) n.sku = (input as { sku: string }).sku
+      const r = await call(name, input, dataClient(varied))
       if (!r.ok) throw new Error(`${name}: ${r.error.code}`)
       expectBounded(name, r.value)
+      if (name === 'order_get') expect((r.value as { order: unknown }).order !== null).toBe(varied.orders.nodes.length > 0)
+      if (name === 'inventory_levels_get') expect((r.value as { matches: unknown[] }).matches).toHaveLength(varied.productVariants.nodes.length)
     })
   }
 
@@ -130,7 +135,8 @@ describe('money', () => {
     const digits = (neg ? -minor : minor).toString().padStart(exponent + 1, '0')
     const whole = digits.slice(0, digits.length - exponent)
     const frac = digits.slice(digits.length - exponent)
-    return `${neg ? '-' : ''}${whole}${exponent ? `.${frac}` : ''}`
+    // Shopify's Decimal always prints a fraction digit: "1500.0" for JPY.
+    return `${neg ? '-' : ''}${whole}.${exponent ? frac : '0'}`
   }
 
   test.prop([fc.constantFrom('USD', 'JPY', 'KWD', 'EUR'), fc.bigInt({ min: -(2n ** 53n) + 1n, max: 2n ** 53n - 1n })])(
@@ -144,6 +150,19 @@ describe('money', () => {
     },
   )
 
+  it.each([
+    ['0.0', 'JPY', 0],
+    ['1500.0', 'JPY', 1500],
+    ['1500.00', 'JPY', 1500],
+    ['-3.000', 'JPY', -3],
+    ['11.5', 'USD', 1150],
+    ['11.50', 'USD', 1150],
+    ['11.500', 'USD', 1150],
+    ['0.100', 'KWD', 100],
+  ])('accepts Shopify\'s %s %s as %d minor', (amount, currency, minor) => {
+    expect(money(amount, currency)).toEqual({ minor, currency })
+  })
+
   it('knows the exponents', () => {
     expect([currencyExponent('USD'), currencyExponent('JPY'), currencyExponent('KWD')]).toEqual([2, 0, 3])
   })
@@ -151,6 +170,8 @@ describe('money', () => {
   it.each([
     ['1.234', 'USD'],
     ['1.5', 'JPY'],
+    ['1500.01', 'JPY'],
+    ['11.501', 'USD'],
     ['abc', 'USD'],
     ['1e5', 'USD'],
     ['', 'USD'],
@@ -182,7 +203,12 @@ describe('instants', () => {
 })
 
 describe('string caps', () => {
-  test.prop([fc.string({ unit: 'binary', maxLength: 400 }), fc.integer({ min: 0, max: 200 })])(
+  // Units that include astral code points (surrogate pairs) and lone surrogates, so "cut at a code point" is exercised.
+  const unit = fc.oneof(
+    fc.string({ unit: 'grapheme', minLength: 1, maxLength: 1 }),
+    fc.constantFrom('🏕', '\ud800', '\udfff', '"', '\\', '\u0001', '\n', 'é', '折'),
+  )
+  test.prop([fc.string({ unit, maxLength: 400 }), fc.integer({ min: 0, max: 200 })])(
     'never more than the cap in JSON bytes, cut at a code point, a prefix, marked when cut',
     (s, max) => {
       const cut = { truncated: false }

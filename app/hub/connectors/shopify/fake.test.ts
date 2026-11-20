@@ -2,7 +2,7 @@ import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { checkDataset } from '../../../test/upstreams/shopify/dataset'
 import { createShopifyUpstream, SHOPIFY_UPSTREAM_CANARY, TEST_CLIENT_ID, TEST_CLIENT_SECRET, type Fault } from '../../../test/upstreams/shopify/server'
-import { currentDocumentHashes, ORDERS_SEARCH, PRODUCTS_SEARCH, SHOPIFY_READ_SCOPES } from './documents'
+import { currentDocumentHashes, INVENTORY_LEVELS_GET, ORDERS_SEARCH, PRODUCTS_SEARCH, SHOPIFY_READ_SCOPES } from './documents'
 import { call, fakeClient, handDataset } from './test-kit'
 import { FINANCIAL_STATUSES, FULFILLMENT_STATUSES, RETURN_STATUSES, variablesFor as ordersVariables } from './tools/orders-search'
 import { variablesFor as productsVariables } from './tools/products-search'
@@ -137,6 +137,25 @@ describe('refusals', () => {
     const up = createShopifyUpstream(handDataset)
     const { body } = await post(up, await token(up), ORDERS_SEARCH, { first: 1, query: 'sku:HX-0013' })
     expect(body.errors[0].extensions.code).toBe('INVALID_SEARCH')
+  })
+
+  it('a clause that does not suit the root errors even on an empty dataset', async () => {
+    const empty = { ...(structuredClone(handDataset) as object), orders: [], products: [] }
+    const up = createShopifyUpstream(empty)
+    const tok = await token(up)
+    expect((await post(up, tok, ORDERS_SEARCH, { first: 1, query: 'status:"active"' })).body.errors[0].extensions.code).toBe('INVALID_SEARCH')
+    expect((await post(up, tok, ORDERS_SEARCH, { first: 1, query: 'inventory_total:<1' })).body.errors[0].extensions.code).toBe('INVALID_SEARCH')
+    expect((await post(up, tok, ORDERS_SEARCH, { first: 1, query: 'fulfillment_status:"any"' })).body.errors[0].extensions.code).toBe('INVALID_SEARCH')
+    expect((await post(up, tok, PRODUCTS_SEARCH, { first: 1, sortKey: 'TITLE', query: 'sku:"HX-0013"' })).body.errors[0].extensions.code).toBe('INVALID_SEARCH')
+    expect((await post(up, tok, INVENTORY_LEVELS_GET, { query: '"lantern"' })).body.errors[0].extensions.code).toBe('INVALID_SEARCH')
+    expect((await post(up, tok, INVENTORY_LEVELS_GET, { query: '-sku:"HX-0013"' })).body.errors[0].extensions.code).toBe('INVALID_SEARCH')
+    expect((await post(up, tok, ORDERS_SEARCH, { first: 1, query: 'sku:"HX-0013"' })).body.data.orders.nodes).toEqual([])
+  })
+
+  it.each(['bnVsbA', 'MTI', 'WzFd', 'InN0ciI'])('a cursor that decodes to a non-object (%s) is the invalid-cursor error', async after => {
+    const up = createShopifyUpstream(handDataset)
+    const { body } = await post(up, await token(up), ORDERS_SEARCH, { first: 1, after })
+    expect(body.errors[0]).toMatchObject({ message: 'invalid cursor', extensions: { code: 'BAD_REQUEST' } })
   })
 
   it('first above 250 is refused', async () => {

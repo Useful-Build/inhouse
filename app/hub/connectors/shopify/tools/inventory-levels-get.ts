@@ -81,7 +81,8 @@ export const inventoryLevelsGet: ToolDef<Input> = {
   description:
     `Get stock for one SKU (exact, case-sensitive): available, on hand, committed and incoming quantities at each location (up to ${L.levels}), ` +
     'whether inventory is tracked, and the product and variant title. Available can be negative when oversold. Takes ' +
-    'sku only; find a SKU with products_search first. Returns matches: [] when no variant has that SKU.',
+    'sku only; find a SKU with products_search first. Returns matches: [] when no variant has that SKU; matches: [] ' +
+    `with moreMatches: true means it wasn't in the first ${L.first} search matches, so check the SKU with products_search.`,
   mode: 'read',
   input,
   run: (ctx, i) => runQuery(ctx, INVENTORY_LEVELS_GET, variablesFor(i), parser, d => map(d, i.sku)),

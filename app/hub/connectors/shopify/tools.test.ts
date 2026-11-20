@@ -2,7 +2,7 @@ import { fc, test } from '@fast-check/vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HubErrorCode } from '../../index/contract'
 import { err } from '../../index/errors'
-import { buildRegistry, listReadTools, MAX_DESCRIPTION } from '../../registry/registry'
+import { buildRegistry, callReadTool, listReadTools, MAX_DESCRIPTION } from '../../registry/registry'
 import { checkGrantedScopes } from '../../scope/scopes'
 import { SHOPIFY_READ_SCOPES } from './documents'
 import { shopifyConnector } from './route'
@@ -138,6 +138,71 @@ function mutate(data: unknown, seed: number, kind: string) {
   } else p[slot.key] = replacement[kind]
 }
 
+describe('refunds_search: the window before the cap', () => {
+  const refund = (createdAt: string) => ({
+    createdAt,
+    note: `refund ${createdAt.slice(5, 10)}`,
+    totalRefundedSet: { shopMoney: { amount: '1.00', currencyCode: 'USD' } },
+    refundLineItems: { nodes: [], pageInfo: { hasNextPage: false } },
+  })
+  const data = (...dates: string[]) => ({
+    orders: { nodes: [{ id: 'gid://shopify/Order/1', name: '#1', refunds: dates.map(refund) }], pageInfo: { hasNextPage: false, endCursor: null } },
+  })
+  const notes = async (dates: string[], input: Record<string, unknown>) => {
+    const v = await value<Items<{ note: string; moreRefunds: boolean }>>('refunds_search', input, dataClient(data(...dates)))
+    return { notes: v.items.map(i => i.note), more: v.items.map(i => i.moreRefunds) }
+  }
+
+  it('an in-window refund after out-of-window ones still shows', async () => {
+    expect(await notes(['2026-11-10T09:00:00Z', '2026-11-12T09:00:00Z', '2026-11-19T09:00:00Z'], { createdFrom: '2026-11-19T00:00:00Z' })).toEqual({
+      notes: ['refund 11-19'],
+      more: [false],
+    })
+  })
+
+  it('more in the window than the cap says moreRefunds', async () => {
+    const r = await notes(['2026-11-19T09:00:00Z', '2026-11-19T10:00:00Z', '2026-11-19T11:00:00Z'], { createdFrom: '2026-11-19T00:00:00Z' })
+    expect(r).toEqual({ notes: ['refund 11-19', 'refund 11-19'], more: [true, true] })
+  })
+
+  it('a list that came back full says moreRefunds', async () => {
+    const dates = ['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-19'].map(d => `${d}T09:00:00Z`)
+    expect(await notes(dates, { createdFrom: '2026-11-19T00:00:00Z' })).toEqual({ notes: ['refund 11-19'], more: [true] })
+  })
+})
+
+describe('inputs never make run throw (fuzzed through the gateway)', () => {
+  const scope = { kind: 'server', job: 'test', requestId: 'r' } as const
+  const deps = {
+    registry: buildRegistry([shopifyConnector]),
+    isConfigured: () => true,
+    shopifyFor: () => dataClient({}),
+    nowMs: () => 0,
+  }
+  const pad = (n: number, w: number) => String(n).padStart(w, '0')
+  const instantish = fc.oneof(
+    fc.constantFrom('0000-01-01T00:00:00+01:00', '9999-12-31T23:59:59-01:00', '0001-01-01T00:00:00Z', '9999-12-31T23:59:59Z'),
+    fc
+      .tuple(fc.integer({ min: 0, max: 9999 }), fc.integer({ min: 1, max: 12 }), fc.integer({ min: 1, max: 28 }), fc.integer({ min: -23, max: 23 }), fc.integer({ min: 0, max: 59 }))
+      .map(([y, m, d, oh, om]) => `${pad(y, 4)}-${pad(m, 2)}-${pad(d, 2)}T12:00:00${oh < 0 ? '-' : '+'}${pad(Math.abs(oh), 2)}:${pad(om, 2)}`),
+  )
+  const args = fc.oneof(
+    fc.anything(),
+    fc.record({ processedFrom: instantish, processedTo: instantish, createdFrom: instantish, createdTo: instantish }, { requiredKeys: [] }),
+  )
+  for (const name of Object.keys(TOOLS)) {
+    test.prop([args])(`${name}: any input resolves to a result`, async a => {
+      const r = await callReadTool(deps, scope, name, a)
+      expect(typeof r.ok).toBe('boolean')
+    })
+  }
+
+  it.each(['0000-01-01T00:00:00+01:00', '9999-12-31T23:59:59-01:00'])('%s is invalid_args', async at => {
+    expect(await callReadTool(deps, scope, 'refunds_search', { createdFrom: at })).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    expect(await callReadTool(deps, scope, 'orders_search', { processedTo: at })).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+  })
+})
+
 describe('exact keys (test 7)', () => {
   const orderNode = () => structuredClone((MAXIMAL.order_get!.data as any).orders.nodes[0]) as Record<string, unknown> & { name: string }
   const withNames = (...names: string[]) => ({ orders: { nodes: names.map(n => ({ ...orderNode(), name: n })) } })
@@ -200,14 +265,16 @@ describe('no "today" (test 8)', () => {
     expect(await all(nowMs)).toEqual(baseline)
   })
 
-  it('no tool source reads the clock', async () => {
+  it('no connector source reads the clock (tests and the test kit aside)', async () => {
     const { readFileSync, readdirSync } = await import('node:fs')
     const { fileURLToPath } = await import('node:url')
-    const dir = fileURLToPath(new URL('./tools/', import.meta.url).href)
-    for (const f of readdirSync(dir)) {
-      const src = readFileSync(`${dir}/${f}`, 'utf8')
-      expect(src, f).not.toMatch(/Date\.now|nowMs|new Date\(\)/)
-    }
+    const here = fileURLToPath(new URL('./', import.meta.url).href)
+    const files = [
+      ...readdirSync(here).filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts') && f !== 'test-kit.ts'),
+      ...readdirSync(`${here}/tools`).map(f => `tools/${f}`),
+    ]
+    expect(files).toEqual(expect.arrayContaining(['route.ts', 'shape.ts', 'search.ts', 'documents.ts', 'tools/orders-search.ts']))
+    for (const f of files) expect(readFileSync(`${here}/${f}`, 'utf8'), f).not.toMatch(/Date\.now|nowMs|new Date\(\s*\)/)
   })
 })
 

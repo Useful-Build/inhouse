@@ -12,13 +12,14 @@ export const SHOPIFY_READ_SCOPES = ['read_orders', 'read_products', 'read_invent
 
 /**
  * Nested limits per tool. Every result list is capped by one of these, so each tool's worst-case JSON stays under
- * 24 KiB (shape.test.ts computes it). A list without pageInfo (Order.refunds) is requested one longer than its cap, so
- * the mapper can tell "more" from "exactly full".
+ * 24 KiB (shape.test.ts computes it). A list without pageInfo (Order.refunds) is requested longer than its cap, so the
+ * mapper can tell "more" from "exactly full".
  */
 export const LIMITS = {
   ordersSearch: { maxFirst: 20, defaultFirst: 10, lines: 5 },
   orderGet: { first: 2, lines: 20, refunds: 5, refundLines: 5, returns: 5, returnLines: 5 },
-  refundsSearch: { maxFirst: 10, defaultFirst: 10, refunds: 2, refundLines: 3, maxItems: 20 },
+  // scan: refunds read per order, before the window filter; refunds: the most returned per order.
+  refundsSearch: { maxFirst: 10, defaultFirst: 10, scan: 5, refunds: 2, refundLines: 3, maxItems: 20 },
   returnsSearch: { maxFirst: 5, defaultFirst: 5, returns: 3, returnLines: 5, maxItems: 15 },
   productsSearch: { maxFirst: 20, defaultFirst: 10, variants: 3 },
   inventoryLevelsGet: { first: 3, levels: 10 },
@@ -103,7 +104,7 @@ export const REFUNDS_SEARCH = `query RefundsSearch($first: Int!, $after: String,
   orders(first: $first, after: $after, query: $query, sortKey: UPDATED_AT, reverse: true) {
     nodes {
       id name
-      refunds(first: ${L.refundsSearch.refunds + 1}) {
+      refunds(first: ${L.refundsSearch.scan}) {
         createdAt note
         totalRefundedSet ${MONEY}
         refundLineItems(first: ${L.refundsSearch.refundLines}) { nodes { quantity restockType lineItem { sku } } pageInfo { hasNextPage } }

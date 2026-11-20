@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { checkDataset } from '../../../test/upstreams/shopify/dataset'
 import { createShopifyUpstream, TEST_CLIENT_ID, TEST_CLIENT_SECRET, type ShopifyUpstreamOptions } from '../../../test/upstreams/shopify/server'
-import { parseCurlOutput, runStep, StepError } from '../../../test/upstreams/shopify/step'
+import { buildDataset, parseCurlOutput, runStep, StepError } from '../../../test/upstreams/shopify/step'
 import { CASES, type LiveCase } from '../../../test/connectors/shopify/cases'
 import { handDataset } from './test-kit'
 
@@ -57,11 +57,11 @@ async function grantToken(store: Store): Promise<string> {
 }
 
 /** Drives start and ingest to done against `storeData`, as the orchestrator would with curl. Returns the step dir. */
-async function drive(storeData: unknown, mode: 'record' | 'check', cases: readonly LiveCase[], options: ShopifyUpstreamOptions = {}) {
+async function drive(storeData: unknown, mode: 'record' | 'check', cases: readonly LiveCase[], options: ShopifyUpstreamOptions = {}, committed?: unknown) {
   const dir = mkdtempSync(join(tmpdir(), 'shopify-step-'))
   const store = createShopifyUpstream(storeData, options)
   const token = await grantToken(store)
-  let message = await runStep({ SHOPIFY_STEP: 'start', SHOPIFY_STEP_MODE: mode, SHOPIFY_STEP_DIR: dir }, { cases })
+  let message = await runStep({ SHOPIFY_STEP: 'start', SHOPIFY_STEP_MODE: mode, SHOPIFY_STEP_DIR: dir }, { cases, committed })
   const commands: string[] = []
   for (let i = 0; i < 200 && message.startsWith('next:'); i++) {
     commands.push(message)
@@ -88,7 +88,8 @@ describe('the step engine, offline', () => {
     const done = await runStep({ SHOPIFY_STEP: 'finish', SHOPIFY_STEP_DIR: dir, SHOPIFY_STEP_OUT: out, SHOPIFY_SHOP: SHOP }, { cases: HAND_CASES, today: '2026-11-20' })
     expect(done).toMatch(/differential all equal/)
     const diff = readFileSync(join(dir, 'differential.txt'), 'utf8')
-    expect(diff.trim().split('\n')).toEqual(HAND_CASES.map(c => `${c.name}: equal`))
+    // The fixed cases, then the window cases cut from the recorded dates.
+    expect(diff.trim().split('\n')).toEqual([...HAND_CASES.map(c => c.name), 'orders in a processed window', 'refunds in a closed window'].map(n => `${n}: equal`))
 
     const written = readFileSync(join(out, 'dataset.ts'), 'utf8')
     expect(written).toMatch(/^\/\/ Recorded from the read fixture store/)
@@ -100,20 +101,58 @@ describe('the step engine, offline', () => {
     expect(recorded.orders.find(o => o.name === '#1004')!.returns.nodes).toHaveLength(1)
 
     // Check mode on the committed recording: the same cases, the same differential.
-    const check = await drive(store, 'check', HAND_CASES)
+    const check = await drive(store, 'check', HAND_CASES, {}, recorded)
     expect(check.message).toMatch(/^done: /)
     expect(await runStep({ SHOPIFY_STEP: 'finish', SHOPIFY_STEP_DIR: check.dir }, { cases: HAND_CASES, committed: recorded })).toMatch(/all equal/)
   })
 
   it('the differential names the first difference when the recording disagrees', async () => {
     const store = recordable()
-    const check = await drive(store, 'check', HAND_CASES)
     const committed = structuredClone(store)
     committed.orders.find((o: any) => o.name === '#1001').displayFulfillmentStatus = 'FULFILLED'
+    const check = await drive(store, 'check', HAND_CASES, {}, committed)
     expect(await runStep({ SHOPIFY_STEP: 'finish', SHOPIFY_STEP_DIR: check.dir }, { cases: HAND_CASES, committed })).toMatch(/has differences/)
     const lines = readFileSync(join(check.dir, 'differential.txt'), 'utf8')
     expect(lines).toMatch(/order 1001: \$\[0\]\.order\.fulfillmentStatus: values differ/)
     expect(lines).toMatch(/orders paid unfulfilled: \$\[0\]\.items: length 1 vs 0/)
+  })
+
+  it('fails when an order with refunds or returns escaped the refunds or returns pass', async () => {
+    for (const plant of [
+      // Refunded, but its financial status keeps it out of the refunds pass's search.
+      (d: any) => (d.orders.find((o: any) => o.name === '#1003').displayFinancialStatus = 'PAID'),
+    ]) {
+      const store = recordable()
+      plant(store)
+      const { dir } = await drive(store, 'record', HAND_CASES.slice(0, 1))
+      const out = mkdtempSync(join(tmpdir(), 'shopify-out-'))
+      await expect(runStep({ SHOPIFY_STEP: 'finish', SHOPIFY_STEP_DIR: dir, SHOPIFY_STEP_OUT: out, SHOPIFY_SHOP: SHOP }, { cases: HAND_CASES.slice(0, 1) })).rejects.toThrow(
+        /missing from the (refunds|returns) pass/,
+      )
+      expect(readdirSync(out)).toEqual([])
+    }
+    // The fake's searches agree with its own fields, so a returns-pass miss is built directly: the orders pass shows a
+    // return status, the returns pass came back without that order.
+    const order = (checkDataset(recordable()).orders.find(o => o.name === '#1004')!) as Record<string, unknown>
+    const state = { nodes: { orders: [order], refunds: [], returns: [], products: [] }, currency: 'USD' }
+    expect(() => buildDataset(state as never, '2026-11-20')).toThrow(/missing from the returns pass/)
+  })
+
+  it('window cases: one boundary inside the recorded dates, so the upper bound excludes something', async () => {
+    const { windowOf, windowCases, windowSource } = await import('../../../test/connectors/shopify/cases')
+    expect(windowOf(['2026-11-10T08:00:00Z', '2026-11-19T10:00:00.500Z', '2026-11-12T10:30:00Z'])).toEqual({ from: '2026-11-10T08:00:00Z', to: '2026-11-12T10:30:00Z' })
+    expect(windowOf(['2026-11-10T08:00:00Z', '2026-11-10T08:00:00Z'])).toBeNull()
+    const src = windowSource(checkDataset(handDataset))
+    const cases = windowCases(src)
+    expect(cases.map(c => c.name)).toEqual(['orders in a processed window', 'refunds in a closed window'])
+    for (const c of cases) {
+      const r = await (await import('../../../test/connectors/shopify/run')).runCase({ ...c, pages: 10 }, (await import('./test-kit')).fakeClient())
+      if (!r.ok) throw new Error(r.error.code)
+      const got = r.value.flatMap(p => (p as { items: unknown[] }).items).length
+      const all = c.tool === 'orders_search' ? src.processedAt.length : src.refundCreatedAt.length
+      expect(got).toBeGreaterThan(0)
+      expect(got).toBeLessThan(all)
+    }
   })
 
   it('stops with "raise the recorder limit" when a nested list may be incomplete', async () => {
@@ -133,6 +172,9 @@ describe('the step engine, offline', () => {
     ['an email', (d: any) => (d.orders[1].refunds[0].note = 'asked by buyer@example.com'), /email/],
     ['a phone number', (d: any) => (d.orders[1].refunds[0].note = 'call +1 415 555 0123'), /phone/],
     ['an original gid number', (d: any) => (d.products[0].title = 'Stove 5550000001001'), /original gid/],
+    ['an unformatted phone number', (d: any) => (d.orders[0].lineItems.nodes[0].title = 'ring 4155550123'), /phone/],
+    ['a UK phone number', (d: any) => (d.orders[1].refunds[0].note = 'buyer on +44 20 7946 0958'), /phone/],
+    ['a dotted phone number', (d: any) => (d.products[0].variants.nodes[0].title = '(020) 7946.0958 x1'), /phone/],
   ] as const) {
     it(`the scrub scan fails on ${what}`, async () => {
       const store = recordable()
@@ -149,7 +191,7 @@ describe('the step engine, offline', () => {
 
   it('ingest refuses a bad status, another version, errors, a cost over 900 and a run that is not done', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'shopify-step-'))
-    await runStep({ SHOPIFY_STEP: 'start', SHOPIFY_STEP_MODE: 'check', SHOPIFY_STEP_DIR: dir }, { cases: HAND_CASES })
+    await runStep({ SHOPIFY_STEP: 'start', SHOPIFY_STEP_MODE: 'check', SHOPIFY_STEP_DIR: dir }, { cases: HAND_CASES, committed: handDataset })
     const ingest = (text: string) => {
       const f = join(dir, 'r.txt')
       writeFileSync(f, text)
@@ -173,7 +215,7 @@ describe('the step engine, offline', () => {
   it('the real case list builds a read request for every case', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'shopify-step-'))
     // Start writes the first request; every case request is captured from the tool itself, so a bad case input fails here.
-    await runStep({ SHOPIFY_STEP: 'start', SHOPIFY_STEP_MODE: 'check', SHOPIFY_STEP_DIR: dir })
+    await runStep({ SHOPIFY_STEP: 'start', SHOPIFY_STEP_MODE: 'check', SHOPIFY_STEP_DIR: dir }, { committed: handDataset })
     expect(new Set(CASES.map(c => c.name)).size).toBe(CASES.length)
     const { captureRequest, toolFor } = await import('../../../test/connectors/shopify/run')
     for (const c of CASES) {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runLive } from '../../../test/connectors/shopify/live-run'
-import { CASES } from '../../../test/connectors/shopify/cases'
+import { casesFor, windowSource } from '../../../test/connectors/shopify/cases'
+import { checkDataset } from '../../../test/upstreams/shopify/dataset'
 import { createShopifyUpstream, TEST_CLIENT_ID, TEST_CLIENT_SECRET } from '../../../test/upstreams/shopify/server'
 import { handDataset } from './test-kit'
 
@@ -18,14 +19,14 @@ describe('the live script', () => {
     const { failures } = await runLive(ENV, { upstream: createShopifyUpstream(handDataset), committed: handDataset })
     const all = printed.join('\n')
     expect(all).toContain('grant: ok, scopes match')
-    for (const c of CASES) expect(all).toContain(`case ${c.name}: `)
+    for (const c of casesFor(windowSource(checkDataset(handDataset)))) expect(all).toContain(`case ${c.name}: `)
     for (const leak of ['shpat_test', TEST_CLIENT_SECRET, 'X-Shopify', 'Trail lantern', 'Igniter', 'gid://', 'HX-00', '{"']) expect(all).not.toContain(leak)
     // The hand dataset isn't the fixture: its facts fail, and say so by case name.
     expect(failures.some(f => f.startsWith('case stock of the oversold SKU: fact: '))).toBe(true)
   })
 
   it('every case passes its non-fact checks against the recorded upstream (bounds, fields, differential)', async () => {
-    const { failures } = await runLive(ENV, { upstream: createShopifyUpstream(handDataset), committed: handDataset, cases: CASES.map(c => ({ name: c.name, tool: c.tool, input: c.input, pages: c.pages })), print: () => {} })
+    const { failures } = await runLive(ENV, { upstream: createShopifyUpstream(handDataset), committed: handDataset, cases: casesFor(windowSource(checkDataset(handDataset))).map(c => ({ name: c.name, tool: c.tool, input: c.input, pages: c.pages })), print: () => {} })
     expect(failures).toEqual([])
   })
 

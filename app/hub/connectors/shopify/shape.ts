@@ -38,8 +38,12 @@ export function money(amount: string, currency: string): Money {
   const m = DECIMAL.exec(amount)
   if (!m) fail('amount')
   const exponent = currencyExponent(currency)
-  const frac = m[3] ?? ''
-  if (frac.length > exponent) fail('amount precision')
+  // Shopify's Decimal prints at least one fraction digit ("1500.0" for JPY): extra digits are fine when they're zeros.
+  let frac = m[3] ?? ''
+  if (frac.length > exponent) {
+    if (!/^0+$/.test(frac.slice(exponent))) fail('amount precision')
+    frac = frac.slice(0, exponent)
+  }
   const digits = `${m[2]}${frac.padEnd(exponent, '0')}`
   const big = BigInt(digits) * (m[1] === '-' ? -1n : 1n)
   if (big > BigInt(Number.MAX_SAFE_INTEGER) || big < -BigInt(Number.MAX_SAFE_INTEGER)) fail('amount range')
@@ -146,4 +150,10 @@ export async function runQuery<T>(
 export const SKU = /^[\x21-\x7E][\x20-\x7E]{0,63}$/
 export const zSku = z.string().regex(SKU)
 export const zCursor = z.string().regex(CURSOR)
-export const zInstantInput = z.iso.datetime({ offset: true })
+/** Years 0001 to 9999 once in UTC: the range a search query and C1's `iso` can hold. */
+export const zInstantInput = z.iso.datetime({ offset: true }).refine(s => {
+  const ms = Date.parse(s)
+  if (!Number.isFinite(ms)) return false
+  const year = new Date(ms).getUTCFullYear()
+  return year >= 1 && year <= 9999
+}, 'instant out of range')

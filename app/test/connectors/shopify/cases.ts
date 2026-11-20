@@ -27,11 +27,6 @@ export const UNKNOWN_SKU = 'INHOUSE-NO-SUCH-SKU-0000'
 export const CASES: readonly LiveCase[] = [
   // orders_search
   { name: 'orders max first, two pages', tool: 'orders_search', input: { first: 20 }, pages: 2 },
-  {
-    name: 'orders in a processed window',
-    tool: 'orders_search',
-    input: { processedFrom: '2026-09-01T00:00:00Z', processedTo: '2026-10-01T00:00:00Z', first: 20 },
-  },
   { name: 'orders paid and unfulfilled', tool: 'orders_search', input: { financialStatus: 'paid', fulfillmentStatus: 'unfulfilled', first: 20 } },
   { name: 'orders by return status', tool: 'orders_search', input: { returnStatus: 'return_requested', first: 20 } },
   {
@@ -80,7 +75,6 @@ export const CASES: readonly LiveCase[] = [
       return expectCount('refunds with a P4-0062 line', r.length, 21)
     },
   },
-  { name: 'refunds in a closed window', tool: 'refunds_search', input: { createdFrom: '2026-11-01T00:00:00Z', createdTo: '2026-11-20T00:00:00Z', first: 10 }, pages: 2 },
 
   // returns_search
   {
@@ -128,4 +122,39 @@ export const CASES: readonly LiveCase[] = [
   },
   { name: 'stock unknown sku', tool: 'inventory_levels_get', input: { sku: UNKNOWN_SKU }, fact: ([p]) => expectCount('matches', (p as { matches: unknown[] }).matches.length, 0) },
   { name: 'stock injection-shaped sku', tool: 'inventory_levels_get', input: { sku: INJECTION_SKU }, fact: ([p]) => expectCount('matches', (p as { matches: unknown[] }).matches.length, 0) },
+  // A prefix of the fixture's P4-0010 to P4-0019: search may match loosely, the tool keeps exact matches only.
+  { name: 'stock of a SKU prefix', tool: 'inventory_levels_get', input: { sku: 'P4-001' }, fact: ([p]) => expectCount('matches', (p as { matches: unknown[] }).matches.length, 0) },
 ]
+
+/** The dates the window cases are cut from: every order's processedAt and every refund's createdAt in the recording. */
+export type WindowSource = { processedAt: string[]; refundCreatedAt: string[] }
+
+export function windowSource(d: { orders: { processedAt: string; refunds: { createdAt: string | null }[] }[] }): WindowSource {
+  return {
+    processedAt: d.orders.map(o => o.processedAt),
+    refundCreatedAt: d.orders.flatMap(o => o.refunds.map(r => r.createdAt).filter((c): c is string => c !== null)),
+  }
+}
+
+/**
+ * [the earliest date, the median date): one boundary inside the data, so the upper bound excludes something. Null when
+ * the dates can't make such a window (fewer than two distinct values).
+ */
+export function windowOf(dates: readonly string[]): { from: string; to: string } | null {
+  const ms = [...new Set(dates.map(d => Date.parse(d)).filter(Number.isFinite))].sort((a, b) => a - b)
+  if (ms.length < 2) return null
+  const at = (x: number) => new Date(x).toISOString().replace(/\.\d{3}Z$/, 'Z')
+  return { from: at(Math.floor(ms[0]! / 1000) * 1000), to: at(Math.floor(ms[Math.floor(ms.length / 2)]! / 1000) * 1000) }
+}
+
+/** The window cases, derived from the recorded dates (the recorder from its passes, the live check from the recording). */
+export function windowCases(src: WindowSource): LiveCase[] {
+  const out: LiveCase[] = []
+  const orders = windowOf(src.processedAt)
+  if (orders) out.push({ name: 'orders in a processed window', tool: 'orders_search', input: { processedFrom: orders.from, processedTo: orders.to, first: 20 }, pages: 2 })
+  const refunds = windowOf(src.refundCreatedAt)
+  if (refunds) out.push({ name: 'refunds in a closed window', tool: 'refunds_search', input: { createdFrom: refunds.from, createdTo: refunds.to, first: 10 }, pages: 2 })
+  return out
+}
+
+export const casesFor = (src: WindowSource, base: readonly LiveCase[] = CASES): LiveCase[] => [...base, ...windowCases(src)]
