@@ -9,49 +9,49 @@
       "what": "Reads every tool and updates Today.",
       "freq": "Daily",
       "day": "Weekdays",
-      "time": "6:00 AM",
-      "next": "Tue, Nov 17 at 6:00 AM",
+      "time": "06:00",
+      "next": "+1d 06:00",
       "need": 0,
-      "last": "Last run today at 6:00 AM · found 6 things"
+      "last": { "at": "0d 06:00", "result": "found 6 things" }
     },
     {
       "name": "Monday reorder list",
       "what": "Drafts a reorder for anything with under 21 days of stock.",
       "freq": "Weekly",
       "day": "Monday",
-      "time": "7:00 AM",
-      "next": "Mon, Nov 23 at 7:00 AM",
+      "time": "07:00",
+      "next": "+7d 07:00",
       "need": 1,
       "money": true,
-      "last": "Last run today at 7:00 AM · nothing beyond the Ridge 30L draft"
+      "last": { "at": "0d 07:00", "result": "nothing beyond the Ridge 30L draft" }
     },
     {
       "name": "Amazon payout check",
       "what": "Compares each Amazon payout with what Xero expected.",
       "freq": "Daily",
       "day": "Every day",
-      "time": "6:00 AM",
-      "next": "Tue, Nov 17 at 6:00 AM",
+      "time": "06:00",
+      "next": "+1d 06:00",
       "need": 1,
-      "last": "Last run today at 6:00 AM · found a $1,240 gap"
+      "last": { "at": "0d 06:00", "result": "found a $1,240 gap" }
     },
     {
       "name": "Weekly numbers report",
       "what": "Sales, margin, stock and ad spend, saved to Library.",
       "freq": "Weekly",
       "day": "Friday",
-      "time": "4:00 PM",
-      "next": "Fri, Nov 20 at 4:00 PM",
+      "time": "16:00",
+      "next": "+4d 16:00",
       "need": 1,
-      "last": "Last run Fri, Nov 13 · saved to Library"
+      "last": { "at": "-3d 16:00", "result": "saved to Library" }
     }
   ],
   "createdInSeedChat": {
     "name": "Stuck orders check",
     "freq": "Daily",
     "day": "Every day",
-    "time": "7:00 AM",
-    "next": "Tue, Nov 17 at 7:00 AM",
+    "time": "07:00",
+    "next": "+1d 07:00",
     "need": 1
   }
 }

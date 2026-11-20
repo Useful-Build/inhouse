@@ -1,14 +1,9 @@
 // Slack's page at 390 px: the row opens it and nothing is cut or scrolls sideways.
-import { expect, test } from './csp.js'
+import { expect, test } from './support/fx.js'
 import { atRest } from './states.js'
 
-test('Phone: the Slack row opens its page and nothing is cut', async ({ page }) => {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+test('Phone: the Slack row opens its page and nothing is cut', async ({ page, fx }) => {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/tools')
   await page.locator('[data-channel-row]').click()
   await expect(page).toHaveURL(/#\/tools\/slack$/)

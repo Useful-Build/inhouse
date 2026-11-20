@@ -33,7 +33,7 @@
     "stuck": {
       "title": "Which orders are stuck over 3 days?",
       "durationSeconds": 9.4,
-      "cost": "$0.04",
+      "cost": { "minor": 4, "currency": "USD" },
       "tokens": "18.2k",
       "steps": [
         {
@@ -97,7 +97,7 @@
     "routine": {
       "title": "Chase ShipBob on #4821, and check for stuck orders every morning",
       "durationSeconds": 41,
-      "cost": "$0.21",
+      "cost": { "minor": 21, "currency": "USD" },
       "tokens": "61.4k",
       "steps": [
         {
@@ -185,7 +185,7 @@
     "morning": {
       "title": "Morning check",
       "durationSeconds": 118,
-      "cost": "$0.31",
+      "cost": { "minor": 31, "currency": "USD" },
       "tokens": "92.7k",
       "steps": [
         {
@@ -273,7 +273,7 @@
     "draft": {
       "title": "Drafted a fix for your approval",
       "durationSeconds": 14.2,
-      "cost": "$0.06",
+      "cost": { "minor": 6, "currency": "USD" },
       "tokens": "24.9k",
       "steps": [
         {
@@ -337,7 +337,7 @@
     "generic": {
       "title": "Answer",
       "durationSeconds": 6.8,
-      "cost": "$0.02",
+      "cost": { "minor": 2, "currency": "USD" },
       "tokens": "7.4k",
       "steps": [
         {
@@ -377,7 +377,7 @@
     "stuck-watch": {
       "title": "Chase ShipBob on #4821, and check for stuck orders every morning",
       "durationSeconds": 8.6,
-      "cost": "$0.03",
+      "cost": { "minor": 3, "currency": "USD" },
       "tokens": "14.6k",
       "steps": [
         {
@@ -433,7 +433,7 @@
     "refunds": {
       "title": "Why did refunds jump this week?",
       "durationSeconds": 12.4,
-      "cost": "$0.04",
+      "cost": { "minor": 4, "currency": "USD" },
       "tokens": "19.8k",
       "steps": [
         {
@@ -497,7 +497,7 @@
     "refunds-list": {
       "title": "Show me the newest ones.",
       "durationSeconds": 7.9,
-      "cost": "$0.03",
+      "cost": { "minor": 3, "currency": "USD" },
       "tokens": "12.1k",
       "steps": [
         {
@@ -553,7 +553,7 @@
     "sizing-note": {
       "title": "Draft a sizing note for the product page.",
       "durationSeconds": 6.2,
-      "cost": "$0.02",
+      "cost": { "minor": 2, "currency": "USD" },
       "tokens": "8.3k",
       "steps": [
         {
@@ -601,7 +601,7 @@
     "friday": {
       "title": "What should we feature in Friday's email?",
       "durationSeconds": 10.6,
-      "cost": "$0.03",
+      "cost": { "minor": 3, "currency": "USD" },
       "tokens": "13.9k",
       "steps": [
         {
@@ -649,7 +649,7 @@
     "bottle-colors": {
       "title": "Which bottle color sells best?",
       "durationSeconds": 5.4,
-      "cost": "$0.02",
+      "cost": { "minor": 2, "currency": "USD" },
       "tokens": "6.9k",
       "steps": [
         {
@@ -697,7 +697,7 @@
     "payout": {
       "title": "Why was the last Amazon payout lower than Xero expected?",
       "durationSeconds": 14.0,
-      "cost": "$0.05",
+      "cost": { "minor": 5, "currency": "USD" },
       "tokens": "22.6k",
       "steps": [
         {
@@ -761,7 +761,7 @@
     "payout-check": {
       "title": "Can you check the next one?",
       "durationSeconds": 4.8,
-      "cost": "$0.01",
+      "cost": { "minor": 1, "currency": "USD" },
       "tokens": "4.2k",
       "steps": [
         {
@@ -801,7 +801,7 @@
     "weekly-report": {
       "title": "Weekly numbers report · Nov 7 to 13",
       "durationSeconds": 22.0,
-      "cost": "$0.08",
+      "cost": { "minor": 8, "currency": "USD" },
       "tokens": "38.4k",
       "steps": [
         {
@@ -873,7 +873,7 @@
     "ridge": {
       "title": "How many Ridge 30L Packs should we reorder?",
       "durationSeconds": 9.8,
-      "cost": "$0.04",
+      "cost": { "minor": 4, "currency": "USD" },
       "tokens": "17.5k",
       "steps": [
         {
@@ -937,7 +937,7 @@
     "meta-ads": {
       "title": "Which ads are spending on low-stock products?",
       "durationSeconds": 8.1,
-      "cost": "$0.03",
+      "cost": { "minor": 3, "currency": "USD" },
       "tokens": "13.2k",
       "steps": [
         {
@@ -993,7 +993,7 @@
     "kestrel": {
       "title": "How long does Kestrel really take to deliver?",
       "durationSeconds": 7.3,
-      "cost": "$0.02",
+      "cost": { "minor": 2, "currency": "USD" },
       "tokens": "9.6k",
       "steps": [
         {
@@ -1049,7 +1049,7 @@
     "black-friday": {
       "title": "Which products will run out before Black Friday?",
       "durationSeconds": 9.2,
-      "cost": "$0.03",
+      "cost": { "minor": 3, "currency": "USD" },
       "tokens": "14.4k",
       "steps": [
         {
@@ -1097,7 +1097,7 @@
     "query": {
       "title": "Last week by SKU",
       "durationSeconds": 8.4,
-      "cost": "$0.03",
+      "cost": { "minor": 3, "currency": "USD" },
       "tokens": "11.8k",
       "steps": [
         {
@@ -1137,7 +1137,7 @@
     "routine-new": {
       "title": "Set up a routine from a request",
       "durationSeconds": 11.6,
-      "cost": "$0.06",
+      "cost": { "minor": 6, "currency": "USD" },
       "tokens": "26.3k",
       "steps": [
         {
@@ -1185,7 +1185,7 @@
     "skill-new": {
       "title": "Wrote a skill from a request",
       "durationSeconds": 9.4,
-      "cost": "$0.05",
+      "cost": { "minor": 5, "currency": "USD" },
       "tokens": "21.7k",
       "steps": [
         {
@@ -1233,7 +1233,7 @@
     "gorgias-failed": {
       "title": "Couldn't read Gorgias",
       "durationSeconds": 3.1,
-      "cost": "$0.01",
+      "cost": { "minor": 1, "currency": "USD" },
       "tokens": "2.1k",
       "steps": [
         {
@@ -1265,7 +1265,7 @@
     "first-day": {
       "title": "No tools connected yet",
       "durationSeconds": 1.2,
-      "cost": "$0.00",
+      "cost": { "minor": 0, "currency": "USD" },
       "tokens": "0.9k",
       "steps": [
         {
@@ -1297,7 +1297,7 @@
     "loading": {
       "title": "Still reading your tools",
       "durationSeconds": 1.2,
-      "cost": "$0.00",
+      "cost": { "minor": 0, "currency": "USD" },
       "tokens": "0.9k",
       "steps": [
         {

@@ -1,21 +1,16 @@
 // Slack's own page: Tools → Slack opens #/tools/slack, with Back to Tools; before Act it says it's included from Act.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx, type Stage } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
-async function start(page: Page, hash: string, stage = 'Act') {
-  await page.addInitScript(s => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, stage)
+async function start(page: Page, fx: Fx, hash: string, stage: Stage = 'Act') {
+  await fx.seed({ stage, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 
-test('Slack row opens its page with the channel details, no tool abilities, and Back returns to Tools', async ({ page }) => {
-  await start(page, '#/tools')
+test('Slack row opens its page with the channel details, no tool abilities, and Back returns to Tools', async ({ fx, page }) => {
+  await start(page, fx, '#/tools')
   await page.locator('[data-channel-row]').click()
   await expect(page).toHaveURL(/#\/tools\/slack$/)
   await expect(page.getByRole('heading', { level: 1, name: 'Slack' })).toBeVisible()
@@ -39,8 +34,8 @@ test('Slack row opens its page with the channel details, no tool abilities, and 
   await expect(page.locator('[data-channel-row]')).toBeVisible()
 })
 
-test('Before Act the Slack page says it is included from Act', async ({ page }) => {
-  await start(page, '#/tools', 'Watch')
+test('Before Act the Slack page says it is included from Act', async ({ fx, page }) => {
+  await start(page, fx, '#/tools', 'Watch')
   await expect(page.locator('[data-channel-row]')).toContainText('Included from Act')
   await page.locator('[data-channel-row]').click()
   await expect(page).toHaveURL(/#\/tools\/slack$/)

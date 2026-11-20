@@ -1,16 +1,19 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
 
-// Unit and property tests live in src/**/*.property.test.ts. The Playwright specs in e2e/ are never picked up here.
+// Property tests live in src/**/*.property.test.ts, the other unit tests (the contract suite, the formatter tests) in
+// src/**/*.test.ts, the build helpers' tests (the demo deploy redirect) in build-support/. The Playwright specs in e2e/ are never picked up here.
 export default defineConfig({
   resolve: {
     alias: {
+      // The demo client entry, as in tsconfig.app.json; vite.config.ts picks it by mode.
+      '@client': fileURLToPath(new URL('./src/agent/client.demo.ts', import.meta.url)),
       '@sample': fileURLToPath(new URL('./src/agent/sample-data', import.meta.url)),
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
   test: {
-    include: ['src/**/*.property.test.ts'],
+    include: ['src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts'],
     environment: 'node',
     // Node 24.11.1 has a V8 garbage-collector bug: a mark-compact pass crashes with SIGSEGV
     // (ClearStaleLeftTrimmedPointerVisitor) when it meets a baseline (Sparkplug) frame. The property tests hit it on long

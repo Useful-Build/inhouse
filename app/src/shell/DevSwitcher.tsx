@@ -1,5 +1,6 @@
 // Demo switches. Dev builds, or any build opened with ?demo.
-import { SCENARIOS, STAGES } from '../agent/types'
+import { demo } from '../agent'
+import { STAGES } from '../agent/types'
 import type { Ambient } from '../state/store'
 import { useUi } from '../state/store'
 import { Button, Icon, IconButton, Segmented, Switch } from '../ui'
@@ -49,7 +50,7 @@ export function DevSwitcher() {
       <Segmented label="Stage" value={stage} options={STAGES.map(s => [s, s])} onChange={v => setDemo({ stage: v })} />
       <div className={label}>Scenario</div>
       <div className="flex flex-wrap gap-1">
-        {SCENARIOS.map(s => (
+        {(demo?.scenarios ?? []).map(s => (
           <Button key={s} variant={scenario === s ? 'primary' : 'soft'} size="sm" aria-pressed={scenario === s} onClick={() => setDemo({ scenario: s })}>{s}</Button>
         ))}
       </div>

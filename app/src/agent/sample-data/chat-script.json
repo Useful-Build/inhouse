@@ -83,8 +83,7 @@
           {
             "type": "routine",
             "name": "Stuck orders check",
-            "when": "Every day at 7:00 AM",
-            "next": "Next run Tue, Nov 17 at 7:00 AM",
+            "next": "+1d 07:00",
             "note": "Posts here only when it finds a stuck order"
           }
         ],
@@ -101,8 +100,7 @@
           {
             "type": "routine",
             "name": "Stuck orders check",
-            "when": "Every day at 7:00 AM",
-            "next": "Next run Tue, Nov 17 at 7:00 AM",
+            "next": "+1d 07:00",
             "note": "Nudges ShipBob by itself, within your limits"
           }
         ],
@@ -160,7 +158,7 @@
           "name": "Low stock list",
           "freq": "Weekly",
           "day": "Monday",
-          "time": "7:00 AM"
+          "time": "07:00"
         }
       },
       "trace": "routine-new"

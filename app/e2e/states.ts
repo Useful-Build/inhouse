@@ -4,6 +4,7 @@
 // in the Library and All chats, the Library's file viewer and an open Help guide.
 import { expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { mockClient } from './support/clients/mock.js'
 
 export const THEMES = ['light', 'dark'] as const
 export type Theme = (typeof THEMES)[number]
@@ -115,7 +116,7 @@ export const STATES: UiState[] = [
       // A fixed, believable stamp on every run: the demo clock reads 8:00 AM plus the time since the demo started
       // (saved at the first load). The page clock is set back to that moment and held, so every approval says
       // "8:00 AM" however long the run took; it moves only by runFor below (the send hold), then runs again.
-      const started = await page.evaluate(() => JSON.parse(localStorage.getItem('inhouse.demo.v2') ?? '{}').demoStartedAt as number)
+      const started = await mockClient(page).demoStartedAt()
       expect(typeof started).toBe('number')
       await page.clock.install({ time: started })
       await page.clock.pauseAt(started + 20_000)
@@ -235,12 +236,9 @@ export const STATES: UiState[] = [
 /** Opens a state from a clean demo: a fixed theme, no agent-mark animation, no dot sweep. */
 export async function openState(page: Page, s: UiState, theme: Theme) {
   await page.emulateMedia({ colorScheme: theme })
-  await page.addInitScript(([stage, scenario, t]) => {
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage, scenario, ambient: 'Off', animateMark: false }))
-    localStorage.setItem('inhouse.theme', t)
-  }, [s.stage, s.scenario, theme])
-  await page.goto('/?demo' + s.hash)
+  const client = mockClient(page)
+  await client.seed({ stage: s.stage, scenario: s.scenario, theme, once: false })
+  await client.open(s.hash)
   await expect(page.getByText(s.ready, { exact: false }).first()).toBeVisible()
   if (s.act) await s.act(page)
   await fontsReady(page)

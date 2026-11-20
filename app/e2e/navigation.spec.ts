@@ -1,16 +1,11 @@
 // PR 5, navigation (desktop): the ⌘K palette (a chat, a settings page, New chat, focus back on Escape), the shortcuts,
 // the collapsible sidebar and its icon rail across a reload, notifications read one at a time and all at once, and the
 // team window's Send and sender.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash = '#/today') {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, hash = '#/today') {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -26,8 +21,8 @@ const paletteInput = (page: Page) => palette(page).getByRole('combobox')
 const tip = (page: Page, text: string | RegExp) => page.getByRole('tooltip').filter({ hasText: text })
 const composer = (page: Page) => page.getByRole('textbox', { name: /^(Ask|Message) your Inhouse agent$/ })
 
-test('Palette: open a chat and a settings page, run New chat, Escape gives focus back; shortcuts skip fields except ⌘K', async ({ page }) => {
-  await start(page)
+test('Palette: open a chat and a settings page, run New chat, Escape gives focus back; shortcuts skip fields except ⌘K', async ({ fx, page }) => {
+  await start(page, fx)
 
   // ⌘K opens it with the search field focused; filter to one chat and open it with Enter.
   await page.keyboard.press('ControlOrMeta+k')
@@ -91,8 +86,8 @@ test('Palette: open a chat and a settings page, run New chat, Escape gives focus
   await expect.poll(() => hash(page)).toBe('#/chats/new')
 })
 
-test('Palette over the problem panel: Escape closes only the palette; the palette search ignores internal ids', async ({ page }) => {
-  await start(page)
+test('Palette over the problem panel: Escape closes only the palette; the palette search ignores internal ids', async ({ fx, page }) => {
+  await start(page, fx)
   await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
   const panel = page.getByRole('dialog').filter({ hasText: 'Ridge 30L Pack' })
   await expect(panel).toBeVisible()
@@ -111,8 +106,8 @@ test('Palette over the problem panel: Escape closes only the palette; the palett
   await expect(panel).toHaveCount(0)
 })
 
-test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows in full, the account name starts with its text', async ({ page }) => {
-  await start(page)
+test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows in full, the account name starts with its text', async ({ fx, page }) => {
+  await start(page, fx)
   const toggle = page.getByRole('button', { name: 'Sidebar', exact: true })
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
   await expect(toggle).toHaveAttribute('aria-controls', 'sidebar')
@@ -163,8 +158,8 @@ test('Sidebar: Tab from a chat row reaches its menu trigger, a cut title shows i
   await expect(account).toHaveAccessibleName(new RegExp('^' + visible.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
 })
 
-test('Sidebar: collapse to the rail, move through it by its tooltips, stay collapsed after a reload, expand with the shortcut', async ({ page }) => {
-  await start(page)
+test('Sidebar: collapse to the rail, move through it by its tooltips, stay collapsed after a reload, expand with the shortcut', async ({ fx, page }) => {
+  await start(page, fx)
   const collapse = page.getByRole('button', { name: 'Sidebar', exact: true })
   await collapse.hover()
   await expect(tip(page, /Collapse sidebar\s*(⌘\\|Ctrl\+\\)/)).toBeVisible()
@@ -212,8 +207,8 @@ test('Sidebar: collapse to the rail, move through it by its tooltips, stay colla
   await expect(page.getByRole('button', { name: 'Sidebar', exact: true })).toHaveAttribute('aria-expanded', 'true')
 })
 
-test('Notifications: one read by clicking it drops the count in the bell, Mark all as read shows the empty state', async ({ page }) => {
-  await start(page)
+test('Notifications: one read by clicking it drops the count in the bell, Mark all as read shows the empty state', async ({ fx, page }) => {
+  await start(page, fx)
   const bell = header(page).getByRole('button', { name: /^Notifications/ })
   await expect(bell).toHaveAccessibleName('Notifications, 2 unread')
   await bell.click()
@@ -236,8 +231,8 @@ test('Notifications: one read by clicking it drops the count in the bell, Mark a
   await expect(header(page).getByRole('button', { name: /^Notifications/ })).toHaveAccessibleName('Notifications')
 })
 
-test('Team window: Send waits for words (whitespace is empty), and the request carries the name set in Settings', async ({ page }) => {
-  await start(page, '#/settings/you-general')
+test('Team window: Send waits for words (whitespace is empty), and the request carries the name set in Settings', async ({ fx, page }) => {
+  await start(page, fx, '#/settings/you-general')
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Robin Okafor')
   await expect(side(page).getByRole('button', { name: /account and settings/i })).toContainText('Robin Okafor')
 

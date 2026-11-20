@@ -10,12 +10,17 @@
 //      holding one, an alias, `promisify`), the `timers` module in any form, `scheduler.wait(`, `Atomics.wait`. Wait
 //      for a condition (an `expect` or `expect.poll`), or move time with the Clock API (`page.clock.install()`,
 //      `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine. No allow list.
+//   4. the mock's storage keys, sample data and module in the E2E specs: any `inhouse.demo.` key, the UI session key or the theme key (`inhouse.theme`), any
+//      `sample-data` or `@sample` reference, and the mock module (`agent/mock`), in e2e/ outside e2e/support/. Specs read
+//      names and seed or read back state through `fx` (e2e/support/fx.ts). A literal guard, not a wall (see the rule's
+//      code); build-support/check-app-rules.test.ts runs it on the probes in scripts/check-app-rules-probes/.
 // Exceptions live in scripts/check-app-rules.allow.json, each with a reason. An entry nothing uses fails too.
 // Run: npm run lint:tokens (part of npm run lint).
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-// Optional argument: the src/ folder to check (default: this app's src/).
+// Optional arguments: the src/ folder to check (default: this app's src/) and the e2e/ folder (default: this app's e2e/;
+// the probe test points it at a probe folder).
 const root = process.argv[2] ? process.argv[2].replace(/\/?$/, '/') : new URL('../src/', import.meta.url).pathname
 const allow = JSON.parse(readFileSync(new URL('./check-app-rules.allow.json', import.meta.url), 'utf8'))
 const problems = []
@@ -154,7 +159,7 @@ for (const [path, n] of ALLOWED) {
 for (const [c, n] of ALLOWED_CLASSES) if (!n) problems.push(`check-app-rules.allow.json: ${c} is not used anywhere; remove it`)
 
 // ---------- fixed waits in e2e ----------
-const e2eDir = new URL('../e2e/', import.meta.url).pathname
+const e2eDir = process.argv[3] ? process.argv[3].replace(/\/?$/, '/') : new URL('../e2e/', import.meta.url).pathname
 const waits = []
 // Blanks comments (keeping newlines, so line numbers stay right). Regex literals (after `( , = : [ ! & | ? { } ;`,
 // `return` or at the start) are skipped to their closing `/` so quotes inside them don't open a string; '...' and "..."
@@ -212,10 +217,36 @@ if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
 waits.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]))
 for (let i = 0; i < waits.length; i++) waits[i] = waits[i][2]
 
+// ---------- mock storage keys, sample data and the mock module in e2e ----------
+// Only e2e/support/ (the fixtures layer) may name the mock's storage keys or import its sample data or its module.
+// A literal guard, not a wall: a key built from pieces ('inhouse.' + 'demo.') or a path assembled at run time gets past it,
+// and review covers that. Every app key in a spec goes through `fx`, the theme preference (`inhouse.theme`) too: seed it
+// with `fx.seed({ theme })`, change it mid-test with `fx.setTheme(theme)`.
+const seam = []
+// An app-owned storage key (`inhouse.demo.`, `inhouse.ui.`, `inhouse.crash.`, `inhouse.preload-reload`, `inhouse.theme`), the
+// sample data in any form (`sample-data` with or without a slash, the `@sample` alias) or the mock module (`agent/mock`,
+// any extension, or the `@client` alias, its entry point).
+const SEAM_HIT = /inhouse\.(?:demo|ui|crash)\.|inhouse\.theme\b|inhouse\.preload-reload|sample-data|@sample|@client|agent\/mock\b/
+if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
+  const rel = `e2e/${relative(e2eDir, file)}`
+  if (rel.startsWith('e2e/support/')) continue
+  const lines = stripComments(readFileSync(file, 'utf8'), false).split('\n')
+  const found = lines.flatMap((line, i) => SEAM_HIT.test(line) ? [`${rel}:${i + 1}  ${line.trim()}`] : [])
+  seam.push(...found)
+}
+// The sample-data read helper is for the sample data's own spec only: any other spec must get names through `fx`, so
+// it still works against a real client (P2) that has no sample data.
+if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
+  const rel = `e2e/${relative(e2eDir, file)}`
+  if (rel === 'e2e/sample-data.spec.ts' || rel.startsWith('e2e/support/')) continue
+  if (/support\/sample-reads/.test(readFileSync(file, 'utf8'))) problems.push(`${rel}: imports e2e/support/sample-reads, which only e2e/sample-data.spec.ts may use; get names through \`fx\``)
+}
+
 const report = (list, msg) => { if (list.length) console.error(`${list.length} ${msg}\n${list.join('\n')}\n`) }
 report(hits.arbitrary, 'arbitrary value(s). Use a scale step (w-82.5 = 330px) or an --app-* token in src/index.css:')
 report(hits.style, 'inline style(s) with a literal. Use a class, or compute the value from data:')
 report(waits, 'fixed wait(s) in e2e. Wait for a condition (expect, expect.poll) or use the Clock API (page.clock.install(), page.clock.runFor(ms)):')
+report(seam, "storage key(s), sample-data or mock-module reference(s) in e2e outside e2e/support/. Go through `fx` (e2e/support/fx.ts):")
 report(problems, 'allow-list problem(s):')
-if (hits.arbitrary.length + hits.style.length + waits.length + problems.length) process.exit(1)
-console.log('app rules: no arbitrary values (outside src/components/ui), literal inline styles or fixed waits in e2e')
+if (hits.arbitrary.length + hits.style.length + waits.length + seam.length + problems.length) process.exit(1)
+console.log('app rules: no arbitrary values (outside src/components/ui), literal inline styles, fixed waits or mock storage keys and sample data (outside e2e/support) in e2e')

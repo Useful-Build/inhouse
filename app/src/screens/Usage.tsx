@@ -1,8 +1,9 @@
 // Usage: spend against the cap, daily bars, totals and breakdown.
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { activeChannel, capStatus } from '../state/derive'
-import { DEMO_START, fmtCount } from '../agent/clock'
+import { activeChannel, capStatus, usageSummary } from '../state/derive'
+import { calendarOf, fmtCount, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
+import { display, nowOf } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
 import { AgentMark, Avatar, CardGrid, EmptyState, Page, PageHeader, Segmented } from '../ui'
@@ -12,7 +13,6 @@ import { cn } from '@/lib/utils'
 
 const TABS: [UsageTab, string][] = [['person', 'Person'], ['job', 'Job'], ['model', 'Model'], ['tool', 'Tool']]
 const COL: Record<UsageTab, string> = { person: 'Person', job: 'Job', model: 'Model', tool: 'Tool read' }
-const money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 /** A person's avatar on the Person tab; the agent's own row wears the agent's mark. */
 function RowMark({ who }: { who: string }) {
@@ -30,8 +30,9 @@ export function Usage() {
   // recorded for them. A cap never changes what was spent: only "reached" compares the two.
   const status = capStatus(ctx)
   const usage = thisMonth ? { ...month, cap: status.cap, alertAt: status.alertAt } : month
-  // Every month listed is in the demo's year.
-  const monthLabels = usageMonths.map(m => `${m.month} ${DEMO_START.getFullYear()}`)
+  // Every month listed is in the year the client's clock is in (the demo's year in the demo).
+  const year = calendarOf(nowOf(), display()).year
+  const monthLabels = usageMonths.map(m => `${m.month} ${year}`)
   const mon = usage.month.slice(0, 3)
   const cap = thisMonth && status.reached
   const tab = useUi(s => s.usageTab)
@@ -41,8 +42,14 @@ export function Usage() {
   const [barAt, setBarAt] = useState(0)
   const bars = useRef<(HTMLDivElement | null)[]>([])
 
-  const days = usage.daily
-  const total = usage.total
+  const d0 = display()
+  const currency = usage.total.currency
+  /** An amount here always shows its cents ("$182.43"). */
+  const money = (major: number) => fmtUsageMoney(major, currency, d0)
+  const count = (n: number) => fmtCount(n, d0)
+  // The arithmetic below is on dollars; every amount is shown through `money`.
+  const days = usage.daily.map(majorOf)
+  const total = majorOf(usage.total)
   const maxD = Math.max(...days)
   // A day's bar as a share of the peak day. A month with nothing spent yet (day one) draws every bar flat.
   const barHeight = (v: number) => (maxD > 0 ? Math.round(v / maxD * 100) : 0) + '%'
@@ -58,26 +65,17 @@ export function Usage() {
     bars.current[t]?.focus()
   }
   const peakAt = days.indexOf(maxD) + 1
-  const pct = Math.min(100, Math.round(total / usage.cap * 100)) + '%'
-  const over = usage.total > usage.cap
-  const hint = !thisMonth
-    ? over ? `Went over your $${fmtCount(usage.cap)} cap` : `Finished under your $${fmtCount(usage.cap)} cap`
-    : cap
-      ? `Cap reached with ${30 - days.length} days of the month left`
-      : `On track for about $${fmtCount(Math.round(total / days.length * 30))} this month, ${total / days.length * 30 > usage.cap ? 'over' : 'under'} your cap`
-  const capNote = !thisMonth
-    ? over ? `Closed at ${Math.round(total / usage.cap * 100)}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
-    : cap
-      ? 'Cap reached today. Routines and jobs are paused until an admin raises it.'
-      : `Admins get an email at ${usage.alertAt}%. Your Inhouse agent pauses routines and jobs at the cap.`
+  const pct = Math.min(100, Math.round(total / majorOf(usage.cap) * 100)) + '%'
+  const over = total > majorOf(usage.cap)
+  const { hint, capNote } = usageSummary(usage, thisMonth, cap)
   // A channel counts only from its stage (Act) and once connected: before that, questions come from chats alone, so a
   // row shows its plain `sub`. Once one is, rows that name it show `subWithChannel` with the channel's name.
   const channel = activeChannel(ctx)
   const rows = usage.breakdown[tab].map(r => (channel && r.subWithChannel ? { ...r, sub: r.subWithChannel.replaceAll('{channel}', channel.name) } : r))
   const stats: [string, string][] = [
-    ['Conversations', fmtCount(usage.conversations)],
-    ['Questions asked', fmtCount(usage.questionsAsked)],
-    ['Jobs run', fmtCount(usage.jobsRun)],
+    ['Conversations', count(usage.conversations)],
+    ['Questions asked', count(usage.questionsAsked)],
+    ['Jobs run', count(usage.jobsRun)],
     // No conversations yet (day one): nothing was spent on one.
     ['Cost per conversation', money(usage.conversations ? total / usage.conversations : 0)],
   ]
@@ -99,7 +97,7 @@ export function Usage() {
           <div className="mt-1.5 text-sm text-muted-foreground">{hint}</div>
           <div className="mt-5.5 flex justify-between gap-3 text-sm">
             <span className="font-strong whitespace-nowrap">Spending cap</span>
-            <span className="whitespace-nowrap text-muted-foreground">{money(total)} of ${fmtCount(usage.cap)}</span>
+            <span className="whitespace-nowrap text-muted-foreground">{fmtSpentOfCap(usage.total, usage.cap, d0)}</span>
           </div>
           <div role="progressbar" aria-label="Spending cap used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={parseInt(pct)} className="mt-2 h-2 overflow-hidden rounded-full bg-fill">
             <i className={`block h-full rounded-full ${cap || over ? 'bg-destructive' : 'bg-chart-2'}`} style={{ width: pct }} />
@@ -150,7 +148,7 @@ export function Usage() {
       ) : phone ? (
         <div className="mt-3 border-t border-border">
           {rows.map(r => {
-            const cost = r.dollars
+            const cost = majorOf(r.spent)
             const share = Math.round(cost / total * 100) + '%'
             return (
               <div key={r.name} className="flex items-start gap-3 border-b border-border py-3 text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
@@ -165,7 +163,7 @@ export function Usage() {
                     </span>
                     <span className="w-10 text-right">{share}<span className="sr-only"> of total</span></span>
                   </div>
-                  <div className="mt-1 text-sm text-foreground-2">{fmtCount(r.conversations)} {r.conversations === 1 ? 'conversation' : 'conversations'}</div>
+                  <div className="mt-1 text-sm text-foreground-2">{count(r.conversations)} {r.conversations === 1 ? 'conversation' : 'conversations'}</div>
                 </div>
               </div>
             )
@@ -181,7 +179,7 @@ export function Usage() {
             <span className="w-30 text-right">Conversations</span>
           </div>
           {rows.map(r => {
-            const cost = r.dollars
+            const cost = majorOf(r.spent)
             const share = Math.round(cost / total * 100) + '%'
             return (
               <div key={r.name} className="flex min-h-13.5 items-center border-b border-border text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
@@ -197,7 +195,7 @@ export function Usage() {
                   </span>
                   <span className="w-10 text-right">{share}</span>
                 </span>
-                <span className="w-30 text-right text-foreground-2">{fmtCount(r.conversations)}</span>
+                <span className="w-30 text-right text-foreground-2">{count(r.conversations)}</span>
               </div>
             )
           })}

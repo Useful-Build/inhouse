@@ -1,26 +1,19 @@
 // The theme switch: the ⌘K palette's "Switch to dark/light theme" item and Settings > General > Theme (the only place
-// to pick System). Each choice sets the root `dark` class and the page colour, saves in `inhouse.theme` (System saves
+// to pick System). Each choice sets the root `dark` class and the page colour, saves in the app's theme preference (System saves
 // nothing and follows `prefers-color-scheme`) and survives a reload.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-const THEME_KEY = 'inhouse.theme'
-
-async function start(page: Page, scheme: 'light' | 'dark', hash = '#/today') {
+async function start(page: Page, fx: Fx, scheme: 'light' | 'dark', hash = '#/today') {
   // The OS setting for the run. No saved theme: the app follows it.
   await page.emulateMedia({ colorScheme: scheme })
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fx.seed({ stage: 'Act' })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
 
 const palette = (page: Page) => page.getByRole('dialog', { name: 'Search' })
-const saved = (page: Page) => page.evaluate(k => localStorage.getItem(k), THEME_KEY)
+const saved = async (fx: Fx) => (await fx.saved()).theme
 /** What the page shows: the root class and the body's computed background, as a 0 to 1 brightness. */
 const look = (page: Page) => page.evaluate(() => {
   const [r, g, b] = getComputedStyle(document.body).backgroundColor.match(/[\d.]+/g)!.slice(0, 3).map(Number)
@@ -43,10 +36,10 @@ async function paletteTheme(page: Page, item: 'Switch to dark theme' | 'Switch t
   await expect(palette(page)).toHaveCount(0)
 }
 
-test('Palette: the theme item flips light and dark, sets the page colour, is saved and survives a reload', async ({ page }) => {
-  await start(page, 'light')
+test('Palette: the theme item flips light and dark, sets the page colour, is saved and survives a reload', async ({ fx, page }) => {
+  await start(page, fx, 'light')
   await expectTheme(page, 'light')
-  expect(await saved(page)).toBeNull()
+  expect(await saved(fx)).toBeUndefined()
 
   // From light the item offers dark, and only dark.
   await page.keyboard.press('ControlOrMeta+k')
@@ -56,22 +49,22 @@ test('Palette: the theme item flips light and dark, sets the page colour, is sav
 
   await paletteTheme(page, 'Switch to dark theme')
   await expectTheme(page, 'dark')
-  expect(await saved(page)).toBe('dark')
+  expect(await saved(fx)).toBe('dark')
   await page.reload()
   await expectTheme(page, 'dark')
-  expect(await saved(page)).toBe('dark')
+  expect(await saved(fx)).toBe('dark')
 
   // From dark the item offers light. The OS still says light: the saved choice wins over it.
   await paletteTheme(page, 'Switch to light theme')
   await expectTheme(page, 'light')
-  expect(await saved(page)).toBe('light')
+  expect(await saved(fx)).toBe('light')
   await page.reload()
   await expectTheme(page, 'light')
-  expect(await saved(page)).toBe('light')
+  expect(await saved(fx)).toBe('light')
 })
 
-test('Settings: Theme picks Light, Dark and System; System follows the OS setting live and after a reload', async ({ page }) => {
-  await start(page, 'light', '#/settings/you-general')
+test('Settings: Theme picks Light, Dark and System; System follows the OS setting live and after a reload', async ({ fx, page }) => {
+  await start(page, fx, 'light', '#/settings/you-general')
   const theme = (value: string) => page.getByRole('combobox', { name: `Theme: ${value}` })
   const pick = async (from: string, to: string) => {
     await theme(from).click()
@@ -83,18 +76,18 @@ test('Settings: Theme picks Light, Dark and System; System follows the OS settin
 
   await pick('System', 'Dark')
   await expectTheme(page, 'dark')
-  expect(await saved(page)).toBe('dark')
+  expect(await saved(fx)).toBe('dark')
   await page.reload()
   await expect(theme('Dark')).toBeVisible()
   await expectTheme(page, 'dark')
 
   await pick('Dark', 'Light')
   await expectTheme(page, 'light')
-  expect(await saved(page)).toBe('light')
+  expect(await saved(fx)).toBe('light')
 
   // System saves nothing and follows the OS: it changes when the OS does, and a reload keeps following it.
   await pick('Light', 'System')
-  expect(await saved(page)).toBeNull()
+  expect(await saved(fx)).toBeUndefined()
   await expectTheme(page, 'light')
   await page.emulateMedia({ colorScheme: 'dark' })
   await expectTheme(page, 'dark')
