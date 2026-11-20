@@ -163,6 +163,9 @@ describe('route 41: the download name (round 1, the high)', () => {
     expect(downloadName('REPORT.PDF', 'application/pdf')).toBe('REPORT.PDF')
     expect(downloadName('Photo.JPEG', 'image/jpeg')).toBe('Photo.JPEG')
     expect(downloadName('NOTES.HTML', 'text/plain')).toBe('NOTES.HTML.txt')
+    // The last extension decides, not the first.
+    expect(downloadName('report.v2.pdf', 'application/pdf')).toBe('report.v2.pdf')
+    expect(downloadName('data.2026.csv', 'text/csv')).toBe('data.2026.csv')
   })
   const RISKY = ['html', 'svg', 'js', 'hta', 'bat', 'cmd', 'ps1', 'vbs', 'lnk', 'exe', 'msi', 'jar', 'scr']
   test.prop([fc.constantFrom(...Object.keys(EXT)), fc.string({ minLength: 1, maxLength: 20 }), fc.constantFrom(...RISKY), fc.boolean()])(
