@@ -1,18 +1,13 @@
 // Ship spec for the hardening project: the 84 KB icon font, lazy pages, deep links and the per-screen crash boundary.
 // Recorded at 1440x900 and 390x844. Every page is opened through the UI, as a person would.
-import { expect, test } from '../csp.js'
+import { expect, test, type Fx } from '../support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
 const phone = () => test.info().project.name === 'ship-phone'
 
 /** Seeds the demo once per browser session, then loads `url` as a first visit (a full load, not a hash change). */
-async function start(page: Page, url: string, heading: string | RegExp) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, url: string, heading: string | RegExp) {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto(url)
   if (heading) await expect(h1(page, heading)).toBeVisible()
 }
@@ -85,8 +80,8 @@ async function paletteTheme(page: Page, to: 'dark' | 'light') {
   await expect(page.locator('html')).toHaveClass(to === 'dark' ? /\bdark\b/ : /^((?!\bdark\b).)*$/)
 }
 
-test('S1: Icons draw the same after the font was cut to 84 KB: Today, sidebar, Library, a toast, dark and back', async ({ page }) => {
-  await start(page, '/?demo#/today', TODAY)
+test('S1: Icons draw the same after the font was cut to 84 KB: Today, sidebar, Library, a toast, dark and back', async ({ fx, page }) => {
+  await start(page, fx, '/?demo#/today', TODAY)
   await expect.poll(() => page.evaluate(() => document.fonts.check("20px 'Material Symbols Rounded'"))).toBe(true)
   await expectIconsDrawn(main(page), 1)
   const side = await sidebar(page)
@@ -110,8 +105,8 @@ test('S1: Icons draw the same after the font was cut to 84 KB: Today, sidebar, L
   await expectIconsDrawn(main(page), 1)
 })
 
-test('S2: Heavy pages load on first visit without a crash, with the heading in focus and the tab titled', async ({ page }) => {
-  await start(page, '/?demo#/today', TODAY)
+test('S2: Heavy pages load on first visit without a crash, with the heading in focus and the tab titled', async ({ fx, page }) => {
+  await start(page, fx, '/?demo#/today', TODAY)
   await goTo(page, 'Usage')
   await expect(page).toHaveTitle(/Usage/)
   if (!phone()) await expect(h1(page, 'Usage')).toBeFocused()
@@ -127,15 +122,15 @@ test('S2: Heavy pages load on first visit without a crash, with the heading in f
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
-test('S3: A deep link opens straight onto a lazy page, and Back to Today works', async ({ page }) => {
-  await start(page, '/?demo#/settings/team-audit', 'Audit log')
+test('S3: A deep link opens straight onto a lazy page, and Back to Today works', async ({ fx, page }) => {
+  await start(page, fx, '/?demo#/settings/team-audit', 'Audit log')
   await expect(main(page).getByText('Sam Mercer changed an approval rule', { exact: true })).toBeVisible()
   await goTo(page, 'Today')
   await expect(page).toHaveURL(/#\/today$/)
 })
 
-test('S4: A broken screen shows its own error inside the app, and the sidebar and Message the team still work', async ({ page }) => {
-  await start(page, '/?demo&crash=screen#/usage', '')
+test('S4: A broken screen shows its own error inside the app, and the sidebar and Message the team still work', async ({ fx, page }) => {
+  await start(page, fx, '/?demo&crash=screen#/usage', '')
   const crashed = main(page).getByRole('alert')
   await expect(crashed.getByRole('heading', { name: 'Something went wrong.' })).toBeVisible()
   await expect(crashed.getByRole('button', { name: 'Try again', exact: true })).toBeVisible()

@@ -4,16 +4,11 @@
 //
 // Dictation: the model for it is connected later. When it lands this check changes: the button then records, and the
 // "isn't connected" test is replaced by one that drives the real thing.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash: string, ready: (page: Page) => Promise<void>) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, hash: string, ready: (page: Page) => Promise<void>) {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await ready(page)
 }
@@ -24,8 +19,8 @@ const titled = (page: Page) => expect(page.getByRole('heading', { level: 1 }).fi
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
 const composer = (page: Page) => page.locator('[data-composer]')
 
-test('Composer: "From Google Drive" says Google Drive isn\'t connected and attaches nothing', async ({ page }) => {
-  await start(page, '#/today', titled)
+test('Composer: "From Google Drive" says Google Drive isn\'t connected and attaches nothing', async ({ fx, page }) => {
+  await start(page, fx, '#/today', titled)
   const field = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
   await composer(page).getByRole('button', { name: 'Attach', exact: true }).click()
   const menu = page.getByRole('menu')
@@ -37,8 +32,8 @@ test('Composer: "From Google Drive" says Google Drive isn\'t connected and attac
   await expect(composer(page).getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
 })
 
-test('Composer: Dictate says Dictation isn\'t connected and leaves the field alone', async ({ page }) => {
-  await start(page, '#/today', titled)
+test('Composer: Dictate says Dictation isn\'t connected and leaves the field alone', async ({ fx, page }) => {
+  await start(page, fx, '#/today', titled)
   const field = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
   await field.fill('Draft I keep')
   await composer(page).getByRole('button', { name: 'Dictate' }).click()
@@ -46,9 +41,9 @@ test('Composer: Dictate says Dictation isn\'t connected and leaves the field alo
   await expect(field).toHaveValue('Draft I keep')
 })
 
-test('Answer menu: "Send to Slack" says Slack isn\'t connected', async ({ page }) => {
+test('Answer menu: "Send to Slack" says Slack isn\'t connected', async ({ fx, page }) => {
   const answer = page.getByRole('log', { name: 'Conversation' }).locator('[data-chat-msg]').filter({ hasText: 'Refund requests rose from 14 last week to 31 this week' })
-  await start(page, '#/chats/refunds', () => expect(answer).toBeVisible())
+  await start(page, fx, '#/chats/refunds', () => expect(answer).toBeVisible())
   await answer.getByRole('button', { name: 'More', exact: true }).click()
   await page.getByRole('menu', { name: 'Message actions' }).getByRole('menuitem', { name: 'Send to Slack' }).click()
   await expect(toast(page, "Send to Slack isn't connected in this demo.")).toBeVisible()

@@ -1,15 +1,15 @@
 // Phone (390 px): Today, the problem panel, Approvals and Chats must work with no sideways scroll.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
-async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: true }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+const seeded = new WeakSet<Page>()
+async function start(page: Page, fx: Fx, hash: string) {
+  // A test opens several pages; one seed covers them all (a page takes one seed).
+  if (!seeded.has(page)) {
+    seeded.add(page)
+    await fx.seed({ stage: 'Act', demo: { ambient: 'Always', animateMark: true } })
+  }
   await page.goto('/?demo' + hash)
 }
 
@@ -19,8 +19,8 @@ async function noSidewaysScroll(page: Page) {
     { message: 'horizontal overflow in px (page or main)' }).toBeLessThanOrEqual(1)
 }
 
-test('Phone: Today, panel, Approvals and Chats fit 390 px; the drawer closes on navigation', async ({ page }) => {
-  await start(page, '#/today')
+test('Phone: Today, panel, Approvals and Chats fit 390 px; the drawer closes on navigation', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
   await noSidewaysScroll(page)
   await page.screenshot({ path: test.info().outputPath('phone-today.png'), fullPage: true })
@@ -48,8 +48,8 @@ test('Phone: Today, panel, Approvals and Chats fit 390 px; the drawer closes on 
   await page.screenshot({ path: test.info().outputPath('phone-chats.png') })
 })
 
-test('Phone: the account menu and the team window open above the drawer', async ({ page }) => {
-  await start(page, '#/today')
+test('Phone: the account menu and the team window open above the drawer', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   const side = page.getByRole('complementary', { name: 'Sidebar' })
 
   await page.getByRole('button', { name: 'Menu' }).click()
@@ -75,8 +75,8 @@ test('Phone: the account menu and the team window open above the drawer', async 
   await expect(page.getByRole('heading', { level: 1, name: 'General' })).toBeVisible()
 })
 
-test('Phone: the drawer has no Chats item; See all, a recent chat and a Settings dropdown fit 390 px', async ({ page }) => {
-  await start(page, '#/today')
+test('Phone: the drawer has no Chats item; See all, a recent chat and a Settings dropdown fit 390 px', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   const side = page.getByRole('complementary', { name: 'Sidebar' })
   await page.getByRole('button', { name: 'Menu' }).click()
   await expect(side.getByRole('button', { name: 'Chats', exact: true })).toHaveCount(0)
@@ -107,8 +107,8 @@ test('Phone: the drawer has no Chats item; See all, a recent chat and a Settings
   await page.screenshot({ path: test.info().outputPath('phone-settings-search.png'), fullPage: true })
 })
 
-test('Phone: Library shows places as chips, one list, a filter sheet, and a viewer that fits 390 px', async ({ page }) => {
-  await start(page, '#/library')
+test('Phone: Library shows places as chips, one list, a filter sheet, and a viewer that fits 390 px', async ({ fx, page }) => {
+  await start(page, fx, '#/library')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
   await noSidewaysScroll(page)
   // Places are a chip row at the top, with the search box above it.
@@ -177,13 +177,13 @@ async function nothingUnderSwitcher(page: Page) {
   expect(hits, 'controls under the demo switcher').toEqual([])
 }
 
-test('Phone: with ?demo nothing sits under the switcher, and Library file names show whole', async ({ page }) => {
+test('Phone: with ?demo nothing sits under the switcher, and Library file names show whole', async ({ fx, page }) => {
   for (const hash of ['#/library', '#/settings/you-general', '#/today', '#/chats/refunds']) {
-    await start(page, hash)
+    await start(page, fx, hash)
     await expect(page.getByRole('button', { name: /^Demo switches/ })).toBeVisible()
     await nothingUnderSwitcher(page)
   }
-  await start(page, '#/library')
+  await start(page, fx, '#/library')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
   // 28 characters in a row: the whole name shows, on at most two lines.
   const fit = async (text: string) => {
@@ -200,8 +200,8 @@ test('Phone: with ?demo nothing sits under the switcher, and Library file names 
   await keep(page, 'library-390')
 })
 
-test('Phone: reopening the open chat from See all keeps what was added', async ({ page }) => {
-  await start(page, '#/chats/refunds')
+test('Phone: reopening the open chat from See all keeps what was added', async ({ fx, page }) => {
+  await start(page, fx, '#/chats/refunds')
   await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('And what about last week?')
   await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
   await expect(page.getByText('And what about last week?', { exact: true })).toBeVisible()
@@ -216,10 +216,10 @@ test('Phone: reopening the open chat from See all keeps what was added', async (
   await keep(page, 'chat-reopen-390')
 })
 
-test("Phone: Usage shows the capped state for a low saved cap, and there's no month picker", async ({ page }) => {
+test("Phone: Usage shows the capped state for a low saved cap, and there's no month picker", async ({ fx, page }) => {
   // Team settings are read on a phone, so the cap is set at a desktop width first.
   await page.setViewportSize({ width: 1440, height: 900 })
-  await start(page, '#/settings/team-spend')
+  await start(page, fx, '#/settings/team-spend')
   const cap = page.getByRole('textbox', { name: 'Monthly cap' })
   await cap.fill('$50')
   await cap.blur()

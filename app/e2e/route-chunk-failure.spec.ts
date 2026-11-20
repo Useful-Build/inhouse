@@ -1,30 +1,27 @@
 // A lazy route's chunk failing to load (an old tab after a deploy) and focus staying put on in-page hash changes (desktop).
 // Production plan H3: P-2, A-10.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 const CHUNK = /\/assets\/Usage-[^/]*\.js(\?.*)?$/
 const CRASH = 'inhouse.e2e.crash-seen'
 
 /** Seeds the demo once per tab, and records in sessionStorage (so it survives a reload) every moment the crash screen was in the DOM. */
-async function start(page: Page, hash: string) {
+async function start(page: Page, fx: Fx, hash: string) {
   await page.addInitScript(crashKey => {
     new MutationObserver(() => {
       if ([...document.querySelectorAll('h1, h2')].some(h => h.textContent === 'Something went wrong.')) sessionStorage.setItem(crashKey, '1')
     }).observe(document, { childList: true, subtree: true, characterData: true })
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
   }, CRASH)
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 const crashSeen = (page: Page) => page.evaluate(k => sessionStorage.getItem(k) === '1', CRASH)
 const sidebar = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const crashHeading = (page: Page) => page.getByRole('heading', { name: 'Something went wrong.' })
 
-test('A lazy chunk that fails once reloads into the route, keeps the draft and never shows the crash screen', async ({ page }) => {
-  await start(page, '#/today')
+test('A lazy chunk that fails once reloads into the route, keeps the draft and never shows the crash screen', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   const composer = page.getByRole('textbox', { name: /^(Ask|Message) your Inhouse agent$/ })
   await composer.fill('A question I had half typed')
 
@@ -44,8 +41,8 @@ test('A lazy chunk that fails once reloads into the route, keeps the draft and n
   await expect(composer).toHaveValue('A question I had half typed')
 })
 
-test('A second chunk failure inside the guard window reaches the error screen instead of looping', async ({ page }) => {
-  await start(page, '#/today')
+test('A second chunk failure inside the guard window reaches the error screen instead of looping', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   let loads = 0
   page.on('load', () => { loads++ })
   await page.route(CHUNK, route => route.abort())
@@ -57,8 +54,8 @@ test('A second chunk failure inside the guard window reaches the error screen in
   expect(loads).toBe(1)
 })
 
-test('Offline, a chunk failure reaches the error screen and does not reload', async ({ page }) => {
-  await start(page, '#/today')
+test('Offline, a chunk failure reaches the error screen and does not reload', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   let loads = 0
   page.on('load', () => { loads++ })
   await page.context().setOffline(true)
@@ -71,8 +68,8 @@ test('Offline, a chunk failure reaches the error screen and does not reload', as
   }
 })
 
-test('In-page hash changes leave focus where the person put it', async ({ page }) => {
-  await start(page, '#/chats/all')
+test('In-page hash changes leave focus where the person put it', async ({ fx, page }) => {
+  await start(page, fx, '#/chats/all')
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
   const moved = () => page.evaluate(() => {
     const a = document.activeElement

@@ -3,17 +3,12 @@
 // answering chat stops it and Undo brings it back with the stopped note. Screenshots of each state go to the report.
 // Time runs on Playwright's clock: answers move on with `runFor`, and a paused clock holds an answer mid-way, so no
 // check depends on how fast the machine is.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash = '#/today') {
+async function start(page: Page, fx: Fx, hash = '#/today') {
   await page.clock.install()
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fx.seed({ stage: 'Act' })
   await page.goto('/?demo' + hash)
 }
 
@@ -46,8 +41,8 @@ const STOPPED = 'You stopped your Inhouse agent. Nothing was changed.'
 const REFUNDS = 'Why did refunds jump?'
 const PAYOUT = 'Amazon payout gap'
 
-test('Runs: leave a chat mid-answer for another, come back, and the whole answer is there once', async ({ page }) => {
-  await start(page, '#/chats/refunds')
+test('Runs: leave a chat mid-answer for another, come back, and the whole answer is there once', async ({ fx, page }) => {
+  await start(page, fx, '#/chats/refunds')
   await ask(page, STUCK_Q)
   await openSide(page, PAYOUT)
   // The other chat shows no thinking row and nothing of the first chat's answer.
@@ -72,8 +67,8 @@ test('Runs: leave a chat mid-answer for another, come back, and the whole answer
   await shot(page, 'runs-back-to-finished-answer')
 })
 
-test('Runs: two chats answer at once, each answer in its own chat, and Stop in one leaves the other', async ({ page }) => {
-  await start(page, '#/chats/refunds')
+test('Runs: two chats answer at once, each answer in its own chat, and Stop in one leaves the other', async ({ fx, page }) => {
+  await start(page, fx, '#/chats/refunds')
   await ask(page, STUCK_Q)
   await openSide(page, PAYOUT)
   await ask(page, REFUNDS_Q)
@@ -101,8 +96,8 @@ test('Runs: two chats answer at once, each answer in its own chat, and Stop in o
   await shot(page, 'runs-two-chats-answered')
 })
 
-test('Runs: ask from Today, go to the Library mid-answer, and the chat has the full answer when you come back', async ({ page }) => {
-  await start(page)
+test('Runs: ask from Today, go to the Library mid-answer, and the chat has the full answer when you come back', async ({ fx, page }) => {
+  await start(page, fx)
   await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(STUCK_Q)
   await page.keyboard.press('Enter')
   await expect(stop(page)).toBeVisible()
@@ -118,8 +113,8 @@ test('Runs: ask from Today, go to the Library mid-answer, and the chat has the f
   await shot(page, 'runs-today-library-back')
 })
 
-test('Runs: deleting a chat that answers in the background stops it, and Undo brings it back with the stopped note', async ({ page }) => {
-  await start(page, '#/chats/refunds')
+test('Runs: deleting a chat that answers in the background stops it, and Undo brings it back with the stopped note', async ({ fx, page }) => {
+  await start(page, fx, '#/chats/refunds')
   await ask(page, REFUNDS_Q)
   // The clock holds, so the delete lands while the answer is still being written behind the list.
   await hold(page)
@@ -143,8 +138,8 @@ test('Runs: deleting a chat that answers in the background stops it, and Undo br
   await shot(page, 'runs-deleted-while-answering-undone')
 })
 
-test('Runs: the sidebar shows a running dot on a chat answering in the background until it finishes', async ({ page }) => {
-  await start(page, '#/chats/refunds')
+test('Runs: the sidebar shows a running dot on a chat answering in the background until it finishes', async ({ fx, page }) => {
+  await start(page, fx, '#/chats/refunds')
   await ask(page, STUCK_Q)
   await openSide(page, PAYOUT)
   const refundsRow = side(page).getByRole('button', { name: REFUNDS, exact: true })
@@ -153,8 +148,8 @@ test('Runs: the sidebar shows a running dot on a chat answering in the backgroun
   await expect(refundsRow).not.toHaveAccessibleDescription('Answering now', { timeout: 15_000 })
 })
 
-test('Runs: delete an answer, open another chat, and Undo still brings the answer back', async ({ page }) => {
-  await start(page, '#/chats/refunds')
+test('Runs: delete an answer, open another chat, and Undo still brings the answer back', async ({ fx, page }) => {
+  await start(page, fx, '#/chats/refunds')
   const answer = msgs(page, REFUNDS_A).last()
   await answer.hover()
   await answer.getByRole('button', { name: 'More', exact: true }).click()

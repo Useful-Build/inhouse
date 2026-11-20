@@ -4,16 +4,17 @@
 // on itself, never with a focus ring or a "Close" tooltip on its Close button (L6). A locked switch says why in a tooltip
 // that keyboard focus reaches (M31). "Skip to content" is the first Tab stop and the top bar is the banner (L18). Each
 // overlay's screenshot is attached to the test report.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
-async function open(page: Page, hash: string, ready: string) {
+const seeded = new WeakSet<Page>()
+async function open(page: Page, fx: Fx, hash: string, ready: string) {
   await page.emulateMedia({ colorScheme: 'dark' })
-  await page.addInitScript(() => {
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    localStorage.setItem('inhouse.theme', 'dark')
-  })
+  // A test opens several pages; one seed covers them all (a page takes one seed).
+  if (!seeded.has(page)) {
+    seeded.add(page)
+    await fx.seed({ stage: 'Act', theme: 'dark', once: false })
+  }
   await page.goto('/?demo' + hash)
   await expect(page.getByText(ready, { exact: false }).first()).toBeVisible()
   await expect(page.locator('html')).toHaveClass(/\bdark\b/)
@@ -59,8 +60,8 @@ async function escapeTo(page: Page, overlay: Locator, trigger: Locator) {
   await expect(trigger).toBeFocused()
 }
 
-test('Dark, by keyboard: the palette, Help, the team window, the account menu and notifications open and give focus back', async ({ page }) => {
-  await open(page, '#/today', '6 things need you')
+test('Dark, by keyboard: the palette, Help, the team window, the account menu and notifications open and give focus back', async ({ fx, page }) => {
+  await open(page, fx, '#/today', '6 things need you')
 
   // Command palette, from the top bar's Search: the field has focus, Escape gives it back.
   const search = header(page).getByRole('button', { name: 'Search', exact: true })
@@ -126,9 +127,9 @@ test('Dark, by keyboard: the palette, Help, the team window, the account menu an
   expect(await page.evaluate(() => (window as unknown as { escapeReachedWindow?: boolean }).escapeReachedWindow)).toBe(false)
 })
 
-test('Dark, by keyboard: the problem panel, the trace window, a file viewer and a confirm question open and give focus back', async ({ page }) => {
+test('Dark, by keyboard: the problem panel, the trace window, a file viewer and a confirm question open and give focus back', async ({ fx, page }) => {
   // The problem panel, from a Today card's Review button: a sheet, opened with focus on itself.
-  await open(page, '#/today', '6 things need you')
+  await open(page, fx, '#/today', '6 things need you')
   const review = page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' })
   await press(review)
   const panel = page.getByRole('dialog').filter({ hasText: 'Remembered: Kestrel ships in 14 days' })
@@ -137,7 +138,7 @@ test('Dark, by keyboard: the problem panel, the trace window, a file viewer and 
   await escapeTo(page, panel, review)
 
   // The trace window, from an answer's steps link.
-  await open(page, '#/chats/stuck', '3 orders · $556')
+  await open(page, fx, '#/chats/stuck', '3 orders · $556')
   const steps = page.locator('main').getByRole('button', { name: /6 steps/ }).last()
   await press(steps)
   const trace = page.getByRole('dialog', { name: /What your Inhouse agent did/ })
@@ -147,7 +148,7 @@ test('Dark, by keyboard: the problem panel, the trace window, a file viewer and 
   await escapeTo(page, trace, steps)
 
   // A Library file viewer, from the first file: the arrow keys step through files while it's open.
-  await open(page, '#/library', 'All files')
+  await open(page, fx, '#/library', 'All files')
   const first = page.locator('main [data-file]').first()
   const name = (await first.getAttribute('data-file-id')) ?? ''
   await press(first)
@@ -173,9 +174,9 @@ test('Dark, by keyboard: the problem panel, the trace window, a file viewer and 
   await expect(page.locator(`main [data-file-id="${name}"]`)).toHaveCount(1)
 })
 
-test('Dark, by keyboard: a Settings dropdown gives focus back, and a locked switch says why in a tooltip on focus', async ({ page }) => {
+test('Dark, by keyboard: a Settings dropdown gives focus back, and a locked switch says why in a tooltip on focus', async ({ fx, page }) => {
   // A Settings dropdown: Enter opens the list, Escape closes only the list.
-  await open(page, '#/settings/you-general', 'Profile')
+  await open(page, fx, '#/settings/you-general', 'Profile')
   const select = page.locator('main [role="combobox"]:not([disabled])').first()
   await press(select)
   const list = page.getByRole('listbox')
@@ -185,7 +186,7 @@ test('Dark, by keyboard: a Settings dropdown gives focus back, and a locked swit
 
   // Models: Smart is the default, so its switch is locked on. Tab from its effort picker reaches the switch, the reason
   // shows in a tooltip, and Space doesn't turn it off.
-  await open(page, '#/settings/team-modes', 'Models')
+  await open(page, fx, '#/settings/team-modes', 'Models')
   const locked = page.getByRole('switch', { name: 'Smart: the team can use this model' })
   await press(page.getByRole('combobox', { name: /^How hard it thinks: Smart/ }), 'Tab')
   await expect(locked).toBeFocused()
@@ -197,8 +198,8 @@ test('Dark, by keyboard: a Settings dropdown gives focus back, and a locked swit
   await expect(locked).toHaveAttribute('aria-checked', 'true')
 })
 
-test('Skip to content is the first Tab stop and moves focus into main; the top bar is the banner, outside main', async ({ page }) => {
-  await open(page, '#/today', 'Good morning')
+test('Skip to content is the first Tab stop and moves focus into main; the top bar is the banner, outside main', async ({ fx, page }) => {
+  await open(page, fx, '#/today', 'Good morning')
   await page.keyboard.press('Tab')
   const skip = page.getByRole('link', { name: 'Skip to content' })
   await expect(skip).toBeFocused()
@@ -217,10 +218,10 @@ test('Skip to content is the first Tab stop and moves focus into main; the top b
   await expect(page.getByRole('banner').getByRole('button', { name: /^Notifications/ })).toBeVisible()
 })
 
-test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothing, does nothing over a modal, and the toast still times out', async ({ page }) => {
+test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothing, does nothing over a modal, and the toast still times out', async ({ fx, page }) => {
   // Time runs on the page clock, held while the toasts are made, so no toast times out on a slow run.
   await page.clock.install()
-  await open(page, '#/today', '6 things need you')
+  await open(page, fx, '#/today', '6 things need you')
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
   const toasts = page.locator('[data-toast-stack] [data-toast]')
   const newestUndo = () => toasts.last().getByRole('button', { name: 'Undo', exact: true })
@@ -281,8 +282,8 @@ test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothin
   await page.clock.resume()
 })
 
-test('Skip to content works with the sidebar collapsed, and its link opened on its own lands on Today with no notice', async ({ page }) => {
-  await open(page, '#/activity', 'Activity')
+test('Skip to content works with the sidebar collapsed, and its link opened on its own lands on Today with no notice', async ({ fx, page }) => {
+  await open(page, fx, '#/activity', 'Activity')
   const toggle = header(page).getByRole('button', { name: 'Sidebar', exact: true })
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')

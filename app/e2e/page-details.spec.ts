@@ -1,23 +1,18 @@
 // Page actions: a routine's details and actions, a skill's on switch, Library sort, row menu and
 // viewer stepping, and Settings' Admin confirm and field checks. Each flow reloads to prove what was saved.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx, type Stage } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
-async function start(page: Page, hash: string, stage = 'Act') {
-  await page.addInitScript(s => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, stage)
+async function start(page: Page, fx: Fx, hash: string, stage: Stage = 'Act') {
+  await fx.seed({ stage, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
 
-test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all of it survives a reload', async ({ page }) => {
-  await start(page, '#/routines')
+test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all of it survives a reload', async ({ fx, page }) => {
+  await start(page, fx, '#/routines')
   await expect(page.getByRole('heading', { level: 1, name: 'Routines' })).toBeVisible()
   const name = 'Amazon payout check'
   const sw = page.getByRole('switch', { name: `${name} on or off` })
@@ -90,8 +85,8 @@ test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all o
   await shot(page, 'routine-after-reload')
 })
 
-test('Routines in Watch: a locked routine shows its stage and no actions', async ({ page }) => {
-  await start(page, '#/routines', 'Watch')
+test('Routines in Watch: a locked routine shows its stage and no actions', async ({ fx, page }) => {
+  await start(page, fx, '#/routines', 'Watch')
   await expect(page.getByRole('button', { name: 'Actions for Morning check' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Actions for Amazon payout check' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Amazon payout check', exact: true }).click()
@@ -100,8 +95,8 @@ test('Routines in Watch: a locked routine shows its stage and no actions', async
   await expect(sheet.getByRole('button', { name: 'Run now' })).toHaveCount(0)
 })
 
-test('Skills: turn a skill off in its details and back on', async ({ page }) => {
-  await start(page, '#/skills')
+test('Skills: turn a skill off in its details and back on', async ({ fx, page }) => {
+  await start(page, fx, '#/skills')
   const name = 'Reorder drafting'
   await page.getByRole('button', { name, exact: true }).click()
   const sheet = page.getByRole('dialog', { name })
@@ -134,8 +129,8 @@ const cards = (page: Page) => page.getByRole('list', { name: 'Files' }).getByRol
 const names = (page: Page) => cards(page).getByRole('button', { name: /^Actions for / })
   .evaluateAll(els => els.map(e => e.getAttribute('aria-label')!.replace(/^Actions for /, '')))
 
-test('Library: sort by name, delete from a row menu with Undo, step the viewer with the arrow keys in a tab', async ({ page }) => {
-  await start(page, '#/library')
+test('Library: sort by name, delete from a row menu with Undo, step the viewer with the arrow keys in a tab', async ({ fx, page }) => {
+  await start(page, fx, '#/library')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
   const total = await cards(page).count()
 
@@ -211,9 +206,9 @@ test('Library: sort by name, delete from a row menu with Undo, step the viewer w
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
-test('Settings: removing Admin asks first and Cancel keeps it; a wrong Monthly cap shows why and isn\'t saved', async ({ page }) => {
+test('Settings: removing Admin asks first and Cancel keeps it; a wrong Monthly cap shows why and isn\'t saved', async ({ fx, page }) => {
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
-  await start(page, '#/settings/team-members')
+  await start(page, fx, '#/settings/team-members')
   await page.getByRole('combobox', { name: 'Sam Mercer: Admin' }).click()
   await page.getByRole('option', { name: 'Approver' }).click()
   const ask = page.getByRole('dialog', { name: 'Remove your admin role?' })
@@ -283,8 +278,8 @@ test('Settings: removing Admin asks first and Cancel keeps it; a wrong Monthly c
   await expect(toast(page, 'Saved')).toHaveCount(0)
 })
 
-test('Library: deleting the last search match moves focus to the search box', async ({ page }) => {
-  await start(page, '#/library')
+test('Library: deleting the last search match moves focus to the search box', async ({ fx, page }) => {
+  await start(page, fx, '#/library')
   const victim = 'kestrel-delivery-times.png'
   const search = page.getByRole('searchbox', { name: 'Search library' })
   await search.fill(victim)
@@ -297,8 +292,8 @@ test('Library: deleting the last search match moves focus to the search box', as
   await expect(search).toBeFocused()
 })
 
-test('Routines: Cancel on a delete asked from the details gives focus back to the routine row', async ({ page }) => {
-  await start(page, '#/routines')
+test('Routines: Cancel on a delete asked from the details gives focus back to the routine row', async ({ fx, page }) => {
+  await start(page, fx, '#/routines')
   const name = 'Monday reorder list'
   const open = page.getByRole('button', { name, exact: true })
   await open.click()
