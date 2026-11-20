@@ -7,6 +7,7 @@ import { InviteInputSchema, MemberIdSchema, MemberRemoveQuerySchema, RoleChangeI
 import { apiError, apiJson } from '../http.ts'
 import { encodeCursor, readBody, readPage, readQuery, storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
+import { brandAgent } from '../do/brand-agent/client.ts'
 
 /** `GET /api/members?cursor&limit`: every person row with its status (removed ones too, for history), by id. */
 export async function listMembers(c: ApiCtx): Promise<Response> {
@@ -52,15 +53,26 @@ export async function changeMemberRole(c: ApiCtx): Promise<Response> {
   }
 }
 
-/** `DELETE /api/members/:id?ifRev=`: the member is removed (the row and its id stay). */
-export async function removeMember(c: ApiCtx): Promise<Response> {
+/**
+ * `DELETE /api/members/:id?ifRev=`: the member is removed (the row and its id stay). Once the batch committed, the
+ * BrandAgent hears of it (`onMemberRemoved`, P3 design 4.10): their sockets close and their turns are fenced. A lost
+ * call doesn't undo the removal: the object's authority sweep finds it in D1 within 5 minutes.
+ */
+export async function removeMember(c: ApiCtx & { env: Pick<Env, 'BRAND_AGENT'> }): Promise<Response> {
   const id = memberIdParam(c)
   if (id === null) return apiError('not_found')
   const query = readQuery(c.request, MemberRemoveQuerySchema)
   if ('error' in query) return query.error
   // Decision 19b: the Inhouse team never removes an Admin (checked in the statement, see members.remove).
   const done = await storesOf(c).members.remove({ id, ifRev: query.ok.ifRev, notAdmin: c.principal.kind === 'inhouse' }, writer(c))
-  if ('ok' in done) return apiJson(done.ok)
+  if ('ok' in done) {
+    try {
+      await brandAgent(c.env).onMemberRemoved(id)
+    } catch (err) {
+      console.error({ event: 'authority_call_lost', call: 'onMemberRemoved', requestId: c.requestId, error: err instanceof Error ? err.name : 'unknown' })
+    }
+    return apiJson(done.ok)
+  }
   if ('conflict' in done) return apiError('conflict', { current: done.conflict })
   switch (done.refused) {
     case 'admin_target': return apiError('forbidden')
