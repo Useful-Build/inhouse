@@ -787,6 +787,31 @@ describe('#159 round 1 lows', () => {
     expect(h.usage.closed.get(`${t} c1`)).toBe(40_000)
   }))
 
+  // #159 round 2 (low 3): a new call during the backoff must not resend the failed close early (M20's guard).
+  it('a call arriving during the backoff sends nothing early; the close goes again at 5 s, then the call is decided', () => inAgent(async h => {
+    const t = (await liveTurn(h)).turnId
+    ask(h, t, 'c1', 100_000)
+    await settle()
+    await h.core.renewModelCall(t, 'c1', U(0))
+    let fail = true
+    const real = h.usage.close.bind(h.usage)
+    h.usage.close = async (...a) => {
+      if (fail) { fail = false; h.usage.calls.push({ method: 'close', args: a }); throw new StoreUnavailableError('usage ledger', new Error('D1 down')) }
+      return real(...a)
+    }
+    await h.core.releaseModelCall(t, 'c1', { usage: U(40_000), cut: false })
+    await settle()
+    const closes = () => h.usage.calls.filter(c => c.method === 'close').length
+    await h.tick(2 * SEC)
+    const c2 = ask(h, t, 'c2', 10_000)
+    await settle()
+    expect(closes()).toBe(1)
+    expect(c2.v).toBeUndefined()
+    await h.tick(3 * SEC)
+    expect(closes()).toBe(2)
+    expect(c2.v).toEqual(GRANTED)
+  }))
+
   it('a reset frees a waiting call: it never holds the head of the queue (M15)', () => inAgent(async h => {
     const t = (await liveTurn(h)).turnId
     ;[1, 2, 3, 4].forEach(i => ask(h, t, `c${i}`, 10_000))
