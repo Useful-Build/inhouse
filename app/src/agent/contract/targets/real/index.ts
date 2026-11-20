@@ -13,7 +13,7 @@ import { endLiveGrant, staleRev } from './grants'
 import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
-import { settingFixtures } from './settings'
+import { resetPersonalSettings, settingFixtures } from './settings'
 
 /** The P2 methods: what this target's client serves over HTTP. */
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
@@ -88,6 +88,8 @@ function realTarget(origin: string): ContractTarget {
     },
   }) as unknown as AgentClient
 
+  /** The Loading scenario's client never hears back: a later scenario needs a client that does. */
+  let hung = false
   let agent = make('admin')
   let client = injecting(agent)
   const install = (next: HttpAgent) => { agent = next; client = injecting(next) }
@@ -147,16 +149,21 @@ function realTarget(origin: string): ContractTarget {
       const seeded = await ready()
       await resetTeam(s)
       await endLiveGrant(s)
+      await resetPersonalSettings(s)
       this.fixtures.personId = seeded.admin
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }
       this.fixtures.otherMemberId = seeded.leo
+      hung = false
       install(make('admin'))
       await agent.whenLoaded()
     },
     async seed(state) {
       // The test build has one brand and no stages or scenarios; the Loading scenario is a client that hasn't heard back.
-      if (state.scenario === 'Loading') install(make('admin', { fetch: hanging }))
-      else await agent.whenLoaded()
+      if (state.scenario === 'Loading') { hung = true; install(make('admin', { fetch: hanging })) }
+      else {
+        if (hung) { hung = false; install(make('admin')) }
+        await agent.whenLoaded()
+      }
     },
     async failSaves(on) { failAllSaves = on },
     async injectError(method, code) { if (code) armedErrors.set(method, code); else armedErrors.delete(method) },
