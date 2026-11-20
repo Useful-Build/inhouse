@@ -113,11 +113,12 @@ const t = <A extends unknown[]>(fn: (state: RunnerState, ...args: A) => Promise<
 
 interface Made {
   core: RunnerCore<Binding>
-  exits: [string, number][]
+  /** [runner, gen, how many starts the container had seen when the exit was reported] */
+  exits: [string, number, number][]
   aborts: AbortController[]
 }
 function make(container: FakeContainer, state: RunnerState, accepted?: readonly number[], name = 'runner-0'): Made {
-  const exits: [string, number][] = []
+  const exits: [string, number, number][] = []
   const aborts: AbortController[] = []
   const core = new RunnerCore<Binding>({
     name,
@@ -128,7 +129,7 @@ function make(container: FakeContainer, state: RunnerState, accepted?: readonly 
       web: props => ({ kind: 'web', props }),
       deny: props => ({ kind: 'deny', props }),
     },
-    exited: async (runner, gen) => void exits.push([runner, gen]),
+    exited: async (runner, gen) => void exits.push([runner, gen, container.starts.length]),
     accepted,
     timeout: () => {
       const c = new AbortController()
@@ -220,7 +221,7 @@ describe('container start', () => {
     expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 2, protocol: 2 })
     expect(c.intercepts.slice(3).map(i => i.binding.props.containerGen)).toEqual([2, 2, 2])
     expect(c.requests.filter(r => r.path === '/protocol')).toHaveLength(2)
-    expect(m.exits).toEqual([['runner-0', 1]])
+    expect(m.exits).toEqual([['runner-0', 1, 1]])
   }))
 
   it('a container that stops before answering /protocol is a placement error', t(async state => {
@@ -233,6 +234,22 @@ describe('container start', () => {
     const r = await core.admit(RS)
     expect('placementError' in r).toBe(true)
     expect(c.requests.map(x => x.path)).not.toContain('/runs')
+  }))
+})
+
+describe('boot deadline', () => {
+  it('one deadline bounds the whole start: when it passes, no more /protocol tries and a placement error', t(async state => {
+    const c = new FakeContainer()
+    // /protocol never answers: each call hangs until its signal aborts.
+    c.route = (_p, init) => new Promise<Response>((_res, rej) => init!.signal!.addEventListener('abort', () => rej(init!.signal!.reason)))
+    const m = make(c, state)
+    const pending = m.core.admit(RS)
+    await settle()
+    // The first signal handed out is the boot deadline; the second the first try's own 10 s.
+    m.aborts[0].abort(new DOMException('timed out', 'TimeoutError'))
+    const r = await pending
+    expect(r).toEqual({ placementError: expect.stringContaining('within 60000 ms') })
+    expect(c.requests.map(x => x.path)).toEqual(['/protocol'])
   }))
 })
 
@@ -270,6 +287,31 @@ describe('liveness', () => {
     expect(c.requests.filter(r => r.path === '/protocol')).toHaveLength(1)
   }))
 
+  it('an object restart: the first admission (no touch before it) re-arms the timeout and the monitor', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2])
+    await make(c, state).core.admit(RS)
+    const after = make(c, state)
+    expect(await after.core.admit({ ...RS, runId: 't_turnDDDDDDDDDDDDDDDDDDDD' })).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    expect(c.timeouts).toEqual([600_000, 600_000])
+    expect(c.log.filter(x => x === 'monitor')).toHaveLength(2)
+    expect(c.starts).toHaveLength(1)
+  }))
+
+  it('a container that exited while the object was away is reported before the next one starts', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2])
+    await make(c, state).core.admit(RS)
+    // The object is evicted; its monitor is gone with it, and the container then stops unseen.
+    c.monitors.splice(0)
+    c.running = false
+    const after = make(c, state)
+    expect(await after.core.admit(RS)).toEqual({ accepted: true, gen: 2, protocol: 2 })
+    // Reported while only the first container had started: before the new one.
+    expect(after.exits).toEqual([['runner-0', 1, 1]])
+    expect(c.starts).toHaveLength(2)
+  }))
+
   it('two settlements of one generation report the exit once', t(async state => {
     const c = new FakeContainer()
     c.route = v2Runner([2])
@@ -280,7 +322,7 @@ describe('liveness', () => {
     expect(c.monitors).toHaveLength(2)
     c.exit(1)
     await settle()
-    expect([...first.exits, ...second.exits]).toEqual([['runner-0', 1]])
+    expect([...first.exits, ...second.exits]).toEqual([['runner-0', 1, 1]])
   }))
 })
 
@@ -315,15 +357,36 @@ describe('admission answers', () => {
   }))
 
   it.each([
-    [503, { error: 'the runner is stopping' }],
-    [400, { error: 'bad body' }],
-    [500, { error: 'could not set up the session user' }],
-  ])('%i %j is not admitted: a placement error', t(async (state, status: number, body: unknown) => {
+    [400, { error: 'bad body' }, { rejected: 400, gen: 1 }],
+    [413, { error: 'body too large' }, { rejected: 413, gen: 1 }],
+    [503, { error: 'the runner is stopping' }, { unavailable: 'the runner is stopping', gen: 1 }],
+  ])('a typed %i %j is definite: %j', t(async (state, status: number, body: unknown, want: unknown) => {
     const c = new FakeContainer()
     c.route = v2Runner([2], () => json(status, body))
     const { core } = make(c, state)
-    const r = await core.admit(RS)
-    expect('placementError' in r).toBe(true)
+    expect(await core.admit(RS)).toEqual(want)
+  }))
+
+  it.each([
+    [500, JSON.stringify({ error: 'internal error' })],
+    [500, 'oops'],
+    [502, '<html>bad gateway</html>'],
+    [504, ''],
+    [503, 'Service Unavailable'],
+    [200, JSON.stringify({ accepted: true })],
+    [404, 'not found'],
+  ])('%i %s is untyped: ambiguous (the runner may have admitted)', t(async (state, status: number, body: string) => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2], () => new Response(body, { status }))
+    const { core } = make(c, state)
+    expect(await core.admit(RS)).toEqual({ ambiguous: true, gen: 1 })
+  }))
+
+  it('a bare 409 (no readable body) is the chat being live: chat_live', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2], () => new Response('conflict', { status: 409 }))
+    const { core } = make(c, state)
+    expect(await core.admit(RS)).toEqual({ refused: 'chat_live', gen: 1 })
   }))
 })
 
@@ -340,6 +403,20 @@ describe('status', () => {
     const { core } = make(c, state)
     await core.admit(RS)
     expect(await core.status('t_1')).toEqual({ state: want, containerGone: false })
+  }))
+
+  it('a call that fails because the container just stopped is unreachable and gone', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2], path => {
+      if (path === '/runs/t_1') {
+        c.running = false
+        throw new TypeError('connection reset')
+      }
+      return json(202, { accepted: true })
+    })
+    const { core } = make(c, state)
+    await core.admit(RS)
+    expect(await core.status('t_1')).toEqual({ state: 'unreachable', containerGone: true })
   }))
 
   it('a failed call is unreachable with the container still there; no container is unreachable and gone', t(async state => {

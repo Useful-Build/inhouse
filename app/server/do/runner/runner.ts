@@ -13,7 +13,7 @@
 // https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/ (an operation keeps the object
 // in memory for at most 15 minutes, so nothing here waits on a long read: the runner pushes, and every push touches).
 import {
-  ACCEPTED_VERSIONS, Health, PROTOCOL_HEADER, ProtocolInfo, RunRefusal, RunStatus, negotiateVersion,
+  ACCEPTED_VERSIONS, ErrorBody, Health, PROTOCOL_HEADER, ProtocolInfo, RunRefusal, RunStatus, negotiateVersion,
   type RunRefusalCode, type RunStart,
 } from '../../../shared/protocol/index.ts'
 import type { RunnerTurnStatus } from '../brand-agent/ports.ts'
@@ -27,7 +27,7 @@ export const INACTIVITY_MS = 10 * 60_000
 export const ADMIT_TIMEOUT_MS = 15_000
 /** `status`, `interrupt`, `stop` and the warm-up's calls. */
 export const CALL_TIMEOUT_MS = 10_000
-/** How long a new container has to answer `/protocol` before the start counts as a placement error. */
+/** How long a new container has to answer `/protocol` (one deadline over the whole start) before it's a placement error. */
 export const BOOT_TIMEOUT_MS = 60_000
 export const BOOT_POLL_MS = 250
 
@@ -74,15 +74,24 @@ export interface RunnerDeps<B> {
   log?(entry: Record<string, unknown>): void
 }
 
-/** `admit`'s answer. Only `ambiguous` may have reached the runner without a definite answer. */
+/**
+ * `admit`'s answer. Only a typed answer from the runner is definite; anything it didn't type may follow an admission.
+ * - `refused`: the runner's typed refusals (`503 session_pool_exhausted|session_folder_parked`, `409 chat_live|run_live`;
+ *   a 409 with no readable body is `chat_live`);
+ * - `protocol`: no shared version, or a 426;
+ * - `placementError`: the container never answered `/protocol` (it didn't start, stopped, or the boot deadline passed);
+ * - `rejected`: a typed 4xx (`ErrorBody`): the runner refused this turn's start (a bad body, too large);
+ * - `unavailable`: a typed 503 (`ErrorBody`, e.g. stopping): the runner states it didn't admit;
+ * - `ambiguous`: no answer (a network error, the 15 s abort), an untyped 5xx (500, a proxy's 502 or 504), or any other
+ *   answer the runner didn't type (a 2xx other than 202, a 3xx, a 4xx without `ErrorBody`).
+ */
 export type AdmitResult =
   | { accepted: true; gen: number; protocol: number }
   | { refused: RunRefusalCode; gen: number }
-  /** No shared protocol version (or the runner answered 426): never pick this runner on this container. */
   | { protocol: 'none'; gen: number }
-  /** The container didn't come up, or the runner answered without admitting (a bad body, a stopping runner). */
   | { placementError: string }
-  /** The request left and no answer came (a network error or the 15 s abort). */
+  | { rejected: number; gen: number }
+  | { unavailable: string; gen: number }
   | { ambiguous: true; gen: number }
 
 export interface StatusResult {
@@ -156,12 +165,17 @@ export class RunnerCore<B> {
     try {
       body = await res.json()
     } catch {
-      // An unreadable body: the status alone decides below.
+      // An unreadable body: untyped.
     }
     const refusal = RunRefusal.safeParse(body)
     if (refusal.success) return { refused: refusal.data.error, gen }
+    // The runner's 409s are only "this chat / this run is live here"; a bare one is the chat's (never admitted).
     if (res.status === 409) return { refused: 'chat_live', gen }
-    return { placementError: `the runner answered ${res.status} without admitting` }
+    const typed = ErrorBody.safeParse(body).success
+    if (typed && res.status >= 400 && res.status < 500) return { rejected: res.status, gen }
+    if (typed && res.status === 503) return { unavailable: (body as ErrorBody).error.slice(0, 200), gen }
+    this.#log({ event: 'admit_ambiguous', turnId: rs.runId, status: res.status })
+    return { ambiguous: true, gen }
   }
 
   /** The runner's `GET /runs/:id`; `unreachable` only when the call failed. Never starts a container. */
@@ -203,7 +217,7 @@ export class RunnerCore<B> {
       up = await this.#up()
       // Asked again on this generation even when it was negotiated earlier: warm-up proves the container as it is now.
       this.#d.state.setProtocol(up.gen, undefined)
-      up = { gen: up.gen, protocol: await this.#negotiate(up.gen, 1) }
+      up = { gen: up.gen, protocol: await this.#negotiate(up.gen, true) }
     } catch (e) {
       return { ok: false, why: 'start', detail: errorText(e) }
     }
@@ -259,6 +273,8 @@ export class RunnerCore<B> {
       const known = s.protocol(gen)
       return { gen, protocol: known === undefined ? await this.#negotiate(gen) : known }
     }
+    // The last container exited while this object wasn't watching it (evicted, or restarted): report that first.
+    if (s.gen() > 0) await this.#reportExit(s.gen(), 'exited while the object was away')
     const gen = s.gen() + 1
     s.setGen(gen)
     const props: EgressProps = { runner: this.#d.name, containerGen: gen }
@@ -275,13 +291,18 @@ export class RunnerCore<B> {
     return { gen, protocol: await this.#negotiate(gen) }
   }
 
-  /** `GET /protocol` until it answers (a new container takes a moment); stores and returns the shared version. */
-  async #negotiate(gen: number, attempts = Math.ceil(BOOT_TIMEOUT_MS / BOOT_POLL_MS)): Promise<number | null> {
+  /**
+   * `GET /protocol` until it answers (a new container takes a moment), within one deadline over the whole start;
+   * `once`: a single try (warm-up). Stores and returns the shared version.
+   */
+  async #negotiate(gen: number, once = false): Promise<number | null> {
+    const deadline = this.#timeout(BOOT_TIMEOUT_MS)
     let last: unknown = 'no answer'
-    for (let i = 0; i < attempts; i++) {
+    for (;;) {
+      if (deadline.aborted) throw new Error(`no /protocol answer within ${BOOT_TIMEOUT_MS} ms: ${errorText(last)}`)
       if (!this.#d.container.running) throw new Error('the container stopped before it answered /protocol')
       try {
-        const res = await this.#port().fetch('http://runner/protocol', { signal: this.#timeout(CALL_TIMEOUT_MS) })
+        const res = await this.#port().fetch('http://runner/protocol', { signal: AbortSignal.any([deadline, this.#timeout(CALL_TIMEOUT_MS)]) })
         if (res.status === 200) {
           const version = negotiateVersion(ProtocolInfo.parse(await res.json()), this.#accepted)
           this.#d.state.setProtocol(gen, version)
@@ -293,9 +314,9 @@ export class RunnerCore<B> {
       } catch (e) {
         last = e
       }
-      if (i + 1 < attempts) await this.#wait(BOOT_POLL_MS)
+      if (once) throw new Error(`no /protocol answer: ${errorText(last)}`)
+      if (!deadline.aborted) await this.#wait(BOOT_POLL_MS)
     }
-    throw new Error(`no /protocol answer: ${errorText(last)}`)
   }
 
   /** Watches the container of generation `gen`; its exit (either way the promise settles) is reported once per generation. */

@@ -1,17 +1,21 @@
 // The runner pool (pool.ts) on the BrandAgent's real SQLite, with W1's `turns`, `runs` and `flags` tables created here
 // in the shape of p3-design 4.1 (W1 creates them in the object) and the Runner objects behind a fake. Routing is checked
-// against a reference model written in this file with literal constants (25 per runner, 60 s queue, 5 s retry, 5 s
-// refusal cool-down); it shares no code with pool.ts. Ways it can fail, written down first:
+// against a ledger the test keeps from the answers it scripted and the design's table of what each answer does (written
+// out below with literal constants: 25 per runner, 60 s queue, 5 s cool-down, 60 s suspect cool-down, 3 per pass); it
+// never reads pool.ts's state. Ways it can fail, written down first:
 //  1. a placement goes to the wrong runner (not fill-first by index, a sleeping one woken before an up one has room,
-//     a refused or protocol runner picked);
-//  2. more than 25 unfinished turns derived on one runner, including two placements racing for the 25th slot;
-//  3. an ambiguous admission is followed by a placement of that turn on any runner;
-//  4. the queue isn't FIFO, a newcomer overtakes it, a 409 is placed elsewhere, a turn waits past 60 s, or a freed
-//     slot / the 5 s retry doesn't hand the head back;
-//  5. a container exit fences the turns twice, or the wrong turns;
-//  6. drain: an admission after the drain step, counts that don't reach 0, an expiry that doesn't clear or advance runs;
-//     warm-up clearing the drain with a failed /health, or not starting a run's queued follow-up;
-//  7. the signals miss a protocol runner, a restart storm or a shortfall.
+//     a cooling, suspect or protocol runner picked);
+//  2. more than 25 unfinished turns on one runner, including placements racing for the last slots;
+//  3. an ambiguous admission (or an untyped answer, or `run_live`) is followed by a placement of that turn anywhere, or
+//     doesn't make the runner suspect;
+//  4. one turn the runner rejects (a typed 4xx) cools the pool or holds the queue;
+//  5. the queue isn't FIFO, a newcomer overtakes it, a 409 holds the turns behind it, a turn waits past 60 s, a pass
+//     places more than 3, or a free slot / the 5 s retry doesn't hand queued turns back;
+//  6. a container exit fences the turns twice, the wrong turns, or (a late, older generation) the new container's;
+//  7. drain: an admission after the drain step, counts that don't reach 0, an expiry that doesn't clear or advance runs;
+//     warm-up clearing the drain with a failed /health or on the container from before the drain, or not starting a
+//     run's queued follow-up;
+//  8. the signals miss a protocol runner, a restart storm or a shortfall.
 import { fc } from '@fast-check/vitest'
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
@@ -61,240 +65,260 @@ let objects = 0
 const inObject = <R>(fn: (sql: SqlStorage) => Promise<R>) =>
   runInDurableObject(env.BRAND_AGENT.getByName(`pool-test-${++objects}`), (_i, s) => fn(s.storage.sql))
 
-// ---------------------------------------------------------------------------------------------------------------
-// Routing: random histories against the reference model.
+/** A 2-runner pool whose Runners answer `admit` through `admit(name)`; every other call is inert. */
+function poolWith(sql: SqlStorage, admit: (name: string) => (start: RunStart) => Promise<AdmitResult>, clock = { now: T0 }, hooks: PlacementHooks = { retryPlacement: async () => {}, placementExpired: async () => {} }, sched: Scheduler = new FakeScheduler()) {
+  return new RunnerPool({
+    sql, scheduler: sched, now: () => clock.now, size: 2, hooks,
+    runner: name => ({
+      admit: admit(name),
+      status: async () => ({ state: 'live', containerGone: false }),
+      interrupt: async () => {}, stop: async () => {}, warm: async () => ({ ok: true, gen: 1, protocol: 2 }),
+    }),
+  })
+}
 
-type Mode = 'ok' | 'exhausted' | 'chat_live' | 'parked' | 'ambiguous' | 'down' | 'protocol'
+// ---------------------------------------------------------------------------------------------------------------
+// Routing: random histories, admissions interleaved by fast-check's scheduler, checked against a ledger the test keeps
+// from the answers it scripted and the design's table of what each answer does. The ledger never asks pool.ts; every
+// pick, result, queue move, expiry and fence is checked against it at the moment the pool makes it.
+
+type Mode = 'ok' | 'ambiguous' | 'run_live' | 'chat_live' | 'exhausted' | 'parked' | 'unavailable' | 'down' | 'protocol'
+type Answer = Mode | 'rejected'
 type Op =
-  | { k: 'start' }
+  /** Start these turns at once (their admissions interleave); `true`: the runner rejects that turn's start (typed 400). */
+  | { k: 'burst'; bad: boolean[] }
   | { k: 'end'; i: number }
   | { k: 'mode'; r: number; mode: Mode }
   | { k: 'exit'; r: number }
   | { k: 'tick'; ms: number }
 
-const N = 2
+const N = 3
+const CAP = 25
+const QUEUE_MS = 60_000
+const PASS_MAX = 3
+
+/**
+ * The design table (p3-design 7, fix round 1): what one answer does to the turn and to the runner. `cool`: the runner
+ * isn't picked for this long (0 clears it; absent leaves it); `awake`: up-class (`false`: sleeping); `protocolBad`:
+ * never picked; `keeps`: the turn stays counted on the runner.
+ */
+const TABLE: Record<Answer, { turn: 'admitted' | 'ambiguous' | 'next' | 'queued' | 'files' | 'rejected'; keeps: boolean; cool?: number; awake?: boolean; protocolBad?: boolean }> = {
+  ok: { turn: 'admitted', keeps: true, cool: 0, awake: true, protocolBad: false },
+  ambiguous: { turn: 'ambiguous', keeps: true, cool: 60_000 },
+  run_live: { turn: 'ambiguous', keeps: true },
+  chat_live: { turn: 'queued', keeps: false, awake: true },
+  exhausted: { turn: 'next', keeps: false, cool: 5_000, awake: true },
+  parked: { turn: 'files', keeps: false, awake: true },
+  unavailable: { turn: 'queued', keeps: false, cool: 5_000 },
+  down: { turn: 'next', keeps: false, cool: 5_000, awake: false, protocolBad: false },
+  protocol: { turn: 'next', keeps: false, protocolBad: true },
+  rejected: { turn: 'rejected', keeps: false },
+}
+
 const opArb: fc.Arbitrary<Op> = fc.oneof(
-  { weight: 12, arbitrary: fc.constant<Op>({ k: 'start' }) },
-  { weight: 4, arbitrary: fc.nat(1000).map<Op>(i => ({ k: 'end', i })) },
-  { weight: 2, arbitrary: fc.record({ r: fc.nat(N - 1), mode: fc.constantFrom<Mode>('ok', 'ok', 'ok', 'exhausted', 'chat_live', 'parked', 'ambiguous', 'down', 'protocol') }).map<Op>(x => ({ k: 'mode', ...x })) },
+  { weight: 10, arbitrary: fc.array(fc.constantFrom(false, false, false, false, false, false, false, true), { minLength: 1, maxLength: 8 }).map<Op>(bad => ({ k: 'burst', bad })) },
+  { weight: 5, arbitrary: fc.nat(10_000).map<Op>(i => ({ k: 'end', i })) },
+  { weight: 3, arbitrary: fc.record({ r: fc.nat(N - 1), mode: fc.constantFrom<Mode>('ok', 'ok', 'ok', 'ok', 'ambiguous', 'run_live', 'chat_live', 'exhausted', 'parked', 'unavailable', 'down', 'protocol') }).map<Op>(x => ({ k: 'mode', ...x })) },
   { weight: 1, arbitrary: fc.nat(N - 1).map<Op>(r => ({ k: 'exit', r })) },
   { weight: 3, arbitrary: fc.constantFrom(1_000, 5_000, 30_000, 61_000).map<Op>(ms => ({ k: 'tick', ms })) },
 )
 
-/** The reference: the pool's routing rules and W1's side of the hooks, as plain data. */
-class Reference {
-  now = T0
-  log: string[] = []
-  runners = Array.from({ length: N }, () => ({ state: 'sleeping' as string, until: 0, mode: 'ok' as Mode, started: false }))
-  turns = new Map<string, { state: 'starting' | 'live' | 'ended'; runner: number | null; ambiguous: boolean }>()
-  queue: { id: string; at: number }[] = []
-  retryDue: number | null = null
-  n = 0
+interface PlaceCtx { newcomer: boolean; tried: number[]; expect: string | 'pending' }
 
-  count(r: number) {
-    let c = 0
-    for (const t of this.turns.values()) if (t.runner === r && t.state !== 'ended') c++
-    return c
+class Ledger {
+  now = T0
+  violations: string[] = []
+  runners = Array.from({ length: N }, () => ({ unfinished: new Set<string>(), coolUntil: 0, awake: false, protocolBad: false, mode: 'ok' as Mode, gen: 1 }))
+  /** FIFO: insertion order; turn → queued at. */
+  queue = new Map<string, number>()
+  ambiguous = new Set<string>()
+  bad = new Set<string>()
+  places = new Map<string, PlaceCtx>()
+
+  eligible(i: number, tried: readonly number[]) {
+    const r = this.runners[i]
+    return !tried.includes(i) && r.unfinished.size < CAP && r.coolUntil <= this.now && !r.protocolBad
   }
-  pick(tried: Set<number>): number | null {
-    const free = (i: number) => !tried.has(i) && this.count(i) < 25 && this.runners[i].until <= this.now
-    for (let i = 0; i < N; i++) if (['up', 'starting', 'refused'].includes(this.runners[i].state) && free(i)) return i
-    for (let i = 0; i < N; i++) if (this.runners[i].state === 'sleeping' && free(i)) return i
+  /** Fill-first: the lowest-index up-class runner with room, else the lowest-index sleeping one. */
+  pick(tried: readonly number[]): number | null {
+    for (let i = 0; i < N; i++) if (this.runners[i].awake && this.eligible(i, tried)) return i
+    for (let i = 0; i < N; i++) if (!this.runners[i].awake && this.eligible(i, tried)) return i
     return null
   }
-  enqueue(id: string) {
-    if (!this.queue.some(q => q.id === id)) this.queue.push({ id, at: this.now })
-    if (this.retryDue === null) this.retryDue = this.now + 5_000
-  }
-  dequeue(id: string) { this.queue = this.queue.filter(q => q.id !== id) }
+  enqueue(t: string) { if (!this.queue.has(t)) this.queue.set(t, this.now) }
+  violate(v: string) { this.violations.push(v) }
 
-  place(id: string) {
-    const turn = this.turns.get(id)!
-    let result: string
-    if (this.queue.length > 0 && this.queue[0].id !== id) {
-      this.enqueue(id)
-      result = 'queued'
-    } else {
-      const tried = new Set<number>()
-      for (;;) {
-        const r = this.pick(tried)
-        if (r === null) { this.enqueue(id); result = 'queued'; break }
-        tried.add(r)
-        const rr = this.runners[r]
-        turn.runner = r
-        if (rr.state === 'sleeping') rr.state = 'starting'
-        this.log.push(`admit ${id} runner-${r}`)
-        if (rr.mode !== 'down') rr.started = true
-        if (rr.mode === 'ok') { rr.state = 'up'; rr.until = 0; this.dequeue(id); result = `admitted runner-${r}`; break }
-        if (rr.mode === 'ambiguous') { this.dequeue(id); result = `ambiguous runner-${r}`; break }
-        turn.runner = null
-        if (rr.mode === 'down') { rr.state = 'sleeping'; rr.until = this.now + 5_000; continue }
-        if (rr.mode === 'protocol') { rr.state = 'protocol'; continue }
-        if (rr.mode === 'exhausted') { rr.state = 'refused'; rr.until = this.now + 5_000; continue }
-        rr.state = 'up'
-        if (rr.mode === 'parked') { this.dequeue(id); result = 'files'; break }
-        this.enqueue(id) // chat_live
-        result = 'queued'
-        break
+  /** At `place(t)`'s call (the pool's synchronous part runs before its first admission). */
+  placeStarts(t: string) {
+    const ctx: PlaceCtx = { newcomer: !this.queue.has(t), tried: [], expect: 'pending' }
+    this.places.set(t, ctx)
+    if ((ctx.newcomer && this.queue.size > 0) || this.pick([]) === null) {
+      ctx.expect = 'queued'
+      this.enqueue(t)
+    }
+  }
+  /** At an admission call: the pick must be the table's, under the cap, never for an ambiguous turn. */
+  admitCalled(t: string, i: number) {
+    const ctx = this.places.get(t)
+    if (ctx === undefined || ctx.expect !== 'pending') return this.violate(`${t}: an admission the ledger didn't expect (runner-${i})`)
+    if (this.ambiguous.has(t)) this.violate(`${t}: admitted again after an ambiguous answer (runner-${i})`)
+    const want = this.pick(ctx.tried)
+    if (want !== i) this.violate(`${t}: picked runner-${i}, the table says ${want === null ? 'none' : `runner-${want}`}`)
+    ctx.tried.push(i)
+    this.runners[i].unfinished.add(t)
+    this.runners[i].awake = true
+  }
+  answered(t: string, i: number, a: Answer) {
+    const ctx = this.places.get(t)!
+    const e = TABLE[a]
+    const r = this.runners[i]
+    if (!e.keeps) r.unfinished.delete(t)
+    if (e.cool !== undefined) r.coolUntil = e.cool === 0 ? 0 : this.now + e.cool
+    if (e.awake !== undefined) r.awake = e.awake
+    if (e.protocolBad !== undefined) r.protocolBad = e.protocolBad
+    if (e.turn === 'ambiguous') this.ambiguous.add(t)
+    if (e.turn === 'next') {
+      if (this.pick(ctx.tried) === null) {
+        ctx.expect = 'queued'
+        this.enqueue(t)
       }
+      return
     }
-    this.log.push(`place ${id} ${result}`)
-    if (result.startsWith('admitted')) turn.state = 'live'
-    else if (result.startsWith('ambiguous')) turn.ambiguous = true
-    else if (result === 'files') turn.state = 'ended'
+    ctx.expect = e.turn === 'admitted' || e.turn === 'ambiguous' ? `${e.turn} runner-${i}` : e.turn
+    if (e.turn === 'queued') this.enqueue(t)
+    else this.queue.delete(t)
   }
-
-  retry() {
-    while (this.queue.length > 0 && this.queue[0].at + 60_000 <= this.now) {
-      const h = this.queue.shift()!
-      this.log.push(`expire ${h.id}`)
-      this.turns.get(h.id)!.state = 'ended'
-    }
-    while (this.queue.length > 0) {
-      if (this.pick(new Set()) === null) break
-      const head = this.queue[0].id
-      this.place(head)
-      if (this.queue[0]?.id === head) break
-    }
-    if (this.queue.length > 0) this.retryDue = Math.max(this.now, Math.min(this.now + 5_000, this.queue[0].at + 60_000))
-  }
-
-  ended(id: string) {
-    this.turns.get(id)!.state = 'ended'
-    this.dequeue(id)
-    if (this.queue.length > 0) this.retryDue = this.now
-  }
-
-  apply(op: Op) {
-    if (op.k === 'start') {
-      const id = `t_${this.n++}`
-      this.turns.set(id, { state: 'starting', runner: null, ambiguous: false })
-      this.place(id)
-    } else if (op.k === 'end') {
-      const placed = [...this.turns].filter(([, t]) => t.runner !== null && t.state !== 'ended').map(([id]) => id).sort()
-      if (placed.length > 0) this.ended(placed[op.i % placed.length])
-    } else if (op.k === 'mode') {
-      this.runners[op.r].mode = op.mode
-    } else if (op.k === 'exit') {
-      const rr = this.runners[op.r]
-      if (rr.started) {
-        rr.started = false
-        rr.state = 'sleeping'
-        const fenced = [...this.turns].filter(([, t]) => t.runner === op.r && t.state !== 'ended').map(([id]) => id).sort()
-        this.log.push(`fence runner-${op.r} ${fenced.join(',')}`)
-        for (const id of fenced) this.ended(id)
-      }
-    } else {
-      this.now += op.ms
-    }
-    if (this.retryDue !== null && this.retryDue <= this.now) {
-      this.retryDue = null
-      this.retry()
-    }
+  placeEnded(t: string, result: string) {
+    const ctx = this.places.get(t)!
+    if (ctx.expect !== result) this.violate(`${t}: place answered ${result}, the table says ${ctx.expect}`)
+    this.places.delete(t)
   }
 }
 
-/** The real pool, a fake Runner per name, and W1's side of the hooks. */
-async function runReal(sql: SqlStorage, ops: Op[]) {
+const answerOf = (a: Answer, gen: number): AdmitResult => {
+  switch (a) {
+    case 'ok': return { accepted: true, gen, protocol: 2 }
+    case 'ambiguous': return { ambiguous: true, gen }
+    case 'run_live': return { refused: 'run_live', gen }
+    case 'chat_live': return { refused: 'chat_live', gen }
+    case 'exhausted': return { refused: 'session_pool_exhausted', gen }
+    case 'parked': return { refused: 'session_folder_parked', gen }
+    case 'unavailable': return { unavailable: 'the runner is stopping', gen }
+    case 'down': return { placementError: 'no /protocol answer' }
+    case 'protocol': return { protocol: 'none', gen }
+    case 'rejected': return { rejected: 400, gen }
+  }
+}
+
+/** The real pool, a fake Runner per name answering through fast-check's scheduler, and W1's side of the hooks. */
+async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
   w1Tables(sql)
-  const clock = { now: T0 }
+  const L = new Ledger()
   const sched = new FakeScheduler()
-  const log: string[] = []
-  const violations: string[] = []
-  const ambiguous = new Set<string>()
-  const runners = Array.from({ length: N }, () => ({ mode: 'ok' as Mode, gen: 1, started: false }))
   let n = 0
 
   const placeAndApply = async (id: string) => {
+    L.placeStarts(id)
     const a = await pool.place(rs(id), 1)
     const result = 'admitted' in a ? `admitted ${a.admitted}` : 'ambiguous' in a ? `ambiguous ${a.ambiguous}` : 'queued' in a ? 'queued' : a.refused
-    log.push(`place ${id} ${result}`)
+    L.placeEnded(id, result)
     if ('admitted' in a) sql.exec("UPDATE turns SET state = 'live' WHERE turn_id = ?", id)
-    else if ('ambiguous' in a) ambiguous.add(id)
     else if ('refused' in a) sql.exec("UPDATE turns SET state = 'ended' WHERE turn_id = ?", id)
   }
+  let pass: { calls: string[]; order: string[] } | null = null
   const hooks: PlacementHooks = {
     retryPlacement: async id => {
-      const row = sql.exec<{ state: string }>('SELECT state FROM turns WHERE turn_id = ?', id).one()
-      if (row.state === 'starting' && !ambiguous.has(id)) await placeAndApply(id)
+      if (pass === null || !L.queue.has(id)) return L.violate(`${id}: retried while not queued`)
+      pass.calls.push(id)
+      if (!L.ambiguous.has(id)) await placeAndApply(id)
     },
     placementExpired: async id => {
-      log.push(`expire ${id}`)
+      const at = L.queue.get(id)
+      if (at === undefined || L.now - at < QUEUE_MS) L.violate(`${id}: expired after ${at === undefined ? '?' : L.now - at} ms`)
+      L.queue.delete(id)
       sql.exec("UPDATE turns SET state = 'ended' WHERE turn_id = ?", id)
     },
   }
   const fake = (i: number): RunnerRpc => ({
-    admit: async (start): Promise<AdmitResult> => {
-      const r = runners[i]
-      log.push(`admit ${start.runId} runner-${i}`)
-      if (ambiguous.has(start.runId)) violations.push(`${start.runId} placed again after an ambiguous answer`)
-      if (r.mode !== 'down') r.started = true
-      switch (r.mode) {
-        case 'ok': return { accepted: true, gen: r.gen, protocol: 2 }
-        case 'ambiguous': return { ambiguous: true, gen: r.gen }
-        case 'down': return { placementError: 'no /protocol answer' }
-        case 'protocol': return { protocol: 'none', gen: r.gen }
-        case 'exhausted': return { refused: 'session_pool_exhausted', gen: r.gen }
-        case 'parked': return { refused: 'session_folder_parked', gen: r.gen }
-        case 'chat_live': return { refused: 'chat_live', gen: r.gen }
-      }
+    admit: start => {
+      const t = start.runId
+      L.admitCalled(t, i)
+      const a: Answer = L.bad.has(t) ? 'rejected' : L.runners[i].mode
+      const gen = L.runners[i].gen
+      return s.schedule(Promise.resolve(a), `admit ${t} runner-${i} ${a}`).then(x => {
+        L.answered(t, i, x)
+        return answerOf(x, gen)
+      })
     },
     status: async () => ({ state: 'live', containerGone: false }),
     interrupt: async () => {},
     stop: async () => {},
-    warm: async () => ({ ok: true, gen: runners[i].gen, protocol: 2 }),
+    warm: async () => ({ ok: true, gen: L.runners[i].gen, protocol: 2 }),
   })
-  const pool = new RunnerPool({ sql, scheduler: sched, now: () => clock.now, size: N, runner: name => fake(Number(name.slice(7))), hooks })
+  const pool = new RunnerPool({ sql, scheduler: sched, now: () => L.now, size: N, runner: name => fake(Number(name.slice(7))), hooks })
 
   const ended = (id: string) => {
+    for (const r of L.runners) r.unfinished.delete(id)
     const t = sql.exec<{ runner: string | null }>("UPDATE turns SET state = 'ended' WHERE turn_id = ? RETURNING runner", id).one()
     pool.turnEnded(t.runner ?? '', id)
   }
   for (const op of ops) {
-    if (op.k === 'start') {
-      const id = `t_${n++}`
-      sql.exec("INSERT INTO turns (turn_id, run_id, state, gen) VALUES (?, ?, 'starting', 1)", id, `r_${id}`)
-      await placeAndApply(id)
+    if (op.k === 'burst') {
+      const ids = op.bad.map(b => {
+        const id = `t_${n++}`
+        if (b) L.bad.add(id)
+        sql.exec("INSERT INTO turns (turn_id, run_id, state, gen) VALUES (?, ?, 'starting', 1)", id, `r_${id}`)
+        return id
+      })
+      await s.waitFor(Promise.all(ids.map(placeAndApply)))
     } else if (op.k === 'end') {
-      const placed = sql.exec<{ turn_id: string }>("SELECT turn_id FROM turns WHERE runner IS NOT NULL AND state != 'ended'").toArray().map(r => r.turn_id).sort()
+      const placed = L.runners.flatMap(r => [...r.unfinished]).sort()
       if (placed.length > 0) ended(placed[op.i % placed.length])
     } else if (op.k === 'mode') {
-      runners[op.r].mode = op.mode
+      L.runners[op.r].mode = op.mode
     } else if (op.k === 'exit') {
-      const r = runners[op.r]
-      if (r.started) {
-        r.started = false
+      const r = L.runners[op.r]
+      if (r.awake || r.protocolBad) {
+        const want = [...r.unfinished].sort()
         const fenced = pool.containerExited(`runner-${op.r}`, r.gen)
+        if (JSON.stringify(fenced) !== JSON.stringify(want)) L.violate(`exit runner-${op.r}: fenced ${JSON.stringify(fenced)}, the ledger has ${JSON.stringify(want)}`)
+        if (pool.containerExited(`runner-${op.r}`, r.gen) !== null) L.violate(`exit runner-${op.r}: generation ${r.gen} taken twice`)
+        for (const id of want) ended(id)
+        r.awake = false
+        r.protocolBad = false
         r.gen++
-        log.push(`fence runner-${op.r} ${(fenced ?? ['DUPLICATE']).slice().sort().join(',')}`)
-        for (const id of fenced ?? []) ended(id)
-        // The same generation reported again (a second monitor): nothing more.
-        if (pool.containerExited(`runner-${op.r}`, r.gen - 1) !== null) violations.push('an exit taken twice')
       }
     } else {
-      clock.now += op.ms
+      L.now += op.ms
     }
     const due = sched.tasks.get('pool-retry')
-    if (due !== undefined && due.dueAtMs <= clock.now) {
+    if (due !== undefined && due.dueAtMs <= L.now) {
       sched.tasks.delete('pool-retry')
-      await pool.retryQueue()
+      const order = [...L.queue.keys()].filter(id => L.now - L.queue.get(id)! < QUEUE_MS)
+      const slot = L.pick([]) !== null
+      pass = { calls: [], order }
+      await s.waitFor(pool.retryQueue())
+      const { calls } = pass
+      pass = null
+      if (calls.length > PASS_MAX) L.violate(`a pass placed ${calls.length}`)
+      const inOrder = calls.every((id, k) => k === 0 || order.indexOf(id) > order.indexOf(calls[k - 1]))
+      if (!inOrder) L.violate(`a pass retried out of FIFO order: ${calls.join(',')} of ${order.join(',')}`)
+      if (order.length > 0 && slot && calls.length === 0) L.violate('a pass with a free slot handed nothing back')
+      for (const [id, at] of L.queue) if (L.now - at >= QUEUE_MS) L.violate(`${id}: still queued after ${L.now - at} ms`)
     }
     for (const { runner, c } of sql.exec<{ runner: string; c: number }>("SELECT runner, COUNT(*) AS c FROM turns WHERE runner IS NOT NULL AND state IN ('starting','live','ending') GROUP BY runner").toArray()) {
-      if (c > 25) violations.push(`${runner} has ${c} unfinished turns`)
+      if (c > CAP) L.violate(`${runner} has ${c} unfinished turns`)
     }
+    if (L.violations.length > 0) break
   }
-  return { log, violations }
+  return L.violations
 }
 
 describe('routing', () => {
-  it('placements equal the reference model; never over 25 per runner; an ambiguous turn is never placed again', async () => {
+  it('every pick, answer, queue move, expiry and fence follows the design table; never over 25; an ambiguous turn is never placed again', async () => {
     await fc.assert(
-      fc.asyncProperty(fc.array(opArb, { minLength: 100, maxLength: 300, size: 'max' }), async ops => {
-        const ref = new Reference()
-        for (const op of ops) ref.apply(op)
-        const real = await inObject(sql => runReal(sql, ops))
-        expect(real.violations).toEqual([])
-        expect(real.log).toEqual(ref.log)
+      fc.asyncProperty(fc.array(opArb, { minLength: 60, maxLength: 160, size: 'max' }), fc.scheduler(), async (ops, s) => {
+        expect(await inObject(sql => runReal(sql, ops, s))).toEqual([])
       }),
       { numRuns: 60 },
     )
@@ -354,6 +378,114 @@ describe('routing', () => {
     })
   })
 
+  it('one turn the runner rejects (typed 400) cools nothing: a good turn still places on runner-0 (H2)', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen, runner) VALUES ('t_live', 'live', 1, 'runner-0'), ('t_bad', 'starting', 1, NULL), ('t_good', 'starting', 1, NULL)")
+      const admits: string[] = []
+      const pool = poolWith(sql, name => async start => {
+        admits.push(`${start.runId}@${name}`)
+        return start.runId === 't_bad' ? { rejected: 400, gen: 1 } : { accepted: true, gen: 1, protocol: 2 }
+      })
+      sql.exec("UPDATE pool_runners SET state = 'up'")
+      expect(await pool.place(rs('t_bad'), 1)).toEqual({ refused: 'rejected', status: 400 })
+      expect(await pool.place(rs('t_good'), 1)).toEqual({ admitted: 'runner-0' })
+      expect(admits).toEqual(['t_bad@runner-0', 't_good@runner-0'])
+      expect(pool.queued()).toEqual([])
+      expect(sql.exec("SELECT runner FROM turns WHERE turn_id = 't_bad'").one().runner).toBeNull()
+      expect(sql.exec('SELECT runner, state, refused_until_ms, protocol FROM pool_runners ORDER BY runner').toArray()).toEqual([
+        { runner: 'runner-0', state: 'up', refused_until_ms: null, protocol: 2 },
+        { runner: 'runner-1', state: 'up', refused_until_ms: null, protocol: null },
+      ])
+    })
+  })
+
+  it('a typed 503 (stopping): the turn requeues, the runner cools 5 s but stays up with its protocol (H2)', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      const pool = poolWith(sql, () => async () => ({ unavailable: 'the runner is stopping', gen: 1 }))
+      sql.exec("UPDATE pool_runners SET state = 'up', protocol = 2 WHERE runner = 'runner-0'")
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ queued: true })
+      expect(sql.exec("SELECT state, refused_until_ms, protocol FROM pool_runners WHERE runner = 'runner-0'").one()).toEqual({ state: 'up', refused_until_ms: T0 + 5_000, protocol: 2 })
+    })
+  })
+
+  it('an ambiguous admission keeps the turn on the runner and makes it suspect for 60 s: new turns go elsewhere (H1)', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
+      const clock = { now: T0 }
+      const pool = poolWith(sql, name => async () => (name === 'runner-0' ? { ambiguous: true, gen: 1 } : { accepted: true, gen: 1, protocol: 2 }), clock)
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ ambiguous: 'runner-0' })
+      expect(sql.exec("SELECT runner FROM turns WHERE turn_id = 't_a'").one().runner).toBe('runner-0')
+      expect(await pool.place(rs('t_b'), 1)).toEqual({ admitted: 'runner-1' })
+      clock.now = T0 + 60_000
+      expect(await pool.place(rs('t_c'), 1)).toEqual({ ambiguous: 'runner-0' })
+    })
+  })
+
+  it('409 run_live: the turn is live there, so it keeps the runner and is ambiguous, never cleared or moved', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      const admits: string[] = []
+      const pool = poolWith(sql, name => async start => {
+        admits.push(`${start.runId}@${name}`)
+        return { refused: 'run_live', gen: 1 }
+      })
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ ambiguous: 'runner-0' })
+      expect(admits).toEqual(['t_a@runner-0'])
+      expect(sql.exec("SELECT runner FROM turns WHERE turn_id = 't_a'").one().runner).toBe('runner-0')
+      expect(pool.queued()).toEqual([])
+    })
+  })
+
+  it('a second place() of a turn whose admission is in flight answers ambiguous and sends nothing', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      let open!: () => void
+      const barrier = new Promise<void>(r => (open = r))
+      let calls = 0
+      const pool = poolWith(sql, () => async () => {
+        calls++
+        await barrier
+        return { accepted: true, gen: 1, protocol: 2 }
+      })
+      const first = pool.place(rs('t_a'), 1)
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ ambiguous: 'runner-0' })
+      open()
+      expect(await first).toEqual({ admitted: 'runner-0' })
+      expect(calls).toBe(1)
+    })
+  })
+
+  it('a stale attempt refused by the runner leaves the newer attempt on the same runner alone (the gen fence)', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      // The newer attempt (gen 2) already sits on runner-0.
+      sql.exec("INSERT INTO turns (turn_id, state, gen, runner) VALUES ('t_a', 'starting', 2, 'runner-0')")
+      const pool = poolWith(sql, () => async () => ({ rejected: 400, gen: 1 }))
+      sql.exec("UPDATE pool_runners SET state = 'up' WHERE runner = 'runner-0'")
+      await pool.place(rs('t_a'), 1)
+      expect(sql.exec("SELECT runner FROM turns WHERE turn_id = 't_a'").one().runner).toBe('runner-0')
+    })
+  })
+
+  it('a late exit of an older generation fences nothing on the newer container', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      const pool = poolWith(sql, () => async () => ({ accepted: true, gen: 3, protocol: 2 }))
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-0' })
+      sql.exec("UPDATE turns SET state = 'live' WHERE turn_id = 't_a'")
+      expect(pool.containerExited('runner-0', 2)).toEqual([])
+      expect(sql.exec("SELECT state FROM pool_runners WHERE runner = 'runner-0'").one().state).toBe('up')
+      expect(pool.containerExited('runner-0', 3)).toEqual(['t_a'])
+    })
+  })
+
   it('a stale attempt (the turn moved on to another gen) leaves no runner on the row after a refusal', async () => {
     await inObject(async sql => {
       w1Tables(sql)
@@ -407,6 +539,90 @@ function drainRig(sql: SqlStorage): DrainRig {
   })
   return rig
 }
+
+describe('placement queue', () => {
+  /** Turns queued in this order (a chat_live answer each), then the runners answer per `answer`. */
+  async function queuedRig(sql: SqlStorage, ids: string[], answer: (turnId: string) => AdmitResult) {
+    w1Tables(sql)
+    for (const id of ids) sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES (?, 'starting', 1)", id)
+    const clock = { now: T0 }
+    const sched = new FakeScheduler()
+    let script: (turnId: string) => AdmitResult = () => ({ refused: 'chat_live', gen: 1 })
+    const retried: string[] = []
+    const expired: string[] = []
+    const hooks: PlacementHooks = {
+      retryPlacement: async id => {
+        retried.push(id)
+        await pool.place(rs(id), 1)
+      },
+      placementExpired: async id => void expired.push(id),
+    }
+    const pool = poolWith(sql, () => async start => script(start.runId), clock, hooks, sched)
+    for (const id of ids) {
+      expect(await pool.place(rs(id), 1)).toEqual({ queued: true })
+      clock.now += 1
+    }
+    script = answer
+    return { pool, clock, sched, retried, expired, set hooks(h: PlacementHooks) { Object.assign(hooks, h) } }
+  }
+
+  it('a head still answered chat_live does not hold the turns behind it', async () => {
+    await inObject(async sql => {
+      const rig = await queuedRig(sql, ['t_a', 't_b', 't_c'], id => (id === 't_a' ? { refused: 'chat_live', gen: 1 } : { accepted: true, gen: 1, protocol: 2 }))
+      await rig.pool.retryQueue()
+      expect(rig.retried).toEqual(['t_a', 't_b', 't_c'])
+      expect(rig.pool.queued()).toEqual(['t_a'])
+    })
+  })
+
+  it('a newcomer queued behind the queue while a slot is free brings the next pass forward to now', async () => {
+    await inObject(async sql => {
+      const rig = await queuedRig(sql, ['t_a'], () => ({ refused: 'chat_live', gen: 1 }))
+      rig.clock.now = T0 + 2_000
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_new', 'starting', 1)")
+      expect(await rig.pool.place(rs('t_new'), 1)).toEqual({ queued: true })
+      expect(rig.pool.queued()).toEqual(['t_a', 't_new'])
+      expect(rig.sched.tasks.get('pool-retry')?.dueAtMs).toBe(T0 + 2_000)
+    })
+  })
+
+  it('a pass places at most 3, and the rest go in the next pass at once', async () => {
+    await inObject(async sql => {
+      const ids = ['t_1', 't_2', 't_3', 't_4', 't_5']
+      const rig = await queuedRig(sql, ids, () => ({ accepted: true, gen: 1, protocol: 2 }))
+      await rig.pool.retryQueue()
+      expect(rig.retried).toEqual(['t_1', 't_2', 't_3'])
+      expect(rig.pool.queued()).toEqual(['t_4', 't_5'])
+      expect(rig.sched.tasks.get('pool-retry')?.dueAtMs).toBe(rig.clock.now)
+      await rig.pool.retryQueue()
+      expect(rig.retried).toEqual(ids)
+      expect(rig.pool.queued()).toEqual([])
+    })
+  })
+
+  it('every row is checked for expiry in a pass, and a row stays queued until placementExpired succeeded', async () => {
+    await inObject(async sql => {
+      const rig = await queuedRig(sql, ['t_a', 't_b', 't_c'], () => ({ refused: 'chat_live', gen: 1 }))
+      // t_a and t_b were queued at T0 and T0+1, t_c at T0+2: at T0+60_001 the first two are due, t_c isn't.
+      rig.clock.now = T0 + 60_001
+      let fail = true
+      rig.hooks = {
+        retryPlacement: async () => {},
+        placementExpired: async id => {
+          if (id === 't_b' && fail) throw new Error('W1 could not fail it')
+          rig.expired.push(id)
+        },
+      }
+      await expect(rig.pool.retryQueue()).rejects.toThrow('W1 could not fail it')
+      expect(rig.expired).toEqual(['t_a'])
+      expect(rig.pool.queued()).toEqual(['t_b', 't_c'])
+      fail = false
+      await rig.pool.retryQueue()
+      expect(rig.expired).toEqual(['t_a', 't_b'])
+      expect(rig.pool.queued()).toEqual(['t_c'])
+    })
+  })
+})
 
 describe('drain', () => {
   it('a placement racing the drain call: refused at the next step, never sent to another runner', async () => {
@@ -482,6 +698,19 @@ describe('drain', () => {
 })
 
 describe('warm-up', () => {
+  it('refuses while a runner still has the container it had when the drain began; a newer one passes', async () => {
+    await inObject(async sql => {
+      const rig = drainRig(sql)
+      sql.exec("UPDATE pool_runners SET state = 'up', container_gen = 4 WHERE runner IN ('runner-0', 'runner-1')")
+      rig.pool.drain(rig.clock.now)
+      rig.warm = async name => ({ ok: true, gen: name === 'runner-0' ? 5 : 4, protocol: 2 })
+      expect(await rig.pool.warmup()).toEqual({ refused: { code: 'unavailable', reason: 'draining' } })
+      expect(rig.pool.drainState().drainingUntilMs).toBe(T0 + 1_800_000)
+      rig.warm = async () => ({ ok: true, gen: 5, protocol: 2 })
+      expect(await rig.pool.warmup()).toEqual({ ok: true })
+    })
+  })
+
   it('refuses to clear the drain when /health fails on a runner', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
@@ -567,6 +796,24 @@ describe('signals', () => {
       expect(rig.pool.health().restarts.ok).toBe(false)
       rig.clock.now = T0 + 3_600_001
       expect(rig.pool.health().restarts.ok).toBe(true)
+    })
+  })
+
+  it('pool_shortfall: a turn that waited over 30 s and was then placed keeps it red for 15 minutes', async () => {
+    await inObject(async sql => {
+      const rig = drainRig(sql)
+      let answer: AdmitResult = { refused: 'chat_live', gen: 1 }
+      rig.admit = async () => answer
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      expect(await rig.pool.place(rs('t_a'), 1)).toEqual({ queued: true })
+      rig.clock.now = T0 + 30_001
+      answer = { accepted: true, gen: 1, protocol: 2 }
+      expect(await rig.pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-0' })
+      expect(rig.pool.queued()).toEqual([])
+      rig.clock.now = T0 + 30_001 + 15 * 60_000 - 1
+      expect(rig.pool.health().shortfall.ok).toBe(false)
+      rig.clock.now = T0 + 30_001 + 15 * 60_000
+      expect(rig.pool.health().shortfall.ok).toBe(true)
     })
   })
 
