@@ -50,10 +50,19 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   const fx = t.fixtures
   let notices: AgentNotice[]
   let unsubscribe: () => void
+  /** Every `subscribe` listener a test adds: the mock is one shared instance, so each comes off after the test, pass or fail. */
+  let offs: (() => void)[] = []
+  const subscribe = (listener: () => void) => {
+    const off = t.client.subscribe(listener)
+    offs.push(off)
+    return off
+  }
+  const dropListeners = () => { const all = offs; offs = []; all.forEach(off => off()) }
 
   /** A first-run client in a stage and scenario, with the notice collector listening (a reset replaces the client). */
   const fresh = async (stage: Stage = 'Act', scenario: Scenario = 'Normal') => {
     unsubscribe?.()
+    dropListeners()
     await t.reset()
     await t.seed({ stage, scenario })
     notices = []
@@ -65,6 +74,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   })
   afterEach(async () => {
     unsubscribe()
+    dropListeners()
     await t.failSaves(false)
     await t.teardown()
     // Every notice the test collected is one the schema accepts.
@@ -599,7 +609,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     test('subscribe tells listeners of every change, and stops after unsubscribe', async () => {
       // `seed` resolves only once the client shows the new world, so a listener has heard it by the time it returns.
       const calls = vi.fn(() => t.client.getSnapshot())
-      const off = t.client.subscribe(calls)
+      const off = subscribe(calls)
       const before = t.client.getSnapshot()
       await t.client.pause()
       expect(calls.mock.calls.length, 'a write tells the listener').toBeGreaterThanOrEqual(1)
@@ -671,7 +681,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await t.settle()
       clearNotices()
       const heard: ReturnType<ContractTarget['client']['getSnapshot']>[] = []
-      const off = t.client.subscribe(() => heard.push(t.client.getSnapshot()))
+      const off = subscribe(() => heard.push(t.client.getSnapshot()))
       return { snapshot: t.client.getSnapshot(), data: t.client.read(), observed: observe(w), heard, off }
     }
     /** After a failed `approve`: it never goes out later. */
@@ -688,6 +698,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         const settled = w.run(t.client)
         expect(observe(w), 'the change shows before the write settles').not.toEqual(before.observed)
         await settled
+        await until(() => before.heard.length >= 1, 'the listeners being told')
         before.off()
         expect(before.heard.length, 'listeners were told').toBeGreaterThanOrEqual(1)
         expect(notices).toEqual([])
