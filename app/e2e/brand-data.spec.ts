@@ -1,20 +1,15 @@
 // UI chrome takes the brand's name and channel from the agent's data, never from the demo. A brand that isn't Northline and
 // has no chat channel: the sidebar, a Library preview, and the Skills, Usage and Settings pages never say Northline, and no
 // page of a short tour says Slack. What the agent wrote (draft bodies, sign-offs, emails) is its data and may name anyone.
-// The mock reads the override from localStorage `inhouse.demo.data.v1` (see DATA_OVERRIDE_KEY in src/agent/mock.ts).
-import { expect, test } from './csp.js'
+// The sample brand is overridden through `fx.seed({ demo: { brand } })`.
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
+import type { Stage } from './support/fx.js'
 
 const BRAND = 'Fernwood Supply'
 
-async function start(page: Page, stage: string, hash: string, scenario = 'Normal') {
-  await page.addInitScript(([s, brand, sc]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Off', animateMark: false }))
-    localStorage.setItem('inhouse.demo.data.v1', JSON.stringify({ brandName: brand, channels: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, BRAND, scenario])
+async function start(page: Page, stage: Stage, hash: string, scenario = 'Normal') {
+  await fxFor(page, undefined).seed({ stage, scenario, demo: { brand: { brandName: BRAND, channels: false } } })
   await page.goto('/?demo' + hash)
 }
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
@@ -83,12 +78,7 @@ test('Approvals at Watch names no channel', async ({ page }) => {
 })
 
 test('the sample brand still shows its own name and channel', async ({ page }) => {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Act' })
   await page.goto('/?demo#/approvals')
   await expect(side(page)).toContainText('Northline Outdoor')
   await go(page, '#/settings/you-notif')

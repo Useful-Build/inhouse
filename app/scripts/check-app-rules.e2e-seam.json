@@ -1,29 +1,6 @@
 {
   "note": "E2E files that still name an `inhouse.demo.` storage key, the UI session key, sample data or the mock module, each with its hit count (lines). A count that goes up or an unlisted file fails the lint; so does a stale or inexact entry. Batches lower the counts and remove files. Delete this file when the list is empty (batch A and batch B clear it).",
   "files": {
-    "e2e/app.spec.ts": 1,
-    "e2e/brand-data.spec.ts": 3,
-    "e2e/chats-manage-phone.spec.ts": 1,
-    "e2e/chats-manage.spec.ts": 2,
-    "e2e/composer-phone.spec.ts": 1,
-    "e2e/composer.spec.ts": 1,
-    "e2e/conversation-phone.spec.ts": 1,
-    "e2e/conversation-polish.spec.ts": 3,
-    "e2e/conversation.spec.ts": 1,
-    "e2e/cross-screen.spec.ts": 1,
-    "e2e/data-states.spec.ts": 1,
-    "e2e/dots-and-today-phone.spec.ts": 1,
-    "e2e/dots-and-today.spec.ts": 2,
-    "e2e/edge-cases.spec.ts": 1,
-    "e2e/help-account-menu.spec.ts": 1,
-    "e2e/library-polish.spec.ts": 1,
-    "e2e/library.spec.ts": 1,
-    "e2e/memory.spec.ts": 1,
-    "e2e/menus.spec.ts": 1,
-    "e2e/mock-behaviour.spec.ts": 1,
-    "e2e/models-and-scroll-phone.spec.ts": 1,
-    "e2e/models-and-scroll.spec.ts": 1,
-    "e2e/motion.spec.ts": 1,
     "e2e/sample-data.spec.ts": 4
   }
 }
