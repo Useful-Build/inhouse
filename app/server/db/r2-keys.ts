@@ -5,6 +5,7 @@ export const R2_PREFIXES = [
 
   // W3 (p3-w3.md): 'sessions/' (PR 1), 'files/' (PR 2); entries in ops/tables/files.ts.
   'sessions/',
+  'files/',
 
   // W4 (p3-w4.md): 'audit-copy/' (entry in ops/tables/usage.ts).
 ] as const
@@ -20,5 +21,8 @@ export const sessionPrefix = (chatId: string, sessionId: string, projectHash: st
 /** One stored part: `<sub>` is `m` (the main transcript) or `s/<encodeURIComponent(subpath)>` (a subagent's). */
 export const sessionKey = (chatId: string, sessionId: string, projectHash: string, sub: string, part: string): string =>
   `${sessionPrefix(chatId, sessionId, projectHash)}${sub}/${part}.json`
+
+/** A chat file's bytes: `files/<chatId>/<fileId>` (an attachment or an output, p3-design 8.5). */
+export const chatFileKey = (chatId: string, fileId: string): string => `files/${chatId}/${fileId}`
 
 // W4's key builders (audit-copy/).
