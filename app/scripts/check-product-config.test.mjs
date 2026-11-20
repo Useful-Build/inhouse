@@ -37,6 +37,8 @@ const RULE_TEXT = {
   'version-metadata-missing': 'version_metadata needs a binding name',
   'secret-var-named': 'vars.AUDIT_HASH_KEY looks like a secret',
   'secret-var-pattern': 'vars.SESSION_TOKEN looks like a secret',
+  'sbx-name': 'config.name carries inhouse-sbx-',
+  'sbx-host': 'config.vars.INHOUSE_ACCESS carries inhouse-sbx-',
 }
 
 describe('check-product-config', () => {
