@@ -12,3 +12,4 @@ export const UNAUTHORIZED = 'unauthorized' satisfies AgentErrorCode
 export const REASON = {
   badType: 'bad_type', wrongScope: 'wrong_scope', alreadyMember: 'already_member', lastAdmin: 'last_admin', grantLive: 'grant_live',
 } as const satisfies Record<string, ErrorReason>
+export const RATE_LIMITED = 'rate_limited' satisfies AgentErrorCode
