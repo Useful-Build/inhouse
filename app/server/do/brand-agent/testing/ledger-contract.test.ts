@@ -10,6 +10,7 @@ import { createUsageLedger } from '../../../usage/ledger.ts'
 import { NOV, monthRow, resetUsage, setSetting, turnIn, turnRow } from '../../../usage/test-fixtures.ts'
 import { TURN_CEILING_MICRO } from '../../../model/catalog.ts'
 import { env } from 'cloudflare:workers'
+import { StoreUnavailableError } from '../../../db/sql.ts'
 
 type Step =
   | { op: 'cap'; cap: string; micro: number }
@@ -19,7 +20,8 @@ type Step =
   | { op: 'settle'; turn: string; micro: number; want: unknown }
   | { op: 'release'; turn: string; want: unknown }
 
-const THROWS = 'throws'
+/** A throw, by class: storage down (resent by the BrandAgent) or the ledger refusing for good (dropped). */
+const REFUSED = 'refused'
 const SONNET = 'claude-sonnet-5-5'
 const HAIKU = 'claude-haiku-5-5'
 
@@ -40,7 +42,7 @@ const SCRIPT: Step[] = [
   { op: 'extend', turn: 'tA', call: 'a1', need: 120_000, want: { ok: true, ledgerHold: 400_000 } }, // 900k
   { op: 'extend', turn: 'tA', call: 'a1', need: 120_000, want: { ok: true, ledgerHold: 400_000 } }, // a retry: once
   // An extended call not closed: release refuses (its cost would be lost).
-  { op: 'release', turn: 'tA', want: THROWS },
+  { op: 'release', turn: 'tA', want: REFUSED },
   { op: 'close', turn: 'tA', call: 'a1', actual: 90_000, hold: 300_000, want: { ledgerHold: 300_000 } }, // 800k
   // A double close changes nothing.
   { op: 'close', turn: 'tA', call: 'a1', actual: 999, hold: 260_000, want: { ledgerHold: 300_000 } },
@@ -57,11 +59,11 @@ const SCRIPT: Step[] = [
   // 700k is more than the cap leaves even with no other hold: `cap_reached`.
   { op: 'extend', turn: 'tC', call: 'c1', need: 700_000, want: { refused: 'cap_reached', ledgerHold: 250_000 } },
   // Unknown turns.
-  { op: 'settle', turn: 'tZ', micro: 10, want: THROWS },
+  { op: 'settle', turn: 'tZ', micro: 10, want: REFUSED },
   { op: 'settle', turn: 'tZ', micro: 0, want: undefined },
   { op: 'release', turn: 'tZ', want: undefined },
-  { op: 'close', turn: 'tZ', call: 'z1', actual: 1, hold: 1, want: THROWS },
-  { op: 'extend', turn: 'tZ', call: 'z1', need: 50_000, want: THROWS },
+  { op: 'close', turn: 'tZ', call: 'z1', actual: 1, hold: 1, want: REFUSED },
+  { op: 'extend', turn: 'tZ', call: 'z1', need: 50_000, want: REFUSED },
   // The reserve's cap edge at exact equality: cap − spent = 250k fits a start hold, so others' holds block it.
   { op: 'cap', cap: '$0.37', micro: 370_000 },
   { op: 'reserve', turn: 'tF', want: { refused: 'budget_busy' } },
@@ -87,7 +89,9 @@ const END = {
 
 async function run(ledger: UsageLedgerPort, setCap: (cap: string, micro: number) => Promise<void>): Promise<unknown[]> {
   const out: unknown[] = []
-  const attempt = async (f: () => Promise<unknown>) => { try { out.push(await f()) } catch { out.push(THROWS) } }
+  const attempt = async (f: () => Promise<unknown>) => {
+    try { out.push(await f()) } catch (err) { out.push(err instanceof StoreUnavailableError ? 'unavailable' : REFUSED) }
+  }
   for (const s of SCRIPT) {
     switch (s.op) {
       case 'cap': await setCap(s.cap, s.micro); break
