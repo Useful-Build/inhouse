@@ -15,7 +15,7 @@ import type { Seeded, Signer } from './me'
 
 /** Client methods the real target doesn't serve yet, each with why (the suite skips them by name). */
 export const CHAT_EXEMPT: Readonly<Record<string, string>> = {
-  forgetMemory: 'no route creates a memory fact until a chat turn can run on the test build (W7 PR 2, Q2 deployment); seeding would need a second writer on wrangler\'s open SQLite file',
+  forgetMemory: 'no route creates a memory fact until a chat turn can run on the test build (W7 PR 2, Q2 deployment); the contract suite has no local D1 to seed in remote mode (the API specs seed with writeSql, a second writer, which the contract target avoids)',
 }
 
 /** The paths the client reads the Memory and Usage pages from (`readMemory`, `readUsage`). */

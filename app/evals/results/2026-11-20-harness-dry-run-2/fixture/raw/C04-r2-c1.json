@@ -1,0 +1,49 @@
+{
+ "row": {
+  "caseId": "C04",
+  "cat": "connector",
+  "pair": "products_search/inventory_levels_get",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat comes from a search for \"ceramic\", so a product with a differently spelled tag, like \"stoneware\", wouldn't show up. I can run a wider search if you'd like.",
+  "costUsd": 0.011673200000000002,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__shop__products_search",
+    "input": {},
+    "result": "\"MCP error -32602: Input validation error: Invalid arguments for tool products_search: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"query\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\\n\\nThis tool's inpu",
+    "isError": true
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "ceramic"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat comes from a search for \"ceramic\", so a product with a differently spelled tag, like \"stoneware\", wouldn't show up. I can run a wider search if you'd like.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2618,
+   "cacheReadTokens": 32562,
+   "outputTokens": 186
+  },
+  "costUsd": 0.011673200000000002
+ }
+}

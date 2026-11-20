@@ -29,6 +29,7 @@ const upload = (request: APIRequestContext, who: typeof dana, chatId: string, na
 
 test.beforeAll(async ({ request }) => { await endLiveGrants(request) })
 test.afterAll(async ({ request }) => {
+  if (process.env.E2E_TEST_BUILD_REMOTE) return // nothing was seeded: writeSql skips there, and a skip inside a hook is not relied on
   await endLiveGrants(request)
   for (const id of chatIds) {
     writeSql('DELETE FROM chat_files WHERE chat_id = ?', id)
@@ -98,7 +99,7 @@ test('Inhouse is refused without a live grant and reads the list and the file un
   expectError(await call(request, inhouse, 'GET', `/api/chats/${chatId}/files`), 403, 'forbidden', 'grant_required')
   expectError(await call(request, inhouse, 'GET', `/api/files/${up.json.fileId}`), 403, 'forbidden', 'grant_required')
   const grant = await call(request, admin, 'POST', '/api/grants', { json: { hours: 1 } })
-  expect(grant.status, grant.text).toBe(200)
+  expect(grant.status, grant.text).toBe(201)
   const list = await call(request, inhouse, 'GET', `/api/chats/${chatId}/files`)
   expect(list.status, list.text).toBe(200)
   expect(list.json.items.map((i: { fileId: string }) => i.fileId)).toEqual([up.json.fileId])

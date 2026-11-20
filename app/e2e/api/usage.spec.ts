@@ -34,6 +34,7 @@ test.beforeAll(async ({ request }) => {
   turn(TURNS[2]!, CHATS[0]!, d.memberId, 'claude-sonnet-5-5', '2025-02', 10_000_000)
 })
 test.afterAll(() => {
+  if (process.env.E2E_TEST_BUILD_REMOTE) return // nothing was seeded: writeSql skips there, and a skip inside a hook is not relied on
   for (const t of TURNS) writeSql('DELETE FROM usage_turns WHERE turn_id = ?', t)
   for (const m of ['2025-01', '2025-02']) writeSql('DELETE FROM usage_months WHERE month = ?', m)
 })

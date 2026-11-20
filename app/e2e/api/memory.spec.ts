@@ -37,6 +37,7 @@ test.beforeAll(async ({ request }) => {
   seed(ids.adminActive, 'person', a.memberId, 'E2E Admin note.', 'active')
 })
 test.afterAll(async ({ request }) => {
+  if (process.env.E2E_TEST_BUILD_REMOTE) return // nothing was seeded: writeSql skips there, and a skip inside a hook is not relied on
   await endLiveGrants(request)
   for (const id of Object.values(ids)) writeSql('DELETE FROM memories WHERE id = ?', id)
 })
@@ -74,7 +75,7 @@ test('GET /api/memory shows active team facts and the caller\'s own, never waiti
 test('Inhouse is refused without a live grant and, under one, reads the team lines but none of a member\'s own', async ({ request }) => {
   expectError(await call(request, inhouse, 'GET', '/api/memory'), 403, 'forbidden', 'grant_required')
   const grant = await call(request, admin, 'POST', '/api/grants', { json: { hours: 1 } })
-  expect(grant.status, grant.text).toBe(200)
+  expect(grant.status, grant.text).toBe(201)
   const page = keys(await read(request, inhouse))
   expect(page.team).toContain(ids.teamActive)
   expect([...page.team, ...page.personal]).not.toEqual(expect.arrayContaining([ids.danaActive]))

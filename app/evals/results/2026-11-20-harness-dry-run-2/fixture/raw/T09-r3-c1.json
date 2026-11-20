@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I've sent Tom a message that the Norda delivery arrived this morning.",
+  "costUsd": 0.0087336,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__notification_send",
+    "input": {
+     "to": [
+      "p_tom"
+     ],
+     "body": "Hi Tom, Maya says the Norda delivery arrived this morning.",
+     "format": "message"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Sent to the team.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've sent Tom a message that the Norda delivery arrived this morning.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2027,
+   "cacheReadTokens": 21081,
+   "outputTokens": 155
+  },
+  "costUsd": 0.0087336
+ }
+}

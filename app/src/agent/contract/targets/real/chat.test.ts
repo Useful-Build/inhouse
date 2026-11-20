@@ -16,7 +16,7 @@ describe('the real target\'s memory and usage parts', () => {
   })
   it('exempts forgetMemory with a reason that names the later PR', () => {
     expect(Object.keys(CHAT_EXEMPT)).toEqual(['forgetMemory'])
-    expect(CHAT_EXEMPT.forgetMemory).toMatch(/second writer.*W7 PR 2|W7 PR 2.*second writer/)
+    expect(CHAT_EXEMPT.forgetMemory).toMatch(/no route creates a memory fact.*W7 PR 2.*no local D1/)
   })
   it('sends a team line to route 45 and a person\'s own to route 44', async () => {
     expect(await forgetRoute(signer(200, page), 'admin', KEY_B)).toEqual({ verbs: ['PUT'], path: `/api/memory/brand/${KEY_B}/forgotten` })
