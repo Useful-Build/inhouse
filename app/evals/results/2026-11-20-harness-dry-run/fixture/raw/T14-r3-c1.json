@@ -1,0 +1,69 @@
+{
+ "row": {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "team_request_list",
+   "team_request_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't connect it myself, so I've sent a request to the Inhouse team (tr_17). I asked for read access to TikTok Shop orders, plus products and inventory if possible.\n\nUntil it's connected, I can't see TikTok orders, so any order or stock numbers I give you won't include them. The Klaviyo connection",
+  "costUsd": 0.0173624,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__team_request_create,mcp__inhouse__team_request_list",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__team_request_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__team_request_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "TikTok Shop"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"request_id\\\":\\\"tr_12\\\",\\\"title\\\":\\\"Connect Klaviyo\\\",\\\"status\\\":\\\"in progress\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__team_request_create",
+    "input": {
+     "title": "Connect TikTok Shop",
+     "details": "Maya Berg (owner) asked to connect TikTok Shop. The team can't see its orders yet, so orders are missing from our view next to the shop and mail apps. We need read access to TikTok Shop orders at minimum. Products and inventory would be useful too."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Request tr_17 sent to the Inhouse team.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I can't connect it myself, so I've sent a request to the Inhouse team (tr_17). I asked for read access to TikTok Shop orders, plus products and inventory if possible.\n\nUntil it's connected, I can't see TikTok orders, so any order or stock numbers I give you won't include them. The Klaviyo connection (tr_12) is already in progress, so the team has that one open too.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2811,
+   "cacheReadTokens": 45389,
+   "outputTokens": 578
+  },
+  "costUsd": 0.0173624
+ }
+}

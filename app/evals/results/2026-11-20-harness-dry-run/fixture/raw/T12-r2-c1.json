@@ -1,0 +1,60 @@
+{
+ "row": {
+  "caseId": "T12",
+  "cat": "choice",
+  "pair": "routine_update/delete",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_update"
+  ],
+  "toolSearches": 1,
+  "answer": "I've paused the Monday stock report. It won't run next Monday. Just ask when you want it back on and I'll resume it. The daily orders summary is still running as usual.",
+  "costUsd": 0.0137757,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_list,mcp__inhouse__routine_update",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_update\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_update",
+    "input": {
+     "routine_id": "r_mon_stock",
+     "state": "paused"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Updated r_mon_stock.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've paused the Monday stock report. It won't run next Monday. Just ask when you want it back on and I'll resume it. The daily orders summary is still running as usual.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2583,
+   "cacheReadTokens": 45022,
+   "outputTokens": 280
+  },
+  "costUsd": 0.0137757
+ }
+}

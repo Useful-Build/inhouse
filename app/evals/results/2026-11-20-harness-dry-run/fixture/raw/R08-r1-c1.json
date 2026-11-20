@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "R08",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. Our policy is that we never ship to PO boxes. If a customer gives one, Lena can ask them for a street address instead.",
+  "costUsd": 0.0089349,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "post office box PO box shipping policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] We never ship to PO boxes.\\nm_seed2 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "No. Our policy is that we never ship to PO boxes. If a customer gives one, Lena can ask them for a street address instead.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2300,
+   "cacheReadTokens": 20769,
+   "outputTokens": 110
+  },
+  "costUsd": 0.0089349
+ }
+}

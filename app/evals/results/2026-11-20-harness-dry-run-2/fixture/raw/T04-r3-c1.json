@@ -1,0 +1,62 @@
+{
+ "row": {
+  "caseId": "T04",
+  "cat": "choice",
+  "pair": "memory_forget/routine_delete",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_forget"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the saved fact \"The Moss glaze mug is our bestseller.\" It was the only one about the Moss glaze. If you tell me the correct fact, I can save it.",
+  "costUsd": 0.0130272,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Moss glaze"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_moss [brand] The Moss glaze mug is our bestseller.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__memory_forget,mcp__inhouse__memory_update",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_forget\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_update\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_forget",
+    "input": {
+     "memory_id": "m_moss",
+     "reason": "Maya said the fact is wrong."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Deleted m_moss.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I deleted the saved fact \"The Moss glaze mug is our bestseller.\" It was the only one about the Moss glaze. If you tell me the correct fact, I can save it.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2615,
+   "cacheReadTokens": 33177,
+   "outputTokens": 316
+  },
+  "costUsd": 0.0130272
+ }
+}

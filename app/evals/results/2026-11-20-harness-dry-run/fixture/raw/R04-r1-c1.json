@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "R04",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I'd set up a daily routine. It checks inventory each morning and sends Tom a short message listing only the products below their threshold. Nothing is sent on days when nothing is low.\n\n- **Channel:** An in-app message works for most days. If you want him to see it faster, add email or Slack. His no",
+  "costUsd": 0.012862700000000001,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Tom notifications stock low alerts preference"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "low stock threshold reorder"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I'd set up a daily routine. It checks inventory each morning and sends Tom a short message listing only the products below their threshold. Nothing is sent on days when nothing is low.\n\n- **Channel:** An in-app message works for most days. If you want him to see it faster, add email or Slack. His notification settings decide how it reaches him.\n- **Timing:** A morning check fits a buyer who orders on a schedule. If some items sell out in a day or two, I can also run it twice a day.\n- **Content:** Product name, current stock, the threshold, and the sales pace if I can get it. That way he can tell what needs ordering now and what can wait.\n- **Orders:** I'd only flag the shortage. Any purchase order would come to you or Tom as an approval request first.\n\nI don't have a saved low-stock threshold or any preference from Tom. Two questions before I build it:\n1. What counts as low? One number for every product, or different numbers per product?\n2. Should Tom get this by app, email or Slack?\n\nOnce you answer, I'll create the routine.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2435,
+   "cacheReadTokens": 20772,
+   "outputTokens": 469
+  },
+  "costUsd": 0.012862700000000001
+ }
+}

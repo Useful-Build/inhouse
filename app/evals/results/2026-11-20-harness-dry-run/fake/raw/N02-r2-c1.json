@@ -1,0 +1,31 @@
+{
+ "row": {
+  "caseId": "N02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true,
+   "answer": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "15 percent of 240 is 36.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [],
+  "answer": "15 percent of 240 is 36.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

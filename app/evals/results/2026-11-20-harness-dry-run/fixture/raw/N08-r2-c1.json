@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't give you tomorrow's Berlin weather. The web lookup I tried needed permission, and nobody was available to approve it in this session. I haven't guessed a forecast, since I'd only be making one up.\n\nFor a quick answer, check a weather app or a site like dwd.de (the German weather service). If",
+  "costUsd": 0.0144098,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:WebSearch,WebFetch",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"WebSearch\"},{\"type\":\"tool_reference\",\"tool_name\":\"WebFetch\"}]",
+    "isError": false
+   },
+   {
+    "name": "WebFetch",
+    "input": {
+     "url": "https://wttr.in/Berlin?format=j1",
+     "prompt": "Give tomorrow's (2026-11-20) forecast for Berlin: min/max temperature in C, conditions, chance of rain, wind."
+    },
+    "result": "\"Permission for this tool use was denied. It requires approval, and this session has no approval surface — nobody can answer a permission prompt here — so it was denied automatically. The action was NOT performed; do not claim it succeeded, and do not retry it: this action, and anything else that re",
+    "isError": true
+   }
+  ],
+  "answer": "I can't give you tomorrow's Berlin weather. The web lookup I tried needed permission, and nobody was available to approve it in this session. I haven't guessed a forecast, since I'd only be making one up.\n\nFor a quick answer, check a weather app or a site like dwd.de (the German weather service). If you want, I can help with shop or mail tasks in the meantime.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 3067,
+   "cacheReadTokens": 33403,
+   "outputTokens": 339
+  },
+  "costUsd": 0.0144098
+ }
+}

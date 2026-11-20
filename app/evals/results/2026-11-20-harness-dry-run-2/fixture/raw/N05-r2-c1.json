@@ -1,0 +1,57 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get",
+   "memory_search",
+   "order_get"
+  ],
+  "toolSearches": 0,
+  "answer": "Order 1042 is 2 Moss mugs, €24.90, and it shows as delivered. I can't see the customer's details in the shop record, so I haven't confirmed that the name and address you gave match the order.\n\nI don't have a saved policy for damaged items, so I haven't drafted anything yet. Which of these do you wan",
+  "costUsd": 0.0135439,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__shop__order_get",
+    "input": {},
+    "result": "\"MCP error -32602: Input validation error: Invalid arguments for tool order_get: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"order_id\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\\n\\nThis tool's input s",
+    "isError": true
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "damaged order policy refund replacement"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Order 1042 is 2 Moss mugs, €24.90, and it shows as delivered. I can't see the customer's details in the shop record, so I haven't confirmed that the name and address you gave match the order.\n\nI don't have a saved policy for damaged items, so I haven't drafted anything yet. Which of these do you want?\n\n1. A replacement: send 2 new mugs, or only the damaged one if only one broke.\n2. A full refund of €24.90.\n3. A partial refund, if only one mug was damaged.\n\nOnce you pick, I'll put the customer email and the refund or replacement into Approvals. Nothing goes out until you approve it. It would also help to know whether Anna sent photos.\n\nI haven't saved her phone number or address, because they're customer personal data.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2476,
+   "cacheReadTokens": 33119,
+   "outputTokens": 403
+  },
+  "costUsd": 0.0135439
+ }
+}

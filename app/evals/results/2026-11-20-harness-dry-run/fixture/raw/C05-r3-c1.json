@@ -1,0 +1,58 @@
+{
+ "row": {
+  "caseId": "C05",
+  "cat": "connector",
+  "pair": "campaign_stats_get/campaigns_list",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "campaigns_list",
+   "memory_search",
+   "campaign_stats_get"
+  ],
+  "toolSearches": 0,
+  "answer": "The November newsletter (sent 12 Nov) did well:\n\n- **Opens:** 41%\n- **Clicks:** 6%\n- **Revenue:** €1,830\n\nI don't have earlier campaigns or saved benchmarks to compare against, so I can't say if this is above or below your usual results. If you want, I can look through past activity for earlier numb",
+  "costUsd": 0.011728,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__mail__campaigns_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"campaign_id\\\":\\\"c_77\\\",\\\"name\\\":\\\"November newsletter\\\",\\\"sent\\\":\\\"2026-11-12\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "newsletter performance benchmarks"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__mail__campaign_stats_get",
+    "input": {
+     "campaign_id": "c_77"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"opens\\\":0.41,\\\"clicks\\\":0.06,\\\"revenue_eur\\\":1830}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "The November newsletter (sent 12 Nov) did well:\n\n- **Opens:** 41%\n- **Clicks:** 6%\n- **Revenue:** €1,830\n\nI don't have earlier campaigns or saved benchmarks to compare against, so I can't say if this is above or below your usual results. If you want, I can look through past activity for earlier numbers.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2247,
+   "cacheReadTokens": 32785,
+   "outputTokens": 282
+  },
+  "costUsd": 0.011728
+ }
+}
