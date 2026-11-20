@@ -48,6 +48,19 @@ COPY --from=build /runner/dist ./dist
 # Our skills, as a plugin: root-owned and read-only. /work is 0711: bwrap and each session reach the session's own
 # folder, but no session can list the chat ids. The wipe runs find and ipcrm (findutils, util-linux: always installed).
 COPY runner/image/plugin /opt/inhouse/plugin
+# The CLI as each session starts it: image/bin/claude sets the session's process limit (RLIMIT_NPROC, prlimit from
+# util-linux), then runs the SDK's own CLI for this platform, linked here as claude-cli (the build fails if it's missing).
+COPY runner/image/bin/claude /opt/inhouse/bin/claude
+RUN cli="/opt/runner/node_modules/@anthropic-ai/claude-agent-sdk-linux-$(node -p process.arch)/claude" \
+ && test -x "$cli" && test -x /usr/bin/prlimit \
+ && ln -s "$cli" /opt/inhouse/bin/claude-cli
+# The sandbox's seccomp filter: without it the sandbox starts but doesn't block Unix sockets (`allowAllUnixSockets:
+# false` isn't enforced). The sandboxing docs: install @anthropic-ai/sandbox-runtime globally; the CLI finds its
+# vendor/seccomp/<arch>/apply-seccomp under the global npm root. Pinned; the container probe checks a sandboxed command
+# can't make a Unix socket.
+RUN npm install -g --omit=dev --no-audit --no-fund @anthropic-ai/sandbox-runtime@0.0.81 \
+ && test -x "/usr/local/lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/$(node -p process.arch)/apply-seccomp" \
+ && npm cache clean --force
 RUN chown -R root:root /opt/runner /opt/inhouse \
  && chmod -R go-w,a+rX /opt/runner /opt/inhouse \
  && mkdir -m 0711 /work

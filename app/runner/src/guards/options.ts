@@ -8,7 +8,7 @@ import type { RunConfig } from '../protocol/local.ts'
 import type { QueryGuards, RunContext } from '../session/seam.ts'
 import { auditHook } from './audit.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER } from './lists.ts'
-import { HOME, PLUGIN_DIR, RUNNER_DIR, WORK_ROOT, validSessionKey } from './paths.ts'
+import { CLI_WRAPPER, HOME, PLUGIN_DIR, RUNNER_DIR, WORK_ROOT, validSessionKey } from './paths.ts'
 import { webFetchAllowRules, webFetchHook } from './webfetch.ts'
 
 type Settings = Exclude<Options['settings'], string | undefined>
@@ -45,6 +45,8 @@ export type QueryGuardDeps = {
   hostAddresses: () => string[]
   workRoot?: string
   pluginDir?: string
+  /** The CLI the SDK starts (the wrapper that sets the session's process limit). */
+  cliPath?: string
   auditTimeoutMs?: number
 }
 
@@ -87,9 +89,10 @@ export function assertFetchDomain(domain: string, hostAddresses: readonly string
 export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
   const workRoot = deps.workRoot ?? WORK_ROOT
   const pluginDir = deps.pluginDir ?? PLUGIN_DIR
+  const cliPath = deps.cliPath ?? CLI_WRAPPER
   return {
     kind: 'production',
-    apply: (base, config, run) => guardedOptions(base, config, run, { ...deps, workRoot, pluginDir }),
+    apply: (base, config, run) => guardedOptions(base, config, run, { ...deps, workRoot, pluginDir, cliPath }),
   }
 }
 
@@ -97,7 +100,7 @@ export function guardedOptions(
   base: Options,
   config: Pick<RunConfig, 'webFetchDomains'>,
   run: RunContext,
-  deps: QueryGuardDeps & { workRoot: string; pluginDir: string },
+  deps: QueryGuardDeps & { workRoot: string; pluginDir: string; cliPath: string },
 ): Options {
   for (const key of GUARDED_OPTIONS) {
     if (Object.hasOwn(base, key) && (base as Record<string, unknown>)[key] !== undefined) {
@@ -174,6 +177,9 @@ export function guardedOptions(
     settings,
     skills: [...ALLOWED_SKILLS],
     plugins: [{ type: 'local', path: deps.pluginDir, skipMcpDiscovery: true }],
+    // The wrapper caps the session's processes (RLIMIT_NPROC) before it runs the SDK's CLI: a fork bomb can't starve
+    // the release's kill and wipe and so quarantine the uid.
+    pathToClaudeCodeExecutable: deps.cliPath,
     sandbox: {
       enabled: true,
       failIfUnavailable: true,

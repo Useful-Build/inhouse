@@ -10,6 +10,17 @@ export const WORK_ROOT = '/work'
 export const RUNNER_DIR = '/opt/runner'
 /** Our skills, as a plugin: root-owned and read-only (app/runner/image/plugin/ in the repo). */
 export const PLUGIN_DIR = '/opt/inhouse/plugin'
+/**
+ * The CLI as each session starts it: a wrapper (app/runner/image/bin/claude in the repo) that sets the per-session
+ * process limit, then runs the SDK's own CLI. Root-owned and read-only.
+ */
+export const CLI_WRAPPER = '/opt/inhouse/bin/claude'
+/**
+ * RLIMIT_NPROC for the CLI and everything under it (Bash, its scripts): the most processes the session's uid may have
+ * before a fork fails. The kernel counts every process of the uid, and a uid serves one session, so a fork bomb stops
+ * here and the release's kill and wipe still run. The wrapper sets it; a test pins the two together.
+ */
+export const SESSION_PROCESS_LIMIT = 512
 
 /**
  * A session key is the chat id (the wire protocol's `Id`). Only letters, digits, `_` and `-`, 1 to 64 of them: no `/`,
