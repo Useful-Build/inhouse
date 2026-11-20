@@ -14,6 +14,7 @@ import type { AccessObject, AccessRow, CanRows } from './matrix.ts'
 import { CanKeySchema } from '../../shared/contract/me.ts'
 import { AuditArgsSchema } from '../../shared/contract/audit.ts'
 import { DESIGN_CAN_ROWS, DESIGN_ROWS, SMOKE_MEMBER, principals } from '../testing/auth-fixtures.ts'
+import { INHOUSE_BRAND_WRITES } from '../testing/inhouse-brand-writes.ts'
 
 const NOW = Date.parse('2026-11-20T10:00:00.000Z')
 const row = fc.constantFrom(...DESIGN_ROWS)
@@ -287,11 +288,8 @@ describe('every row against every principal (the hand-written oracle)', () => {
   }
 })
 
-/**
- * The brand_data writes the Inhouse team may make under a live grant (item 19, 2026-11-20): a closed list. P3: forgetting
- * a team fact (row 45). Changed for item 19: before it, no brand_data write row could list inhouse.
- */
-const INHOUSE_BRAND_WRITES = ['PUT /api/memory/brand/:id/forgotten']
+// INHOUSE_BRAND_WRITES (server/testing/inhouse-brand-writes.ts): the brand_data writes the Inhouse team may make under a
+// live grant (item 19). Changed for item 19: before it, no brand_data write row could list inhouse.
 /** Rows outside technical, report and baseline that list Inhouse on a non-GET method: personal, or brand_data off the list. */
 const inhouseWriteProblems = (rows: readonly AccessRow[]) =>
   rows.filter(x => x.method !== 'GET' && (x.class === 'personal' || (x.class === 'brand_data' && !INHOUSE_BRAND_WRITES.includes(`${x.method} ${x.pattern}`))) && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
