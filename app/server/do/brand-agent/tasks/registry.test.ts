@@ -21,8 +21,16 @@ describe('the registry has no stub where it matters (obligation 12)', () => {
     for (const kind of kinds) expect(taskHandlers[kind], kind).not.toBe(notBuilt)
   }))
 
-  // Flips on in the W1 PR that builds the last W1 stub (PR 4: grant-expiry and authority-sweep; flush-turn is PR 3),
-  // once W4's audit-copy and usage-sweep are real too.
+  // Every kind but W1's last three stubs is real now (W2's pool-retry, W4's audit-copy and usage-sweep included).
+  const STILL_STUBS = ['grant-expiry', 'authority-sweep', 'flush-turn']
+  it('every registered handler outside the three W1 stubs is real', () => {
+    for (const [kind, handler] of Object.entries(taskHandlers)) {
+      if (!STILL_STUBS.includes(kind)) expect(handler, kind).not.toBe(notBuilt)
+    }
+    for (const kind of STILL_STUBS) expect(taskHandlers[kind], kind).toBe(notBuilt)
+  })
+
+  // Flips on with W1 PR 4 (grant-expiry, authority-sweep), after PR 3 builds flush-turn.
   it.skip('no registered handler is a stub (flip in W1 PR 4)', () => {
     for (const [kind, handler] of Object.entries(taskHandlers)) expect(handler, kind).not.toBe(notBuilt)
   })
