@@ -3,7 +3,8 @@
 export const R2_PREFIXES = [
   'photos/',
 
-  // W3 (p3-w3.md): 'sessions/', 'files/' (entries in ops/tables/files.ts).
+  // W3 (p3-w3.md): 'sessions/' (PR 1), 'files/' (PR 2); entries in ops/tables/files.ts.
+  'sessions/',
 
   // W4 (p3-w4.md): 'audit-copy/' (entry in ops/tables/usage.ts).
 ] as const
@@ -12,5 +13,12 @@ export const R2_PREFIXES = [
 export const photoKey = (memberId: string, random: string): string => `photos/${memberId}/${random}`
 
 // W3's key builders (sessions/, files/).
+/** The bucket a module writes only through these builders (the egress's store route). */
+export type KeyedBucket = R2Bucket
+/** A session's folder in the store: `sessions/<chatId>/<sessionId>/<projectHash>/` (p3-design 8.5). */
+export const sessionPrefix = (chatId: string, sessionId: string, projectHash: string): string => `sessions/${chatId}/${sessionId}/${projectHash}/`
+/** One stored part: `<sub>` is `m` (the main transcript) or `s/<encodeURIComponent(subpath)>` (a subagent's). */
+export const sessionKey = (chatId: string, sessionId: string, projectHash: string, sub: string, part: string): string =>
+  `${sessionPrefix(chatId, sessionId, projectHash)}${sub}/${part}.json`
 
 // W4's key builders (audit-copy/).

@@ -26,12 +26,13 @@ const T = 1_800_000_000_000
 let u = 0
 const uniq = () => `${++u}-${Math.random().toString(36).slice(2, 7)}`
 
-/** The shipped catalogue with a price on every model (W3 fills the real ones). */
+/** The shipped catalogue with a simple price on every model (the values don't matter to these routes). */
 const PRICED: CatalogModel[] = CATALOG.map(m => ({
   ...m, price: { tiers: [{ uptoInputTokens: null, input: 1, output: 1, cacheWrite5m: 1, cacheWrite1h: 1, cacheRead: 1 }], fastModeMultiplier: null, geoMultipliers: {}, webSearchPerUse: 1 },
 }))
 const sendPriced = sendTurnWith(PRICED)
-const sendShipped = sendTurnWith(CATALOG)
+/** The catalogue with Sonnet unpriced (a model W3 hasn't priced is refused: fail closed). */
+const sendUnpriced = sendTurnWith(CATALOG.map(m => (m.id === 'sonnet' ? { ...m, price: null } : m)))
 
 let alice: string
 let bob: string
@@ -93,7 +94,7 @@ describe('route 29: send a turn', () => {
   it('an unpriced model, or one switched off, is model_off (failure 2)', async () => {
     const id = `c-${uniq()}`
     await chat(id, alice)
-    expect(await send(sendShipped, alice, id, { clientTurnKey: key(), text: 'hi', model: 'sonnet' })).toMatchObject({ status: 403, body: { error: { code: 'forbidden', reason: 'model_off' } } })
+    expect(await send(sendUnpriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'sonnet' })).toMatchObject({ status: 403, body: { error: { code: 'forbidden', reason: 'model_off' } } })
     await setting('tm:opus:on', 'off')
     expect(await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'opus' })).toMatchObject({ status: 403, body: { error: { code: 'forbidden', reason: 'model_off' } } })
   })

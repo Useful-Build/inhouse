@@ -2,18 +2,8 @@
 // stored on the turn (`turns.start_json`) so a placement retry mints a fresh token and sends the same start; the token
 // joins it only in memory, on its way to the pool.
 import { composeTurnPrompt } from '../../../shared/contract/runs.ts'
+import { TURN_CEILING_MICRO } from '../../model/catalog.ts'
 import type { RunStart } from '../../../shared/protocol/index.ts'
-
-/**
- * The per-turn ceilings in micro-USD by API id (p3-design 9, item 22 E2). W3's catalog.ts carries the same table as
- * `TURN_CEILING_MICRO` (PR #145); this copy goes once that merges (the orchestrator's note in the PR body).
- */
-export const TURN_CEILING_MICRO: Readonly<Record<string, number>> = {
-  'claude-fable-5-2': 52_120_000,
-  'claude-opus-5-5': 27_160_000,
-  'claude-sonnet-5-5': 14_680_000,
-  'claude-haiku-5-5': 5_320_000,
-}
 
 /**
  * The file caps every run carries (p3-design 8.5, in exact bytes). W3's `files-io/caps.ts` owns the one constant; this
