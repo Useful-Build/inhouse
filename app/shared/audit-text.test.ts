@@ -26,6 +26,8 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'agent.paused': { action: 'agent.paused' },
   'agent.resumed': { action: 'agent.resumed' },
   'support.attach': { action: 'support.attach', grantId: 'g_1', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' },
+  'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
+  'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -81,5 +83,14 @@ describe('P3 lines (W1 first PR: the support.access routes of p3-design section 
     expect(auditText({ action: 'agent.resumed' }, names)).toEqual({ what: 'resumed the agent', detail: '' })
     const t = auditText({ action: 'support.attach', grantId: 'g_1', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' }, names)
     expect(t).toEqual({ what: 'watched a live answer', detail: '' })
+  })
+})
+
+describe('P3 memory lines (W6, item 19)', () => {
+  it('says what happened to a team fact, and an Inhouse forget reads as a change, not a look', () => {
+    expect(auditText({ action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' }, names)).toEqual({ what: 'forgot a team memory', detail: '' })
+    expect(auditText({ action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' }, names)).toEqual({ what: 'brought back a team memory', detail: 'It waits for an admin’s OK' })
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'PUT', route: '/api/memory/brand/:id/forgotten' }, names)).toEqual({ what: 'changed brand data', detail: 'Team memory' })
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/memory' }, names)).toEqual({ what: 'looked at brand data', detail: 'Memory' })
   })
 })

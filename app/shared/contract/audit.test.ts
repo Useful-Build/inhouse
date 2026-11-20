@@ -32,6 +32,8 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'agent.paused': { action: 'agent.paused' },
   'agent.resumed': { action: 'agent.resumed' },
   'support.attach': { action: 'support.attach', grantId: g, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' },
+  'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
+  'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -114,5 +116,30 @@ describe('P3 lines (W1 first PR)', () => {
     expect(ok({ action: 'support.attach', grantId: g, runId: 'chat-1' })).toBe(false)
     expect(ok({ action: 'support.attach', grantId: g, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', chatId: 'c1' })).toBe(false)
     expect(ok({ action: 'agent.paused', by: m })).toBe(false)
+  })
+})
+
+describe('P3 memory lines (W6, item 19)', () => {
+  const GET_ROUTES = ['/api/members', '/api/members/:id/photo', '/api/audit', '/api/audit/export.csv', '/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files', '/api/files/:fileId', '/api/memory']
+  const FORGET = '/api/memory/brand/:id/forgotten'
+  it('support.access pairs PUT with the team-fact forget only, and GET with the read routes only', () => {
+    expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route: FORGET })).toBe(true)
+    expect(ok({ action: 'support.access', grantId: g, method: 'GET', route: FORGET })).toBe(false)
+    for (const route of GET_ROUTES) {
+      expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(true)
+      expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route }), route).toBe(false)
+    }
+    for (const method of ['POST', 'DELETE', 'get', 'PATCH', 1, null]) expect(ok({ action: 'support.access', grantId: g, method, route: FORGET }), String(method)).toBe(false)
+    for (const route of ['/api/memory/brand/mem_x/forgotten', '/api/memory/personal/:id/forgotten', 1, null]) expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route }), String(route)).toBe(false)
+    expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route: FORGET, memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' })).toBe(false)
+  })
+  it('memory.forgotten and memory.restored name a memory id only, never its text or a person', () => {
+    for (const action of ['memory.forgotten', 'memory.restored']) {
+      expect(ok({ action, memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' })).toBe(true)
+      expect(ok({ action, memoryId: 'We restock on Fridays' })).toBe(false)
+      expect(ok({ action })).toBe(false)
+      expect(ok({ action, memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', text: 'We restock on Fridays' })).toBe(false)
+      expect(ok({ action, memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', memberId: m })).toBe(false)
+    }
   })
 })

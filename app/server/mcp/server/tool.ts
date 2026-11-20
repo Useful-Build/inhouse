@@ -1,0 +1,61 @@
+// What a tool handler of the `inhouse` MCP server is (p3-design section 10): its input schema and its call. The call
+// runs as the run's person only (`memberId` from the run token's grant, never from the arguments).
+import type { z } from 'zod'
+
+/** Who and what a call runs for: the run token's grant (the egress), plus this call's clock and request id. */
+export interface ToolScope {
+  memberId: string
+  chatId: string
+  runId: string
+  turnId: string
+  nowMs: number
+  /** Stamped on the rows a write changes (`req_id`). */
+  requestId: string
+}
+
+/** An MCP `CallToolResult` (2025-11-25): text the model reads, the same data as `structuredContent`, `isError` on a refusal. */
+export interface ToolResult {
+  content: { type: 'text'; text: string }[]
+  structuredContent?: Record<string, unknown>
+  isError?: true
+}
+
+/** The 20 tool names of the registry (agent-tools); `tools/index.ts` checks at load that they equal the registry's. */
+export const INHOUSE_TOOL_NAMES = [
+  'memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list',
+  'approval_request', 'approval_get', 'approval_list', 'approval_withdraw',
+  'question_ask',
+  'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
+  'history_search', 'history_read',
+  'notification_send',
+  'team_request_create', 'team_request_list',
+] as const
+export type InhouseToolName = (typeof INHOUSE_TOOL_NAMES)[number]
+
+/** What a handler gets besides its arguments: the Worker's bindings it reads through (each area opens its own store). */
+export interface ToolDeps {
+  db: D1Database
+}
+
+/**
+ * One tool's handler: its input schema (zod; `tools/list` shows it as JSON Schema, `tools/call` parses the arguments
+ * with it) and its call. Each area folder exports `handlers: Partial<Record<InhouseToolName, ToolHandler>>` from its
+ * `index.ts`; `tools/index.ts` composes them.
+ */
+export interface ToolHandler<S extends z.ZodType = z.ZodType> {
+  input: S
+  call(args: z.output<S>, scope: ToolScope, deps: ToolDeps): Promise<ToolResult>
+}
+
+/** A tool's answer: readable text first, the data after it as JSON (MCP: structured content also goes in a text block). */
+export function answer(text: string, data: Record<string, unknown>): ToolResult {
+  return { content: [{ type: 'text', text }, { type: 'text', text: JSON.stringify(data) }], structuredContent: data }
+}
+
+/** A refusal the agent can act on: what went wrong and how to fix the call. `error` is a stable code. */
+export function refusal(error: string, text: string): ToolResult {
+  return { content: [{ type: 'text', text }], structuredContent: { error }, isError: true }
+}
+
+/** Types a handler's call from its own schema, then widens it for the area's map. */
+export const tool = <S extends z.ZodType>(t: ToolHandler<S>): ToolHandler => t as unknown as ToolHandler

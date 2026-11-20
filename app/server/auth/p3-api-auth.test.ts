@@ -176,19 +176,16 @@ describe('the committed P3 routes are PR0 stubs (failure 6)', () => {
     quiet()
     const { call } = setup({ table: routes, rows: accessMatrix })
     const member = { 'Cf-Access-Jwt-Assertion': await person('member'), Origin: BRAND.origin }
-    const admin = { 'Cf-Access-Jwt-Assertion': await person('admin'), Origin: BRAND.origin }
     const release = { 'Cf-Access-Jwt-Assertion': await service(RELEASE_ID), Origin: BRAND.origin }
     const P3 = [
       ['GET', '/api/chats', member], ['POST', '/api/chats', member], ['GET', '/api/chats/c1', member], ['PUT', '/api/chats/c1/title', member],
       ['PUT', '/api/chats/c1/pin', member], ['POST', '/api/chats/delete', member], ['POST', '/api/chats/restore', member],
       ['GET', '/api/runs/active', member], ['GET', '/api/traces/r1', member], ['GET', '/api/socket', member],
-      ['GET', '/api/memory', member],
-      ['PUT', '/api/memory/personal/x1/forgotten', member], ['PUT', '/api/memory/brand/x1/forgotten', admin], ['POST', '/api/ops/drain', release],
-      ['GET', '/api/ops/drain', release], ['POST', '/api/ops/warmup', release],
+      ['POST', '/api/ops/drain', release], ['GET', '/api/ops/drain', release], ['POST', '/api/ops/warmup', release],
     ] as const
-    // Routes 38 to 41 are built (W3: server/api/models.test.ts, attachments.test.ts), route 42 (W4 PR 1,
-    // server/usage/api.test.ts), and 29-31, 35-37 and 49 (W1 PR 2: server/api/runs.test.ts), so they left this list.
-    expect(P3).toHaveLength(16)
+    // Built and so off this list: 38-41 (W3), 42 (W4 PR 1), 43-45 (W6), and 29-31, 35-37 and 49 (W1 PR 2,
+    // server/api/runs.test.ts).
+    expect(P3).toHaveLength(13)
     for (const [method, path, headers] of P3) {
       const res = await call(BRAND.origin, path, { method, headers })
       expect(res.status, `${method} ${path}`).toBe(503)
