@@ -7,11 +7,19 @@
 //   load-then-stop         a resume whose query loads the main transcript (it matches expect), then waits for a stop
 //   restore-stop           the chat has a file whose download never answers: the restore runs until stopped
 import { writeFileSync } from 'node:fs'
+import { register } from 'node:module'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
-import { openRootChannel } from '../../../src/session/channel.ts'
-import { runSession, type QueryFn } from '../../../src/session/core.ts'
-import { PROXY_URL, fakeEgress } from '../support/fake-egress.ts'
-import { testQueryGuards } from '../support/test-seams.ts'
+import type { QueryFn } from '../../../src/session/core.ts'
+
+// The core and the shared protocol import zod. In a child process Node resolves it from the importing file's folder up,
+// and app/shared/ has no node_modules of its own when only the runner's packages are installed (CI): send it to the
+// runner's copy, as the build and vitest do. Registered before the modules that need it are imported (below).
+const zod = new URL('../../../node_modules/zod/index.js', import.meta.url).href
+register(`data:text/javascript,${encodeURIComponent(`export async function resolve(s, c, next) { return next(s === 'zod' ? ${JSON.stringify(zod)} : s, c) }`)}`)
+const { openRootChannel } = await import('../../../src/session/channel.ts')
+const { runSession } = await import('../../../src/session/core.ts')
+const { PROXY_URL, fakeEgress } = await import('../support/fake-egress.ts')
+const { testQueryGuards } = await import('../support/test-seams.ts')
 
 const SID = '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11'
 const egress = fakeEgress()
