@@ -14,7 +14,9 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
-- Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; no e2e spec checks it (only `src/agent/http/client.test.ts` checks the logout URL).
+- Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; `e2e/real/sign-out.spec.ts` checks the account menu goes to that path on the test build (no Access there); the real Access logout is checked on the candidate deploy (pending).
+- The WebSocket under the enforced CSP is P3's: P2 has no WebSocket route, so `connect-src 'self'` is checked for fetch only (`e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo).
+- "A failed audit write leaves no change" (Acceptance 6) is proven only by the server unit tests on the vitest workerd (compat 2026-11-11), not on the test build's: forcing an audit write to fail there needs test code in the deployable bundle.
 
 ## Today
 

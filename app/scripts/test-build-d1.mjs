@@ -4,8 +4,8 @@
 // <dir> is wrangler's persist root (`wrangler dev --persist-to`), default .wrangler/test-build. Both steps and the server
 // must get the same one. The D1 lives under <dir>/v3, which is what a getPlatformProxy caller passes as
 // `persist: { path: '<dir>/v3' }` (https://developers.cloudflare.com/workers/wrangler/api/#getplatformproxy).
-// The seed refuses a <dir>/v3 with no migrated D1. It runs W2's server/seed/run.ts with `--persist-to <dir>`, and fails
-// loud until that exists. Exit codes: 0 done, 1 the step failed or was refused, 2 usage. TEST_BUILD_SEED_RUNNER (a path
+// The seed refuses a <dir>/v3 with no migrated D1. It runs server/seed/run.ts with `--persist-to <dir>`, and fails
+// loud if that is missing. Exit codes: 0 done, 1 the step failed or was refused, 2 usage. TEST_BUILD_SEED_RUNNER (a path
 // relative to app/) runs another seed script in its place: scripts/test-build-d1.test.mjs uses it for a stub.
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
@@ -63,7 +63,7 @@ if (migrated.length === 0) {
 }
 const runner = process.env.TEST_BUILD_SEED_RUNNER || 'server/seed/run.ts'
 if (!existsSync(resolve(appDir, runner))) {
-  console.error(`test-build:seed: no seed yet (${runner}). W2 adds server/seed/run.ts, and this script then runs it.`)
+  console.error(`test-build:seed: the seed script ${runner} doesn't exist.`)
   process.exit(1)
 }
 run('node', [runner, '--persist-to', persist])

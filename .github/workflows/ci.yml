@@ -147,16 +147,12 @@ jobs:
       - name: Migrations, fresh install
         run: rm -rf .wrangler/test-build && npm run test-build:migrate
       # The deployable-config check must refuse the test build's config (it sets the test flag and test origins).
-      # W1 adds scripts/check-product-config.mjs and its fixture tests (which run with test:unit, in e2e shard 1).
+      # The script's fixture tests run with test:unit (e2e shard 1).
       # Its exit codes (AGENTS.md): 0 deployable, 1 refused, 2 usage or a crash. Only 1 counts as refusing here: a crash
       # (2) or any other code fails this step too.
       - name: The config check refuses wrangler.test.jsonc
         if: ${{ !cancelled() }}
         run: |
-          if [ ! -f scripts/check-product-config.mjs ]; then
-            echo "::notice::scripts/check-product-config.mjs doesn't exist yet (W1 adds it). Nothing to assert."
-            exit 0
-          fi
           rc=0
           node scripts/check-product-config.mjs wrangler.test.jsonc || rc=$?
           if [ "$rc" -ne 1 ]; then

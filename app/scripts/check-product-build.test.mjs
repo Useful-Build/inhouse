@@ -1,6 +1,5 @@
-// scripts/check-product-build.mjs part 4: the test-build proof is soft (a note) until the test issuer exists, and each of
-// its three triggers alone turns it hard (exit 1 when the test build has no canary): server/auth/test-issuer.ts, the
-// canary anywhere under server/, a test-issuer module in the test build's module list. Builds are fixtures in temp dirs.
+// scripts/check-product-build.mjs part 4: the test-build proof is always hard (exit 1 when the test build has no canary),
+// whatever the server folder holds. Builds are fixtures in temp dirs.
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -37,17 +36,12 @@ function run({ server = {}, productTest = {} } = {}) {
 
 const PROOF_FAILED = `no "${CANARY}" in the test build`
 
-test('no test issuer anywhere: the proof is a note, and the check passes', () => {
-  const r = run()
-  expect(r.stdout).toContain('note  server bundle: no test issuer yet')
-  expect(r.status).toBe(0)
-})
-
 test.each([
+  ['nothing test-issuer shaped anywhere', {}],
   ['server/auth/test-issuer.ts exists', { server: { 'auth/test-issuer.ts': 'export {}' } }],
   ['the canary is in a file under server/', { server: { 'auth/other.ts': `export const c = '${CANARY}'` } }],
   ['the test build lists a test-issuer module', { productTest: { serverModules: ['server/index.ts', 'server/auth/test-issuer.ts'] } }],
-])('%s: the proof is hard, and fails with no canary in the test build', (_name, setup) => {
+])('%s: the proof fails with no canary in the test build', (_name, setup) => {
   const r = run(setup)
   expect(r.stderr).toContain(PROOF_FAILED)
   expect(r.stdout).not.toContain('note  server bundle')

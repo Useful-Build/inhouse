@@ -1,6 +1,7 @@
 // check-product-config fixture: refused, rule "app-no-aud".
 {
 	"name": "inhouse-product",
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
 	"main": "server/index.ts",
 	"vars": {
 		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://example-team.cloudflareaccess.com\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://brand.example.test\",\"aud\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse.example.test\"}],\"serviceTokens\":{\"monitor-client.access\":\"monitor\",\"smoke-client.access\":\"smoke\"}}"

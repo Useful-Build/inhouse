@@ -67,7 +67,9 @@ npm run deploy     # build, then wrangler deploy to your Cloudflare account
 ```
 
 Phase 1 deploys as one Cloudflare Worker and serves invented sample data only. Every PR gets a Workers Preview, which
-sends `noindex`; production's pages are indexable.
+sends `noindex`; the demo's production pages are indexable (`deploy.yml` drops the `X-Robots-Tag` line from the build's
+`_headers`). The brand deployment (the product Worker) is not: nothing drops that line from its build, so its pages (the
+assets' `_headers`) and every `/api` answer (the Worker parses the same `/*` block) send `noindex, nofollow`.
 
 ## The mock agent, and how phase 2 swaps it
 
