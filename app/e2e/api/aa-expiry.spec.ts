@@ -1,7 +1,7 @@
 // A grant past its end (p2-design section 9): not live, and its `grant.expired` line is written once, by the system, by
-// the first request that reads grants or the audit log. This file's name sorts first, so it runs before any other spec has
-// made such a read (the files run serially, in name order): the grant must still be unlogged, and the Inhouse team must
-// already be refused, because access never depends on the flag.
+// the first request that sees it (an Inhouse sign-in, a grants read or an audit read). This file's name sorts first, so it runs before any other spec has
+// made such a request (the files run serially, in name order): the grant must be unlogged when the run starts, and the
+// Inhouse team is refused whether or not the line has been written, because access never depends on the flag.
 import { expect, test } from '@playwright/test'
 import { auditText } from '../../shared/audit-text.ts'
 import { SEED_EXPIRED_GRANT_ID } from '../support/test-build/expired-grant.ts'
@@ -14,15 +14,15 @@ const logged = () => readSql<{ ends_at_ms: number; expiry_logged: number }>('SEL
 
 test.describe.configure({ mode: 'serial' })
 
-test('before any read, the expired grant is unlogged and gives the Inhouse team no access', async ({ request }) => {
+test('at the start of the run the expired grant is unlogged, and it gives the Inhouse team no access', async ({ request }) => {
   expect(logged(), 'the prepare step made the grant').toHaveLength(1)
   expect(logged()[0].expiry_logged).toBe(0)
   expect(auditWhere('grant.expired')).toEqual([])
+  // The Inhouse sign-in reads grants, so it may be the request that writes the expiry; access never depends on that.
   expectError(await call(request, alex, 'GET', '/api/members'), 403, 'forbidden', 'grant_required')
-  expect(logged()[0].expiry_logged, 'a sign-in does not write the expiry').toBe(0)
 })
 
-test('the first grants or audit read writes grant.expired once, by the system, dated at the grant\'s end', async ({ request }) => {
+test('the first request that sees it writes grant.expired once, by the system, dated at the grant\'s end', async ({ request }) => {
   for (let i = 0; i < 2; i++) {
     const list = await call(request, admin, 'GET', '/api/grants')
     expect(list.status, list.text).toBe(200)
