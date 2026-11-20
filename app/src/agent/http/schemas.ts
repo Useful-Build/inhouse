@@ -7,6 +7,7 @@ import { AuditPageSchema } from '../../../shared/contract/audit'
 import { GrantCreateInputSchema, GrantEndInputSchema, GrantsListSchema, SupportGrantSchema } from '../../../shared/contract/grants'
 import { MeSchema } from '../../../shared/contract/me'
 import { InviteInputSchema, MemberRecordSchema, MemberRoleSchema, PhotoResultSchema, RoleChangeInputSchema } from '../../../shared/contract/members'
+import { MemoryDataSchema, MemoryForgetInputSchema, MemoryLineSchema } from '../../../shared/contract/memory'
 import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
 
@@ -14,10 +15,13 @@ import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from
 export const ANSWERS = {
   me: MeSchema, settings: SettingsListSchema, setting: SettingRecordSchema, members: pageOf(MemberRecordSchema), member: MemberRecordSchema,
   audit: AuditPageSchema, grants: GrantsListSchema, grant: SupportGrantSchema, photo: PhotoResultSchema,
+  // P3 (W6): routes 43 to 45.
+  memory: MemoryDataSchema, memoryLine: MemoryLineSchema,
 }
 
 /** What each write sends. */
 export const BODIES = {
   invite: InviteInputSchema, role: MemberRoleSchema, roleChange: RoleChangeInputSchema, grantCreate: GrantCreateInputSchema,
   grantEnd: GrantEndInputSchema, settingWrite: SettingWriteInputSchema,
+  memoryForget: MemoryForgetInputSchema,
 }
