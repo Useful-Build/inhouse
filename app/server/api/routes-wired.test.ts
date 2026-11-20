@@ -119,7 +119,8 @@ describe('each wired route runs its handler (failure 1)', () => {
 
 describe('a refused principal gets the access error before any store call (failure 2)', () => {
   const cases: [string, string, () => string, unknown, string?, string?][] = [
-    ['GET', '/api/members', () => tokens.inhouse, undefined, INHOUSE.origin, 'grant_required'],
+    ['GET', '/api/audit/export.csv', () => tokens.inhouse, undefined, INHOUSE.origin, 'grant_required'],
+    ['POST', '/api/grants/g_x/end', () => tokens.inhouse, { ifRev: 1 }, INHOUSE.origin],
     ['POST', '/api/members/invites', () => tokens.member, { name: 'X Example', email: 'x@example.test', role: 'admin' }],
     ['PUT', '/api/members/m_x/role', () => tokens.member, { role: 'admin', ifRev: 1 }],
     ['DELETE', '/api/members/m_x?ifRev=1', () => tokens.member, undefined],
@@ -129,7 +130,8 @@ describe('a refused principal gets the access error before any store call (failu
     ['GET', '/api/settings/technical', () => tokens.smoke, undefined],
     ['PUT', '/api/settings/technical/stage', () => tokens.member, { value: 'Run', ifRev: 0 }],
     ['PUT', '/api/settings/technical/stage', () => tokens.admin, { value: 'Run', ifRev: 0 }, undefined, 'admin_read_only'],
-    ['PUT', '/api/settings/technical/tm:fable:on', () => tokens.admin, { value: 'on', ifRev: 0 }, undefined, 'admin_read_only'],
+    // An Admin switches a model 'on' or 'off' only: clearing the key (null) is another value, refused.
+    ['PUT', '/api/settings/technical/tm:fable:on', () => tokens.admin, { value: null, ifRev: 0 }, undefined, 'admin_read_only'],
   ]
   it.each(cases)('%s %s', async (method, path, tok, body, origin, reason) => {
     const before = await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first<number>('n')
@@ -213,7 +215,7 @@ describe('routes 1 and 13 to 20 run their handlers (failure 1)', () => {
 })
 
 describe('Inhouse under a live grant reads brand data, each read logged first (failure 5)', () => {
-  it('route 3 and route 19 through api() on D1: the data served, one support.access line per read', async () => {
+  it('routes 19 and 20 through api() on D1: the data served, one support.access line per read; route 3 (baseline) adds none', async () => {
     const made = await call('/api/grants', { method: 'POST', token: tokens.admin, body: { hours: 4 } })
     expect(made.status).toBe(201)
     const before = (await db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM audit_log').first<number>('n'))!
@@ -221,21 +223,80 @@ describe('Inhouse under a live grant reads brand data, each read logged first (f
     expect(list.status).toBe(200)
     expect((list.body.items as { id: string }[]).map(m => m.id)).toEqual(expect.arrayContaining([who.admin, who.member]))
     expect((await call('/api/audit', { token: tokens.inhouse, origin: INHOUSE.origin })).status).toBe(200)
+    expect((await send('/api/audit/export.csv', { token: tokens.inhouse, origin: INHOUSE.origin })).status).toBe(200)
     const lines = (await db.prepare('SELECT actor_id, action, args_json FROM audit_log WHERE id > ? ORDER BY id').bind(before).all<{ actor_id: string; action: string; args_json: string }>()).results
     expect(lines.map(l => [l.actor_id, l.action, JSON.parse(l.args_json)])).toEqual([
-      [who.inhouse, 'support.access', { grantId: made.body.id, method: 'GET', route: '/api/members' }],
       [who.inhouse, 'support.access', { grantId: made.body.id, method: 'GET', route: '/api/audit' }],
+      [who.inhouse, 'support.access', { grantId: made.body.id, method: 'GET', route: '/api/audit/export.csv' }],
     ])
-    // Ended: the very next read is refused.
+    // Ended: the very next audit read is refused; the member list (baseline) still opens.
     await call(`/api/grants/${made.body.id}/end`, { method: 'POST', token: tokens.admin, body: { ifRev: 1 } })
-    expect(await call('/api/members', { token: tokens.inhouse, origin: INHOUSE.origin })).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'grant_required' } } })
+    expect(await call('/api/audit', { token: tokens.inhouse, origin: INHOUSE.origin })).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'grant_required' } } })
+    expect((await call('/api/members', { token: tokens.inhouse, origin: INHOUSE.origin })).status).toBe(200)
+  })
+})
+
+describe('the Inhouse team holds every Admin control, each write audited as its own (decision 19)', () => {
+  const mark = async () => (await db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM audit_log').first<number>('n'))!
+  const linesAfter = async (id: number) =>
+    (await db.prepare('SELECT actor_id, action, args_json FROM audit_log WHERE id > ? ORDER BY id').bind(id).all<{ actor_id: string; action: string; args_json: string }>()).results
+      .map(l => [l.actor_id, l.action, JSON.parse(l.args_json)])
+  const asInhouse = (path: string, init: Omit<Parameters<typeof send>[1], 'token' | 'origin'> = {}) => call(path, { ...init, token: tokens.inhouse, origin: INHOUSE.origin })
+
+  it('invites, changes a role and removes without a grant, and each line names the Inhouse member', async () => {
+    const before = await mark()
+    const invited = await asInhouse('/api/members/invites', { method: 'POST', body: { name: 'New Example', email: `ih-new-${k}@example.test`, role: 'member' } })
+    expect(invited).toMatchObject({ status: 201, body: { status: 'invited', role: 'member' } })
+    const id = invited.body.id as string
+    expect(await asInhouse(`/api/members/${id}/role`, { method: 'PUT', body: { role: 'admin', ifRev: 1 } })).toMatchObject({ status: 200, body: { role: 'admin', rev: 2 } })
+    expect(await asInhouse(`/api/members/${id}?ifRev=2`, { method: 'DELETE' })).toMatchObject({ status: 200, body: { status: 'removed' } })
+    expect(await linesAfter(before)).toEqual([
+      [who.inhouse, 'member.invited', { memberId: id, role: 'member' }],
+      [who.inhouse, 'member.role_changed', { memberId: id, from: 'member', to: 'admin' }],
+      [who.inhouse, 'member.removed', { memberId: id }],
+    ])
+    // No grant was live, and none of these is brand data: no support.access line.
+  })
+  it('edits a brand setting without a grant, audited as the Inhouse member', async () => {
+    const before = await mark()
+    expect(await asInhouse('/api/settings/brand/g:tz', { method: 'PUT', body: { value: 'Europe/Paris', ifRev: 0 } })).toMatchObject({ status: 200, body: { key: 'g:tz', value: 'Europe/Paris', updatedBy: who.inhouse } })
+    const lines = await linesAfter(before)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].slice(0, 2)).toEqual([who.inhouse, 'setting.changed'])
+    expect(lines[0][2]).toMatchObject({ scope: 'brand', key: 'g:tz' })
+  })
+  it("can't demote or remove the brand's last Admin, any more than an Admin can, and writes no line", async () => {
+    const rev = await memberRev(who.admin)
+    const before = await mark()
+    expect(await asInhouse(`/api/members/${who.admin}/role`, { method: 'PUT', body: { role: 'member', ifRev: rev } })).toEqual({ status: 409, body: { error: { code: 'conflict', reason: 'last_admin' } } })
+    expect(await asInhouse(`/api/members/${who.admin}?ifRev=${rev}`, { method: 'DELETE' })).toEqual({ status: 409, body: { error: { code: 'conflict', reason: 'last_admin' } } })
+    expect(await memberRev(who.admin)).toBe(rev)
+    expect(await linesAfter(before)).toEqual([])
+  })
+  it('never grants itself access, and never reads the audit log without a grant', async () => {
+    expect(await asInhouse('/api/grants', { method: 'POST', body: { hours: 1 } })).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })
+    expect(await asInhouse('/api/audit')).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'grant_required' } } })
+    expect(handlerCalls()).toEqual([])
+  })
+})
+
+describe('an Admin turns a model off and back on (decision 27a)', () => {
+  it("'off' and 'on' both pass; another key or value is admin_read_only; a Member is refused", async () => {
+    const off = await call('/api/settings/technical/tm:fable:on', { method: 'PUT', token: tokens.admin, body: { value: 'off', ifRev: 0 } })
+    expect(off).toMatchObject({ status: 200, body: { key: 'tm:fable:on', value: 'off', updatedBy: who.admin } })
+    const on = await call('/api/settings/technical/tm:fable:on', { method: 'PUT', token: tokens.admin, body: { value: 'on', ifRev: off.body.rev } })
+    expect(on).toMatchObject({ status: 200, body: { key: 'tm:fable:on', value: 'on' } })
+    const refused = { status: 403, body: { error: { code: 'forbidden', reason: 'admin_read_only' } } }
+    expect(await call('/api/settings/technical/tm:fable:on', { method: 'PUT', token: tokens.admin, body: { value: null, ifRev: on.body.rev } })).toEqual(refused)
+    expect(await call('/api/settings/technical/tm:fable:effort', { method: 'PUT', token: tokens.admin, body: { value: 'High', ifRev: 0 } })).toEqual(refused)
+    expect(await call('/api/settings/technical/tm:fable:on', { method: 'PUT', token: tokens.member, body: { value: 'off', ifRev: on.body.rev } })).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })
   })
 })
 
 describe('refused before any store call: routes 1 and 13 to 20 (failure 2)', () => {
   const cases: [string, string, () => string, unknown, string?][] = [
     ['GET', '/api/health', () => tokens.member, undefined],
-    ['GET', '/api/members/m_x/photo', () => tokens.inhouse, undefined, INHOUSE.origin],
+    ['GET', '/api/members/m_x/photo', () => tokens.smoke, undefined],
     ['GET', '/api/grants', () => tokens.member, undefined],
     ['POST', '/api/grants', () => tokens.member, { hours: 1 }],
     ['POST', '/api/grants', () => tokens.inhouse, { hours: 1 }, INHOUSE.origin],
