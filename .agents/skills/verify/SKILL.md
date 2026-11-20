@@ -41,6 +41,7 @@ Projects are in `app/playwright.config.ts`.
 | update baselines | `npm run test:visual:linux:update` | On purpose only. Or run the `baselines` workflow in CI. |
 | a11y (axe, WCAG 2.1 A and AA) | `npm run test:a11y` | Desktop size. |
 | motion (30 fps) | `MOTION=1 npx playwright test --project=motion` | Manual (`motion.yml`), never in CI's normal run. |
+| connector hub | in `app/hub/`: `npm run typecheck`, `npm run test:node`; CI also runs `npm run test:workers`, `npm run bundle`, `npm run bundle:test` | Own package, own `npm ci`. Then in `app/`: `node scripts/check-hub-build.mjs`, `node scripts/check-hub-config.mjs wrangler.hub.jsonc`, `node --test scripts/check-hub-config.test.mjs`. workerd and bundles go through the heavy lock. |
 | ship recording | `SHIP=1 BASE_URL=<deployment url> npx playwright test e2e/ship/<spec> --project=ship-desktop --project=ship-phone` | Against a deployed preview, video on and slowed. In CI: `gh workflow run ship -f pr=<n> -f spec=<file>`; the `ship-pr-<n>` artifact holds `reel.mp4` and the report. Convention: `app/e2e/ship/README.md`. |
 
 ## Previews

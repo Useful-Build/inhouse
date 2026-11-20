@@ -121,22 +121,75 @@ jobs:
           path: app/e2e-artifacts
           retention-days: 7
 
+  # The connector hub (P4): its own package in app/hub/, installed alone (app/ isn't), so code bundled into the hub
+  # from outside app/hub/ can't lean on app/'s packages. No secret, no environment. Type check, both test projects
+  # (Node and workerd), the deployable and test dry-run bundles, then the bundle scan (the deployable bundle has no
+  # test seam; the test bundle must be caught) and the config check (the template passes; the test config must fail).
+  hub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: app/hub
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No cache (AGENTS.md, "No Actions cache"); app/hub/package.json has no packageManager field.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run bundle
+      - run: npm run bundle:test
+      - name: Hub bundle scan, its own tests
+        working-directory: app
+        run: node --test scripts/check-hub-build.test.mjs
+      - name: Hub bundle scan
+        working-directory: app
+        run: node scripts/check-hub-build.mjs
+      - name: Hub config check, its own tests
+        working-directory: app
+        run: node --test scripts/check-hub-config.test.mjs
+      - name: Hub config check, the template passes
+        working-directory: app
+        run: node scripts/check-hub-config.mjs wrangler.hub.jsonc
+      - name: Hub config check, the test config fails
+        working-directory: app
+        run: |
+          set +e
+          node scripts/check-hub-config.mjs wrangler.hub.test.jsonc
+          rc=$?
+          set -e
+          if [ "$rc" != 1 ]; then
+            echo "::error::check-hub-config.mjs exited $rc on wrangler.hub.test.jsonc; it must exit 1 (the test build is never deployable)."
+            exit 1
+          fi
+
   ci:
-    needs: e2e
-    # always(): a cancelled or skipped shard makes ci red, never skipped (a skipped check counts as passing).
+    needs: [e2e, hub]
+    # always(): a cancelled or skipped job makes ci red, never skipped (a skipped check counts as passing).
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Every shard passed
+      - name: Every job passed
         env:
-          RESULT: ${{ needs.e2e.result }}
+          E2E: ${{ needs.e2e.result }}
+          HUB: ${{ needs.hub.result }}
         run: |
-          echo "e2e: $RESULT"
-          if [ "$RESULT" = cancelled ]; then
-            echo "::error::The e2e legs were cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
+          echo "e2e: $E2E"
+          echo "hub: $HUB"
+          if [ "$E2E" = cancelled ] || [ "$HUB" = cancelled ]; then
+            echo "::error::A job was cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
-          test "$RESULT" = success
+          test "$E2E" = success && test "$HUB" = success
 
   pr-gates:
     if: github.event_name == 'pull_request'
