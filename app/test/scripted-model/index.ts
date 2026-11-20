@@ -11,6 +11,7 @@
 // Web-standard APIs only (Request, Response, ReadableStream), so it runs in Node tests and in the harness Worker alike.
 
 export const SCRIPTED_MODEL_CANARY = 'inhouse-scripted-model-canary-7f3c9b21'
+export { SCENARIOS } from './scenarios.ts'
 
 export type ScriptedBlock = { type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
 
