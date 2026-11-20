@@ -207,6 +207,8 @@ describe('a chat delete ends its turns through storeFinal (failure 4)', () => {
       h.usage.reserveAnswer = { refused: 'budget_busy' }
       const a = await send(h, c, 'key-proj13'); await settle()
       const b = await send(h, c, 'key-proj14')
+      // The send's advance claims the waiting turn again; its reserve is still busy, so it goes back to the queue.
+      await settle()
       expect(h.turn(a.turnId).state).toBe('queued')
       expect(h.turn(b.turnId).state).toBe('queued')
       h.usage.reserveAnswer = { reservedMicro: 250_000 }
@@ -214,6 +216,8 @@ describe('a chat delete ends its turns through storeFinal (failure 4)', () => {
       h.core.endChats([c])
       await settle()
       expect(seen).toEqual([`${a.turnId} cancelled deleted`, `${b.turnId} cancelled deleted`])
+      // Never claimed: no claim time on the second turn (a claim half-way would set it before its cancel).
+      expect(h.turn(b.turnId).claimed_at_ms).toBeNull()
       expect(h.usage.calls.filter(x => x.method === 'reserve').length).toBe(reserves)
       await h.tick(MIN)
       expect(h.usage.calls.filter(x => x.method === 'reserve').length).toBe(reserves)

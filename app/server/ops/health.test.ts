@@ -14,7 +14,8 @@ import { signals } from './signals/index.ts'
 import { health, healthHandler } from './health.ts'
 
 const stores = openStores(env)
-const VERSIONED = { CF_VERSION_METADATA: { id: 'v-123', tag: '', timestamp: '' } } as unknown as HandlerEnv
+// P3 lists signals that ask the BrandAgent (runs) and read the usage ledger (usage_stranded): the env carries the binding.
+const VERSIONED = { CF_VERSION_METADATA: { id: 'v-123', tag: '', timestamp: '' }, BRAND_AGENT: env.BRAND_AGENT } as unknown as HandlerEnv
 const c = { env: VERSIONED, stores }
 const call = async (h: ReturnType<typeof healthHandler>, ctx = c) => {
   const res = await h(ctx)
@@ -28,6 +29,10 @@ describe('the health route', () => {
       status: 200,
       body: { version: 'v-123', ok: true, signals: [
         { name: 'version', ok: true, detail: 'v-123' }, { name: 'd1', ok: true }, { name: 'migrations', ok: true, detail: `${SHIPPED_MIGRATIONS.length} applied` },
+        { name: 'runs_failed', ok: true, detail: '0 of 0 failed in the last hour' }, { name: 'runs_stuck', ok: true, detail: '0 stuck' },
+        { name: 'session_damaged', ok: true, detail: '0 damaged in 24 h' }, { name: 'scheduler', ok: true, detail: '0 quarantined' },
+        { name: 'pool_protocol', ok: true }, { name: 'pool_restarts', ok: true }, { name: 'pool_shortfall', ok: true },
+        { name: 'usage_stranded', ok: true },
       ] },
     })
   })

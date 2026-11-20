@@ -1,11 +1,13 @@
-// Routes 29-31, 35-37 and 49 (p3-design 3, 4.3, 4.7, 4.9, 4.11) through their handlers, on the real migrations and the
+// Routes 29-33, 35-37 and 49 (p3-design 3, 4.3, 4.7, 4.9, 4.11) through their handlers, on the real migrations and the
 // real BrandAgent (its ports are compose.ts's fakes until W2, W3 and W4 fill them). Expected values are literals. Ways
 // they can fail, written down first:
 //  1. another person's chat or turn answers anything but 404, or reaches `requireObject` (a caught refusal is a 403);
 //  2. a deleted chat, a bad body, an unknown model or a model switched off or unpriced is admitted;
 //  3. the turn runs with settings other than the brand's: model, effort, side model, `maxTurns`, WebFetch's hosts;
 //  4. a pause or resume writes no line, or a line by someone else; resume starts anything;
-//  5. a run token on `/api/*` authorises anything (no handler or auth file reads it).
+//  5. a run token on `/api/*` authorises anything (no handler or auth file reads it);
+//  6. routes 32 and 33: a person (an Admin too) sees another person's run or trace, or reaches `requireObject` with it;
+//     Inhouse under a grant misses one; Inhouse without a live grant reads anything; the smoke member sees others' runs.
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -16,7 +18,9 @@ import { ctx, lastLineId, person, personPrincipal, reset } from '../db/test-supp
 import type { HandlerContext } from '../routes.ts'
 import type { Principal } from '../auth/index.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
-import { interruptTurn, sendTurnWith, stopTurn } from './runs.ts'
+import { activeRuns, getTrace, interruptTurn, sendTurnWith, stopTurn } from './runs.ts'
+import { TraceSchema } from '../../shared/contract/trace.ts'
+import { ActiveRunsSchema } from '../../shared/contract/runs.ts'
 import { getPause, pauseAgent, resumeAgent } from './pause.ts'
 import { resetSession } from './chats.ts'
 
@@ -188,5 +192,63 @@ describe('a run token never authorises /api/* (failure 5)', () => {
     const sources = import.meta.glob(['../api/*.ts', '../auth/*.ts', '../api.ts', '../index.ts', '!../**/*.test.ts'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>
     expect(Object.keys(sources).length).toBeGreaterThan(10)
     for (const [file, text] of Object.entries(sources)) expect(text.toLowerCase(), file).not.toContain('x-inhouse-run-token')
+  })
+})
+
+describe('routes 32 and 33: active runs and traces (failure 6)', () => {
+  const inhouse = (grant: { id: string; endsAtMs: number } | null): Principal =>
+    ({ kind: 'inhouse', memberId: admin, subject: 'sub-ih', grant, requestId: 'req-ih', expMs: 4_102_444_800_000 })
+  const runsOf = (r: { body: Record<string, unknown> }) => (r.body.runs as { runId: string }[]).map(x => x.runId)
+
+  it("each person sees their own runs only; Inhouse under a live grant sees every chat's; smoke its own", async () => {
+    // A monthly cap, so each turn reserves and its run stays live: an ended run whose turns are in D1 isn't active
+    // (PR 3's projection flushes them; without a cap every turn ends `cap_reached` at once).
+    await setting('s:cap', '$320')
+    const ids: Record<string, string> = {}
+    for (const [who, label] of [[alice, 'a'], [bob, 'b'], [admin, 'd']] as const) {
+      const id = `c-${uniq()}`
+      await chat(id, who)
+      const sent = await call(sendPriced, personPrincipal(who, who === admin ? 'admin' : 'member'), { method: 'POST', path: `/api/chats/${id}/turns`, params: { id }, body: { clientTurnKey: key(), text: 'hi', model: 'sonnet' } })
+      ids[label] = sent.body.runId as string
+    }
+    const asAlice = await call(activeRuns, personPrincipal(alice, 'member'), { path: '/api/runs/active' })
+    expect(asAlice.status).toBe(200)
+    expect(ActiveRunsSchema.safeParse(asAlice.body).success).toBe(true)
+    expect(runsOf(asAlice)).toContain(ids.a)
+    expect(runsOf(asAlice)).not.toContain(ids.b)
+    expect(runsOf(asAlice)).not.toContain(ids.d)
+    expect(asAlice.objects).toEqual([{ ownerId: alice }])
+    const asAdmin = await call(activeRuns, personPrincipal(admin, 'admin'), { path: '/api/runs/active' })
+    expect(runsOf(asAdmin)).toContain(ids.d)
+    expect(runsOf(asAdmin)).not.toContain(ids.a)
+    const asInhouse = await call(activeRuns, inhouse({ id: 'g1', endsAtMs: 4_102_444_800_000 }), { path: '/api/runs/active' })
+    expect(runsOf(asInhouse)).toEqual(expect.arrayContaining([ids.a, ids.b, ids.d]))
+    expect((await call(activeRuns, inhouse(null), { path: '/api/runs/active' })).body).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
+    expect((await call(activeRuns, inhouse({ id: 'g1', endsAtMs: 1 }), { path: '/api/runs/active' })).status).toBe(403)
+    const smoke: Principal = { kind: 'service', name: 'smoke', memberId: alice, requestId: 'req-smoke' }
+    const asSmoke = await call(activeRuns, smoke, { path: '/api/runs/active' })
+    expect(runsOf(asSmoke)).toContain(ids.a)
+    expect(runsOf(asSmoke)).not.toContain(ids.b)
+  })
+
+  it("a trace is its owner's (another person's is 404 before the object check), or Inhouse's under a grant", async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const sent = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'what sold best?', model: 'sonnet' })
+    const runId = sent.body.runId as string
+    const turnId = sent.body.turnId as string
+    const own = await call(getTrace, personPrincipal(alice, 'member'), { path: `/api/traces/${runId}`, params: { id: runId } })
+    expect(own.status).toBe(200)
+    expect(TraceSchema.parse(own.body)).toMatchObject({ id: runId, title: 'what sold best?' })
+    expect(own.objects).toEqual([{ ownerId: alice }])
+    expect((await call(getTrace, personPrincipal(alice, 'member'), { path: `/api/traces/${turnId}`, params: { id: turnId } })).body).toMatchObject({ id: turnId })
+    for (const p of [personPrincipal(bob, 'member'), personPrincipal(admin, 'admin')]) {
+      const other = await call(getTrace, p, { path: `/api/traces/${runId}`, params: { id: runId } })
+      expect(other.status).toBe(404)
+      expect(other.objects).toEqual([])
+    }
+    expect((await call(getTrace, personPrincipal(alice, 'member'), { path: '/api/traces/c1', params: { id: 'c1' } })).status).toBe(404)
+    expect((await call(getTrace, inhouse({ id: 'g1', endsAtMs: 4_102_444_800_000 }), { path: `/api/traces/${runId}`, params: { id: runId } })).body).toMatchObject({ id: runId })
+    expect((await call(getTrace, inhouse(null), { path: `/api/traces/${runId}`, params: { id: runId } })).status).toBe(403)
   })
 })

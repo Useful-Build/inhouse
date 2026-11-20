@@ -1,8 +1,7 @@
 // The BrandAgent Durable Object (P3, p3-design section 4): one per brand, `env.BRAND_AGENT.getByName('brand')`. Owner:
 // W1 (p3-w1.md). The class wires the object's SQLite, its scheduler (the one owner of the alarm), the run tokens and
 // the ports (compose.ts) to the turn engine (core.ts), and answers the RPC surface (`BrandAgentRpc`, ports.ts). The
-// socket (`fetch`, route 34) is PR 4's; the model gate's three calls answer "not admitted" until PR 2b builds it (no
-// model is priced before W3's catalogue, so route 29 refuses every model until then anyway).
+// socket (`fetch`, route 34) is PR 4's.
 import { DurableObject } from 'cloudflare:workers'
 import { apiError } from '../../http.ts'
 import { SYSTEM_PROMPT_V1 } from '../../prompt/system.ts'
@@ -15,6 +14,8 @@ import type {
   Actor, AdmitAnswer, BrandAgentPorts, BrandAgentRpc, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PoolHealth, Refusal, RunScope, RunsHealth, SubmitTurn,
 } from './ports.ts'
 import { createAgentTables } from './schema.ts'
+import { modelUsable } from './model-check.ts'
+import { openStores } from '../../db/stores.ts'
 import { alarmPort, createScheduler } from './scheduler.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
@@ -42,7 +43,10 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         sql, scheduler: sched, now,
         hooks: { retryPlacement: id => this.core.retryPlacement(id), placementExpired: id => this.core.placementExpired(id) },
       })
-      this.core = new AgentCore({ sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V1, db: env.DB })
+      this.core = new AgentCore({
+        sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V1, db: env.DB,
+        modelUsable: modelUsable(openStores(env)),
+      })
       this.core.ensureSeeds()
       await sched.syncAlarm()
     })
@@ -67,15 +71,15 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async noteCountTokens(turnId: string): Promise<boolean> {
     return this.core.noteCountTokens(turnId)
   }
-  /** PR 2b builds the gate; until then no call is admitted (503 for that call). */
-  async admitModelCall(_turnId: string, _callId: string, _worst: ModelCallWorst): Promise<AdmitAnswer> {
-    return { busy: true }
+  /** The model gate (8.2, gate.ts): answered once the call is granted, refused, or 503 (`busy`). */
+  async admitModelCall(turnId: string, callId: string, worst: ModelCallWorst): Promise<AdmitAnswer> {
+    return this.core.admitModelCall(turnId, callId, worst)
   }
-  async renewModelCall(_turnId: string, _callId: string, _usage: ModelCallUsage): Promise<LeaseAnswer> {
-    return { gone: true }
+  async renewModelCall(turnId: string, callId: string, usage: ModelCallUsage): Promise<LeaseAnswer> {
+    return this.core.renewModelCall(turnId, callId, usage)
   }
-  async releaseModelCall(_turnId: string, _callId: string, _end: { usage: ModelCallUsage; cut: boolean }): Promise<LeaseAnswer> {
-    return { gone: true }
+  async releaseModelCall(turnId: string, callId: string, end: { usage: ModelCallUsage; cut: boolean }): Promise<LeaseAnswer> {
+    return this.core.releaseModelCall(turnId, callId, end)
   }
   async writeToolCall(turnId: string, n: number, entry: AuditEntry): Promise<void> {
     await this.core.writeToolCall(turnId, n, entry)
@@ -119,13 +123,13 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async restoreChats(chatIds: string[]): Promise<void> {
     this.core.restoreChats(chatIds)
   }
-  /** Route 32: PR 2b. */
-  async activeRuns(_scope: RunScope): Promise<ActiveRun[]> {
-    throw new Error('activeRuns: not built (PR 2b)')
+  /** Route 32: live runs and ended ones with a turn not yet in D1, in the scope. */
+  async activeRuns(scope: RunScope): Promise<ActiveRun[]> {
+    return this.core.activeRuns(scope)
   }
-  /** Route 33: PR 2b. */
-  async trace(_id: string, _scope: RunScope): Promise<Trace | null> {
-    throw new Error('trace: not built (PR 2b)')
+  /** Route 33: a run's or a turn's trace, null when it isn't there or isn't in the scope. */
+  async getTrace(id: string, scope: RunScope): Promise<Trace | null> {
+    return this.core.readTrace(id, scope)
   }
 
   // ---------- authority (4.10; the sockets are PR 4's) ----------
@@ -143,9 +147,9 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async poolHealth(): Promise<PoolHealth> {
     return this.ports.pool.health()
   }
-  /** The runs signal: PR 2b. */
+  /** The runs signal (ops/signals/runs.ts): failures, stuck turns, damaged sessions, quarantined tasks. */
   async runsHealth(): Promise<RunsHealth> {
-    throw new Error('runsHealth: not built (PR 2b)')
+    return this.core.runsHealth(this.sched.quarantinedCount())
   }
   async drain(): Promise<DrainState> {
     return this.core.drain()

@@ -59,6 +59,10 @@ export interface Harness {
   /** The `place` calls, as turn ids, in order. */
   placed(): string[]
   dueTasks(): { id: string; due_at_ms: number }[]
+  /** Picker ids the start's model check finds switched off (shared across a restart). */
+  modelsOff: Set<string>
+  /** The start's settings read throws while `throws` is set. */
+  modelCheck: { throws: boolean }
 }
 
 let objects = 0
@@ -70,6 +74,10 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { db?: D1Dat
   const stub = env.BRAND_AGENT.getByName(`core-${++objects}-${Math.random()}`)
   await runInDurableObject(stub, async (_i, state) => {
     const sql = state.storage.sql
+    // The real class's constructor seeded its tasks at the wall clock (W4's audit copy among them, dated today); this
+    // harness runs its own instance on a fake clock far ahead, where those would all be overdue and its daily chain
+    // would replay every day up to it. The harness's own tasks start from its clock.
+    sql.exec('DELETE FROM due_tasks')
     const clock = { now: T0 }
     const pool = new FakeRunnerPool()
     const nextRunner = { name: 'runner-0' }
@@ -87,6 +95,8 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { db?: D1Dat
     const files = new FakeFileLedger()
     const alarm: AlarmPort = { get: async () => null, set: async () => {}, delete: async () => {} }
     let sessions = 0
+    const modelsOff = new Set<string>()
+    const modelCheck = { throws: false }
     const build = (): Harness => {
       createAgentTables(sql)
       const now = () => clock.now
@@ -99,9 +109,13 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { db?: D1Dat
       core = new AgentCore({
         sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: o.db ?? env.DB,
         newSessionId: () => `00000000-0000-4000-8000-${String(++sessions).padStart(12, '0')}`,
+        modelUsable: async id => {
+          if (modelCheck.throws) throw new Error('settings read failed')
+          return !modelsOff.has(id)
+        },
       })
       const h: Harness = {
-        core, sql, clock, pool, nextRunner, usage, files, tokens, sched,
+        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck,
         restart: () => { const n = build(); n.core.ensureSeeds(); return n },
         async tick(ms) {
           clock.now += ms

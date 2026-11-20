@@ -38,6 +38,8 @@ export type ChatFrameEnvelope = z.infer<typeof ChatFrameEnvelopeSchema>
 export const TurnFailureSchema = z.enum([
   'session_crashed', 'protocol', 'store', 'files', 'timeout', 'sdk_error', 'max_turns', 'turn_budget', 'cap_reached',
   'budget_busy', 'pool_full', 'unknown',
+  // The turn's model was switched off (or lost its price) while the turn waited (W1 PR 2b rechecks at start).
+  'model_off',
 ])
 export type TurnFailure = z.infer<typeof TurnFailureSchema>
 
@@ -130,6 +132,9 @@ export type SendTurnResult = z.infer<typeof SendTurnResultSchema>
 /** A run the browser may attach to: the live one, or an ended one whose turns aren't all in D1 yet. */
 export const ActiveRunSchema = z.object({ runId: RunIdSchema, chatId: ChatIdSchema, lastSeq: z.number().int(), live: z.boolean() })
 export type ActiveRun = z.infer<typeof ActiveRunSchema>
+/** Route 32's answer (`GET /api/runs/active`), oldest run first. */
+export const ActiveRunsSchema = z.object({ runs: z.array(ActiveRunSchema) })
+export type ActiveRuns = z.infer<typeof ActiveRunsSchema>
 
 /** Whether the brand's agent is paused (`GET /api/pause`). `by` is a member id: an Admin's, or an Inhouse member's (item 19). */
 export const PauseStateSchema = z.object({ paused: z.boolean(), at: InstantSchema.nullable(), by: MemberIdSchema.nullable() })
