@@ -24,11 +24,13 @@ done
 if [ -s "$ca" ]; then
   # The image pins ca-certificates (its build checks the tool is there), so the system store always takes it; a
   # failed update stops the container rather than running with an intercept nothing but Node trusts.
+  # The copy is world-readable (0644): sessions run as non-root pool users, and the source file may be root-only.
+  # NODE_EXTRA_CA_CERTS names that copy, so every session's Node and CLI can read it.
   mkdir -p "$trust_dir"
-  cp "$ca" "$trust_dir/cloudflare-containers-ca.crt"
+  install -m 0644 "$ca" "$trust_dir/cloudflare-containers-ca.crt"
   update-ca-certificates >/dev/null
   store=system
-  export NODE_EXTRA_CA_CERTS="$ca"
+  export NODE_EXTRA_CA_CERTS="$trust_dir/cloudflare-containers-ca.crt"
   printf '{"type":"intercept_ca","found":true,"systemStore":"%s"}\n' "$store"
 else
   printf '{"type":"intercept_ca","found":false}\n'

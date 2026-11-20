@@ -500,3 +500,31 @@ describe('released from the real core: a resume that ends before the SDK touched
     })
   })
 })
+
+describe('#137 review round 1 (lows): status and late messages', () => {
+  it('GET /runs/:id: a run stopped before its session was spawned reads ending (not admitted) once its terminal is out', async () => {
+    const allocating = gate()
+    const releasing = gate()
+    const users = testSessionUsers({ onAllocate: () => allocating.promise, onRelease: () => releasing.promise })
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
+      const start = runStart({ prompt: 'cp:finish' })
+      const run = openRun(root, start)
+      await waitFor(() => users.allocated.length === 1)
+      expect(await post(root, `/runs/${start.runId}/stop`)).toBe(202)
+      allocating.open()
+      await waitFor(() => run.events.some((e) => e.type === 'failed'), 'the terminal event')
+      const res = await fetch(`${root.url}/runs/${start.runId}`, { headers: protocolHeaders })
+      expect(RunStatus.parse(await res.json()).state).toBe('ending')
+      releasing.open()
+      await run.released
+    })
+  })
+
+  it('a query_started after the terminal event is ignored: released says queryRan false', async () => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
+      const run = openRun(root, runStart({ prompt: 'late-query-started' }))
+      expect((await run.done).at(-1)?.type).toBe('finished')
+      expect(await run.released).toMatchObject({ checkpoint: null, queryRan: false })
+    })
+  })
+})

@@ -427,8 +427,10 @@ export function createRoot(deps: RootDeps): Root {
     if (live) {
       const p = live.pusher
       const seqs = { lastSeq: p?.lastSeq() ?? null, ackedSeq: p?.ackedSeq() ?? null }
+      // The terminal event first: a run stopped before its session was spawned has ended without a handle.
+      if (live.stream?.ended) return { state: 'ending', ...seqs }
       if (live.stream === null || live.handle === null) return { state: 'admitted', ...seqs }
-      return { state: live.stream.ended ? 'ending' : 'running', ...seqs }
+      return { state: 'running', ...seqs }
     }
     const p = released.get(runId)
     if (p) return { state: 'released', lastSeq: p.lastSeq(), ackedSeq: p.ackedSeq() }

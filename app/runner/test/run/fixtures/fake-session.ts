@@ -165,6 +165,12 @@ channel.onMessage((line) => {
     tick()
   }
   switch (mode) {
+    case 'late-query-started':
+      // A query_started after the run's terminal event: the root reads it no more (released.queryRan stays false).
+      finished()
+      send({ type: 'query_started' })
+      end()
+      break
     case 'cp':
       send({ type: 'query_started' })
       event({ type: 'sdk', message: { type: 'assistant', i: 0 }, truncated: false })

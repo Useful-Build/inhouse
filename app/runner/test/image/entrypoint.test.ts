@@ -3,7 +3,7 @@
 // the sessions), the CA isn't copied into the trust store folder, or a failed store update is ignored; without it, the
 // runner doesn't start, or starts with a CA variable naming a missing file; the command it's given isn't the one run.
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,7 +32,8 @@ describe('the entrypoint', () => {
   it('with the CA: copied into the trust store and the store updated; NODE_EXTRA_CA_CERTS names it for the command', () => {
     const d = temp()
     const ca = join(d, 'ca.crt')
-    writeFileSync(ca, 'pem')
+    // Root-only at the source, as the container's file may be.
+    writeFileSync(ca, 'pem', { mode: 0o600 })
     const trust = join(d, 'trust')
     const bin = join(d, 'bin')
     execFileSync('/bin/mkdir', ['-p', trust, bin])
@@ -40,9 +41,12 @@ describe('the entrypoint', () => {
     writeFileSync(join(bin, 'update-ca-certificates'), `#!/bin/sh\ntouch ${join(d, 'updated')}\n`, { mode: 0o755 })
     const lines = run({ INHOUSE_CA_FILE: ca, INHOUSE_CA_TRUST_DIR: trust, PATH: `${bin}:${process.env.PATH}` })
     expect(lines[0]).toEqual({ type: 'intercept_ca', found: true, systemStore: 'system' })
-    expect(readFileSync(join(trust, 'cloudflare-containers-ca.crt'), 'utf8')).toBe('pem')
+    const copy = join(trust, 'cloudflare-containers-ca.crt')
+    expect(readFileSync(copy, 'utf8')).toBe('pem')
+    // Readable by the non-root session users, whatever the source's mode; NODE_EXTRA_CA_CERTS names that copy.
+    expect(statSync(copy).mode & 0o777).toBe(0o644)
     expect(existsSync(join(d, 'updated'))).toBe(true)
-    expect(lines[1]).toEqual({ ca })
+    expect(lines[1]).toEqual({ ca: copy })
     expect(lines).toHaveLength(2)
   })
 

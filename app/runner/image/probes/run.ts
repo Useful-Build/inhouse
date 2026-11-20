@@ -1213,10 +1213,15 @@ async function probeDirect() {
     const prefix = `mcp__${INHOUSE_MCP_SERVER}__`
     const sent = ((first.tools ?? []) as { name: string; defer_loading?: boolean }[]).filter((t) => t.name.startsWith(prefix))
     const loaded = sent.filter((t) => t.defer_loading !== true).map((t) => t.name.slice(prefix.length)).sort()
-    const deferred = [...INHOUSE_ALWAYS, ...INHOUSE_ON_DEMAND].filter((n) => !loaded.includes(n)).sort()
+    // Deferred, positively: the tool is named in the first request (sent with defer_loading, or listed for tool
+    // search, as the CLI lists deferred tools) and isn't among those loaded. A name missing from the request entirely
+    // counts as not deferred.
+    const requestText = JSON.stringify(first)
+    const deferred = [...INHOUSE_ALWAYS, ...INHOUSE_ON_DEMAND].filter((n) => !loaded.includes(n) && requestText.includes(`${prefix}${n}`)).sort()
     fact('inhouse-tools.first-request', `loaded ${JSON.stringify(loaded)}, sent deferred ${JSON.stringify(sent.filter((t) => t.defer_loading === true).map((t) => t.name))}, all tool names ${JSON.stringify(((first.tools ?? []) as { name: string }[]).map((t) => t.name))}`)
     record('inhouse-tools.six-at-start', JSON.stringify(loaded) === JSON.stringify([...INHOUSE_ALWAYS].sort()), `loaded at start: ${JSON.stringify(loaded)}`)
-    record('inhouse-tools.fourteen-deferred', JSON.stringify(deferred) === JSON.stringify([...INHOUSE_ON_DEMAND].sort()), `deferred: ${JSON.stringify(deferred)}`)
+    const missing = INHOUSE_ON_DEMAND.filter((n) => !deferred.includes(n))
+    record('inhouse-tools.fourteen-deferred', JSON.stringify(deferred) === JSON.stringify([...INHOUSE_ON_DEMAND].sort()), `deferred (named in the request, not loaded): ${JSON.stringify(deferred)}; of the fourteen, not seen deferred: ${JSON.stringify(missing)}`)
   } else record('inhouse-tools.init', false, `no model request: ${twenty.raw.slice(-600)}`)
 
   // The blocking audit hook: a refused entry blocks the call; without the hook the same call goes through.

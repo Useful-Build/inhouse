@@ -185,6 +185,8 @@ export function createPusher(opts: {
         body: batch.body,
         signal: abort.signal,
       })
+      // Any answer but a 200 is read no further: its body is cancelled so the connection is freed.
+      if (res.status !== 200) void res.body?.cancel().catch(() => undefined)
       if (res.status === 410) outcome = { kind: 'gone' }
       else if (res.status !== 200) outcome = { kind: 'failed', why: `status ${res.status}` }
       else {

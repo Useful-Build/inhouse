@@ -328,3 +328,52 @@ describe('the pusher', () => {
     expect(p.ackedSeq()).toBe(19)
   })
 })
+
+// #137 review round 1 (lows).
+describe('the pusher, round 1', () => {
+  it('a non-200 answer has its body cancelled (the connection is freed); a 200 is read', async () => {
+    const clock = fakeClock()
+    const cancelled: number[] = []
+    let n = 0
+    const egress = {
+      fetch: (async () => {
+        const status = [500, 401, 429][n++] ?? 200
+        const body = new ReadableStream({ cancel: () => void cancelled.push(status) })
+        return status === 200 ? Response.json({ ackSeq: 0, stop: false }) : new Response(body, { status })
+      }) as PushFetch,
+    }
+    const { p } = pusherOn(clock, egress)
+    p.push(LITERAL[0]!)
+    for (let i = 0; i < 10 && p.ackedSeq() === null; i++) await clock.advance(20_000)
+    expect(p.ackedSeq()).toBe(0)
+    expect(cancelled).toEqual([500, 401, 429])
+  })
+
+  it('after released, delivery gives up once it has failed for giveUpMs, and finishes', async () => {
+    const clock = fakeClock()
+    const egress = fakeEgress(() => 'fail500')
+    const { p } = pusherOn(clock, egress, { giveUpMs: 60_000 })
+    let done = false
+    void p.done.then(() => (done = true))
+    for (const e of LITERAL) p.push(e)
+    await clock.advance(59_000)
+    expect(done).toBe(false)
+    for (let i = 0; i < 20 && !done; i++) await clock.advance(15_000)
+    expect(done).toBe(true)
+    const sends = egress.bodies.length
+    await clock.advance(10 * 60_000)
+    expect(egress.bodies.length).toBe(sends)
+  })
+
+  it('before released, delivery never gives up (the run is still live)', async () => {
+    const clock = fakeClock()
+    const egress = fakeEgress(() => 'fail500')
+    const { p } = pusherOn(clock, egress, { giveUpMs: 60_000 })
+    let done = false
+    void p.done.then(() => (done = true))
+    p.push(LITERAL[0]!)
+    for (let i = 0; i < 40; i++) await clock.advance(15_000)
+    expect(done).toBe(false)
+    expect(egress.bodies.length).toBeGreaterThan(5)
+  })
+})
