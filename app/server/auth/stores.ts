@@ -52,6 +52,12 @@ export interface AuditSink {
   supportAccess(principal: InhousePrincipal, at: { method: string; route: string; nowMs: number }): Promise<void>
 }
 
+/**
+ * The stores, as `authenticate` and every handler get them (a handler through `closedAfterRefusal`). The contract
+ * (W2): every method takes data and returns data. No method hands out a writer (a transaction or batch callback, a
+ * statement or batch builder, a sub-store or handle returned from a call): `closedAfterRefusal` checks only when a
+ * method is called, so a writer handed out before an object check refused would still write after it.
+ */
 export interface AuthStores {
   members: MemberDirectory
   grants: GrantStore

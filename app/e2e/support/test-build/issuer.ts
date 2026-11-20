@@ -1,17 +1,18 @@
 // The test build's issuer, test side (p2-design section 10). One RS256 key pair per Playwright run, made when
 // playwright.config.ts loads in the main process and handed to the worker processes through the environment (they
 // inherit it), so the Worker under `wrangler dev` (given only the public JWKS, as a --var) and every spec agree on it.
-// The private key never leaves the test runner. W1's server/auth/test-issuer-mint.ts replaces `mint` once it lands.
+// The private key never leaves the test runner. The token itself comes from server/auth/test-issuer-mint.ts (W1), the
+// one minting helper the seed and the unit tests use too, so every test token has the same claims.
 // The `ship` workflow's test-build mode (SHIP=1) starts the test build itself: it makes the key pair and passes the
 // private JWK as a file (TEST_ISSUER_PRIVATE_JWK_FILE) and the origins as BASE_URL (brand) and TEST_BUILD_INHOUSE_URL
 // (inhouse). Those win when set, so `signIn` works there with no key from playwright.config.ts.
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { SignJWT, importJWK } from 'jose'
 import type { JWK } from 'jose'
+import { TEST_ISSUER, mintPerson } from '../../../server/auth/test-issuer-mint.ts'
 
 /** The issuer the Worker trusts in the test build only. */
-export const TEST_ISSUER = 'https://test-issuer.invalid'
+export { TEST_ISSUER }
 /** Where the test build's Worker config lands (`npm run build:product-test`), relative to app/. */
 export const TEST_BUILD_WORKER_CONFIG = 'dist-product-test/inhouse_product/wrangler.json'
 /** The test build's port: its origins (`http://brand.localhost:<port>`) carry it. 8787 by default, as in wrangler.test.jsonc. */
@@ -112,15 +113,6 @@ function privateJwk(): JWK {
  */
 export async function signIn(memberKey: string, appName: AppName): Promise<Record<string, string>> {
   const jwk = privateJwk()
-  const key = await importJWK(jwk, 'RS256')
-  const jwt = await new SignJWT({ email: `${memberKey}@example.test`, type: 'app' })
-    .setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
-    .setIssuer(TEST_ISSUER)
-    .setAudience([app(appName).aud])
-    .setSubject(memberKey)
-    .setIssuedAt()
-    .setNotBefore('0s')
-    .setExpirationTime('10m')
-    .sign(key)
+  const jwt = await mintPerson({ key: jwk, aud: app(appName).aud, sub: memberKey, email: `${memberKey}@example.test` })
   return { 'Cf-Access-Jwt-Assertion': jwt }
 }

@@ -64,3 +64,25 @@ export const AccessConfigSchema = z.strictObject({
   if (a?.aud === b?.aud) ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps share an aud' })
 })
 export type AccessConfig = z.infer<typeof AccessConfigSchema>
+
+let parsed: { raw: string | undefined; config: AccessConfig | null } | undefined
+
+/**
+ * `INHOUSE_ACCESS`, parsed once per isolate (again only if the var's text changes). Null when it's missing or invalid:
+ * the caller answers 503 `unavailable` to every /api/* request. Logs one line per bad value, naming the failing paths only.
+ */
+export function loadAccessConfig(raw: string | undefined): AccessConfig | null {
+  if (parsed && parsed.raw === raw) return parsed.config
+  let config: AccessConfig | null = null
+  let issues: string[]
+  try {
+    const result = AccessConfigSchema.safeParse(JSON.parse(raw ?? ''))
+    if (result.success) config = result.data
+    issues = result.success ? [] : result.error.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`)
+  } catch {
+    issues = ['(root): not JSON']
+  }
+  if (!config) console.error({ event: 'access_config_invalid', issues })
+  parsed = { raw, config }
+  return config
+}

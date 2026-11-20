@@ -4,26 +4,49 @@
 // and no-store: the errors through server/http.ts, and a handler's own Response is wrapped here, so no handler can opt
 // out. Its parts come in as `ApiParts` (server/index.ts passes the real ones), so tests can drive the path itself.
 import type { AccessRow } from './access-matrix.ts'
-import type { authenticate, checkAccess, checkOrigin } from './auth/index.ts'
+import { AccessRefusedError, closedAfterRefusal, objectGate } from './auth/index.ts'
+import type { AuthStores, authenticate, checkAccess, checkOrigin } from './auth/index.ts'
 import { SECURITY_HEADERS, apiError } from './http.ts'
-import { withSecurityHeaders } from '../shared/security-headers.ts'
-import { matchRoute } from './routes.ts'
-import type { Route } from './routes.ts'
+import { respond, withSecurityHeaders } from '../shared/security-headers.ts'
+import { STORE_BINDINGS, matchRoute } from './routes.ts'
+import type { HandlerEnv, Route } from './routes.ts'
 
 export interface ApiParts {
   authenticate: typeof authenticate
   checkOrigin: typeof checkOrigin
   checkAccess: typeof checkAccess
+  /** The D1-backed stores sign-in and access read (W2's data layer). */
+  stores: (env: Env) => AuthStores
   routes: readonly Route[]
   accessMatrix: readonly AccessRow[]
 }
 
+/**
+ * The handler's env: a new frozen object with every binding but `STORE_BINDINGS` (`DB`, `FILES`), so a handler that
+ * casts its `env` still finds no D1 or R2 binding on it.
+ */
+export function handlerEnv(env: Env): HandlerEnv {
+  const drop: readonly string[] = STORE_BINDINGS
+  return Object.freeze(Object.fromEntries(Object.entries(env).filter(([k]) => !drop.includes(k)))) as HandlerEnv
+}
+
 export async function api(parts: ApiParts, request: Request, env: Env, ctx: ExecutionContext, requestId: string): Promise<Response> {
-  const principal = await parts.authenticate(request, env, requestId)
-  if (!principal) return apiError('unauthorized')
+  const nowMs = Date.now()
+  let stores: AuthStores
+  try {
+    stores = parts.stores(env)
+  } catch (err) {
+    console.error({ event: 'auth_store_failed', requestId, error: err instanceof Error ? err.name : 'unknown' })
+    return apiError('unavailable')
+  }
+  const auth = await parts.authenticate(request, env, stores, nowMs, requestId)
+  if ('refused' in auth) return apiError(auth.refused, 'reason' in auth ? { reason: auth.reason } : {})
+  const { principal } = auth
+  // The API serves no CORS: a preflight gets 405, never a route.
+  if (request.method === 'OPTIONS') return respond(SECURITY_HEADERS, 405, { headers: { Allow: 'GET, HEAD, POST, PUT, DELETE' } })
   const upgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
   if (upgrade || (request.method !== 'GET' && request.method !== 'HEAD')) {
-    const reason = parts.checkOrigin(request, env, principal)
+    const reason = parts.checkOrigin(request, env)
     if (reason) return apiError('forbidden', { reason })
   }
   const { pathname } = new URL(request.url)
@@ -34,7 +57,38 @@ export async function api(parts: ApiParts, request: Request, env: Env, ctx: Exec
     console.error({ event: 'route_without_matrix_row', requestId, method: found.route.method, pattern: found.route.pattern })
     return apiError('unknown')
   }
-  const denied = parts.checkAccess(row, principal, request)
-  if (denied) return apiError(denied.code, denied.reason ? { reason: denied.reason } : {})
-  return withSecurityHeaders(SECURITY_HEADERS, await found.route.handler({ request, env, ctx, principal, params: found.params, requestId }))
+  const decision = parts.checkAccess(principal, row, undefined, nowMs)
+  if ('refused' in decision) return apiError('forbidden', decision.reason ? { reason: decision.reason } : {})
+  // The audit duty comes from the decision (Inhouse reading brand data): no line, no data.
+  if (decision.audit === 'support.access') {
+    if (principal.kind !== 'inhouse') throw new Error('support.access decided for a principal that is not Inhouse')
+    try {
+      await stores.audit.supportAccess(principal, { method: row.method, route: row.pattern, nowMs })
+    } catch (err) {
+      console.error({ event: 'support_access_unlogged', requestId, error: err instanceof Error ? err.name : 'unknown' })
+      return apiError('unavailable')
+    }
+  }
+  const gate = objectGate(principal, row, nowMs)
+  // A `report` row's handler gets no stores; every other handler's stores close at the first refusal.
+  const handlerStores = row.class === 'report' ? undefined : closedAfterRefusal(stores, () => gate.refusal !== null)
+  let response: Response
+  try {
+    response = await found.route.handler({
+      request, env: handlerEnv(env), ctx, principal, params: found.params, requestId, nowMs, stores: handlerStores, access: { requireObject: gate.requireObject },
+    })
+  } catch (err) {
+    // A refusal answers 403 whatever the handler threw after it (a closed store's StoresClosed included).
+    if (gate.refusal) return apiError('forbidden', gate.refusal.reason ? { reason: gate.refusal.reason } : {})
+    if (err instanceof AccessRefusedError) return apiError('forbidden', err.reason ? { reason: err.reason } : {})
+    throw err
+  }
+  // Fails closed on the outcome, not the call: any refusal is 403 whatever the handler answered (it may have caught it),
+  // and a row whose rule needs the object never answers 1xx or 2xx (a 101 upgrade included) without a passing check.
+  if (gate.refusal) return apiError('forbidden', gate.refusal.reason ? { reason: gate.refusal.reason } : {})
+  if (decision.objectCheck === 'required' && response.status < 300 && !gate.passed) {
+    console.error({ event: 'object_check_skipped', requestId, method: row.method, pattern: row.pattern })
+    return apiError('unknown')
+  }
+  return withSecurityHeaders(SECURITY_HEADERS, response)
 }

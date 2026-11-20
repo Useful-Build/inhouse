@@ -12,8 +12,10 @@ import type { Method } from '../routes.ts'
  *   object check passes.
  * - `personal`: only the owner (`object.ownerId === principal.memberId`), never Inhouse.
  * - `open`: the closed list (today only `GET /api/health`, for `monitor`).
+ * - `report`: POST only, per `allow` (Inhouse included, no grant: the error reporter posts from both hosts); never a
+ *   service token. Its handler gets no stores (api.ts), so it can only log. No `CanKey` points at one.
  */
-export type RouteClass = 'brand_data' | 'baseline' | 'technical' | 'personal' | 'open'
+export type RouteClass = 'brand_data' | 'baseline' | 'technical' | 'personal' | 'open' | 'report'
 
 /** One row per route. `method` and `pattern` match the route's own (server/routes.ts) exactly. */
 export interface AccessRow {
@@ -101,4 +103,151 @@ export function canRowsProblems(rows: readonly AccessRow[], canRows: CanRows): s
     if (n !== 1) problems.push(`${key} → ${want.method} ${want.pattern} matches ${n} rows`)
   }
   return problems
+}
+
+const OK: AccessDecision = { ok: true }
+const NO: AccessDecision = { refused: 'forbidden' }
+const OBJECT_REQUIRED: AccessDecision = { ok: true, objectCheck: 'required' }
+
+/** The only technical write an Admin may make (decision log: admins may switch a model off). Call 4 may add `'on'`. */
+const ADMIN_WRITE_KEY = /^tm:[^:]+:on$/
+
+/** The object an Admin's allowed `adminWrite` write has, for `canFor` (`as: 'adminWrite'`). */
+export const ADMIN_WRITE_OBJECT: AccessObject = { settingKey: 'tm:any:on', value: 'off' }
+
+const owner = (object: AccessObject | undefined, memberId: string): AccessDecision =>
+  object === undefined ? OBJECT_REQUIRED : object.ownerId === memberId ? OK : { refused: 'forbidden', reason: 'not_owner' }
+
+export const checkAccess: CheckAccess = (principal, row, object, nowMs) => {
+  const read = row.method === 'GET'
+  if (principal.kind === 'service') {
+    if (!row.services?.includes(principal.name)) return NO
+    if (principal.name === 'monitor') return row.class === 'open' && read ? OK : NO
+    if (!read || row.class === 'open' || row.class === 'report') return NO
+    return row.class === 'personal' ? owner(object, principal.memberId) : OK
+  }
+  if (row.class === 'open') return NO
+  if (row.class === 'report') {
+    const who = principal.kind === 'inhouse' ? 'inhouse' : principal.role
+    return row.method === 'POST' && row.allow.includes(who) ? OK : NO
+  }
+
+  if (principal.kind === 'inhouse') {
+    if (!row.allow.includes('inhouse')) return NO
+    switch (row.class) {
+      case 'brand_data': {
+        if (!read) return NO
+        const g = principal.grant
+        return g && g.endsAtMs > nowMs ? { ok: true, audit: 'support.access' } : { refused: 'forbidden', reason: 'grant_required' }
+      }
+      case 'baseline': return read ? OK : NO
+      case 'technical': return OK
+      case 'personal': return NO
+    }
+  }
+
+  const role = principal.role
+  if (!row.allow.includes(role)) return row.class === 'technical' && !read && role === 'admin' ? { refused: 'forbidden', reason: 'admin_read_only' } : NO
+  if (row.class === 'technical' && !read) {
+    // A Member never writes technical; an Admin only on an `adminWrite` row, and only through the object rule.
+    if (role !== 'admin') return NO
+    if (!row.adminWrite) return { refused: 'forbidden', reason: 'admin_read_only' }
+    if (object === undefined) return OBJECT_REQUIRED
+    return typeof object.settingKey === 'string' && ADMIN_WRITE_KEY.test(object.settingKey) && object.value === 'off'
+      ? OK
+      : { refused: 'forbidden', reason: 'admin_read_only' }
+  }
+  return row.class === 'personal' ? owner(object, principal.memberId) : OK
+}
+
+/** What `requireObject` throws: api.ts answers 403 `forbidden` with its reason. */
+export class AccessRefusedError extends Error implements AccessRefused {
+  readonly code = 'forbidden' as const
+  readonly reason?: ForbiddenReason
+  constructor(reason?: ForbiddenReason) {
+    super('forbidden')
+    this.name = 'AccessRefused'
+    this.reason = reason
+  }
+}
+
+/**
+ * `requireObject` for one request on one row, with every call's outcome recorded: `refusal` is the first refusal
+ * (api.ts answers 403 with it whatever the handler returned), `passed` whether at least one call passed. The 403 only
+ * fixes the answer: it can't undo a write committed before the handler returned, so api.ts also hands the handler its
+ * stores through `closedAfterRefusal`, and a handler that swallows `AccessRefused` can't write through them after it.
+ */
+export function objectGate(principal: Principal, row: AccessRow, nowMs: number): { requireObject: RequireObject; readonly passed: boolean; readonly refusal: AccessRefusedError | null } {
+  let passed = false
+  let refusal: AccessRefusedError | null = null
+  return {
+    requireObject(object) {
+      const d = checkAccess(principal, row, object, nowMs)
+      const refused = 'refused' in d ? new AccessRefusedError(d.reason) : d.objectCheck ? new AccessRefusedError() : null
+      if (refused) {
+        refusal ??= refused
+        throw refused
+      }
+      passed = true
+    },
+    get passed() { return passed },
+    get refusal() { return refusal },
+  }
+}
+
+/** The row for a method and pattern, or undefined. */
+export const rowFor = (rows: readonly AccessRow[], method: string, pattern: string) =>
+  rows.find(r => r.method === method && r.pattern === pattern)
+
+export const canFor: CanFor = (principal, rows, canRows, nowMs) => {
+  const out = {} as Record<CanKey, boolean>
+  for (const key of Object.keys(canRows) as CanKey[]) {
+    const want = canRows[key]
+    const row = rowFor(rows, want.method, want.pattern)
+    const d = row && checkAccess(principal, row, want.as === 'adminWrite' ? ADMIN_WRITE_OBJECT : undefined, nowMs)
+    out[key] = !!d && 'ok' in d && !d.objectCheck
+  }
+  return out
+}
+
+/** What a store call throws once the request's object check has refused. */
+export class StoresClosedError extends Error {
+  constructor() {
+    super('stores closed: this request was refused')
+    this.name = 'StoresClosed'
+  }
+}
+
+/**
+ * `stores` as the handler gets them: every method, at any depth, throws `StoresClosedError` once `refused()` is true
+ * (reads too: the answer is 403 anyway). A call made before the refusal runs as usual; what it returns isn't wrapped.
+ */
+export function closedAfterRefusal<T extends object>(stores: T, refused: () => boolean): T {
+  // A blank target, so a frozen store or a class instance (private fields, prototype methods) wraps as well: each
+  // method still runs with the real object as `this`.
+  // `has`, `ownKeys` and `getOwnPropertyDescriptor` forward too (each property reported configurable, as the blank
+  // target requires), so `in`, `Object.keys` and a spread work; a spread copies the wrapped values, so it closes too.
+  const target = stores
+  const wrapped = (prop: string | symbol): unknown => {
+    const value: unknown = Reflect.get(target, prop, target)
+    if (typeof value === 'function') {
+      return (...args: unknown[]) => {
+        if (refused()) throw new StoresClosedError()
+        return (value as (...a: unknown[]) => unknown).apply(target, args)
+      }
+    }
+    return value !== null && typeof value === 'object' ? closedAfterRefusal(value, refused) : value
+  }
+  return new Proxy(Object.create(null) as T, {
+    get: (_, prop) => wrapped(prop),
+    has: (_, prop) => Reflect.has(target, prop),
+    ownKeys: () => Reflect.ownKeys(target),
+    getOwnPropertyDescriptor(_, prop) {
+      const d = Reflect.getOwnPropertyDescriptor(target, prop)
+      return d && { value: wrapped(prop), writable: false, enumerable: d.enumerable, configurable: true }
+    },
+    set: () => false,
+    defineProperty: () => false,
+    deleteProperty: () => false,
+  })
 }

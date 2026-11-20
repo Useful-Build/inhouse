@@ -1,0 +1,17 @@
+// check-product-config fixture: refused, rule "env-block".
+{
+	"name": "inhouse-product",
+	"main": "server/index.ts",
+	"vars": {
+		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://example-team.cloudflareaccess.com\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://brand.example.test\",\"aud\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse.example.test\",\"aud\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}],\"serviceTokens\":{\"monitor-client.access\":\"monitor\",\"smoke-client.access\":\"smoke\"}}"
+	},
+	"workers_dev": false,
+	"preview_urls": false,
+	"env": {
+		"staging": {
+			"vars": {
+				"INHOUSE_ACCESS": "{}"
+			}
+		}
+	}
+}

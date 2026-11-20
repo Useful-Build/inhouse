@@ -1,22 +1,21 @@
-// PR0's stand-ins for W1's auth (p2-design sections 1 to 3). W1 replaces this file: `authenticate` verifies the Access
-// JWT (or the test issuer's, in the test build only) and reads the principal from D1; `checkOrigin` and `checkAccess`
-// read the config and the matrix row. Until then every /api/* request is 401, so nothing past it can run.
-import type { AccessRow } from '../access-matrix.ts'
+// The API's sign-in and access parts (p2-design sections 1 to 3), as server/api.ts takes them (ApiParts):
+// `authenticate` and `checkOrigin` (authenticate.ts), and `checkAccess` with `objectGate` (matrix.ts).
+import type { AuthStores } from './stores.ts'
 
-/** Placeholder until W1's first PR freezes the principal type (p2-design section 1). */
-export type Principal = { readonly kind: string; readonly requestId: string }
+export { authenticate, authenticateUpgrade, checkOrigin } from './authenticate.ts'
+export type { AuthOutcome } from './authenticate.ts'
+export { AccessRefusedError, StoresClosedError, checkAccess, closedAfterRefusal, objectGate } from './matrix.ts'
+export type { Principal } from './principal.ts'
+export type { AuthStores } from './stores.ts'
 
-/** The verified principal, or null (401 `unauthorized`, the body never says why). Fails closed: always null for now. */
-export async function authenticate(_request: Request, _env: Env, _requestId: string): Promise<Principal | null> {
-  return null
-}
+const unwired = () => Promise.reject(new Error('stores not wired'))
 
-/** Null when the request may go on; else the refusal's reason (403 `forbidden`). */
-export function checkOrigin(_request: Request, _env: Env, _principal: Principal): string | null {
-  return 'bad_origin'
-}
-
-/** Null when the matrix row lets this principal through; else the refusal. Fails closed until W1 lands. */
-export function checkAccess(_row: AccessRow, _principal: Principal, _request: Request): { code: 'forbidden' | 'not_found'; reason?: string } | null {
-  return { code: 'forbidden' }
+/**
+ * Stand-in stores until W2's D1 data layer is wired (server/index.ts): every call throws, so every sign-in that needs
+ * D1 answers 503 and nothing is let through. Only `monitor` (no member row) gets a principal.
+ */
+export const unwiredStores: AuthStores = {
+  members: { resolvePerson: unwired, resolveInhouse: unwired, serviceMember: unwired, profile: unwired },
+  grants: { active: unwired },
+  audit: { supportAccess: unwired },
 }
