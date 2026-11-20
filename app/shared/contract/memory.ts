@@ -13,6 +13,8 @@ export const MemoryLineSchema = z.object({
   at: InstantSchema.optional(),
   used: z.string().optional(),
   lastUsed: InstantSchema.optional(),
+  /** Revision of this line (forgetting it bumps it): a write sends it back as `ifRev`. */
+  rev: z.number().int().min(1),
 })
 export type MemoryLine = z.infer<typeof MemoryLineSchema>
 

@@ -29,7 +29,7 @@ export function Routines() {
   const [deleting, setDeleting] = useState<Item | null>(null)
   const all: RoutineDef[] = [
     ...data.routines,
-    ...st.routinesExtra.map(r => ({ need: 1 as const, ...r, what: `Created in a chat: "${r.what}"` })),
+    ...st.routinesExtra.map(r => ({ need: 1 as const, rev: 1, ...r, what: `Created in a chat: "${r.what}"` })),
   ]
   const list: Item[] = all.filter(r => !st.routinesDeleted[r.id] && !(r.inChat && S < r.need)).map(r => {
     const locked = S < r.need

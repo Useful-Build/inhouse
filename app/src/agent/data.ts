@@ -165,12 +165,12 @@ export const tools = {
 }
 
 /** A routine as the sample data has it: the mock gives each its id. */
-type RawRoutine = Omit<RoutineDef, 'id' | 'time' | 'next' | 'last' | 'need'> & { time: string; next: string; need: number; last?: { at: string; result: string } }
+type RawRoutine = Omit<RoutineDef, 'id' | 'time' | 'next' | 'last' | 'need' | 'rev'> & { time: string; next: string; need: number; last?: { at: string; result: string } }
 const routineOf = (r: RawRoutine): Omit<RoutineDef, 'id'> => {
   const what = `the routine "${r.name}"`
   const { last, ...rest } = r
   return {
-    ...rest, need: needOf(what, r.need), time: clockTimeOf(what, r.time), next: sampleAt(what, r.next),
+    ...rest, rev: 1, need: needOf(what, r.need), time: clockTimeOf(what, r.time), next: sampleAt(what, r.next),
     ...(last ? { last: { at: sampleAt(what, last.at), result: last.result } } : {}),
   }
 }
@@ -296,7 +296,7 @@ const memLines = (group: string, rows: RawMemoryLine[]): MemoryLine[] =>
   rows.map((r, i) => {
     const what = `the memory "${r.text}"`
     return {
-      key: `${group}:${i}`, text: r.text, source: r.source,
+      key: `${group}:${i}`, text: r.text, source: r.source, rev: 1,
       ...(r.at !== undefined ? { at: sampleAt(what, r.at) } : {}),
       ...(r.used !== undefined ? { used: r.used } : {}),
       ...(r.lastUsed !== undefined ? { lastUsed: sampleAt(what, r.lastUsed) } : {}),
@@ -346,7 +346,7 @@ export const { models, defaultModel } = loadModels()
 
 
 /** The Library data, checked once at load: bad sample data stops the app with a message instead of showing the wrong place or type. */
-type RawFile = Omit<LibraryFile, 'at' | 'durationMs'> & { at: string; durationSeconds?: number }
+type RawFile = Omit<LibraryFile, 'at' | 'durationMs' | 'rev'> & { at: string; durationSeconds?: number }
 const loadLibrary = (): { places: LibraryPlace[]; files: LibraryFile[] } => {
   const places = libraryJson.places as LibraryPlace[]
   const raw = libraryJson.files as unknown as RawFile[]
@@ -367,7 +367,7 @@ const loadLibrary = (): { places: LibraryPlace[]; files: LibraryFile[] } => {
     ids.add(f.id)
   }
   const files = raw.map(({ at, durationSeconds, ...f }): LibraryFile => ({
-    ...f, at: sampleAt(`the file "${f.id}"`, at), ...(durationSeconds !== undefined ? { durationMs: durationSeconds * 1000 } : {}),
+    ...f, rev: 1, at: sampleAt(`the file "${f.id}"`, at), ...(durationSeconds !== undefined ? { durationMs: durationSeconds * 1000 } : {}),
   }))
   return { places, files }
 }

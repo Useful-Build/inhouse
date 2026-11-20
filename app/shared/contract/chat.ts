@@ -28,6 +28,8 @@ export const RoutineCardSchema = z.object({
   note: z.string(),
   /** Original request, for routines created in a chat. */
   what: z.string().optional(),
+  /** Revision of this routine once a write moved it (delete, restore, regenerate); missing means its first. */
+  rev: z.number().int().min(1).optional(),
 })
 export type RoutineCard = z.infer<typeof RoutineCardSchema>
 

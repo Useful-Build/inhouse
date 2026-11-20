@@ -3,9 +3,10 @@
 // the `error` notice every failed write sends, and a run never starts. The product shell reads that as "not connected yet" and shows one screen in place of the pages
 // (src/shell/NotConnected.tsx). P2 fills this file in. It imports nothing from the mock or the sample data.
 import { instantOf } from '../../lib/format'
+import { RESOURCE_KEYS } from '../../../shared/contract/keys'
 import { AgentError } from '../types'
 import type {
-  AgentClient, AgentData, AgentNotice, AgentNotification, AgentState, AskOptions, Instant, LibraryFile, RoutineRun, RunEvent, Trace,
+  AgentClient, AgentData, AgentNotice, AgentNotification, AgentState, AskOptions, Instant, LibraryFile, ResourceKey, ResourceStatus, RoutineRun, RunEvent, Trace,
 } from '../types'
 
 const UNAVAILABLE = 'Not connected yet.'
@@ -25,7 +26,7 @@ const LOADING: AgentData = {
   skillSuggestions: [],
   usage: { month: '', cap: { minor: 0, currency: 'USD' }, alertAt: 0, total: { minor: 0, currency: 'USD' }, conversations: 0, questionsAsked: 0, jobsRun: 0, daily: [], breakdown: { person: [], job: [], model: [], tool: [] } },
   usageMonths: [],
-  people: { members: [], approvalRules: [], runLimits: { jobsAgentMayFinish: [], alwaysWaitsForAPerson: [], dailyActionLimit: 0, largestRestockUnits: 0 } },
+  people: { members: [], approvalRules: [], supportGrant: null, runLimits: { jobsAgentMayFinish: [], alwaysWaitsForAPerson: [], dailyActionLimit: 0, largestRestockUnits: 0 } },
   memory: { team: [], personal: [] },
   auditLog: [],
   activity: { today: [], earlier: [] },
@@ -34,6 +35,8 @@ const LOADING: AgentData = {
   defaultModel: '',
   chat: { chats: [], recentCount: 0, suggestions: [] },
   library: { places: [] },
+  more: { audit: false, members: false },
+  resources: Object.fromEntries(RESOURCE_KEYS.map(k => [k, { status: 'loading' }])) as Record<ResourceKey, ResourceStatus>,
   help: [],
 }
 
@@ -112,4 +115,16 @@ export class HttpAgent implements AgentClient {
   pinChat = (_id: string, _pinned: boolean) => this.refuse()
   deleteChats = (_ids: string[]) => this.refuse()
   restoreChats = (_ids: string[]) => this.refuse()
+
+  // P2 (W4 implements these over HTTP): until then each is `unavailable`, and `me()` is null (loading).
+  me = (): null => null
+  inviteMember = (_input: Parameters<AgentClient['inviteMember']>[0]) => this.refuse()
+  setMemberRole = (_id: string, _role: Parameters<AgentClient['setMemberRole']>[1]) => this.refuse()
+  removeMember = (_id: string) => this.refuse()
+  grantSupport = (_hours: number) => this.refuse()
+  endSupportGrant = (_id: string) => this.refuse()
+  loadMore = (_list: 'audit' | 'members') => this.refuse()
+  retry = (_resource: ResourceKey) => this.refuse()
+  auditExportUrl = (): string | null => null
+  signOutUrl = (): string | null => null
 }

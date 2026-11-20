@@ -2,9 +2,10 @@
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'
+import { GRANT_HOURS } from './keys.ts'
 
-/** How long a grant may run, in hours. */
-export const GRANT_HOURS = [1, 4, 24, 72] as const
+/** How long a grant may run, in hours (the list is in keys.ts, which has no imports). */
+export { GRANT_HOURS }
 export const GrantHoursSchema = z.literal(GRANT_HOURS)
 export type GrantHours = z.infer<typeof GrantHoursSchema>
 
