@@ -738,7 +738,10 @@ async function probeIsolation() {
   void a.done.then(() => (aEnded = true))
   const holder = await waitUntil(() => {
     if (aEnded) throw new Error(`A's run ended before its holder started: ${JSON.stringify(terminalOf(a.run))}`)
-    return procs().find((p) => p.cmdline.includes('canary-A-cmdline-holder') && p.uid !== 0)
+    // The holder itself, never a wrapper of A's Bash call: bwrap, the seccomp helper and the shells under them carry
+    // the whole command (`CANARY_A_FILE` and all) at the end of command lines thousands of bytes long, past the 600 a
+    // sub-probe prints, and none of them has the canary in its environment.
+    return procs().find((p) => p.cmdline.includes('canary-A-cmdline-holder') && !p.cmdline.includes('CANARY_A_FILE') && p.uid !== 0)
   }, "A's holder process", 60_000)
   // By uid, not by working folder: root reads another uid's /proc/<pid>/cwd only with CAP_SYS_PTRACE, which Docker's
   // default set lacks.
@@ -842,10 +845,14 @@ async function probeIsolation() {
   const fdView = (u: { uid: number; gid: number }) =>
     aSession ? runCommand('python3', ['-c', FD_VIEW, String(aSession.pid)], { uid: u.uid, gid: u.gid }) : Promise.resolve({ code: null, out: "A's session not found" })
   const chOff = await fdView(aUser)
+  // B's run has ended and the root is releasing its uid: the release kills every process of the uid, so a process of
+  // B's uid starts only once the release is done (its event, not a timer). A's session is still up.
+  const bRelease = await releaseOf(rb)
   const bUser = bSession && pool.find((u) => u.uid === bSession!.uid)
-  const chB = bUser ? await fdView(bUser) : { code: null, out: "B's session not found" }
-  // Outside the namespace, root sees both sessions by their command lines.
-  const sessionsSeen = [aSession, bSession].map((p) => (p ? readFileSync(`/proc/${p.pid}/cmdline`, 'utf8').replace(/\0/g, ' ') : ''))
+  const chB = !bUser ? { code: null, out: "B's session not found" } : bRelease.ok ? await fdView(bUser) : { code: null, out: `B's uid is not free: ${bRelease.detail}` }
+  // Outside the namespace, root saw both sessions by their command lines: procs() read each while it was up (B's when
+  // its Bash was about to look). B's session is gone by now, so /proc can't be read for it again.
+  const sessionsSeen = [aSession, bSession].map((p) => p?.cmdline ?? '')
   // The Read tool's rules, each taken out alone in a direct session while A is up: what its other walls do.
   const readStep = (file_path: string) => () => ({ tool: 'Read', input: { file_path } })
   const grepStep = (path: string) => () => ({ tool: 'Grep', input: { pattern: 'CANARY.A', path, output_mode: 'content' } })
