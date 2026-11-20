@@ -79,6 +79,30 @@ function base(c: RunConfig): Options {
 }
 
 describe('the guarded options', () => {
+  // Structured output (R3 follow-up). Ways it could fail: StructuredOutput is available or pre-approved without an
+  // outputFormat (the model could end a plain run on it), or missing with one (the SDK can't return the answer); a base
+  // whose outputFormat differs from the run config's goes through.
+  const SCHEMA = { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] }
+  it.prop([config])('StructuredOutput is in tools and allowedTools exactly when the run config asks for structured output', (c) => {
+    const plain = guards.apply(base({ ...c, outputFormat: undefined }), { ...c, outputFormat: undefined }, run)
+    expect(plain.tools).not.toContain('StructuredOutput')
+    expect(plain.allowedTools).not.toContain('StructuredOutput')
+    expect(plain.outputFormat).toBeUndefined()
+    const asked = { ...c, outputFormat: { type: 'json_schema' as const, schema: SCHEMA } }
+    const o = guards.apply(base(asked), asked, run)
+    expect(o.tools).toEqual([...BUILT_IN_TOOLS, 'StructuredOutput'])
+    expect(o.allowedTools).toContain('StructuredOutput')
+    expect(o.outputFormat).toEqual({ type: 'json_schema', schema: SCHEMA })
+  })
+
+  it.prop([config])("a base whose outputFormat isn't the run config's is refused", (c) => {
+    const asked = { ...c, outputFormat: { type: 'json_schema' as const, schema: SCHEMA } }
+    const plain = { ...c, outputFormat: undefined }
+    expect(() => guards.apply(base(asked), plain, run)).toThrow(/outputFormat/)
+    expect(() => guards.apply(base(plain), asked, run)).toThrow(/outputFormat/)
+    expect(() => guards.apply({ ...base(asked), outputFormat: { type: 'json_schema', schema: { type: 'string' } } }, asked, run)).toThrow(/outputFormat/)
+  })
+
   it.prop([config])('for any run config: sandbox mandatory, the 20 tools, the allowed skills, dontAsk, no settings files', (c) => {
     const o = guards.apply(base(c), c, run)
     expect(o.sandbox?.enabled).toBe(true)

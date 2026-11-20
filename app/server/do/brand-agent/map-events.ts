@@ -82,5 +82,7 @@ export function outcomeOf(ev: Terminal, interruptAsked: boolean): TurnOutcome {
   }
   if (ev.reason === 'interrupted') return interruptAsked ? { outcome: 'interrupted' } : { outcome: 'failed', reason: 'unknown' }
   if (ev.reason === 'stopped') return { outcome: 'stopped' }
+  // `structured_output` (R3 #151) has no TurnFailure value until PR 5 adds it: an SDK-side failure until then.
+  if (ev.reason === 'structured_output') return { outcome: 'failed', reason: 'sdk_error' }
   return { outcome: 'failed', reason: ev.reason }
 }
