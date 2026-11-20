@@ -50,10 +50,19 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   const fx = t.fixtures
   let notices: AgentNotice[]
   let unsubscribe: () => void
+  /** Every `subscribe` listener a test adds: the mock is one shared instance, so each comes off after the test, pass or fail. */
+  let offs: (() => void)[] = []
+  const subscribe = (listener: () => void) => {
+    const off = t.client.subscribe(listener)
+    offs.push(off)
+    return off
+  }
+  const dropListeners = () => { const all = offs; offs = []; all.forEach(off => off()) }
 
   /** A first-run client in a stage and scenario, with the notice collector listening (a reset replaces the client). */
   const fresh = async (stage: Stage = 'Act', scenario: Scenario = 'Normal') => {
     unsubscribe?.()
+    dropListeners()
     await t.reset()
     await t.seed({ stage, scenario })
     notices = []
@@ -65,6 +74,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   })
   afterEach(async () => {
     unsubscribe()
+    dropListeners()
     await t.failSaves(false)
     await t.teardown()
     // Every notice the test collected is one the schema accepts.
@@ -360,7 +370,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test('asking in a chat the client never made fails loud', async () => {
       const failure = await errorOf(startRun(fx.questions.table, { chatId: fx.unknownChatId }).next())
-      expect(failure).toBeInstanceOf(Error)
+      expect(failure).toBeInstanceOf(AgentError)
+      expect(parse(AgentErrorCodeSchema, (failure as AgentError).code, 'ask() error code')).toBe('not_found')
     })
   })
 
@@ -598,7 +609,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     test('subscribe tells listeners of every change, and stops after unsubscribe', async () => {
       // `seed` resolves only once the client shows the new world, so a listener has heard it by the time it returns.
       const calls = vi.fn(() => t.client.getSnapshot())
-      const off = t.client.subscribe(calls)
+      const off = subscribe(calls)
       const before = t.client.getSnapshot()
       await t.client.pause()
       expect(calls.mock.calls.length, 'a write tells the listener').toBeGreaterThanOrEqual(1)
@@ -626,10 +637,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       run: (c: ContractTarget['client']) => Promise<unknown>
       /** What the write changes, when it isn't the state: compared before, during and after. */
       observe?: (c: ContractTarget['client']) => unknown
-      /** False: the write doesn't save through the client's store, so a forced save failure can't fail it. */
+      /** False: the write doesn't save through the client's store, so a forced save failure can't fail it (createChat on the mock: its chat ids live in memory only; reported to the orchestrator). */
       saves?: boolean
-      /** False: the mock doesn't tell `subscribe` listeners when this write applies (reported to the orchestrator: createChat). */
-      tellsListeners?: boolean
     }
     const noop = async () => undefined
     let deletedFile = ''
@@ -639,7 +648,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       { label: 'editDraft', method: 'editDraft', run: c => c.editDraft(heldProblem(), 'x') },
       { label: 'undoHandled', method: 'undoHandled', run: c => c.undoHandled(heldProblem()) },
       { label: 'redoHandled', method: 'redoHandled', prepare: c => c.undoHandled(heldProblem()), run: c => c.redoHandled(heldProblem()) },
-      { label: 'createChat', method: 'createChat', run: c => c.createChat(fx.newChat), observe: c => c.allChatIds(), saves: false, tellsListeners: false },
+      { label: 'createChat', method: 'createChat', run: c => c.createChat(fx.newChat), observe: c => c.allChatIds(), saves: false },
       { label: 'pause', method: 'pause', run: c => c.pause() },
       { label: 'resume', method: 'resume', prepare: c => c.pause(), run: c => c.resume() },
       { label: 'setToggle', method: 'setToggle', run: c => c.setToggle(fx.toggleKey, false) },
@@ -672,7 +681,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await t.settle()
       clearNotices()
       const heard: ReturnType<ContractTarget['client']['getSnapshot']>[] = []
-      const off = t.client.subscribe(() => heard.push(t.client.getSnapshot()))
+      const off = subscribe(() => heard.push(t.client.getSnapshot()))
       return { snapshot: t.client.getSnapshot(), data: t.client.read(), observed: observe(w), heard, off }
     }
     /** After a failed `approve`: it never goes out later. */
@@ -689,8 +698,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         const settled = w.run(t.client)
         expect(observe(w), 'the change shows before the write settles').not.toEqual(before.observed)
         await settled
+        await until(() => before.heard.length >= 1, 'the listeners being told')
         before.off()
-        if (w.tellsListeners !== false) expect(before.heard.length, 'listeners were told').toBeGreaterThanOrEqual(1)
+        expect(before.heard.length, 'listeners were told').toBeGreaterThanOrEqual(1)
         expect(notices).toEqual([])
         checkWorld(`after ${w.label}`)
       })
@@ -727,7 +737,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
           expect(observe(w)).toEqual(before.observed)
           expect(notices, 'exactly one notice').toHaveLength(1)
           expect(parse(AgentNoticeSchema, notices[0], 'the notice')).toMatchObject({ type: 'error', code })
-          expect(before.heard.length, 'listeners heard the change and its rollback').toBeGreaterThanOrEqual(w.tellsListeners === false ? 1 : 2)
+          expect(before.heard.length, 'listeners heard the change and its rollback').toBeGreaterThanOrEqual(2)
           expect(before.heard.at(-1)).toBe(before.snapshot)
           await neverSent(w)
         }
