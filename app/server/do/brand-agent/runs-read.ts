@@ -9,8 +9,9 @@
 //   records), a `fail` step for a hook that denied a call (an `approval` step for one deferred to a person; an allowed
 //   hook adds nothing beside its step), one `model` step per model call that was granted (its grant to its close).
 //   `cost` and `tokens` from the calls (closed at their price, open at their worst case, as the usage sweep reads them).
-// - The runs signal: `runs_failed` is red when over 20% of the turns that ended in the last hour failed for a reason
-//   other than the caps (`cap_reached`, `turn_budget`; stop and interrupt aren't failures); `runs_stuck` counts turns
+// - The runs signal: `runs_failed` is red when at least 5 turns ended in the last hour and over 20% of them failed for a
+//   reason other than the caps and the brand's own choices (`cap_reached`, `turn_budget`, `budget_busy`, `model_off`;
+//   stop and interrupt aren't failures; #159 round 1); `runs_stuck` counts turns
 //   the watchdog should have ended (a `starting` turn 5 minutes past its deadline; a running one 5 minutes past the
 //   45-minute turn life); `session_damaged` counts chats damaged in the last 24 hours; `scheduler` counts quarantined
 //   due tasks. Counts only.
@@ -25,6 +26,8 @@ const DAY_MS = 24 * HOUR_MS
 const TURN_LIFE_MS = 45 * 60_000
 const STUCK_SLACK_MS = 5 * 60_000
 const FAILED_SHARE_MAX = 0.2
+/** Fewer turns than this in the hour: the share isn't judged (one failure of two isn't an outage). */
+const FAILED_SAMPLE_MIN = 5
 
 interface RunRow { [k: string]: SqlStorageValue; run_id: string; chat_id: string; owner_id: string; state: string; last_seq: number; started_at_ms: number; ended_at_ms: number | null }
 interface TurnRead {
@@ -103,7 +106,7 @@ export function runsHealth(sql: SqlStorage, nowMs: number, quarantined: number):
   const n = (q: string, ...a: SqlStorageValue[]) => sql.exec<{ n: number }>(q, ...a).one().n
   const ended = n("SELECT COUNT(*) AS n FROM turns WHERE state = 'ended' AND ended_at_ms >= ?", nowMs - HOUR_MS)
   const failed = n(
-    "SELECT COUNT(*) AS n FROM turns WHERE state = 'ended' AND ended_at_ms >= ? AND outcome = 'failed' AND COALESCE(failure, '') NOT IN ('cap_reached', 'turn_budget')",
+    "SELECT COUNT(*) AS n FROM turns WHERE state = 'ended' AND ended_at_ms >= ? AND outcome = 'failed' AND COALESCE(failure, '') NOT IN ('cap_reached', 'turn_budget', 'budget_busy', 'model_off')",
     nowMs - HOUR_MS)
   const stuck = n(
     `SELECT COUNT(*) AS n FROM turns WHERE (state = 'starting' AND starting_deadline_ms < ?)
@@ -111,7 +114,7 @@ export function runsHealth(sql: SqlStorage, nowMs: number, quarantined: number):
     nowMs - STUCK_SLACK_MS, nowMs - TURN_LIFE_MS - STUCK_SLACK_MS)
   const damaged = n('SELECT COUNT(*) AS n FROM chat_state WHERE damaged_at_ms >= ?', nowMs - DAY_MS)
   return {
-    failures: { ok: ended === 0 || failed / ended <= FAILED_SHARE_MAX, detail: `${failed} of ${ended} failed in the last hour` },
+    failures: { ok: ended < FAILED_SAMPLE_MIN || failed / ended <= FAILED_SHARE_MAX, detail: `${failed} of ${ended} failed in the last hour` },
     stuck: { ok: stuck === 0, detail: `${stuck} stuck` },
     damaged: { ok: damaged === 0, detail: `${damaged} damaged in 24 h` },
     quarantined: { ok: quarantined === 0, detail: `${quarantined} quarantined` },
