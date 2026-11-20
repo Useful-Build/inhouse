@@ -41,6 +41,13 @@ export type TaskResult = { done: true } | { retryAtMs: number; error: string }
  */
 export type TaskHandler<C = TaskContext> = (task: DueTask, ctx: C) => Promise<TaskResult>
 
+/** The BrandAgent's own work its W1 tasks run (core.ts). */
+export interface AgentTasks {
+  watch(turnId: string): Promise<TaskResult>
+  advanceTask(runId: string): Promise<TaskResult>
+  leaseTask(turnId: string): Promise<TaskResult>
+}
+
 /** What a handler gets: the BrandAgent's parts. */
 export interface TaskContext {
   nowMs: number
@@ -49,6 +56,7 @@ export interface TaskContext {
   scheduler: Scheduler
   tokens: RunTokens
   ports: BrandAgentPorts
+  agent: AgentTasks
 }
 
 /** The object's alarm. Only the scheduler holds one (a test scans the folder for any other `setAlarm`). */
