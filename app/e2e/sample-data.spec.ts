@@ -1,14 +1,10 @@
 // Every control shows real sample data and works: Settings dropdowns, text fields and search, the chats
 // (each opens its own conversation, See all lists them), and the search boxes and pickers on other pages.
-import { readFileSync, readdirSync } from 'node:fs'
-import { expect, test } from './csp.js'
+import { readFileSync } from 'node:fs'
+import { expect, test, type Fx } from './support/fx.js'
+import { mockSource, sampleFiles, sampleJson as json } from './support/sample-reads.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
-
-/** The sample data, read straight from its folder for the data checks. */
-const DATA_DIR = new URL('../src/agent/sample-data/', import.meta.url)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const json = (name: string): any => JSON.parse(readFileSync(new URL(name, DATA_DIR), 'utf8'))
 /** A sample time ("-3d 16:20": days from the demo's Monday, Nov 16, and a local time), as minutes from that Monday's midnight. */
 const offsetMin = (at: string) => {
   const m = /^([+-]?\d+)d (\d\d):(\d\d)$/.exec(at)
@@ -17,7 +13,7 @@ const offsetMin = (at: string) => {
 }
 /** A sample time's day, as days from the demo's Monday. */
 const dayOf = (at: string) => Math.floor(offsetMin(at) / (24 * 60))
-const DATA_FILES = readdirSync(DATA_DIR).filter(f => f.endsWith('.json'))
+const DATA_FILES = sampleFiles()
 /** Keys that hold notes for whoever edits the data: never shown in the app. */
 const NOTE_KEYS = new Set(['fieldGuide', 'sampleFacts', 'rowShape', 'usedBy', 'stepKinds', 'rule', 'kinds', 'openQuestion', 'placeholders'])
 /** Keys that hold machine values (ids, keys, paths, ISO times): never shown as text. A video's duration ("1:36") isn't a time of day. */
@@ -46,14 +42,9 @@ function personText(): [string, string, string][] {
   return out
 }
 
-async function start(page: Page, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = '#/today') {
-  await page.addInitScript(([s]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage])
-  await page.goto('/?demo' + hash)
+async function start(fx: Fx, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = '#/today') {
+  await fx.seed({ stage, demo: { ambient: 'Always' } })
+  await fx.open(hash)
 }
 
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
@@ -71,8 +62,8 @@ const settingsPage = async (page: Page, label: string) => {
   await page.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: label }).click()
 }
 
-test('Settings: a dropdown opens a real list, the pick survives a reload and Reset demo clears it', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-general')
+test('Settings: a dropdown opens a real list, the pick survives a reload and Reset demo clears it', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/settings/you-general')
   // New York is the default zone, shown by its name (the saved value stays the zone's id).
   const zone = page.getByRole('combobox', { name: 'Time zone: Eastern Time (New York)' })
   await zone.click()
@@ -84,7 +75,7 @@ test('Settings: a dropdown opens a real list, the pick survives a reload and Res
   await expect(list).toHaveCount(0)
   await expect(page.getByRole('combobox', { name: 'Time zone: Central Time (Chicago)' })).toBeVisible()
   // Saved as the zone's id, not its name.
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('inhouse.demo.v2') ?? '{}').settings?.['g:tz'])).toBe('America/Chicago')
+  expect((await fx.saved()).demo.settings?.['g:tz']).toBe('America/Chicago')
 
   // It persists across a reload.
   await page.reload()
@@ -97,8 +88,8 @@ test('Settings: a dropdown opens a real list, the pick survives a reload and Res
   await expect(page.getByRole('combobox', { name: 'Time zone: Eastern Time (New York)' })).toBeVisible()
 })
 
-test('Settings: a dropdown works from the keyboard and Escape closes it without a change', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-notif')
+test('Settings: a dropdown works from the keyboard and Escape closes it without a change', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/settings/you-notif')
   const send = page.getByRole('combobox', { name: 'Send alerts to: Slack' })
   await send.focus()
   await page.keyboard.press('ArrowDown')
@@ -119,8 +110,8 @@ test('Settings: a dropdown works from the keyboard and Escape closes it without 
   await expect(page.getByRole('combobox', { name: 'Send alerts to: Email and Slack' })).toBeFocused()
 })
 
-test('Settings: Who approves what and the spending cap dropdowns change their values', async ({ page }) => {
-  await start(page, 'Run', '#/settings/team-approvals')
+test('Settings: Who approves what and the spending cap dropdowns change their values', async ({ page, fx }) => {
+  await start(fx, 'Run', '#/settings/team-approvals')
   const rule = page.getByRole('combobox', { name: /^Orders over \$5,000: Dana Kim/ })
   await rule.click()
   await expect(page.getByRole('option')).toHaveCount(4)
@@ -133,8 +124,8 @@ test('Settings: Who approves what and the spending cap dropdowns change their va
   await shot(page, 'settings-spend')
 })
 
-test('Settings: a text field is editable, saved, shown in the account menu and cleared by Reset demo', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-general')
+test('Settings: a text field is editable, saved, shown in the account menu and cleared by Reset demo', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/settings/you-general')
   const name = page.getByRole('textbox', { name: 'Name', exact: true })
   await expect(name).toHaveValue('Sam Mercer')
   await name.fill('Samuel Mercer')
@@ -154,8 +145,8 @@ test('Settings: a text field is editable, saved, shown in the account menu and c
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Sam Mercer')
 })
 
-test('Settings: search filters the menu to matching pages and rows', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-general')
+test('Settings: search filters the menu to matching pages and rows', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/settings/you-general')
   const nav = page.getByRole('navigation', { name: 'Settings' })
   const menu = nav.locator('button[data-nav-row]')
   const search = page.getByRole('searchbox', { name: 'Search settings' })
@@ -183,8 +174,8 @@ test('Settings: search filters the menu to matching pages and rows', async ({ pa
   await expect(menu).toHaveCount(13)
 })
 
-test('Chats: there is no Chats item in the nav; New chat and Recent chats stay', async ({ page }) => {
-  await start(page)
+test('Chats: there is no Chats item in the nav; New chat and Recent chats stay', async ({ page, fx }) => {
+  await start(fx)
   await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Chats' })).toHaveCount(0)
   await expect(side(page).getByRole('button', { name: 'Chats', exact: true })).toHaveCount(0)
   await expect(side(page).getByRole('button', { name: 'New chat' })).toBeVisible()
@@ -192,8 +183,8 @@ test('Chats: there is no Chats item in the nav; New chat and Recent chats stay',
   await expect(side(page).getByRole('button', { name: 'See all' })).toBeVisible()
 })
 
-test('Chats: each recent chat opens its own conversation', async ({ page }) => {
-  await start(page)
+test('Chats: each recent chat opens its own conversation', async ({ page, fx }) => {
+  await start(fx)
   const chats: [string, string][] = [
     ['Stuck orders over 3 days', '3 orders · $556'],
     ['Why did refunds jump?', 'Refund requests rose from 14 last week to 31 this week.'],
@@ -220,14 +211,14 @@ test('Chats: each recent chat opens its own conversation', async ({ page }) => {
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
 })
 
-test('Chats: every seeded answer ends with its footer, its model, steps and seconds from its own trace', async ({ page }) => {
+test('Chats: every seeded answer ends with its footer, its model, steps and seconds from its own trace', async ({ page, fx }) => {
   const traces = json('traces.json').traces as Record<string, { durationSeconds: number; steps: { kind: string; detail?: string }[] }>
   const modes = json('models.json').modes as { id: string; label: string; model: string }[]
   const secs = (x: number) => (x < 60 ? `${Math.round(x * 10) / 10}s` : `${Math.floor(x / 60)}m ${Math.round(x % 60)}s`)
   type Turn = { user?: string; stage?: string; trace?: string; model?: string }
   const seed = json('chat-script.json').seedThread.turns as Turn[]
   const chats = json('chats.json').chats as { id: string; turns: 'seedThread' | Turn[] }[]
-  await start(page)
+  await start(fx)
   for (const c of chats) {
     // In Act, the answers that show: each turn's footer is its last answer's trace.
     const expected: string[] = []
@@ -253,8 +244,8 @@ test('Chats: every seeded answer ends with its footer, its model, steps and seco
   await shot(page, 'chat-footers-stuck')
 })
 
-test('Chats: See all lists every chat, search filters by title, picking one opens it', async ({ page }) => {
-  await start(page)
+test('Chats: See all lists every chat, search filters by title, picking one opens it', async ({ page, fx }) => {
+  await start(fx)
   await side(page).getByRole('button', { name: 'See all' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'All chats' })).toBeVisible()
   const main = page.locator('main')
@@ -282,8 +273,8 @@ test('Chats: See all lists every chat, search filters by title, picking one open
   await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
 })
 
-test('Tools and Skills: search filters the lists; the tool page links to the vendor', async ({ page }) => {
-  await start(page, 'Act', '#/tools')
+test('Tools and Skills: search filters the lists; the tool page links to the vendor', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/tools')
   const search = page.getByRole('searchbox', { name: 'Search tools' })
   await search.fill('ship')
   await expect(page.getByRole('button', { name: /ShipBob/ })).toBeVisible()
@@ -304,8 +295,8 @@ test('Tools and Skills: search filters the lists; the tool page links to the ven
   await expect(page.getByText('No skills match "qqq".')).toBeVisible()
 })
 
-test('Usage: the month picker lists this month, the chart ends today; Today sorts by amount; Help and Sign out answer', async ({ page }) => {
-  await start(page, 'Act', '#/usage')
+test('Usage: the month picker lists this month, the chart ends today; Today sorts by amount; Help and Sign out answer', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/usage')
   await expect(page.getByText('$78.40').first()).toBeVisible()
   // One bar a day up to today, Mon, Nov 16, and the projection follows them: $78.40 over 16 days is about $147.
   await expect(page.locator('[data-usage-bar]')).toHaveCount(16)
@@ -395,7 +386,7 @@ test('Data: no text a person reads holds a 24-hour time, "2025", an old "17 Nov"
     for (const [re, what] of checks) if (re.test(text) && text !== 'Sales, October 2025') bad.push(`${file} ${path} (${what}): ${text.slice(0, 80)}`)
   }
   // The answers written in code, not in the data: the formatted query answer and the ask-for-a-time reply.
-  const mock = readFileSync(new URL('../src/agent/mock.ts', import.meta.url), 'utf8')
+  const mock = mockSource()
   const inCode = [/const QUERY_ANSWER = \[([\s\S]*?)\]\.join/, /const ASK_FOR_TIME = ('.*')/].map(re => re.exec(mock)?.[1])
   expect(inCode.every(Boolean), 'the answers in mock.ts were found').toBe(true)
   for (const text of inCode as string[]) {
@@ -528,8 +519,8 @@ test('Data: the bell is newest first, no denied text anywhere a person reads, no
   expect(dates.filter(([, , d]) => d !== live)).toEqual([])
 })
 
-test('Facts agree across screens: PO-1187, the waiting count and the stuck-orders window', async ({ page }) => {
-  await start(page)
+test('Facts agree across screens: PO-1187, the waiting count and the stuck-orders window', async ({ page, fx }) => {
+  await start(fx)
   // The waiting count: Today, the nav badge, the bell and Approvals.
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
   await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })).toContainText('6')
@@ -559,8 +550,8 @@ test('Facts agree across screens: PO-1187, the waiting count and the stuck-order
   await expect(log).not.toContainText('in Watch')
 })
 
-test('Activity: every time sits on one line in its column', async ({ page }) => {
-  await start(page, 'Run', '#/activity')
+test('Activity: every time sits on one line in its column', async ({ page, fx }) => {
+  await start(fx, 'Run', '#/activity')
   // Run shows the most lines, "10:12 AM" the widest time.
   const times = page.locator('[data-activity-row] > span:first-child')
   await expect(times.first()).toBeVisible()
@@ -570,8 +561,8 @@ test('Activity: every time sits on one line in its column', async ({ page }) => 
   await shot(page, 'activity-times')
 })
 
-test('The Klaviyo line takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page }) => {
-  await start(page, 'Act')
+test('The Klaviyo line takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
+  await start(fx, 'Act')
   const live = side(page).getByText(/goes live by/)
   await expect(live).toHaveText('Klaviyo goes live by Fri, Nov 20.')
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })

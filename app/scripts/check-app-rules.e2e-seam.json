@@ -1,6 +1,0 @@
-{
-  "note": "E2E files that still name an `inhouse.demo.` storage key, the UI session key, sample data or the mock module, each with its hit count (lines). A count that goes up or an unlisted file fails the lint; so does a stale or inexact entry. Batches lower the counts and remove files. Delete this file when the list is empty (batch A and batch B clear it).",
-  "files": {
-    "e2e/sample-data.spec.ts": 4
-  }
-}
