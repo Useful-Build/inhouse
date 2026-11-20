@@ -1,3 +1,6 @@
+// CONTRACT GUARD ONLY: this checks the helpers' behaviour and can't catch the crash itself, which was in the caller (the
+// Composer read .id of activeMode's result; the helper always returned undefined). The e2e spec
+// e2e/real/composer-no-models.spec.ts is the guard for that. No DOM test environment exists to render the Composer here.
 // The product's client has no models until chat arrives (P3), so `models` is []. Ways this could fail, written first:
 //  1. activeMode indexes modes[0] of an empty list and the Composer reads `.id` of undefined (the crash the test build's
 //     Worker logged on `/`);
