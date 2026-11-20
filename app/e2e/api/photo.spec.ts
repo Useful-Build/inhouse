@@ -105,7 +105,7 @@ test('a Member can\'t read, replace or remove another Member\'s photo', async ({
   // Leo's upload and removal act on Leo only.
   const theirs = imageBytes('image/jpeg', 80)
   const put = await call(request, leo, 'PUT', '/api/photo', { bytes: theirs, contentType: 'image/jpeg' })
-  expect(put.json).toEqual({ photoUrl: `/api/members/${leoId}/photo`, rev: await revOf(request, leoId) })
+  expect(put.json).toEqual({ photoUrl: expect.stringMatching(new RegExp(`^/api/members/${leoId}/photo\\?v=[0-9a-f]{32}$`)), rev: await revOf(request, leoId) })
   expect((await call(request, dana, 'GET', `/api/members/${danaId}/photo`)).bytes.equals(mine)).toBe(true)
   expect((await call(request, leo, 'DELETE', '/api/photo')).json).toEqual({ photoUrl: null, rev: await revOf(request, leoId) })
   const still = await call(request, dana, 'GET', `/api/members/${danaId}/photo`)

@@ -3,7 +3,7 @@
 //  2. a signal that throws takes the route down (500) instead of failing its own entry;
 //  3. a detail carries brand data (an error message, a name, an email);
 //  4. the migration signal passes when the last applied migration isn't the newest one this build knows;
-//  5. a release without the version metadata binding answers healthy (its version null, unnoticed).
+//  5. a release without the version metadata binding answers 200 healthy instead of failing the version signal (503).
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { HandlerEnv } from '../routes.ts'
