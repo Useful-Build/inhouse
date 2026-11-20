@@ -69,6 +69,12 @@ export interface RunnerPoolPort {
   warmup(): Promise<{ ok: true } | Refusal>
   /** A container exited: the turn ids the BrandAgent fences, or null when this generation was already reported. */
   containerExited(runner: string, gen: number): string[] | null
+  /** The `pool-retry` task's work (its handler only gets `ctx.ports.pool`): try the placement queue again. */
+  retryQueue(): Promise<void>
+  /** Takes a turn out of the placement queue (the BrandAgent cancelled it); nothing when it isn't queued. */
+  dequeue(turnId: string): void
+  /** Empties the placement queue and returns the turn ids it held, in queue order (pause fails them `paused`, 4.11). */
+  clearQueue(): string[]
 }
 
 // ---------- the usage ledger (W4, p3-design section 9) ----------
