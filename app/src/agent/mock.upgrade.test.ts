@@ -202,4 +202,11 @@ describe('a demo saved before C2 and C9 loads with ids, roles, photos and the gr
       expect(again.read().people.members.some(m => m.email === 'robin@example.test' && m.status === 'invited')).toBe(true)
     })
   })
+
+  test('a removed photo is saved as removed and stays removed after a reload', async () => {
+    const agent = load({})
+    expect(agent.read().people.members.find(m => m.id === 'm_sam')?.photo, 'the sample photo').not.toBeNull()
+    await agent.setPhoto('m_sam', null)
+    expect(new MockAgent().read().people.members.find(m => m.id === 'm_sam')?.photo).toBeNull()
+  })
 })

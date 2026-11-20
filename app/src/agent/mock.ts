@@ -408,7 +408,7 @@ const savedServer = (v: unknown, startedAt: number): Server => {
     : null
   return {
     roles: recOf(v.roles, isRole),
-    photos: recOf(v.photos, (x): x is string => str(x)),
+    photos: recOf(v.photos, (x): x is string | null => str(x) || x === null),
     removed: flagsOf(v.removed),
     invited: (isArr(v.invited) ? v.invited : []).flatMap(m => { const r = MemberRecordSchema.safeParse(m); return r.success ? [r.data] : [] }),
     // A saved `grant: null` is "there never was one"; a missing or unreadable one is the first-run grant.
