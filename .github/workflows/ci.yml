@@ -123,6 +123,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run check:zod
+      # The harness (a local-only Worker that runs the runner under wrangler dev with the scripted model) has its own
+      # package: install and type check it. It's never deployed (it refuses every request without HARNESS_LOCAL_ONLY=1).
+      - name: Harness typecheck
+        working-directory: app/runner/harness
+        run: npm ci && npm run typecheck
       # Build context is app/, so the protocol schemas in app/shared/ can be bundled; Dockerfile.dockerignore keeps the
       # rest of app/ out.
       - run: docker build -f Dockerfile -t inhouse-runner:ci ..
