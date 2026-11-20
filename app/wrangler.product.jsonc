@@ -25,6 +25,9 @@
 		}
 	],
 	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-files" }],
+	// The deployed version's id for the health route's `version` signal, which fails without it.
+	// https://developers.cloudflare.com/workers/runtime-apis/bindings/version-metadata/ (read 2026-11-20)
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
 	"vars": {
 		// JSON text, filled by the ops repo: { teamDomain, apps: [{ name, origin, aud }], serviceTokens } (p2-design section 2).
 		// Empty here, so a release that doesn't fill it fails the config check.
