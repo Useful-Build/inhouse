@@ -644,8 +644,8 @@ export const defaultModeId = (data: AgentData, saved: Record<string, string>): s
   return (on.find(m => m.label === saved['g:mode']) ?? on.find(m => m.id === data.defaultModel) ?? on[0])?.id ?? data.defaultModel
 }
 
-/** The mode a question uses: the one picked in the composer if the team can still use it, else the default. */
-export const activeMode = (data: AgentData, saved: Record<string, string>, picked: string | null): ThinkingMode => {
+/** The mode a question uses: the one picked in the composer if the team can still use it, else the default. Undefined when the agent has no models. */
+export const activeMode = (data: AgentData, saved: Record<string, string>, picked: string | null): ThinkingMode | undefined => {
   const modes = thinkingModes(data, saved)
   const id = modes.find(m => m.id === picked && m.on)?.id ?? defaultModeId(data, saved)
   return modes.find(m => m.id === id) ?? modes[0]
