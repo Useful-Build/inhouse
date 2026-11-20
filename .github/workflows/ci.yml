@@ -171,6 +171,16 @@ jobs:
           E2E_TEST_BUILD: "1"
           VERIFY_DIR: e2e-artifacts/test-build
         run: npx playwright test --project=api --project=real-desktop --project=real-phone --forbid-only
+      # The release smoke on the test build (e2e/smoke/, read only, request only): the same checks a release runs with
+      # Access service-token headers instead of the test issuer. After the api project, which proves the routes it reads.
+      - name: Playwright, release smoke
+        if: ${{ !cancelled() }}
+        env:
+          E2E_TEST_BUILD: "1"
+          # Its own folder: Playwright empties its output folder at the start of a run, which would wipe the api and real
+          # failure artifacts before the upload below (its path, app/e2e-artifacts, covers both folders).
+          VERIFY_DIR: e2e-artifacts/test-build-smoke
+        run: npx playwright test --project=smoke --forbid-only
       # The contract suite with the real client's target added (CONTRACT_REAL_ORIGIN), against a fresh test build.
       - name: Contract suite on the real client
         if: ${{ !cancelled() }}

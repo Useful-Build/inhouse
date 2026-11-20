@@ -11,6 +11,8 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
   product's client stub.
 - `app/shared/` holds the zod schemas for everything the `AgentClient` returns (`shared/contract/`); `src/agent/types.ts`
   re-exports their types.
+- `app/server/` is the product Worker (P2, below), `app/ops/` the table registry (`ops/tables/`: every D1 table, Durable
+  Object store and R2 prefix, registered in the PR that adds it).
 - `app/build-support/` holds the build helpers and their tests (the demo deploy redirect).
 - `app/public-demo/` holds the demo-only public files (the Library's sample files, avatars); the product build ships none.
 - `app/src/ui/` holds the app's own components, `app/src/components/ui/` the base's shadcn components.
@@ -41,6 +43,7 @@ Run them in `app/`.
 | `npm run test-build:migrate` | Apply `server/migrations/` to the test build's local D1 (`.wrangler/test-build`, or `-- --persist-to <dir>`) |
 | `npm run test-build:seed` | Seed that D1 with the invented brand (W2's `server/seed/run.ts`; refuses an unmigrated D1 and fails until the seed exists; same `-- --persist-to <dir>`) |
 | `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone` | The test build's specs (`e2e/api/`, `e2e/real/`), after `npm run build:product-test`. No other run includes them |
+| `E2E_TEST_BUILD=1 npx playwright test --project=smoke` | The release smoke (`e2e/smoke/`, read only) on the test build. On a release: `SMOKE_BASE_URL=<url> npx playwright test --project=smoke`, with the service-token env vars in the `verify` skill |
 | `npm run preview` | Build, then serve the build |
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
 | `npm run test:visual:linux` | The visual suite in the Playwright Docker image (`:update` regenerates baselines) |
@@ -156,3 +159,13 @@ skill before any UI change. Repo specifics:
   PR. Nothing from a `fleet/` branch deploys to the house or a brand account; releases come from tags on `main`.
 - **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`), the test build 8787 (`E2E_TEST_BUILD_PORT`; the `ship` workflow serves it there too). Give each parallel worktree its own `E2E_PORT`, `E2E_PRODUCT_PORT` and `E2E_TEST_BUILD_PORT`.
 - **Fleet repo:** no. `fleet/<topic>` is only the integration branch name here.
+- **Test build, projects and migrations (P2).** The test build (`npm run build:product-test`, `wrangler.test.jsonc`) is
+  the product Worker with the test issuer compiled in, served by `wrangler dev` on a local D1 and R2; it proves every
+  backend PR and never deploys. Its Playwright projects: `api` (`e2e/api/`, every route against every role), `real-*`
+  (`e2e/real/`, a browser with the CSP guard) and `smoke` (`e2e/smoke/`, the read-only release smoke). Migrations live in
+  `server/migrations/`: P2 `0001`-`0099`, then a block of 100 per phase (P3 `0100`-`0199` up to P8 `0600`-`0699`), as the
+  backend plan's "Migrations" says; forward-only.
+- **Accounts and releases (P2).** The sandbox Cloudflare account is for candidate deploys only (the ops workflow
+  rehearsed with invented data); there is no per-PR product preview (decision Q1), the test build is the per-PR proof.
+  The release (create D1 and R2, fill the config template, migrate, set secrets, deploy a tag, run the smoke) runs from
+  the private ops repo, never from this one. Keep account ids, hostnames and team domains out of this repo.

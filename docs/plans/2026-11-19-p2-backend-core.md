@@ -1,6 +1,6 @@
 # P2: backend core (`fleet/backend-core`)
 
-Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend plan
+Status: built; closing pieces in review. Locked and approved by Wasim, 2026-11-19. Phase plan under the backend plan
 (`docs/plans/2026-11-19-backend.md`). Common rules are in its "Phase schedule (waves)" section.
 
 Progress: tracked in the backend plan's "Implementation progress" section, entry P2. Read it before you start

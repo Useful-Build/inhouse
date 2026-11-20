@@ -35,7 +35,8 @@ const productURL = `http://localhost:${productPort}`
 // other project ignores both folders. They run against dist-product-test/ (npm run build:product-test) under
 // `wrangler dev` with a fresh local D1 (migrated and seeded first) and this run's test issuer key.
 // Run: npm run build:product-test && E2E_TEST_BUILD=1 E2E_PREBUILT=1 npx playwright test --project=api --project=real-desktop --project=real-phone
-const testBuild = /e2e[\\/](api|real)[\\/]/
+// e2e/smoke/ (the `smoke` project, below) is ignored by every other project the same way, so it joins this pattern.
+const testBuild = /e2e[\\/](api|real|smoke)[\\/]/
 const testBuildOn = !!process.env.E2E_TEST_BUILD
 const testBuildPortNumber = testBuildPort()
 const visualMatch = noVisual ? { testIgnore: /.*/ } : { testMatch: /visual\.spec/, testIgnore: [ship, product, testBuild] }
@@ -79,6 +80,13 @@ const testBuildProjects: PlaywrightTestProject[] = testBuildOn
       { name: 'real-phone', use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: false }, testMatch: /e2e[\\/]real[\\/].*\.spec\.ts$/ },
     ]
   : []
+// The release smoke (e2e/smoke/, request only, read only): on the test build with E2E_TEST_BUILD=1 (CI), or against a
+// release with SMOKE_BASE_URL (no local servers then, like BASE_URL). See the spec's header. Recording is off for this
+// project, always: on a release the requests carry Access service-token headers, and a trace, video or report would
+// keep them.
+const smokeProject: PlaywrightTestProject[] = testBuildOn || process.env.SMOKE_BASE_URL
+  ? [{ name: 'smoke', testMatch: /e2e[\\/]smoke[\\/].*\.spec\.ts$/, use: { trace: 'off', video: 'off', screenshot: 'off' } }]
+  : []
 // E2E_PREBUILT (CI): serve the build already in dist/ instead of building again.
 const demoServer = {
   command: `${process.env.E2E_PREBUILT ? '' : 'npm run build && '}npx vite preview --port ${port} --strictPort`,
@@ -106,10 +114,10 @@ const testBuildServer = () => ({
   reuseExistingServer: false,
   timeout: 180_000,
 })
-// BASE_URL: run the demo projects against a deployed preview, with no local demo server. E2E_TEST_BUILD: a run of the
+// BASE_URL: run the demo projects against a deployed preview, with no local demo server (SMOKE_BASE_URL: the release smoke, same). E2E_TEST_BUILD: a run of the
 // test build's projects only, so no demo server either (the test-build CI job has no demo build to serve).
 const webServers = [
-  ...(process.env.BASE_URL || testBuildOn ? [] : [demoServer]),
+  ...(process.env.BASE_URL || process.env.SMOKE_BASE_URL || testBuildOn ? [] : [demoServer]),
   ...(process.env.E2E_PRODUCT ? [productServer] : []),
   ...(testBuildOn ? [testBuildServer()] : []),
 ]
@@ -148,6 +156,7 @@ export default defineConfig({
     ...productProject,
     // Run: see testBuild above.
     ...testBuildProjects,
+    ...smokeProject,
   ],
   webServer: webServers.length ? webServers : undefined,
 })
