@@ -1,20 +1,15 @@
 // The theme switch: the ⌘K palette's "Switch to dark/light theme" item and Settings > General > Theme (the only place
 // to pick System). Each choice sets the root `dark` class and the page colour, saves in `inhouse.theme` (System saves
 // nothing and follows `prefers-color-scheme`) and survives a reload.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 const THEME_KEY = 'inhouse.theme'
 
-async function start(page: Page, scheme: 'light' | 'dark', hash = '#/today') {
+async function start(page: Page, fx: Fx, scheme: 'light' | 'dark', hash = '#/today') {
   // The OS setting for the run. No saved theme: the app follows it.
   await page.emulateMedia({ colorScheme: scheme })
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fx.seed({ stage: 'Act' })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -43,8 +38,8 @@ async function paletteTheme(page: Page, item: 'Switch to dark theme' | 'Switch t
   await expect(palette(page)).toHaveCount(0)
 }
 
-test('Palette: the theme item flips light and dark, sets the page colour, is saved and survives a reload', async ({ page }) => {
-  await start(page, 'light')
+test('Palette: the theme item flips light and dark, sets the page colour, is saved and survives a reload', async ({ fx, page }) => {
+  await start(page, fx, 'light')
   await expectTheme(page, 'light')
   expect(await saved(page)).toBeNull()
 
@@ -70,8 +65,8 @@ test('Palette: the theme item flips light and dark, sets the page colour, is sav
   expect(await saved(page)).toBe('light')
 })
 
-test('Settings: Theme picks Light, Dark and System; System follows the OS setting live and after a reload', async ({ page }) => {
-  await start(page, 'light', '#/settings/you-general')
+test('Settings: Theme picks Light, Dark and System; System follows the OS setting live and after a reload', async ({ fx, page }) => {
+  await start(page, fx, 'light', '#/settings/you-general')
   const theme = (value: string) => page.getByRole('combobox', { name: `Theme: ${value}` })
   const pick = async (from: string, to: string) => {
     await theme(from).click()

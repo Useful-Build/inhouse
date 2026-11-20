@@ -1,17 +1,12 @@
 // Profile photos: sample portraits show for the team, Sam can upload (cropped to a 256 px square) or remove his own,
 // the new photo shows everywhere at once, a reload keeps it, and Reset demo brings the sample photo back.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import path from 'node:path'
 import { atRest } from './states.js'
 
-async function start(page: Page, hash = '#/settings/you-general') {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, hash = '#/settings/you-general') {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -31,8 +26,8 @@ async function resetDemo(page: Page) {
   await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('things need you')
 }
 
-test('Sample photos show for Sam and the team; Sam uploads, reloads, removes and resets', async ({ page }) => {
-  await start(page)
+test('Sample photos show for Sam and the team; Sam uploads, reloads, removes and resets', async ({ fx, page }) => {
+  await start(page, fx)
   // Sample photos: sidebar, the Photo row and, on Members, all four people.
   await expect(sidebarImg(page)).toHaveAttribute('src', '/avatars/sam.svg')
   const photoRow = page.getByText('Photo', { exact: true }).locator('xpath=ancestor::div[.//input[@type="file"]][1]')
@@ -90,8 +85,8 @@ test('Sample photos show for Sam and the team; Sam uploads, reloads, removes and
   await expect(sidebarImg(page)).toHaveAttribute('src', '/avatars/sam.svg')
 })
 
-test('Who approves what, Activity and Usage show photos; bad files get an error toast', async ({ page }) => {
-  await start(page, '#/settings/team-approvals')
+test('Who approves what, Activity and Usage show photos; bad files get an error toast', async ({ fx, page }) => {
+  await start(page, fx, '#/settings/team-approvals')
   await expect(page.locator('img[src="/avatars/dana.svg"]')).toHaveCount(1) // Orders over $5,000 is Dana
   await page.goto('/?demo#/settings/you-general')
   const file = page.locator('input[type=file]')
@@ -116,9 +111,9 @@ test('Who approves what, Activity and Usage show photos; bad files get an error 
   await expect(page.locator('[data-usage-row] img')).toHaveCount(4)
 })
 
-test('Phone (390): the sidebar, account menu, General, Members and an upload all show the photo', async ({ page }) => {
+test('Phone (390): the sidebar, account menu, General, Members and an upload all show the photo', async ({ fx, page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await start(page)
+  await start(page, fx)
   await expect(page.getByText('Photo', { exact: true })).toBeVisible()
   await expect(page.locator('img[src="/avatars/sam.svg"]').first()).toBeVisible()
   await shot(page, 'phone-1-general-sample-photo')
