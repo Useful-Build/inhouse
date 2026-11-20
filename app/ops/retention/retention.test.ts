@@ -15,6 +15,7 @@ import { openStores } from '../../server/db/stores.ts'
 import { seedBrand } from '../../server/seed/seed.ts'
 import { listDeletionLog } from '../delete/log.ts'
 import { recordingDb, snapshotAll, token, withoutLog, writesAudit } from '../delete/test-support.ts'
+import type { Snapshot } from '../delete/test-support.ts'
 import { tables } from '../tables/index.ts'
 import type { TableEntry } from '../tables/types.ts'
 import { planRetention, runRetention } from './retention.ts'
@@ -32,7 +33,15 @@ const registry: TableEntry[] = [
   { kind: 'r2', name: FIXTURE_PREFIX, retention: 'retention_period', personKeys: [], export: false },
 ]
 const rules: Record<string, RetentionRule> = { retention_fixture: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'id' }, [FIXTURE_PREFIX]: { kind: 'r2' } }
-const deps = (nowMs: number, over: Partial<RetentionDeps> = {}): RetentionDeps => ({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs }, registry, rules, ...over })
+// The log's write clock: moving on every read, so each run's entries sort after every earlier run's and a case can list
+// only its own run's entries (after the last key it saw) instead of reading the whole log.
+let wall = BASE + 1_000_000_000
+const deps = (nowMs: number, over: Partial<RetentionDeps> = {}): RetentionDeps => ({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs }, clock: () => ++wall, registry, rules, ...over })
+/** The last deletion-log key in a snapshot: a run's own entries list after it. */
+const lastLogKey = (s: Snapshot): string | undefined => Object.keys(s.r2).filter(k => k.startsWith('deletion-log/')).sort().at(-1)
+// Each case snapshots and lists the log, which grows with every case: by etag and from a watermark, so a case's cost
+// doesn't grow with the cases before it.
+const cheap = { logBodies: false }
 
 beforeAll(async () => {
   await seedBrand(db, openStores(env), BASE)
@@ -47,11 +56,11 @@ describe('the D1 cutoff (failures 1 to 5, property)', () => {
       const nowMs = BASE + shift
       const cutoff = nowMs - days * DAY
       for (const o of offsets) await db.prepare('INSERT INTO retention_fixture (id, at_ms, note) VALUES (?, ?, ?)').bind(`r${token()}`, cutoff + o, 'x').run()
-      const before = await snapshotAll(db, bucket)
+      const before = await snapshotAll(db, bucket, cheap)
       const rec = recordingDb(db)
       const d = deps(nowMs, { db: rec.db })
       const plan = await planRetention(d, { periods: { retention_fixture: days, [FIXTURE_PREFIX]: days } })
-      expect(await snapshotAll(db, bucket), 'the dry run writes nothing').toEqual(before)
+      expect(await snapshotAll(db, bucket, cheap), 'the dry run writes nothing').toEqual(before)
       const old = before.d1.retention_fixture.filter(r => (r.at_ms as number) < cutoff)
       expect(plan.cutoffs).toContainEqual({ store: 'retention_fixture', cutoffMs: cutoff })
       expect(plan.counts.retention_fixture).toBe(old.length)
@@ -61,11 +70,14 @@ describe('the D1 cutoff (failures 1 to 5, property)', () => {
       expect(rec.sql.filter(writesAudit)).toEqual([])
       expect(result.removed.retention_fixture).toBe(old.length)
       expect(result.differences).toEqual([])
-      const after = await snapshotAll(db, bucket)
+      const after = await snapshotAll(db, bucket, cheap)
       expect(after.d1.retention_fixture).toEqual(before.d1.retention_fixture.filter(r => (r.at_ms as number) >= cutoff))
       for (const t of Object.keys(before.d1)) if (t !== 'retention_fixture') expect(after.d1[t], t).toEqual(before.d1[t])
       expect(withoutLog(after).r2).toEqual(withoutLog(before).r2)
-      const log = (await listDeletionLog(bucket)).filter(e => e.entry.runId === result.runId)
+      // Every entry after the last one seen before is this run's, and the log gained nothing else.
+      const log = await listDeletionLog(bucket, { after: lastLogKey(before) })
+      expect(log.every(e => e.entry.runId === result.runId)).toBe(true)
+      expect(Object.keys(after.r2).filter(k => !(k in before.r2))).toEqual(log.map(e => e.key))
       // start, one progress entry per non-empty round of at most roundSize ids, then done with the totals.
       const rounds = Math.ceil(old.length / roundSize)
       expect(log.map(e => e.entry.phase)).toEqual(['start', ...Array<string>(rounds).fill('progress'), 'done'])
@@ -96,15 +108,16 @@ describe('the R2 cutoff (failure 1)', () => {
     for (let i = 0; i < n; i++) await bucket.put(`${FIXTURE_PREFIX}${token()}`, `bytes${i}`)
     const objs = (await bucket.list({ prefix: FIXTURE_PREFIX })).objects
     const cutoff = objs[pick % objs.length].uploaded.getTime()
-    const before = await snapshotAll(db, bucket)
+    const before = await snapshotAll(db, bucket, cheap)
     const plan = await planRetention(deps(cutoff + days * DAY), { periods: { retention_fixture: 100_000, [FIXTURE_PREFIX]: days } })
     const old = objs.filter(o => o.uploaded.getTime() < cutoff).map(o => o.key).sort()
     expect(plan.counts[FIXTURE_PREFIX]).toBe(old.length)
     const r = await runRetention(deps(cutoff + days * DAY), plan)
     expect(r.removed[FIXTURE_PREFIX]).toBe(old.length)
-    const after = withoutLog(await snapshotAll(db, bucket))
+    const after = withoutLog(await snapshotAll(db, bucket, cheap))
     expect(after.r2).toEqual(Object.fromEntries(Object.entries(withoutLog(before).r2).filter(([k]) => !old.includes(k))))
-    const log = (await listDeletionLog(bucket)).filter(e => e.entry.runId === r.runId)
+    const log = await listDeletionLog(bucket, { after: lastLogKey(before) })
+    expect(log.every(e => e.entry.runId === r.runId)).toBe(true)
     const logged = log.filter(e => e.entry.phase === 'progress').flatMap(e => e.entry.removed!.flatMap(x => (x.store === FIXTURE_PREFIX ? x.keys! : [])))
     expect(logged.sort()).toEqual(old)
     expect(log.at(-1)!.entry.removed).toContainEqual({ store: FIXTURE_PREFIX, count: old.length })
