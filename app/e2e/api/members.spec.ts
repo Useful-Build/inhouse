@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { actor, allPages, call, expectConflict, expectError, me, newIdentity, personActor } from './kit.ts'
 import type { Actor } from './kit.ts'
-import { auditMax, expectOneLine } from './db.ts'
+import { auditAfter, auditMax, expectOneLine } from './db.ts'
 
 const admin = actor('admin')
 test.describe.configure({ mode: 'serial' })
@@ -189,4 +189,32 @@ test('a role change and a removal need their rev, and a stale one is 409 with th
   expect(auditMax(), 'no refused write added a line').toBe(mark)
   await me(request, personActor(who))
   await remove(request, invited.id)
+})
+
+test('decision 19b: the Inhouse team invites and removes Members, never an Admin, and never changes a role', async ({ request }) => {
+  const alex = actor('inhouse')
+  const adminTarget = await invite(request, newIdentity('ih-admin-target'), 'admin')
+  const memberTarget = await invite(request, newIdentity('ih-member-target'), 'member')
+  // Signed in before the mark, so a first sign-in's own line can't land inside it.
+  const alexId = (await me(request, alex)).memberId
+  const mark = auditMax()
+  // Refused: 403 forbidden, nothing written, no line.
+  const wantAdmin = newIdentity('ih-invite-admin')
+  expectError(await call(request, alex, 'POST', '/api/members/invites', { json: { name: wantAdmin.name, email: wantAdmin.email, role: 'admin' } }), 403, 'forbidden')
+  expectError(await call(request, alex, 'DELETE', `/api/members/${adminTarget.id}?ifRev=${adminTarget.rev}`), 403, 'forbidden')
+  for (const [target, role] of [[memberTarget, 'admin'], [adminTarget, 'member']] as const) {
+    expectError(await call(request, alex, 'PUT', `/api/members/${target.id}/role`, { json: { role, ifRev: target.rev } }), 403, 'forbidden')
+  }
+  expect(auditAfter(mark), 'a refusal writes no line').toEqual([])
+  expect((await members(request)).some(m => m.email === wantAdmin.email.toLowerCase())).toBe(false)
+  expect(await find(request, adminTarget.id)).toMatchObject({ role: 'admin', status: 'invited', rev: adminTarget.rev })
+  // Allowed: a Member invited and removed, each line naming the Inhouse member.
+  const wantMember = newIdentity('ih-invite-member')
+  const made = await call(request, alex, 'POST', '/api/members/invites', { json: { name: wantMember.name, email: wantMember.email, role: 'member' } })
+  expect(made.status, made.text).toBe(201)
+  const gone = await call(request, alex, 'DELETE', `/api/members/${memberTarget.id}?ifRev=${memberTarget.rev}`)
+  expect(gone.status, gone.text).toBe(200)
+  expect(auditAfter(mark).map(l => [l.actor_id, l.action])).toEqual([[alexId, 'member.invited'], [alexId, 'member.removed']])
+  await remove(request, made.json.id)
+  await remove(request, adminTarget.id)
 })

@@ -46,6 +46,9 @@ In:
   (members, brand settings, models, pause, tools) plus the technical pages, with no grant. The member list and member
   photos are baseline, not brand data. A brand's chats, memory and audit log still need an Admin's live, time-boxed
   grant; the Inhouse team never creates or ends a grant itself; a person's own settings and photo stay the owner's.
+  **Amended again 2026-11-20 (decision 19b):** the Inhouse team can't change roles, invite an Admin or remove an Admin
+  (so it can't make itself or anyone else an Admin and then grant itself access). Role changes are Admin-only; an
+  Inhouse invite or removal that touches an Admin is 403 `forbidden`, with nothing written and no audit line.
 - **Support grants** (BD7): an admin grants the Inhouse team time-boxed access to brand data; the grant, its use and
   its end are audited; ending it closes that access at once.
 - **C2** `me()` (member id, name, role, `can`), actor ids on records, approvers as member ids, stage from the server.

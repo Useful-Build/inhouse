@@ -165,7 +165,7 @@ describe('checkAccess cases', () => {
     expect(Object.values(member).filter(Boolean)).toHaveLength(3) // viewMembers, viewAudit, exportAudit
     const inhouse = canFor(principals.inhouse(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(inhouse).toEqual({
-      invite: true, changeRole: true, remove: true, editBrandSettings: true, editTechnical: true, switchModel: true, grantSupport: false,
+      invite: true, changeRole: false, remove: true, editBrandSettings: true, editTechnical: true, switchModel: true, grantSupport: false,
       viewMembers: true, viewAudit: false, exportAudit: false,
     })
     const granted = canFor(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
@@ -188,7 +188,8 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/me': ['ok', 'ok', 'ok', 'ok', 'ok', 'no', 'no'],
   'GET /api/members': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'POST /api/members/invites': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
-  'PUT /api/members/:id/role': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  // Decision 19b: role changes are Admin-only (every change makes or unmakes an Admin).
+  'PUT /api/members/:id/role': ['no', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'DELETE /api/members/:id': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'GET /api/settings/personal': ['obj', 'obj', 'no', 'no', 'obj', 'no', 'no'],
   'PUT /api/settings/personal/:key': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
@@ -263,8 +264,11 @@ describe('every row against every principal (the hand-written oracle)', () => {
 const inhouseWriteProblems = (rows: readonly AccessRow[]) =>
   rows.filter(x => x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal') && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
 
-/** The Inhouse team never grants itself access (decision 19), and the audit log is never baseline (BD7). */
-const GRANT_WRITES = ['POST /api/grants', 'POST /api/grants/:id/end']
+/**
+ * The Inhouse team never grants itself access (decision 19), never changes a role (19b: every change makes or unmakes
+ * an Admin), and the audit log is never baseline (BD7).
+ */
+const GRANT_WRITES = ['POST /api/grants', 'POST /api/grants/:id/end', 'PUT /api/members/:id/role']
 const BRAND_DATA_READS = ['GET /api/audit', 'GET /api/audit/export.csv']
 const grantProblems = (rows: readonly AccessRow[]) => [
   ...rows.filter(x => GRANT_WRITES.includes(`${x.method} ${x.pattern}`) && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern} lists inhouse`),
@@ -363,7 +367,7 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
         if (x.class === 'personal') expect(x.allow).not.toContain('inhouse')
       }
     })
-    it('Inhouse never creates or ends a grant, and the audit log stays brand_data', () => {
+    it('Inhouse never creates or ends a grant or changes a role, and the audit log stays brand_data', () => {
       expect(grantProblems(rows)).toEqual([])
     })
     it('every technical row allows Inhouse; only adminWrite rows let an Admin write technical', () => {
