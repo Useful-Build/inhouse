@@ -1,5 +1,5 @@
-// Routes 3 to 6 (p2-design section 3): the team list, invite, role change and removal. Access (Admin only for the
-// writes, Inhouse only reading under a grant) is the matrix's, before these run; the rules on the object (already a
+// Routes 3 to 6 (p2-design section 3): the team list, invite, role change and removal. Access (Admin and the Inhouse
+// team for the writes, decision 19; every signed-in person reads the list) is the matrix's, before these run; the rules on the object (already a
 // member, the last Admin, a stale ifRev) are the data layer's, inside its statements.
 import { InviteInputSchema, MemberIdSchema, MemberRemoveQuerySchema, RoleChangeInputSchema } from '../../shared/contract/members.ts'
 import { apiError, apiJson } from '../http.ts'
