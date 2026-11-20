@@ -5,8 +5,8 @@ import { isIP } from 'node:net'
 import { basename, join } from 'node:path'
 import type { HookCallbackMatcher, HookEvent, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { RunConfig } from '../protocol/local.ts'
-import type { QueryGuards } from '../session/seam.ts'
-import { auditHook, type AuditChannel } from './audit.ts'
+import type { QueryGuards, RunContext } from '../session/seam.ts'
+import { auditHook } from './audit.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER } from './lists.ts'
 import { HOME, PLUGIN_DIR, RUNNER_DIR, WORK_ROOT, validSessionKey } from './paths.ts'
 import { webFetchAllowRules, webFetchHook } from './webfetch.ts'
@@ -41,7 +41,6 @@ export const GUARDED_OPTIONS = [
 export class GuardConfigError extends Error {}
 
 export type QueryGuardDeps = {
-  audit: AuditChannel
   /** The container's own addresses, denied to sandboxed commands (src/proxy/proc-net.ts's `hostAddresses`). */
   hostAddresses: () => string[]
   workRoot?: string
@@ -90,13 +89,14 @@ export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
   const pluginDir = deps.pluginDir ?? PLUGIN_DIR
   return {
     kind: 'production',
-    apply: (base, config) => guardedOptions(base, config, { ...deps, workRoot, pluginDir }),
+    apply: (base, config, run) => guardedOptions(base, config, run, { ...deps, workRoot, pluginDir }),
   }
 }
 
 export function guardedOptions(
   base: Options,
   config: Pick<RunConfig, 'webFetchDomains'>,
+  run: RunContext,
   deps: QueryGuardDeps & { workRoot: string; pluginDir: string },
 ): Options {
   for (const key of GUARDED_OPTIONS) {
@@ -151,7 +151,7 @@ export function guardedOptions(
   }
 
   const ours: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
-    PreToolUse: [webFetchHook(domains), auditHook(deps.audit, deps.auditTimeoutMs)],
+    PreToolUse: [webFetchHook(domains), auditHook(run, deps.auditTimeoutMs)],
   }
   const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = { ...base.hooks }
   for (const [event, matchers] of Object.entries(ours) as [HookEvent, HookCallbackMatcher[]][]) {

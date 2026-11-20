@@ -1,7 +1,6 @@
 // The production wiring of the guards seam: R2's implementations (src/guards/). `requireProduction` refuses any
 // implementation not marked production, so the test implementation (test/run/support/) can never be wired in here.
 import { readFileSync } from 'node:fs'
-import { auditTransportMissing } from '../guards/audit.ts'
 import { createSessionHost, parkAllFolders, type HostDeps } from '../guards/host.ts'
 import { createQueryGuards } from '../guards/options.ts'
 import { createSessionPool, readPool, type PoolUser } from '../guards/users.ts'
@@ -33,9 +32,9 @@ export function productionSessionUsers(): SessionUsers {
 }
 
 /**
- * The session process's seam: the guards around `query()`. The audit transport is R1's second PR; until it's wired,
- * `auditTransportMissing` refuses every entry, so every tool call is blocked rather than run unrecorded.
+ * The session process's seam: the guards around `query()`. The audit hook records each tool call through the run's own
+ * transport (`RunContext.audit`, R1's channel to the root), and the call is blocked unless the root acked it.
  */
 export function productionQueryGuards(): QueryGuards {
-  return requireProduction<QueryGuards>(createQueryGuards({ audit: auditTransportMissing, hostAddresses }), 'QueryGuards')
+  return requireProduction<QueryGuards>(createQueryGuards({ hostAddresses }), 'QueryGuards')
 }

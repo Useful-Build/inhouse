@@ -1,100 +1,104 @@
 // The blocking audit hook: every tool call is recorded before it runs, or it doesn't run.
 //
-// The transport (decided): the session process sends the entry to the root over the local channel, the root writes it
-// as an `audit` run event on the Worker's open stream and acks. The hook resolves only on that ack. A nack, a closed
-// channel or stream, or no answer within the timeout throws, and `onFailure: 'block'` turns the throw into a blocked
-// call. R1's second PR adds the messages; until then the production channel is `auditTransportMissing` (every call
-// blocked), never a channel that says yes.
+// The transport is R1's (src/session/core.ts): `RunContext.audit(entry)` sends the entry to the root over the local
+// channel, the root writes it as an `audit` run event on the Worker's open stream and acks. It resolves only on that
+// ack; a nack (a gone Worker, an ended run, an expired entry), a closed channel or R1's own timeout rejects it. The hook
+// lets the call go only once it resolved: any rejection, or no answer within our backstop timeout, throws, and
+// `onFailure: 'block'` turns the throw into a blocked call.
 import { createHash } from 'node:crypto'
 import type { HookCallbackMatcher, HookInput } from '@anthropic-ai/claude-agent-sdk'
-
-/** One tool call, as the root records it. `input` is the tool's input, capped (see `AUDIT_INPUT_MAX_BYTES`). */
-export type AuditEntry = {
-  toolUseId: string
-  tool: string
-  input: unknown
-  /**
-   * True when `input` was over the cap and is replaced by its size, hash, start and end (see `capInput`). The
-   * replacement says so itself (`truncated: true`, `bytes`), so the flag stays with it wherever the entry is carried.
-   */
-  truncated: boolean
-}
-
-/** What the root answered. Anything but `ack` blocks the call. */
-export type AuditAnswer = { ok: true } | { ok: false; reason: 'nack' | 'closed' | 'timeout'; message?: string }
-
-/** The session's side of the audit transport. `send` may reject (a closed channel); that blocks the call too. */
-export interface AuditChannel {
-  send(entry: AuditEntry): Promise<AuditAnswer>
-}
+import { AUDIT_INPUT_MAX_BYTES, jsonBytes, type AuditEntry } from '../../../shared/protocol/index.ts'
+import { LOCAL_MAX_DEPTH, deeperThan } from '../protocol/ndjson.ts'
+import type { RunContext } from '../session/seam.ts'
 
 export class AuditRefusedError extends Error {}
 
-/** Within the event cap with room to spare; a bigger input is recorded as its size, hash, start and end. */
-export const AUDIT_INPUT_MAX_BYTES = 64 * 1024
-/** How much of the start and of the end of an over-cap input is kept, in characters of its JSON text. */
-export const AUDIT_EDGE_CHARS = 4 * 1024
-/** How long the hook waits for the root's ack. */
-export const AUDIT_TIMEOUT_MS = 5_000
+/**
+ * How much of the start and of the end of an over-cap input is kept, in characters of its JSON text. Each kept
+ * character costs at most 3 bytes once the edges are encoded again (a non-ASCII one; an escaped `"` or `\` costs 2),
+ * so both edges with the hash and the size stay well inside the shared `AUDIT_INPUT_MAX_BYTES` (16 KB).
+ */
+export const AUDIT_EDGE_CHARS = 2 * 1024
+/**
+ * The deepest input sent as is. The root refuses a local line nested past `LOCAL_MAX_DEPTH` (which would end the run),
+ * and the audit message's envelope (`{type:'audit', entry:{input}}`) adds two levels; two more are spare. A deeper input
+ * goes in the over-cap form, whose edges are flat strings.
+ */
+export const AUDIT_INPUT_MAX_DEPTH = LOCAL_MAX_DEPTH - 4
+/**
+ * Our backstop for an answer that never comes. Above R1's own audit timeout (10 s, src/session/core.ts), so R1's
+ * timeout and the entry's `expiresAt` are what normally end a wait; this one only fires if the transport never settles.
+ */
+export const AUDIT_TIMEOUT_MS = 12_000
 /** The engine's own hook timeout, in seconds, above ours so our timeout is the one that fires. */
 export const AUDIT_HOOK_TIMEOUT_S = 15
+/**
+ * What the audit hook decided: it lets the call go once the entry is on the stream. The entry is written before the
+ * call runs, so another guard (the permission rules, the WebFetch hook, the sandbox) may still refuse the call.
+ */
+export const AUDIT_DECISION = 'allow'
 
-export function capInput(input: unknown): { input: unknown; truncated: boolean } {
+/** An input within the shared cap (and the depth cap) as is; any other as its size, a hash of the whole and its start and end. */
+export function capInput(input: unknown): unknown {
   let text: string | undefined
   try {
     text = JSON.stringify(input)
   } catch {
-    return { input: { unencodable: true }, truncated: true }
+    return { truncated: true, unencodable: true }
   }
-  const bytes = text === undefined ? 0 : Buffer.byteLength(text)
-  if (bytes <= AUDIT_INPUT_MAX_BYTES || text === undefined) return { input, truncated: false }
+  if (text === undefined || (jsonBytes(input) <= AUDIT_INPUT_MAX_BYTES && !deeperThan(input, AUDIT_INPUT_MAX_DEPTH))) return input
   // Padding at either end can't hide a command: the start and end are kept, and the hash pins the whole input. What
   // sat in the middle is gone, so the record says it was cut and how big the whole was: a reader never takes the
   // start and end for the whole call.
+  const bytes = Buffer.byteLength(text)
   const sha256 = createHash('sha256').update(text).digest('hex')
-  return { input: { truncated: true, bytes, sha256, head: text.slice(0, AUDIT_EDGE_CHARS), tail: text.slice(-AUDIT_EDGE_CHARS) }, truncated: true }
+  return { truncated: true, bytes, sha256, head: text.slice(0, AUDIT_EDGE_CHARS), tail: text.slice(-AUDIT_EDGE_CHARS) }
+}
+
+/** The entry for one PreToolUse call, in the shared shape the root checks. */
+export function auditEntry(input: HookInput & { hook_event_name: 'PreToolUse' }): AuditEntry {
+  return { hook: input.hook_event_name, toolName: input.tool_name, toolUseId: input.tool_use_id, decision: AUDIT_DECISION, input: capInput(input.tool_input) }
+}
+
+/** A rejection's reason as text. Never throws: a value that can't be turned into a string mustn't change the error. */
+function describe(e: unknown): string {
+  if (e instanceof Error) return e.message
+  try {
+    return String(e)
+  } catch {
+    return 'a refusal with no readable reason'
+  }
 }
 
 /**
- * Records one call and resolves only on the root's ack. Throws on anything else, including a channel that never
- * answers (after `timeoutMs`).
+ * Records one call and resolves only once `run.audit` resolved (the root's ack). Throws on anything else: a rejection,
+ * a `run.audit` that throws, or no answer after `timeoutMs`.
  */
-export async function recordToolCall(channel: AuditChannel, entry: AuditEntry, timeoutMs = AUDIT_TIMEOUT_MS): Promise<void> {
+export async function recordToolCall(run: RunContext, entry: AuditEntry, timeoutMs = AUDIT_TIMEOUT_MS): Promise<void> {
   let timer: NodeJS.Timeout | undefined
-  const timeout = new Promise<AuditAnswer>((resolve) => {
-    timer = setTimeout(() => resolve({ ok: false, reason: 'timeout' }), timeoutMs)
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), timeoutMs)
   })
-  let answer: AuditAnswer
   try {
-    answer = await Promise.race([channel.send(entry), timeout])
+    await Promise.race([Promise.resolve().then(() => run.audit(entry)), timeout])
   } catch (e) {
-    answer = { ok: false, reason: 'closed', message: String(e instanceof Error ? e.message : e) }
+    throw new AuditRefusedError(`audit not recorded (${describe(e)}); the tool call is blocked`)
   } finally {
     clearTimeout(timer)
-  }
-  // Only a well-formed ack counts: a channel that resolves with anything else is a failure, not a yes.
-  if (answer === null || typeof answer !== 'object' || answer.ok !== true) {
-    const reason = answer && typeof answer === 'object' && answer.ok === false ? answer.reason : 'nack'
-    throw new AuditRefusedError(`audit not recorded (${reason}); the tool call is blocked`)
   }
 }
 
 /** The PreToolUse matcher: every tool (no `matcher`), blocking on failure. */
-export function auditHook(channel: AuditChannel, timeoutMs = AUDIT_TIMEOUT_MS): HookCallbackMatcher {
+export function auditHook(run: RunContext, timeoutMs = AUDIT_TIMEOUT_MS): HookCallbackMatcher {
   return {
     onFailure: 'block',
     timeout: AUDIT_HOOK_TIMEOUT_S,
     hooks: [
       async (input: HookInput) => {
         if (input.hook_event_name !== 'PreToolUse') throw new AuditRefusedError(`audit hook got ${input.hook_event_name}`)
-        await recordToolCall(channel, { toolUseId: input.tool_use_id, tool: input.tool_name, ...capInput(input.tool_input) }, timeoutMs)
+        await recordToolCall(run, auditEntry(input), timeoutMs)
         return {}
       },
     ],
   }
-}
-
-/** Until R1's audit transport lands: every call is refused, so nothing runs unrecorded. */
-export const auditTransportMissing: AuditChannel = {
-  send: async () => ({ ok: false, reason: 'closed', message: 'the audit transport is not wired yet' }),
 }
