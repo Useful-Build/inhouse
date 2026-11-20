@@ -16,10 +16,10 @@ export function allowance(row: Row, can: Can | undefined, failClosed = false, ro
   const brand = can.editBrandSettings, tech = can.editTechnical
   const own = role !== 'inhouse'
   const byKey = row.can ? can[row.can] : row.kind === 'photo' || scope === 'personal' ? own : scope === 'brand' ? brand : scope === 'technical' ? tech : true
-  // Without `editTechnical` an Admin may only turn a model off (`switchModelOff`), so the switch works only while it is on.
-  const sw = tech || (can.switchModelOff && !!row.switchOn)
+  // Without `editTechnical` an Admin may still turn a model off and back on (`switchModel`, decision 27a).
+  const sw = tech || can.switchModel
   // A model row shows the switch to anyone who may use it, and the effort picker only to those who may edit.
-  return row.kind === 'mode' ? { control: tech || can.switchModelOff, effort: tech, switch: sw } : { control: byKey, effort: byKey, switch: byKey }
+  return row.kind === 'mode' ? { control: sw, effort: tech, switch: sw } : { control: byKey, effort: byKey, switch: byKey }
 }
 
 /** The lists a settings page reads, so a failed read says what couldn't load. `grants` is read only by whoever sees the grant (route 16 is Admin and Inhouse only). */
