@@ -87,6 +87,13 @@ skill before any UI change. Repo specifics:
   problem is; what was tried (each round and model, and its result); why it still isn't fixed; whether it's a
   must-have or a nice-to-have for the task or the app; whether it's an edge case or the main case. Wasim decides. This
   replaces the change loop's three-round limit in this repo.
+- **CI rounds (Wasim, 2026-11-20).** For CI, a round is one fix push or one re-run, counted per check: a new error
+  on the same check is still a round, escalation rounds included, and a check that first goes red after a push starts
+  its own count. A worker fixing its own CI stops and reports back once a check it's fixing is still red after two
+  rounds; the orchestrator then escalates as above. A change to the CI environment (host settings, sysctls, runner
+  config) is never a worker's fix: the worker proposes it in its report, the orchestrator decides with the PR's
+  review, and one that costs money goes to Wasim. The orchestrator may give a spike brief a larger budget (for
+  example 4 rounds); once it's spent the worker reports back and the escalation above runs from there.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.
