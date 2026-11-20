@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createProxy } from './proxy/server.ts'
 import { apiPeerAllowed, readPeerUid } from './proxy/proc-net.ts'
 import { createRoot } from './server/app.ts'
+import type { PushFetch } from './server/pusher.ts'
 import { readMemory } from './server/memory.ts'
 import { productionSessionUsers } from './server/production.ts'
 import { spawnSessionProcess } from './server/session-host.ts'
@@ -30,6 +31,10 @@ const root = createRoot({
   users,
   spawnSession: spawnSessionProcess(sessionEntry),
   proxyPort,
+  egressUrl: upstream.href,
+  // Set by the image's entrypoint when Cloudflare's intercept CA is there (image/bin/entrypoint.sh).
+  extraCaCerts: process.env.NODE_EXTRA_CA_CERTS || undefined,
+  fetch: globalThis.fetch as PushFetch,
   stopGraceMs: 10_000,
   runTimeoutMs: 30 * 60_000,
   memory: readMemory,

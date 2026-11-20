@@ -58,11 +58,46 @@ export function cliEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out
 }
 
+/** The `inhouse` MCP server's name (R2's guard allows only it). */
+export const INHOUSE_SERVER = 'inhouse'
+
+/** Compaction (Wasim, item 22 E2): the 1M window, compacted at 600,000 tokens, below the gate's 650,000 refusal. */
+export const AUTO_COMPACT_WINDOW = 600_000
+
+/**
+ * The engine's model settings for a run (Claude Code's env-vars page, read 2026-11-20). Every alias resolves to a model
+ * the egress allows (the run's `model` or `sideModel`): `ANTHROPIC_DEFAULT_HAIKU_MODEL` is the `haiku` alias and the
+ * background model; subagents run on the turn's model (`CLAUDE_CODE_SUBAGENT_MODEL`, forced so a model Claude names
+ * when it spawns one doesn't win); the `sonnet`, `opus` and `fable` aliases resolve to the turn's model too.
+ * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sets how full the context gets before compaction (no `CLAUDE_CODE_DISABLE_1M_CONTEXT`:
+ * the 1M window stays). It binds subagents too: the subagents page (read 2026-11-20) says a subagent uses the lowest of
+ * its own `autoCompactWindow`, the model's window and the window this variable sets. A per-subagent value can only
+ * lower that, and would need custom agent definitions, which R2's guard refuses (`agents` is a guarded option), so
+ * none is set. The CLI's own concurrency
+ * (parallel subagents) isn't limited here: the Worker's gate holds a turn to 4 model calls in flight.
+ */
+export function modelEnv(config: Pick<RunConfig, 'model' | 'sideModel'>): Record<string, string> {
+  return {
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: config.sideModel,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: config.model,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: config.model,
+    ANTHROPIC_DEFAULT_FABLE_MODEL: config.model,
+    CLAUDE_CODE_SUBAGENT_MODEL: config.model,
+    CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(AUTO_COMPACT_WINDOW),
+  }
+}
+
 export function baseOptions(config: RunConfig, cwd: string, env: Record<string, string>, abortController: AbortController, sessionStore?: Options['sessionStore']): Options {
+  // The `inhouse` server goes through the root's proxy (sessionEnv() always sets INHOUSE_PROXY_URL; a bare test env
+  // without it gets no server).
+  const proxy = env.INHOUSE_PROXY_URL
   return {
     cwd,
-    env,
+    env: { ...env, ...modelEnv(config) },
     abortController,
+    systemPrompt: config.systemPrompt,
+    ...(proxy ? { mcpServers: { [INHOUSE_SERVER]: { type: 'http', url: `${proxy.replace(/\/$/, '')}/mcp/` } } } : {}),
     model: config.model,
     effort: config.effort,
     maxTurns: config.maxTurns,
@@ -302,7 +337,23 @@ export async function runSession(deps: {
 
   // 1. The guarded options, before anything touches the work folder: a guard that refuses this run ends it here, typed,
   // with the folder as the host left it.
-  const store = createStoreAdapter({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl })
+  // A resume is checked against the Worker's `expect` on the SDK's first load of the main transcript, which comes
+  // before any model call; a mismatch aborts the query and the run fails `store`.
+  let resumeRefused: string | null = null
+  const store = createStoreAdapter({
+    fetch: deps.io.fetch,
+    proxyUrl: deps.io.proxyUrl,
+    expect: config.resume ? config.expect : null,
+    onResumeRefused: (why) => {
+      resumeRefused = why
+      log({ type: 'resume_refused', why })
+      abort.abort()
+    },
+    // `query_started` goes on the SDK's first store call, not when query() is called: until the SDK touches the store,
+    // the transcript is as the last checkpoint left it, and a run that ends before that (a stop, an interrupt, an SDK
+    // error before the resume's load) leaves the chat's session as it was (`released.queryRan: false`).
+    onFirstCall: () => void channel.send({ type: 'query_started' }),
+  })
   let options: Options
   try {
     options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort, store.store), config, { audit })
@@ -367,7 +418,18 @@ export async function runSession(deps: {
 
   // 4. The end: the deferred call, files, the store, then the one terminal event.
   let terminal: Extract<SessionEvent, { type: 'finished' | 'failed' }>
-  if (result !== null && (!threw || stopping || abort.signal.aborted)) {
+  const check = store.resumeCheck()
+  // A resume that ended before the SDK touched the store (stopped, interrupted or an SDK error before its first load):
+  // the transcript is untouched, so the run ends as it ended, with no checkpoint and no mirror error, and the chat keeps
+  // its last good state.
+  const untouchedResume = check.state === 'pending' && !store.touched()
+  if (resumeRefused !== null || check.state === 'failed') {
+    terminal = { type: 'failed', reason: 'store', message: `the store doesn't hold the transcript to resume: ${resumeRefused ?? (check.state === 'failed' ? check.error : '')}`.slice(0, 2000) }
+  } else if (check.state === 'pending' && !stopping && !abort.signal.aborted && (result !== null || !untouchedResume)) {
+    // An unstopped query that ended (with a result, or after writing to the store) without the SDK ever loading the main
+    // transcript: nothing proved the resume ran on the expected transcript. A stop or an interrupt keeps its own end.
+    terminal = { type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' }
+  } else if (result !== null && (!threw || stopping || abort.signal.aborted)) {
     // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept).
     terminal = finishedEvent(result)
     const deferred = result.subtype === 'success' ? result.deferred_tool_use : undefined
@@ -384,16 +446,17 @@ export async function runSession(deps: {
   // Without a stop: files, then the checkpoint. A stop (before or during the save) cuts the save; the checkpoint goes
   // first, then the rest of the files, both within the stop's deadline.
   let filesDone = stopping ? false : await files.save(before, emit, stopCut.signal)
-  const cp = await settleOrCut(store.checkpoint(), deadlineCut.signal)
-  if (cp === null) await emit({ type: 'mirror_error', message: "the store's checkpoint did not finish before the stop's deadline" })
+  const cp = untouchedResume ? null : await settleOrCut(store.checkpoint(), deadlineCut.signal)
+  if (untouchedResume) log({ type: 'checkpoint_skipped', why: 'the resume ended before the SDK touched the store' })
+  else if (cp === null) await emit({ type: 'mirror_error', message: "the store's checkpoint did not finish before the stop's deadline" })
   else {
     if (cp.value.repaired > 0) log({ type: 'store_repaired', batches: cp.value.repaired })
-    // Protocol v2's checkpoint reports the store's whole main transcript. A first run that wrote none leaves it empty;
-    // a resume that wrote none can't say what the store holds without loading it (R3's second PR does that load), so
-    // until then that's a mirror error rather than a guess.
+    // Protocol v2's checkpoint reports the store's whole main transcript (the adapter loads the SDK's main key when this
+    // run wrote none). A first run that neither wrote nor loaded one leaves it empty (`mainEntries: 0`: no transcript
+    // to resume); a resume that never loaded one can't say, so that's a mirror error rather than a guess.
     const main = cp.value.ok ? (cp.value.main ?? (config.resume ? null : { mainEntries: 0, lastUuid: null, lastUuidIndex: null })) : null
     if (cp.value.ok && main !== null) await emit({ type: 'checkpoint', ...main, runEntries: cp.value.entries })
-    else await emit({ type: 'mirror_error', message: cp.value.ok ? 'a resume that wrote no main transcript' : cp.value.error })
+    else await emit({ type: 'mirror_error', message: cp.value.ok ? 'a resume that never loaded its transcript' : cp.value.error })
   }
   if (!filesDone && !deadlineCut.signal.aborted) filesDone = await files.save(before, emit, deadlineCut.signal)
   if (!filesDone) log({ type: 'files_save_cut', why: "the stop's deadline" })

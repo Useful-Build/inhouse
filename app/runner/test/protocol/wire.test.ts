@@ -68,7 +68,7 @@ const runStartFields = fc.record({
   maxTurns: fc.integer({ min: 1, max: 500 }),
   maxBudgetUsd: fc.double({ min: 0.01, max: 1000, noNaN: true }),
   runToken: fc.stringMatching(/^[\x21-\x7e]{16,64}$/),
-  webFetchDomains: fc.array(fc.domain().map((d) => d.toLowerCase()), { maxLength: 4 }),
+  webFetchDomains: fc.option(fc.array(fc.domain().map((d) => d.toLowerCase()), { maxLength: 4 }), { nil: null }),
   fileCaps: fc.record({
     maxFileBytes: fc.integer({ min: 1, max: 1e9 }),
     maxFilesPerTurn: fc.integer({ min: 1, max: 100 }),
@@ -309,7 +309,7 @@ const parserFor = (name: string): ((raw: unknown) => unknown) => {
 describe('v2 wire fixtures (written by hand)', () => {
   const v2 = fixtures('v2')
   it('every v2 fixture parses to exactly what its bytes say', () => {
-    expect(v2.length).toBeGreaterThanOrEqual(21)
+    expect(v2.length).toBeGreaterThanOrEqual(22)
     for (const f of v2) expect(parserFor(f.name)(JSON.parse(f.text)), f.name).toEqual(JSON.parse(f.text))
   })
 
@@ -390,6 +390,16 @@ describe('RunStart v2 limits', () => {
     expect(ok({ ...first, attachments: ['a.pdf'] })).toBe(false)
     expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(1017)}`] })).toBe(true)
     expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(1018)}`] })).toBe(false)
+  })
+
+  it('webFetchDomains: null (any public host), a list, or [] (none); never a missing key or a bad host', () => {
+    expect(ok({ ...first, webFetchDomains: null })).toBe(true)
+    expect(ok({ ...first, webFetchDomains: [] })).toBe(true)
+    expect(ok({ ...first, webFetchDomains: ['docs.example.com'] })).toBe(true)
+    const { webFetchDomains: _, ...missing } = first
+    expect(ok(missing)).toBe(false)
+    expect(ok({ ...first, webFetchDomains: ['localhost'] })).toBe(false)
+    expect(ok({ ...first, webFetchDomains: '*' })).toBe(false)
   })
 
   it('sideModel follows the model rule', () => {

@@ -84,6 +84,7 @@ const FilePath = z.string().max(1024)
 export const ResumeExpect = z
   .strictObject({ mainEntries: z.int().min(1), lastUuid: z.string().min(1).max(256).nullable(), lastUuidIndex: z.int().nonnegative().nullable() })
   .superRefine(checkLastUuid)
+export type ResumeExpect = z.infer<typeof ResumeExpect>
 
 /** `lastUuid` and `lastUuidIndex` are both null or both set, and the index is inside `mainEntries`. */
 function checkLastUuid(v: { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null }, ctx: z.RefinementCtx) {
@@ -120,7 +121,12 @@ export const RunStartFields = z.strictObject({
   maxTurns: z.int().min(1).max(500),
   maxBudgetUsd: z.number().positive().max(1000),
   runToken: z.string().regex(/^[\x21-\x7e]{16,512}$/),
-  webFetchDomains: z.array(Hostname).max(200),
+  /**
+   * WebFetch's reach (Wasim, decision 20: on from the start). `null`: any public host (the runner still refuses IP
+   * literals, local names and its own host; the Worker's egress refuses private and reserved addresses); a list: only
+   * those hosts; `[]`: none.
+   */
+  webFetchDomains: z.array(Hostname).max(200).nullable(),
   fileCaps: FileCaps,
 })
 

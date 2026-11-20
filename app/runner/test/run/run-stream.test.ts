@@ -4,13 +4,15 @@
 import { fc, it } from '@fast-check/vitest'
 import { expect } from 'vitest'
 import type { RunEvent, RunEventBody } from '../../../shared/protocol/index.ts'
+
+type Body = Exclude<RunEventBody, { type: 'released' }>
 import { RunStream } from '../../src/server/run-stream.ts'
 
 const body = fc.oneof(
-  fc.constant<RunEventBody>({ type: 'checkpoint', mainEntries: 3, lastUuid: 'u-3', lastUuidIndex: 2, runEntries: 1 }),
-  fc.constant<RunEventBody>({ type: 'sdk', message: { type: 'assistant' }, truncated: false }),
-  fc.constant<RunEventBody>({ type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }),
-  fc.constant<RunEventBody>({ type: 'failed', reason: 'stopped', message: 'x' }),
+  fc.constant<Body>({ type: 'checkpoint', mainEntries: 3, lastUuid: 'u-3', lastUuidIndex: 2, runEntries: 1 }),
+  fc.constant<Body>({ type: 'sdk', message: { type: 'assistant' }, truncated: false }),
+  fc.constant<Body>({ type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }),
+  fc.constant<Body>({ type: 'failed', reason: 'stopped', message: 'x' }),
 )
 
 it.prop([fc.array(fc.tuple(fc.nat(5), body), { maxLength: 200 }), fc.scheduler()])(

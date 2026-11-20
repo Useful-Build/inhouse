@@ -73,19 +73,26 @@ export function assertFetchDomain(domain: string, hostAddresses: readonly string
   } catch {
     throw new GuardConfigError(`webFetchDomains: "${domain}" is not a host name`)
   }
-  const bare = host.replace(/^\[|\]$/g, '')
   if (host !== domain || host.endsWith('.')) throw new GuardConfigError(`webFetchDomains: "${domain}" must be written as "${host.replace(/\.$/, '')}"`)
-  if (isIP(bare) !== 0) throw new GuardConfigError(`webFetchDomains: "${domain}" is an IP address`)
-  if (!host.includes('.') || LOCAL_NAMES.includes(host) || LOCAL_SUFFIXES.some((s) => host.endsWith(s))) {
-    throw new GuardConfigError(`webFetchDomains: "${domain}" is a local name`)
-  }
-  if (hostAddresses.includes(host)) throw new GuardConfigError(`webFetchDomains: "${domain}" is this container`)
+  const why = fetchHostRefusal(host, hostAddresses)
+  if (why !== null) throw new GuardConfigError(`webFetchDomains: "${domain}" ${why}`)
+}
+
+/**
+ * Why a host (as the URL parser writes it) is never one WebFetch may reach, or null when it may: an IP literal (in any
+ * form the parser reads as one), a local name, one of this container's own addresses, or a reserved label. The same
+ * rule for a listed domain and, with WebFetch open to any public host, for every URL's host.
+ */
+export function fetchHostRefusal(host: string, hostAddresses: readonly string[]): string | null {
+  const bare = host.replace(/^\[|\]$/g, '')
+  if (isIP(bare) !== 0) return 'is an IP address'
+  if (!host.includes('.') || LOCAL_NAMES.includes(host) || LOCAL_SUFFIXES.some((s) => host.endsWith(s))) return 'is a local name'
+  if (hostAddresses.includes(host)) return 'is this container'
   // Labels with `--` in the third and fourth places are reserved (RFC 5891), and whether the URL parser accepts an
   // invalid `xn--` one (`xn--a`) differs between Node versions, so the guard refuses them all itself rather than depend
-  // on the parser. A brand domain with non-ASCII letters isn't accepted here for now.
-  if (host.split('.').some((label) => label.slice(2, 4) === '--')) {
-    throw new GuardConfigError(`webFetchDomains: "${domain}" has a reserved label (\`--\` in the third and fourth places)`)
-  }
+  // on the parser. A host with non-ASCII letters (punycode) isn't reachable for now.
+  if (host.split('.').some((label) => label.slice(2, 4) === '--')) return 'has a reserved label (`--` in the third and fourth places)'
+  return null
 }
 
 export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
@@ -135,8 +142,9 @@ export function guardedOptions(
   if (inhouse !== undefined && inhouse.type !== 'http') throw new GuardConfigError(`the "${INHOUSE_MCP_SERVER}" MCP server must be an http server`)
 
   const hostAddresses = deps.hostAddresses()
-  const domains = [...config.webFetchDomains]
-  for (const d of domains) assertFetchDomain(d, hostAddresses)
+  // null: WebFetch to any public host (the hook refuses local, IP and own hosts per URL); a list: only those.
+  const domains = config.webFetchDomains === null ? null : [...config.webFetchDomains]
+  for (const d of domains ?? []) assertFetchDomain(d, hostAddresses)
   // A permission rule's absolute path starts with `//`.
   const abs = (p: string) => `/${p}`
   const settings: Settings = {
@@ -171,7 +179,7 @@ export function guardedOptions(
   }
 
   const ours: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
-    PreToolUse: [webFetchHook(domains), auditHook(run, deps.auditTimeoutMs)],
+    PreToolUse: [webFetchHook(domains, hostAddresses), auditHook(run, deps.auditTimeoutMs)],
   }
   const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = { ...base.hooks }
   for (const [event, matchers] of Object.entries(ours) as [HookEvent, HookCallbackMatcher[]][]) {
@@ -182,7 +190,7 @@ export function guardedOptions(
     ...base,
     tools: [...BUILT_IN_TOOLS],
     // Pre-approved; `dontAsk` refuses everything else. Edits only inside the session folder (the deny rules above
-    // carve out .claude/ and .mcp.json, and name the home); WebFetch only to the listed domains.
+    // carve out .claude/ and .mcp.json, and name the home); WebFetch to the listed domains, or any (null: the hook decides).
     allowedTools: [
       ...BUILT_IN_TOOLS.filter((t) => t !== 'Edit' && t !== 'Write' && t !== 'WebFetch'),
       `Edit(${abs(cwd)}/**)`,
@@ -203,8 +211,9 @@ export function guardedOptions(
       autoAllowBashIfSandboxed: true,
       allowUnsandboxedCommands: false,
       network: {
-        // Bash reaches the listed WebFetch domains and nothing else; never this container or its root's ports.
-        allowedDomains: domains,
+        // Bash reaches the listed WebFetch domains and nothing else; never this container or its root's ports. With
+        // WebFetch open to any public host (null), Bash still reaches none: the open reach is WebFetch's alone.
+        allowedDomains: domains ?? [],
         strictAllowlist: true,
         deniedDomains: [...new Set([...LOCAL_NAMES, ...hostAddresses])],
         allowLocalBinding: false,
