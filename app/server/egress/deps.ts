@@ -2,6 +2,7 @@
 // the Runner's `touch`, the model upstream, R2 and D1, the clock and timers, `waitUntil` and a log without secrets.
 import type { KeyedBucket } from '../db/r2-keys.ts'
 import type { BrandAgentRpc } from '../do/brand-agent/ports.ts'
+import type { FileStore } from '../files-io/store.ts'
 import type { SettingsView } from '../model/catalog.ts'
 import type { ModelUpstream } from './gateway.ts'
 
@@ -23,6 +24,9 @@ export interface EgressDeps {
   /** R2, keys only from r2-keys.ts. */
   bucket: KeyedBucket
   db: D1Database
+  /** The chat files table (files-io/store.ts). */
+  files: FileStore
+  newFileId(): string
   mcp: McpHandler
   waitUntil(p: Promise<unknown>): void
   setInterval(fn: () => void, ms: number): ReturnType<typeof setInterval>

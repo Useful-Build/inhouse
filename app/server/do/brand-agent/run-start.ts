@@ -3,23 +3,8 @@
 // joins it only in memory, on its way to the pool.
 import { composeTurnPrompt } from '../../../shared/contract/runs.ts'
 import { TURN_CEILING_MICRO } from '../../model/catalog.ts'
+import { FILE_CAPS } from '../../files-io/caps.ts'
 import type { RunStart } from '../../../shared/protocol/index.ts'
-
-/**
- * The file caps every run carries (p3-design 8.5, in exact bytes). W3's `files-io/caps.ts` owns the one constant; this
- * copy goes once it lands (the orchestrator's note in the PR body).
- */
-export const RUN_FILE_CAPS: RunStart['fileCaps'] = {
-  maxFileBytes: 20_971_520,
-  maxFilesPerTurn: 20,
-  maxRestoreBytes: 104_857_600,
-  allowedTypes: [
-    'application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'text/csv', 'text/plain', 'text/markdown', 'application/json',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  ],
-}
 
 /** A turn's attachment as stored: the input row's id, name and path (from `files.inputsOf`, never the client's names). */
 export interface StoredAttachment { fileId: string; name: string; path: string }
@@ -60,7 +45,7 @@ export function buildStart(i: StartInput): StartWithoutToken {
     maxTurns: i.maxTurns,
     maxBudgetUsd: ceiling / 1_000_000,
     webFetchDomains: i.webFetchDomains,
-    fileCaps: RUN_FILE_CAPS,
+    fileCaps: FILE_CAPS,
   }
 }
 
