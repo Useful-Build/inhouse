@@ -51,7 +51,7 @@ export function Notifications({ children }: { children: ReactNode }) {
               : <IconTile icon={n.icon} />}
             <span className="min-w-0 flex-1">
               <span className="block text-base leading-menu">{n.text}</span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">{n.who} · {fmtWhen(n.at, nowOf(agent.getSnapshot()), display())}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{n.who} · {fmtWhen(n.at, nowOf(), display())}</span>
             </span>
             {n.unread && <><span className="sr-only">Unread</span><i aria-hidden="true" className="mt-1.75 size-1.75 flex-none rounded-full bg-foreground" /></>}
           </button>

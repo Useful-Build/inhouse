@@ -523,6 +523,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.listFiles().map(f => f.id)).toEqual(files.map(f => f.id))
     })
 
+    test('createChat changes the snapshot (a write changes identity, so React sees the new chat)', async () => {
+      const before = t.client.getSnapshot()
+      await t.client.createChat(fx.newChat)
+      expect(t.client.getSnapshot()).not.toBe(before)
+    })
+
     test('chats: create, rename, pin, delete, restore', async () => {
       const c = t.client
       const { id, title } = fx.newChat

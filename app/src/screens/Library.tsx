@@ -404,7 +404,7 @@ function Row({ file: f, phone, selecting, on, onClick, menu }: { file: LibraryFi
       <span className="hidden font-mono text-xs text-foreground-3 @2xl:block">{f.type}</span>
       <span className="hidden min-w-0 text-foreground-3 text-pretty wrap-anywhere @2xl:block">{f.from}</span>
       <span className="hidden text-right text-foreground-3 tabular-nums @2xl:block">{f.size}</span>
-      <span className="hidden text-foreground-3 tabular-nums @2xl:block">{fmtWhen(f.at, nowOf(agent.getSnapshot()), display())}</span>
+      <span className="hidden text-foreground-3 tabular-nums @2xl:block">{fmtWhen(f.at, nowOf(), display())}</span>
     </button>
     {menu ?? (!phone && <span aria-hidden="true" className="size-8 flex-none" />)}
     </div>

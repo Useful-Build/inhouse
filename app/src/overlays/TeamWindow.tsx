@@ -47,7 +47,7 @@ export function TeamWindow() {
   // The tool being connected takes its date from tools.json; on First day (nothing live yet) its request isn't listed.
   const live = goingLive(ctx)
   // A request as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20" ("just now" for one the person sent).
-  const now = nowOf(st)
+  const now = nowOf()
   const seeded = data.notifications.teamRequests.flatMap((q, i) => {
     const tool = /^Connect (.+)$/.exec(q.title)?.[1]
     if (tool && live?.name !== tool) return []
@@ -68,7 +68,7 @@ export function TeamWindow() {
   const send = () => {
     const txt = team.text.trim()
     if (!txt) return
-    agent.sendTeamRequest({ icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}`, at: instantOf(nowOf(agent.getSnapshot())), status: 'Sent' })
+    agent.sendTeamRequest({ icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}`, at: instantOf(nowOf()), status: 'Sent' })
     showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : 'Request sent. Your Inhouse team replies within one working day.')
     patch({ pop: null, team: { ...team, text: '' } })
   }

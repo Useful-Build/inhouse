@@ -147,13 +147,28 @@ function keepDemoDeployRedirect(): Plugin {
   }
 }
 
+/**
+ * index.html's title names the demo's sample brand. The product build has no sample brand, so its page title is just
+ * the product's name; the app sets per-route titles after it loads (check-product-build.mjs's canaries catch a leak).
+ */
+function productHtmlTitle(): Plugin {
+  return {
+    name: 'inhouse:product-html-title',
+    transformIndexHtml(html) {
+      const out = html.replace(/<title>[^<]*<\/title>/, '<title>Inhouse</title>')
+      if (out === html) throw new Error('productHtmlTitle: index.html has no <title> to replace')
+      return out
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const product = mode === PRODUCT
   return {
     plugins: [
       react(), tailwindcss(), cloudflare(), keepSourceMapsOut(), writeModuleList(),
-      ...(product ? [keepDemoDeployRedirect()] : demoPublicFiles()),
+      ...(product ? [keepDemoDeployRedirect(), productHtmlTitle()] : demoPublicFiles()),
     ],
     resolve: {
       alias: { '@client': clientEntry(mode), '@sample': sampleData, '@': fileURLToPath(new URL('./src', import.meta.url)) },

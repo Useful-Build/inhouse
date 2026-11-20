@@ -14,8 +14,10 @@ import type {
   SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, Trace, UsageData,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, photoKey, stageIndex } from './types'
-import { DEMO_START, demoDayAt, demoNow, nextLocalRun, shownClock, shownDateTimeIn, shownTimeOn } from './clock'
+import { nextLocalRun, shownClock, shownDateTimeIn, shownTimeOn } from './clock'
+import { DEMO_START, demoDayAt, demoNow } from './demo-clock'
 import { instantOf } from '../lib/format'
+import { NOT_FOUND } from '../../shared/contract/error-codes'
 import { listNames, pendingIds, visibleProblems } from '../state/derive'
 
 /**
@@ -596,7 +598,11 @@ const loadRunInfo = (): Map<string, RunInfo> => {
   }
 }
 
+/** A unique string the product build check (scripts/check-product-build.mjs) looks for: it must never be in the product build. */
+export const MOCK_MARKER = 'inhouse-canary:mock'
+
 export class MockAgent implements AgentClient {
+  readonly marker = MOCK_MARKER
   private state: AgentState
   private listeners = new Set<() => void>()
   private noticeListeners = new Set<(n: AgentNotice) => void>()
@@ -708,6 +714,7 @@ export class MockAgent implements AgentClient {
   allChatIds = () => [...chats.map(c => c.id), ...this.created]
   subscribe = (l: () => void) => { this.listeners.add(l); return () => { this.listeners.delete(l) } }
   onNotice = (l: (n: AgentNotice) => void) => { this.noticeListeners.add(l); return () => { this.noticeListeners.delete(l) } }
+  /** DemoControls (demo-controls.ts), not AgentClient: the real client has neither. */
   setDemo(ctx: DemoContext) {
     const changed = ctx.stage !== this.demo.stage || ctx.scenario !== this.demo.scenario
     this.demo = ctx
@@ -1099,12 +1106,17 @@ export class MockAgent implements AgentClient {
   createChat(chat: { id: string; title: string }): Promise<void> {
     if (!chat.id.trim()) return this.rejected('unknown', "Couldn't start the chat.", true)
     this.created.add(chat.id)
+    // A write changes the snapshot's identity (the contract), so a React reader of `getSnapshot` sees the new chat.
+    this.state = { ...this.state }
+    // `allChatIds` changed, so `subscribe` listeners are told. On the next microtask, not in this call: the store makes the
+    // chats it restored at load while it is still being created, and a listener must not run into it half made.
+    queueMicrotask(() => this.listeners.forEach(l => l()))
     return Promise.resolve()
   }
 
   async *ask(question: string, opts: AskOptions): AsyncGenerator<RunEvent> {
     // A chat the agent doesn't know is a wiring bug in the app: fail loud.
-    if (!this.knownChat(opts.chatId)) throw new Error(`ask: unknown chat id "${opts.chatId}". Make it with createChat first.`)
+    if (!this.knownChat(opts.chatId)) throw new AgentError(NOT_FOUND, `ask: unknown chat id "${opts.chatId}". Make it with createChat first.`)
     const runId = `run-${SESSION}-${++this.runSeq}`
     const run: LiveRun = { stop: new AbortController(), turn: new AbortController(), queue: [] }
     this.runs.set(runId, run)

@@ -101,7 +101,7 @@ export function Routines() {
                   </Badge>
                   {mode && <span>{mode}</span>}
                 </div>
-                {!phone && !locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r, nowOf(st)) || 'Not run yet')}</div>}
+                {!phone && !locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r, nowOf()) || 'Not run yet')}</div>}
               </div>
               <div className="relative flex flex-none flex-col items-end gap-2.5 text-right">
                 {!phone && <div className="text-xs text-muted-foreground">Next run<span className={`block text-sm font-medium ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
@@ -113,7 +113,7 @@ export function Routines() {
               {/* A phone has no room beside the switch: the last run and the next run take the row's full width under it. */}
               {phone && (
                 <div className="basis-full">
-                  {!locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r, nowOf(st)) || 'Not run yet')}</div>}
+                  {!locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r, nowOf()) || 'Not run yet')}</div>}
                   {next && <div className="mt-2 text-xs text-muted-foreground">Next run <span className={`text-sm font-medium whitespace-nowrap ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
                 </div>
               )}

@@ -1,5 +1,6 @@
 import { Component } from 'react'
 import type { ReactNode } from 'react'
+import { demo as demoControls } from './agent'
 import { useUi } from './state/store'
 import { Button } from './ui'
 import { demoCrash, reportError } from './report-error'
@@ -42,7 +43,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
   render() {
     if (!this.state.failed) return this.props.children
     // Reset demo (it clears every change) only for the demo's presenter.
-    const demo = new URLSearchParams(location.search).has('demo')
+    const demo = demoControls !== null && new URLSearchParams(location.search).has('demo')
     return (
       <div role="alert" className="box-border flex min-h-dvh flex-col items-center justify-center gap-1.5 bg-background p-6 text-center">
         <h1 className="text-2xl font-medium tracking-heading">Something went wrong.</h1>

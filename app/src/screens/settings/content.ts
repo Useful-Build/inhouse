@@ -4,8 +4,8 @@ import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
 import type { Theme } from '../../lib/theme'
-import { DEMO_YEAR, plainSpaces } from '../../agent/clock'
-import { fmtAuditDay, fmtCapSetting, fmtDayWord, fmtMoney, fmtNearDay, fmtSpentSetting, fmtTime, fmtWhen, moneyOf } from '../../lib/format'
+import { plainSpaces } from '../../agent/clock'
+import { calendarOf, fmtAuditDay, fmtCapSetting, fmtDayWord, fmtMoney, fmtNearDay, fmtSpentSetting, fmtTime, fmtWhen, moneyOf } from '../../lib/format'
 import { display, nowOf } from '../../state/display'
 
 export type RowKind = 'select' | 'text' | 'value' | 'button' | 'toggle' | 'mode' | 'photo'
@@ -125,7 +125,7 @@ export function settingsPage(tab: string, env: Env): Page {
   const { auditLog, memory, meta, people, skills, usage } = data
   const me = meta.currentUser
   const d0 = display()
-  const now = nowOf(agent)
+  const now = nowOf()
   const forgetRows = (lines: MemoryLine[]) =>
     lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 1, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
@@ -217,7 +217,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always'), R('Pause Inhouse agent', 'Stops every routine and job at once. Asking questions still works.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause)] },
     ] },
     'team-spend': { title: 'Spending cap', sections: [
-      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${DEMO_YEAR}.`, 'value', fmtSpentSetting(env.spent, d0))] },
+      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },
       { label: 'Accounts', rows: [R('AI', 'Your Anthropic account, billed at cost.', 'value', 'Anthropic'), R('Hosting', 'Your Cloudflare account, billed at cost.', 'value', 'Cloudflare')] },
     ] },
     'team-data': { title: 'Data and access', sections: [

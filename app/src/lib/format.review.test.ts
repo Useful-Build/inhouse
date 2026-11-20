@@ -13,7 +13,7 @@ vi.stubGlobal('localStorage', {
   removeItem: (k: string) => { store.delete(k) },
 })
 const { MockAgent } = await import('../agent/mock')
-const { DEMO_START } = await import('../agent/clock')
+const { DEMO_START } = await import('../agent/demo-clock')
 const F = await import('./format')
 const { display } = await import('../state/display')
 const { activityRows, draftView, handled, teamRequestLine } = await import('../state/derive')

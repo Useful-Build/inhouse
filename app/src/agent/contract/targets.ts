@@ -114,6 +114,9 @@ Object.defineProperty(globalThis, 'localStorage', { value: shim, configurable: t
 
 // Imported after the shim: the mock reads storage when it loads. Until W4 merges, `reset()` makes a fresh instance;
 // W4 adds `demo.reset()` and this target switches to it.
+// The client entry first: display.ts reads the clock from it, and the entry builds the mock, which imports display (a cycle that
+// only works when the entry starts it).
+await import('../index')
 const { MockAgent: Mock } = await import('../mock')
 
 /** Where the mock saves its state (its own constant isn't exported): the proxy keeps this in step when it takes a change back. */

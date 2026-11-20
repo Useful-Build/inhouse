@@ -19,7 +19,8 @@ import notificationsRaw from '@sample/notifications.json'
 import scenariosRaw from '@sample/scenarios.json'
 import modelsRaw from '@sample/models.json'
 import libraryRaw from '@sample/library.json'
-import { demoAt, keepTimesTogether } from './clock'
+import { keepTimesTogether } from './clock'
+import { demoAt } from './demo-clock'
 import { moneyOf } from '../lib/format'
 import type {
   ActivityLine, AuditEntry, CatalogTool, ClockTime, Draft, Effort, Instant, LibraryFile, LibraryKind, LibraryPlace, MemoryLine, ModelMode, Money, Problem, Prose, RoutineDef, SkillDef,

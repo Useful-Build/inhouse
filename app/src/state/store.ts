@@ -1,12 +1,11 @@
 // UI state and the actions screens call. Domain state lives in the agent
-// (see agent/mock.ts); this store holds navigation, overlays, composer and chat UI.
+// (the client behind src/agent/index.ts); this store holds navigation, overlays, composer and chat UI.
 import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
-import { agent } from '../agent'
-import { dataOverrideActive } from '../agent/mock'
+import { agent, demo as demoControls, now } from '../agent'
 import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, Scenario, SetAsideReason, Stage } from '../agent/types'
 import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
-import { demoNow, shownClock, shownDateTimeIn, shownTimeOn } from '../agent/clock'
+import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/clock'
 import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
 import { rememberTrigger } from '../ui/dialogs'
@@ -294,8 +293,8 @@ const RUN_FAILED = "Your Inhouse agent couldn't finish this answer. Nothing was 
 /** A run id the agent made (its messages carry it as their trace), as opposed to a recorded trace key on a seeded answer. */
 const RUN_ID = /^run-/
 let chatSeq = 0
-/** Now on the demo clock (agent/clock.ts). */
-const demoTime = () => demoNow(agent.getSnapshot().demoStartedAt)
+/** Now on the client entry's clock: the demo clock in the demo, the real clock in the product (agent/index.ts). */
+const demoTime = () => new Date(now())
 /** A write the agent took back: it already told the person with a notice, so the console gets the detail. */
 const logFailure = (what: string) => (e: unknown) => { console.warn(`Inhouse: ${what}.`, e) }
 /** A started chat's title: the question when it's short, else its first words cut at a word break (L8). */
@@ -576,8 +575,10 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
 })
 
 export const useUi = create<UiState & UiActions>()((set, get) => {
-  const demo = loadDemo()
-  agent.setDemo({ stage: demo.stage, scenario: demo.scenario })
+  // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: its stage comes
+  // from the client in P2, so `stage` and `scenario` here are placeholders there.
+  const demo = demoControls ? loadDemo() : DEFAULT_DEMO
+  demoControls?.setDemo({ stage: demo.stage, scenario: demo.scenario })
   const session = restoreSession(loadSession())
   // The reload note goes into the saved session once, not again on every reload until something else saves.
   saveAfterSetup = !!session.noted
@@ -1014,8 +1015,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const was = openChatKey(get(), agent.read())
       set(p)
       const { stage, scenario, ambient, animateMark } = get()
-      agent.setDemo({ stage, scenario })
-      saveDemo({ stage, scenario, ambient, animateMark })
+      demoControls?.setDemo({ stage, scenario })
+      if (demoControls) saveDemo({ stage, scenario, ambient, animateMark })
       const now = openChatKey(get(), agent.read())
       if (now !== was) {
         set(s => {
@@ -1028,16 +1029,16 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     resetDemo: () => {
       // Every answer stops: the runs go with the state, so their late events find no token.
       for (const r of Object.values(get().runs)) if (r.runId) agent.stop(r.runId)
-      agent.reset()
+      demoControls?.reset()
       clearSession()
       // The stage and scenario go back to their defaults with everything else; the dot sweep and mark animation stay.
       const { ambient, animateMark } = get()
       const d = { ...DEFAULT_DEMO, ambient, animateMark }
-      agent.setDemo({ stage: d.stage, scenario: d.scenario })
-      saveDemo(d)
+      demoControls?.setDemo({ stage: d.stage, scenario: d.scenario })
+      if (demoControls) saveDemo(d)
       set({ ...initialUi(), ...d, phone: get().phone, demoOpen: get().demoOpen })
       // The brand and channels came from the override at load, so a reload is what drops them.
-      if (dataOverrideActive) location.reload()
+      if (demoControls?.dataOverrideActive) location.reload()
     },
 
     approveMany: ids => {

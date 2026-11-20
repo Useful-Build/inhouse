@@ -28,7 +28,7 @@ export function ChatList() {
   const pinned = found.filter(c => c.pinned)
   const rest = found.filter(c => !c.pinned)
   // Grouped by the day each was last active: Today, Yesterday, Last 7 days, Earlier.
-  const now = nowOf(agentState), d0 = display()
+  const now = nowOf(), d0 = display()
   const dayOf = (c: (typeof found)[number]) => fmtDayGroup(c.at, now, d0)
   const groups: [string, typeof found][] = [
     ...(pinned.length ? [['Pinned', pinned] as [string, typeof found]] : []),

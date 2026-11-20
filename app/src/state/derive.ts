@@ -651,6 +651,6 @@ export function routineRuns(ctx: Ctx, r: { id: string; name: string; last?: { at
   const lines = [...data.activity.today.map(l => ({ ...l, day: 'Today' })), ...data.activity.earlier.map(l => ({ ...l, day: fmtWeekday(l.at, d0) }))]
     .filter(l => !(l.minStage === 'Act' && S < 1) && l.text.toLowerCase().includes(name))
     .map((l): RoutineRunLine => ({ key: `${l.day}|${fmtTime(l.at, d0)}|${l.text}`, day: l.day, t: fmtTime(l.at, d0), text: fill(l.text), trace: l.trace, inActivity: true }))
-  if (lines.length === 0 && r.last) lines.push({ key: 'last', day: '', t: '', text: lastRunLine(r.last, nowOf(agent)), inActivity: false })
+  if (lines.length === 0 && r.last) lines.push({ key: 'last', day: '', t: '', text: lastRunLine(r.last, nowOf()), inActivity: false })
   return [...now, ...lines]
 }

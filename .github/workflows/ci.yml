@@ -84,6 +84,11 @@ jobs:
           path: app/pr-meta.json
           if-no-files-found: error
           retention-days: 7
+      # The product build (P1, C8) must ship no sample data, mock code, demo controls, demo clock or demo files, and the
+      # check must catch each of those in the demo build. Runs after the demo artifact upload: the product build puts
+      # the demo's deploy pointer back when it ends, so the uploaded demo build is untouched either way.
+      - if: matrix.shard == 1
+        run: npm run build:product && node scripts/check-product-build.mjs
       # Playwright balances shards by test count, not time, and the slow desktop specs come first. So the
       # suite is cut in four by test (--fully-parallel) and each job runs one slow and one fast quarter.
       # One worker: the tests run one at a time. Every quarter runs even if the one before failed.
