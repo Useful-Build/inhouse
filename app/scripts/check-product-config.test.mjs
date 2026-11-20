@@ -34,6 +34,7 @@ const RULE_TEXT = {
   'workers-dev-true': 'workers_dev must be false',
   'preview-urls-true': 'preview_urls must be false',
   'workers-dev-missing': 'workers_dev must be false',
+  'version-metadata-missing': 'version_metadata needs a binding name',
   'secret-var-named': 'vars.AUDIT_HASH_KEY looks like a secret',
   'secret-var-pattern': 'vars.SESSION_TOKEN looks like a secret',
 }
@@ -75,6 +76,8 @@ describe('check-product-config', () => {
   test('passes wrangler.product.jsonc with INHOUSE_ACCESS filled in', () => {
     const config = JSON.parse(stripJsonc(readFileSync(template, 'utf8')))
     config.vars.INHOUSE_ACCESS = accessOf(`${fixtures}pass.jsonc`)
+    // The template gets this binding in #125; the test passes on a base with or without it.
+    config.version_metadata ??= { binding: 'CF_VERSION_METADATA' }
     const file = join(mkdtempSync(join(tmpdir(), 'product-config-')), 'filled.json')
     writeFileSync(file, JSON.stringify(config))
     const r = run(file)
@@ -85,7 +88,8 @@ describe('check-product-config', () => {
   test('refuses the unfilled wrangler.product.jsonc on INHOUSE_ACCESS only', () => {
     const r = run(template)
     expect(r.status).toBe(1)
-    const lines = r.stderr.split('\n').filter(l => l.startsWith('  - '))
+    // Without #125's version_metadata binding the template also lists that rule; this test is about INHOUSE_ACCESS.
+    const lines = r.stderr.split('\n').filter(l => l.startsWith('  - ') && !l.includes('version_metadata'))
     expect(lines).toEqual(['  - vars.INHOUSE_ACCESS is missing or not JSON'])
   })
 

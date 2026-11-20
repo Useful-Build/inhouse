@@ -7,6 +7,7 @@
 //   - the test issuer is switched on: `INHOUSE_TEST_BUILD` or `TEST_ISSUER_JWKS` in `vars`;
 //   - a var is a Worker secret (`AUDIT_HASH_KEY`, the only one the server reads) or has a secret-like name (ends in
 //     SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with `wrangler secret put`, never in the config;
+//   - `version_metadata` has no `binding` name (the Worker reads its release from that binding);
 //   - INHOUSE_ACCESS is missing or not JSON, or its `teamDomain` isn't `https://<name>.cloudflareaccess.com`;
 //   - INHOUSE_ACCESS.apps isn't exactly one `brand` app and one `inhouse` app;
 //   - an app lacks `origin` or `aud`, an origin isn't a bare `https://` origin, two apps share a hostname (an origin,
@@ -77,6 +78,9 @@ export function checkConfig(config) {
   }
   if (config.workers_dev !== false) failures.push('workers_dev must be false (left out, wrangler turns it on)')
   if (config.preview_urls !== false) failures.push('preview_urls must be false (left out, wrangler turns it on)')
+
+  const vm = config.version_metadata
+  if (typeof vm?.binding !== 'string' || !vm.binding) failures.push('version_metadata needs a binding name (the Worker reads its release from it)')
 
   const raw = config.vars?.INHOUSE_ACCESS
   let access
