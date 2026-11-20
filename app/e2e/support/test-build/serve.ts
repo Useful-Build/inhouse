@@ -2,7 +2,7 @@
 //   node e2e/support/test-build/serve.ts -- npx vitest run src/agent/contract
 // Makes this run's test issuer key, prepares a fresh local D1 (prepare.mjs), starts `wrangler dev` on the test build as
 // playwright.config.ts does, runs the command with CONTRACT_REAL_ORIGIN (the brand app's origin) and the issuer key in its
-// environment, then stops the server and exits with the command's code. CI's contract-suite step uses it.
+// environment (and the brand app's `aud`, for the contract suite's real target to sign in), then stops the server and exits with the command's code. CI's contract-suite step uses it.
 import { execFileSync, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { TEST_BUILD_WORKER_CONFIG, appOrigin, testAccessConfig, testBuildPort, testIssuerJwks } from './issuer.ts'
@@ -58,7 +58,7 @@ await new Promise<void>((resolve, reject) => {
   process.exit(1)
 })
 
-child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true, env: { ...process.env, CONTRACT_REAL_ORIGIN: appOrigin('brand') } })
+child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true, env: { ...process.env, CONTRACT_REAL_ORIGIN: appOrigin('brand'), CONTRACT_REAL_BRAND_AUD: testAccessConfig().apps.find(a => a.name === 'brand')!.aud } })
 const started = child
 const code = await new Promise<number>(resolve => started.once('exit', c => resolve(c ?? signalled ?? 1)))
 stop()

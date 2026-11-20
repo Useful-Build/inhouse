@@ -67,6 +67,8 @@ export interface Fixtures {
   /** One setting key with three valid values, for the stale-write property. */
   choices: { key: string; values: [string, string, string] }
   photoDataUrl: string
+  /** What a member's `photo` reads as after `setPhoto(personId, photoDataUrl)`: the demo keeps the picture as sent, the product serves it from `/api/members/<id>/photo`. */
+  photoAfterSet: string
   teamRequest: TeamRequest
   newChat: { id: string; title: string }
   /** A title with spaces round it: `renameChat` trims it to `paddedTitleTrimmed`. */
@@ -81,6 +83,8 @@ export interface ContractTarget {
   /** The client in use now. `reset()` replaces it, so read it fresh in each test, and subscribe again after a reset. */
   readonly client: AgentClient
   fixtures: Fixtures
+  /** The most runs a property test makes on this target (the env's count when smaller). A target over HTTP sets it: each run is several round trips. The mock leaves it unset. */
+  propertyRuns?: number
   /** Before each test: take control of time. The mock uses vitest's fake timers; a real target starts its dev clock. */
   setup(): Promise<void>
   /** After each test: give time back. */
@@ -95,6 +99,8 @@ export interface ContractTarget {
     agentWritesSaveInClient: boolean
     /** True when a list can have a next page (the server pages the audit log and members); false on the mock, which returns every list whole: `more` is false and `loadMore` does nothing. */
     pagesLists: boolean
+    /** True on the demo: its Admin may do everything (`me().can` all true). A product target's Admin has what the server's access rows give an Admin. */
+    adminCanDoEverything: boolean
   }
   /** Let what is in flight arrive without moving the clock: microtasks flushed (the mock), delivery awaited (a server). Called before each `advance`. */
   settle(): Promise<void>
@@ -266,6 +272,7 @@ function mockTarget(): ContractTarget {
       links: { auditExport: null, signOut: null },
       choices: { key: 'g:tz', values: ['Europe/London', 'America/Chicago', 'Australia/Sydney'] },
       photoDataUrl: 'data:image/png;base64,AAAA',
+      photoAfterSet: 'data:image/png;base64,AAAA',
       teamRequest: { icon: 'build', title: 'Connect Klaviyo', sub: 'From Settings', at: { iso: '2026-11-19T14:04:00.000Z', ms: Date.UTC(2026, 10, 19, 14, 4) }, status: 'Requested' },
       newChat: { id: 'contract-chat-1', title: 'A new chat' },
       paddedTitle: '  Padded   title  ',
@@ -274,7 +281,7 @@ function mockTarget(): ContractTarget {
       unknownTraceId: 'no-such-trace',
     },
     failedSaveNotice: 'save.failed',
-    capabilities: { agentWritesSaveInClient: true, pagesLists: false },
+    capabilities: { agentWritesSaveInClient: true, pagesLists: false, adminCanDoEverything: true },
     async setup() { vi.useFakeTimers() },
     async teardown() { vi.useRealTimers() },
     async settle() { await vi.advanceTimersByTimeAsync(0) },

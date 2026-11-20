@@ -42,9 +42,9 @@ export interface StoresEnv {
 /**
  * The stores over this env's D1. Throws when `AUDIT_HASH_KEY` is unset, so a Worker without it answers 503 instead of
  * logging a value it can't redact. `hook` and `testing` are for tests only (`hook` swaps every audit statement;
- * `testing.beforePhotoBatch` runs between a photo's R2 put and its D1 batch).
+ * `testing.beforePhotoBatch` runs between a photo's R2 put and its D1 batch, `testing.afterPhotoBatch` right after it).
  */
-export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePhotoBatch?: () => Promise<void> } = {}): Stores {
+export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePhotoBatch?: () => Promise<void>; afterPhotoBatch?: () => Promise<void> } = {}): Stores {
   const hashKey = env.AUDIT_HASH_KEY
   if (!hashKey) throw new AuditKeyMissingError()
   const db = env.DB
@@ -68,7 +68,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     grants: grantStore({ db, hook }),
     audit,
     settings: settingStore({ db, hashKey, members, hook }),
-    photos: photoStore({ db, files: env.FILES, hook, beforeBatch: testing.beforePhotoBatch }),
+    photos: photoStore({ db, files: env.FILES, hook, beforeBatch: testing.beforePhotoBatch, afterBatch: testing.afterPhotoBatch }),
     health: {
       async ping() {
         if ((await first<{ one: number }>(db, stmt('SELECT 1 AS one')))?.one !== 1) throw new Error('D1 did not answer SELECT 1')
