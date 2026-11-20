@@ -86,6 +86,14 @@ describe('extend refusals (failure 2) and a close freeing room (failure 3)', () 
     expect(await monthRow()).toMatchObject({ reserved_micro: 2_850_000 })
   })
 
+  it('a turn blocked only by its own hold is cap_reached: cap $10, one turn holding $9.90, need $0.50', async () => {
+    await resetUsage('$10')
+    await ledger.reserve(turnIn('t1'))
+    expect(await ledger.extend('t1', 'c1', 9_650_000)).toEqual({ ok: true, ledgerHold: 9_900_000 })
+    expect(await ledger.close('t1', 'c1', 9_000_000, 9_900_000)).toEqual({ ledgerHold: 9_900_000 })
+    expect(await ledger.extend('t1', 'c2', 500_000)).toEqual({ refused: 'cap_reached', ledgerHold: 9_900_000 })
+  })
+
   it('a hold freed by another turn\'s close lets the held extend through', async () => {
     await resetUsage('$10')
     await ledger.reserve(turnIn('tA'))
@@ -248,5 +256,85 @@ describe('the brand\'s month (failure 9)', () => {
     expect((await turnRow('t_early'))?.month).toBe('2026-12')
     expect(await monthRow('2026-11')).toMatchObject({ reserved_micro: 250_000 })
     expect(await monthRow('2026-12')).toMatchObject({ reserved_micro: 250_000 })
+  })
+})
+
+describe('boundaries and guards (review round 1)', () => {
+  it('(a) reserve with exactly $0.25 left: budget_busy while another turn holds, reserved when nothing else is held', async () => {
+    await resetUsage('$1')
+    await otherHolds(1, 250_000, 750_000)
+    expect(await ledger.reserve(turnIn('t1'))).toEqual({ refused: 'budget_busy' })
+    await resetUsage('$1')
+    await otherHolds(0, 0, 750_000)
+    expect(await ledger.reserve(turnIn('t1'))).toEqual({ reservedMicro: 250_000 })
+  })
+
+  it('(b) an extend to exactly the ceiling passes; one micro over is turn_budget (Sonnet 5.5, $14.68)', async () => {
+    await resetUsage('$100')
+    await ledger.reserve(turnIn('t1'))
+    expect(await ledger.close('t1', 'c0', 0, 180_000)).toEqual({ ledgerHold: 180_000 })
+    expect(await ledger.extend('t1', 'c1', 14_500_000)).toEqual({ ok: true, ledgerHold: 14_680_000 })
+    await ledger.reserve(turnIn('t2'))
+    expect(await ledger.close('t2', 'c0', 0, 180_001)).toEqual({ ledgerHold: 180_001 })
+    expect(await ledger.extend('t2', 'c1', 14_500_000)).toEqual({ refused: 'turn_budget', ledgerHold: 180_001 })
+  })
+
+  it('(c) with cap − spent − own hold exactly the need it is held (others block it); $0.05 more is cap_reached', async () => {
+    await resetUsage('$10')
+    await otherHolds(1, 1_000_000, 8_000_000)
+    await ledger.reserve(turnIn('t1'))
+    // 10 − 8 − 0.25 = 1.75: equal → others' $1.00 is what blocks it.
+    expect(await ledger.extend('t1', 'c1', 1_750_000)).toEqual({ refused: 'held', ledgerHold: 250_000 })
+    expect(await ledger.extend('t1', 'c2', 1_800_000)).toEqual({ refused: 'cap_reached', ledgerHold: 250_000 })
+  })
+
+  it('(d) an extend on a final turn is turn_budget and leaves the month\'s reserved alone', async () => {
+    await resetUsage('$10')
+    await ledger.reserve(turnIn('t1'))
+    await ledger.reserve(turnIn('t2'))
+    await ledger.settle('t1', 100_000, NOV)
+    expect(await ledger.extend('t1', 'c1', 500_000)).toEqual({ refused: 'turn_budget', ledgerHold: 0 })
+    expect(await monthRow()).toMatchObject({ reserved_micro: 250_000, spent_micro: 100_000 })
+  })
+
+  it('(e) a cap lowered between reserve and extend refuses the extend on the new cap', async () => {
+    await resetUsage('$10')
+    await ledger.reserve(turnIn('t1'))
+    await setSetting('s:cap', '$0.50')
+    expect(await ledger.extend('t1', 'c1', 300_000)).toEqual({ refused: 'cap_reached', ledgerHold: 250_000 })
+    expect(await monthRow()).toMatchObject({ cap_micro: 500_000, reserved_micro: 250_000 })
+  })
+
+  it('(f) the first alert crossing is kept when spend crosses again', async () => {
+    await resetUsage('$10')
+    await setSetting('s:alert', '50%')
+    await ledger.reserve(turnIn('t1'))
+    await ledger.reserve(turnIn('t2'))
+    await ledger.settle('t1', 6_000_000, 1_111)
+    expect((await monthRow())?.alert_crossed_at_ms).toBe(1_111)
+    await ledger.settle('t2', 1_000_000, 2_222)
+    expect((await monthRow())?.alert_crossed_at_ms).toBe(1_111)
+  })
+
+  it('(g) a stale replay of an earlier close doesn\'t shrink a later extend\'s hold', async () => {
+    await resetUsage('$10')
+    await ledger.reserve(turnIn('t1'))
+    expect(await ledger.extend('t1', 'c1', 2_000_000)).toEqual({ ok: true, ledgerHold: 2_250_000 })
+    expect(await ledger.close('t1', 'c1', 500_000, 500_000)).toEqual({ ledgerHold: 500_000 })
+    expect(await ledger.extend('t1', 'c2', 1_000_000)).toEqual({ ok: true, ledgerHold: 1_500_000 })
+    expect(await ledger.close('t1', 'c1', 500_000, 500_000)).toEqual({ ledgerHold: 1_500_000 })
+    expect(await monthRow()).toMatchObject({ reserved_micro: 1_500_000 })
+  })
+
+  it('release with a call still open throws and changes nothing; once closed it books the call', async () => {
+    await resetUsage('$10')
+    await ledger.reserve(turnIn('t1'))
+    await ledger.extend('t1', 'c1', 1_000_000)
+    await expect(ledger.release('t1', NOV)).rejects.toThrow('call still open')
+    expect(await monthRow()).toMatchObject({ reserved_micro: 1_250_000, spent_micro: 0 })
+    expect(await turnRow('t1')).toMatchObject({ final: 0 })
+    await ledger.close('t1', 'c1', 400_000, 400_000)
+    await ledger.release('t1', NOV)
+    expect(await monthRow()).toMatchObject({ reserved_micro: 0, spent_micro: 400_000 })
   })
 })

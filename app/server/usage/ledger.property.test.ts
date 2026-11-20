@@ -99,7 +99,7 @@ describe('the ledger under generated histories', () => {
             const answer = await send(() => ledger.extend(d.id, callId, need))
             const expected = free >= rounded && d.hold + rounded <= CEILING[d.plan.model]
               ? { ok: true, ledgerHold: d.hold + rounded }
-              : { refused: cap - model.spent < rounded ? 'cap_reached' : d.hold + rounded > CEILING[d.plan.model] ? 'turn_budget' : 'held', ledgerHold: d.hold }
+              : { refused: cap - model.spent - d.hold < rounded ? 'cap_reached' : d.hold + rounded > CEILING[d.plan.model] ? 'turn_budget' : 'held', ledgerHold: d.hold }
             expect(answer).toEqual(expected)
             if (!('ok' in answer)) {
               // Refused: wait for a sibling's close, or, with nothing in flight, the turn is fenced (ends, settles its tally).

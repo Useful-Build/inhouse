@@ -8,11 +8,13 @@ import { readQuery, storesOf } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
 import { apiError, apiJson } from '../http.ts'
 import { CATALOG } from '../model/catalog.ts'
+import { START_HOLD_MICRO } from './ledger.ts'
 import { MONTH_KEY, monthName } from './month.ts'
 import type { UsageGroupRow, UsageMonthView } from './store.ts'
 
 const QuerySchema = z.object({ month: z.string().regex(MONTH_KEY).optional() }).strict()
 
+// Each amount is rounded on its own, so rows and days may not sum to the total by a cent or so.
 const money = (micro: number) => ({ minor: Math.round(micro / 10_000), currency: 'USD' })
 const questions = (n: number) => `${n} ${n === 1 ? 'question' : 'questions'}`
 
@@ -44,8 +46,9 @@ export function toUsageData(v: UsageMonthView): UsageData {
     daily: v.dailyMicro.map(money),
     // `job` and `tool` stay empty until P4 and P5.
     breakdown: { person: v.people.map(personRow), job: [], model: v.models.map(modelRow), tool: [] },
-    // No cap set this month reserves nothing, so it reads as reached; a finished month without a cap row reads as not.
-    capReached: v.current ? v.spentMicro >= v.capMicro : v.capMicro > 0 && v.spentMicro >= v.capMicro,
+    // This month: "new chats are refused", the ledger's own reserve rule (cap − spent < the start hold), so the page and
+    // the ledger never disagree (no cap reads as reached). A finished month: spend at or past the cap its ledger recorded.
+    capReached: v.current ? v.capMicro - v.spentMicro < START_HOLD_MICRO : v.capMicro > 0 && v.spentMicro >= v.capMicro,
     alertCrossed: v.capMicro > 0 && v.spentMicro * 100 >= v.capMicro * v.alertPct,
     months: v.months,
   }

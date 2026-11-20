@@ -41,7 +41,11 @@ export interface UsageStore {
   strandedTurns(q: { beforeMs: number }): Promise<number>
 }
 
-/** A daily bucket: settled turns grouped by their reservation time in 15-minute slots (every zone offset is a multiple). */
+/**
+ * A daily bucket: settled turns grouped by their reservation time in 15-minute slots (every zone offset is a multiple),
+ * placed on days in today's `g:tz`. A turn's month was fixed at reservation, so after a zone change a turn near midnight
+ * can sit on a neighbouring day (or outside this month's days, then it shows in the total only).
+ */
 const SLOT_MS = 15 * 60_000
 
 export function usageStore(deps: { db: D1Database }): UsageStore {
@@ -68,7 +72,9 @@ export function usageStore(deps: { db: D1Database }): UsageStore {
               GROUP BY t.member_id ORDER BY micro DESC, t.member_id`, month),
         stmt(`SELECT model AS key, NULL AS name, SUM(settled_micro) AS micro, COUNT(DISTINCT chat_id) AS conversations, COUNT(*) AS questions
               ${settled} GROUP BY model ORDER BY micro DESC, model`, month),
-        stmt('SELECT month FROM usage_months ORDER BY month DESC LIMIT 24'),
+        // A refused reserve leaves an empty month row: only months with a turn or spend are offered.
+        stmt(`SELECT month FROM usage_months m WHERE spent_micro > 0 OR EXISTS (SELECT 1 FROM usage_turns t WHERE t.month = m.month)
+              ORDER BY month DESC LIMIT 24`),
       ])
       const row = r[0].results[0] as { cap_micro: number; spent_micro: number } | undefined
       const counts = r[1].results[0] as { conversations: number; questions: number }

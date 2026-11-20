@@ -26,7 +26,8 @@ export function Usage() {
   const monthIdx = useUi(s => s.usageMonth)
   // The real client fills `usageMonths` once route 42 answers; until then the snapshot's `usage` stands in.
   const month = usageMonths[monthIdx] ?? usageMonths[0] ?? ctx.data.usage
-  const thisMonth = month === usageMonths[0]
+  // No months read yet (the real client before route 42 answers): the stand-in is this month.
+  const thisMonth = usageMonths.length === 0 || month === usageMonths[0]
   // The cap and alert level saved in Settings (Spending cap) apply to this month only. Finished months keep the ones
   // recorded for them. A cap never changes what was spent: only "reached" compares the two.
   const status = capStatus(ctx)

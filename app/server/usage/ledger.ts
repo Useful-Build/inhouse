@@ -153,7 +153,9 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
       if (t.granted) return { ok: true, ledgerHold }
       // A final turn takes no more money: answered as its budget being spent.
       if (t.final) return { refused: 'turn_budget', ledgerHold }
-      if (t.cap_micro - t.spent_micro < need) return { refused: 'cap_reached', ledgerHold }
+      // `cap_reached` when the need can't fit even after every other turn's hold ends (only this turn's own hold and the
+      // spend stand in its way); `held` when others' holds are what block it (they may finish). Orchestrator's call, #154 r1.
+      if (t.cap_micro - t.spent_micro - t.reserved_micro < need) return { refused: 'cap_reached', ledgerHold }
       if (t.ceiling === null || t.reserved_micro + need > t.ceiling) return { refused: 'turn_budget', ledgerHold }
       return { refused: 'held', ledgerHold }
     },
@@ -204,6 +206,13 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
 
     async release(turnIdIn, nowMs) {
       const turnId = id('turn id', turnIdIn)
+      // A call extended and not closed would be booked at $0 and its cost lost: refuse. (A call admitted without an extend
+      // is invisible here: the port's doc says release is only for a turn with no call open.)
+      // A final turn's release is a no-op whatever its rows say.
+      const open = await db.prepare(`SELECT COUNT(*) AS n FROM usage_extends WHERE turn_id = ? AND closed = 0
+          AND EXISTS (SELECT 1 FROM usage_turns WHERE turn_id = ? AND final = 0)`).bind(turnId, turnId).first<{ n: number }>()
+        .catch((err: unknown) => { throw new StoreUnavailableError('usage ledger', err) })
+      if ((open?.n ?? 0) > 0) throw new Error('usage: release with a call still open (close it first)')
       // Settle with what the tally holds: the closed calls' actual costs (none for a turn cancelled before any call).
       await finalize(turnId, '(SELECT COALESCE(SUM(actual_micro), 0) FROM usage_extends WHERE turn_id = ? AND closed = 1)', [turnId], nowMs, null)
     },

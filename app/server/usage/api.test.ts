@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { UsageDataSchema } from '../../shared/contract/usage.ts'
 import { openStores } from '../db/stores.ts'
 import { ctx, personPrincipal } from '../db/test-support.ts'
-import { getUsage } from './api.ts'
+import { getUsage, toUsageData } from './api.ts'
 import { createUsageLedger } from './ledger.ts'
 import { db, resetUsage, setSetting, turnIn } from './test-fixtures.ts'
 
@@ -79,6 +79,24 @@ describe('route 42', () => {
     await setSetting('s:cap', null)
     expect(await usage()).toMatchObject({ cap: usd(0), capReached: true, alertCrossed: false })
     await setSetting('s:cap', '$10')
+  })
+
+  it('capReached means new chats are refused: cap − spent under the $0.25 start hold (review round 1)', async () => {
+    // Spent $4.734567: $4.98 leaves $0.245433 < $0.25 → reached; $4.99 leaves $0.255433 → not.
+    await setSetting('s:cap', '$4.98')
+    expect(await usage()).toMatchObject({ capReached: true })
+    await setSetting('s:cap', '$4.99')
+    expect(await usage()).toMatchObject({ capReached: false })
+    await setSetting('s:cap', '$10')
+    const view = { month: '2026-11', current: true, capMicro: 250_000_000, alertPct: 80, spentMicro: 249_800_000, conversations: 0, questions: 0, dailyMicro: [], people: [], models: [], months: ['2026-11'] }
+    expect(toUsageData(view).capReached).toBe(true)
+  })
+
+  it('a refused reserve leaves no empty month in the picker (review round 1)', async () => {
+    await setSetting('s:cap', '$0.10')
+    await ledger.reserve(turnIn('t_refused', { nowMs: Date.UTC(2026, 8, 10, 12) }))
+    await setSetting('s:cap', '$10')
+    expect((await usage()).months).toEqual(['2026-11', '2026-10'])
   })
 
   it('a finished month: every day, its own spend and the cap its ledger recorded', async () => {
