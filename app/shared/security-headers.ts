@@ -30,7 +30,13 @@ export function respond(security: readonly [string, string][], status: number, i
   return new Response(init.body ?? null, { status, headers: securityHeaders(security, init.headers) })
 }
 
-/** The same response with the security headers added: for an asset or a handler's own Response. */
+/**
+ * The same response with the security headers added: for an asset or a handler's own Response. A WebSocket upgrade (a
+ * 101 with `webSocket`, Workers only; the DOM's Response has no such field, hence the widened type) keeps its socket and
+ * status: without it the rebuilt 101 has no socket and the runtime refuses it. The demo Worker never upgrades.
+ */
 export function withSecurityHeaders(security: readonly [string, string][], response: Response): Response {
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: securityHeaders(security, response.headers) })
+  const { webSocket } = response as Response & { webSocket?: unknown }
+  const init = { status: response.status, statusText: response.statusText, headers: securityHeaders(security, response.headers), ...(webSocket ? { webSocket } : {}) }
+  return new Response(response.body, init as ResponseInit)
 }

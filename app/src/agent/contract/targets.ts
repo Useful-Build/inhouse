@@ -258,4 +258,8 @@ declare module 'vitest' {
 // CONTRACT_REAL_ORIGIN (the test build's origin, e.g. http://brand.localhost:8787): also run the suite on the real
 // client against it (src/agent/contract/targets/real/). vitest.config.ts hands it over with `provide`.
 export const realOrigin: string | undefined = inject('contractRealOrigin') || undefined
-export const targets: ContractTarget[] = [mockTarget(), ...(realOrigin ? realTargets(realOrigin) : [])]
+/** The real targets for `origin` (none without one). `make` is for targets.test.ts, which proves the origin reaches it. */
+export function realTargetsFor(origin: string | undefined, make: (origin: string) => ContractTarget[] = realTargets): ContractTarget[] {
+  return origin ? make(origin) : []
+}
+export const targets: ContractTarget[] = [mockTarget(), ...realTargetsFor(realOrigin)]

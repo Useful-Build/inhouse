@@ -3,9 +3,12 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.server.tsbuildinfo",
     // The product Worker's bindings, from `npx wrangler types -c wrangler.product.jsonc --strict-vars false server/worker-configuration.d.ts`.
-    "types": ["./server/worker-configuration.d.ts", "vite/client", "@cloudflare/vitest-plugin/types"],
+    // No test types here (`cloudflare:test` must not typecheck in deployable code): the server tests and their setup are
+    // tsconfig.server-test.json's.
+    "types": ["./server/worker-configuration.d.ts", "vite/client"],
     // Typed from W1's real module; builds other than the test build resolve it to server/auth/issuer-off.ts (vite.config.ts).
     "paths": { "@test-issuer": ["./server/auth/test-issuer.ts"] },
   },
-  "include": ["server", "shared", "ops"]
+  "include": ["server", "shared", "ops"],
+  "exclude": ["server/**/*.test.ts", "server/testing"]
 }

@@ -2,6 +2,7 @@
 // `npm run build:product-test`:
 //   node scripts/check-product-build.mjs                      checks dist-product/ (must pass) and dist/ (must fail)
 //   node scripts/check-product-build.mjs --product DIR --demo DIR --product-test DIR   other build folders
+//   ... --server DIR   the server source part 4 looks in for the test issuer (default server/; its tests use fixtures)
 // The product build ships no sample data, mock code, demo controls or demo clock. Three parts, each run on both builds:
 //   1. Canary strings in the client output: the sample brand's and people's names, the brand's email domain and the user's
 //      email (read from src/agent/sample-data/) and a
@@ -36,6 +37,7 @@ const flag = (name, fallback) => {
 const productDir = flag('--product', join(root, 'dist-product'))
 const demoDir = flag('--demo', join(root, 'dist'))
 const productTestDir = flag('--product-test', join(root, 'dist-product-test'))
+const serverDir = flag('--server', join(root, 'server'))
 
 const fail = msg => { console.error(`check-product-build: ${msg}`); process.exit(2) }
 const readJson = rel => JSON.parse(readFileSync(join(root, 'src/agent/sample-data', rel), 'utf8'))
@@ -170,7 +172,6 @@ const testWorker = workerDir(productTestDir, 'product-test')
 const inTest = serverScan(testWorker)
 // The proof is required once the test issuer exists in any form: its file, the canary anywhere under server/, or a
 // test-issuer module in the test build's graph. Before that (PR0, until W1) it can't be made yet, and says so.
-const serverDir = join(root, 'server')
 const canaryInSource = walk(serverDir).some(f => /\.(ts|mts|js|mjs)$/.test(f) && readFileSync(f, 'utf8').includes(SERVER_CANARY))
 const issuerExists = existsSync(join(serverDir, 'auth/test-issuer.ts')) || canaryInSource || inTest.some(h => h.startsWith('module '))
 if (issuerExists) {
