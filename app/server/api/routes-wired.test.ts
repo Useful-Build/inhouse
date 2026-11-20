@@ -178,8 +178,10 @@ describe('routes 1 and 13 to 20 run their handlers (failure 1)', () => {
     expect(await call('/api/health', { token: monitor })).toMatchObject({ status: 200, body: { ok: true } })
   })
   it('13 to 15: a photo up, served with its own headers through the wrap, and removed (failure 6)', async () => {
-    expect(await call('/api/photo', { method: 'PUT', token: tokens.member, raw: PNG, type: 'image/png' })).toEqual({ status: 200, body: { photoUrl: `/api/members/${who.member}/photo`, rev: await memberRev(who.member) } })
-    const res = await send(`/api/members/${who.member}/photo`, { token: tokens.admin })
+    const up = await call('/api/photo', { method: 'PUT', token: tokens.member, raw: PNG, type: 'image/png' })
+    expect(up).toEqual({ status: 200, body: { photoUrl: expect.stringMatching(new RegExp(`^/api/members/${who.member}/photo\\?v=[0-9a-f]{32}$`)), rev: await memberRev(who.member) } })
+    // The versioned URL goes through the same route, gate and wrap as the bare path.
+    const res = await send((up.body as { photoUrl: string }).photoUrl, { token: tokens.admin })
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('image/png')
     expect(res.headers.get('Content-Security-Policy')).toBe("default-src 'none'; sandbox")

@@ -4,6 +4,8 @@ import { LATEST_MIGRATION } from '../../migrations/latest.ts'
 import type { HandlerEnv } from '../../routes.ts'
 import type { Signal } from './types.ts'
 
+declare const __INHOUSE_TEST_BUILD__: boolean
+
 /**
  * The Worker version's id, from the version metadata binding when the config has one
  * (https://developers.cloudflare.com/workers/runtime-apis/bindings/version-metadata/, read 2026-11-20), else null.
@@ -13,15 +15,25 @@ export function versionOf(env: HandlerEnv): string | null {
   return typeof meta?.id === 'string' && meta.id !== '' ? meta.id : null
 }
 
-export const coreSignals: readonly Signal[] = [
-  {
-    // Informational: a Worker without the binding (the test build) still runs; the detail says so.
+/**
+ * The deployed version: a release's config has the `version_metadata` binding (wrangler.product.jsonc), so a Worker
+ * without it is misconfigured and fails. Only the test build (compiled in and switched on, as the test issuer is) may run
+ * without one, and its detail says so.
+ */
+export function versionSignal(compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__): Signal {
+  return {
     name: 'version',
     async check({ env }) {
       const id = versionOf(env)
-      return { ok: true, detail: id ?? 'no version metadata' }
+      if (id !== null) return { ok: true, detail: id }
+      const testBuild = compiledTestBuild && (env as { INHOUSE_TEST_BUILD?: unknown }).INHOUSE_TEST_BUILD === '1'
+      return testBuild ? { ok: true, detail: 'no version metadata (test build)' } : { ok: false, detail: 'no version metadata' }
     },
-  },
+  }
+}
+
+export const coreSignals: readonly Signal[] = [
+  versionSignal(),
   {
     name: 'd1',
     async check({ stores }) {

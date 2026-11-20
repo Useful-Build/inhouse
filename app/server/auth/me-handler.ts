@@ -1,6 +1,7 @@
 // `GET /api/me` (route 2, p2-design section 11): who is signed in and what they may do. `can` comes from the same
 // access-matrix rows `checkAccess` reads, so the UI never offers what the server refuses.
 import type { Me } from '../../shared/contract/me.ts'
+import { photoUrl } from '../db/photos.ts'
 import { apiError, apiJson } from '../http.ts'
 import type { Handler } from '../routes.ts'
 import { canFor } from './matrix.ts'
@@ -20,7 +21,7 @@ export function buildMe(principal: Exclude<Principal, { name: 'monitor' }>, prof
     email: profile.email,
     role,
     can: canFor(principal, rows, canRows, nowMs),
-    photoUrl: profile.photoKey ? `/api/members/${encodeURIComponent(principal.memberId)}/photo` : null,
+    photoUrl: profile.photoKey ? photoUrl(principal.memberId, profile.photoKey) : null,
     grant,
   }
 }

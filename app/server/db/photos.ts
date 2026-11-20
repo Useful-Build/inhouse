@@ -14,6 +14,13 @@ import { photoKey } from './r2-keys.ts'
 import { first, runBatch, stmt, storage } from './sql.ts'
 import type { Stmt } from './sql.ts'
 
+/**
+ * The Worker's URL for a member's photo, versioned by the photo's own key: every upload stores a new key, so a replaced
+ * photo gets a new URL and a browser never shows the old one from its cache. The download route reads only the path.
+ */
+export const photoUrl = (memberId: string, key: string): string =>
+  `/api/members/${encodeURIComponent(memberId)}/photo?v=${encodeURIComponent(key.slice(key.lastIndexOf('/') + 1))}`
+
 /** The R2 calls the photo store makes (on the `FILES` binding). */
 export type PhotoFiles = Pick<R2Bucket, 'put' | 'get' | 'delete'>
 
@@ -53,7 +60,7 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch, afte
 
   return {
     /** Stores a person's own photo. A conflict: another upload or a removal changed it first (nothing kept of this one). */
-    async set(input: { memberId: string; bytes: Uint8Array; type: PhotoType }, at: At): Promise<{ ok: true; rev: number } | PhotoConflict> {
+    async set(input: { memberId: string; bytes: Uint8Array; type: PhotoType }, at: At): Promise<{ ok: true; rev: number; key: string } | PhotoConflict> {
       const before = await keyOf(input.memberId)
       if (!before) throw new Error('set: not a person row')
       const key = photoKey(input.memberId, randomPart())
@@ -84,7 +91,7 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch, afte
         if (now?.photo_key === key) {
           if (before.photo_key) await dropOld(before.photo_key)
           // The one place the rev is read again: the reply was lost, so there is no result to take it from.
-          return { ok: true, rev: now.rev }
+          return { ok: true, rev: now.rev, key }
         }
         throw err
       }
@@ -97,7 +104,7 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch, afte
       if (before.photo_key) await dropOld(before.photo_key)
       // The row's rev after this write (the write moved it): the caller sends it as `ifRev` on its next write to the row.
       if (rev === undefined) throw new Error('set: the update returned no rev')
-      return { ok: true, rev }
+      return { ok: true, rev, key }
     },
 
     /**

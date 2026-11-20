@@ -117,3 +117,15 @@ export const DESIGN_CAN_ROWS: CanRows = {
   viewAudit: { method: 'GET', pattern: '/api/audit' },
   exportAudit: { method: 'GET', pattern: '/api/audit/export.csv' },
 }
+
+const unwired = () => Promise.reject(new Error('stores not wired'))
+
+/**
+ * Stores whose every call throws (test-only, so it never reaches the product bundle): every sign-in that needs D1
+ * answers 503 and nothing is let through. Only `monitor` (no member row) gets a principal.
+ */
+export const unwiredStores: AuthStores = {
+  members: { resolvePerson: unwired, resolveInhouse: unwired, serviceMember: unwired, profile: unwired },
+  grants: { active: unwired },
+  audit: { supportAccess: unwired },
+}
