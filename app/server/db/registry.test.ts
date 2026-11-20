@@ -41,10 +41,11 @@ describe('person keys', () => {
     const memberValued = SETTING_KEY_EXAMPLES.filter(key => {
       const spec = settingSpec(key)
       if (!spec) throw new Error(`${key} has no spec`)
-      return spec.value.safeParse('m_abc123').success
+      // A value that names a member: takes a member id but not free text (g:name, n:channel, t:signs and g:mode take
+      // any short text, member ids included, and are logged redacted; they aren't member references).
+      return spec.value.safeParse('m_abc123').success && !spec.value.safeParse('Some free text').success
     })
-    // Not vacuous: approvers (a:<n>) take a member id today.
-    expect(memberValued).toContain('a:0')
+    expect(memberValued).toEqual(['a:0'])
     const settings = tables.find(t => t.kind === 'd1' && t.name === 'settings')!
     const audit = tables.find(t => t.kind === 'd1' && t.name === 'audit_log')!
     expect(settings.personKeys).toContain('value_json')

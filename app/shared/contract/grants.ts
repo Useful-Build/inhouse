@@ -23,3 +23,15 @@ export const SupportGrantSchema = z.object({
   live: z.boolean(),
 })
 export type SupportGrant = z.infer<typeof SupportGrantSchema>
+
+/** `POST /api/grants`. */
+export const GrantCreateInputSchema = z.object({ hours: GrantHoursSchema }).strict()
+export type GrantCreateInput = z.infer<typeof GrantCreateInputSchema>
+
+/** `POST /api/grants/:id/end`: the rev last read (up to 9 digits, as every `ifRev`). */
+export const GrantEndInputSchema = z.object({ ifRev: z.number().int().min(1).max(999_999_999) }).strict()
+export type GrantEndInput = z.infer<typeof GrantEndInputSchema>
+
+/** `GET /api/grants`: the most recent grants (up to 20), newest first; the live one, if any, among them. */
+export const GrantsListSchema = z.object({ items: z.array(SupportGrantSchema) })
+export type GrantsList = z.infer<typeof GrantsListSchema>

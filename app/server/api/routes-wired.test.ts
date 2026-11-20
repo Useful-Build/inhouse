@@ -1,9 +1,13 @@
-// Routes 3 to 12 as server/routes.ts wires them, through the whole /api/* path (server/api.ts): W1's real sign-in (a
+// Routes 1 and 3 to 20 as server/routes.ts wires them, through the whole /api/* path (server/api.ts): W1's real sign-in (a
 // local issuer), the committed access rows, W2's stores on the test D1. Ways it can fail, written down first:
 //  1. a route still answers the `notYet` stub (503), or another handler than its own;
 //  2. a principal the row refuses reaches a store call (a read or a write) before the 403;
-//  3. a handler on a row whose rule needs the object (7, 8, and 12 for an Admin) answers 2xx without calling
-//     requireObject: api.ts must turn that into 500, so the wiring can't pass with a skipped check.
+//  3. a handler on a row whose rule needs the object (7, 8, 13, 14, and 12 for an Admin) answers 2xx without calling
+//     requireObject: api.ts must turn that into 500, so the wiring can't pass with a skipped check;
+//  4. such a handler reads or writes a store before its requireObject (harmless while the owner is the caller, but a
+//     later owner-from-input change would read another person's data before the refusal);
+//  5. an Inhouse principal with a live grant reads brand data without its support.access line, or not at all;
+//  6. the photo route's stricter CSP and caching are lost in api.ts's wrap, or another handler can loosen the site's.
 import { env as baseEnv } from 'cloudflare:workers'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api.ts'
@@ -47,13 +51,17 @@ const parts = (table: readonly Route[] = routes): ApiParts => ({
   authenticate: (r, e, st, n, id) => authenticate(r, e, st, n, id, good.keys),
   checkOrigin, checkAccess, stores: e => recorded(openStores(e)), routes: table, accessMatrix,
 })
-const call = async (path: string, init: { method?: string; token: string; body?: unknown; origin?: string; table?: readonly Route[] }) => {
+const send = (path: string, init: { method?: string; token: string; body?: unknown; raw?: BodyInit; type?: string; origin?: string; table?: readonly Route[] }) => {
   const origin = init.origin ?? BRAND.origin
-  const res = await api(parts(init.table), new Request(`${origin}${path}`, {
+  const type = init.type ?? (init.body === undefined ? undefined : 'application/json')
+  return api(parts(init.table), new Request(`${origin}${path}`, {
     method: init.method ?? 'GET',
-    headers: { 'Cf-Access-Jwt-Assertion': init.token, Origin: origin, ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    headers: { 'Cf-Access-Jwt-Assertion': init.token, Origin: origin, ...(type ? { 'Content-Type': type } : {}) },
+    body: init.raw ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
   }), env, ctx, `req-${++k}`)
+}
+const call = async (path: string, init: Parameters<typeof send>[1]) => {
+  const res = await send(path, init)
   return { status: res.status, body: (await res.json()) as Record<string, unknown> }
 }
 const token = (role: 'admin' | 'member' | 'inhouse') =>
@@ -153,6 +161,124 @@ describe('an object-check row that skips requireObject is 500, never a 2xx (fail
       expect((await call(path, { method, token: tokens[role], body })).status).toBe(200)
       const mutated = await call(path, { method, token: tokens[role], body: body && { ...body, ifRev: 1 }, table: skipping(method, pattern) })
       expect(mutated).toEqual({ status: 500, body: { error: { code: 'unknown' } } })
+      expect(error.mock.calls.some(([l]) => (l as { event?: string }).event === 'object_check_skipped')).toBe(true)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+})
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
+
+describe('routes 1 and 13 to 20 run their handlers (failure 1)', () => {
+  it('1: health for the monitor', async () => {
+    const monitor = await mintService({ key: good.key.privateJwk, iss: TEAM, aud: BRAND.aud, clientId: MONITOR_ID })
+    expect(await call('/api/health', { token: monitor })).toMatchObject({ status: 200, body: { ok: true } })
+  })
+  it('13 to 15: a photo up, served with its own headers through the wrap, and removed (failure 6)', async () => {
+    expect(await call('/api/photo', { method: 'PUT', token: tokens.member, raw: PNG, type: 'image/png' })).toEqual({ status: 200, body: { photoUrl: `/api/members/${who.member}/photo` } })
+    const res = await send(`/api/members/${who.member}/photo`, { token: tokens.admin })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toBe('image/png')
+    expect(res.headers.get('Content-Security-Policy')).toBe("default-src 'none'; sandbox")
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG)
+    expect(await call('/api/photo', { method: 'DELETE', token: tokens.member })).toEqual({ status: 200, body: { photoUrl: null } })
+    expect((await call(`/api/members/${who.member}/photo`, { token: tokens.admin })).status).toBe(404)
+  })
+  it("a handler can't loosen the site's CSP or caching: only the photo's exact values survive the wrap (failure 6)", async () => {
+    const loose: Handler = async () => new Response('{}', { headers: { 'Content-Security-Policy': "default-src *", 'Cache-Control': 'public, max-age=600' } })
+    const table = routes.map(r => (r.pattern === '/api/members' && r.method === 'GET' ? { ...r, handler: loose } : r))
+    const res = await send('/api/members', { token: tokens.member, table })
+    expect(res.headers.get('Content-Security-Policy')).toContain("default-src 'self'")
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
+  })
+  it('16 to 20: grants listed, made and ended; the audit log read and exported', async () => {
+    const made = await call('/api/grants', { method: 'POST', token: tokens.admin, body: { hours: 1 } })
+    expect(made).toMatchObject({ status: 201, body: { live: true, rev: 1 } })
+    expect((await call('/api/grants', { token: tokens.inhouse, origin: INHOUSE.origin })).body.items).toEqual([expect.objectContaining({ id: made.body.id })])
+    expect(await call(`/api/grants/${made.body.id}/end`, { method: 'POST', token: tokens.admin, body: { ifRev: 1 } })).toMatchObject({ status: 200, body: { live: false } })
+    const page = await call('/api/audit?limit=2', { token: tokens.member })
+    expect(page).toMatchObject({ status: 200, body: { items: [expect.objectContaining({ what: 'ended the Inhouse team’s access' }), expect.objectContaining({ what: 'gave the Inhouse team access' })] } })
+    const csv = await send('/api/audit/export.csv', { token: tokens.member })
+    expect(csv.status).toBe(200)
+    expect(csv.headers.get('Content-Type')).toBe('text/csv; charset=utf-8')
+    expect((await csv.text()).startsWith('"When","Who","What","Detail"\r\n')).toBe(true)
+  })
+})
+
+describe('Inhouse under a live grant reads brand data, each read logged first (failure 5)', () => {
+  it('route 3 and route 19 through api() on D1: the data served, one support.access line per read', async () => {
+    const made = await call('/api/grants', { method: 'POST', token: tokens.admin, body: { hours: 4 } })
+    expect(made.status).toBe(201)
+    const before = (await db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM audit_log').first<number>('n'))!
+    const list = await call('/api/members', { token: tokens.inhouse, origin: INHOUSE.origin })
+    expect(list.status).toBe(200)
+    expect((list.body.items as { id: string }[]).map(m => m.id)).toEqual(expect.arrayContaining([who.admin, who.member]))
+    expect((await call('/api/audit', { token: tokens.inhouse, origin: INHOUSE.origin })).status).toBe(200)
+    const lines = (await db.prepare('SELECT actor_id, action, args_json FROM audit_log WHERE id > ? ORDER BY id').bind(before).all<{ actor_id: string; action: string; args_json: string }>()).results
+    expect(lines.map(l => [l.actor_id, l.action, JSON.parse(l.args_json)])).toEqual([
+      [who.inhouse, 'support.access', { grantId: made.body.id, method: 'GET', route: '/api/members' }],
+      [who.inhouse, 'support.access', { grantId: made.body.id, method: 'GET', route: '/api/audit' }],
+    ])
+    // Ended: the very next read is refused.
+    await call(`/api/grants/${made.body.id}/end`, { method: 'POST', token: tokens.admin, body: { ifRev: 1 } })
+    expect(await call('/api/members', { token: tokens.inhouse, origin: INHOUSE.origin })).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'grant_required' } } })
+  })
+})
+
+describe('refused before any store call: routes 1 and 13 to 20 (failure 2)', () => {
+  const cases: [string, string, () => string, unknown, string?][] = [
+    ['GET', '/api/health', () => tokens.member, undefined],
+    ['GET', '/api/members/m_x/photo', () => tokens.inhouse, undefined, INHOUSE.origin],
+    ['GET', '/api/grants', () => tokens.member, undefined],
+    ['POST', '/api/grants', () => tokens.member, { hours: 1 }],
+    ['POST', '/api/grants', () => tokens.inhouse, { hours: 1 }, INHOUSE.origin],
+    ['POST', '/api/grants/g_x/end', () => tokens.member, { ifRev: 1 }],
+    ['GET', '/api/audit', () => tokens.inhouse, undefined, INHOUSE.origin],
+    ['GET', '/api/audit/export.csv', () => tokens.smoke, undefined],
+  ]
+  it.each(cases)('%s %s', async (method, path, tok, body, origin) => {
+    const res = await call(path, { method, token: tok(), body, origin })
+    expect(res.status).toBe(403)
+    expect(handlerCalls()).toEqual([])
+  })
+  it('PUT and DELETE /api/photo for Inhouse are 403 before any store call', async () => {
+    expect((await call('/api/photo', { method: 'PUT', token: tokens.inhouse, origin: INHOUSE.origin, raw: PNG, type: 'image/png' })).status).toBe(403)
+    expect((await call('/api/photo', { method: 'DELETE', token: tokens.inhouse, origin: INHOUSE.origin })).status).toBe(403)
+    expect(handlerCalls()).toEqual([])
+  })
+})
+
+describe('object-check rows: requireObject comes before any store call, and skipping it is 500 (failures 3, 4)', () => {
+  /** The committed table with one route's requireObject swapped: `refuse` throws, `skip` does nothing. */
+  const swapped = (method: string, pattern: string, mode: 'refuse' | 'skip'): Route[] => routes.map(r => {
+    if (r.method !== method || r.pattern !== pattern) return r
+    const handler: Handler = c => r.handler({ ...c, access: { requireObject: () => { if (mode === 'refuse') throw new Error('refused (test)') } } })
+    return { ...r, handler }
+  })
+  const rows = [
+    ['GET', '/api/settings/personal', '/api/settings/personal', 'member', undefined, undefined],
+    ['PUT', '/api/settings/personal/:key', '/api/settings/personal/g:theme', 'member', { value: 'Light', ifRev: 0 }, undefined],
+    ['PUT', '/api/settings/technical/:key', '/api/settings/technical/tm:opus:on', 'admin', { value: 'off', ifRev: 0 }, undefined],
+    ['PUT', '/api/photo', '/api/photo', 'member', undefined, PNG],
+    ['DELETE', '/api/photo', '/api/photo', 'member', undefined, undefined],
+  ] as const
+  it.each(rows)('%s %s: no store call before requireObject', async (method, pattern, path, role, body, raw) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(send(path, { method, token: tokens[role], body, raw, type: raw ? 'image/png' : undefined, table: swapped(method, pattern, 'refuse') })).rejects.toThrow('refused (test)')
+      expect(handlerCalls()).toEqual([])
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+  it.each(rows.slice(3))('%s %s: skipping requireObject is 500', async (method, pattern, path, role, body, raw) => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const res = await send(path, { method, token: tokens[role], body, raw, type: raw ? 'image/png' : undefined, table: swapped(method, pattern, 'skip') })
+      expect(res.status).toBe(500)
       expect(error.mock.calls.some(([l]) => (l as { event?: string }).event === 'object_check_skipped')).toBe(true)
     } finally {
       vi.restoreAllMocks()

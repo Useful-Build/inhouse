@@ -6,7 +6,7 @@
 import type { AccessRow } from './access-matrix.ts'
 import { AccessRefusedError, closedAfterRefusal, objectGate } from './auth/index.ts'
 import type { AuthStores, authenticate, checkAccess, checkOrigin } from './auth/index.ts'
-import { SECURITY_HEADERS, apiError } from './http.ts'
+import { SECURITY_HEADERS, apiError, keepPhotoHeaders } from './http.ts'
 import { respond, withSecurityHeaders } from '../shared/security-headers.ts'
 import { STORE_BINDINGS, matchRoute } from './routes.ts'
 import type { HandlerEnv, Route } from './routes.ts'
@@ -90,5 +90,6 @@ export async function api(parts: ApiParts, request: Request, env: Env, ctx: Exec
     console.error({ event: 'object_check_skipped', requestId, method: row.method, pattern: row.pattern })
     return apiError('unknown')
   }
-  return withSecurityHeaders(SECURITY_HEADERS, response)
+  // The photo route's stricter CSP and caching survive the wrap (only those exact values: http.ts).
+  return keepPhotoHeaders(response, withSecurityHeaders(SECURITY_HEADERS, response))
 }

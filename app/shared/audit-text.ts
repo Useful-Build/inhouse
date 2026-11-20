@@ -1,0 +1,49 @@
+// What an audit line says (p2-design section 8): its `what` and `detail` from the action and its arguments, one function
+// for the audit page and the CSV. People are named by their current name, looked up by member id (`name`); a member id
+// nobody can name shows as "Former member". A redacted setting never shows its value.
+import type { AuditArgs } from './contract/audit.ts'
+
+export interface AuditText {
+  what: string
+  detail: string
+}
+
+const ROLE = { member: 'Member', admin: 'Admin' } as const
+
+const ROUTE: Record<string, string> = {
+  '/api/members': 'The team',
+  '/api/members/:id/photo': "A member's photo",
+  '/api/audit': 'The audit log',
+  '/api/audit/export.csv': 'The audit log export',
+}
+
+const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
+
+/** `name(id)`: the member's current name, or null when the id names no member. */
+export function auditText(args: AuditArgs, name: (memberId: string) => string | null): AuditText {
+  const who = (id: string) => name(id) ?? 'Former member'
+  switch (args.action) {
+    case 'member.invited': return { what: 'invited a member', detail: `${who(args.memberId)} as ${ROLE[args.role]}` }
+    case 'member.reinvited': return { what: 'invited a member again', detail: `${who(args.memberId)} as ${ROLE[args.role]}` }
+    case 'member.bound': return { what: 'joined the team', detail: args.replaces ? 'Signed in with a new account' : '' }
+    case 'member.restored': return { what: 'rejoined the team', detail: '' }
+    case 'member.role_changed': return { what: 'changed a role', detail: `${who(args.memberId)}: ${ROLE[args.from]} → ${ROLE[args.to]}` }
+    case 'member.removed': return { what: 'removed a member', detail: who(args.memberId) }
+    case 'inhouse.first_sign_in': return { what: 'signed in for the first time', detail: 'Inhouse team' }
+    case 'setting.changed': {
+      let value: string
+      if (args.redacted) value = 'changed (not shown)'
+      else if (args.value === null || args.value === undefined) value = 'reset'
+      else if (typeof args.value === 'boolean') value = args.value ? 'on' : 'off'
+      else if (/^a:/.test(args.key) && args.value !== 'anyone') value = who(args.value)
+      else value = args.value
+      return { what: 'changed a setting', detail: `${args.key}: ${value}` }
+    }
+    case 'photo.changed': return { what: 'changed their photo', detail: '' }
+    case 'photo.removed': return { what: 'removed their photo', detail: '' }
+    case 'grant.created': return { what: 'gave the Inhouse team access', detail: hours(args.hours) }
+    case 'grant.ended': return { what: 'ended the Inhouse team’s access', detail: '' }
+    case 'grant.expired': return { what: 'Inhouse team access ended', detail: 'Its time ran out' }
+    case 'support.access': return { what: 'looked at brand data', detail: ROUTE[args.route] ?? args.route }
+  }
+}

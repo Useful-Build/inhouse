@@ -57,3 +57,7 @@ export type RoleChangeInput = z.infer<typeof RoleChangeInputSchema>
 /** `DELETE /api/members/:id?ifRev=`: the query, as text. */
 export const MemberRemoveQuerySchema = z.object({ ifRev: z.string().regex(/^(0|[1-9]\d{0,8})$/).transform(Number) }).strict()
 export type MemberRemoveQuery = z.infer<typeof MemberRemoveQuerySchema>
+
+/** `PUT /api/photo` and `DELETE /api/photo`: the caller's photo URL as it is now (null: no photo). */
+export const PhotoResultSchema = z.object({ photoUrl: z.string().nullable() })
+export type PhotoResult = z.infer<typeof PhotoResultSchema>

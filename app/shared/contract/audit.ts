@@ -1,6 +1,7 @@
 // The audit log: changes to how the agent may work. W2 owns this file in P2 (its actions and the `AuditEntry` it becomes).
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
+import { pageOf } from './paging.ts'
 import { GrantHoursSchema, GrantIdSchema } from './grants.ts'
 import { MemberIdSchema, MemberRoleSchema } from './members.ts'
 import { SettingKeySchema, SettingScopeSchema, SettingValueSchema, settingSpec } from './settings.ts'
@@ -83,3 +84,7 @@ export const AuditLineSchema = z.object({
   detail: z.string(),
 })
 export type AuditLine = z.infer<typeof AuditLineSchema>
+
+/** `GET /api/audit?cursor&limit`: a page of lines, newest first. */
+export const AuditPageSchema = pageOf(AuditLineSchema)
+export type AuditPage = z.infer<typeof AuditPageSchema>
