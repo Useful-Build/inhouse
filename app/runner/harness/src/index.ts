@@ -133,7 +133,7 @@ export class RunnerHarness extends DurableObject<Env> {
     return new Response('not found', { status: 404 })
   }
 
-  async #startRun(body: { scenario?: string; chatId?: string; prompt?: string; resume?: boolean; sessionId?: string; runId?: string; fileCaps?: FileCaps }) {
+  async #startRun(body: { scenario?: string; chatId?: string; prompt?: string; resume?: boolean; expect?: unknown; sessionId?: string; runId?: string; fileCaps?: FileCaps }) {
     if (!body.scenario || !(body.scenario in SCENARIOS)) return Response.json({ error: `unknown scenario; known: ${Object.keys(SCENARIOS).join(', ')}` }, { status: 400 })
     const chatId = body.chatId ?? 'chat-1'
     const runToken = `harness_${crypto.randomUUID().replaceAll('-', '')}`
@@ -144,6 +144,11 @@ export class RunnerHarness extends DurableObject<Env> {
       resume: body.resume ?? false,
       prompt: body.prompt ?? '',
       model: HARNESS_MODEL,
+      sideModel: HARNESS_MODEL,
+      systemPrompt: '',
+      attachments: [],
+      // A resume names what the store must hold (protocol v2); the caller passes it with `resume: true`.
+      expect: body.expect ?? null,
       effort: 'medium',
       maxTurns: 8,
       maxBudgetUsd: 1,

@@ -158,7 +158,7 @@ describe('runSession', () => {
   it('resume: true passes resume, not sessionId; "" is passed as the prompt', async () => {
     const q = fakeQuery([result])
     const h = harness(q.query)
-    const c = config({ resume: true, prompt: '' })
+    const c = config({ resume: true, prompt: '', expect: { mainEntries: 1, lastUuid: null, lastUuidIndex: null } })
     h.deliver({ type: 'run', config: c })
     await h.done
     expect(q.calls[0]!.options.resume).toBe(c.sessionId)
@@ -465,7 +465,7 @@ describe('the run lifecycle', () => {
     h.deliver({ type: 'run', config: config() })
     await h.done
     expect(types(h.events())).toEqual(['sdk', 'sdk', 'checkpoint', 'finished'])
-    expect(h.events()[2]).toEqual({ type: 'checkpoint', entries: 2 })
+    expect(h.events()[2]).toEqual({ type: 'checkpoint', mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1, runEntries: 2 })
     expect(egress.entries({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' }).map((e: any) => e.uuid)).toEqual(['u1', 'u2'])
     expect(h.logs).toContainEqual({ type: 'store_repaired', batches: 1 })
   })
@@ -630,7 +630,7 @@ describe('the run lifecycle', () => {
     egress.files.set('inputs/huge.txt', { body: new Uint8Array(5000) })
     const q = fakeQuery([result])
     const h = harness(q.query, testQueryGuards, { egress })
-    h.deliver({ type: 'run', config: config({ resume: true, prompt: '', fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 10, allowedTypes: [] } }) })
+    h.deliver({ type: 'run', config: config({ resume: true, prompt: '', expect: { mainEntries: 1, lastUuid: null, lastUuidIndex: null }, fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 10, allowedTypes: [] } }) })
     await h.done
     expect(q.calls[0]!.prompt).toBe('')
   })
@@ -792,7 +792,8 @@ describe('the production wiring', () => {
   it('production cannot run a tool call unrecorded (blocked on the transport\'s nack), takes no injected host deps, and refuses a missing guard', async () => {
     const config = RunConfig.parse({
       runId: 'r1', chatId: 'chat1', sessionId: '00000000-0000-4000-8000-000000000000', resume: false, prompt: 'hi',
-      model: 'claude-sonnet-5-5', effort: 'low', maxTurns: 1, maxBudgetUsd: 1, webFetchDomains: [],
+      model: 'claude-sonnet-5-5', sideModel: 'claude-haiku-5-5', systemPrompt: '', attachments: [], expect: null,
+      effort: 'low', maxTurns: 1, maxBudgetUsd: 1, webFetchDomains: [],
       fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 0, allowedTypes: [] },
     })
     // The run's real audit transport (R1's, src/session/core.ts), on a channel this test answers for the root.

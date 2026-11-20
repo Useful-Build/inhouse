@@ -43,7 +43,8 @@ describe('checkpoint and repair', () => {
       for (const b of batches) await sdkAppend(a, key, b)
       egress.fail = () => null
       const cp = await a.checkpoint()
-      expect(cp).toMatchObject({ ok: true, entries: u })
+      // u >= 1 (every batch has an entry): the main transcript is all of them, the last uuid last.
+      expect(cp).toEqual({ ok: true, entries: u, repaired: expect.any(Number), main: { mainEntries: u, lastUuid: `u-${u - 1}`, lastUuidIndex: u - 1 } })
       expect(egress.entries(key)).toEqual(batches.flat())
     },
   )
@@ -77,11 +78,11 @@ describe('checkpoint and repair', () => {
     const batch = [{ type: 'user', uuid: 'r1' }]
     await expect(a.store.append(key, batch)).rejects.toThrow()
     egress.fail = () => null
-    expect(await a.checkpoint()).toEqual({ ok: true, entries: 1, repaired: 1 })
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 1, repaired: 1, main: { mainEntries: 1, lastUuid: 'r1', lastUuidIndex: 0 } })
     // The SDK's own retry of the batch, landing after the repair confirmed it.
     await a.store.append(key, batch)
     expect(egress.entries(key)).toEqual(batch)
-    expect(await a.checkpoint()).toEqual({ ok: true, entries: 1, repaired: 0 })
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 1, repaired: 0, main: { mainEntries: 1, lastUuid: 'r1', lastUuidIndex: 0 } })
   })
 
   it('a batch with no uuids that the SDK retries after the repair keeps its part; the same content after that is new', async () => {
@@ -91,7 +92,8 @@ describe('checkpoint and repair', () => {
     const title = [{ type: 'custom-title', title: 'x' }]
     await expect(a.store.append(key, title)).rejects.toThrow()
     egress.fail = () => null
-    expect(await a.checkpoint()).toEqual({ ok: true, entries: 0, repaired: 1 })
+    // No uuid anywhere: only the length counts.
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 0, repaired: 1, main: { mainEntries: 1, lastUuid: null, lastUuidIndex: null } })
     // The SDK's own retry, landing after the repair confirmed the batch: the same part, so one copy.
     await a.store.append(key, title)
     expect(egress.entries(key)).toEqual(title)
@@ -108,7 +110,7 @@ describe('checkpoint and repair', () => {
     expect(await sdkAppend(a, key, [{ type: 'user', uuid: 'b' }])).toBe(false)
     egress.fail = () => null
     await sdkAppend(a, key, [{ type: 'user', uuid: 'c' }])
-    expect(await a.checkpoint()).toEqual({ ok: true, entries: 3, repaired: 1 })
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 3, repaired: 1, main: { mainEntries: 3, lastUuid: 'c', lastUuidIndex: 2 } })
     expect(egress.entries(key).map((e) => (e as { uuid: string }).uuid)).toEqual(['a', 'b', 'c'])
   })
 
@@ -124,7 +126,7 @@ describe('checkpoint and repair', () => {
     expect(settled).toBe(false)
     g.open()
     await appending
-    expect(await cp).toEqual({ ok: true, entries: 1, repaired: 0 })
+    expect(await cp).toEqual({ ok: true, entries: 1, repaired: 0, main: { mainEntries: 1, lastUuid: 'x', lastUuidIndex: 0 } })
   })
 
   it('an entry the store said it took but lost fails the check', async () => {
@@ -156,10 +158,26 @@ describe('checkpoint and repair', () => {
     const sub = { ...key, subpath: 'subagents/agent-1' }
     await sdkAppend(a, key, [{ type: 'user', uuid: 'm' }])
     await sdkAppend(a, sub, [{ type: 'user', uuid: 's' }])
-    expect(await a.checkpoint()).toEqual({ ok: true, entries: 2, repaired: 0 })
+    // The subagent's entry is checked but isn't part of the main transcript.
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 2, repaired: 0, main: { mainEntries: 1, lastUuid: 'm', lastUuidIndex: 0 } })
     expect(await a.store.listSubkeys!({ projectKey: key.projectKey, sessionId: key.sessionId })).toEqual(['subagents/agent-1'])
     egress.parts.get(JSON.stringify([sub.projectKey, sub.sessionId, sub.subpath]))!.clear()
     expect(await a.checkpoint()).toMatchObject({ ok: false })
+  })
+
+  it("the main state names the last entry that has a uuid, not the last entry (protocol v2's checkpoint)", async () => {
+    const egress = fakeEgress()
+    const a = createStoreAdapter({ fetch: egress.fetch, proxyUrl: PROXY_URL })
+    await sdkAppend(a, key, [{ type: 'user', uuid: 'a' }, { type: 'assistant', uuid: 'b' }])
+    await sdkAppend(a, key, [{ type: 'custom-title', title: 't' }])
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 2, repaired: 0, main: { mainEntries: 3, lastUuid: 'b', lastUuidIndex: 1 } })
+  })
+
+  it('a run that wrote only a subagent transcript has no main state', async () => {
+    const egress = fakeEgress()
+    const a = createStoreAdapter({ fetch: egress.fetch, proxyUrl: PROXY_URL })
+    await sdkAppend(a, { ...key, subpath: 'subagents/agent-1' }, [{ type: 'user', uuid: 's' }])
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 1, repaired: 0, main: null })
   })
 
   it('load returns null for a key never written', async () => {

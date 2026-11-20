@@ -6,10 +6,11 @@
 // The one open shape is the SDK message inside an `sdk` event, passed through as data.
 import { z } from 'zod'
 
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 /**
  * The versions this side speaks. The rule: the current one and the one before, so a Worker one version ahead still runs
- * chats. There's no version before 1, so this is `[1]`; when v2 lands it becomes `[2, 1]`.
+ * chats. v1 was never deployed, so the rule starts at the first deployed version: this is `[2]`, and v3 makes it
+ * `[3, 2]`.
  */
 export const ACCEPTED_VERSIONS: readonly number[] = [PROTOCOL_VERSION]
 /** Every request to the runner (except the discovery routes `/protocol` and `/health`) carries this header. */
@@ -59,11 +60,35 @@ export const Effort = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
 
 /** The prompt cap, in characters. */
 export const PROMPT_MAX_CHARS = 200_000
+/** The system prompt cap, in UTF-8 bytes. */
+export const SYSTEM_PROMPT_MAX_BYTES = 64 * 1024
+/** The most attachments one run start names. */
+export const ATTACHMENTS_MAX = 10
 /**
  * The runner's cap on a `POST /runs` body, in bytes. JSON can escape one prompt character as six bytes (`\u0000`), so
  * the cap fits a prompt at its cap written that way, plus every other field at its own cap (checked in wire.test.ts).
  */
 export const RUN_START_MAX_BYTES = 2 * 1024 * 1024
+
+const utf8 = new TextEncoder()
+
+const Model = z.string().regex(/^[A-Za-z0-9._:@/-]{1,128}$/)
+const FilePath = z.string().max(1024)
+
+/**
+ * What a resume expects the store to hold (the Worker's last checkpoint for the chat): at least `mainEntries` entries in
+ * the main transcript (subagent transcripts don't count) and, when `lastUuid` isn't null, uuid `lastUuid` on entry
+ * `lastUuidIndex` (the last entry that has a uuid; uuids are optional, so with none only the length is checked).
+ */
+export const ResumeExpect = z
+  .strictObject({ mainEntries: z.int().min(1), lastUuid: z.string().min(1).max(256).nullable(), lastUuidIndex: z.int().nonnegative().nullable() })
+  .superRefine(checkLastUuid)
+
+/** `lastUuid` and `lastUuidIndex` are both null or both set, and the index is inside `mainEntries`. */
+function checkLastUuid(v: { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null }, ctx: z.RefinementCtx) {
+  if ((v.lastUuid === null) !== (v.lastUuidIndex === null)) ctx.addIssue({ code: 'custom', path: ['lastUuidIndex'], message: 'lastUuid and lastUuidIndex are both null or both set' })
+  if (v.lastUuidIndex !== null && v.lastUuidIndex >= v.mainEntries) ctx.addIssue({ code: 'custom', path: ['lastUuidIndex'], message: 'lastUuidIndex is past mainEntries' })
+}
 
 /** The fields of a `POST /runs` body; `RunStart` adds the cross-field rules. */
 export const RunStartFields = z.strictObject({
@@ -74,7 +99,15 @@ export const RunStartFields = z.strictObject({
   resume: z.boolean(),
   /** `""` resumes after a deferred tool call's answer, so it's allowed only with `resume: true`. */
   prompt: z.string().max(PROMPT_MAX_CHARS),
-  model: z.string().regex(/^[A-Za-z0-9._:@/-]{1,128}$/),
+  model: Model,
+  /** The engine's background (Haiku-class) model; subagents use `model`. */
+  sideModel: Model,
+  /** Set by the Worker (the brand's agent instructions and the house prompt). */
+  systemPrompt: z.string().refine((p) => utf8.encode(p).length <= SYSTEM_PROMPT_MAX_BYTES, { message: `system prompt over ${SYSTEM_PROMPT_MAX_BYTES} bytes` }),
+  /** This turn's attachments, paths under `inputs/`: restored first; the Worker names them in the prompt. */
+  attachments: z.array(FilePath.startsWith('inputs/')).max(ATTACHMENTS_MAX),
+  /** Required (non-null) when `resume`, null on a session's first run. */
+  expect: ResumeExpect.nullable(),
   effort: Effort,
   maxTurns: z.int().min(1).max(500),
   maxBudgetUsd: z.number().positive().max(1000),
@@ -84,13 +117,38 @@ export const RunStartFields = z.strictObject({
 })
 
 /** Cross-field rules shared by `RunStart` and the runner's run config (the same fields less the token). */
-export function checkRunStart(v: { prompt: string; resume: boolean }, ctx: z.RefinementCtx) {
+export function checkRunStart(v: { prompt: string; resume: boolean; expect: unknown }, ctx: z.RefinementCtx) {
   if (v.prompt === '' && !v.resume) ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'an empty prompt is only for a resume' })
+  if (v.resume && v.expect === null) ctx.addIssue({ code: 'custom', path: ['expect'], message: 'a resume carries expect' })
+  if (!v.resume && v.expect !== null) ctx.addIssue({ code: 'custom', path: ['expect'], message: "a session's first run has no expect" })
 }
 
 /** `POST /runs` body. The run token is accepted here and nowhere else. */
 export const RunStart = RunStartFields.superRefine(checkRunStart)
 export type RunStart = z.infer<typeof RunStart>
+
+/**
+ * `POST /runs` answers `202 RunAdmission` once the runner admitted the run; its events then go to the egress
+ * (`PushBatch`), never on this answer.
+ */
+export const RunAdmission = z.strictObject({ accepted: z.literal(true) })
+export type RunAdmission = z.infer<typeof RunAdmission>
+
+/**
+ * The refusals of `POST /runs` the Worker routes on, each with its status (`RUN_REFUSAL_STATUS`): the uid pool is full
+ * or the chat's folder is parked (503: try another runner, or never), the chat or this run id is live here (409: a
+ * definite non-admission). Other refusals (a bad body, a stopping runner, a wrong version) are an `ErrorBody`.
+ */
+export const RunRefusalCode = z.enum(['session_pool_exhausted', 'session_folder_parked', 'chat_live', 'run_live'])
+export type RunRefusalCode = z.infer<typeof RunRefusalCode>
+export const RunRefusal = z.strictObject({ error: RunRefusalCode })
+export type RunRefusal = z.infer<typeof RunRefusal>
+export const RUN_REFUSAL_STATUS: Readonly<Record<RunRefusalCode, 409 | 503>> = {
+  session_pool_exhausted: 503,
+  session_folder_parked: 503,
+  chat_live: 409,
+  run_live: 409,
+}
 
 /** The largest SDK message passed through whole in an `sdk` event; a bigger one arrives as a stub with `truncated`. */
 export const SDK_MESSAGE_MAX_BYTES = 256 * 1024
@@ -106,8 +164,6 @@ export const FileRefusalReason = z.enum(['too_large', 'too_many', 'type_not_allo
 export const DEFERRED_INPUT_MAX_BYTES = 64 * 1024
 export const USAGE_MAX_BYTES = 32 * 1024
 
-const utf8 = new TextEncoder()
-
 /** The size of a value as JSON, in UTF-8 bytes; Infinity for a value JSON can't encode. */
 export function jsonBytes(value: unknown): number {
   try {
@@ -122,8 +178,9 @@ export function jsonBytes(value: unknown): number {
 export const AUDIT_INPUT_MAX_BYTES = 16 * 1024
 
 /**
- * One entry of the blocking audit log (R2's hook builds them). The session sends it to the root, which writes it as an
- * `audit` run event on the Worker's open stream before it acks; the hook's call goes ahead only on that ack.
+ * One entry of the blocking audit log (R2's hook builds them). The session sends it to the root, which posts it to the
+ * egress's `/audit/` (`AuditPost`) and acks the hook only on its 204; the hook's call goes ahead only on that ack. The
+ * entry also goes out as an `audit` run event, for the trace.
  */
 export const AuditEntry = z.strictObject({
   /** The hook event, e.g. `PreToolUse`. */
@@ -136,9 +193,12 @@ export const AuditEntry = z.strictObject({
 })
 export type AuditEntry = z.infer<typeof AuditEntry>
 
-const FilePath = z.string().max(1024)
-
 const Usage = z.record(z.string(), z.unknown()).refine((u) => jsonBytes(u) <= USAGE_MAX_BYTES, { message: `usage over ${USAGE_MAX_BYTES} bytes` })
+
+const Sha256 = z.string().regex(/^[0-9a-f]{64}$/)
+
+/** The store's state after a run: what the next resume's `expect` is built from. */
+const CheckpointState = z.strictObject({ mainEntries: z.int().nonnegative(), lastUuid: z.string().min(1).max(256).nullable(), lastUuidIndex: z.int().nonnegative().nullable() })
 
 /** A run event without its envelope. The root runner stamps `runId` and `seq`. */
 export const RunEventBody = z.discriminatedUnion('type', [
@@ -149,7 +209,8 @@ export const RunEventBody = z.discriminatedUnion('type', [
     message: z.record(z.string(), z.unknown()),
     truncated: z.boolean(),
   }),
-  z.strictObject({ type: z.literal('file_saved'), path: FilePath, bytes: z.int().nonnegative(), contentType: z.string().max(128) }),
+  /** `sha256`: the saved bytes' SHA-256, lower-case hex (the PUT's `x-inhouse-sha256`); the Worker confirms by it. */
+  z.strictObject({ type: z.literal('file_saved'), path: FilePath, bytes: z.int().nonnegative(), contentType: z.string().max(128), sha256: Sha256 }),
   z.strictObject({ type: z.literal('file_refused'), path: FilePath, reason: FileRefusalReason, bytes: z.int().nonnegative().optional() }),
   /** The refusals past the first 50 of a run, counted rather than sent one by one. */
   z.strictObject({ type: z.literal('file_refused_more'), count: z.int().positive() }),
@@ -178,10 +239,22 @@ export const RunEventBody = z.discriminatedUnion('type', [
     input: z.unknown().refine((i) => jsonBytes(i) <= DEFERRED_INPUT_MAX_BYTES, { message: `input over ${DEFERRED_INPUT_MAX_BYTES} bytes` }),
   }),
   /**
-   * The store confirmed every batch of this run (`entries` uuids checked with `load()`). The only event the Worker marks
-   * a chat waiting on (with an earlier `deferred`): never `deferred` by itself.
+   * The store confirmed every batch of this run. `mainEntries` is the store's **total** main-transcript length after
+   * this run (subagent transcripts don't count), `lastUuid` the uuid of the last of them that has one and
+   * `lastUuidIndex` its index (both null when none has one): the next resume's `expect`. `runEntries` is this run's own
+   * count, for the log. The only event the Worker marks a chat waiting on (with an earlier `deferred`): never
+   * `deferred` by itself.
    */
-  z.strictObject({ type: z.literal('checkpoint'), entries: z.int().nonnegative() }),
+  z.strictObject({ type: z.literal('checkpoint'), ...CheckpointState.shape, runEntries: z.int().nonnegative() }).superRefine(checkLastUuid),
+  /** Sent when nothing else happened for 30 s, so the Worker sees the run alive through a silent tool call. */
+  z.strictObject({ type: z.literal('heartbeat') }),
+  /**
+   * The last event of every run, on every exit path: the session process exited, its store flush finished and the
+   * runner freed the chat. `checkpoint` is the run's checkpoint result (as in `checkpoint`), or null when there's none
+   * (no checkpoint was taken, or it failed); `queryRan` is false when the run ended before its query started (a stop
+   * during the file restore or before the query), so there's no transcript to keep.
+   */
+  z.strictObject({ type: z.literal('released'), checkpoint: CheckpointState.superRefine(checkLastUuid).nullable(), queryRan: z.boolean() }),
   z.strictObject({
     type: z.literal('finished'),
     subtype: z.string().max(64),
@@ -196,9 +269,10 @@ export type RunEventBody = z.infer<typeof RunEventBody>
 
 const RunEventEnvelope = z.strictObject({ runId: Id, seq: z.int().nonnegative() })
 
-/** One line of the `POST /runs` NDJSON stream: the body plus `runId` and `seq` (from 0 per run, no gaps). */
+/** A run event: the body plus `runId` and `seq` (from 0 per run, no gaps). */
 export type RunEvent = z.infer<typeof RunEventEnvelope> & RunEventBody
 
+/** Exactly one per run. `released` follows it (after the session's exit and store flush). */
 export const TERMINAL_EVENTS: ReadonlySet<RunEventBody['type']> = new Set(['finished', 'failed'])
 
 /** Parses a run event (envelope and body, both strict); throws on anything else. */
@@ -216,6 +290,68 @@ export function parseRunEventLine(line: string): RunEvent {
 export function encodeRunEvent(event: RunEvent): string {
   return `${JSON.stringify(event)}\n`
 }
+
+/** The most events in one push. */
+export const PUSH_BATCH_MAX_EVENTS = 200
+/** The root's buffer of unacked events per run, in JSON bytes; a full buffer pauses reading the session. */
+export const PUSH_BUFFER_MAX_BYTES = 2 * 1024 * 1024
+
+/**
+ * `POST /events/` body (the root runner, with the run's token): a run's next events, `seq` consecutive, every one of
+ * the run `turnId`. One batch in flight per run: the next goes only after this one's `PushAck`; a failed one is sent
+ * again unchanged.
+ */
+export const PushBatch = z
+  .strictObject({ turnId: Id, events: z.array(z.unknown()).min(1).max(PUSH_BATCH_MAX_EVENTS) })
+  .transform((b, ctx) => {
+    const events: RunEvent[] = []
+    for (const [i, raw] of b.events.entries()) {
+      try {
+        events.push(parseRunEvent(raw))
+      } catch (e) {
+        ctx.addIssue({ code: 'custom', path: ['events', i], message: e instanceof Error ? e.message : 'not a run event' })
+        return z.NEVER
+      }
+    }
+    for (const [i, e] of events.entries()) {
+      if (e.runId !== b.turnId) ctx.addIssue({ code: 'custom', path: ['events', i, 'runId'], message: 'an event of another run' })
+      if (i > 0 && e.seq !== events[i - 1]!.seq + 1) ctx.addIssue({ code: 'custom', path: ['events', i, 'seq'], message: 'seq not consecutive' })
+    }
+    return { turnId: b.turnId, events }
+  })
+export type PushBatch = z.output<typeof PushBatch>
+
+/**
+ * `POST /events/` 200 answer. `ackSeq`: the highest seq the Worker holds for the run (a batch at or below it was a
+ * resend). `stop`: the Worker fenced the run; the runner stops it and keeps pushing its `checkpoint`, `mirror_error`,
+ * terminal event and `released`. A 410 (the run has ended at the Worker) drops the batch.
+ */
+export const PushAck = z.strictObject({ ackSeq: z.int().nonnegative(), stop: z.boolean() })
+export type PushAck = z.infer<typeof PushAck>
+
+/**
+ * `POST /audit/` body (the root runner, with the run's token): one blocking audit entry, `n` counting from 0 per run.
+ * The session's hook is acked only on the Worker's 204; anything else (or 10 s without an answer) denies the call.
+ */
+export const AuditPost = z.strictObject({ turnId: Id, n: z.int().nonnegative(), entry: AuditEntry })
+export type AuditPost = z.infer<typeof AuditPost>
+
+/**
+ * `GET /runs/:runId` answer. `lastSeq`: the last event seq the root stamped; `ackedSeq`: the last the egress acked
+ * (null before the first). `unknown`: the root doesn't know the run (never admitted, or released and forgotten), with
+ * both null.
+ */
+export const RunStatus = z
+  .strictObject({
+    state: z.enum(['admitted', 'running', 'ending', 'released', 'unknown']),
+    lastSeq: z.int().nonnegative().nullable(),
+    ackedSeq: z.int().nonnegative().nullable(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.state === 'unknown' && (v.lastSeq !== null || v.ackedSeq !== null)) ctx.addIssue({ code: 'custom', path: ['state'], message: 'an unknown run has no seqs' })
+    if (v.ackedSeq !== null && (v.lastSeq === null || v.ackedSeq > v.lastSeq)) ctx.addIssue({ code: 'custom', path: ['ackedSeq'], message: 'acked past the last seq' })
+  })
+export type RunStatus = z.infer<typeof RunStatus>
 
 // ---- The loopback proxy's store and files routes (the session calls them; the Worker's egress serves them, scoped to
 // the run's chat by its token). Paths are relative to the proxy's `/store/` and `/files/`.

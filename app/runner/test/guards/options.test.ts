@@ -59,13 +59,16 @@ const config = fc
     resume: fc.boolean(),
     prompt: fc.string({ minLength: 1, maxLength: 50 }),
     model: fc.constantFrom('claude-sonnet-5-5', 'claude-opus-5-5'),
+    sideModel: fc.constant('claude-haiku-5-5'),
+    systemPrompt: fc.string({ maxLength: 50 }),
+    attachments: fc.constant([]),
     effort: fc.constantFrom('low', 'medium', 'high', 'xhigh', 'max'),
     maxTurns: fc.integer({ min: 1, max: 500 }),
     maxBudgetUsd: fc.double({ min: 0.01, max: 1000, noNaN: true }),
     webFetchDomains: fc.uniqueArray(domain, { maxLength: 8 }),
     fileCaps: fc.constant({ maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 0, allowedTypes: [] }),
   })
-  .map((c) => RunConfig.parse(c))
+  .map((c) => RunConfig.parse({ ...c, expect: c.resume ? { mainEntries: 1, lastUuid: null, lastUuidIndex: null } : null }))
 
 /** R1's real base options for a session folder, as the session process builds them. */
 function base(c: RunConfig): Options {

@@ -7,7 +7,7 @@ import type { RunEvent, RunEventBody } from '../../../shared/protocol/index.ts'
 import { RunStream } from '../../src/server/run-stream.ts'
 
 const body = fc.oneof(
-  fc.constant<RunEventBody>({ type: 'checkpoint', entries: 1 }),
+  fc.constant<RunEventBody>({ type: 'checkpoint', mainEntries: 3, lastUuid: 'u-3', lastUuidIndex: 2, runEntries: 1 }),
   fc.constant<RunEventBody>({ type: 'sdk', message: { type: 'assistant' }, truncated: false }),
   fc.constant<RunEventBody>({ type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }),
   fc.constant<RunEventBody>({ type: 'failed', reason: 'stopped', message: 'x' }),

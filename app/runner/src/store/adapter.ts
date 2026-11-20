@@ -18,7 +18,14 @@ export type Fetch = (url: string, init: { method: string; headers?: Record<strin
 /** One batch of the run. Once the store confirms it, its entries are dropped: only its uuids are kept, for the check. */
 type Batch = { key: SessionKey; entries: SessionStoreEntry[] | null; uuids: string[]; part: string; confirmed: boolean; sdkRejected: boolean }
 
-export type CheckpointResult = { ok: true; entries: number; repaired: number } | { ok: false; error: string; repaired: number }
+/**
+ * The main transcript as the store holds it after the check: its total length, and the last entry that has a uuid
+ * (null when none has one). Subagent transcripts don't count.
+ */
+export type MainState = { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null }
+
+/** `entries`: the uuids this run sent, all found in the store. `main`: null when this run wrote no main-transcript batch. */
+export type CheckpointResult = { ok: true; entries: number; repaired: number; main: MainState | null } | { ok: false; error: string; repaired: number }
 
 export type StoreAdapter = {
   store: SessionStore
@@ -29,6 +36,14 @@ export type StoreAdapter = {
 /** Part ids sort in append order: the time, then a counter within this process (one writer per chat at a time). */
 export function partId(nowMs: number, n: number): string {
   return `${String(Math.max(0, Math.floor(nowMs))).padStart(15, '0').slice(-15)}-${String(n % 1_000_000).padStart(6, '0')}`
+}
+
+function mainState(entries: SessionStoreEntry[]): MainState {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const uuid = entries[i]!.uuid
+    if (typeof uuid === 'string' && uuid !== '') return { mainEntries: entries.length, lastUuid: uuid, lastUuidIndex: i }
+  }
+  return { mainEntries: entries.length, lastUuid: null, lastUuidIndex: null }
 }
 
 const keyId = (k: SessionKey) => JSON.stringify([k.projectKey, k.sessionId, k.subpath ?? null])
@@ -134,6 +149,7 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
       byKey.set(keyId(b.key), k)
     }
     let checked = 0
+    let main: MainState | null = null
     for (const { key, uuids } of byKey.values()) {
       let stored: SessionStoreEntry[] | null
       try {
@@ -145,8 +161,12 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
       const missing = [...uuids].filter((u) => !have.has(u)).length
       if (missing > 0) return { ok: false, error: `${missing} of ${uuids.size} entries missing from the store`, repaired }
       checked += uuids.size
+      if (key.subpath === undefined) {
+        if (main !== null) return { ok: false, error: 'this run wrote two main transcripts', repaired }
+        main = mainState(stored ?? [])
+      }
     }
-    return { ok: true, entries: checked, repaired }
+    return { ok: true, entries: checked, repaired, main }
   }
 
   return { store, checkpoint }
