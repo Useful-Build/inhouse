@@ -77,6 +77,12 @@ export function assertFetchDomain(domain: string, hostAddresses: readonly string
     throw new GuardConfigError(`webFetchDomains: "${domain}" is a local name`)
   }
   if (hostAddresses.includes(host)) throw new GuardConfigError(`webFetchDomains: "${domain}" is this container`)
+  // Labels with `--` in the third and fourth places are reserved (RFC 5891), and whether the URL parser accepts an
+  // invalid `xn--` one (`xn--a`) differs between Node versions, so the guard refuses them all itself rather than depend
+  // on the parser. A brand domain with non-ASCII letters isn't accepted here for now.
+  if (host.split('.').some((label) => label.slice(2, 4) === '--')) {
+    throw new GuardConfigError(`webFetchDomains: "${domain}" has a reserved label (\`--\` in the third and fourth places)`)
+  }
 }
 
 export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
