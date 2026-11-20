@@ -3,7 +3,7 @@
 // Every animation frame is sampled in the page (scrollTop, scrollHeight, the last message's bottom), saved as JSON
 // next to the video, and checked for a view that jumps up or a bottom gap that jumps.
 import { writeFileSync } from 'node:fs'
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 type Frame = { t: number; top: number; height: number; client: number; msgs: number; gap: number }
@@ -20,12 +20,7 @@ const composer = (page: Page) => page.getByRole('textbox', { name: 'Message your
 const stop = (page: Page) => page.locator('[data-composer]').getByRole('button', { name: 'Stop', exact: true })
 
 async function open(page: Page) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   await expect(page.getByRole('log', { name: 'Conversation' }).getByText('Refund requests rose').first()).toBeVisible()
   await page.evaluate(() => {

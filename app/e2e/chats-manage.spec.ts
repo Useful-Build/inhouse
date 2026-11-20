@@ -1,15 +1,10 @@
 // PR 3, managing chats: rename, pin, copy link and delete with Undo from the sidebar row menu, the top bar menu and
 // See all (with Select for several), checked in the sidebar, See all and the top bar, across a reload and Reset demo.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -39,7 +34,7 @@ const seeAll = async (page: Page) => {
 const OLD = 'Why did refunds jump?'
 const NEW = 'Refund spike, week 46'
 
-test('Chats: rename, pin, copy link, delete with Undo and bulk delete, kept across a reload until Reset demo', async ({ page, context }) => {
+test('Chats: rename, pin, copy link, delete with Undo and bulk delete, kept across a reload until Reset demo', async ({ page, context, fx }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await start(page)
 
@@ -162,7 +157,7 @@ test('Chats: rename, pin, copy link, delete with Undo and bulk delete, kept acro
   await expect(main(page).locator('section').first()).toHaveAttribute('aria-label', 'Today')
   await expect(main(page).getByRole('button', { name: /Amazon payout gap/ })).toBeVisible()
   await expect(main(page).getByRole('button', { name: new RegExp(NEW) })).toHaveCount(0)
-  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('inhouse.demo.v2') ?? '{}'))
+  const { demo: saved } = await fx.saved()
   expect([saved.chatTitles, saved.chatPinned, saved.chatDeleted]).toEqual([{}, {}, {}])
   await shot(page, 'chats-manage-after-reset')
 })

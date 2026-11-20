@@ -1,14 +1,9 @@
 // Page actions on a phone (390 px, PR 6): the Usage breakdown stacks so nothing is cut off, and small controls get a 44px hit area.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
-async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: true }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, hash: string) {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always', animateMark: true } })
   await page.goto('/?demo' + hash)
 }
 
@@ -39,8 +34,8 @@ const atLeast44 = async (el: Locator) => {
   expect(b.h, 'hit area height').toBeGreaterThanOrEqual(44)
 }
 
-test('Phone: Usage breakdown rows stack inside 390 px in every tab, with cost, share and conversations shown', async ({ page }) => {
-  await start(page, '#/usage')
+test('Phone: Usage breakdown rows stack inside 390 px in every tab, with cost, share and conversations shown', async ({ fx, page }) => {
+  await start(page, fx, '#/usage')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Usage')
   for (const tab of ['Person', 'Job', 'Model', 'Tool']) {
     await page.getByRole('radiogroup', { name: 'Break down by' }).getByRole('radio', { name: tab, exact: true }).click()
@@ -63,8 +58,8 @@ test('Phone: Usage breakdown rows stack inside 390 px in every tab, with cost, s
   await page.screenshot({ path: test.info().outputPath('phone-usage-breakdown.png'), fullPage: true })
 })
 
-test('Phone: Approvals and Today small controls have a 44px hit area', async ({ page }) => {
-  await start(page, '#/approvals')
+test('Phone: Approvals and Today small controls have a 44px hit area', async ({ fx, page }) => {
+  await start(page, fx, '#/approvals')
   await expect(page.getByRole('heading', { level: 2, name: /^Waiting for you/ })).toBeVisible()
   // A phone has no sort: the header holds Approve all low-risk alone, and each card's "···" is a full tap area.
   await expect(page.getByRole('combobox', { name: /^Sort drafts/ })).toHaveCount(0)
@@ -80,8 +75,8 @@ test('Phone: Approvals and Today small controls have a 44px hit area', async ({ 
   await page.screenshot({ path: test.info().outputPath('phone-today-card-menu.png') })
 })
 
-test('Phone: the Library place chips and the Select bar\'s Download and Delete have a 44px hit area', async ({ page }) => {
-  await start(page, '#/library')
+test('Phone: the Library place chips and the Select bar\'s Download and Delete have a 44px hit area', async ({ fx, page }) => {
+  await start(page, fx, '#/library')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
   const chips = page.getByRole('navigation', { name: 'Library places' }).getByRole('button')
   expect(await chips.count()).toBeGreaterThan(1)

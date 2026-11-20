@@ -1,16 +1,11 @@
 // PR 4, the composer: a growing multi-line field, Send that turns into Stop mid-answer and is off while empty,
 // files by paste and drop with a limit, and a draft kept per chat (and Today's apart).
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 import { atRest } from './states.js'
 
 async function start(page: Page, hash = '#/today') {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 

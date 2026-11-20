@@ -1,18 +1,17 @@
 // At 390: Settings, the Models page and the picker fit, nothing is cut off and the page scrolls naturally.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
-async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+/** Opens a page and waits for it to draw. Seeds nothing: seed a page once (`start`), then use this to move around. */
+async function visit(page: Page, hash: string) {
   await page.goto('/?demo' + hash)
   await expect(page.locator('main')).toBeVisible() // the page drew (a chat has no h1)
   await atRest(page)
+}
+async function start(page: Page, hash: string) {
+  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await visit(page, hash)
 }
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
 const keep = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: `${out}/${name}.png` }) }
@@ -73,8 +72,9 @@ test('Phone: a long settings page scrolls with the page (main moves, nothing nes
 })
 
 test('Phone: Settings and the Library scroll naturally, with no nested scroll areas', async ({ page }) => {
+  await start(page, '#/settings/team-data')
   for (const [name, hash] of [['settings', '#/settings/team-data'], ['library', '#/library']] as const) {
-    await start(page, hash)
+    await visit(page, hash)
     const nested = await page.evaluate(() => [...document.querySelectorAll('main *')].filter(el => {
       const o = getComputedStyle(el).overflowY
       return (o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight + 4

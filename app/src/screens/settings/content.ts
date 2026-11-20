@@ -1,10 +1,12 @@
 // Settings content. Pure data: the screen renders it.
-import type { AgentData, AgentState, MemoryLine, StageIndex } from '../../agent/types'
+import type { AgentData, AgentState, AuditEntry, MemoryLine, Money, StageIndex } from '../../agent/types'
 import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
 import type { Theme } from '../../lib/theme'
-import { DEMO_START, plainSpaces } from '../../agent/clock'
+import { plainSpaces } from '../../agent/clock'
+import { calendarOf, fmtAuditDay, fmtCapSetting, fmtDayWord, fmtMoney, fmtNearDay, fmtSpentSetting, fmtTime, fmtWhen, moneyOf } from '../../lib/format'
+import { display, nowOf } from '../../state/display'
 
 export type RowKind = 'select' | 'text' | 'value' | 'button' | 'toggle' | 'mode' | 'photo'
 export interface Row {
@@ -49,10 +51,12 @@ export function checkField(type: FieldType, raw: string): { error: string } | { 
   if (!/^\$?(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/.test(v)) return { error: 'Enter an amount above $0, like $300.' }
   const n = Number(v.replace(/^\$/, '').replaceAll(',', ''))
   if (!(n > 0)) return { error: 'Enter an amount above $0, like $300.' }
-  if (n > MONEY_MAX) return { error: `Enter an amount up to $${MONEY_MAX.toLocaleString('en-US')}.` }
-  // Whole dollars stay whole ("$320"); cents always show two digits ("$300.50").
-  return { value: Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}` }
+  if (n > MONEY_MAX) return { error: `Enter an amount up to ${fmtMoney(moneyOf(MONEY_MAX, FIELD_CURRENCY), display())}.` }
+  // Whole dollars stay whole ("$320"); cents always show two digits ("$300.50"); no thousands separator.
+  return { value: fmtMoney(moneyOf(n, FIELD_CURRENCY), display(), { grouping: false }) }
 }
+/** A money field takes US dollars: the currency the brand is billed in. */
+const FIELD_CURRENCY = 'USD'
 /** The largest amount a money field takes: far above any monthly cap a brand this size would set. */
 const MONEY_MAX = 100_000
 /** `caption` is one visible label over a column of controls (the effort pickers); `empty` is the muted line a section with no rows shows. */
@@ -80,7 +84,7 @@ export interface Env {
   agent: AgentState
   data: AgentData
   /** Spent so far this month, from the agent's data (a cap never rescales it). */
-  spent: number
+  spent: Money
   /** On a phone the page is read-only, so a hint about changing a setting is left out. */
   phone: boolean
   openTeam: (type: RequestType, text?: string) => void
@@ -110,12 +114,20 @@ const SEL = (title: string, desc: string, key: string, value: string, options: s
 const TXT = (title: string, desc: string, key: string, value: string, need = 0): Row =>
   ({ title, desc, kind: 'text', value, need, key })
 
+/** Where a remembered line came from: "Sam told your Inhouse agent in a chat, Nov 4 · used 7 times", "Learned from 6 past orders · used 12 times, last today". */
+export const memorySource = (l: MemoryLine, now: number): string => {
+  const d0 = display()
+  return l.source + (l.at ? `, ${fmtNearDay(l.at, now, d0)}` : '') + (l.used ? ` · ${l.used}` : '') + (l.lastUsed ? `, last ${fmtDayWord(l.lastUsed, now, d0)}` : '')
+}
+
 export function settingsPage(tab: string, env: Env): Page {
   const { S, stage, agent, data } = env
   const { auditLog, memory, meta, people, skills, usage } = data
   const me = meta.currentUser
+  const d0 = display()
+  const now = nowOf()
   const forgetRows = (lines: MemoryLine[]) =>
-    lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, l.source, 'button', 'Forget', 1, undefined, undefined, () => env.forget(l.key)))
+    lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 1, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
   const teach = R('Teach it something', 'Tell it a rule in a chat, in your own words. It appears here.', 'button', 'Teach in a chat', 1, undefined, undefined, () => env.newChat('Remember that '))
@@ -126,8 +138,10 @@ export function settingsPage(tab: string, env: Env): Page {
   // A saved choice that isn't an option now (another channel, or none) shows and counts as the default.
   const savedTo = agent.settings['n:channel']
   const alertsTo = savedTo && alertOptions.includes(savedTo) ? savedTo : (channel ?? 'Email')
-  const auditRow = (e: { who: string; what: string; detail: string; at: string }) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${e.at}`, 'value'), e.who)
-  const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Routines and jobs stopped · ${agent.paused}`, 'value'), me.id)] : []
+  const auditRow = (e: AuditEntry) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${fmtWhen(e.at, now, d0)}`, 'value'), e.who)
+  /** The audit log's two groups: changes made today, and earlier ones. */
+  const auditDay = (e: AuditEntry) => fmtAuditDay(e.at, now, d0)
+  const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Routines and jobs stopped · ${fmtTime(agent.paused, d0)}`, 'value'), me.id)] : []
   const nextStage = S < 2
     ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...(channel ? [channel] : [])])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
     : 'You have every stage. Money and customer actions still wait for a person.'
@@ -203,7 +217,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always'), R('Pause Inhouse agent', 'Stops every routine and job at once. Asking questions still works.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause)] },
     ] },
     'team-spend': { title: 'Spending cap', sections: [
-      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Jobs pause when the cap is reached.', 's:cap', `$${usage.cap}`), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${DEMO_START.getFullYear()}.`, 'value', `$${env.spent.toFixed(2)}`)] },
+      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },
       { label: 'Accounts', rows: [R('AI', 'Your Anthropic account, billed at cost.', 'value', 'Anthropic'), R('Hosting', 'Your Cloudflare account, billed at cost.', 'value', 'Cloudflare')] },
     ] },
     'team-data': { title: 'Data and access', sections: [
@@ -213,14 +227,14 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Take it with you', rows: [R('Export everything', 'Chats, memory, routines, skills and logs as one download.', 'button', 'Export', 0, undefined, undefined, () => env.toast("Export isn't connected in this demo.", 4000, 'info')), R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
     ] },
     'team-audit': { title: 'Audit log', sections: [
-      { label: 'Today', rows: [...pausedRow, ...auditLog.filter(e => e.day === 'Today').map(auditRow)] },
-      { label: 'Earlier', rows: auditLog.filter(e => e.day === 'Earlier').map(auditRow) },
+      { label: 'Today', rows: [...pausedRow, ...auditLog.filter(e => auditDay(e) === 'Today').map(auditRow)] },
+      { label: 'Earlier', rows: auditLog.filter(e => auditDay(e) === 'Earlier').map(auditRow) },
       // Day one and while loading: nothing was changed yet.
       { label: '', rows: [], empty: auditLog.length === 0 && pausedRow.length === 0 ? (env.data.status === 'loading' ? 'Still loading. Changes show here in a moment.' : 'Nothing changed yet. Changes to settings, rules and people show here.') : undefined },
       { label: 'Keep a copy', rows: [R('Download the log', 'Every change to settings, rules, people, tools and memory. Kept for 12 months. Nobody can edit it.', 'button', 'Download CSV', 0, undefined, undefined, () => {
         const q = (v: string) => `"${v.replaceAll('"', '""')}"`
         // A plain space in every cell: the no-break space before AM or PM is for the screen, not a spreadsheet.
-        const lines = [['When', 'Who', 'What', 'Detail'], ...auditLog.map(e => [`${e.day} ${e.at}`, e.who, e.what, e.detail].map(plainSpaces))]
+        const lines = [['When', 'Who', 'What', 'Detail'], ...auditLog.map(e => [`${auditDay(e)} ${fmtWhen(e.at, now, d0)}`, e.who, e.what, e.detail].map(plainSpaces))]
         env.download('inhouse-audit-log.csv', lines.map(l => l.map(q).join(',')).join('\n') + '\n', 'text/csv')
         env.toast('Audit log downloaded', 4000)
       })] },

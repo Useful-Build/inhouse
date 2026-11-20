@@ -363,7 +363,8 @@ export function DotsBackground() {
   const ambient = useUi(s => s.ambient)
   const live = useUi(s => s.animateMark)
   const thinking = useUi(s => !!openRun(s))
-  const loading = useUi(s => s.scenario === 'Loading')
+  // The agent is still reading: its data's status says so (a real client starts there), not the demo's scenario switch.
+  const loading = useAgentData().status === 'loading'
   const sweep = live && (ambient === 'Always' || (ambient === 'When Inhouse agent works' && (thinking || loading)))
   // Masks only read alpha: black shows, transparent hides. The band's color hints (35%, 65%) give it the same soft
   // edges as the old 35% stops at 30% and 70%.

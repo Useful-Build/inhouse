@@ -1,13 +1,8 @@
 // PR 4 on a phone (390px): every answer shows its action row and every question its Copy and Edit, without hover.
-import { expect, test } from './csp.js'
+import { expect, test } from './support/fx.js'
 
-test('Phone conversation: every answer and question shows its actions', async ({ page }) => {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+test('Phone conversation: every answer and question shows its actions', async ({ page, fx }) => {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   const log = page.getByRole('log', { name: 'Conversation' })
   await expect(log.getByText('Refund requests rose').first()).toBeVisible()

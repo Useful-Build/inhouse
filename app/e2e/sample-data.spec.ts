@@ -1,15 +1,19 @@
 // Every control shows real sample data and works: Settings dropdowns, text fields and search, the chats
 // (each opens its own conversation, See all lists them), and the search boxes and pickers on other pages.
-import { readFileSync, readdirSync } from 'node:fs'
-import { expect, test } from './csp.js'
+import { readFileSync } from 'node:fs'
+import { expect, test, type Fx } from './support/fx.js'
+import { mockSource, sampleFiles, sampleJson as json } from './support/sample-reads.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
-
-/** The sample data, read straight from its folder for the data checks. */
-const DATA_DIR = new URL('../src/agent/sample-data/', import.meta.url)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const json = (name: string): any => JSON.parse(readFileSync(new URL(name, DATA_DIR), 'utf8'))
-const DATA_FILES = readdirSync(DATA_DIR).filter(f => f.endsWith('.json'))
+/** A sample time ("-3d 16:20": days from the demo's Monday, Nov 16, and a local time), as minutes from that Monday's midnight. */
+const offsetMin = (at: string) => {
+  const m = /^([+-]?\d+)d (\d\d):(\d\d)$/.exec(at)
+  if (!m) throw new Error(`Not a sample time like "-3d 16:20": "${at}"`)
+  return Number(m[1]) * 24 * 60 + Number(m[2]) * 60 + Number(m[3])
+}
+/** A sample time's day, as days from the demo's Monday. */
+const dayOf = (at: string) => Math.floor(offsetMin(at) / (24 * 60))
+const DATA_FILES = sampleFiles()
 /** Keys that hold notes for whoever edits the data: never shown in the app. */
 const NOTE_KEYS = new Set(['fieldGuide', 'sampleFacts', 'rowShape', 'usedBy', 'stepKinds', 'rule', 'kinds', 'openQuestion', 'placeholders'])
 /** Keys that hold machine values (ids, keys, paths, ISO times): never shown as text. A video's duration ("1:36") isn't a time of day. */
@@ -18,11 +22,16 @@ const NOTE_KEYS = new Set(['fieldGuide', 'sampleFacts', 'rowShape', 'usedBy', 's
 const EDITOR_NOTES = new Set(['usage.json.capReached.note'])
 const MACHINE_KEYS = new Set(['iso', 'id', 'k', 'key', 'src', 'poster', 'photo', 'logo', 'icon', 'sev', 'kind', 'type', 'place', 'site', 'problemId', 'trace', 'match', 'ratio', 'media', 'opens', 'onlyInScenario', 'duration', 'tool'])
 /** Every string a person can read in the app, as [file, path, text]. */
+const TIME_DATA = /^(?:[+-]?\d+d )?\d{2}:\d{2}$/
+const machineTimes: [string, string, string][] = []
 function personText(): [string, string, string][] {
   const out: [string, string, string][] = []
   const walk = (file: string, v: unknown, path: string, key: string) => {
     if (NOTE_KEYS.has(key) || (key === 'note' && (path === `${file}.note` || EDITOR_NOTES.has(path)))) return
     if (typeof v === 'string') {
+      // C1 stores times as data the app parses, never shows: a day offset plus a local time ("-3d 16:00") or a clock
+      // time ("07:00"). Those whole values go to machineTimes (checked for validity below), not the text scan.
+      if (TIME_DATA.test(v)) { machineTimes.push([file, path, v]); return }
       if (!MACHINE_KEYS.has(key) && !(key === 'at' && /^\d{4}-\d\d-\d\dT/.test(v))) out.push([file, path, v])
       return
     }
@@ -33,14 +42,9 @@ function personText(): [string, string, string][] {
   return out
 }
 
-async function start(page: Page, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = '#/today') {
-  await page.addInitScript(([s]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage])
-  await page.goto('/?demo' + hash)
+async function start(fx: Fx, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = '#/today') {
+  await fx.seed({ stage, demo: { ambient: 'Always' } })
+  await fx.open(hash)
 }
 
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
@@ -58,8 +62,8 @@ const settingsPage = async (page: Page, label: string) => {
   await page.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: label }).click()
 }
 
-test('Settings: a dropdown opens a real list, the pick survives a reload and Reset demo clears it', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-general')
+test('Settings: a dropdown opens a real list, the pick survives a reload and Reset demo clears it', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/settings/you-general')
   // New York is the default zone, shown by its name (the saved value stays the zone's id).
   const zone = page.getByRole('combobox', { name: 'Time zone: Eastern Time (New York)' })
   await zone.click()
@@ -71,7 +75,7 @@ test('Settings: a dropdown opens a real list, the pick survives a reload and Res
   await expect(list).toHaveCount(0)
   await expect(page.getByRole('combobox', { name: 'Time zone: Central Time (Chicago)' })).toBeVisible()
   // Saved as the zone's id, not its name.
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('inhouse.demo.v2') ?? '{}').settings?.['g:tz'])).toBe('America/Chicago')
+  expect((await fx.saved()).demo.settings?.['g:tz']).toBe('America/Chicago')
 
   // It persists across a reload.
   await page.reload()
@@ -84,8 +88,8 @@ test('Settings: a dropdown opens a real list, the pick survives a reload and Res
   await expect(page.getByRole('combobox', { name: 'Time zone: Eastern Time (New York)' })).toBeVisible()
 })
 
-test('Settings: a dropdown works from the keyboard and Escape closes it without a change', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-notif')
+test('Settings: a dropdown works from the keyboard and Escape closes it without a change', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/settings/you-notif')
   const send = page.getByRole('combobox', { name: 'Send alerts to: Slack' })
   await send.focus()
   await page.keyboard.press('ArrowDown')
@@ -106,8 +110,8 @@ test('Settings: a dropdown works from the keyboard and Escape closes it without 
   await expect(page.getByRole('combobox', { name: 'Send alerts to: Email and Slack' })).toBeFocused()
 })
 
-test('Settings: Who approves what and the spending cap dropdowns change their values', async ({ page }) => {
-  await start(page, 'Run', '#/settings/team-approvals')
+test('Settings: Who approves what and the spending cap dropdowns change their values', async ({ page, fx }) => {
+  await start(fx, 'Run', '#/settings/team-approvals')
   const rule = page.getByRole('combobox', { name: /^Orders over \$5,000: Dana Kim/ })
   await rule.click()
   await expect(page.getByRole('option')).toHaveCount(4)
@@ -120,8 +124,8 @@ test('Settings: Who approves what and the spending cap dropdowns change their va
   await shot(page, 'settings-spend')
 })
 
-test('Settings: a text field is editable, saved, shown in the account menu and cleared by Reset demo', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-general')
+test('Settings: a text field is editable, saved, shown in the account menu and cleared by Reset demo', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/settings/you-general')
   const name = page.getByRole('textbox', { name: 'Name', exact: true })
   await expect(name).toHaveValue('Sam Mercer')
   await name.fill('Samuel Mercer')
@@ -141,8 +145,8 @@ test('Settings: a text field is editable, saved, shown in the account menu and c
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Sam Mercer')
 })
 
-test('Settings: search filters the menu to matching pages and rows', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-general')
+test('Settings: search filters the menu to matching pages and rows', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/settings/you-general')
   const nav = page.getByRole('navigation', { name: 'Settings' })
   const menu = nav.locator('button[data-nav-row]')
   const search = page.getByRole('searchbox', { name: 'Search settings' })
@@ -170,8 +174,8 @@ test('Settings: search filters the menu to matching pages and rows', async ({ pa
   await expect(menu).toHaveCount(13)
 })
 
-test('Chats: there is no Chats item in the nav; New chat and Recent chats stay', async ({ page }) => {
-  await start(page)
+test('Chats: there is no Chats item in the nav; New chat and Recent chats stay', async ({ page, fx }) => {
+  await start(fx)
   await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Chats' })).toHaveCount(0)
   await expect(side(page).getByRole('button', { name: 'Chats', exact: true })).toHaveCount(0)
   await expect(side(page).getByRole('button', { name: 'New chat' })).toBeVisible()
@@ -179,8 +183,8 @@ test('Chats: there is no Chats item in the nav; New chat and Recent chats stay',
   await expect(side(page).getByRole('button', { name: 'See all' })).toBeVisible()
 })
 
-test('Chats: each recent chat opens its own conversation', async ({ page }) => {
-  await start(page)
+test('Chats: each recent chat opens its own conversation', async ({ page, fx }) => {
+  await start(fx)
   const chats: [string, string][] = [
     ['Stuck orders over 3 days', '3 orders · $556'],
     ['Why did refunds jump?', 'Refund requests rose from 14 last week to 31 this week.'],
@@ -207,14 +211,14 @@ test('Chats: each recent chat opens its own conversation', async ({ page }) => {
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
 })
 
-test('Chats: every seeded answer ends with its footer, its model, steps and seconds from its own trace', async ({ page }) => {
+test('Chats: every seeded answer ends with its footer, its model, steps and seconds from its own trace', async ({ page, fx }) => {
   const traces = json('traces.json').traces as Record<string, { durationSeconds: number; steps: { kind: string; detail?: string }[] }>
   const modes = json('models.json').modes as { id: string; label: string; model: string }[]
   const secs = (x: number) => (x < 60 ? `${Math.round(x * 10) / 10}s` : `${Math.floor(x / 60)}m ${Math.round(x % 60)}s`)
   type Turn = { user?: string; stage?: string; trace?: string; model?: string }
   const seed = json('chat-script.json').seedThread.turns as Turn[]
   const chats = json('chats.json').chats as { id: string; turns: 'seedThread' | Turn[] }[]
-  await start(page)
+  await start(fx)
   for (const c of chats) {
     // In Act, the answers that show: each turn's footer is its last answer's trace.
     const expected: string[] = []
@@ -240,8 +244,8 @@ test('Chats: every seeded answer ends with its footer, its model, steps and seco
   await shot(page, 'chat-footers-stuck')
 })
 
-test('Chats: See all lists every chat, search filters by title, picking one opens it', async ({ page }) => {
-  await start(page)
+test('Chats: See all lists every chat, search filters by title, picking one opens it', async ({ page, fx }) => {
+  await start(fx)
   await side(page).getByRole('button', { name: 'See all' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'All chats' })).toBeVisible()
   const main = page.locator('main')
@@ -269,8 +273,8 @@ test('Chats: See all lists every chat, search filters by title, picking one open
   await expect(page.getByRole('banner')).toContainText('Stuck orders over 3 days')
 })
 
-test('Tools and Skills: search filters the lists; the tool page links to the vendor', async ({ page }) => {
-  await start(page, 'Act', '#/tools')
+test('Tools and Skills: search filters the lists; the tool page links to the vendor', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/tools')
   const search = page.getByRole('searchbox', { name: 'Search tools' })
   await search.fill('ship')
   await expect(page.getByRole('button', { name: /ShipBob/ })).toBeVisible()
@@ -291,8 +295,8 @@ test('Tools and Skills: search filters the lists; the tool page links to the ven
   await expect(page.getByText('No skills match "qqq".')).toBeVisible()
 })
 
-test('Usage: the month picker lists this month, the chart ends today; Today sorts by amount; Help and Sign out answer', async ({ page }) => {
-  await start(page, 'Act', '#/usage')
+test('Usage: the month picker lists this month, the chart ends today; Today sorts by amount; Help and Sign out answer', async ({ page, fx }) => {
+  await start(fx, 'Act', '#/usage')
   await expect(page.getByText('$78.40').first()).toBeVisible()
   // One bar a day up to today, Mon, Nov 16, and the projection follows them: $78.40 over 16 days is about $147.
   await expect(page.locator('[data-usage-bar]')).toHaveCount(16)
@@ -357,6 +361,17 @@ test('Data: every "Mon, Nov 16" in the sample data has the right weekday on the 
   expect(json('meta.json').fixedClock.label).toBe('Monday, November 16, 2026')
 })
 
+test('Data: every time stored as data is a valid day offset and local time, or a clock time', () => {
+  machineTimes.length = 0
+  personText()
+  expect(machineTimes.length).toBeGreaterThan(20)
+  const wrong = machineTimes.filter(([, , v]) => {
+    const m = /^(?:([+-]?\d+)d )?(\d{2}):(\d{2})$/.exec(v)
+    return !m || Number(m[2]) > 23 || Number(m[3]) > 59 || (m[1] !== undefined && Math.abs(Number(m[1])) > 60)
+  }).map(([f, p, v]) => `${f} ${p}: ${v}`)
+  expect(wrong).toEqual([])
+})
+
 test('Data: no text a person reads holds a 24-hour time, "2025", an old "17 Nov" date, UK spelling or the words sample, demo or mock', () => {
   const bad: string[] = []
   for (const [file, path, text] of personText()) {
@@ -371,7 +386,7 @@ test('Data: no text a person reads holds a 24-hour time, "2025", an old "17 Nov"
     for (const [re, what] of checks) if (re.test(text) && text !== 'Sales, October 2025') bad.push(`${file} ${path} (${what}): ${text.slice(0, 80)}`)
   }
   // The answers written in code, not in the data: the formatted query answer and the ask-for-a-time reply.
-  const mock = readFileSync(new URL('../src/agent/mock.ts', import.meta.url), 'utf8')
+  const mock = mockSource()
   const inCode = [/const QUERY_ANSWER = \[([\s\S]*?)\]\.join/, /const ASK_FOR_TIME = ('.*')/].map(re => re.exec(mock)?.[1])
   expect(inCode.every(Boolean), 'the answers in mock.ts were found').toBe(true)
   for (const text of inCode as string[]) {
@@ -408,7 +423,7 @@ test('Data: a file made in a chat names that chat by its title', () => {
 test("Data: every seeded answer names its own trace, and its steps and seconds are that trace's", () => {
   const traces = json('traces.json').traces as Record<string, { durationSeconds: number; steps: { kind: string; endSeconds: number }[] }>
   type Turn = { trace?: string; agent?: { type: string }[] }
-  const chats = json('chats.json').chats as { id: string; iso: string; turns: 'seedThread' | Turn[] }[]
+  const chats = json('chats.json').chats as { id: string; at: string; turns: 'seedThread' | Turn[] }[]
   const seed = json('chat-script.json').seedThread.turns as Turn[]
   const answers = chats.flatMap(c => (typeof c.turns === 'string' ? seed : c.turns).map(t => ({ chat: c.id, ...t }))).filter(t => t.agent)
   const used = new Map<string, string>()
@@ -432,18 +447,19 @@ test("Data: every seeded answer names its own trace, and its steps and seconds a
     expect(traces[String(k).split(' ')[0]], `scripted trace "${k}"`).toBeTruthy()
   }
   // All chats is newest first by a real time.
-  const isos = chats.map(c => c.iso)
-  expect(isos).toEqual([...isos].sort().reverse())
+  const ats = chats.map(c => offsetMin(c.at))
+  expect(ats).toEqual([...ats].sort((a, b) => b - a))
 })
 
 test('Data: PO-1187, the stuck-orders window, the cap and Slack each have one value', () => {
   // PO-1187: the Today card's amount is the PDF's total, and the price list prices it.
-  const po = (json('problems.json').problems as { id: string; cost: string }[]).find(p => p.id === 'po')!
+  const po = (json('problems.json').problems as { id: string; cost: { minor: number; currency: string } }[]).find(p => p.id === 'po')!
   const files = json('library.json').files as { id: string; doc?: { table?: { rows: string[][]; total?: string[] } } }[]
   const pdf = files.find(f => f.id === 'a-po-1187')!
-  expect(pdf.doc!.table!.total![2]).toBe(po.cost)
-  // Its lines add up to its total: units and dollars.
   const dollars = (v: string) => Number(v.replace(/[$,]/g, '')) || 0
+  expect(po.cost.currency).toBe('USD')
+  expect(Math.round(dollars(pdf.doc!.table!.total![2]) * 100)).toBe(po.cost.minor)
+  // Its lines add up to its total: units and dollars.
   const lines = pdf.doc!.table!.rows
   expect(lines.reduce((a, r) => a + dollars(r[2]), 0)).toBe(dollars(pdf.doc!.table!.total![2]))
   expect(lines.reduce((a, r) => a + (Number(r[1]) || 0), 0)).toBe(Number(pdf.doc!.table!.total![1]))
@@ -470,48 +486,41 @@ test('Data: PO-1187, the stuck-orders window, the cap and Slack each have one va
 })
 
 test('Data: the bell is newest first, no denied text anywhere a person reads, no chat reads a tool before it was connected, and Klaviyo has one date', () => {
-  const DAY_MIN = 24 * 60
-  /** "7:30 AM" is today (Mon, Nov 16); "Fri, Nov 13" is that day. As minutes, for ordering. */
-  const minutes = (when: string) => {
-    const t = /^(\d{1,2}):(\d\d)[ \u00a0](AM|PM)$/.exec(when)
-    if (t) return 16 * DAY_MIN + (Number(t[1]) % 12 + (t[3] === 'PM' ? 12 : 0)) * 60 + Number(t[2])
-    const d = /^\w{3}, Nov (\d{1,2})$/.exec(when)
-    if (!d) throw new Error(`The bell has a time it can't read: "${when}"`)
-    return Number(d[1]) * DAY_MIN
-  }
-  const bell = (json('notifications.json').notifications as { when: string }[]).map(n => minutes(n.when))
+  const bell = (json('notifications.json').notifications as { at: string }[]).map(n => offsetMin(n.at))
   expect(bell, 'the bell, newest first').toEqual([...bell].sort((a, b) => b - a))
 
   // E2E_DENY_NAMES is a comma-separated list of texts that must never show; unset or empty, a generic list of placeholders stands in.
   const deny = (process.env.E2E_DENY_NAMES || 'lorem,TODO,sample data').split(',').map(d => d.trim().toLowerCase()).filter(Boolean)
   expect(personText().filter(([, , t]) => deny.some(d => t.toLowerCase().includes(d))), 'text with a denied name or placeholder').toEqual([])
 
-  // A chat's answers read only tools that were connected by the chat's day ("since": "Nov 13").
+  // A chat's answers read only tools that were connected by the chat's day ("since": "-3d 09:00"). A tool still being
+  // connected has `liveBy` instead, and no chat reads it.
   const tools = json('tools.json')
-  const since = new Map((Object.values(tools.details) as { name: string; since: string }[]).map(d => [d.name, d.since]))
+  const since = new Map((Object.values(tools.details) as { name: string; since?: string }[]).flatMap(d => (d.since ? [[d.name, dayOf(d.since)] as const] : [])))
   const traces = json('traces.json').traces as Record<string, { steps: { kind: string; label: string }[] }>
   const late: string[] = []
   // (The stuck chat's turns are the seed thread in chat-script.json, named here by a string, and it's dated today, after every tool was connected.)
-  for (const c of json('chats.json').chats as { id: string; iso: string; turns: { trace?: string }[] | string }[]) {
-    const day = Number(c.iso.slice(8, 10))
+  for (const c of json('chats.json').chats as { id: string; at: string; turns: { trace?: string }[] | string }[]) {
+    const day = dayOf(c.at)
     for (const key of (Array.isArray(c.turns) ? c.turns : []).flatMap(t => (t.trace ? [t.trace.split(' ')[0]] : []))) {
       for (const s of traces[key]?.steps ?? []) {
-        const on = s.kind === 'tool' ? /^Nov (\d{1,2})$/.exec(since.get(s.label.split(' · ')[0]) ?? '') : null
-        if (on && Number(on[1]) > day) late.push(`${c.id} (${c.iso}) reads ${s.label} before it was connected`)
+        const on = s.kind === 'tool' ? since.get(s.label.split(' · ')[0]) : undefined
+        if (on !== undefined && on > day) late.push(`${c.id} (${c.at}) reads ${s.label} before it was connected`)
       }
     }
   }
   expect(late).toEqual([])
 
   // Klaviyo goes live on one date, wherever it's said.
-  const live = /Live by (\w{3}, Nov \d{1,2})$/.exec(tools.details.klaviyo.since)![1]
+  const liveDay = new Date(2026, 10, 16 + dayOf(tools.details.klaviyo.liveBy))
+  const live = `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][liveDay.getDay()]}, Nov ${liveDay.getDate()}`
   const dates = personText().filter(([, , t]) => /klaviyo/i.test(t) && /Nov \d/.test(t)).map(([f, path, t]) => [f, path, /\w{3}, Nov \d{1,2}/.exec(t)?.[0]])
   expect(dates.length).toBeGreaterThan(0)
   expect(dates.filter(([, , d]) => d !== live)).toEqual([])
 })
 
-test('Facts agree across screens: PO-1187, the waiting count and the stuck-orders window', async ({ page }) => {
-  await start(page)
+test('Facts agree across screens: PO-1187, the waiting count and the stuck-orders window', async ({ page, fx }) => {
+  await start(fx)
   // The waiting count: Today, the nav badge, the bell and Approvals.
   await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you')
   await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })).toContainText('6')
@@ -541,8 +550,8 @@ test('Facts agree across screens: PO-1187, the waiting count and the stuck-order
   await expect(log).not.toContainText('in Watch')
 })
 
-test('Activity: every time sits on one line in its column', async ({ page }) => {
-  await start(page, 'Run', '#/activity')
+test('Activity: every time sits on one line in its column', async ({ page, fx }) => {
+  await start(fx, 'Run', '#/activity')
   // Run shows the most lines, "10:12 AM" the widest time.
   const times = page.locator('[data-activity-row] > span:first-child')
   await expect(times.first()).toBeVisible()
@@ -552,8 +561,8 @@ test('Activity: every time sits on one line in its column', async ({ page }) => 
   await shot(page, 'activity-times')
 })
 
-test('The Klaviyo line takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page }) => {
-  await start(page, 'Act')
+test('The Klaviyo line takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
+  await start(fx, 'Act')
   const live = side(page).getByText(/goes live by/)
   await expect(live).toHaveText('Klaviyo goes live by Fri, Nov 20.')
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })

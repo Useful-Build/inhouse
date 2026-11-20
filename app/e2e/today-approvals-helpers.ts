@@ -1,18 +1,15 @@
 // Shared by today-approvals.spec.ts and today-approvals-phone.spec.ts: start at a stage, and find any text a card cuts.
 import { expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { mockClient } from './support/clients/mock.js'
 
 export type Stage = 'Watch' | 'Act' | 'Run'
 export const STAGES: Stage[] = ['Watch', 'Act', 'Run']
 
 export async function start(page: Page, stage: Stage, hash: string, scenario = 'Normal') {
-  await page.addInitScript(([s, sc]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, scenario])
-  await page.goto('/?demo' + hash)
+  const client = mockClient(page)
+  await client.seed({ stage, scenario })
+  await client.open(hash)
 }
 
 /**

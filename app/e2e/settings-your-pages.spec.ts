@@ -1,18 +1,13 @@
 // Settings > Notifications and Memory (your own pages), at 1440. Each control does what it says; the picks survive a
 // reload and Reset demo clears them. At Watch both pages are locked until Act. The phone twin is
 // settings-pages-phone.spec.ts.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 type Stage = 'Watch' | 'Act' | 'Run'
 
-async function start(page: Page, stage: Stage, hash: string) {
-  await page.addInitScript(s => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, stage)
+async function start(page: Page, fx: Fx, stage: Stage, hash: string) {
+  await fx.seed({ stage })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
@@ -38,8 +33,8 @@ const PERSONAL = [
   'You handle supplier emails yourself. Dana handles money.',
 ]
 
-test('Notifications and Memory at Watch: the alerts, the memory lines and the learn switch are locked until Act', async ({ page }) => {
-  await start(page, 'Watch', '#/settings/you-notif')
+test('Notifications and Memory at Watch: the alerts, the memory lines and the learn switch are locked until Act', async ({ fx, page }) => {
+  await start(page, fx, 'Watch', '#/settings/you-notif')
   await expect(page.getByRole('heading', { level: 1, name: 'Notifications', exact: true })).toBeVisible()
   await expect(main(page).getByRole('combobox', { name: /^Approvals waiting/ })).toBeDisabled()
   await expect(main(page).getByRole('combobox', { name: /^Send alerts to/ })).toBeDisabled()
@@ -56,8 +51,8 @@ test('Notifications and Memory at Watch: the alerts, the memory lines and the le
   await expect(main(page).getByText('Private', { exact: true })).toBeVisible()
 })
 
-test('Notifications: alert timing, where alerts go and both switches change, survive a reload and Reset demo clears them', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-notif')
+test('Notifications: alert timing, where alerts go and both switches change, survive a reload and Reset demo clears them', async ({ fx, page }) => {
+  await start(page, fx, 'Act', '#/settings/you-notif')
   await expect(combo(page, 'Approvals waiting: Right away')).toBeVisible()
   await expect(combo(page, 'Send alerts to: Slack')).toBeVisible()
   await expect(sw(page, 'Slack')).toBeChecked()
@@ -96,8 +91,8 @@ test('Notifications: alert timing, where alerts go and both switches change, sur
   await expect(sw(page, 'Weekly report')).toBeChecked()
 })
 
-test('Memory: Forget (with Undo) and the learn switch work, survive a reload and Reset demo clears them', async ({ page }) => {
-  await start(page, 'Act', '#/settings/you-memory')
+test('Memory: Forget (with Undo) and the learn switch work, survive a reload and Reset demo clears them', async ({ fx, page }) => {
+  await start(page, fx, 'Act', '#/settings/you-memory')
   const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
   const learn = sw(page, 'Learn from my chats')
   await expect(forgets).toHaveCount(3)

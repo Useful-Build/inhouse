@@ -3,6 +3,8 @@ import { useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
 import { draftView, memberFor, userName } from '../state/derive'
+import { fmtMoney, fmtProse, fmtTime } from '../lib/format'
+import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Avatar, Button, Icon, IconButton, IconTile, LogoTile } from '../ui'
 import { sevClass } from '../ui/severity'
@@ -44,7 +46,7 @@ export function ProblemPanel() {
           <Badge variant="muted" size="lg" className="gap-1.5">
             <i className={cn('size-1.75 rounded-full', sevClass(p.sev))} />{p.area}
           </Badge>
-          Found at {p.draftedAt}
+          Found at {fmtTime(p.draftedAt, display())}
           <div className="flex-1" />
           <IconButton icon="close" label="Close" onClick={closeProblem} />
         </div>
@@ -52,7 +54,7 @@ export function ProblemPanel() {
         <div className="min-h-0 flex-1 overflow-auto px-6 pt-3 pb-6">
           <SheetTitle className="text-2xl leading-heading font-medium tracking-heading">{p.title}</SheetTitle>
           <div className="mt-2 text-base text-foreground-3">
-            <b className="font-semibold text-foreground tabular-nums">{p.cost}</b> {p.costNote}
+            <b className="font-semibold text-foreground tabular-nums">{fmtMoney(p.cost, display())}</b> {p.costNote}
           </div>
 
           <div className={`${card} mt-5 px-5 py-4.5`}>
@@ -149,7 +151,7 @@ export function ProblemPanel() {
               <Icon name="check_circle" size={20} weight={400} />
               <span className="flex-1">
                 <b className="font-semibold">Handled by Inhouse agent</b>
-                <span className="block text-sm text-brand-text/85">{p.done}. Within your Run limits · logged in Activity.</span>
+                <span className="block text-sm text-brand-text/85">{p.done && fmtProse(p.done, display())}. Within your Run limits · logged in Activity.</span>
               </span>
               <Button variant="surface" size="sm" onClick={() => undoHandled(openId)}>Undo</Button>
             </div>
