@@ -1,0 +1,349 @@
+// The Runner object's logic (p3-design sections 1 and 7), written against a container port so the Workers test pool
+// can drive it without a container: index.ts hands it the real `ctx.container`. Every container start registers the
+// intercepts (in order: `egress.internal`, HTTPS `*`, then every other HTTP host), starts the container with no
+// Internet, sets the inactivity timeout, watches it with `monitor()` (an exit is reported once per generation) and
+// negotiates the protocol. A restarted object that finds its container running only re-arms the timeout and the
+// monitor (the intercepts belong to the container, and live until it stops).
+//
+// Docs (read 2026-11-20): Container API, https://developers.cloudflare.com/durable-objects/api/container/ (`start()`
+// returns before the container is ready; `setInactivityTimeout()` is unset after a restart, "set it again after start()
+// or in the constructor if the container is running"; "The monitor() promise does not survive a Durable Object restart.
+// If running is true on startup, call monitor() again"; "Intercepts last until the container stops. Register them again
+// for each new container"; hostname intercepts before the catch-all). DO lifecycle,
+// https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/ (an operation keeps the object
+// in memory for at most 15 minutes, so nothing here waits on a long read: the runner pushes, and every push touches).
+import {
+  ACCEPTED_VERSIONS, Health, PROTOCOL_HEADER, ProtocolInfo, RunRefusal, RunStatus, negotiateVersion,
+  type RunRefusalCode, type RunStart,
+} from '../../../shared/protocol/index.ts'
+import type { RunnerTurnStatus } from '../brand-agent/ports.ts'
+
+export const RUNNER_PORT = 8080
+export const PROXY_PORT = 8081
+export const EGRESS_HOST = 'egress.internal'
+/** How long the container outlives an inactive object; every push's `touch()` re-arms it. */
+export const INACTIVITY_MS = 10 * 60_000
+/** `admit`'s own bound: the fetch is aborted, so no admission can land after it (a timeout is `ambiguous`). */
+export const ADMIT_TIMEOUT_MS = 15_000
+/** `status`, `interrupt`, `stop` and the warm-up's calls. */
+export const CALL_TIMEOUT_MS = 10_000
+/** How long a new container has to answer `/protocol` before the start counts as a placement error. */
+export const BOOT_TIMEOUT_MS = 60_000
+export const BOOT_POLL_MS = 250
+
+/** The only props an intercept gets: never a token, a chat or a member (design 7). */
+export interface EgressProps {
+  runner: string
+  containerGen: number
+}
+
+/** What the Runner uses of `ctx.container` (the real one satisfies it; the tests pass a fake). */
+export interface ContainerPort<B> {
+  readonly running: boolean
+  start(options: { enableInternet: boolean; env: Record<string, string> }): void
+  setInactivityTimeout(durationMs: number): Promise<void>
+  monitor(): Promise<void>
+  interceptOutboundHttp(addr: string, binding: B): Promise<void>
+  interceptOutboundHttps(addr: string, binding: B): Promise<void>
+  interceptAllOutboundHttp(binding: B): Promise<void>
+  getTcpPort(port: number): { fetch(input: string, init?: RequestInit): Promise<Response> }
+}
+
+/** The Runner's own durable numbers (its SQLite): the container generation, its negotiated version, the last exit reported. */
+export interface RunnerState {
+  gen(): number
+  setGen(gen: number): void
+  /** The version negotiated with generation `gen`: a number, `null` for no shared version, `undefined` when not asked yet. */
+  protocol(gen: number): number | null | undefined
+  setProtocol(gen: number, version: number | null | undefined): void
+  exitReported(): number
+  setExitReported(gen: number): void
+}
+
+export interface RunnerDeps<B> {
+  name: string
+  container: ContainerPort<B>
+  state: RunnerState
+  bindings: { egress(props: EgressProps): B; web(props: EgressProps): B; deny(props: EgressProps): B }
+  /** Tells the BrandAgent the container of generation `gen` exited (`containerExited`). */
+  exited(runner: string, gen: number): Promise<void>
+  /** The versions this Worker speaks (the protocol's own list; a test injects another). */
+  accepted?: readonly number[]
+  timeout?(ms: number): AbortSignal
+  wait?(ms: number): Promise<void>
+  log?(entry: Record<string, unknown>): void
+}
+
+/** `admit`'s answer. Only `ambiguous` may have reached the runner without a definite answer. */
+export type AdmitResult =
+  | { accepted: true; gen: number; protocol: number }
+  | { refused: RunRefusalCode; gen: number }
+  /** No shared protocol version (or the runner answered 426): never pick this runner on this container. */
+  | { protocol: 'none'; gen: number }
+  /** The container didn't come up, or the runner answered without admitting (a bad body, a stopping runner). */
+  | { placementError: string }
+  /** The request left and no answer came (a network error or the 15 s abort). */
+  | { ambiguous: true; gen: number }
+
+export interface StatusResult {
+  state: RunnerTurnStatus
+  /** The container isn't running: the generation the turn ran on is gone. */
+  containerGone: boolean
+}
+
+export type WarmResult = { ok: true; gen: number; protocol: number } | { ok: false; why: 'protocol' | 'health' | 'start'; detail: string }
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200)
+
+export class RunnerCore<B> {
+  readonly #d: RunnerDeps<B>
+  readonly #accepted: readonly number[]
+  readonly #timeout: (ms: number) => AbortSignal
+  readonly #wait: (ms: number) => Promise<void>
+  readonly #log: (entry: Record<string, unknown>) => void
+  /** This object instance has a pending `monitor()` (it doesn't survive a restart). */
+  #monitoring = false
+  #booting: Promise<{ gen: number; protocol: number | null }> | undefined
+
+  constructor(deps: RunnerDeps<B>) {
+    this.#d = deps
+    this.#accepted = deps.accepted ?? ACCEPTED_VERSIONS
+    this.#timeout = deps.timeout ?? (ms => AbortSignal.timeout(ms))
+    this.#wait = deps.wait ?? (ms => scheduler.wait(ms))
+    this.#log = deps.log ?? (entry => console.log(JSON.stringify({ runner: deps.name, ...entry })))
+  }
+
+  /** An egress push arrived: keep the container (and re-arm the monitor after an object restart). Never starts one. */
+  async touch(): Promise<void> {
+    const c = this.#d.container
+    if (!c.running) return
+    await c.setInactivityTimeout(INACTIVITY_MS)
+    if (!this.#monitoring) this.#watch(this.#d.state.gen())
+  }
+
+  async admit(rs: RunStart): Promise<AdmitResult> {
+    let up: { gen: number; protocol: number | null }
+    try {
+      up = await this.#up()
+    } catch (e) {
+      return { placementError: errorText(e) }
+    }
+    if (up.protocol === null) return { protocol: 'none', gen: up.gen }
+    const { gen } = up
+    let res: Response
+    try {
+      res = await this.#port().fetch(`http://runner/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [PROTOCOL_HEADER]: String(up.protocol) },
+        body: JSON.stringify(rs),
+        signal: this.#timeout(ADMIT_TIMEOUT_MS),
+      })
+    } catch (e) {
+      this.#log({ event: 'admit_ambiguous', turnId: rs.runId, error: errorText(e) })
+      return { ambiguous: true, gen }
+    }
+    // The status decides: an answer came, so it's definite. The body is only read to tell the refusals apart.
+    if (res.status === 202) {
+      await res.body?.cancel()
+      return { accepted: true, gen, protocol: up.protocol }
+    }
+    if (res.status === 426) {
+      await res.body?.cancel()
+      this.#d.state.setProtocol(gen, null)
+      return { protocol: 'none', gen }
+    }
+    let body: unknown = null
+    try {
+      body = await res.json()
+    } catch {
+      // An unreadable body: the status alone decides below.
+    }
+    const refusal = RunRefusal.safeParse(body)
+    if (refusal.success) return { refused: refusal.data.error, gen }
+    if (res.status === 409) return { refused: 'chat_live', gen }
+    return { placementError: `the runner answered ${res.status} without admitting` }
+  }
+
+  /** The runner's `GET /runs/:id`; `unreachable` only when the call failed. Never starts a container. */
+  async status(turnId: string): Promise<StatusResult> {
+    if (!this.#d.container.running) return { state: 'unreachable', containerGone: true }
+    try {
+      const up = await this.#up()
+      if (up.protocol === null) return { state: 'unreachable', containerGone: false }
+      const res = await this.#port().fetch(`http://runner/runs/${encodeURIComponent(turnId)}`, {
+        headers: { [PROTOCOL_HEADER]: String(up.protocol) },
+        signal: this.#timeout(CALL_TIMEOUT_MS),
+      })
+      if (res.status !== 200) {
+        await res.body?.cancel()
+        return { state: 'unreachable', containerGone: !this.#d.container.running }
+      }
+      const parsed = RunStatus.parse(await res.json())
+      const state: RunnerTurnStatus =
+        parsed.state === 'released' ? 'ended' : parsed.state === 'unknown' ? 'unknown' : 'live'
+      return { state, containerGone: false }
+    } catch (e) {
+      this.#log({ event: 'status_failed', turnId, error: errorText(e) })
+      return { state: 'unreachable', containerGone: !this.#d.container.running }
+    }
+  }
+
+  interrupt(turnId: string): Promise<void> {
+    return this.#action(turnId, 'interrupt')
+  }
+
+  stop(turnId: string): Promise<void> {
+    return this.#action(turnId, 'stop')
+  }
+
+  /** Warm-up (route 48): the container up, a fresh `/protocol` with a shared version, then `/health` ok on it. */
+  async warm(): Promise<WarmResult> {
+    let up: { gen: number; protocol: number | null }
+    try {
+      up = await this.#up()
+      // Asked again on this generation even when it was negotiated earlier: warm-up proves the container as it is now.
+      this.#d.state.setProtocol(up.gen, undefined)
+      up = { gen: up.gen, protocol: await this.#negotiate(up.gen, 1) }
+    } catch (e) {
+      return { ok: false, why: 'start', detail: errorText(e) }
+    }
+    if (up.protocol === null) return { ok: false, why: 'protocol', detail: 'no shared protocol version' }
+    try {
+      const res = await this.#port().fetch('http://runner/health', { signal: this.#timeout(CALL_TIMEOUT_MS) })
+      if (res.status !== 200) {
+        await res.body?.cancel()
+        return { ok: false, why: 'health', detail: `health answered ${res.status}` }
+      }
+      const health = Health.parse(await res.json())
+      if (!health.ok) return { ok: false, why: 'health', detail: 'health not ok' }
+      return { ok: true, gen: up.gen, protocol: up.protocol }
+    } catch (e) {
+      return { ok: false, why: 'health', detail: errorText(e) }
+    }
+  }
+
+  async #action(turnId: string, action: 'interrupt' | 'stop'): Promise<void> {
+    // No container: nothing runs there to interrupt or stop.
+    if (!this.#d.container.running) return
+    const up = await this.#up()
+    if (up.protocol === null) throw new Error(`${action}: no shared protocol version with the runner`)
+    const res = await this.#port().fetch(`http://runner/runs/${encodeURIComponent(turnId)}/${action}`, {
+      method: 'POST',
+      headers: { [PROTOCOL_HEADER]: String(up.protocol) },
+      signal: this.#timeout(CALL_TIMEOUT_MS),
+    })
+    await res.body?.cancel()
+    // 404: the runner doesn't know the run (it ended): nothing left to do.
+    if (res.status !== 202 && res.status !== 404) throw new Error(`${action}: the runner answered ${res.status}`)
+  }
+
+  #port() {
+    return this.#d.container.getTcpPort(RUNNER_PORT)
+  }
+
+  /** The container running with a negotiated version; one start at a time. */
+  #up(): Promise<{ gen: number; protocol: number | null }> {
+    return (this.#booting ??= this.#boot().finally(() => (this.#booting = undefined)))
+  }
+
+  async #boot(): Promise<{ gen: number; protocol: number | null }> {
+    const c = this.#d.container
+    const s = this.#d.state
+    if (c.running) {
+      const gen = s.gen()
+      if (!this.#monitoring) {
+        // A restarted object: the container (and its intercepts) carried on; the timeout and the monitor didn't.
+        await c.setInactivityTimeout(INACTIVITY_MS)
+        this.#watch(gen)
+      }
+      const known = s.protocol(gen)
+      return { gen, protocol: known === undefined ? await this.#negotiate(gen) : known }
+    }
+    const gen = s.gen() + 1
+    s.setGen(gen)
+    const props: EgressProps = { runner: this.#d.name, containerGen: gen }
+    await c.interceptOutboundHttp(EGRESS_HOST, this.#d.bindings.egress(props))
+    await c.interceptOutboundHttps('*', this.#d.bindings.web(props))
+    await c.interceptAllOutboundHttp(this.#d.bindings.deny(props))
+    c.start({
+      enableInternet: false,
+      env: { EGRESS_URL: `http://${EGRESS_HOST}`, PORT: String(RUNNER_PORT), PROXY_PORT: String(PROXY_PORT) },
+    })
+    await c.setInactivityTimeout(INACTIVITY_MS)
+    this.#watch(gen)
+    this.#log({ event: 'container_started', gen })
+    return { gen, protocol: await this.#negotiate(gen) }
+  }
+
+  /** `GET /protocol` until it answers (a new container takes a moment); stores and returns the shared version. */
+  async #negotiate(gen: number, attempts = Math.ceil(BOOT_TIMEOUT_MS / BOOT_POLL_MS)): Promise<number | null> {
+    let last: unknown = 'no answer'
+    for (let i = 0; i < attempts; i++) {
+      if (!this.#d.container.running) throw new Error('the container stopped before it answered /protocol')
+      try {
+        const res = await this.#port().fetch('http://runner/protocol', { signal: this.#timeout(CALL_TIMEOUT_MS) })
+        if (res.status === 200) {
+          const version = negotiateVersion(ProtocolInfo.parse(await res.json()), this.#accepted)
+          this.#d.state.setProtocol(gen, version)
+          if (version === null) this.#log({ event: 'protocol_mismatch', gen })
+          return version
+        }
+        await res.body?.cancel()
+        last = `protocol answered ${res.status}`
+      } catch (e) {
+        last = e
+      }
+      if (i + 1 < attempts) await this.#wait(BOOT_POLL_MS)
+    }
+    throw new Error(`no /protocol answer: ${errorText(last)}`)
+  }
+
+  /** Watches the container of generation `gen`; its exit (either way the promise settles) is reported once per generation. */
+  #watch(gen: number) {
+    this.#monitoring = true
+    const exited = (how: unknown) => {
+      if (this.#d.state.gen() === gen) this.#monitoring = false
+      void this.#reportExit(gen, how)
+    }
+    this.#d.container.monitor().then(() => exited('exit 0'), exited)
+  }
+
+  async #reportExit(gen: number, how: unknown) {
+    const s = this.#d.state
+    if (s.exitReported() >= gen) return
+    s.setExitReported(gen)
+    if (s.gen() === gen) s.setProtocol(gen, undefined)
+    this.#log({ event: 'container_exited', gen, how: errorText(how) })
+    try {
+      await this.#d.exited(this.#d.name, gen)
+    } catch (e) {
+      // The BrandAgent's turn-watch still finds the turns (status: unreachable with the container gone).
+      this.#log({ event: 'container_exit_report_failed', gen, error: errorText(e) })
+    }
+  }
+}
+
+/** RunnerState over the object's SQLite (one small key-value table). */
+export function sqlRunnerState(sql: SqlStorage): RunnerState {
+  sql.exec('CREATE TABLE IF NOT EXISTS runner_state (key TEXT PRIMARY KEY, value INTEGER)')
+  const get = (key: string): number | null | undefined => {
+    const row = sql.exec<{ value: number | null }>('SELECT value FROM runner_state WHERE key = ?', key).toArray()[0]
+    return row === undefined ? undefined : row.value
+  }
+  const set = (key: string, value: number | null) =>
+    sql.exec('INSERT INTO runner_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value)
+  const del = (key: string) => sql.exec('DELETE FROM runner_state WHERE key = ?', key)
+  return {
+    gen: () => get('gen') ?? 0,
+    setGen: gen => set('gen', gen),
+    protocol: gen => get(`protocol:${gen}`),
+    setProtocol: (gen, version) => {
+      // Only the current generation's answer is kept.
+      sql.exec("DELETE FROM runner_state WHERE key LIKE 'protocol:%' AND key != ?", `protocol:${gen}`)
+      if (version === undefined) del(`protocol:${gen}`)
+      else set(`protocol:${gen}`, version)
+    },
+    exitReported: () => get('exit_reported') ?? 0,
+    setExitReported: gen => set('exit_reported', gen),
+  }
+}
