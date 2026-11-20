@@ -91,9 +91,10 @@ describe('the table registry', () => {
     expect(importsR2Keys("import { photoKey } from '../db/r2-keys.ts'")).toBe(true)
     expect(importsR2Keys("import { backupManifestKey } from '../../server/db/r2-keys.ts'")).toBe(true)
     // Every key builder's key sits under a listed prefix.
-    const builders = Object.entries(r2Keys).filter(([, v]) => typeof v === 'function') as [string, (...a: string[]) => string][]
+    // One argument list every builder accepts: an id or a number where each takes one (deletionLogKey checks its numbers).
+    const builders = Object.entries(r2Keys).filter(([, v]) => typeof v === 'function') as [string, (...a: (string | number)[]) => string][]
     expect(builders.map(([n]) => n)).toContain('photoKey')
-    for (const [name, build] of builders) expect(R2_PREFIXES.some(p => build('m_x', 'r', 's').startsWith(p)), name).toBe(true)
+    for (const [name, build] of builders) expect(R2_PREFIXES.some(p => build(1, 'r', 1, 's').startsWith(p)), name).toBe(true)
   })
 
   it('every ops/ module that writes R2 builds its keys through r2-keys.ts (failure 3, P8)', () => {
