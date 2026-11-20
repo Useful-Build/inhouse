@@ -384,6 +384,23 @@ describe('writes', () => {
     expect(((await errorOf(agent.grantSupport(2))) as AgentError).code).toBe('invalid')
   })
 
+  test('a grant that ended behind the client is not there to end, and the snapshot shows it ended', async () => {
+    const { agent } = await loaded({
+      ...reads(), 'GET /api/grants': { body: { items: [grant()] } },
+      'POST /api/grants/g_1/end': refusal(409, 'conflict', { current: grant({ rev: 2, endedAt: iso(2000), endedBy: ME_ID, live: false }) }),
+    })
+    expect(((await errorOf(agent.endSupportGrant('g_1'))) as AgentError).code).toBe('not_found')
+    expect(agent.read().people.supportGrant).toMatchObject({ rev: 2, live: false })
+    expect(((await errorOf(agent.endSupportGrant('g_1'))) as AgentError).code, 'and once it shows ended, nothing is sent').toBe('not_found')
+  })
+
+  test('the name is written at the member rev, which a photo or a role change moved', async () => {
+    let seen: unknown
+    const { agent } = await loaded({ ...reads({ members: [member(ME_ID, { role: 'admin', rev: 4 })], settings: { personal: [record('g:name', 'Sam Mercer', 1)] } }), 'GET /api/me': { body: me() }, [put('g:name')]: r => { seen = JSON.parse(r.body!); return { body: record('g:name', 'Sam', 5) } } })
+    await agent.setSetting('g:name', 'Sam')
+    expect(seen).toEqual({ value: 'Sam', ifRev: 4 })
+  })
+
   test('a refused grant is taken back; one already live is a conflict with its reason', async () => {
     const { agent, heard } = await loaded({ ...reads(), 'POST /api/grants': refusal(409, 'conflict', { reason: 'grant_live' }) })
     const before = agent.read()

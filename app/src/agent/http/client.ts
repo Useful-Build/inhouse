@@ -332,7 +332,7 @@ export class HttpAgent implements AgentClient {
       } catch (e) {
         if (this.s === mine) this.commit(before); else this.commit(o.undo(this.s, before))
         const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
-        if (err.code === 'conflict' && err.current && o.onConflict) this.commit(o.onConflict(this.s, err.current))
+        if (err.current && o.onConflict) this.commit(o.onConflict(this.s, err.current))
         throw this.fail(err)
       }
     })())
@@ -358,7 +358,9 @@ export class HttpAgent implements AgentClient {
     if (raw !== null && !meetsRule(row.rule, raw)) return this.refuseLocal('invalid', `That isn't a value for "${key}".`, REASON.badType)
     // Text is kept as the server keeps it: trimmed.
     const value = typeof raw === 'string' && row.rule.t === 'text' ? raw.trim() : raw
-    const body = k.BODIES.settingWrite.safeParse({ value, ifRev: this.s.revs[key] ?? 0 })
+    // The name is on the member's row: its rev is the member's, which a photo or a role change moves too.
+    const rev = key === 'g:name' ? this.s.members.find(m => m.id === this.s.me?.memberId)?.rev ?? this.s.revs[key] ?? 0 : this.s.revs[key] ?? 0
+    const body = k.BODIES.settingWrite.safeParse({ value, ifRev: rev })
     if (!body.success) return this.refuseLocal('invalid', `That isn't a value for "${key}".`, REASON.badType)
     const was = this.valueOf(this.s, key)
     const put = (s: Slices, rec: { value: SettingValue; rev: number }): Slices => ({ ...this.withValue(s, key, rec.value), revs: { ...s.revs, [key]: rec.rev } })
@@ -482,9 +484,15 @@ export class HttpAgent implements AgentClient {
     const was = this.s.grant
     const mine = was && was.id === id ? was : null
     const body = k.BODIES.grantEnd.parse({ ifRev: mine?.rev ?? 1 })
+    // A grant already over isn't there to end.
+    if (mine && !isLive(mine, this.now())) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
     return this.write({
       apply: s => ({ ...s, grant: mine && { ...mine, endedAt: instantOf(this.now()), endedBy: s.me?.memberId ?? mine.createdBy, live: false } }),
-      send: () => this.http.call({ method: 'POST', path: `/api/grants/${encodeURIComponent(id)}/end`, schema: 'grant', json: body }),
+      send: () => this.http.call({ method: 'POST', path: `/api/grants/${encodeURIComponent(id)}/end`, schema: 'grant', json: body }).catch((e: unknown) => {
+        // The server says conflict for a grant that ended behind us (its rev moved); to the person it is simply not there to end.
+        const g = e instanceof AgentError && e.code === 'conflict' ? k.ANSWERS.grant.safeParse(e.current) : null
+        throw g?.success && !g.data.live ? new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND], { current: e instanceof AgentError ? e.current : undefined }) : e
+      }),
       done: (s, g) => ({ ...s, grant: g }),
       undo: s => ({ ...s, grant: was }),
       onConflict: (s, current) => { const g = k.ANSWERS.grant.safeParse(current); return g.success ? { ...s, grant: g.data } : s },
