@@ -93,9 +93,10 @@ function moduleGraph({ modules }) {
  */
 const PUBLIC_DEMO = join(root, 'public-demo')
 if (!existsSync(PUBLIC_DEMO)) fail('public-demo/ is missing: the copied-files check has nothing to compare against.')
-const publicDemoTop = readdirSync(PUBLIC_DEMO)
+// Dotfiles (a Finder .DS_Store) are never demo content and are gitignored, so they're left out on both sides.
+const publicDemoTop = readdirSync(PUBLIC_DEMO).filter(n => !n.startsWith('.'))
 if (publicDemoTop.length === 0) fail('public-demo/ is empty: the copied-files check has nothing to compare against.')
-const publicDemoFiles = new Set(walk(PUBLIC_DEMO).map(f => relative(PUBLIC_DEMO, f).split(sep).join('/')))
+const publicDemoFiles = new Set(walk(PUBLIC_DEMO).map(f => relative(PUBLIC_DEMO, f).split(sep).join('/')).filter(f => !f.split('/').some(p => p.startsWith('.'))))
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const DEMO_ONLY_TOP = new RegExp(`^(${publicDemoTop.map(escapeRe).join('|')})(/|$)`)
 function copiedFiles({ clientDir, files }) {

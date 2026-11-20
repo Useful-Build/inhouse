@@ -2,18 +2,13 @@
 // was added to it, the model pick and the Library view survive a reload; a chat answering at the reload says so; Reset
 // demo clears every one of them and puts the stage and scenario back to Act and Normal, also after a reload. What was added
 // to a sample chat survives a reload on First day (no chats there), and the demo clock never runs backwards on a reload.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test, type Stage } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, hash = '#/today', stage = 'Act', scenario = 'Normal') {
+async function start(page: Page, hash = '#/today', stage: Stage = 'Act', scenario = 'Normal') {
   // Time keeps flowing; runFor adds app time on top (the session save, answers), so no real sleep.
   await page.clock.install()
-  await page.addInitScript(([s, sc]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, scenario])
+  await fxFor(page, undefined).seed({ stage, scenario })
   await page.goto('/?demo' + hash)
 }
 

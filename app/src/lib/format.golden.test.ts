@@ -20,7 +20,7 @@ vi.stubGlobal('localStorage', {
 })
 const { MockAgent } = await import('../agent/mock')
 const { instantOf } = await import('./format')
-const { DEMO_LATEST, DEMO_START, demoNow } = await import('../agent/demo-clock')
+const { DEMO_LATEST, DEMO_START, demoClockFor, demoNow } = await import('../agent/demo-clock')
 const { capStatus, defaultModeId, lastRunLine, sinceLine, toolView, usageSummary, whenOf } = await import('../state/derive')
 const { checkField } = await import('../screens/settings/content')
 const F = await import('./format')
@@ -28,7 +28,7 @@ const { display, nowOf, setNow } = await import('../state/display')
 const d = display()
 
 /** Now on the demo clock: what relative labels ("Today", "Yesterday") are measured from. */
-setNow(() => demoNow(agent.getSnapshot().demoStartedAt).getTime())
+setNow(() => demoClockFor(agent)())
 const now = () => nowOf()
 // Each call site's own helper from format.ts, so this checks the code the screen runs: fmtUsageMoney and fmtSpentOfCap
 // (src/screens/Usage.tsx), fmtNextRun (src/screens/chat/Parts.tsx), fmtAuditDay, fmtCapSetting and fmtSpentSetting

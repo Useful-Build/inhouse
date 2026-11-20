@@ -33,3 +33,7 @@ export const demoAt = (rel: string): Instant => {
 /** The demo's Monday at a minute since midnight: how a time stored before C1 ("8:03 AM", minute 483) becomes an instant. */
 export const demoDayAt = (minute: number): Instant =>
   instantOf(new Date(DEMO_START.getFullYear(), DEMO_START.getMonth(), DEMO_START.getDate(), 0, minute).getTime())
+
+/** "Now" for a demo agent: its demo clock, from when that agent's demo started. The demo entry and the tests share it. */
+export const demoClockFor = (agent: { getSnapshot(): { demoStartedAt: number } }) => (): number =>
+  demoNow(agent.getSnapshot().demoStartedAt).getTime()

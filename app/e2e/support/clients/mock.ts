@@ -2,7 +2,7 @@
 // (with support/capture/ and support/fixtures/). Specs go through `fx` (../fx.ts); P2 adds clients/real.ts beside this one.
 import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
-import type { Fx, Names, Restage, Saved, Seed, SavedDemo } from '../fx.js'
+import type { Fx, Names, Restage, Saved, Seed, SavedDemo, Theme } from '../fx.js'
 
 export type { Names, Seed, Stage, Theme } from '../fx.js'
 
@@ -53,13 +53,13 @@ const stateOf = (page: Page) => {
   return s
 }
 
-type Script = { id: number; entries: [string, string][]; once: boolean; clear: boolean }
+type Script = { id: number; entries: [string, string][]; once: boolean; clear: boolean; stampStart?: boolean }
 /**
  * Runs before every document of the page. The reset mark lives in this tab's sessionStorage (written by `reset`), so a
  * reset on one tab never switches off another tab's seeds. A script whose id the mark has passed does nothing. Ids are
  * unique across pages (`lastId`), so the marks a popup copies from its opener never cover a script of its own.
  */
-function applySeed({ id, entries, once, clear }: Script) {
+function applySeed({ id, entries, once, clear, stampStart }: Script) {
   // about:blank and other non-http documents have no storage (it throws a SecurityError): nothing to seed there.
   if (!location.protocol.startsWith('http')) return
   const reset = sessionStorage.getItem('e2e-reset')
@@ -67,7 +67,10 @@ function applySeed({ id, entries, once, clear }: Script) {
   const mark = `e2e-seeded-${id}`
   if (once && sessionStorage.getItem(mark)) return
   if (clear) localStorage.clear()
-  for (const [k, v] of entries) localStorage.setItem(k, v)
+  for (const [k, v] of entries) {
+    // The demo clock's zero is the time the seed applies in the browser, not when Node called seedSaved.
+    localStorage.setItem(k, stampStart && k === 'inhouse.demo.v2' ? JSON.stringify({ demoStartedAt: Date.now(), ...JSON.parse(v) }) : v)
+  }
   if (once) sessionStorage.setItem(mark, '1')
 }
 
@@ -77,10 +80,10 @@ const switches = ({ stage, scenario = 'Normal', demo }: Restage) => ({
 
 export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt(): Promise<number> } {
   let names: Names | undefined
-  const install = async (entries: Record<string, string>, once: boolean, clear: boolean) => {
+  const install = async (entries: Record<string, string>, once: boolean, clear: boolean, stampStart = false) => {
     const st = stateOf(page)
     st.n = ++lastId
-    await page.addInitScript(applySeed, { id: st.n, entries: Object.entries(entries), once, clear })
+    await page.addInitScript(applySeed, { id: st.n, entries: Object.entries(entries), once, clear, stampStart })
   }
   const seedOnce = async (s: Seed, saved?: SavedDemo) => {
     const st = stateOf(page)
@@ -90,14 +93,17 @@ export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt()
     if (s.theme) stored[KEYS.theme] = s.theme
     if (s.demo?.brand) stored[KEYS.brand] = JSON.stringify(s.demo.brand)
     if (saved) stored[KEYS.demo] = JSON.stringify(saved)
-    await install(stored, s.once ?? true, true)
+    await install(stored, s.once ?? true, true, !!saved)
   }
   const saved = async (): Promise<Saved> => {
-    const [demo, runs, session] = await page.evaluate(
+    const [demo, runs, session, theme] = await page.evaluate(
       keys => keys.map(k => localStorage.getItem(k)),
-      [KEYS.demo, KEYS.runs, KEYS.session],
+      [KEYS.demo, KEYS.runs, KEYS.session, KEYS.theme],
     )
-    return { demo: JSON.parse(demo ?? '{}'), runs: JSON.parse(runs ?? '[]'), session: JSON.parse(session ?? '{}') }
+    return {
+      demo: JSON.parse(demo ?? '{}'), runs: JSON.parse(runs ?? '[]'), session: JSON.parse(session ?? '{}'),
+      ...(theme ? { theme: theme as Theme } : {}),
+    }
   }
 
   return {
@@ -105,6 +111,7 @@ export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt()
     seed: s => seedOnce(s),
     seedSaved: (s, savedDemo) => seedOnce(s, savedDemo),
     restage: s => install(switches(s), false, false),
+    setTheme: theme => install({ [KEYS.theme]: theme }, false, false),
     saved,
     async reset() {
       const st = stateOf(page)

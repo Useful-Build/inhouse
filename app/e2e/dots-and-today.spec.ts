@@ -1,18 +1,13 @@
 // UI polish A: the dotted background sits behind every card, Today shows only the title, the composer and the
 // Needs you cards, and the composer's logo row stops at 3 logos plus a "+N" chip.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { atRest } from './states.js'
 
 async function start(page: Page, hash: string, stage: 'Watch' | 'Act' | 'Run' = 'Act', scenario = 'Normal') {
-  await page.addInitScript(([s, sc]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, scenario])
+  await fxFor(page, undefined).seed({ stage, scenario, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -65,9 +60,7 @@ test('Today shows only the title, the composer and the Needs you cards, at every
   for (const stage of ['Watch', 'Act', 'Run'] as const) {
     await page.goto('about:blank')
     await page.context().clearCookies()
-    await page.addInitScript(([s]) => {
-      localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    }, [stage])
+    await fxFor(page, undefined).restage({ stage, demo: { ambient: 'Always' } })
     await page.goto('/?demo#/today')
     const h1 = page.getByRole('heading', { level: 1 })
     await expect(h1).toContainText('Good morning, Sam.')

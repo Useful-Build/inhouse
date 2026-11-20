@@ -10,7 +10,7 @@
 //      holding one, an alias, `promisify`), the `timers` module in any form, `scheduler.wait(`, `Atomics.wait`. Wait
 //      for a condition (an `expect` or `expect.poll`), or move time with the Clock API (`page.clock.install()`,
 //      `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine. No allow list.
-//   4. the mock's storage keys, sample data and module in the E2E specs: any `inhouse.demo.` key or the UI session key, any
+//   4. the mock's storage keys, sample data and module in the E2E specs: any `inhouse.demo.` key, the UI session key or the theme key (`inhouse.theme`), any
 //      `sample-data` or `@sample` reference, and the mock module (`agent/mock`), in e2e/ outside e2e/support/. Specs read
 //      names and seed or read back state through `fx` (e2e/support/fx.ts). Files still to migrate are in
 //      scripts/check-app-rules.e2e-seam.json with a hit count each: a count that goes up or an unlisted file fails, a
@@ -220,18 +220,18 @@ for (let i = 0; i < waits.length; i++) waits[i] = waits[i][2]
 // ---------- mock storage keys, sample data and the mock module in e2e ----------
 // Only e2e/support/ (the fixtures layer) may name the mock's storage keys or import its sample data or its module.
 // A literal guard, not a wall: a key built from pieces ('inhouse.' + 'demo.') or a path assembled at run time gets past it,
-// and review covers that. `inhouse.theme` is not in the rule: it's the app's own theme preference (product too), not demo
-// state; seed it through `fx.seed({ theme })`.
+// and review covers that. Every app key in a spec goes through `fx`, the theme preference (`inhouse.theme`) too: seed it
+// with `fx.seed({ theme })`, change it mid-test with `fx.setTheme(theme)`.
 // Files still to migrate are in scripts/check-app-rules.e2e-seam.json, with their hit counts (lines that match). A count
 // that goes up, or a file that isn't listed, fails; so does an entry that's stale or whose count is no longer exact. Batches
 // lower the counts, and the last one deletes the JSON.
 const SEAM_LIST = new URL('./check-app-rules.e2e-seam.json', import.meta.url)
 const seamListed = new Map(existsSync(SEAM_LIST) ? Object.entries(JSON.parse(readFileSync(SEAM_LIST, 'utf8')).files) : [])
 const seam = []
-// An app-owned storage key (`inhouse.demo.`, `inhouse.ui.`, `inhouse.crash.`, `inhouse.preload-reload`; not the theme), the
+// An app-owned storage key (`inhouse.demo.`, `inhouse.ui.`, `inhouse.crash.`, `inhouse.preload-reload`, `inhouse.theme`), the
 // sample data in any form (`sample-data` with or without a slash, the `@sample` alias) or the mock module (`agent/mock`,
 // any extension, or the `@client` alias, its entry point).
-const SEAM_HIT = /inhouse\.(?:demo|ui|crash)\.|inhouse\.preload-reload|sample-data|@sample|@client|agent\/mock\b/
+const SEAM_HIT = /inhouse\.(?:demo|ui|crash)\.|inhouse\.theme\b|inhouse\.preload-reload|sample-data|@sample|@client|agent\/mock\b/
 if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
   const rel = `e2e/${relative(e2eDir, file)}`
   if (rel.startsWith('e2e/support/')) continue
