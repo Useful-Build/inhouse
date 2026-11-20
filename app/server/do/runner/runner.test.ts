@@ -360,6 +360,7 @@ describe('admission answers', () => {
     [400, { error: 'bad body' }, { rejected: 400, gen: 1 }],
     [413, { error: 'body too large' }, { rejected: 413, gen: 1 }],
     [503, { error: 'the runner is stopping' }, { unavailable: 'the runner is stopping', gen: 1 }],
+    [500, { error: 'could not set up the session user' }, { unavailable: 'could not set up the session user', gen: 1 }],
   ])('a typed %i %j is definite: %j', t(async (state, status: number, body: unknown, want: unknown) => {
     const c = new FakeContainer()
     c.route = v2Runner([2], () => json(status, body))
@@ -368,7 +369,6 @@ describe('admission answers', () => {
   }))
 
   it.each([
-    [500, JSON.stringify({ error: 'internal error' })],
     [500, 'oops'],
     [502, '<html>bad gateway</html>'],
     [504, ''],

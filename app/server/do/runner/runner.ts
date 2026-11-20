@@ -81,8 +81,9 @@ export interface RunnerDeps<B> {
  * - `protocol`: no shared version, or a 426;
  * - `placementError`: the container never answered `/protocol` (it didn't start, stopped, or the boot deadline passed);
  * - `rejected`: a typed 4xx (`ErrorBody`): the runner refused this turn's start (a bad body, too large);
- * - `unavailable`: a typed 503 (`ErrorBody`, e.g. stopping): the runner states it didn't admit;
- * - `ambiguous`: no answer (a network error, the 15 s abort), an untyped 5xx (500, a proxy's 502 or 504), or any other
+ * - `unavailable`: a typed 5xx (`ErrorBody`: stopping, a session user it couldn't set up): the runner states it didn't
+ *   admit (its 202 goes out at admission, so a 5xx from it comes before one);
+ * - `ambiguous`: no answer (a network error, the 15 s abort), an untyped 5xx (a proxy's 502 or 504, a bare 500), or any other
  *   answer the runner didn't type (a 2xx other than 202, a 3xx, a 4xx without `ErrorBody`).
  */
 export type AdmitResult =
@@ -173,7 +174,7 @@ export class RunnerCore<B> {
     if (res.status === 409) return { refused: 'chat_live', gen }
     const typed = ErrorBody.safeParse(body).success
     if (typed && res.status >= 400 && res.status < 500) return { rejected: res.status, gen }
-    if (typed && res.status === 503) return { unavailable: (body as ErrorBody).error.slice(0, 200), gen }
+    if (typed && res.status >= 500 && res.status < 600) return { unavailable: (body as ErrorBody).error.slice(0, 200), gen }
     this.#log({ event: 'admit_ambiguous', turnId: rs.runId, status: res.status })
     return { ambiguous: true, gen }
   }

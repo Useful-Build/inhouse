@@ -12,7 +12,7 @@
 //   | 409 chat_live                  | requeued                               | up                                   |
 //   | 503 session_pool_exhausted     | next candidate                         | refused, 5 s cool-down               |
 //   | 503 session_folder_parked      | refused `files`                        | up                                   |
-//   | typed 503 (e.g. stopping)      | requeued                               | 5 s cool-down (state, protocol kept) |
+//   | typed 5xx (stopping, no user)  | requeued                               | 5 s cool-down (state, protocol kept) |
 //   | typed 4xx                      | refused `rejected` (W1 fails it)       | untouched                            |
 //   | no shared version, 426         | next candidate                         | protocol (never picked)              |
 //   | never answered /protocol       | next candidate                         | sleeping, protocol cleared, 5 s      |
@@ -165,8 +165,7 @@ export class RunnerPool implements RunnerPoolPort {
       if ('rejected' in a) {
         // About this turn, not the runner.
         this.#dequeue(turnId)
-        // TEMPORARY cast until W1's port lists `{ refused: 'rejected'; status }` (approved, fix round 1).
-        return { refused: 'rejected', status: a.rejected } as unknown as PlaceAnswer
+        return { refused: 'rejected', status: a.rejected }
       }
       if ('unavailable' in a) {
         this.#d.sql.exec('UPDATE pool_runners SET refused_until_ms = ? WHERE runner = ?', this.#d.now() + REFUSED_COOLDOWN_MS, r.runner)
