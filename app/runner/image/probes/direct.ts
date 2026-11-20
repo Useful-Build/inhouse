@@ -12,7 +12,7 @@ import { hostAddresses } from '../../src/proxy/proc-net.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
 import type { RunConfig } from '../../src/protocol/local.ts'
 import type { RunContext } from '../../src/session/seam.ts'
-import { EXTRA_PLUGIN, PROBE_MODEL } from './lib.ts'
+import { EXTRA_PLUGIN, HOME_SKILL, PROBE_MODEL } from './lib.ts'
 
 export type DirectVariant =
   /** The guarded options as production builds them: an agent run without the root (run.ts's fallback path). */
@@ -33,6 +33,9 @@ export type DirectVariant =
   | 'skills-not-off'
   /** The same, and the `skills` allowlist taken out too (test-only): nothing of ours stands between /code-review and the CLI. */
   | 'skills-open'
+  /** Seed a user skill before query(), with the production skill guards or with just those guards off. */
+  | 'home-skill-guarded'
+  | 'home-skill-open'
   /** The built-in plugins not turned off, and a plugin we don't ship added (test-only): init must list more than ours. */
   | 'plugins-not-off'
 
@@ -101,6 +104,19 @@ switch (input.variant) {
     delete (options.settings as { skillOverrides?: unknown }).skillOverrides
     delete options.skills
     break
+  case 'home-skill-guarded':
+  case 'home-skill-open': {
+    // Both runs start with the same discoverable fixture in their own HOME. The positive control changes only
+    // skill discovery/filtering. In particular the sandbox stays on.
+    const skill = join(env.HOME!, '.claude', 'skills', HOME_SKILL)
+    mkdirSync(skill, { recursive: true })
+    writeFileSync(join(skill, 'SKILL.md'), `---\nname: ${HOME_SKILL}\ndescription: A probe-only skill.\n---\nSay hello.\n`, { flag: 'wx' })
+    if (input.variant === 'home-skill-open') {
+      options.settingSources = ['user']
+      options.skills = 'all'
+    }
+    break
+  }
   case 'plugins-not-off': {
     delete (options.settings as { enabledPlugins?: unknown }).enabledPlugins
     // In the session user's own temp folder (emptied at release).

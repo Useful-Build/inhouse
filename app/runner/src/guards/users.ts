@@ -131,6 +131,8 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
     }
     drop()
     free.push(user)
+    // Stream EOF precedes release. This is the completion event for observers of an actual release, not a failed allocate.
+    if (ran) log({ type: 'session_user_released', uid: user.uid, sessionKey })
   }
 
   async function allocate(sessionKey: string): Promise<SessionUser> {

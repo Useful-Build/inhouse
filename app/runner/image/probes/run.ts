@@ -18,9 +18,11 @@
 // outside the container that the sandbox's allowlist can name.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
+import { EventEmitter, once } from 'node:events'
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline'
 import { PROTOCOL_HEADER, PROTOCOL_VERSION, type RunEvent } from '../../../shared/protocol/index.ts'
 import { SHARED_WRITABLE, createSessionHost, parseStatus, readProcs } from '../../src/guards/host.ts'
 import { ALLOWED_SKILLS, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER, PLUGIN_NAME } from '../../src/guards/lists.ts'
@@ -31,6 +33,7 @@ import { sessionEnv } from '../../src/session/env.ts'
 import type { DirectInput, DirectVariant } from './direct.ts'
 import {
   EXTRA_PLUGIN,
+  HOME_SKILL,
   PROBE_MODEL,
   facts,
   newScript,
@@ -107,7 +110,20 @@ function procs(): Proc[] {
 
 const egress = await startEgress()
 const rootLog: string[] = []
+type Release = { ok: boolean; uid?: number; detail: string }
+const rootReleases = new Map<string, Release>()
+const releaseEvents = new EventEmitter()
 let root: ChildProcess
+
+function keepRootLine(line: string) {
+  rootLog.push(line)
+  if (!line.startsWith('{')) return
+  const { type, sessionKey, uid, error } = JSON.parse(line) as Record<string, unknown>
+  if (typeof sessionKey !== 'string' || typeof uid !== 'number' || (type !== 'session_user_released' && type !== 'session_user_quarantined')) return
+  const receipt = { ok: type === 'session_user_released', uid, detail: type === 'session_user_released' ? `released uid ${uid}` : `quarantined uid ${uid}: ${error}` }
+  rootReleases.set(sessionKey, receipt)
+  releaseEvents.emit(sessionKey, receipt)
+}
 
 async function health(): Promise<{ ok: boolean; live: number; quarantinedUsers?: number } | null> {
   try {
@@ -123,9 +139,8 @@ async function startRoot() {
     env: { PATH: '/usr/local/bin:/usr/bin:/bin', EGRESS_URL: `http://127.0.0.1:${egress.port}`, PORT: '8080', PROXY_PORT: '8081' },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  const keep = (d: Buffer) => rootLog.push(...d.toString('utf8').split('\n').filter((l) => l.trim() !== ''))
-  root.stdout!.on('data', keep)
-  root.stderr!.on('data', keep)
+  createInterface({ input: root.stdout! }).on('line', keepRootLine)
+  createInterface({ input: root.stderr! }).on('line', (line) => rootLog.push(line))
   root.on('exit', (code, signal) => rootLog.push(`root exited ${code ?? signal}`))
   await waitUntil(() => root.exitCode === null && health(), 'the root to answer /health', 30_000, 100)
 }
@@ -154,15 +169,28 @@ function sdkMessages(events: RunEvent[]): Record<string, unknown>[] {
   return events.filter((e) => e.type === 'sdk').map((e) => (e as { message: Record<string, unknown> }).message)
 }
 type Init = { tools: string[]; skills: string[]; plugins: { name: string }[]; slash_commands: string[] }
-const initOf = (r: Run): Init | undefined => {
-  if (r.via === 'root') return sdkMessages(r.events).find((m) => m.type === 'system' && m.subtype === 'init') as Init | undefined
-  const l = r.lines.find((x) => x.type === 'init') as (Omit<Init, 'plugins'> & { plugins: string[] }) | undefined
+function directInitOf(lines: Run['lines']): Init | undefined {
+  const l = lines.find((x) => x.type === 'init') as (Omit<Init, 'plugins'> & { plugins: string[] }) | undefined
   return l && { ...l, plugins: l.plugins.map((name) => ({ name })) }
 }
+const initOf = (r: Run): Init | undefined =>
+  r.via === 'root' ? (sdkMessages(r.events).find((m) => m.type === 'system' && m.subtype === 'init') as Init | undefined) : directInitOf(r.lines)
 const terminalOf = (r: Run): { type: string; reason?: string } | undefined => {
   if (r.via === 'root') return r.events.findLast((e) => e.type === 'finished' || e.type === 'failed')
   const res = r.lines.find((x) => x.type === 'result')
   return res ? { type: 'finished' } : { type: 'failed', reason: 'session_crashed', ...(r.lines.find((x) => x.type === 'error') ?? {}) }
+}
+
+/** The stream ends first; wait for the pool to report a completed release or quarantine for this chat. */
+async function releaseOf(r: Run): Promise<Release> {
+  if (r.via === 'direct') return { ok: r.cleanup === '', uid: agentUser(r.chatId).uid, detail: r.cleanup || 'direct release passed' }
+  if (r.status !== 200) return { ok: false, detail: `POST /runs returned ${r.status}: ${r.body}` }
+  try {
+    // Cache the event as it may already be here by the time the caller inspects the stream.
+    return rootReleases.get(r.chatId) ?? ((await once(releaseEvents, r.chatId, { signal: AbortSignal.timeout(30_000) }))[0] as Release)
+  } catch {
+    return { ok: false, detail: `no release event for ${r.chatId}` }
+  }
 }
 
 /** Starts one run through the root's API; `done` settles once its stream has ended. */
@@ -177,6 +205,8 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
     })
     return { run, done }
   }
+  // A probe that runs the same chat twice waits for the first release before it starts the second run.
+  rootReleases.delete(opts.chatId)
   egress.byToken.set(token, state)
   const done = (async () => {
     const res = await fetch('http://127.0.0.1:8080/runs', {
@@ -408,7 +438,7 @@ async function probeClaudeDir() {
     { name: 'rm-mcp-json', cmd: 'rm -f .mcp.json' },
     { name: 'plugin', cmd: 'touch /opt/inhouse/plugin/x' },
     { name: 'runner', cmd: 'touch /opt/runner/x' },
-    { name: 'home-skill', cmd: `mkdir -p "$HOME/.claude/skills/evil" && printf -- '---\\nname: evil\\ndescription: probe\\n---\\nprobe\\n' > "$HOME/.claude/skills/evil/SKILL.md" && echo made` },
+    { name: 'home-skill', cmd: `mkdir -p "$HOME/.claude/skills/${HOME_SKILL}" && printf -- '---\\nname: ${HOME_SKILL}\\ndescription: probe\\n---\\nprobe\\n' > "$HOME/.claude/skills/${HOME_SKILL}/SKILL.md" && echo made` },
     { name: 'home-settings', cmd: `mkdir -p "$HOME/.claude" && printf '{"permissions":{"allow":["Bash"]}}' > "$HOME/.claude/settings.json" && echo made` },
   ]
   const script = shellScript(probes)
@@ -443,11 +473,27 @@ async function probeClaudeDir() {
   await host.parkFolder(selfKey)
   record('claude-dir.not-writable', leaks.length === 0 && offLeaks.length >= 6, `agent: ${JSON.stringify(leaks)} | guard off (root, same layout): ${JSON.stringify(offLeaks)}`)
 
-  // And whatever a home held, nothing in it loads: settingSources [] and the lists (the wipe empties it besides).
-  const again = await startRun({ chatId: 'p-claude', script: { steps: [] } }).done
-  const init = initOf(again)
-  const loaded = [...(init?.skills ?? []), ...(init?.slash_commands ?? [])].filter((s) => s.includes('evil'))
-  record('claude-dir.home-skill-not-loaded', init !== undefined && loaded.length === 0, `next run's skills ${JSON.stringify(init?.skills)}, matching commands ${JSON.stringify(loaded)}`)
+  // An empty HOME proves nothing about discovery. Both direct sessions start with a planted skill in HOME, but only
+  // the positive control opts into user settings and all discovered skills. Read the actual SDK init, not a follow-up
+  // request that can hit a chat whose release is still running.
+  const input = { prompt: 'Run the probe.', webFetchDomains: [] }
+  const guarded = await direct('home-skill-guarded', input, { steps: [] })
+  const control = await direct('home-skill-open', input, { steps: [] })
+  const discover = (d: typeof guarded) => {
+    const init = directInitOf(d.lines)
+    if (!Array.isArray(init?.skills) || !Array.isArray(init.slash_commands)) return undefined
+    return [...init.skills, ...init.slash_commands].filter((s) => s.replace(/^\//, '') === HOME_SKILL)
+  }
+  const finished = (d: typeof guarded) => d.cleanup === '' && d.state.misses.length === 0 && d.lines.some((l) => l.type === 'result' && l.subtype === 'success' && l.isError === false)
+  const loaded = discover(guarded)
+  const offLoaded = discover(control)
+  const judgeInit = (d: typeof guarded, skills: string[] | undefined) =>
+    `${finished(d) ? 'finished' : `run or cleanup failed (${d.cleanup || d.raw.slice(-200)})`}, matching init entries ${JSON.stringify(skills) ?? 'unavailable'}`
+  record(
+    'claude-dir.home-skill-not-loaded',
+    finished(guarded) && finished(control) && loaded?.length === 0 && (offLoaded?.length ?? 0) > 0,
+    `guarded: ${judgeInit(guarded, loaded)} | discovery enabled: ${judgeInit(control, offLoaded)}`,
+  )
 }
 
 async function probeFacts() {
@@ -507,16 +553,26 @@ async function probeFacts() {
 
 async function probeLongTmpdir() {
   const chatId = `p-long-${'x'.repeat(57)}`
-  const { done } = startRun({ chatId, script: { steps: [bash('echo "TMPDIR=$TMPDIR"; touch "$TMPDIR/probe-long" && echo wrote; ls -ld "$TMPDIR"')] } })
+  const { done } = startRun({ chatId, script: { steps: [bash('echo "TMPDIR=$TMPDIR"; touch "$TMPDIR/probe-long" && echo wrote-$((40+2)); ls -ld "$TMPDIR"')] } })
   const r = await done
   checkRun('long-tmpdir', r, [0])
-  const out = result(r, 0)?.text.replace(/\n/g, ' ') ?? 'no output'
+  const out = result(r, 0)?.text ?? 'no output'
+  const wrote = /^wrote-42$/m.test(out)
   fact('tmpdir.long-chat-id', out)
   // The temp folder is named by the pool user, so the longest chat id leaves room for the sandbox's sockets in it.
-  record('long-tmpdir.bash-runs', out.split(' ').includes('wrote'), out.slice(0, 300))
-  // The run is over and its uid released: nothing it left in its temp folder or a shared one may still be there.
-  const left = await runCommand('find', ['/tmp', '/var/tmp', '/dev/shm', USERS_ROOT, '-xdev', '-name', 'probe-long'])
-  record('long-tmpdir.wiped-at-release', left.out.trim() === '', `left: ${left.out.trim() || 'nothing'}`)
+  record('long-tmpdir.bash-runs', wrote, out.slice(0, 300))
+  const release = await releaseOf(r)
+  const owner = pool.find((u) => u.uid === release.uid)
+  const tmp = owner && userPaths(owner.user).tmp
+  const bashTmpdir = /^TMPDIR=(.+)$/m.exec(out)?.[1]
+  const usedOwnTmp = tmp !== undefined && (bashTmpdir === tmp || bashTmpdir?.startsWith(`${tmp}/`) === true)
+  const ownLeft = tmp ? await runCommand('find', [tmp, '-xdev', '-mindepth', '1', '-print', '-quit']) : undefined
+  const sharedLeft = await runCommand('find', ['/tmp', '/var/tmp', '/dev/shm', '-xdev', '-name', 'probe-long'])
+  record(
+    'long-tmpdir.wiped-at-release',
+    wrote && usedOwnTmp && release.ok && ownLeft?.code === 0 && ownLeft.out.trim() === '' && sharedLeft.code === 0 && sharedLeft.out.trim() === '',
+    `${release.detail}; marker written in own TMPDIR: ${wrote && usedOwnTmp}; own tmp: ${ownLeft ? `${ownLeft.code}, ${ownLeft.out.trim() || 'empty'}` : 'unknown'}; shared: ${sharedLeft.code}, ${sharedLeft.out.trim() || 'no marker'}`,
+  )
 }
 
 /**
@@ -606,7 +662,8 @@ async function probeIsolation() {
     { name: 'grep-shared', cmd: `grep -rs 'CANARY.A' /tmp /var/tmp /dev/shm /run/lock` },
     { name: 'proc-holder', cmd: `tr '\\0' ' ' < /proc/${holder.pid}/cmdline; tr '\\0' ' ' < /proc/${holder.pid}/environ` },
     { name: 'proc-a-session', cmd: `tr '\\0' ' ' < /proc/${aSession?.pid}/environ; tr '\\0' ' ' < /proc/${aSession?.pid}/cmdline` },
-    { name: 'proc-all', cmd: `for p in /proc/[0-9]*; do tr '\\0' ' ' < $p/cmdline; tr '\\0' ' ' < $p/environ; done 2>/dev/null | grep -o 'CANARY.A[A-Z_]*\\|canary.A[a-z-]*' | sort -u` },
+    // Match the full markers, spelling each with a character class so the pattern in B's own argv doesn't match.
+    { name: 'proc-all', cmd: `for p in /proc/[0-9]*; do tr '\\0' ' ' < $p/cmdline; tr '\\0' ' ' < $p/environ; done 2>/dev/null | grep -oE 'CANAR[Y]_A_ENVIRON|canar[y]-A-cmdline-holder' | sort -u && echo scanned-$((40+2))` },
     { name: 'ps', cmd: 'ps -eo pid,user,args --no-headers | head -30' },
   ]
   const [a1, a2] = split(a.run.token)
@@ -657,6 +714,9 @@ async function probeIsolation() {
   const files = filesProbes()
   // Guard off: root reads the same, while A is still up (its release empties its home and temp folder).
   const off = await rootShell(shellScript(files))
+  // The off scan must see a real marker while A's holder is up. A's own uid can also read its proc entries without
+  // Docker root needing CAP_SYS_PTRACE.
+  const procOff = (await userShell(aUser, shellScript(files.filter((p) => p.name === 'proc-all')))).get('proc-all')
   // Guard off for the channel: A's own uid, outside the sandbox, sees both channel fds of A's session (A is still up).
   const chOff = aSession ? await runCommand('sh', ['-c', `for f in 3 4; do readlink /proc/${aSession.pid}/fd/$f; done 2>&1`], { uid: aUser.uid, gid: aUser.gid }) : { code: null, out: "A's session not found" }
   const offReadable = [`${wa}/inputs/secret.txt`, aTmpSecret(), `${aOwn.home}/secret`].every((p) => existsSync(p) && canary(readFileSync(p, 'utf8')))
@@ -668,9 +728,14 @@ async function probeIsolation() {
   checkRun('isolation.a', ra, [0])
   checkRun('isolation.b', rb, [0, 10])
   fact('isolation.a-wrote', ra.state.results.get(ra.state.ids[0]!)?.text.slice(0, 300) ?? '')
-  // A's release: nothing of it is left in its home or its temp folder for the uid's next chat.
+  // A's release: the canaries were readable before release; now neither folder may contain anything at all.
+  const aRelease = await releaseOf(ra)
   const aLeft = await runCommand('find', [aOwn.home, aOwn.tmp, '-mindepth', '1'])
-  record('isolation.a.own-folders-emptied-at-release', aLeft.out.trim() === '', `left: ${aLeft.out.trim().slice(0, 300) || 'nothing'}`)
+  record(
+    'isolation.a.own-folders-emptied-at-release',
+    offReadable && aRelease.ok && aRelease.uid === aUser.uid && aLeft.code === 0 && aLeft.out.trim() === '',
+    `${aRelease.detail}; expected uid ${aUser.uid}, canaries seeded: ${offReadable}; find status ${aLeft.code}, left: ${aLeft.out.trim().slice(0, 300) || 'nothing'}`,
+  )
 
   const real = parseShell(result(rb, 0)?.text ?? '')
   judge(
@@ -682,11 +747,18 @@ async function probeIsolation() {
     ),
   )
   rmSync('/tmp/iso-a-secret', { force: true })
-  // The /proc probes are judged on the agent's run alone (and printed above).
-  for (const n of ['proc-holder', 'proc-a-session', 'proc-all']) {
+  for (const n of ['proc-holder', 'proc-a-session']) {
     const x = real.get(n)
     record(`isolation.bash.${n}-no-canary`, x !== undefined && !canary(x.out), x?.out.slice(0, 200) ?? 'no output')
   }
+  const procAll = real.get('proc-all')
+  const scanned = (x: ShellResult | undefined) => x?.rc === 0 && x.out.split('\n').includes('scanned-42')
+  const procSeenOff = scanned(procOff) && canary(procOff?.out ?? '')
+  record(
+    'isolation.bash.proc-all-no-canary',
+    scanned(procAll) && !canary(procAll?.out ?? '') && procSeenOff,
+    `agent: ${procAll?.out ?? 'no output'} | guard off (A's uid): ${procOff?.out ?? 'no output'}`,
+  )
   const tools = ['read-a-file', 'read-a-tmp', 'read-a-holder-cmdline', 'read-a-holder-environ', 'read-a-tmpdir', 'read-a-home', 'grep-tmp', 'grep-work', 'glob-a']
   tools.forEach((n, i) => {
     const t = result(rb, i + 1)
@@ -745,9 +817,15 @@ for _ in range(n): os.wait()
   const nOff = forked(off.out)
   record('process-limit.fork-bomb-stops', n >= 0 && n < SESSION_PROCESS_LIMIT && nOff === 1500, `agent forked ${n} (${result(r, 0)?.text.trim().slice(0, 80)}), limit ${SESSION_PROCESS_LIMIT} | guard off (no wrapper): forked ${nOff}`)
   // The release after the bomb: no uid quarantined, and the chat runs again.
+  const release = await releaseOf(r)
   const again = await startRun({ chatId: 'p-nproc', script: { steps: [] } }).done
+  const againRelease = await releaseOf(again)
   const after = (await health())?.quarantinedUsers ?? -1
-  record('process-limit.release-still-passes', before === after && r.cleanup === '' && terminalOf(again)?.type === 'finished', `release ${r.cleanup || 'passed'}; quarantined before ${before}, after ${after}; next run ${JSON.stringify(terminalOf(again))?.slice(0, 120)}`)
+  record(
+    'process-limit.release-still-passes',
+    before >= 0 && before === after && release.ok && againRelease.ok && terminalOf(again)?.type === 'finished',
+    `${release.detail}; quarantined before ${before}, after ${after}; next run ${JSON.stringify(terminalOf(again))?.slice(0, 120)} (${againRelease.detail})`,
+  )
 }
 
 /** A direct session as a pool user, with one test-only variant of the guarded options (direct.ts). */
@@ -763,6 +841,8 @@ const directUsers: Record<DirectVariant, string> = {
   'skills-not-off': 's47',
   'skills-open': 's58',
   'plugins-not-off': 's59',
+  'home-skill-guarded': 's60',
+  'home-skill-open': 's61',
 }
 /** Agent runs' pool users while they go direct: one per chat, from s20 up (the root hands out s00 up). */
 const agentUsers = new Map<string, PoolUser>()

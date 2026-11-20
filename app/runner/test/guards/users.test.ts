@@ -131,23 +131,38 @@ describe('the session pool', () => {
     },
   )
 
-  it('release resolves only after the kill, the park and the wipe; then the uid is free', async () => {
+  it('release reports completion and frees the uid only after the kill, park and wipe', async () => {
     const order: string[] = []
+    const logged: Record<string, unknown>[] = []
+    const wiping = Promise.withResolvers<void>()
+    const finishWipe = Promise.withResolvers<void>()
+    let allocated = false
     const host: SessionHost = {
       killAll: async () => void order.push('kill'),
-      wipeUserFiles: async () => void order.push('wipe'),
+      wipeUserFiles: async () => {
+        order.push('wipe')
+        if (allocated) {
+          wiping.resolve()
+          await finishWipe.promise
+        }
+      },
       prepareFolder: async (k) => (order.push('prepare'), { workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => void order.push('park'),
     }
-    const p = createSessionPool(pool(1), host)
+    const p = createSessionPool(pool(1), host, (e) => (order.push('logged'), void logged.push(e)))
     const u = await p.allocate('a')
     expect(u).toEqual({ uid: 30000, gid: 30000, user: 's00', home: '/work/a/.home', workDir: '/work/a' })
     expect(order).toEqual(['kill', 'wipe', 'prepare'])
+    allocated = true
     order.length = 0
     const released = p.release('a', u).then(() => order.push('resolved'))
+    await wiping.promise
     expect(p.state().free).toEqual([])
+    expect(logged).toEqual([])
+    finishWipe.resolve()
     await released
-    expect(order).toEqual(['kill', 'park', 'wipe', 'resolved'])
+    expect(order).toEqual(['kill', 'park', 'wipe', 'logged', 'resolved'])
+    expect(logged).toEqual([{ type: 'session_user_released', uid: 30000, sessionKey: 'a' }])
     expect(p.state().free).toEqual([30000])
   })
 
@@ -215,7 +230,8 @@ describe('the session pool', () => {
       prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => {},
     }
-    const p = createSessionPool(pool(3), host, () => {})
+    const logged: Record<string, unknown>[] = []
+    const p = createSessionPool(pool(3), host, (e) => void logged.push(e))
     // The kill fails in allocate: this uid never ran in the folder, so nothing of it has the folder open.
     failKill = true
     await expect(p.allocate('a')).rejects.toThrow(/survived/)
@@ -224,6 +240,7 @@ describe('the session pool', () => {
     // Every process is dead, a file is left: the uid is quarantined, the folder is safe to hand to another.
     failWipe = true
     await expect(p.release('a', u)).rejects.toThrow(/left a file/)
+    expect(logged.filter((e) => e.uid === u.uid)).toEqual([expect.objectContaining({ type: 'session_user_quarantined', sessionKey: 'a', error: 'left a file' })])
     failWipe = false
     expect(p.state().parkedForGood).toEqual([])
     expect(p.quarantined()).toBe(2)
