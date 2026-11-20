@@ -24,7 +24,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdir
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
-import { PROTOCOL_HEADER, PROTOCOL_VERSION, type RunEvent } from '../../../shared/protocol/index.ts'
+import { PROTOCOL_HEADER, PROTOCOL_VERSION, type RunEvent, type RunStart } from '../../../shared/protocol/index.ts'
 import { SHARED_WRITABLE, createSessionHost, parseStatus, readProcs } from '../../src/guards/host.ts'
 import { ALLOWED_SKILLS, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER, PLUGIN_NAME } from '../../src/guards/lists.ts'
 import { SESSION_PROCESS_LIMIT, USERS_ROOT, sessionPaths, userPaths } from '../../src/guards/paths.ts'
@@ -220,13 +220,17 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
         resume: false,
         prompt: opts.prompt ?? 'Run the probe.',
         model: PROBE_MODEL,
+        sideModel: PROBE_MODEL,
+        systemPrompt: '',
+        attachments: [],
+        expect: null,
         effort: 'low',
         maxTurns: 20,
         maxBudgetUsd: 1,
         runToken: token,
         webFetchDomains: opts.webFetchDomains ?? [],
         fileCaps: { maxFileBytes: 1_000_000, maxFilesPerTurn: 10, maxRestoreBytes: 1_000_000, allowedTypes: ['text/plain'] },
-      }),
+      } satisfies RunStart),
     })
     run.status = res.status
     const text = await res.text()

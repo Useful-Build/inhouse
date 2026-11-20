@@ -26,7 +26,7 @@ import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import { RunEventBody, type FileCaps } from '../../../shared/protocol/index.ts'
 import { LEFT_OUT_MAX, REFUSALS_MAX, capLeftOut, createFiles, filesPath, localPath, snapshotOutputs } from '../../src/files/files.ts'
 import { closeDir, openDir, readFileIn } from '../../src/files/safe-dir.ts'
-import { sniffType } from '../../src/files/sniff.ts'
+import { sniffType } from '../../../shared/files/sniff.ts'
 import { badProxyPath } from '../../src/proxy/server.ts'
 import { PROXY_URL, fakeEgress, type FakeEgress } from '../run/support/fake-egress.ts'
 
@@ -45,6 +45,10 @@ vi.mock('../../src/files/safe-dir.ts', async (importOriginal) => {
 })
 
 const PDF = Buffer.from('%PDF-1.7\n%test\n')
+/** SHA-256 of the fixtures' bytes, worked out with `shasum -a 256` (not by the code under test). */
+const PDF_SHA = 'c8268d253e803393702f74a502278d92bed7fb8657a04c4c10259173c3e9e3b1'
+const CSV_SHA = '492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470'
+const PDF_MORE_SHA = '65c0faf3dbb71dbe2ab7fb02848654a14271fd637f0729503814dc6a305f441d'
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
 const caps = (over: Partial<FileCaps> = {}): FileCaps => ({
   maxFileBytes: 1000,
@@ -111,8 +115,8 @@ describe('names through /files/', () => {
     const events = await saveAll()
     expect(events).toEqual([
       { type: 'file_refused', path: 'outputs/issue #4.pdf', reason: 'bad_name', bytes: PDF.length },
-      { type: 'file_saved', path: 'outputs/quarterly report.pdf', bytes: PDF.length, contentType: 'application/pdf' },
-      { type: 'file_saved', path: 'outputs/résumé ✓ 日本.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+      { type: 'file_saved', path: 'outputs/quarterly report.pdf', bytes: PDF.length, contentType: 'application/pdf', sha256: PDF_SHA },
+      { type: 'file_saved', path: 'outputs/résumé ✓ 日本.pdf', bytes: PDF.length, contentType: 'application/pdf', sha256: PDF_SHA },
     ])
     expect([...egress.files.keys()].sort()).toEqual(['outputs/quarterly report.pdf', 'outputs/résumé ✓ 日本.pdf'])
     expect(egress.calls.some((c) => c.includes('#'))).toBe(false)
@@ -129,11 +133,11 @@ describe('saving outputs/', () => {
     out('f.txt', 'hello')
     const events = await saveAll(caps({ maxFilesPerTurn: 2, allowedTypes: ['application/pdf', 'text/csv', 'text/plain'] }))
     expect(events).toEqual([
-      { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+      { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf', sha256: PDF_SHA },
       { type: 'file_refused', path: 'outputs/b-really-a-png.pdf', reason: 'type_not_allowed', bytes: PNG.length },
       { type: 'file_refused', path: 'outputs/c.exe', reason: 'type_not_allowed', bytes: 4 },
       { type: 'file_refused', path: 'outputs/d.pdf', reason: 'too_large', bytes: PDF.length + 2000 },
-      { type: 'file_saved', path: 'outputs/e.csv', bytes: 8, contentType: 'text/csv' },
+      { type: 'file_saved', path: 'outputs/e.csv', bytes: 8, contentType: 'text/csv', sha256: CSV_SHA },
       { type: 'file_refused', path: 'outputs/f.txt', reason: 'too_many', bytes: 5 },
     ])
     expect(egress.files.get('outputs/e.csv')?.contentType).toBe('text/csv')
@@ -149,8 +153,8 @@ describe('saving outputs/', () => {
     const events = await saveAll(caps(), before)
     expect(events).toEqual([
       { type: 'file_refused', path: 'outputs/link.pdf', reason: 'type_not_allowed' },
-      { type: 'file_saved', path: 'outputs/deep/er/new.pdf', bytes: PDF.length, contentType: 'application/pdf' },
-      { type: 'file_saved', path: 'outputs/old.pdf', bytes: PDF.length + 4, contentType: 'application/pdf' },
+      { type: 'file_saved', path: 'outputs/deep/er/new.pdf', bytes: PDF.length, contentType: 'application/pdf', sha256: PDF_SHA },
+      { type: 'file_saved', path: 'outputs/old.pdf', bytes: PDF.length + 4, contentType: 'application/pdf', sha256: PDF_MORE_SHA },
     ])
   })
 
@@ -181,7 +185,7 @@ describe('symlinks and links the agent planted (saving)', () => {
     const events = await saveAll()
     expect(events).toEqual([
       { type: 'file_refused', path: 'outputs/sub', reason: 'type_not_allowed' },
-      { type: 'file_saved', path: 'outputs/real.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+      { type: 'file_saved', path: 'outputs/real.pdf', bytes: PDF.length, contentType: 'application/pdf', sha256: PDF_SHA },
     ])
     expect(egress.files.has('outputs/sub/secret.pdf')).toBe(false)
   })
@@ -200,7 +204,7 @@ describe('symlinks and links the agent planted (saving)', () => {
       }
     })
     expect(events).toEqual([
-      { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+      { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf', sha256: PDF_SHA },
       { type: 'file_refused', path: 'outputs/sub/secret.pdf', reason: 'save_failed' },
     ])
     expect(egress.files.has('outputs/sub/secret.pdf')).toBe(false)
@@ -234,7 +238,7 @@ describe('symlinks and links the agent planted (saving)', () => {
     try {
       expect(await saveAll()).toEqual([
         { type: 'file_refused', path: 'outputs/locked', reason: 'save_failed' },
-        { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+        { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf', sha256: PDF_SHA },
       ])
     } finally {
       chmodSync(join(cwd, 'outputs', 'locked'), 0o755)
@@ -282,7 +286,7 @@ describe("a stop's deadline", () => {
     expect(await f.save(new Map(), emit)).toBe(true)
     expect(events).toEqual([
       { type: 'file_refused', path: 'outputs/link', reason: 'type_not_allowed' },
-      { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+      { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf', sha256: PDF_SHA },
     ])
   })
 

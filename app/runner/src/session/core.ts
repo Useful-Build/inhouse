@@ -388,8 +388,12 @@ export async function runSession(deps: {
   if (cp === null) await emit({ type: 'mirror_error', message: "the store's checkpoint did not finish before the stop's deadline" })
   else {
     if (cp.value.repaired > 0) log({ type: 'store_repaired', batches: cp.value.repaired })
-    if (cp.value.ok) await emit({ type: 'checkpoint', entries: cp.value.entries })
-    else await emit({ type: 'mirror_error', message: cp.value.error })
+    // Protocol v2's checkpoint reports the store's whole main transcript. A first run that wrote none leaves it empty;
+    // a resume that wrote none can't say what the store holds without loading it (R3's second PR does that load), so
+    // until then that's a mirror error rather than a guess.
+    const main = cp.value.ok ? (cp.value.main ?? (config.resume ? null : { mainEntries: 0, lastUuid: null, lastUuidIndex: null })) : null
+    if (cp.value.ok && main !== null) await emit({ type: 'checkpoint', ...main, runEntries: cp.value.entries })
+    else await emit({ type: 'mirror_error', message: cp.value.ok ? 'a resume that wrote no main transcript' : cp.value.error })
   }
   if (!filesDone && !deadlineCut.signal.aborted) filesDone = await files.save(before, emit, deadlineCut.signal)
   if (!filesDone) log({ type: 'files_save_cut', why: "the stop's deadline" })

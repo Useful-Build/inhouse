@@ -28,7 +28,7 @@ describe('the CLI wrapper', () => {
   const chatId = fc.stringMatching(/^[A-Za-z0-9_-]{1,64}$/)
   it.prop([chatId])('the guards always start the CLI through it', (id) => {
     const c = RunConfig.parse({
-      runId: 'r1', chatId: id, sessionId: '00000000-0000-4000-8000-000000000000', resume: false, prompt: 'hi', model: 'm', effort: 'low',
+      runId: 'r1', chatId: id, sessionId: '00000000-0000-4000-8000-000000000000', resume: false, prompt: 'hi', model: 'm', sideModel: 'm', systemPrompt: '', attachments: [], expect: null, effort: 'low',
       maxTurns: 1, maxBudgetUsd: 1, webFetchDomains: [],
       fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 1, allowedTypes: [] },
     })

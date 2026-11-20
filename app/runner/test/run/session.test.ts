@@ -14,7 +14,10 @@
 // - an audit entry carries no expiry, so the root writes one the hook already refused on its timeout;
 // - the note on left-out files grows with the number of files, or counts the event's "and N more" as a name;
 // - a stop's deadline doesn't cut a hanging checkpoint, or a query that ends after it still waits on the checkpoint;
-// - a stop during the restore waits for it (past the stop's deadline).
+// - a stop during the restore waits for it (past the stop's deadline);
+// - a first run that wrote no main transcript sends no checkpoint (the Worker could never mark it waiting) or a
+//   non-empty one; a resume that wrote none sends a checkpoint it can't back (protocol v2's checkpoint is the store's
+//   total, which only a load can tell: R3's second PR).
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -158,7 +161,7 @@ describe('runSession', () => {
   it('resume: true passes resume, not sessionId; "" is passed as the prompt', async () => {
     const q = fakeQuery([result])
     const h = harness(q.query)
-    const c = config({ resume: true, prompt: '' })
+    const c = config({ resume: true, prompt: '', expect: { mainEntries: 1, lastUuid: null, lastUuidIndex: null } })
     h.deliver({ type: 'run', config: c })
     await h.done
     expect(q.calls[0]!.options.resume).toBe(c.sessionId)
@@ -465,9 +468,27 @@ describe('the run lifecycle', () => {
     h.deliver({ type: 'run', config: config() })
     await h.done
     expect(types(h.events())).toEqual(['sdk', 'sdk', 'checkpoint', 'finished'])
-    expect(h.events()[2]).toEqual({ type: 'checkpoint', entries: 2 })
+    expect(h.events()[2]).toEqual({ type: 'checkpoint', mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1, runEntries: 2 })
     expect(egress.entries({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' }).map((e: any) => e.uuid)).toEqual(['u1', 'u2'])
     expect(h.logs).toContainEqual({ type: 'store_repaired', batches: 1 })
+  })
+
+  it('the store: a first run that wrote no main transcript checkpoints an empty store', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config({ resume: false }) })
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'checkpoint', 'finished'])
+    expect(h.events()[1]).toEqual({ type: 'checkpoint', mainEntries: 0, lastUuid: null, lastUuidIndex: null, runEntries: 0 })
+  })
+
+  it('the store: a resume that wrote no main transcript is a mirror_error, not a checkpoint', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config({ resume: true, expect: { mainEntries: 4, lastUuid: 'u', lastUuidIndex: 3 } }) })
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'mirror_error', 'finished'])
+    expect(h.events()[1]).toEqual({ type: 'mirror_error', message: 'a resume that wrote no main transcript' })
   })
 
   it('the store: when the repair fails too, mirror_error and no checkpoint; the run still finishes with its cost', async () => {
@@ -630,7 +651,7 @@ describe('the run lifecycle', () => {
     egress.files.set('inputs/huge.txt', { body: new Uint8Array(5000) })
     const q = fakeQuery([result])
     const h = harness(q.query, testQueryGuards, { egress })
-    h.deliver({ type: 'run', config: config({ resume: true, prompt: '', fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 10, allowedTypes: [] } }) })
+    h.deliver({ type: 'run', config: config({ resume: true, prompt: '', expect: { mainEntries: 1, lastUuid: null, lastUuidIndex: null }, fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 10, allowedTypes: [] } }) })
     await h.done
     expect(q.calls[0]!.prompt).toBe('')
   })
@@ -792,7 +813,8 @@ describe('the production wiring', () => {
   it('production cannot run a tool call unrecorded (blocked on the transport\'s nack), takes no injected host deps, and refuses a missing guard', async () => {
     const config = RunConfig.parse({
       runId: 'r1', chatId: 'chat1', sessionId: '00000000-0000-4000-8000-000000000000', resume: false, prompt: 'hi',
-      model: 'claude-sonnet-5-5', effort: 'low', maxTurns: 1, maxBudgetUsd: 1, webFetchDomains: [],
+      model: 'claude-sonnet-5-5', sideModel: 'claude-haiku-5-5', systemPrompt: '', attachments: [], expect: null,
+      effort: 'low', maxTurns: 1, maxBudgetUsd: 1, webFetchDomains: [],
       fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 0, allowedTypes: [] },
     })
     // The run's real audit transport (R1's, src/session/core.ts), on a channel this test answers for the root.

@@ -6,10 +6,37 @@
 // - a deferred input or a usage over its cap passes;
 // - negotiation picks a version one side doesn't speak;
 // - /health from a runner that doesn't count quarantined users yet fails the parse, or a bad count passes.
+// v2 (P3 R3), also written first:
+// - a v2 message written by hand (bytes in fixtures/v2, not made by these encoders) fails to parse, or parses to
+//   something other than what it says; a v1 message (fixtures/v1) parses, or is refused for some other reason than the
+//   field v2 changed (v1 is refused: ACCEPTED_VERSIONS is [2]);
+// - a resume without `expect`, or a first run with one, passes; `lastUuid` without its index (or past `mainEntries`)
+//   passes; a system prompt over 64 KB of UTF-8, an 11th attachment, one outside `inputs/`, one the files route can't
+//   carry (a `.`, `..` or empty segment, `#`, `\`) or one named twice passes;
+// - an empty store (`mainEntries: 0`) is refused in a checkpoint or `released`, or passes with a uuid or an index;
+// - an sdk message over SDK_MESSAGE_MAX_BYTES passes; a batch at PUSH_BATCH_MAX_BYTES (events at the buffer's cap, the
+//   most events, the longest turn id) is refused, or the body cap is smaller than such a batch;
+// - a push batch mixes runs, skips or repeats a seq, is empty or over its cap; a status says unknown with seqs, or acked
+//   past its last seq; a refusal code outside the four, or with a status other than its own.
+import { readFileSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import {
   ACCEPTED_VERSIONS,
+  ATTACHMENTS_MAX,
+  AuditPost,
+  PUSH_BATCH_MAX_BYTES,
+  PUSH_BATCH_MAX_EVENTS,
+  PUSH_BUFFER_MAX_BYTES,
+  SDK_MESSAGE_MAX_BYTES,
+  PushAck,
+  PushBatch,
+  RUN_REFUSAL_STATUS,
+  RunAdmission,
+  RunRefusal,
+  RunStatus,
+  SYSTEM_PROMPT_MAX_BYTES,
   DEFERRED_INPUT_MAX_BYTES,
   Health,
   PROMPT_MAX_CHARS,
@@ -21,6 +48,7 @@ import {
   acceptsVersion,
   encodeRunEvent,
   negotiateVersion,
+  parseRunEvent,
   parseRunEventLine,
   type RunEvent,
 } from '../../../shared/protocol/index.ts'
@@ -33,6 +61,9 @@ const runStartFields = fc.record({
   resume: fc.constant(true),
   prompt: fc.string({ maxLength: 200 }),
   model: fc.constantFrom('claude-sonnet-5-5', 'claude-opus-5-5'),
+  sideModel: fc.constant('claude-haiku-5-5'),
+  systemPrompt: fc.string({ maxLength: 200 }),
+  attachments: fc.uniqueArray(fc.stringMatching(/^[a-z0-9-]{1,20}\.pdf$/).map((n) => `inputs/${n}`), { maxLength: ATTACHMENTS_MAX }),
   effort: fc.constantFrom('low', 'medium', 'high', 'xhigh', 'max'),
   maxTurns: fc.integer({ min: 1, max: 500 }),
   maxBudgetUsd: fc.double({ min: 0.01, max: 1000, noNaN: true }),
@@ -45,17 +76,31 @@ const runStartFields = fc.record({
     allowedTypes: fc.array(fc.constantFrom('application/pdf', 'image/png', 'text/csv'), { maxLength: 3 }),
   }),
 })
-// `resume` is free except that an empty prompt needs it.
+const uuid = fc.uuid({ version: 4 })
+/** A store state: `lastUuid` and its index both null, or both set with the index inside `mainEntries`. */
+const stateArb = (min: number) =>
+  fc.integer({ min, max: 10_000 }).chain((mainEntries) =>
+    mainEntries === 0
+      ? fc.constant({ mainEntries, lastUuid: null, lastUuidIndex: null })
+      : fc.oneof(
+          fc.constant({ mainEntries, lastUuid: null, lastUuidIndex: null }),
+          fc.record({ mainEntries: fc.constant(mainEntries), lastUuid: uuid as fc.Arbitrary<string | null>, lastUuidIndex: fc.nat(mainEntries - 1) as fc.Arbitrary<number | null> }),
+        ),
+  )
+// `resume` is free except that an empty prompt needs it; `expect` is set exactly on a resume.
 const runStartArb: fc.Arbitrary<RunStart> = fc
-  .tuple(runStartFields, fc.boolean())
-  .map(([s, resume]) => ({ ...s, resume: s.prompt === '' ? true : resume }))
+  .tuple(runStartFields, fc.boolean(), stateArb(1))
+  .map(([s, resume, state]) => {
+    const r = s.prompt === '' ? true : resume
+    return { ...s, resume: r, expect: r ? state : null }
+  })
 
 const reason = fc.constantFrom('session_crashed', 'protocol', 'store', 'files', 'interrupted', 'stopped', 'timeout', 'sdk_error' as const)
 const bodyArb: fc.Arbitrary<RunEventBody> = fc.oneof(
   fc.record({ type: fc.constant('started' as const), sessionId: fc.uuid({ version: 4 }), resume: fc.boolean() }),
   // z.record drops an own `__proto__` key (safe, and intended), so the round trip leaves it out of the generators.
   fc.record({ type: fc.constant('sdk' as const), message: fc.dictionary(fc.string().filter((k) => k !== '__proto__'), fc.jsonValue()), truncated: fc.boolean() }),
-  fc.record({ type: fc.constant('file_saved' as const), path: fc.string({ maxLength: 50 }), bytes: fc.nat(), contentType: fc.constant('application/pdf') }),
+  fc.record({ type: fc.constant('file_saved' as const), path: fc.string({ maxLength: 50 }), bytes: fc.nat(), contentType: fc.constant('application/pdf'), sha256: fc.stringMatching(/^[0-9a-f]{64}$/) }),
   fc.record({ type: fc.constant('file_refused' as const), path: fc.string({ maxLength: 50 }), reason: fc.constantFrom('too_large', 'too_many', 'type_not_allowed', 'save_failed', 'bad_name' as const) }),
   fc.record({ type: fc.constant('files_restored' as const), restored: fc.nat(), bytes: fc.nat(), leftOut: fc.array(fc.string({ maxLength: 50 }), { maxLength: 5 }) }),
   fc.record({
@@ -64,7 +109,9 @@ const bodyArb: fc.Arbitrary<RunEventBody> = fc.oneof(
   }),
   fc.record({ type: fc.constant('mirror_error' as const), message: fc.string({ maxLength: 100 }) }),
   fc.record({ type: fc.constant('deferred' as const), toolUseId: fc.string({ maxLength: 40 }), toolName: fc.string({ maxLength: 40 }), input: fc.jsonValue() }),
-  fc.record({ type: fc.constant('checkpoint' as const), entries: fc.nat() }),
+  fc.tuple(stateArb(0), fc.nat()).map(([state, runEntries]) => ({ type: 'checkpoint' as const, ...state, runEntries })),
+  fc.constant({ type: 'heartbeat' as const }),
+  fc.record({ type: fc.constant('released' as const), checkpoint: fc.option(stateArb(0), { nil: null }), queryRan: fc.boolean() }),
   fc.record({
     type: fc.constant('finished' as const),
     subtype: fc.constantFrom('success', 'error_max_turns'),
@@ -97,8 +144,9 @@ describe('RunStart', () => {
   it('takes "" as the deferred-answer resume prompt, and only with resume: true', () => {
     expect(RunStart.shape.prompt.parse('')).toBe('')
     const start = fc.sample(runStartArb, 1)[0]!
-    expect(RunStart.safeParse({ ...start, prompt: '', resume: true }).success).toBe(true)
-    const refused = RunStart.safeParse({ ...start, prompt: '', resume: false })
+    const expectState = { mainEntries: 1, lastUuid: null, lastUuidIndex: null }
+    expect(RunStart.safeParse({ ...start, prompt: '', resume: true, expect: expectState }).success).toBe(true)
+    const refused = RunStart.safeParse({ ...start, prompt: '', resume: false, expect: null })
     expect(refused.success).toBe(false)
     expect(refused.error?.issues[0]?.path).toEqual(['prompt'])
   })
@@ -112,6 +160,12 @@ describe('RunStart', () => {
       // A control character is the longest a character gets in JSON: six bytes (\u0001).
       prompt: '\u0001'.repeat(PROMPT_MAX_CHARS),
       model: 'm'.repeat(128),
+      sideModel: 'h'.repeat(128),
+      // One byte of UTF-8 each, six in JSON.
+      systemPrompt: '\u0001'.repeat(SYSTEM_PROMPT_MAX_BYTES),
+      // Each unique (a digit first), the rest six bytes each in JSON.
+      attachments: Array.from({ length: ATTACHMENTS_MAX }, (_, i) => `inputs/${i}${'\u0001'.repeat(1024 - 8)}`),
+      expect: { mainEntries: Number.MAX_SAFE_INTEGER, lastUuid: '\u0001'.repeat(256), lastUuidIndex: Number.MAX_SAFE_INTEGER - 1 },
       effort: 'medium',
       maxTurns: 500,
       maxBudgetUsd: 1000,
@@ -142,7 +196,7 @@ describe('run events', () => {
   )
 
   it('refuse a negative or fractional seq, and an unknown type', () => {
-    const ok = { runId: 'r', type: 'checkpoint', entries: 1 }
+    const ok = { runId: 'r', type: 'heartbeat' }
     expect(() => parseRunEventLine(JSON.stringify({ ...ok, seq: -1 }))).toThrow()
     expect(() => parseRunEventLine(JSON.stringify({ ...ok, seq: 1.5 }))).toThrow()
     expect(() => parseRunEventLine(JSON.stringify({ ...ok, seq: 0, type: 'mystery' }))).toThrow()
@@ -150,11 +204,11 @@ describe('run events', () => {
 })
 
 describe('versions', () => {
-  it('v1 accepts only itself (no phantom v0); the rule is current and previous once v2 exists', () => {
-    expect(PROTOCOL_VERSION).toBe(1)
-    expect(ACCEPTED_VERSIONS).toEqual([1])
-    expect(acceptsVersion('1')).toBe(true)
-    expect(acceptsVersion('0')).toBe(false)
+  it('v2 accepts only itself: v1 was never deployed, so current-and-previous starts at v2', () => {
+    expect(PROTOCOL_VERSION).toBe(2)
+    expect(ACCEPTED_VERSIONS).toEqual([2])
+    expect(acceptsVersion('2')).toBe(true)
+    expect(acceptsVersion('1')).toBe(false)
   })
 
   it.prop([fc.oneof(fc.integer({ min: -100, max: 1000 }).map(String), fc.string(), fc.nat(1000).map((n) => `0${n}`))])(
@@ -212,5 +266,242 @@ describe('caps on the open shapes', () => {
     expect(deferred(sized(DEFERRED_INPUT_MAX_BYTES + 1))).toBe(false)
     expect(finished(sized(USAGE_MAX_BYTES))).toBe(true)
     expect(finished(sized(USAGE_MAX_BYTES + 1))).toBe(false)
+  })
+
+  it('an sdk message over its cap fails the parse; at the cap it passes', () => {
+    const sized = (bytes: number) => ({ a: 'x'.repeat(bytes - 8) })
+    const sdk = (message: Record<string, unknown>) => RunEventBody.safeParse({ type: 'sdk', message, truncated: false }).success
+    expect(SDK_MESSAGE_MAX_BYTES).toBe(262_144)
+    expect(sdk(sized(SDK_MESSAGE_MAX_BYTES))).toBe(true)
+    expect(sdk(sized(SDK_MESSAGE_MAX_BYTES + 1))).toBe(false)
+    // Bytes, not characters: 'é' is two.
+    expect(sdk({ a: 'é'.repeat((SDK_MESSAGE_MAX_BYTES - 8) / 2) })).toBe(true)
+    expect(sdk({ a: 'é'.repeat((SDK_MESSAGE_MAX_BYTES - 8) / 2) + 'x' })).toBe(false)
+  })
+})
+
+// ---- v2 (P3 R3)
+
+const fixtures = (version: 'v1' | 'v2') => {
+  const dir = fileURLToPath(new URL(`./fixtures/${version}/`, import.meta.url))
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => ({ name: f, text: readFileSync(dir + f, 'utf8') }))
+}
+/** Each fixture file names its schema by the part of its name before the first dot. */
+const parserFor = (name: string): ((raw: unknown) => unknown) => {
+  const kind = name.split('.')[0]!
+  const parsers: Record<string, (raw: unknown) => unknown> = {
+    'run-start': (r) => RunStart.parse(r),
+    event: (r) => parseRunEvent(r),
+    'push-batch': (r) => PushBatch.parse(r),
+    'push-ack': (r) => PushAck.parse(r),
+    'audit-post': (r) => AuditPost.parse(r),
+    'run-status': (r) => RunStatus.parse(r),
+    'run-admission': (r) => RunAdmission.parse(r),
+    'run-refusal': (r) => RunRefusal.parse(r),
+  }
+  const p = parsers[kind]
+  if (!p) throw new Error(`no schema for fixture ${name}`)
+  return p
+}
+
+describe('v2 wire fixtures (written by hand)', () => {
+  const v2 = fixtures('v2')
+  it('every v2 fixture parses to exactly what its bytes say', () => {
+    expect(v2.length).toBeGreaterThanOrEqual(21)
+    for (const f of v2) expect(parserFor(f.name)(JSON.parse(f.text)), f.name).toEqual(JSON.parse(f.text))
+  })
+
+  it('every v1 fixture is refused, on the field v2 changed', () => {
+    const v1 = fixtures('v1')
+    expect(v1.map((f) => f.name).sort()).toEqual(['event.checkpoint.json', 'event.file_saved.json', 'run-start.json'])
+    /** The issues a parse threw: each issue's path, and the keys of an unrecognized-keys issue as `+key`. */
+    const refusal = (name: string): string[] => {
+      const f = v1.find((x) => x.name === name)!
+      try {
+        parserFor(name)(JSON.parse(f.text))
+      } catch (e) {
+        const issues = (e as { issues?: { path: PropertyKey[]; keys?: string[] }[] }).issues
+        if (!issues) throw e
+        return issues.flatMap((i) => [i.path.join('.'), ...(i.keys ?? []).map((k) => `+${k}`)])
+      }
+      throw new Error(`${name} parsed`)
+    }
+    expect(refusal('run-start.json')).toEqual(expect.arrayContaining(['sideModel', 'systemPrompt', 'attachments', 'expect']))
+    expect(refusal('event.checkpoint.json')).toEqual(expect.arrayContaining(['+entries', 'mainEntries', 'lastUuid', 'lastUuidIndex', 'runEntries']))
+    expect(refusal('event.file_saved.json')).toEqual(['sha256'])
+  })
+})
+
+const fixture = (name: string) => JSON.parse(readFileSync(fileURLToPath(new URL(`./fixtures/v2/${name}`, import.meta.url)), 'utf8')) as Record<string, unknown>
+
+describe('RunStart v2 limits', () => {
+  const first = fixture('run-start.first.json')
+  const resume = fixture('run-start.resume.json')
+  const ok = (v: Record<string, unknown>) => RunStart.safeParse(v).success
+
+  it('expect is required on a resume and refused on a first run', () => {
+    expect(ok({ ...resume, expect: null })).toBe(false)
+    expect(ok({ ...first, expect: resume.expect })).toBe(false)
+    const { expect: _, ...noKey } = resume
+    expect(ok(noKey)).toBe(false)
+  })
+
+  it('expect: mainEntries from 1, lastUuid and lastUuidIndex together, the index inside mainEntries', () => {
+    const e = (over: Record<string, unknown>) => ok({ ...resume, expect: { mainEntries: 12, lastUuid: 'u', lastUuidIndex: 11, ...over } })
+    expect(e({})).toBe(true)
+    expect(e({ mainEntries: 0, lastUuid: null, lastUuidIndex: null })).toBe(false)
+    expect(e({ mainEntries: 1, lastUuid: null, lastUuidIndex: null })).toBe(true)
+    expect(e({ lastUuid: null })).toBe(false)
+    expect(e({ lastUuidIndex: null })).toBe(false)
+    expect(e({ lastUuidIndex: 12 })).toBe(false)
+    expect(e({ lastUuidIndex: 0 })).toBe(true)
+    expect(e({ lastUuidIndex: -1 })).toBe(false)
+    expect(e({ lastUuidIndex: 1.5 })).toBe(false)
+    expect(e({ lastUuid: '' })).toBe(false)
+    expect(e({ lastUuid: 'x'.repeat(257) })).toBe(false)
+    expect(e({ extra: 1 })).toBe(false)
+  })
+
+  it('systemPrompt: at most 64 KB of UTF-8 (bytes, not characters)', () => {
+    expect(ok({ ...first, systemPrompt: '' })).toBe(true)
+    expect(ok({ ...first, systemPrompt: 'a'.repeat(65_536) })).toBe(true)
+    expect(ok({ ...first, systemPrompt: 'a'.repeat(65_537) })).toBe(false)
+    // 'é' is two bytes: 32,768 of them is the cap, one more is over (while far under 64K characters).
+    expect(ok({ ...first, systemPrompt: 'é'.repeat(32_768) })).toBe(true)
+    expect(ok({ ...first, systemPrompt: 'é'.repeat(32_768) + 'a' })).toBe(false)
+  })
+
+  it('attachments: none the files route cannot carry, none twice', () => {
+    expect(ok({ ...first, attachments: ['inputs/a.pdf', 'inputs/sub/b.pdf'] })).toBe(true)
+    for (const bad of ['inputs/', 'inputs//a.pdf', 'inputs/./a.pdf', 'inputs/../a.pdf', 'inputs/..', 'inputs/.', 'inputs/a.pdf/', 'inputs/a#b.pdf', 'inputs/a\\b.pdf', 'inputs/\ud800.pdf']) {
+      expect(ok({ ...first, attachments: [bad] }), bad).toBe(false)
+    }
+    expect(ok({ ...first, attachments: ['inputs/a.pdf', 'inputs/a.pdf'] })).toBe(false)
+    expect(ok({ ...first, attachments: ['inputs/a.pdf', 'inputs/b.pdf', 'inputs/a.pdf'] })).toBe(false)
+  })
+
+  it('attachments: at most 10, each under inputs/', () => {
+    const paths = (n: number) => Array.from({ length: n }, (_, i) => `inputs/f_${i}-a.pdf`)
+    expect(ok({ ...first, attachments: paths(10) })).toBe(true)
+    expect(ok({ ...first, attachments: paths(11) })).toBe(false)
+    expect(ok({ ...first, attachments: ['outputs/a.pdf'] })).toBe(false)
+    expect(ok({ ...first, attachments: ['a.pdf'] })).toBe(false)
+    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(1017)}`] })).toBe(true)
+    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(1018)}`] })).toBe(false)
+  })
+
+  it('sideModel follows the model rule', () => {
+    expect(ok({ ...first, sideModel: 'claude-haiku-5-5' })).toBe(true)
+    expect(ok({ ...first, sideModel: '' })).toBe(false)
+    expect(ok({ ...first, sideModel: 'm'.repeat(129) })).toBe(false)
+    expect(ok({ ...first, sideModel: 'claude haiku' })).toBe(false)
+  })
+})
+
+describe('v2 events', () => {
+  const body = (v: Record<string, unknown>) => RunEventBody.safeParse(v).success
+
+  it('file_saved needs a lower-case hex SHA-256', () => {
+    const f = { type: 'file_saved', path: 'outputs/a.pdf', bytes: 1, contentType: 'application/pdf' }
+    expect(body({ ...f, sha256: 'a'.repeat(64) })).toBe(true)
+    expect(body(f)).toBe(false)
+    expect(body({ ...f, sha256: 'A'.repeat(64) })).toBe(false)
+    expect(body({ ...f, sha256: 'a'.repeat(63) })).toBe(false)
+  })
+
+  it('checkpoint and released: lastUuid and its index together, inside mainEntries', () => {
+    const cp = (over: Record<string, unknown>) => body({ type: 'checkpoint', mainEntries: 3, lastUuid: 'u', lastUuidIndex: 2, runEntries: 1, ...over })
+    expect(cp({})).toBe(true)
+    expect(cp({ lastUuidIndex: 3 })).toBe(false)
+    expect(cp({ lastUuid: null })).toBe(false)
+    expect(cp({ runEntries: -1 })).toBe(false)
+    expect(cp({ mainEntries: 0, lastUuid: null, lastUuidIndex: null })).toBe(true)
+    // An empty store has no last uuid and no index.
+    expect(cp({ mainEntries: 0, lastUuid: 'u', lastUuidIndex: null })).toBe(false)
+    expect(cp({ mainEntries: 0, lastUuid: null, lastUuidIndex: 0 })).toBe(false)
+    expect(cp({ mainEntries: 0, lastUuid: 'u', lastUuidIndex: 0 })).toBe(false)
+    const rel = (checkpoint: unknown) => body({ type: 'released', checkpoint, queryRan: true })
+    expect(rel(null)).toBe(true)
+    expect(rel({ mainEntries: 3, lastUuid: 'u', lastUuidIndex: 2 })).toBe(true)
+    expect(rel({ mainEntries: 3, lastUuid: 'u', lastUuidIndex: 3 })).toBe(false)
+    expect(rel({ mainEntries: 0, lastUuid: null, lastUuidIndex: null })).toBe(true)
+    expect(rel({ mainEntries: 0, lastUuid: 'u', lastUuidIndex: null })).toBe(false)
+    expect(rel({ mainEntries: 0, lastUuid: null, lastUuidIndex: 0 })).toBe(false)
+    expect(rel({ mainEntries: 0, lastUuid: 'u', lastUuidIndex: 0 })).toBe(false)
+    expect(rel({ mainEntries: 3, lastUuid: 'u', lastUuidIndex: 2, runEntries: 1 })).toBe(false)
+    expect(body({ type: 'released', checkpoint: null })).toBe(false)
+    expect(body({ type: 'heartbeat', at: 1 })).toBe(false)
+  })
+})
+
+describe('push, audit, status and admission', () => {
+  const ev = (seq: number, runId = 't_a') => ({ runId, seq, type: 'heartbeat' })
+  const batch = (events: unknown[]) => PushBatch.safeParse({ turnId: 't_a', events }).success
+
+  it.prop([fc.nat(1e6), fc.integer({ min: 1, max: PUSH_BATCH_MAX_EVENTS })])('a batch of consecutive seqs of its own run, 1 to the cap, parses', (from, n) => {
+    expect(batch(Array.from({ length: n }, (_, i) => ev(from + i)))).toBe(true)
+  })
+
+  it('a batch that is empty, over the cap, mixes runs, or skips, repeats or reverses a seq is refused', () => {
+    expect(batch([])).toBe(false)
+    expect(batch(Array.from({ length: PUSH_BATCH_MAX_EVENTS + 1 }, (_, i) => ev(i)))).toBe(false)
+    expect(batch([ev(0), ev(1, 't_b')])).toBe(false)
+    expect(batch([ev(0), ev(2)])).toBe(false)
+    expect(batch([ev(0), ev(0)])).toBe(false)
+    expect(batch([ev(1), ev(0)])).toBe(false)
+    expect(batch([{ ...ev(0), extra: 1 }])).toBe(false)
+    expect(PushBatch.safeParse({ turnId: 't_a', events: [ev(0)], extra: 1 }).success).toBe(false)
+  })
+
+  it('a batch at the body cap (the most events, the longest turn id, events summing to the buffer cap) parses', () => {
+    // 2 MiB of events plus 288 bytes of batch JSON around them, worked out by hand.
+    expect(PUSH_BATCH_MAX_BYTES).toBe(2 * 1024 * 1024 + 288)
+    const turnId = 't'.repeat(64)
+    const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length
+    const event = (seq: number, pad: string) => ({ runId: turnId, seq, type: 'sdk', message: { p: pad }, truncated: false })
+    const n = PUSH_BATCH_MAX_EVENTS
+    let left = PUSH_BUFFER_MAX_BYTES - Array.from({ length: n }, (_, i) => bytes(event(i, ''))).reduce((a, b) => a + b, 0)
+    const events = Array.from({ length: n }, (_, i) => {
+      const pad = i === n - 1 ? left : Math.floor(left / (n - i))
+      left -= pad
+      return event(i, 'x'.repeat(pad))
+    })
+    expect(events.reduce((a, e) => a + bytes(e), 0)).toBe(PUSH_BUFFER_MAX_BYTES)
+    const body = { turnId, events }
+    expect(bytes(body)).toBe(PUSH_BATCH_MAX_BYTES)
+    expect(PushBatch.safeParse(body).success).toBe(true)
+  })
+
+  it('an ack needs a whole ackSeq from 0 and stop', () => {
+    expect(PushAck.safeParse({ ackSeq: 0, stop: false }).success).toBe(true)
+    expect(PushAck.safeParse({ ackSeq: -1, stop: false }).success).toBe(false)
+    expect(PushAck.safeParse({ ackSeq: 1 }).success).toBe(false)
+  })
+
+  it('an audit post needs a whole n from 0 and a valid entry', () => {
+    const a = fixture('audit-post.json')
+    expect(AuditPost.safeParse({ ...a, n: -1 }).success).toBe(false)
+    expect(AuditPost.safeParse({ ...a, n: 0.5 }).success).toBe(false)
+    expect(AuditPost.safeParse({ ...a, entry: { hook: 'PreToolUse' } }).success).toBe(false)
+    expect(AuditPost.safeParse({ ...a, turnId: 'a b' }).success).toBe(false)
+  })
+
+  it('a status: unknown carries no seqs, and nothing is acked past the last seq', () => {
+    const st = (v: Record<string, unknown>) => RunStatus.safeParse(v).success
+    expect(st({ state: 'unknown', lastSeq: 3, ackedSeq: null })).toBe(false)
+    expect(st({ state: 'running', lastSeq: 3, ackedSeq: 4 })).toBe(false)
+    expect(st({ state: 'running', lastSeq: null, ackedSeq: 0 })).toBe(false)
+    expect(st({ state: 'released', lastSeq: 9, ackedSeq: 9 })).toBe(true)
+    expect(st({ state: 'ending', lastSeq: 9, ackedSeq: null })).toBe(true)
+    expect(st({ state: 'gone', lastSeq: null, ackedSeq: null })).toBe(false)
+  })
+
+  it('admission is { accepted: true } only; each refusal code has its own status', () => {
+    expect(RunAdmission.safeParse({ accepted: false }).success).toBe(false)
+    expect(RunAdmission.safeParse({ ok: true }).success).toBe(false)
+    expect(RUN_REFUSAL_STATUS).toEqual({ session_pool_exhausted: 503, session_folder_parked: 503, chat_live: 409, run_live: 409 })
+    expect(RunRefusal.safeParse({ error: 'the runner is stopping' }).success).toBe(false)
   })
 })

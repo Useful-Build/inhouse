@@ -17,7 +17,8 @@ import { FileListing, type FileCaps, type RunEventBody } from '../../../shared/p
 import { badProxyPath } from '../proxy/server.ts'
 import type { Fetch } from '../store/adapter.ts'
 import { NotFollowed, closeDir, inDir, list, lstatIn, openBelow, openChild, openDir, readFileIn, type Dir } from './safe-dir.ts'
-import { sniffType } from './sniff.ts'
+import { badFileName } from '../../../shared/files/names.ts'
+import { sniffType } from '../../../shared/files/sniff.ts'
 
 export const INPUTS = 'inputs'
 export const OUTPUTS = 'outputs'
@@ -36,14 +37,8 @@ type Refusal = Extract<FileEvent, { type: 'file_refused' }>
  * name the proxy can't carry (`#` or `\` anywhere, a `.` or `..` segment, an empty segment, an unpaired surrogate).
  */
 export function filesPath(path: string): string | null {
-  const segments = path.split('/')
-  if (segments.some((s) => s === '' || s === '.' || s === '..' || s.includes('#') || s.includes('\\'))) return null
-  let encoded: string
-  try {
-    encoded = `/files/${segments.map(encodeURIComponent).join('/')}`
-  } catch {
-    return null // URIError: an unpaired surrogate
-  }
+  if (badFileName(path)) return null
+  const encoded = `/files/${path.split('/').map(encodeURIComponent).join('/')}`
   return badProxyPath(encoded) ? null : encoded
 }
 
@@ -334,11 +329,12 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
       const contentType = sniffType(body, rel)
       if (!caps.allowedTypes.includes(contentType)) return refuse({ type: 'file_refused', path, reason: 'type_not_allowed', bytes: body.length })
       count++
+      const sha256 = createHash('sha256').update(body).digest('hex')
       try {
         const res = await untilAborted(
           deps.fetch(`${base}${url}`, {
             method: 'PUT',
-            headers: { 'content-type': contentType, 'x-inhouse-sha256': createHash('sha256').update(body).digest('hex') },
+            headers: { 'content-type': contentType, 'x-inhouse-sha256': sha256 },
             body,
             signal,
           }),
@@ -354,7 +350,7 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
         return refuse({ type: 'file_refused', path, reason: 'save_failed', bytes: body.length })
       }
       handled.add(path)
-      await emit({ type: 'file_saved', path, bytes: body.length, contentType })
+      await emit({ type: 'file_saved', path, bytes: body.length, contentType, sha256 })
     } finally {
       await closeDir(dir)
     }
