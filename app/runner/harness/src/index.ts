@@ -1,7 +1,7 @@
 // The runner harness (P3): a small Worker that owns one runner container through `ctx.container` (never the deprecated
 // `Container` class) and plays the Worker's egress with the scripted model, so the runner runs under `wrangler dev`
 // before the real server pieces (P2, W1 to W3) exist. Local development only: no deploy, no account ids, no hosts, no
-// secrets. Deleted once the real runner objects carry the runner tests (P3 plan, "Order and parallelism" 6).
+// secrets; a deployed copy refuses every request (./guards.ts). Deleted once the real runner objects carry the runner tests (P3 plan, "Order and parallelism" 6).
 //
 // The container's only way out is `egress.internal` (the runner's EGRESS_URL), intercepted here; every other HTTP and
 // HTTPS host is refused and logged. The egress checks each call's run token against the runs this harness started,
@@ -18,7 +18,8 @@
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers'
 import { FileListing, PROTOCOL_HEADER, PROTOCOL_VERSION, RunStart, StoreAppend, StoreListSubkeys, StoreLoad, type FileCaps } from '../../../shared/protocol/index.ts'
 import { createScriptedModel } from '../../../test/scripted-model/index.ts'
-import { SCENARIOS } from '../../../test/scripted-model/scenarios.ts'
+import { HARNESS_MODEL, SCENARIOS } from '../../../test/scripted-model/scenarios.ts'
+import { forScriptedModel, localOnlyRefusal } from './guards.ts'
 
 const RUNNER_PORT = 8080
 const EGRESS_HOST = 'egress.internal'
@@ -142,7 +143,7 @@ export class RunnerHarness extends DurableObject<Env> {
       sessionId: body.sessionId ?? crypto.randomUUID(),
       resume: body.resume ?? false,
       prompt: body.prompt ?? '',
-      model: 'claude-sonnet-5-5',
+      model: HARNESS_MODEL,
       effort: 'medium',
       maxTurns: 8,
       maxBudgetUsd: 1,
@@ -175,8 +176,7 @@ export class RunnerHarness extends DurableObject<Env> {
     const sub = `/${rest.join('/')}`
 
     if (route === 'model') {
-      const forModel = new Request(new URL(sub + url.search, url), { method: request.method, headers: request.headers, body: request.body })
-      return this.#model.handle(forModel, run.scenario)
+      return this.#model.handle(forScriptedModel(request, sub), run.scenario)
     }
     if (route === 'store' && request.method === 'POST') return this.#store(run.chatId, sub, await request.json())
     if (route === 'files') return this.#files(run.chatId, request, rest)
@@ -231,6 +231,9 @@ export class RunnerHarness extends DurableObject<Env> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    // Local development only: a deployed copy (no HARNESS_LOCAL_ONLY) refuses everything.
+    const refused = localOnlyRefusal(env)
+    if (refused) return refused
     const url = new URL(request.url)
     // One harness object (one container) per name: `?name=` picks it, `default` otherwise.
     return env.HARNESS.getByName(url.searchParams.get('name') ?? 'default').fetch(request)

@@ -92,13 +92,22 @@ function startSession(o: { storeUrl: string; modelUrl: string; flush: string; pr
   return { child, exited, stderr: () => err, out: () => exited.then(() => (out === '' ? Promise.reject(new Error(`no output; stderr: ${err.slice(-2000)}`)) : out)) }
 }
 
-async function until(cond: () => boolean, what: string, ms = 60_000) {
+/** Whether `cond` holds within `ms`, checked every 25 ms. */
+async function within(cond: () => boolean, ms: number): Promise<boolean> {
   const deadline = Date.now() + ms
   while (!cond()) {
-    if (Date.now() > deadline) throw new Error(`${what}: not met in ${ms} ms`)
-    await new Promise((r) => setImmediate(r))
+    if (Date.now() > deadline) return false
+    await new Promise((r) => setTimeout(r, 25))
   }
+  return true
 }
+
+async function until(cond: () => boolean, what: string, ms = 60_000) {
+  if (!(await within(cond, ms))) throw new Error(`${what}: not met in ${ms} ms`)
+}
+
+/** How long the store gets to show the live turn after the CLI asks for turn 1, in both arms. */
+const STORE_WAIT_MS = 20_000
 
 /** The session's main transcript as the store holds it, in part order. */
 const stored = (egress: FakeEgress) =>
@@ -130,7 +139,20 @@ function cutScenario(held: Promise<void>): ScriptedModel {
 
 const hasToolResult = (r: MessagesRequest) => JSON.stringify(r.messages).includes(`"tool_use_id":"${GLOB_ID}"`)
 
-async function killMidTurn(flush: 'eager' | 'batched', waitForStore: boolean) {
+/** SIGKILLs the session's whole process group; a group already gone (ESRCH) is fine, anything else isn't. */
+function killGroup(run: Run) {
+  try {
+    process.kill(-run.child.pid!, 'SIGKILL')
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ESRCH') throw e
+  }
+}
+
+/**
+ * Runs the cut scenario to turn 1, gives the store the full wait to show the live turn, then kills the session.
+ * `storeHeld`: whether the store showed it within the wait.
+ */
+async function killMidTurn(flush: 'eager' | 'batched') {
   const egress = fakeEgress()
   let release!: () => void
   const held = new Promise<void>((r) => (release = r))
@@ -145,20 +167,25 @@ async function killMidTurn(flush: 'eager' | 'batched', waitForStore: boolean) {
     await until(() => model.log.some((l) => l.turn === 1), 'the CLI to reach turn 1')
     // The CLI writes the tool result before it asks for turn 1, and eager mirrors each entry as it's written, so with
     // eager the store gets the whole live turn while the CLI waits. Batched holds it until the turn ends, never here.
-    if (waitForStore) await until(() => liveTurn(egress).result >= 0, 'the store to hold the live turn (eager)', 20_000)
-    process.kill(-run.child.pid!, 'SIGKILL')
+    // Both arms wait the same, so each tells eager from batched on its own.
+    const storeHeld = await within(() => liveTurn(egress).result >= 0, STORE_WAIT_MS)
+    killGroup(run)
     await run.exited
-    return { egress, model, store, modelServer, work, release }
+    return { egress, model, store, modelServer, work, release, storeHeld }
   } catch (e) {
-    process.kill(-run.child.pid!, 'SIGKILL')
+    killGroup(run)
+    release()
+    store.close()
+    modelServer.close()
     throw e
   }
 }
 
 describe("sessionStoreFlush: 'eager' against a hard kill", () => {
   it('the live turn reaches the store before the kill, in order, once; a fresh container resumes it from the store', async () => {
-    const k = await killMidTurn('eager', true)
+    const k = await killMidTurn('eager')
     try {
+      expect(k.storeHeld, 'the store to hold the live turn (eager) before the kill').toBe(true)
       expect(k.model.misses).toEqual([])
       const turn = liveTurn(k.egress)
       expect(turn.call).toBeGreaterThanOrEqual(0)
@@ -188,9 +215,10 @@ describe("sessionStoreFlush: 'eager' against a hard kill", () => {
     }
   }, 120_000)
 
-  it('the batched control: killed at the same point, the store lacks the live turn', async () => {
-    const k = await killMidTurn('batched', false)
+  it('the batched control: given the same wait and killed at the same point, the store lacks the live turn', async () => {
+    const k = await killMidTurn('batched')
     try {
+      expect(k.storeHeld, 'the store not to hold the live turn (batched) within the full wait').toBe(false)
       expect(k.model.misses).toEqual([])
       expect(liveTurn(k.egress).result).toBe(-1)
     } finally {

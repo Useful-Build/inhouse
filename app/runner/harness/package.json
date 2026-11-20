@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --var HARNESS_LOCAL_ONLY:1",
     "types": "wrangler types",
     "typecheck": "tsc --noEmit -p ."
   },

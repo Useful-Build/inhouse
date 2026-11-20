@@ -54,9 +54,10 @@ export function createScriptedModel(scenarios: Record<string, Scenario>): Script
   const log: ScriptedModel['log'] = []
   const misses: Miss[] = []
 
-  const miss = (scenario: string, turn: number | null, path: string, reason: string) => {
+  const miss = (scenario: string, turn: number | null, path: string, reason: string, logged?: ScriptedModel['log'][number]) => {
     misses.push({ scenario, turn, reason })
-    log.push({ scenario, turn, path, missed: true })
+    if (logged) logged.missed = true
+    else log.push({ scenario, turn, path, missed: true })
     return Response.json(
       { type: 'error', error: { type: 'invalid_request_error', message: `scripted model miss: scenario "${scenario}", turn ${turn ?? '?'}: ${reason}` } },
       { status: 400 },
@@ -82,14 +83,27 @@ export function createScriptedModel(scenarios: Record<string, Scenario>): Script
       const t = script.turns[turn]
       if (t === undefined) return miss(scenario, turn, path, `the script has ${script.turns.length} turns`)
       if (t === null) return miss(scenario, turn, path, 'this turn is not scripted')
-      if (t.expect && !t.expect(body)) return miss(scenario, turn, path, 'the request does not match the turn')
-      log.push({ scenario, turn, path, missed: false })
-      await t.hold?.()
+      // A script's own check or hold that throws is a miss too (a 400 that names it), never a 500 the CLI retries.
+      try {
+        if (t.expect && !t.expect(body)) return miss(scenario, turn, path, 'the request does not match the turn')
+      } catch (e) {
+        return miss(scenario, turn, path, `the turn's expect threw: ${errorText(e)}`)
+      }
+      // Logged before the hold, so a test can see the turn was asked for while it's held.
+      const entry = { scenario, turn, path, missed: false }
+      log.push(entry)
+      try {
+        await t.hold?.()
+      } catch (e) {
+        return miss(scenario, turn, path, `the turn's hold threw: ${errorText(e)}`, entry)
+      }
       const message = messageFor(t, body.model, `${scenario}-${turn}`)
       return body.stream ? new Response(sse(message), { headers: { 'content-type': 'text/event-stream' } }) : Response.json(message)
     },
   }
 }
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200)
 
 type Message = {
   id: string

@@ -38,9 +38,9 @@ export type SessionChannel = {
 export type SessionIo = { fetch: Fetch; proxyUrl: string }
 
 /**
- * How the SDK flushes the transcript to the store. `'eager'` (alpha): each entry is mirrored as it's written, so a hard
- * kill mid-turn leaves the live turn in the store (test/store/eager.test.ts, with the real CLI; `'batched'` loses it).
- * The checkpoint and repair still cover a dropped batch at the run's end.
+ * How the SDK flushes the transcript to the store. `'eager'` (alpha): in test/store/eager.test.ts (the real CLI, a hard
+ * kill while the next model call is held), the live turn reached the store shortly after the CLI wrote it, where
+ * `'batched'` didn't. That's what was shown, not a guarantee: the checkpoint and repair stay as the backstop.
  */
 export const STORE_FLUSH: NonNullable<Options['sessionStoreFlush']> = 'eager'
 
