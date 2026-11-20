@@ -23,7 +23,6 @@
     "e2e/mock-behaviour.spec.ts": 1,
     "e2e/models-and-scroll-phone.spec.ts": 1,
     "e2e/models-and-scroll.spec.ts": 1,
-    "e2e/motion.spec.ts": 1,
-    "e2e/sample-data.spec.ts": 4
+    "e2e/motion.spec.ts": 1
   }
 }
