@@ -420,6 +420,12 @@ export class AgentCore {
         if (named !== null && (t.state === 'live' || t.state === 'ending')) {
           this.sql.exec('UPDATE turns SET runner = ? WHERE turn_id = ? AND runner IS NULL', named, turnId)
         }
+        // Fenced while the placement was in flight: the fence's own stop may have reached the runner before the run was
+        // admitted there (a 404 the runner takes as done), so stop it again now that it is (round 2 low). The token
+        // stays: the grace still flushes through `store` and `events`.
+        if (named !== null && t.fenced === 1) {
+          void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_fenced_stop_failed', error: errorText(err) }))
+        }
         return
       }
       // An attempt requeued or cancelled before admission: its token goes, and a runner it reached is stopped (best
