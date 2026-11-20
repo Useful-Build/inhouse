@@ -2,7 +2,7 @@
 // Content-Type that names another type and a body over 1 MiB are refused; the download carries `nosniff` and the type
 // stored at upload, and goes only to who the row allows; a Member can't touch another Member's photo.
 import { expect, test } from '@playwright/test'
-import { actor, call, endLiveGrants, expectError, imageBytes, me } from './kit.ts'
+import { actor, allPages, call, endLiveGrants, expectError, imageBytes, me } from './kit.ts'
 import type { ImageType } from './kit.ts'
 
 const dana = actor('memberA')
@@ -13,6 +13,12 @@ test.afterAll(async ({ request }) => {
   for (const who of [dana, leo]) await call(request, who, 'DELETE', '/api/photo')
 })
 
+/** The member row's rev as the team list serves it: a photo answer's `rev` must be this, read back after the write. */
+async function revOf(request: Parameters<typeof allPages>[0], id: string): Promise<number> {
+  const { items } = await allPages<{ id: string; rev: number }>(request, actor('admin'), '/api/members', 100)
+  return items.find(m => m.id === id)!.rev
+}
+
 const TYPES: ImageType[] = ['image/png', 'image/jpeg', 'image/webp']
 
 for (const type of TYPES) {
@@ -21,7 +27,7 @@ for (const type of TYPES) {
     const bytes = imageBytes(type, 200)
     const put = await call(request, dana, 'PUT', '/api/photo', { bytes, contentType: type })
     expect(put.status, put.text).toBe(200)
-    expect(put.json).toEqual({ photoUrl: `/api/members/${id}/photo` })
+    expect(put.json).toEqual({ photoUrl: `/api/members/${id}/photo`, rev: await revOf(request, id) })
     expect((await me(request, dana)).photoUrl).toBe(put.json.photoUrl)
     // Any member, and the Admin, reads it.
     for (const who of [dana, leo, actor('admin')]) {
@@ -88,9 +94,9 @@ test('a Member can\'t read, replace or remove another Member\'s photo', async ({
   // Leo's upload and removal act on Leo only.
   const theirs = imageBytes('image/jpeg', 80)
   const put = await call(request, leo, 'PUT', '/api/photo', { bytes: theirs, contentType: 'image/jpeg' })
-  expect(put.json.photoUrl).toBe(`/api/members/${leoId}/photo`)
+  expect(put.json).toEqual({ photoUrl: `/api/members/${leoId}/photo`, rev: await revOf(request, leoId) })
   expect((await call(request, dana, 'GET', `/api/members/${danaId}/photo`)).bytes.equals(mine)).toBe(true)
-  expect((await call(request, leo, 'DELETE', '/api/photo')).json).toEqual({ photoUrl: null })
+  expect((await call(request, leo, 'DELETE', '/api/photo')).json).toEqual({ photoUrl: null, rev: await revOf(request, leoId) })
   const still = await call(request, dana, 'GET', `/api/members/${danaId}/photo`)
   expect(still.status).toBe(200)
   expect(still.bytes.equals(mine)).toBe(true)
@@ -105,7 +111,7 @@ test('removing a photo clears it, for everyone', async ({ request }) => {
   await call(request, dana, 'PUT', '/api/photo', { bytes: imageBytes('image/png'), contentType: 'image/png' })
   const del = await call(request, dana, 'DELETE', '/api/photo')
   expect(del.status, del.text).toBe(200)
-  expect(del.json).toEqual({ photoUrl: null })
+  expect(del.json).toEqual({ photoUrl: null, rev: await revOf(request, id) })
   expect((await me(request, dana)).photoUrl).toBeNull()
   expectError(await call(request, leo, 'GET', `/api/members/${id}/photo`), 404, 'not_found')
 })

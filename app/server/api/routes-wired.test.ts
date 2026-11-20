@@ -27,6 +27,8 @@ import { at, reset } from '../db/test-support.ts'
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
 const env = { ...baseEnv, ...authEnv() } as Env
 const db = env.DB
+/** A member row's rev, read back: what a photo answer must carry. */
+const memberRev = async (id: string) => (await db.prepare('SELECT rev FROM members WHERE id = ?').bind(id).first<number>('rev'))!
 /** What sign-in itself calls; anything else is a handler's store call. */
 const AUTH_CALLS = new Set(['resolvePerson', 'resolveInhouse', 'serviceMember', 'active', 'supportAccess'])
 
@@ -176,7 +178,7 @@ describe('routes 1 and 13 to 20 run their handlers (failure 1)', () => {
     expect(await call('/api/health', { token: monitor })).toMatchObject({ status: 200, body: { ok: true } })
   })
   it('13 to 15: a photo up, served with its own headers through the wrap, and removed (failure 6)', async () => {
-    expect(await call('/api/photo', { method: 'PUT', token: tokens.member, raw: PNG, type: 'image/png' })).toEqual({ status: 200, body: { photoUrl: `/api/members/${who.member}/photo` } })
+    expect(await call('/api/photo', { method: 'PUT', token: tokens.member, raw: PNG, type: 'image/png' })).toEqual({ status: 200, body: { photoUrl: `/api/members/${who.member}/photo`, rev: await memberRev(who.member) } })
     const res = await send(`/api/members/${who.member}/photo`, { token: tokens.admin })
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('image/png')
@@ -184,7 +186,7 @@ describe('routes 1 and 13 to 20 run their handlers (failure 1)', () => {
     expect(res.headers.get('Cache-Control')).toBe('private, no-cache')
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG)
-    expect(await call('/api/photo', { method: 'DELETE', token: tokens.member })).toEqual({ status: 200, body: { photoUrl: null } })
+    expect(await call('/api/photo', { method: 'DELETE', token: tokens.member })).toEqual({ status: 200, body: { photoUrl: null, rev: await memberRev(who.member) } })
     expect((await call(`/api/members/${who.member}/photo`, { token: tokens.admin })).status).toBe(404)
   })
   it("a handler can't loosen the site's CSP or caching: only the photo's exact values survive the wrap (failure 6)", async () => {

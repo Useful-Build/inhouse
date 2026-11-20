@@ -248,8 +248,9 @@ export class HttpAgent implements AgentClient {
     if (this.s.me && !this.s.me.can.viewMembers) return this.setStatus('members', { status: 'ready' })
     try {
       const page = await this.http.call({ method: 'GET', path: '/api/members', schema: 'members' })
-      page.items.forEach(this.confirmMember)
-      this.patch({ members: page.items, membersNext: page.nextCursor, res: { ...this.s.res, members: { status: 'ready' } } })
+      const items = page.items.map(this.newest)
+      items.forEach(this.confirmMember)
+      this.patch({ members: items, membersNext: page.nextCursor, res: { ...this.s.res, members: { status: 'ready' } } })
     } catch (e) { this.failStatus('members', e) }
   }
 
@@ -300,8 +301,9 @@ export class HttpAgent implements AgentClient {
         this.patch({ audit: [...this.s.audit, ...page.items], auditNext: page.nextCursor })
       } else {
         const page = await this.http.call({ method: 'GET', path: `/api/members${q}`, schema: 'members' })
-        page.items.forEach(this.confirmMember)
-        this.patch({ members: page.items.reduce(replaceById, this.s.members), membersNext: page.nextCursor })
+        const items = page.items.map(this.newest)
+        items.forEach(this.confirmMember)
+        this.patch({ members: items.reduce(replaceById, this.s.members), membersNext: page.nextCursor })
       }
     } catch (e) {
       throw this.fail(e)
@@ -452,7 +454,7 @@ export class HttpAgent implements AgentClient {
       apply: s => this.withValue(s, key, value),
       send: () => {
         // Read when it is sent: after the write before it in the queue has answered. The name's rev is the member row's latest known one.
-        const ifRev = key === 'g:name' && meId ? this.s.members.find(m => m.id === meId)?.rev ?? this.s.revs[key] ?? 0 : this.s.revs[key] ?? 0
+        const ifRev = key === 'g:name' && meId ? this.revOfRow(meId) : this.s.revs[key] ?? 0
         return this.http.call({ method: 'PUT', path: `/api/settings/${row.scope}/${encodeURIComponent(key)}`, schema: 'setting', json: k.BODIES.settingWrite.parse({ value, ifRev }) })
       },
       done: (s, rec, others) => (others || this.valueOf(s, key) === value ? put(s, rec, others) : { ...s, revs: { ...s.revs, [key]: rec.rev } }),
@@ -494,12 +496,15 @@ export class HttpAgent implements AgentClient {
       field: `member:${memberId}:photo`,
       apply: s => photoAs(s, dataUrl),
       send: () => this.http.call({ method: bytes ? 'PUT' : 'DELETE', path: '/api/photo', schema: 'photo', ...(bytes ? { bytes } : {}) }),
-      done: (s, r, others) => { this.confirmed.set(record, r.photoUrl); return others ? s : photoAs(s, r.photoUrl) },
+      // The answer carries the row's new rev: the next write to the row (the name, the role) is written at it.
+      done: (s, r, others) => { this.confirmed.set(record, r.photoUrl); this.confirmRowPhoto(memberId, r.photoUrl, r.rev); return this.bumpRev(others ? s : photoAs(s, r.photoUrl), memberId, r.rev) },
       undo: (s, _before, others) => (others ? s : photoAs(s, this.confirmed.get(record) as string | null)),
       onConflict: (s, current, others) => {
         const photo = typeof current.photoUrl === 'string' ? current.photoUrl : null
         this.confirmed.set(record, photo)
-        return others ? s : photoAs(s, photo)
+        if (typeof current.rev === 'number') this.confirmRowPhoto(memberId, photo, current.rev)
+        const next = others ? s : photoAs(s, photo)
+        return typeof current.rev === 'number' ? this.bumpRev(next, memberId, current.rev) : next
       },
       after: () => this.refreshMembers(),
     })
@@ -507,20 +512,38 @@ export class HttpAgent implements AgentClient {
 
   // ----- the team -----
 
-  private serverMember = (id: string) => this.s.members.find(m => m.id === id)
   /** A member's record as the server sent it. The signed-in person's row carries their photo, confirmed with it. */
   private confirmMember = (m: MemberRecord) => {
     this.confirmed.set(`member:${m.id}`, m)
     if (m.id === this.s.me?.memberId) this.confirmed.set(`photo:${m.id}`, m.photo)
   }
+  /** The photo of a member's confirmed row (a photo answer says what the server now holds, before any team read does). */
+  private confirmRowPhoto = (id: string, photo: string | null, rev: number) => {
+    const c = this.confirmed.get(`member:${id}`) as MemberRecord | undefined
+    if (c && rev >= c.rev) this.confirmed.set(`member:${id}`, { ...c, photo })
+  }
   private depthOf = (field: string) => this.depth.get(field) ?? 0
   /** A member's rev only ever goes up: a later answer (the photo's refresh, a name save) may already have moved it. */
-  private bumpRev = (s: Slices, id: string, rev: number): Slices => ({ ...s, members: s.members.map(m => (m.id === id && m.rev < rev ? { ...m, rev } : m)) })
+  private bumpRev = (s: Slices, id: string, rev: number): Slices => {
+    const c = this.confirmed.get(`member:${id}`) as MemberRecord | undefined
+    if (c && c.rev < rev) this.confirmed.set(`member:${id}`, { ...c, rev })
+    // A person whose own row isn't on the page read (the team list pages) still has a rev to write at: the name's.
+    const revs = id === s.me?.memberId && (s.revs['g:name'] ?? 0) < rev ? { ...s.revs, 'g:name': rev } : s.revs
+    return { ...s, revs, members: s.members.map(m => (m.id === id && m.rev < rev ? { ...m, rev } : m)) }
+  }
+  /** The latest rev known for a member's row: the list's, or (the signed-in person's own row not being on the page) what their saves left. */
+  private revOfRow = (id: string): number => Math.max(this.s.members.find(m => m.id === id)?.rev ?? 0, id === this.s.me?.memberId ? this.s.revs['g:name'] ?? 0 : 0)
+  /** A row as the server sent it, unless a newer one is already known: a page served before a write must not lower the rev or bring back a photo. */
+  private newest = (m: MemberRecord): MemberRecord => {
+    const c = this.confirmed.get(`member:${m.id}`) as MemberRecord | undefined
+    return c && c.rev > m.rev ? c : m
+  }
   /**
    * The server's record for a member comes in. A field with a write on screen that isn't done yet (a queued role, a photo
    * in flight, `own` still counting itself) keeps what the screen shows; the rev and every other field come from the server.
    */
-  private takeMember = (s: Slices, m: MemberRecord, own?: 'role' | 'status' | 'photo'): Slices => {
+  private takeMember = (s: Slices, row: MemberRecord, own?: 'role' | 'status' | 'photo'): Slices => {
+    const m = this.newest(row)
     this.confirmMember(m)
     const cur = s.members.find(x => x.id === m.id)
     if (!cur) return { ...s, members: [...s.members, m] }
@@ -559,7 +582,7 @@ export class HttpAgent implements AgentClient {
       lane: `member:${id}`,
       field: `member:${id}:role`,
       apply: this.memberAs(id, m => ({ ...m, role })),
-      send: () => this.http.call({ method: 'PUT', path: `/api/members/${encodeURIComponent(id)}/role`, schema: 'member', json: k.BODIES.roleChange.parse({ role, ifRev: this.serverMember(id)?.rev ?? 0 }) }),
+      send: () => this.http.call({ method: 'PUT', path: `/api/members/${encodeURIComponent(id)}/role`, schema: 'member', json: k.BODIES.roleChange.parse({ role, ifRev: this.revOfRow(id) }) }),
       done: (s, m) => this.takeMember(s, m, 'role'),
       undo: this.untakeMember(id, 'role'),
       onConflict: this.conflictMember(k, 'role'),
@@ -572,7 +595,7 @@ export class HttpAgent implements AgentClient {
     lane: `member:${id}`,
     field: `member:${id}:status`,
     apply: this.memberAs(id, m => ({ ...m, status: 'removed' })),
-    send: () => this.http.call({ method: 'DELETE', path: `/api/members/${encodeURIComponent(id)}?ifRev=${this.serverMember(id)?.rev ?? 0}`, schema: 'member' }),
+    send: () => this.http.call({ method: 'DELETE', path: `/api/members/${encodeURIComponent(id)}?ifRev=${this.revOfRow(id)}`, schema: 'member' }),
     done: (s, m) => this.takeMember(s, m, 'status'),
     undo: this.untakeMember(id, 'status'),
     onConflict: this.conflictMember(k, 'status'),

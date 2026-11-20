@@ -58,6 +58,9 @@ export type RoleChangeInput = z.infer<typeof RoleChangeInputSchema>
 export const MemberRemoveQuerySchema = z.object({ ifRev: z.string().regex(/^(0|[1-9]\d{0,8})$/).transform(Number) }).strict()
 export type MemberRemoveQuery = z.infer<typeof MemberRemoveQuerySchema>
 
-/** `PUT /api/photo` and `DELETE /api/photo`: the caller's photo URL as it is now (null: no photo). */
-export const PhotoResultSchema = z.object({ photoUrl: z.string().nullable() })
+/**
+ * `PUT /api/photo` and `DELETE /api/photo`: the caller's photo URL as it is now (null: no photo), and the member row's `rev`
+ * after the write (a photo moves it, and the name and the role are written at it). A refusal's `current` carries both too.
+ */
+export const PhotoResultSchema = z.object({ photoUrl: z.string().nullable(), rev: z.number().int().min(1) })
 export type PhotoResult = z.infer<typeof PhotoResultSchema>

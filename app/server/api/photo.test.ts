@@ -35,6 +35,8 @@ const webp = (rest: number[] = []) => [0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57,
 const bytesOf = (head: number[], size = 64) => { const b = new Uint8Array(size); b.set(head); return b }
 
 /** This test's member's objects (R2 isn't reset between tests; every member has its own prefix). */
+/** The member row's rev, read back: what a photo answer must carry. */
+const revOf = async () => (await db.prepare('SELECT rev FROM members WHERE id = ?').bind(me).first<number>('rev'))!
 const objects = async () => (await files.list({ prefix: `photos/${me}/` })).objects.map(o => o.key).sort()
 
 function photoCtx(body: BodyInit | null, headers: Record<string, string>, s: Stores = stores, objectsSeen: unknown[] = []): ApiCtx {
@@ -66,7 +68,7 @@ describe('the type comes from the bytes (failure 1)', () => {
   })
   it('takes PNG, JPEG and WebP under their own type', async () => {
     for (const [head, type] of [[PNG, 'image/png'], [JPEG, 'image/jpeg'], [webp(), 'image/webp']] as const) {
-      expect(await put(bytesOf(head), `${type}; charset=binary`)).toEqual({ status: 200, body: { photoUrl: `/api/members/${me}/photo` } })
+      expect(await put(bytesOf(head), `${type}; charset=binary`)).toEqual({ status: 200, body: { photoUrl: `/api/members/${me}/photo`, rev: await revOf() } })
     }
   })
 })
@@ -110,7 +112,7 @@ describe('R2 and D1 together (failures 3, 4)', () => {
       ['photo.changed', me, { type: 'image/png', size: 100 }], ['photo.changed', me, { type: 'image/jpeg', size: 200 }],
     ])
     const removed = await deletePhoto(photoCtx(null, {}))
-    expect(await removed.json()).toEqual({ photoUrl: null })
+    expect(await removed.json()).toEqual({ photoUrl: null, rev: await revOf() })
     expect(await objects()).toEqual([])
     expect((await linesSince(db, before)).map(l => l.action)).toEqual(['photo.changed', 'photo.changed', 'photo.removed'])
     // Removing again changes nothing and logs nothing.
@@ -151,7 +153,7 @@ describe('after the commit, and races (fix round 1)', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       const s = store({ files: { delete: async (k: string | string[]) => { if (k === old) throw new Error('R2 down'); await files.delete(k) } } })
-      expect(await s.set({ memberId: me, bytes: bytesOf(JPEG), type: 'image/jpeg' }, at(me))).toEqual({ ok: true })
+      expect(await s.set({ memberId: me, bytes: bytesOf(JPEG), type: 'image/jpeg' }, at(me))).toEqual({ ok: true, rev: await revOf() })
       expect(error.mock.calls).toEqual([[{ event: 'photo_old_delete_failed', key: old, error: 'StoreUnavailableError' }]])
       const row = await db.prepare('SELECT photo_key FROM members WHERE id = ?').bind(me).first<string>('photo_key')
       expect(row).not.toBe(old)
@@ -169,7 +171,7 @@ describe('after the commit, and races (fix round 1)', () => {
         return typeof v === 'function' ? v.bind(t) : v
       },
     })
-    expect(await store({ db: lostReply }).set({ memberId: me, bytes: bytesOf(PNG), type: 'image/png' }, at(me))).toEqual({ ok: true })
+    expect(await store({ db: lostReply }).set({ memberId: me, bytes: bytesOf(PNG), type: 'image/png' }, at(me))).toEqual({ ok: true, rev: await revOf() })
     const row = await db.prepare('SELECT photo_key FROM members WHERE id = ?').bind(me).first<string>('photo_key')
     expect(await objects()).toEqual([row])
   })
@@ -180,14 +182,14 @@ describe('after the commit, and races (fix round 1)', () => {
     const racing = openStores(env, undefined, { beforePhotoBatch: async () => { await db.prepare("UPDATE members SET photo_key = 'photos/' || id || '/other' WHERE id = ?").bind(me).run() } })
     const res = await deletePhoto(photoCtx(null, {}, racing))
     expect(res.status).toBe(409)
-    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo` } } })
+    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo`, rev: await revOf() } } })
     expect(await linesSince(db, before)).toEqual([])
   })
   it('an upload that loses a race is 409 conflict with the photo as it is now', async () => {
     const racing = openStores(env, undefined, { beforePhotoBatch: async () => { await db.prepare("UPDATE members SET photo_key = 'photos/' || id || '/other' WHERE id = ?").bind(me).run() } })
     const res = await putPhoto(photoCtx(bytesOf(PNG) as Uint8Array<ArrayBuffer>, { 'Content-Type': 'image/png' }, racing))
     expect(res.status).toBe(409)
-    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo` } } })
+    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo`, rev: await revOf() } } })
     expect(await objects()).toEqual([])
   })
 })

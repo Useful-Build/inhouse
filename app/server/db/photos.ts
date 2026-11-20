@@ -28,7 +28,7 @@ export interface PhotoStoreDeps {
 const randomPart = () => [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('')
 
 /** Another write changed the photo first: the key the row holds now. */
-export type PhotoConflict = { conflict: { photoKey: string | null } }
+export type PhotoConflict = { conflict: { photoKey: string | null; rev: number } }
 
 export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: PhotoStoreDeps) {
   const write = (stmts: Stmt[]) => runBatch(db, stmts.map(s => (s.sql.startsWith('INSERT INTO audit_log') ? hook(s) : s)))
@@ -47,11 +47,11 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
     }
   }
   const keyOf = async (memberId: string) =>
-    first<{ photo_key: string | null }>(db, stmt("SELECT photo_key FROM members WHERE id = ? AND kind = 'person'", memberId))
+    first<{ photo_key: string | null; rev: number }>(db, stmt("SELECT photo_key, rev FROM members WHERE id = ? AND kind = 'person'", memberId))
 
   return {
     /** Stores a person's own photo. A conflict: another upload or a removal changed it first (nothing kept of this one). */
-    async set(input: { memberId: string; bytes: Uint8Array; type: PhotoType }, at: At): Promise<{ ok: true } | PhotoConflict> {
+    async set(input: { memberId: string; bytes: Uint8Array; type: PhotoType }, at: At): Promise<{ ok: true; rev: number } | PhotoConflict> {
       const before = await keyOf(input.memberId)
       if (!before) throw new Error('set: not a person row')
       const key = photoKey(input.memberId, randomPart())
@@ -78,26 +78,28 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
         if (now !== undefined && now?.photo_key !== key) await files.delete(key)
         if (now?.photo_key === key) {
           if (before.photo_key) await dropOld(before.photo_key)
-          return { ok: true }
+          return { ok: true, rev: now.rev }
         }
         throw err
       }
       if (changes === 0) {
         await files.delete(key)
-        return { conflict: { photoKey: (await keyOf(input.memberId))?.photo_key ?? null } }
+        const now = await keyOf(input.memberId)
+        return { conflict: { photoKey: now?.photo_key ?? null, rev: now?.rev ?? before.rev } }
       }
       if (before.photo_key) await dropOld(before.photo_key)
-      return { ok: true }
+      // The row's rev after this write (the write moved it): the caller sends it as `ifRev` on its next write to the row.
+      return { ok: true, rev: (await keyOf(input.memberId))?.rev ?? before.rev + 1 }
     },
 
     /**
      * Removes a person's own photo (the row's key first, then the object). `removed: false` when there was none; a
      * conflict when another upload or removal changed it first.
      */
-    async remove(memberId: string, at: At): Promise<{ removed: boolean } | PhotoConflict> {
+    async remove(memberId: string, at: At): Promise<{ removed: boolean; rev: number } | PhotoConflict> {
       const before = await keyOf(memberId)
       if (!before) throw new Error('remove: not a person row')
-      if (!before.photo_key) return { removed: false }
+      if (!before.photo_key) return { removed: false, rev: before.rev }
       await beforeBatch?.()
       const stamp = writeStamp(at.requestId)
       const [change] = await write([
@@ -110,9 +112,12 @@ export function photoStore({ db, files: bucket, hook = s => s, beforeBatch }: Ph
           { table: 'members', where: 'id = ?', params: [memberId], stamp },
         ),
       ])
-      if (change.meta.changes === 0) return { conflict: { photoKey: (await keyOf(memberId))?.photo_key ?? null } }
+      if (change.meta.changes === 0) {
+        const now = await keyOf(memberId)
+        return { conflict: { photoKey: now?.photo_key ?? null, rev: now?.rev ?? before.rev } }
+      }
       await dropOld(before.photo_key)
-      return { removed: true }
+      return { removed: true, rev: (await keyOf(memberId))?.rev ?? before.rev + 1 }
     },
 
     /** A person's photo as stored: its bytes and the type recorded at upload, or null (no such person, or no photo). */

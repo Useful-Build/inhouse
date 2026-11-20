@@ -324,8 +324,8 @@ describe('writes', () => {
     const r = reads()
     const s = server({
       ...r,
-      'PUT /api/photo': q => { seen.push(q); return { body: { photoUrl: `/api/members/${ME_ID}/photo` } } },
-      'DELETE /api/photo': q => { seen.push(q); return { body: { photoUrl: null } } },
+      'PUT /api/photo': q => { seen.push(q); return { body: { photoUrl: `/api/members/${ME_ID}/photo`, rev: 2 } } },
+      'DELETE /api/photo': q => { seen.push(q); return { body: { photoUrl: null, rev: 3 } } },
     })
     const base = s.fetch
     const agent = new HttpAgent({ fetch: (i, init) => { if (init?.body instanceof Uint8Array) bytes = init.body; return base(i, init) } })
@@ -602,7 +602,7 @@ describe('queued writes that are refused go back to what the server last confirm
     const own = `/api/members/${ME_ID}/photo`
     const { agent } = await loaded({
       ...reads({ me: me({ photoUrl: null }), members: [member(ME_ID, { role: 'admin' }), member('m_dana')] }),
-      [`PUT /api/members/${ME_ID}/role`]: lost, 'PUT /api/photo': { body: { photoUrl: own } },
+      [`PUT /api/members/${ME_ID}/role`]: lost, 'PUT /api/photo': { body: { photoUrl: own, rev: 2 } },
       'GET /api/members': { body: { items: [member(ME_ID, { role: 'admin', photo: own, rev: 2 }), member('m_dana')], nextCursor: null } },
     })
     await Promise.all([errorOf(agent.setMemberRole(ME_ID, 'member')), agent.setPhoto(ME_ID, 'data:image/png;base64,iVBORw0KGgo=')])
@@ -633,7 +633,7 @@ describe('a refused write leaves a later queued write on the same field showing'
   test('photos: the first refused, the second still in flight: the second\'s picture is on screen', async () => {
     const own = `/api/members/${ME_ID}/photo`
     const PNG2 = 'data:image/png;base64,iVBORw0KGgoAAAA='
-    const h = held(reads({ me: me({ photoUrl: null }), members: [member(ME_ID, { role: 'admin' })] }), '/api/photo', refusal(503, 'unavailable'), { body: { photoUrl: own } })
+    const h = held(reads({ me: me({ photoUrl: null }), members: [member(ME_ID, { role: 'admin' })] }), '/api/photo', refusal(503, 'unavailable'), { body: { photoUrl: own, rev: 2 } })
     const agent = new HttpAgent({ fetch: h.fetch })
     await agent.whenLoaded()
     const first = errorOf(agent.setPhoto(ME_ID, 'data:image/png;base64,iVBORw0KGgo='))
@@ -703,23 +703,24 @@ describe('a refused photo goes back to what the server has, whatever the client 
 
   test.each([['a Member who may not read the team', alone], ['a person whose row is not on the page read', offPage]])(
     '%s: the first photo saved and the second refused: the served picture, not the first one\'s data', async (_who, routes) => {
-      const answers: Answer[] = [{ body: { photoUrl: own } }, lost]
+      const answers: Answer[] = [{ body: { photoUrl: own, rev: 2 } }, lost]
       const { agent } = await loaded({ ...routes(null), 'PUT /api/photo': () => answers.shift()! })
       await quiet(() => Promise.all([agent.setPhoto(ME_ID, PNG), errorOf(agent.setPhoto(ME_ID, PNG2))]))
       expect(agent.me()?.photoUrl).toBe(own)
     })
 
   test('the first photo refused with the photo as it is now, the second refused with nothing to show: the photo the first refusal told of', async () => {
-    const answers: Answer[] = [refusal(409, 'conflict', { current: { photoUrl: own } }), lost]
+    const answers: Answer[] = [refusal(409, 'conflict', { current: { photoUrl: own, rev: 2 } }), lost]
     const { agent } = await loaded({ ...offPage(null), 'PUT /api/photo': () => answers.shift()! })
     await Promise.all([errorOf(agent.setPhoto(ME_ID, PNG)), errorOf(agent.setPhoto(ME_ID, PNG2))])
     expect(agent.me()?.photoUrl).toBe(own)
   })
 
   test('the team read after a photo is saved says it has since gone (removed on another device), and the next photo is refused: no photo', async () => {
-    const answers: Answer[] = [{ body: { photoUrl: own } }, lost]
-    // The team's rows are served with no photo throughout: by the read after the save, the saved photo is gone again.
-    const { agent } = await loaded({ ...reads(), 'PUT /api/photo': () => answers.shift()! })
+    const answers: Answer[] = [{ body: { photoUrl: own, rev: 2 } }, lost]
+    // The team's rows are served with no photo: by the read after the save the saved photo is gone again (removed elsewhere, so the row's rev moved on).
+    let reads2 = 0
+    const { agent } = await loaded({ ...reads(), 'GET /api/members': () => ({ body: { items: [member(ME_ID, { role: 'admin', rev: reads2++ === 0 ? 1 : 3 }), member('m_dana')], nextCursor: null } }), 'PUT /api/photo': () => answers.shift()! })
     await Promise.all([agent.setPhoto(ME_ID, PNG), errorOf(agent.setPhoto(ME_ID, PNG2))])
     expect(agent.me()?.photoUrl).toBeNull()
     expect(agent.read().people.members.find(m => m.id === ME_ID)?.photo).toBeNull()
@@ -736,7 +737,7 @@ describe('a refused photo goes back to what the server has, whatever the client 
       'GET /api/members': () => ({ body: { items: [member(ME_ID, { role: 'admin', photo }), member('m_dana')], nextCursor: null } }),
       [NAME]: { body: record('g:name', 'Sam B', 2) },
       [`PUT /api/members/${ME_ID}/role`]: { body: member(ME_ID, { rev: 2 }) },
-      'PUT /api/photo': () => { photo = own; return { body: { photoUrl: own } } },
+      'PUT /api/photo': () => { photo = own; return { body: { photoUrl: own, rev: 2 } } },
     })
     const seen: unknown[] = []
     const saved = [first(agent), agent.setPhoto(ME_ID, PNG)]
@@ -779,19 +780,25 @@ describe('a refused photo goes back to what the server has, whatever the client 
         const answer = photos.shift()!
         if (answer === 'lost') return lost
         rev++
-        if (answer === 'changed elsewhere') { has = !has; return refusal(409, 'conflict', { current: { photoUrl: url() } }) }
+        if (answer === 'changed elsewhere') { has = !has; return refusal(409, 'conflict', { current: { photoUrl: url(), rev } }) }
         has = r.method === 'PUT'
-        return { body: { photoUrl: url() } }
+        return { body: { photoUrl: url(), rev } }
       }
       const { agent } = await loaded({
-        ...reads(),
+        // The name's record carries the member row's rev (the real settings read says so), whether or not the team list has the row.
+        ...reads({ settings: { personal: [record('g:name', 'Sam Mercer', 1)] } }),
         'GET /api/me': () => ({ body: me({ ...(team === 'not readable' ? { role: 'member', can: can(false) } : {}), photoUrl: url() }) }),
         'GET /api/members': () => (team === 'not readable' ? refusal(403, 'forbidden') : {
           body: team === 'mine' ? { items: [member(ME_ID, { role: 'admin', photo: url(), rev }), member('m_dana')], nextCursor: null } : { items: [member('m_dana')], nextCursor: 'm_dana' },
         }),
         'PUT /api/photo': photo,
         'DELETE /api/photo': photo,
-        [NAME]: r => (names.shift() === 'lost' ? lost : { body: record('g:name', (JSON.parse(r.body!) as { value: string }).value, ++rev) }),
+        // Like the real route: written at the member row's rev, or a 409 with the record as it is (so a stale rev is caught).
+        [NAME]: r => {
+          if (names.shift() === 'lost') return lost
+          const b = JSON.parse(r.body!) as { value: string; ifRev: number }
+          return b.ifRev === rev ? { body: record('g:name', b.value, ++rev) } : refusal(409, 'conflict', { current: record('g:name', 'elsewhere', rev) })
+        },
       })
       await quiet(async () => {
         const settled = steps.map((s, i) => errorOf(s.kind === 'photo' ? agent.setPhoto(ME_ID, s.to) : agent.setSetting('g:name', `Sam ${i}`)))
@@ -799,7 +806,9 @@ describe('a refused photo goes back to what the server has, whatever the client 
         // record as it is now is two changes back to back (taken back, then the record put in).
         const seen: unknown[] = []
         agent.subscribe(() => queueMicrotask(() => seen.push(agent.me()?.photoUrl)))
-        await Promise.all(settled)
+        const results = await Promise.all(settled)
+        // The server checks the rev a name is written at: a name it answered 'saved' to was written at the row's latest rev (the photo's answer, or a refusal's current).
+        steps.forEach((st, i) => { if (st.kind === 'name' && st.answer === 'saved') expect(results[i], `name write ${i} saved`).toBe('resolved') })
         expect(agent.me()?.photoUrl, 'the account menu, once every write has answered').toBe(url())
         if (team === 'mine') expect(agent.read().people.members.find(m => m.id === ME_ID)?.photo, 'the team list').toBe(url())
         const last = steps.findLast(s => s.kind === 'photo')
@@ -810,6 +819,98 @@ describe('a refused photo goes back to what the server has, whatever the client 
     })
 })
 
+describe('the rev a photo leaves on the member row', () => {
+  const own = `/api/members/${ME_ID}/photo`
+  const PNG = 'data:image/png;base64,iVBORw0KGgo='
+  /** A person whose own row is not on the first page of the team list, on a server whose row is at `rev` and revs as the real one does. */
+  function offPage(opts: { photoRev?: number; rev?: number } = {}) {
+    let rev = opts.rev ?? 4
+    const sent: { name: number[]; role: number[] } = { name: [], role: [] }
+    const routes = {
+      ...reads({ me: me({ photoUrl: null }), members: [member('m_dana')], settings: { personal: [record('g:name', 'Sam Mercer', 4)] } }),
+      'GET /api/members': { body: { items: [member('m_dana')], nextCursor: 'm_dana' } },
+      'PUT /api/photo': () => { rev = opts.photoRev ?? rev + 1; return { body: { photoUrl: own, rev } } },
+      'DELETE /api/photo': () => { rev++; return { body: { photoUrl: null, rev } } },
+      'PUT /api/settings/personal/g:name': (r: Req): Answer => {
+        const b = JSON.parse(r.body!) as { value: string; ifRev: number }
+        sent.name.push(b.ifRev)
+        return b.ifRev === rev ? { body: record('g:name', b.value, ++rev) } : refusal(409, 'conflict', { current: record('g:name', 'elsewhere', rev) })
+      },
+      [`PUT /api/members/${ME_ID}/role`]: (r: Req): Answer => {
+        const b = JSON.parse(r.body!) as { role: string; ifRev: number }
+        sent.role.push(b.ifRev)
+        return b.ifRev === rev ? { body: member(ME_ID, { role: b.role, rev: ++rev }) } : refusal(409, 'conflict', { current: member(ME_ID, { rev }) })
+      },
+    }
+    return { routes, sent, rev: () => rev }
+  }
+
+  test('a person off the first page saves a photo, then their name: the name is written at the photo\'s rev, and saves with no notice', async () => {
+    const o = offPage()
+    const { agent, heard } = await loaded(o.routes)
+    await agent.setPhoto(ME_ID, PNG)
+    await agent.setSetting('g:name', 'Sam B')
+    expect(o.sent.name).toEqual([5])
+    expect(heard).toEqual([])
+    expect(agent.getSnapshot().settings['g:name']).toBe('Sam B')
+  })
+
+  test('the same, queued together', async () => {
+    const o = offPage()
+    const { agent, heard } = await loaded(o.routes)
+    await Promise.all([agent.setPhoto(ME_ID, PNG), agent.setSetting('g:name', 'Sam B')])
+    expect(o.sent.name).toEqual([5])
+    expect(heard).toEqual([])
+  })
+
+  test('a photo, then their own role: written at the photo\'s rev', async () => {
+    const o = offPage()
+    const { agent, heard } = await loaded({ ...o.routes, 'GET /api/members': { body: { items: [member('m_dana'), member(ME_ID, { role: 'admin', rev: 4 })], nextCursor: null } } })
+    // The row is on the page here, but the photo answer's rev is what the role must carry (the team read is served from before the photo).
+    await agent.setPhoto(ME_ID, PNG)
+    await agent.setMemberRole(ME_ID, 'member')
+    expect(o.sent.role).toEqual([5])
+    expect(heard).toEqual([])
+  })
+
+  test('a photo removed likewise leaves its rev', async () => {
+    const o = offPage()
+    const { agent, heard } = await loaded(o.routes)
+    await agent.setPhoto(ME_ID, null)
+    await agent.setSetting('g:name', 'Sam B')
+    expect(o.sent.name).toEqual([5])
+    expect(heard).toEqual([])
+  })
+
+  test('a photo refused with the row as it is (a rev in current): the next name is written at that rev', async () => {
+    // The row moved on elsewhere (rev 6); the name setting this client loaded says 4.
+    const o = offPage({ rev: 6 })
+    const { agent } = await loaded({ ...o.routes, 'PUT /api/photo': refusal(409, 'conflict', { current: { photoUrl: null, rev: 6 } }) })
+    await errorOf(agent.setPhoto(ME_ID, PNG))
+    expect(await errorOf(agent.setSetting('g:name', 'Sam B'))).toBe('resolved')
+    expect(o.sent.name).toEqual([6])
+  })
+
+  test('a team page served before a write does not lower the row\'s rev or put its photo back', async () => {
+    let page = 0
+    const { agent } = await loaded({
+      ...reads({ me: me({ photoUrl: null }), members: [member(ME_ID, { role: 'admin', rev: 1 })] }),
+      'GET /api/members': { body: { items: [member(ME_ID, { role: 'admin', rev: 1 })], nextCursor: 'c' } },
+      'GET /api/members?cursor=c': () => { page++; return { body: { items: [member('m_dana'), member(ME_ID, { role: 'admin', rev: 1, photo: null })], nextCursor: null } } },
+      'PUT /api/photo': { body: { photoUrl: own, rev: 2 } },
+    })
+    await agent.setPhoto(ME_ID, PNG)
+    await agent.loadMore('members')
+    expect(page).toBe(1)
+    const mine = agent.read().people.members.find(m => m.id === ME_ID)!
+    expect(mine).toMatchObject({ rev: 2, photo: own })
+    expect(agent.me()?.photoUrl).toBe(own)
+    // And a re-read of the whole list that was served before the write.
+    await agent.retry('members')
+    expect(agent.read().people.members.find(m => m.id === ME_ID)).toMatchObject({ rev: 2, photo: own })
+  })
+})
+
 describe('one member row is one lane', () => {
   test('a name saved while a photo uploads: both save, no notice, the name carries the rev the photo left', async () => {
     let rev = 1
@@ -817,7 +918,7 @@ describe('one member row is one lane', () => {
     const { agent, heard } = await loaded({
       ...reads({ members: [member(ME_ID, { role: 'admin', rev: 1 })], settings: { personal: [record('g:name', 'Sam Mercer', 1)] } }),
       'GET /api/members': () => ({ body: { items: [member(ME_ID, { role: 'admin', rev })], nextCursor: null } }),
-      'PUT /api/photo': () => { rev++; return { body: { photoUrl: `/api/members/${ME_ID}/photo` } } },
+      'PUT /api/photo': () => { rev++; return { body: { photoUrl: `/api/members/${ME_ID}/photo`, rev } } },
       'PUT /api/settings/personal/g:name': r => {
         const b = JSON.parse(r.body!) as { value: string; ifRev: number }
         sent.push(b.ifRev)
@@ -849,7 +950,7 @@ describe('one member row is one lane', () => {
     const { agent, heard } = await loaded({
       ...reads({ me: me(), members: [member(ME_ID, { role: 'admin', rev: 1 }), member('m_dana')] }),
       'GET /api/members': () => ({ body: { items: [member(ME_ID, { role: 'admin', rev }), member('m_dana')], nextCursor: null } }),
-      'PUT /api/photo': () => { rev++; return { body: { photoUrl: `/api/members/${ME_ID}/photo` } } },
+      'PUT /api/photo': () => { rev++; return { body: { photoUrl: `/api/members/${ME_ID}/photo`, rev } } },
       [`PUT /api/members/${ME_ID}/role`]: r => {
         const b = JSON.parse(r.body!) as { role: string; ifRev: number }
         sent.push(b.ifRev)
@@ -954,7 +1055,7 @@ describe('a photo that is not valid base64', () => {
   })
   fcTest.prop([fc.string({ maxLength: 40 }), fc.constantFrom('', PHOTO, 'data:image/jpeg;base64,', 'data:image/webp;base64,')], { numRuns: 200 })(
     'setPhoto never throws on any text: it resolves or rejects with an AgentError', async (tail, head) => {
-      const s = server({ ...reads(), 'PUT /api/photo': { body: { photoUrl: `/api/members/${ME_ID}/photo` } } })
+      const s = server({ ...reads(), 'PUT /api/photo': { body: { photoUrl: `/api/members/${ME_ID}/photo`, rev: 2 } } })
       const agent = new HttpAgent({ fetch: s.fetch })
       await agent.whenLoaded()
       let p: Promise<void> | undefined
