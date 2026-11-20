@@ -229,7 +229,7 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
     ensure(t) {
       insert(t, `UPDATE SET gen = excluded.gen, due_at_ms = excluded.due_at_ms, payload_json = excluded.payload_json,
         attempts = 0, state = 'ready', last_error = NULL WHERE due_tasks.state = 'quarantined' AND due_tasks.kind = excluded.kind
-          AND due_tasks.last_error LIKE 'unknown kind %'`)
+          AND due_tasks.last_error = 'unknown kind ' || due_tasks.kind`)
       changed()
     },
     cancel(id) {
