@@ -13,3 +13,5 @@ export const turnOf: Real['turnOf'] = () => {
 export const createScriptedModel: Real['createScriptedModel'] = () => {
   throw new Error('The scripted model is not in this build.')
 }
+/** No scenarios outside the test build. */
+export const SCENARIOS: Real['SCENARIOS'] = {}
