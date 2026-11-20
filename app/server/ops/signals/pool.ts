@@ -10,14 +10,9 @@ const fromPool = (name: string, pick: keyof PoolHealth): Signal => ({
   check: async ({ env }) => (await brandAgent(env).poolHealth())[pick],
 })
 
-/**
- * Built, not listed yet: `ops/health.test.ts` pins the exact signal list of /api/health, so listing these is a change to
- * that check (the orchestrator's call), not part of wiring routes 46-48.
- */
-export const POOL_SIGNALS: readonly Signal[] = [
+/** An idle pool (no container started, nothing queued) reads green on all three. */
+export const poolSignals: readonly Signal[] = [
   fromPool('pool_protocol', 'protocol'),
   fromPool('pool_restarts', 'restarts'),
   fromPool('pool_shortfall', 'shortfall'),
 ]
-
-export const poolSignals: readonly Signal[] = []
