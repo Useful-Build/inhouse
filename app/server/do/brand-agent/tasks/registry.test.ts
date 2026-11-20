@@ -9,7 +9,7 @@ import { inAgent, settle } from '../../../testing/brand-agent/core-harness.ts'
 
 describe('the registry has no stub where it matters (obligation 12)', () => {
   it('the kinds built so far are real handlers', () => {
-    for (const kind of ['turn-watch', 'run-advance', 'call-lease']) expect(taskHandlers[kind], kind).not.toBe(notBuilt)
+    for (const kind of ['turn-watch', 'run-advance', 'call-lease', 'flush-turn']) expect(taskHandlers[kind], kind).not.toBe(notBuilt)
   })
 
   it('ensureSeeds() ensures no task whose handler is a stub', () => inAgent(async h => {
@@ -21,16 +21,17 @@ describe('the registry has no stub where it matters (obligation 12)', () => {
     for (const kind of kinds) expect(taskHandlers[kind], kind).not.toBe(notBuilt)
   }))
 
-  // Every kind but W1's last three stubs is real now (W2's pool-retry, W4's audit-copy and usage-sweep included).
-  const STILL_STUBS = ['grant-expiry', 'authority-sweep', 'flush-turn']
-  it('every registered handler outside the three W1 stubs is real', () => {
+  // Every kind but W1's last two stubs is real now (W2's pool-retry, W4's audit-copy and usage-sweep, W1 PR 3's
+  // flush-turn included).
+  const STILL_STUBS = ['grant-expiry', 'authority-sweep']
+  it('every registered handler outside the two W1 stubs is real', () => {
     for (const [kind, handler] of Object.entries(taskHandlers)) {
       if (!STILL_STUBS.includes(kind)) expect(handler, kind).not.toBe(notBuilt)
     }
     for (const kind of STILL_STUBS) expect(taskHandlers[kind], kind).toBe(notBuilt)
   })
 
-  // Flips on with W1 PR 4 (grant-expiry, authority-sweep), after PR 3 builds flush-turn.
+  // Flips on with W1 PR 4 (grant-expiry, authority-sweep); PR 3 built flush-turn.
   it.skip('no registered handler is a stub (flip in W1 PR 4)', () => {
     for (const [kind, handler] of Object.entries(taskHandlers)) expect(handler, kind).not.toBe(notBuilt)
   })

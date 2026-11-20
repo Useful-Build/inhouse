@@ -27,6 +27,8 @@ import type { TurnOutcome } from './map-events.ts'
 import { buildStart, newId, submitPayloadHash } from './run-start.ts'
 import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
+import { FLUSH_RETRY_MS, FLUSH_TURN_PREFIX, fixTurnRows, storedProjection, writeProjection } from './projection.ts'
+import type { ActiveRun } from '../../../shared/contract/runs.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
 export const STARTING_DEADLINE_MS = 3 * 60_000
@@ -74,6 +76,7 @@ export interface TurnRow {
   grace_until_ms: number | null; ending_since_ms: number | null; watch_json: string | null; saw_checkpoint: number
   mirror_error: number; deferred_json: string | null; start_json: string | null; settled: number; parts_n: number
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
+  pos_from: number | null; pos_to: number | null; d1_flushed: number
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
@@ -113,6 +116,8 @@ export class AgentCore {
   private readonly sql: SqlStorage
   /** Turns whose effects queue is being drained by this instance (one drain per turn at a time). */
   private readonly draining = new Set<string>()
+  /** Runs whose `advance` waits while one synchronous step ends several of their turns (`endChats`): none is claimed half-way. */
+  private readonly holding = new Set<string>()
 
   constructor(deps: CoreDeps) {
     this.d = deps
@@ -271,7 +276,7 @@ export class AgentCore {
    */
   advance(runId: string): string | null {
     const run = this.sql.exec<{ state: string; chat_id: string; started_at_ms: number }>('SELECT state, chat_id, started_at_ms FROM runs WHERE run_id = ?', runId).toArray()[0]
-    if (!run || run.state !== 'live') return null
+    if (!run || run.state !== 'live' || this.holding.has(runId)) return null
     if (this.count(`run_id = ? AND state IN ${ACTIVE}`, runId) > 0) return null
     const next = this.sql.exec<TurnRow>(`SELECT * FROM turns WHERE run_id = ? AND state = 'queued' ORDER BY ${PRIORITY_ORDER}, ord LIMIT 1`, runId).toArray()[0]
     if (next) {
@@ -557,7 +562,30 @@ export class AgentCore {
       `UPDATE turns SET state = ?, gen = gen + 1, outcome = COALESCE(outcome, ?), failure = COALESCE(failure, ?),
         cancel_why = COALESCE(cancel_why, ?), pool_queued = 0, ended_at_ms = ? WHERE turn_id = ?`,
       state, o.outcome, o.failure, o.why, now, turnId)
+    // The D1 projection (4.8): the rows fixed here, the batch after; the task is its durable retry.
+    fixTurnRows(this.sql, turnId, now)
+    this.d.scheduler.schedule({ id: `${FLUSH_TURN_PREFIX}${turnId}`, kind: 'flush-turn', dueAtMs: now + FLUSH_RETRY_MS })
+    void this.flushTurn(turnId)
     this.onFinal?.(this.turn(turnId)!)
+  }
+
+  /**
+   * Writes the turn's fixed rows to D1 (idempotent: the same ids and positions every time). True once they're in; a
+   * failure stays for the `flush-turn` task, which retries with the scheduler's backoff.
+   */
+  async flushTurn(turnId: string): Promise<boolean> {
+    const p = storedProjection(this.sql, turnId)
+    if (!p) return true
+    if (this.turn(turnId)?.d1_flushed === 1) return true
+    try {
+      await writeProjection(this.d.db, p)
+    } catch (err) {
+      console.error({ event: 'flush_turn_failed', turnId, error: errorText(err) })
+      return false
+    }
+    this.sql.exec('UPDATE turns SET d1_flushed = 1 WHERE turn_id = ?', turnId)
+    this.d.scheduler.cancel(`${FLUSH_TURN_PREFIX}${turnId}`)
+    return true
   }
 
   /** Testing seam (and PR 5's join point): called once per turn, inside `storeFinal`'s synchronous step. */
@@ -1038,6 +1066,44 @@ export class AgentCore {
     this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
       checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, chatId)
     return { ok: true }
+  }
+
+  // ---------- chats: history and delete (routes 24, 27; 4.8) ----------
+
+  /**
+   * The runs of these chats a reload attaches to (route 24): the live one, and every ended run with a final turn whose
+   * rows aren't in D1 yet (its events replay what the history doesn't have). In start order.
+   */
+  chatRuns(chatIds: string[]): ActiveRun[] {
+    if (chatIds.length === 0) return []
+    const rows = this.sql.exec<{ run_id: string; chat_id: string; last_seq: number; state: string }>(
+      `SELECT r.run_id, r.chat_id, r.last_seq, r.state FROM runs r WHERE r.chat_id IN (${chatIds.map(() => '?').join(', ')})
+        AND (r.state = 'live' OR EXISTS (SELECT 1 FROM turns t WHERE t.run_id = r.run_id AND t.state IN ('ended', 'cancelled') AND t.d1_flushed = 0))
+        ORDER BY r.started_at_ms, r.run_id`, ...chatIds).toArray()
+    return rows.map(r => ({ runId: r.run_id, chatId: r.chat_id, lastSeq: r.last_seq, live: r.state === 'live' }))
+  }
+
+  /**
+   * Route 27 (4.6): the chats were deleted. Their queued turns are cancelled and their running ones fenced, each through
+   * the fence's own paths, so every one ends in `storeFinal`. One synchronous step: the runs' `advance` is held until
+   * every turn is ended or fenced, so no queued turn is claimed on the way.
+   */
+  endChats(chatIds: string[]) {
+    if (chatIds.length === 0) return
+    const marks = chatIds.map(() => '?').join(', ')
+    const runs = this.sql.exec<{ run_id: string }>(`SELECT run_id FROM runs WHERE state = 'live' AND chat_id IN (${marks})`, ...chatIds).toArray().map(r => r.run_id)
+    for (const r of runs) this.holding.add(r)
+    try {
+      const turns = this.sql.exec<{ turn_id: string }>(
+        `SELECT turn_id FROM turns WHERE chat_id IN (${marks}) AND state IN ('queued', 'starting', 'live') ORDER BY created_at_ms, ord`, ...chatIds).toArray()
+      for (const { turn_id } of turns) {
+        const fresh = this.turn(turn_id)
+        if (fresh && fresh.fenced === 0 && (fresh.state === 'queued' || fresh.state === 'starting' || fresh.state === 'live')) this.fence(fresh, { cancel: 'deleted' })
+      }
+    } finally {
+      for (const r of runs) this.holding.delete(r)
+    }
+    for (const r of runs) this.advance(r)
   }
 
   // ---------- pause, drain (4.11, 7) ----------

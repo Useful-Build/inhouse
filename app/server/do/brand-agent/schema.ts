@@ -13,7 +13,10 @@
 // - `chat_state.checkpoint_last_uuid_index`: R3's `lastUuidIndex` (#132), passed back in `expect`;
 // - `turn_effects`: 4.2.6's awaited side effects (file confirms), one at a time per turn, keyed `(turn_id, seq)`;
 // - `turn_trace`: audit and step records for the trace (route 33), never parts;
-// - `authority`: the object's removed-member and ended-grant sets (4.3, 4.10).
+// - `authority`: the object's removed-member and ended-grant sets (4.3, 4.10);
+// - `turn_rows`: a final turn's D1 rows, fixed at its end (4.8, projection.ts), so a retry replays the same ones.
+
+import { TURN_ROWS_TABLE } from './projection.ts'
 
 export function createAgentTables(sql: SqlStorage): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, owner_id TEXT NOT NULL,
@@ -56,4 +59,5 @@ export function createAgentTables(sql: SqlStorage): void {
     json TEXT NOT NULL, PRIMARY KEY (turn_id, n))`)
   sql.exec(`CREATE TABLE IF NOT EXISTS authority (kind TEXT NOT NULL CHECK (kind IN ('member', 'grant')), id TEXT NOT NULL,
     at_ms INTEGER NOT NULL, PRIMARY KEY (kind, id))`)
+  sql.exec(TURN_ROWS_TABLE)
 }
