@@ -20,6 +20,7 @@ import type { Principal } from '../auth/index.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
 import { activeRuns, getTrace, interruptTurn, sendTurnWith, stopTurn } from './runs.ts'
 import { TraceSchema } from '../../shared/contract/trace.ts'
+import { ActiveRunsSchema } from '../../shared/contract/runs.ts'
 import { getPause, pauseAgent, resumeAgent } from './pause.ts'
 import { resetSession } from './chats.ts'
 
@@ -209,6 +210,7 @@ describe('routes 32 and 33: active runs and traces (failure 6)', () => {
     }
     const asAlice = await call(activeRuns, personPrincipal(alice, 'member'), { path: '/api/runs/active' })
     expect(asAlice.status).toBe(200)
+    expect(ActiveRunsSchema.safeParse(asAlice.body).success).toBe(true)
     expect(runsOf(asAlice)).toContain(ids.a)
     expect(runsOf(asAlice)).not.toContain(ids.b)
     expect(runsOf(asAlice)).not.toContain(ids.d)

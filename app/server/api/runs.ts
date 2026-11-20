@@ -8,6 +8,7 @@
 import { ChatIdSchema } from '../../shared/contract/chat-ids.ts'
 import { RunIdSchema } from '../../shared/contract/chat-ids.ts'
 import { SendTurnInputSchema, TurnIdSchema } from '../../shared/contract/runs.ts'
+import type { ActiveRuns } from '../../shared/contract/runs.ts'
 import { MAX_TURNS, parseHostlist } from '../../shared/contract/settings-table.ts'
 import { apiError, apiJson } from '../http.ts'
 import { readCapped, storesOf } from '../db/handler-kit.ts'
@@ -116,7 +117,8 @@ export const activeRuns: Handler = async (c: HandlerContext) => {
   const runs = await brandAgent(c.env).activeRuns(scope)
   // A list filtered by owner checks the caller's own object (section 3).
   if ('owner' in scope) c.access.requireObject({ ownerId: scope.owner })
-  return apiJson({ runs })
+  const body: ActiveRuns = { runs }
+  return apiJson(body)
 }
 
 /** Route 33, `GET /api/traces/:id` (a run or a turn id): another person's is 404 before the object check. */

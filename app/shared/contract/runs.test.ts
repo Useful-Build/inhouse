@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { RunStartFields } from '../protocol/index.ts'
 import {
   AttachmentRefSchema, ChatEventSchema, ChatFrameEnvelopeSchema, ChatIdSchema, CreateChatInputSchema, PauseStateSchema,
-  SendTurnInputSchema, StoredMessageSchema, TurnFailureSchema, acceptsChatVersion, composeTurnPrompt,
+  SendTurnInputSchema, StoredMessageSchema, TurnFailureSchema, ActiveRunsSchema, acceptsChatVersion, composeTurnPrompt,
 } from './index.ts'
 
 const runId = 'r_0123456789abcdefABCDEF'
@@ -118,5 +118,19 @@ describe('a send names each attachment once (route 29, the runner refuses an att
   it('refuses the same id twice, whatever the names; takes two ids with one name', () => {
     expect(SendTurnInputSchema.safeParse({ ...send, attachments: [a, { ...a, name: 'b.pdf' }] }).success).toBe(false)
     expect(SendTurnInputSchema.safeParse({ ...send, attachments: [a, b] }).success).toBe(true)
+  })
+})
+
+// Route 32's answer (A4, 2026-11-20): `{ runs: ActiveRun[] }`. Ways it can fail: a bare array, a run id that isn't one,
+// or a missing `live` parses.
+describe('route 32: the active runs envelope', () => {
+  it('parses { runs } and refuses a bare array or a malformed run', () => {
+    const run = { runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', chatId: 'c_AAAAAAAAAAAAAAAAAAAAAA', lastSeq: 6, live: false }
+    expect(ActiveRunsSchema.parse({ runs: [run] })).toEqual({ runs: [run] })
+    expect(ActiveRunsSchema.parse({ runs: [] })).toEqual({ runs: [] })
+    expect(ActiveRunsSchema.safeParse([run]).success).toBe(false)
+    expect(ActiveRunsSchema.safeParse({ runs: [{ ...run, runId: 't_AAAAAAAAAAAAAAAAAAAAAA' }] }).success).toBe(false)
+    const { live: _live, ...noLive } = run
+    expect(ActiveRunsSchema.safeParse({ runs: [noLive] }).success).toBe(false)
   })
 })
