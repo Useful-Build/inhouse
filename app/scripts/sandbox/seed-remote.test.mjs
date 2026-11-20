@@ -30,7 +30,7 @@ function fakeWrangler(people) {
 import { appendFileSync, readFileSync } from 'node:fs'
 const args = process.argv.slice(2)
 const at = args.indexOf('--file')
-appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, sql: at >= 0 ? readFileSync(args[at + 1], 'utf8') : null }) + '\\n')
+appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, sql: at >= 0 ? readFileSync(args[at + 1], 'utf8') : null, auditKeyInEnv: 'AUDIT_HASH_KEY' in process.env }) + '\\n')
 if (args.includes('--command')) console.log(JSON.stringify([{ results: [{ n: ${people} }], success: true }]))
 `)
   return { fake, calls: () => readFileSync(log, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) }
@@ -126,6 +126,13 @@ describe('the remote steps (failure 3)', () => {
     expect(calls[1].sql).toContain("'s:cap'")
     expect(calls[1].sql).not.toContain(';;')
     expect(calls[1].sql.trim().endsWith(';')).toBe(true)
+  })
+  test('wrangler never gets AUDIT_HASH_KEY in its environment, though the seed reads it from there', () => {
+    const w = fakeWrangler(0)
+    const r = run([...PR12, '--config', configWith(c => { delete c.vars.AUDIT_HASH_KEY }), '--database', 'inhouse-sbx-pr12-db'], w.fake, { ...ENV, AUDIT_HASH_KEY: 'key-from-the-environment-0123456789' })
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(w.calls().map(c => c.auditKeyInEnv)).toEqual([false, false])
   })
   test('refuses a database that already has people, without seeding', () => {
     const w = fakeWrangler(3)

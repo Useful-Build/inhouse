@@ -15,7 +15,8 @@
 //      server/seed/first-admin.ts does. The audit hash key is the config's vars.AUDIT_HASH_KEY or the environment's;
 //   4. the remote database must have no people yet (the seed never runs twice): `wrangler d1 execute --remote --json`;
 //   5. `wrangler d1 execute <name> --remote --file <sql> --yes`.
-// Exit 0 seeded, 1 refused or failed, 2 usage. SEED_REMOTE_WRANGLER_FOR_TESTS (a .mjs path) replaces wrangler with a
+// wrangler runs with this process's environment minus AUDIT_HASH_KEY (the candidate deploy passes the key in the
+// environment for step 3 only). Exit 0 seeded, 1 refused or failed, 2 usage. SEED_REMOTE_WRANGLER_FOR_TESTS (a .mjs path) replaces wrangler with a
 // fake that records its calls (scripts/sandbox/seed-remote.test.mjs).
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -129,10 +130,16 @@ function parseArgs(all) {
   return flags
 }
 
+/** This process's environment minus the audit hash key: the seed needs it to render, wrangler never does. */
+export function wranglerEnv(env) {
+  const { AUDIT_HASH_KEY: _key, ...rest } = env
+  return rest
+}
+
 function wrangler(args) {
   const fake = process.env.SEED_REMOTE_WRANGLER_FOR_TESTS
   const [cmd, pre] = fake ? [process.execPath, [fake]] : ['npx', ['--no-install', 'wrangler']]
-  const r = spawnSync(cmd, [...pre, ...args], { cwd: appDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
+  const r = spawnSync(cmd, [...pre, ...args], { cwd: appDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], env: wranglerEnv(process.env) })
   if (r.error) throw r.error
   if (r.status !== 0) throw new Refused(`wrangler ${args.slice(0, 2).join(' ')} exited ${r.status}`)
   return r.stdout
