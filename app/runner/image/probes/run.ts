@@ -557,11 +557,26 @@ async function probeClaudeDir() {
     `settingSources: [] kept, skills: 'all': ${judgeInit(skillsOpen, sl)}, model request names it ${modelSees(skillsOpen)} | ${bothOff}`,
   )
   fact('claude-dir.home-skill-allowlist-alone.init', `settingSources: ['user'], allowlist kept: ${judgeInit(sourcesOpen, discover(sourcesOpen))}`)
-  record(
-    'claude-dir.home-skill-allowlist-alone',
-    finished(sourcesOpen) && sourcesOpen.state.requests.length > 0 && !modelSees(sourcesOpen) && controlLoads,
-    `the skills allowlist kept, settingSources: ['user']: model requests ${sourcesOpen.state.requests.length}, a request names it ${modelSees(sourcesOpen)} | ${bothOff}`,
-  )
+  const listingOk = finished(sourcesOpen) && sourcesOpen.state.requests.length > 0 && !modelSees(sourcesOpen) && controlLoads
+  const listingDetail = `the skills allowlist kept, settingSources: ['user']: model requests ${sourcesOpen.state.requests.length}, a request names it ${modelSees(sourcesOpen)} | ${bothOff}`
+  // Invocation: the skill typed by name, with the allowlist alone, and with both layers off (the control: it must run).
+  const typed = { prompt: `/${HOME_SKILL}`, webFetchDomains: [] }
+  const sourcesTyped = await direct('home-skill-sources-open', typed, { steps: [] })
+  const controlTyped = await direct('home-skill-open', typed, { steps: [] })
+  const ended = (d: typeof guarded) => d.cleanup === '' && d.lines.some((l) => l.type === 'result')
+  const resultText = (d: typeof guarded) => d.lines.filter((l) => l.type === 'result').map((l) => String(l.text ?? '').slice(0, 160)).join(' | ')
+  const typedInvoked = expanded(sourcesTyped.state.requests, HOME_SKILL)
+  const controlInvoked = finished(controlTyped) && expanded(controlTyped.state.requests, HOME_SKILL)
+  const typedDetail = `typed /${HOME_SKILL}, allowlist alone: ${ended(sourcesTyped) ? 'ended' : 'DID NOT END'}, ${seen(sourcesTyped.state.requests, HOME_SKILL)}, result ${resultText(sourcesTyped)} | both off: ${seen(controlTyped.state.requests, HOME_SKILL)}`
+  fact('claude-dir.home-skill-typed', typedDetail)
+  if (controlInvoked && ended(sourcesTyped) && !typedInvoked) {
+    record('claude-dir.home-skill-allowlist-alone', listingOk, `${listingDetail} | ${typedDetail}`)
+  } else {
+    // The allowlist alone is judged only on what it shows: the model's listing.
+    record('claude-dir.home-skill-allowlist-alone-hides-from-listing', listingOk, listingDetail)
+    if (controlInvoked && typedInvoked) fact('claude-dir.home-skill-allowlist-alone.invocation', `a typed /${HOME_SKILL} still runs with the allowlist alone (it filters the listing, not invocation); settingSources: [] keeps it out (home-skill-sources-alone)`)
+    else markUnproven('claude-dir.home-skill-allowlist-alone.invocation', typedDetail)
+  }
 }
 
 /** The guarded init (probeFacts), for the checks whose guard-off runs come later. */
@@ -660,7 +675,7 @@ async function probeLongTmpdir() {
  * The CLI's marker for a skill it expanded inline (`/dataviz`), or, for a bundled skill it hands over as its own first
  * user text (`/code-review` on 0.3.328, seen in CI), a phrase from that skill's body.
  */
-const SKILL_BODY: Record<string, string> = { 'code-review': 'diff pass (bugs)' }
+const SKILL_BODY: Record<string, string> = { 'code-review': 'diff pass (bugs)', [HOME_SKILL]: 'Say hello.' }
 const expanded = (requests: unknown[], name: string) => {
   const t = JSON.stringify(requests)
   const body = SKILL_BODY[name]
@@ -720,7 +735,17 @@ async function probeCodeReview() {
   else markUnproven('init.no-turned-off-command', `none listed guarded; no guard-off run lists one either (${offs.map((o) => `${o.variant}: ${o.commands.length} commands`).join(', ')})`)
 }
 
+/** A's holder waits for `outputs/.go`: written however the probe ends, so a throw never leaves A's session up. */
 async function probeIsolation() {
+  const outputs = sessionPaths('p-iso-a').outputs
+  try {
+    await isolation()
+  } finally {
+    if (existsSync(outputs)) appendFileSync(join(outputs, '.go'), '')
+  }
+}
+
+async function isolation() {
   const wa = sessionPaths('p-iso-a').workDir
   const a = startRun({
     chatId: 'p-iso-a',
@@ -784,6 +809,17 @@ async function probeIsolation() {
     { name: 'proc-all', cmd: `for p in /proc/[0-9]*; do tr '\\0' ' ' < $p/cmdline; tr '\\0' ' ' < $p/environ; done 2>/dev/null | grep -oE 'CANAR[Y]_A_ENVIRON|canar[y]-A-cmdline-holder' | sort -u && echo scanned-$((40+2))` },
     { name: 'ps', cmd: 'ps -eo pid,user,args --no-headers | head -30' },
   ]
+  // B's searches from a parent folder and through a link, by step: 13 Grep /users, 14 Grep / (files named *secret*
+  // only: the probe's own bundle holds the canary strings), 15 Glob /users, 16 Bash makes the link, 17 Read the link.
+  const wb = sessionPaths('p-iso-b').workDir
+  const walkSteps = (wd: string) => [
+    () => ({ tool: 'Grep', input: { pattern: 'CANARY.A', path: USERS_ROOT, output_mode: 'content' } }),
+    () => ({ tool: 'Grep', input: { pattern: 'CANARY.A', path: '/', glob: '*secret*', output_mode: 'content' } }),
+    () => ({ tool: 'Glob', input: { pattern: '**/*secret*', path: USERS_ROOT } }),
+    bash(`ln -s ${aOpen} link-a && ls -l link-a`),
+    () => ({ tool: 'Read', input: { file_path: join(wd, 'link-a') } }),
+  ]
+  const procGrep = () => ({ tool: 'Grep', input: { pattern: 'CANARY.A|^Uid:', path: '/proc', glob: '*/status', output_mode: 'files_with_matches' } })
   const [a1, a2] = split(a.run.token)
   const tokenProbes = (b: string): ShellProbe[] => {
     const [b1, b2] = split(b)
@@ -827,6 +863,10 @@ async function probeIsolation() {
         },
         () => ({ tool: 'Read', input: { file_path: aOpen } }),
         () => ({ tool: 'Grep', input: { pattern: 'CANARY.A', path: aOwn.tmp, output_mode: 'content' } }),
+        // From a parent folder and through a link: the rules name A's folders, not the search root or the link.
+        ...walkSteps(wb),
+        // /proc from its root. Only the status files: a whole /proc walk reads the uid's own pagemaps (huge).
+        procGrep,
       ],
     },
   })
@@ -861,8 +901,14 @@ async function probeIsolation() {
     return steps.map((_, i) => d.state.results.get(d.state.ids[i]!)?.text ?? `no result (${d.cleanup || d.raw.slice(-200)})`)
   }
   const [tmpRead, tmpGrep] = await ruleOff('tmp-rule-off', [readStep('/tmp/iso-a-secret'), grepStep('/tmp')])
-  const [procCmd, procEnv] = await ruleOff('proc-rule-off', [readStep(`/proc/${holder.pid}/cmdline`), readStep(`/proc/${holder.pid}/environ`)])
-  const [usersRead, usersGrep] = await ruleOff('users-rule-off', [readStep(aOpen), grepStep(aOwn.tmp)])
+  const [procCmd, procEnv, procGrepOff] = await ruleOff('proc-rule-off', [readStep(`/proc/${holder.pid}/cmdline`), readStep(`/proc/${holder.pid}/environ`), procGrep])
+  const [usersRead, usersGrep, usersHome, usersTmpdir, ...usersWalk] = await ruleOff('users-rule-off', [
+    readStep(aOpen),
+    grepStep(aOwn.tmp),
+    readStep(`${aOwn.home}/secret`),
+    readStep(aTmpSecret()),
+    ...walkSteps(sessionPaths(`p-direct-users-rule-off`).workDir),
+  ])
   const offReadable = [`${wa}/inputs/secret.txt`, aTmpSecret(), `${aOwn.home}/secret`].every((p) => existsSync(p) && canary(readFileSync(p, 'utf8')))
   // The /tmp canary is A's uid's, written from outside the sandbox: A's own Bash can't write /tmp, so what B's Bash
   // reads of it says nothing about a wall A could get past. Printed as facts.
@@ -871,7 +917,7 @@ async function probeIsolation() {
   appendFileSync(join(wa, 'outputs', '.go'), '')
   const ra = await a.done
   checkRun('isolation.a', ra, [0])
-  checkRun('isolation.b', rb, [0, 10])
+  checkRun('isolation.b', rb, [0, 10, 16])
   fact('isolation.a-wrote', ra.state.results.get(ra.state.ids[0]!)?.text.slice(0, 300) ?? '')
   // A's release: the canaries were readable before release; now neither folder may contain anything at all.
   const aRelease = await releaseOf(ra)
@@ -894,13 +940,15 @@ async function probeIsolation() {
   rmSync('/tmp/iso-a-secret', { force: true })
   // A's session holds no canary of its own: its marker is its command line and HOME.
   const sessionMark = (t: string) => t.includes('session/main.mjs') || t.includes(`HOME=${aOwn.home}`)
-  for (const [n, leak] of [
-    ['proc-holder', canary],
-    ['proc-a-session', sessionMark],
+  // The holder's control must show both of its markers: the command line and the environ canary.
+  const holderMarks = (t: string) => canary(t) && t.includes('CANARY_A_ENVIRON')
+  for (const [n, leak, offLeak] of [
+    ['proc-holder', canary, holderMarks],
+    ['proc-a-session', sessionMark, sessionMark],
   ] as const) {
     const x = real.get(n)
     const o = procOffA.get(n)
-    const seenOff = o !== undefined && leak(o.out)
+    const seenOff = o !== undefined && offLeak(o.out)
     record(
       `isolation.bash.${n}-no-canary`,
       x !== undefined && !leak(x.out) && seenOff,
@@ -926,9 +974,9 @@ async function probeIsolation() {
     const t = result(rb, i + 1)
     const leak = t !== undefined && (canary(t.text) || (n === 'glob-a' && t.text.includes('secret.txt')))
     const rc = ruleControls[n]
-    // The Read tool may not read /proc entries at all (they stat as empty): then the rule has nothing to stop, and the
-    // control can't show one. Unproven, never a pass; a leak in the agent's run still fails.
-    const procUnreadable = (text: string) => n.startsWith('read-a-holder') && !canary(text) && !/EACCES|permission denied/i.test(text)
+    // The Read tool may not read /proc entries at all: then the rule has nothing to stop, and the control can't show one.
+    // Unproven only on the CLI's own refusal to read such a file; any other control result (none, a crash) fails.
+    const procUnreadable = (text: string) => n.startsWith('read-a-holder') && /names a device or process file that this tool does not read/.test(text)
     if (rc) {
       const seenOff = canary(rc.text)
       const detail = `agent: ${t?.text.slice(0, 160)} | guard off (${rc.rule} taken out): ${seenOff ? 'leak seen' : `NOT SEEN: ${rc.text.slice(0, 120)}`}`
@@ -939,12 +987,22 @@ async function probeIsolation() {
     } else if (n === 'read-a-holder-environ') {
       // Two walls: the rule refuses it first; with the rule out, the uid wall (environ is the owner's, behind ptrace
       // checks) still does. The detector is proven by A's own uid reading the canary.
-      const ownerSees = canary(procOffA.get('proc-holder')?.out ?? '')
+      const ownerSees = holderMarks(procOffA.get('proc-holder')?.out ?? '')
       const wall = canary(procEnv!) ? 'NONE: the rule alone holds' : /EACCES|permission denied/i.test(procEnv!) ? 'the uid wall (EACCES)' : `unclear: ${procEnv!.slice(0, 100)}`
       record(
         `isolation.tool.${n}`,
         t !== undefined && !leak && ownerSees && !wall.startsWith('unclear'),
         `agent: ${t?.text.slice(0, 160)} | Read(//proc/**) taken out: ${wall} | A's own uid: ${ownerSees ? 'reads the canary' : 'NO CANARY SEEN'}`,
+      )
+    } else if (n === 'read-a-home' || n === 'read-a-tmpdir') {
+      // Two walls: the per-user rule refuses it first; with the rule out, the uid wall (A's files are 0600) still does.
+      // The detector is proven by root reading the canary.
+      const ro = n === 'read-a-home' ? usersHome! : usersTmpdir!
+      const wall = canary(ro) ? 'NONE: the rule alone holds' : /EACCES|permission denied/i.test(ro) ? 'the uid wall (EACCES)' : `unclear: ${ro.slice(0, 100)}`
+      record(
+        `isolation.tool.${n}`,
+        t !== undefined && !leak && offReadable && !wall.startsWith('unclear'),
+        `agent: ${t?.text.slice(0, 160)} | Read(//users/<other>/**) taken out: ${wall} | root reads A's files: ${offReadable ? 'leak seen' : 'NO LEAK SEEN'}`,
       )
     } else record(`isolation.tool.${n}`, t !== undefined && !leak && offReadable, `agent: ${t?.text.slice(0, 200)} | guard off (root reads A's files): ${offReadable ? 'leak seen' : 'NO LEAK SEEN'}`)
   })
@@ -960,6 +1018,25 @@ async function probeIsolation() {
       `isolation.tool.${n}`,
       t !== undefined && !canary(t.text) && opened && seenOff,
       `agent: ${t?.text.slice(0, 160)} | modes open to every uid: ${opened} | guard off (Read(//users/<other>/**) taken out): ${seenOff ? 'leak seen' : `NOT SEEN: ${control.slice(0, 120)}`}`,
+    )
+  }
+  // From a parent folder, through a link, and /proc from its root: each control is the same call with the rule out.
+  fact('isolation.tool.link-made', `${result(rb, 16)?.text.replace(/\s+/g, ' ').slice(0, 200)} | rule off: ${usersWalk[3]?.replace(/\s+/g, ' ').slice(0, 200)}`)
+  const globLeak = (t: string) => new RegExp(`${aOwn.dir}/(home|tmp)/\\S*secret`).test(t)
+  const procLeak = (t: string) => canary(t) || /\/proc\/\d+\/status/.test(t)
+  for (const [n, step, control, rule, leakOf] of [
+    ['grep-users-root', 13, usersWalk[0]!, 'Read(//users/<other>/**)', canary],
+    ['grep-fs-root', 14, usersWalk[1]!, 'Read(//users/<other>/**)', canary],
+    ['glob-users-root', 15, usersWalk[2]!, 'Read(//users/<other>/**)', globLeak],
+    ['read-symlink-to-a', 17, usersWalk[4]!, 'Read(//users/<other>/**)', canary],
+    ['grep-proc-root', 18, procGrepOff!, 'Read(//proc/**)', procLeak],
+  ] as const) {
+    const t = result(rb, step)
+    const seenOff = leakOf(control)
+    record(
+      `isolation.tool.${n}`,
+      t !== undefined && !leakOf(t.text) && seenOff,
+      `agent: ${t?.text.replace(/\s+/g, ' ').slice(0, 200)} | guard off (${rule} taken out): ${seenOff ? 'leak seen' : `NOT SEEN: ${control.replace(/\s+/g, ' ').slice(0, 160)}`}`,
     )
   }
 
@@ -1293,15 +1370,20 @@ await step('closed-folder', probeClosedFolder)
 await step('zombie-leader', probeZombieLeader)
 
 const h = await health()
-record('root.still-healthy', h?.ok === true && h.live === 0, JSON.stringify(h))
+record('root.still-healthy', h?.ok === true && h.live === 0 && h.quarantinedUsers === 0, JSON.stringify(h))
 record('egress.no-unknown-token-calls', egress.refused.length === 0, JSON.stringify(egress.refused))
 root!.kill('SIGTERM')
 await waitUntil(() => root.exitCode !== null || root.signalCode !== null, 'the root to stop', 30_000)
 await egress.close()
 
+// The probes whose control can't be made on this CLI, each with its why in its FACT line. Any other UNPROVEN (a control
+// that vanished, a new probe without one) fails the job.
+const EXPECTED_UNPROVEN = ['isolation.tool.read-a-holder-cmdline', 'isolation.tool.read-a-holder-environ']
+const unproven = facts.filter((f) => f.value.startsWith('UNPROVEN'))
+const unexpected = unproven.filter((f) => !EXPECTED_UNPROVEN.includes(f.name))
+record('probes.unproven-only-the-expected', unexpected.length === 0, `unexpected: ${JSON.stringify(unexpected.map((f) => f.name))}, expected: ${JSON.stringify(EXPECTED_UNPROVEN)}`)
 const failed = outcomes.filter((o) => !o.ok)
 console.log(`\n${outcomes.length - failed.length} of ${outcomes.length} probes passed, ${facts.length} facts`)
-const unproven = facts.filter((f) => f.value.startsWith('UNPROVEN'))
 if (unproven.length > 0) console.log(`UNPROVEN (not counted as passing): ${unproven.map((f) => f.name).join(', ')}`)
 if (failed.length > 0) {
   console.log(`FAILED: ${failed.map((f) => f.name).join(', ')}`)

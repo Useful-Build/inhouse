@@ -13,7 +13,7 @@
 //   can swap a folder for a symlink under root's path walk), or a kill that failed before any session ran closes a chat;
 // - the pool reader accepts a missing member, a root or system uid, a login shell, or a shared uid or gid.
 import { fc, it } from '@fast-check/vitest'
-import { describe, expect } from 'vitest'
+import { describe, expect, vi } from 'vitest'
 import { InvalidSessionKeyError } from '../../src/guards/paths.ts'
 import { SessionFolderParkedError, SessionPoolExhaustedError, SessionReleaseError, createSessionPool, poolUserName, readPool, type PoolUser, type SessionHost } from '../../src/guards/users.ts'
 import type { SessionUser } from '../../src/session/seam.ts'
@@ -260,6 +260,28 @@ describe('the session pool', () => {
     await expect(p.allocate('../x')).rejects.toThrow(InvalidSessionKeyError)
   })
 
+  it('a failed allocate whose reclaim succeeds frees the uid without a release event', async () => {
+    const logged: Record<string, unknown>[] = []
+    let failPrepare = true
+    const host: SessionHost = {
+      killAll: async () => {},
+      wipeUserFiles: async () => {},
+      prepareFolder: async (k) => {
+        if (failPrepare) throw new Error('prepare failed')
+        return { workDir: `/work/${k}`, home: `/work/${k}/.home` }
+      },
+      parkFolder: async () => {},
+    }
+    const p = createSessionPool(pool(1), host, (e) => void logged.push(e))
+    await expect(p.allocate('a')).rejects.toThrow(/prepare failed/)
+    // Only a release that ran a session is announced: observers wait on that event for a run's uid.
+    expect(logged).toEqual([])
+    expect(p.state().free).toEqual([30000])
+    expect(p.quarantined()).toBe(0)
+    failPrepare = false
+    await expect(p.allocate('a')).resolves.toMatchObject({ uid: 30000 })
+  })
+
   it('a key allocated mid-release waits and gets a freshly prepared user, not the one being torn down', async () => {
     let openKill!: () => void
     const kills: Promise<void>[] = []
@@ -282,8 +304,8 @@ describe('the session pool', () => {
     expect(prepared).toEqual([30000])
     openKill()
     await releasing
-    // The second allocate's own kill check.
-    await new Promise((r) => setImmediate(r))
+    // The second allocate's own kill check, once it has started (kills: the first allocate, the release, this one).
+    await vi.waitFor(() => expect(kills.length).toBe(3))
     openKill()
     await again
     expect(prepared).toEqual([30000, 30000])

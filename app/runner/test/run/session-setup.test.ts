@@ -97,5 +97,7 @@ describe('a step before the query fails', () => {
     const r = await run(testQueryGuards)
     expect(r.queries()).toBe(1)
     expect(r.events.at(-1)).toMatchObject({ type: 'finished' })
+    // The control for "refused before the files are restored": a run that goes on does restore them.
+    expect(r.egress.calls.filter((c) => c.startsWith('GET /files/'))).not.toEqual([])
   })
 })
