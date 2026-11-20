@@ -65,6 +65,13 @@ describe('the page and the registry (failures 1 to 3)', () => {
     for (const k of [...Object.keys(saved.settings), ...Object.keys(saved.toggles)]) expect(refused(k), `${k} was saved`).toBe(false)
   })
 
+  it('offers a non-Admin only their own label and Admin', () => {
+    expect(rows.find(r => r.key === 'p:m_priya')?.options, 'a Member').toEqual(['Admin', 'Member'])
+    const approver = rows.find(r => r.key?.startsWith('p:') && r.value === 'Approver')
+    expect(approver, 'a sample Approver row exists').toBeDefined()
+    expect(approver!.options).toEqual(['Admin', 'Approver'])
+  })
+
   it('puts each key in the scope section 6 names', () => {
     const scope = (k: string) => settingSpec(k)?.scope
     expect(['g:name', 'g:theme', 'n:channel', 'm:learn'].map(scope)).toEqual(['personal', 'personal', 'personal', 'personal'])

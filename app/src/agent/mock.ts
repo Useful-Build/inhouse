@@ -1332,7 +1332,7 @@ export class MockAgent implements AgentClient {
       const invited = this.server.invited.some(m => m.id === back.id)
         ? this.server.invited.map(m => (m.id === back.id ? { ...m, name, title: title ?? null, role, status: 'invited' as const } : m))
         : [...this.server.invited, { ...back, name, title: title ?? null, role, status: 'invited' as const, photo: null }]
-      return this.writeRecs([[rec, back.rev]], {}, { removed, invited: invited.filter((m, i, all) => all.findIndex(x => x.id === m.id) === i), roles: { ...this.server.roles, [back.id]: role }, revs: { ...this.server.revs, [rec]: back.rev } })
+      return this.writeRecs([[rec, back.rev]], {}, { removed, invited: invited.filter((m, i, all) => all.findIndex(x => x.id === m.id) === i), roles: { ...this.server.roles, [back.id]: role }, photos: Object.fromEntries(Object.entries(this.server.photos).filter(([k]) => k !== back.id)), revs: { ...this.server.revs, [rec]: back.rev } })
     }
     const id = `m_invited_${this.server.invited.length + 1}`
     const record: MemberRecord = { id, name, email: norm, title: title ?? null, role, status: 'invited', photo: null, rev: 1 }

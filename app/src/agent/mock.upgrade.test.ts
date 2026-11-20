@@ -203,6 +203,18 @@ describe('a demo saved before C2 and C9 loads with ids, roles, photos and the gr
     })
   })
 
+  test('a sample member removed and invited again comes back without the old photo', async () => {
+    const agent = load({})
+    await agent.setPhoto('m_dana', 'data:image/png;base64,AAAA')
+    expect(agent.read().people.members.find(m => m.id === 'm_dana')?.photo, 'the photo was set').toBe('data:image/png;base64,AAAA')
+    const email = agent.read().people.members.find(m => m.id === 'm_dana')!.email!
+    await agent.removeMember('m_dana')
+    await agent.inviteMember({ name: 'Dana Again', email, role: 'member' })
+    const back = new MockAgent().read().people.members.find(m => m.id === 'm_dana')
+    expect(back?.status).toBe('invited')
+    expect(back?.photo).toBeNull()
+  })
+
   test('a removed photo is saved as removed and stays removed after a reload', async () => {
     const agent = load({})
     expect(agent.read().people.members.find(m => m.id === 'm_sam')?.photo, 'the sample photo').not.toBeNull()

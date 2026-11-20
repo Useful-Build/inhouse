@@ -1,12 +1,13 @@
 // A member of the team. W2 owns this file in P2.
 import { z } from 'zod'
+import { MEMBER_ID_PATTERN } from './settings-table.ts'
 
 /**
  * A member id: 'm_' and a random or fixed suffix. No spaces or '@', so it can't carry an email or a name as typed, but
  * the pattern alone can't stop one spelled into the suffix (`m_Dana_Kim`): the server mints ids from random bytes and
  * checks an id it is given names a known member before it writes.
  */
-export const MemberIdSchema = z.string().regex(/^m_[A-Za-z0-9_-]{1,64}$/)
+export const MemberIdSchema = z.string().regex(MEMBER_ID_PATTERN)
 export type MemberId = z.infer<typeof MemberIdSchema>
 
 /** A person's role. Approving is a job per rule, not a role; the Inhouse team is its own principal, never a member role. */
