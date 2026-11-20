@@ -74,7 +74,7 @@ export interface TurnRow {
   grace_until_ms: number | null; ending_since_ms: number | null; watch_json: string | null; saw_checkpoint: number
   mirror_error: number; deferred_json: string | null; start_json: string | null; settled: number; parts_n: number
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
-  created_at_ms: number; started_at_ms: number | null; ended_at_ms: number | null
+  created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
 interface ChatStateRow {
@@ -290,8 +290,8 @@ export class AgentCore {
     const now = this.d.now()
     const gen = t.gen + 1
     this.sql.exec(
-      `UPDATE turns SET state = 'starting', gen = ?, starting_deadline_ms = ?, placed = 0, pool_queued = 0, runner = NULL,
-        runner_last_seq = -1, watch_json = NULL WHERE turn_id = ?`, gen, now + STARTING_DEADLINE_MS, t.turn_id)
+      `UPDATE turns SET state = 'starting', gen = ?, starting_deadline_ms = ?, claimed_at_ms = ?, placed = 0, pool_queued = 0,
+        runner = NULL, runner_last_seq = -1, watch_json = NULL WHERE turn_id = ?`, gen, now + STARTING_DEADLINE_MS, now, t.turn_id)
     this.watchTask(t.turn_id, now + WATCH_EVERY_MS)
     void this.start(t.turn_id, gen).catch(err => console.error({ event: 'turn_start_failed', error: errorText(err) }))
   }
@@ -828,13 +828,29 @@ export class AgentCore {
     if (!w.ambiguous && now < deadline) return this.again(t.turn_id, Math.min(deadline, now + WATCH_EVERY_MS))
     // The ambiguous path: stop it there, then `status` until certain.
     const runner = t.runner!
+    // Bounded like any turn (H3 of #153's review): a runner that never answers can't hold the chat past the token's life.
+    if (now - (t.claimed_at_ms ?? t.created_at_ms) >= TURN_MAX_MS) {
+      this.failUnstarted(t, { outcome: 'failed', reason: 'session_crashed' })
+      return { done: true }
+    }
     if (!w.stopped) {
-      await this.d.ports.pool.stop(runner, t.turn_id)
+      // A stop that fails (a dead container) is no answer at all: go on to `status`, never throw out of the watchdog.
+      try {
+        await this.d.ports.pool.stop(runner, t.turn_id)
+      } catch (err) {
+        console.error({ event: 'turn_ambiguous_stop_failed', error: errorText(err) })
+      }
       if (!this.current(t.turn_id, t.gen, 'starting')) return { done: true }
       w.stopped = true
       this.setWatch(t.turn_id, t.gen, { ...w, ambiguous: true })
     }
-    const st = await this.d.ports.pool.status(runner, t.turn_id)
+    let st: Awaited<ReturnType<BrandAgentPorts['pool']['status']>>
+    try {
+      st = await this.d.ports.pool.status(runner, t.turn_id)
+    } catch (err) {
+      console.error({ event: 'turn_status_failed', error: errorText(err) })
+      st = { state: 'unreachable', containerGone: false }
+    }
     const fresh = this.current(t.turn_id, t.gen, 'starting')
     if (!fresh) return { done: true }
     const at = this.d.now()

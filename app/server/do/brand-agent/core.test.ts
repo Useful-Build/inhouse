@@ -527,6 +527,32 @@ describe('the watchdog (1.3)', () => {
     expect(ok(await h.submit('c1', 'key-wd002')).position).toBe('starting')
   }))
 
+  it('the ambiguous path: a stop that rejects goes on to status; two unreachable with the container gone fail it (H3)', () => inAgent(async h => {
+    h.pool.placeAnswer = { ambiguous: 'runner-0' }
+    h.pool.stop = async (runner, turnId) => { h.pool.calls.push({ method: 'stop', args: [runner, turnId] }); throw new Error('container gone') }
+    h.pool.statusAnswer = { state: 'unreachable', containerGone: true }
+    const a = ok(await h.submit('c1', 'key-h3st1'))
+    await settle()
+    await h.tick(0)
+    expect(h.turn(a.turnId).state).toBe('starting')
+    await h.tick(30 * SEC)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'session_crashed' })
+    expect(h.pool.calls.filter(c => c.method === 'status')).toHaveLength(2)
+    expect(h.sched.quarantinedCount()).toBe(0)
+  }))
+
+  it('the ambiguous path: unreachable forever without containerGone fails it at claim + 45 minutes (H3)', () => inAgent(async h => {
+    h.pool.placeAnswer = { ambiguous: 'runner-0' }
+    h.pool.statusAnswer = { state: 'unreachable', containerGone: false }
+    const a = ok(await h.submit('c1', 'key-h3st2'))
+    await settle()
+    for (let i = 0; i < 89; i++) await h.tick(30 * SEC)
+    expect(h.turn(a.turnId).state).toBe('starting')
+    await h.tick(30 * SEC)
+    await h.tick(30 * SEC)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'session_crashed' })
+  }))
+
   it('a single unreachable fails nothing; two with the container gone fail it', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-wd003'))
     await settle()

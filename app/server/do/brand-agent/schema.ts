@@ -2,7 +2,8 @@
 // blockConcurrencyWhile). The scheduler and the run tokens create their own (`due_tasks`, `run_tokens`); the pool its
 // `pool_*` (W2). Columns beyond 4.1 and why:
 // - `turns.count_tokens_calls`: the CLI's own count_tokens calls (count-tokens.ts, the PR 2 handoff's obligation 3);
-// - `turns.requeues`, `pool_queued`, `fence_*`, `grace_until_ms`, `ending_since_ms`, `watch_json`: the recovery rules of
+// - `turns.claimed_at_ms` (the latest claim: the ambiguous path's 45-minute bound), `requeues`, `pool_queued`,
+//   `fence_*`, `grace_until_ms`, `ending_since_ms`, `watch_json`: the recovery rules of
 //   1.3 and the fence of 4.6, so nothing that must happen after a reset lives only in memory (N3);
 // - `turns.saw_checkpoint`, `mirror_error`, `deferred_json`: 4.5's session rules (a `deferred` counts only with a
 //   later checkpoint; a `mirror_error` wins over any checkpoint);
@@ -36,7 +37,7 @@ export function createAgentTables(sql: SqlStorage): void {
     steps_n INTEGER NOT NULL DEFAULT 0, count_tokens_calls INTEGER NOT NULL DEFAULT 0,
     outcome TEXT, failure TEXT, cancel_why TEXT,
     pos_from INTEGER, pos_to INTEGER, d1_flushed INTEGER NOT NULL DEFAULT 0,
-    created_at_ms INTEGER NOT NULL, started_at_ms INTEGER, ended_at_ms INTEGER,
+    created_at_ms INTEGER NOT NULL, claimed_at_ms INTEGER, started_at_ms INTEGER, ended_at_ms INTEGER,
     UNIQUE (chat_id, client_key))`)
   sql.exec('CREATE INDEX IF NOT EXISTS turns_run ON turns(run_id, state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_state ON turns(state)')
