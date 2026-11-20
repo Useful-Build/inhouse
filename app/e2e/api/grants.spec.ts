@@ -92,6 +92,7 @@ test('ending a grant refuses the Inhouse team on its very next request, and each
 })
 
 test('the audit log shows grant.created, support.access, grant.ended and grant.expired', async ({ request }) => {
+  test.skip(!!process.env.E2E_TEST_BUILD_REMOTE, 'its support.access and grant.expired lines come from tests that need the local D1 or prepare step; proven by the local test-build suite')
   const { items } = await allPages<{ what: string }>(request, admin, '/api/audit', 100)
   const said = new Set(items.map(i => i.what))
   const g = 'g_shape_only'
