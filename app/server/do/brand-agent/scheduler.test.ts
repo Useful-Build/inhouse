@@ -16,8 +16,8 @@ import { fc, test } from '@fast-check/vitest'
 import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
-import { alarmPort, createScheduler } from './scheduler.ts'
-import type { DueTask, SqlScheduler, TaskHandler, TaskResult } from './scheduler.ts'
+import { alarmPort, backoffMs, createScheduler } from './scheduler.ts'
+import type { AlarmPort, DueTask, SqlScheduler, TaskHandler, TaskResult } from './scheduler.ts'
 
 /** Far past the wall clock, so the runtime never fires an alarm on its own: only `runDurableObjectAlarm` does. */
 const T = 4_102_444_800_000
@@ -72,7 +72,10 @@ class Reference {
   tasks = new Map<string, RefTask>()
   private gen = 0
   schedule(id: string, kind: string, due: number) { this.tasks.set(id, { kind, due, attempts: 0, state: 'ready', gen: ++this.gen }) }
-  ensure(id: string, kind: string, due: number) { if (!this.tasks.has(id)) this.schedule(id, kind, due) }
+  ensure(id: string, kind: string, due: number) {
+    const t = this.tasks.get(id)
+    if (!t || (t.state === 'quarantined' && t.kind === kind)) this.schedule(id, kind, due)
+  }
   cancel(id: string) { this.tasks.delete(id) }
   earliest(): number | null {
     let best: number | null = null
@@ -118,29 +121,31 @@ class Reference {
 
 // ---------- the model test ----------
 
+/** A time offset, often exactly 0 (due now: the case a pass must not run twice). */
+const offset = (max: number) => fc.oneof(fc.constant(0), fc.constant(0), fc.integer({ min: 0, max }))
 const ids = fc.constantFrom('x1', 'x2', 'x3', 'g1')
 const kinds = fc.constantFrom('a', 'b', 'grant-expiry', 'authority-sweep', 'mystery')
 const op = fc.oneof(
-  fc.record({ schedule: ids, kind: kinds, dueIn: fc.integer({ min: 0, max: 300_000 }) }),
-  fc.record({ ensure: ids, kind: kinds, dueIn: fc.integer({ min: 0, max: 300_000 }) }),
+  fc.record({ schedule: ids, kind: kinds, dueIn: offset(300_000) }),
+  fc.record({ ensure: ids, kind: kinds, dueIn: offset(300_000) }),
   fc.record({ cancel: ids }),
   fc.record({ advance: fc.integer({ min: 0, max: 400_000 }) }),
   fc.constant({ alarm: true as const }),
   fc.constant({ alarm: true as const }),
 )
 const outcome: fc.Arbitrary<Outcome> = fc.record({
-  result: fc.oneof(fc.constantFrom<'done' | 'throw'>('done', 'done', 'throw'), fc.record({ retryIn: fc.integer({ min: 1, max: 200_000 }) })),
+  result: fc.oneof(fc.constantFrom<'done' | 'throw'>('done', 'done', 'throw'), fc.record({ retryIn: offset(200_000) })),
   during: fc.oneof(
     fc.constant(null), fc.constant(null),
-    fc.record({ reschedule: fc.integer({ min: 0, max: 200_000 }) }),
+    fc.record({ reschedule: offset(200_000) }),
     fc.constant({ cancel: true as const }),
-    fc.record({ replace: fc.integer({ min: 0, max: 200_000 }) }),
-    fc.record({ other: ids, dueIn: fc.integer({ min: 0, max: 200_000 }) }),
+    fc.record({ replace: offset(200_000) }),
+    fc.record({ other: ids, dueIn: offset(200_000) }),
   ),
 })
 
 describe('the scheduler against its reference (failures 1-5)', () => {
-  test.prop([fc.array(op, { minLength: 1, maxLength: 25 }), fc.array(outcome, { minLength: 1, maxLength: 8 })], { numRuns: 25 })(
+  test.prop([fc.array(op, { minLength: 1, maxLength: 25 }), fc.array(outcome, { minLength: 1, maxLength: 8 })], { numRuns: 100 })(
     'runs, keeps and alarms exactly as the reference does, with changes during a handler\'s await',
     async (ops, outcomes) => {
       const ref = new Reference()
@@ -251,9 +256,11 @@ describe('a crash between a handler\'s success and its delete (failure 6)', () =
     }
     const h = await harness({ handlers: { a: handler }, afterHandler: () => { if (crash) { crash = false; throw new Error('crashed') } } })
     await inObject(h.stub, async () => { h.sched.schedule({ id: 'c', kind: 'a', dueAtMs: T }); await h.sched.settled() })
-    await expect(runDurableObjectAlarm(h.stub)).rejects.toThrow()
+    // The pass fails after the handler: the task stays, and the alarm is left at it.
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
     expect(await rows(h.stub)).toHaveLength(1)
-    // The runtime retries a thrown alarm; after a restart the new scheduler sets it again from the table.
+    expect(await alarmAt(h.stub)).toBe(T)
+    // After a restart the new scheduler sets the alarm again from the table.
     const again = await h.restart({ afterHandler: undefined })
     await inObject(h.stub, () => again.syncAlarm())
     expect(await alarmAt(h.stub)).toBe(T)
@@ -282,6 +289,93 @@ describe('a change during a handler\'s await (failure 2)', () => {
   })
 })
 
+describe('a task due now again during its pass (failure 1)', () => {
+  it('a handler that reschedules its own task to now runs once; the alarm is left at now', async () => {
+    let calls = 0
+    let h!: Harness<{ nowMs: number }>
+    h = await harness({ handlers: { a: async (task, ctx) => { calls++; h.sched.schedule({ id: task.id, kind: 'a', dueAtMs: ctx.nowMs }); return { done: true } } } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 's', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(calls).toBe(1)
+    expect(await alarmAt(h.stub)).toBe(T)
+    expect(await rows(h.stub)).toEqual([{ id: 's', kind: 'a', due_at_ms: T, attempts: 0, state: 'ready' }])
+  })
+  it('a retry at now runs once; the alarm is left at now', async () => {
+    let calls = 0
+    const h = await harness({ handlers: { a: async (_t, ctx) => { calls++; return { retryAtMs: ctx.nowMs, error: 'again' } } } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'r', kind: 'a', dueAtMs: T - 5 }); await h.sched.settled() })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(calls).toBe(1)
+    expect(await alarmAt(h.stub)).toBe(T)
+    expect(await rows(h.stub)).toEqual([{ id: 'r', kind: 'a', due_at_ms: T, attempts: 1, state: 'ready' }])
+  })
+})
+
+describe('bounds and backoff (failures 1, 5)', () => {
+  it('a pass stops once 10 s have gone by', async () => {
+    let h!: Harness<{ nowMs: number }>
+    const seen: string[] = []
+    h = await harness({ handlers: { a: async t => { seen.push(t.id); h.clock.now += 6_000; return { done: true } } } })
+    await inObject(h.stub, async () => {
+      for (const id of ['p1', 'p2', 'p3']) h.sched.schedule({ id, kind: 'a', dueAtMs: T })
+      await h.sched.settled()
+    })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    // p1 at 0 s, p2 at 6 s; at 12 s the pass is over its 10 s.
+    expect(seen).toEqual(['p1', 'p2'])
+    expect(await alarmAt(h.stub)).toBe(T)
+  })
+  it('backs off 30 s doubling, at most an hour', () => {
+    expect([0, 1, 6, 7, 9, 30].map(backoffMs)).toEqual([30_000, 60_000, 1_920_000, 3_600_000, 3_600_000, 3_600_000])
+  })
+  it('a throw retries after the backoff of the attempts before it', async () => {
+    const h = await harness({ handlers: { a: async () => { throw new Error('no') } } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'b', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([{ id: 'b', kind: 'a', due_at_ms: T + 30_000, attempts: 1, state: 'ready' }])
+    h.clock.now = T + 30_000
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([{ id: 'b', kind: 'a', due_at_ms: T + 90_000, attempts: 2, state: 'ready' }])
+  })
+  it('a result of another shape counts as a retry', async () => {
+    const h = await harness({ handlers: { a: async () => ({ retryAtMs: 'soon' }) as unknown as TaskResult } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'x', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([{ id: 'x', kind: 'a', due_at_ms: T + 30_000, attempts: 1, state: 'ready' }])
+  })
+})
+
+describe('a failed alarm write (failure 4)', () => {
+  /** The real alarm, except that `set` fails the first `failures` times. */
+  const flaky = (state: DurableObjectState, failures: number, sets: number[]): AlarmPort => {
+    const real = alarmPort(state.storage)
+    return { ...real, set: async at => { sets.push(at); if (failures-- > 0) throw new Error('storage down'); await real.set(at) } }
+  }
+  it('settled() rethrows it once, then clears', async () => {
+    await runInDurableObject(freshStub(), async (_i, state) => {
+      const sched = createScheduler({ sql: state.storage.sql, alarm: flaky(state, 1, []), now: () => T, handlers: {}, context: n => ({ nowMs: n }) })
+      sched.schedule({ id: 'f', kind: 'a', dueAtMs: T + 1 })
+      await expect(sched.settled()).rejects.toThrow('storage down')
+      await expect(sched.settled()).resolves.toBeUndefined()
+    })
+  })
+  it('a pass whose alarm write fails leaves a fallback alarm 30 s on', async () => {
+    const stub = freshStub()
+    const sets: number[] = []
+    await runInDurableObject(stub, async (instance, state) => {
+      const sched = createScheduler({ sql: state.storage.sql, alarm: alarmPort(state.storage), now: () => T, handlers: { a: async () => ({ done: true }) }, context: n => ({ nowMs: n }) })
+      sched.schedule({ id: 'k', kind: 'a', dueAtMs: T + 500 })
+      sched.schedule({ id: 'd', kind: 'a', dueAtMs: T })
+      await sched.settled()
+      const failing = createScheduler({ sql: state.storage.sql, alarm: flaky(state, 1, sets), now: () => T, handlers: { a: async () => ({ done: true }) }, context: n => ({ nowMs: n }) })
+      ;(instance as unknown as { alarm: () => Promise<void> }).alarm = () => failing.alarm()
+    })
+    expect(await runDurableObjectAlarm(stub)).toBe(true)
+    expect(sets).toEqual([T + 500, T + 30_000])
+    expect(await alarmAt(stub)).toBe(T + 30_000)
+  })
+})
+
 describe('ensure and schedule (failure 3)', () => {
   it('ensure never moves an existing task; schedule does', async () => {
     const h = await harness({ handlers: {} })
@@ -295,6 +389,28 @@ describe('ensure and schedule (failure 3)', () => {
     await inObject(h.stub, async () => { h.sched.schedule({ id: 'e', kind: 'b', dueAtMs: T + 10 }); await h.sched.settled() })
     expect(await rows(h.stub)).toEqual([{ id: 'e', kind: 'b', due_at_ms: T + 10, attempts: 0, state: 'ready' }])
     expect(await alarmAt(h.stub)).toBe(T + 10)
+  })
+})
+
+describe('ensure (failure 3)', () => {
+  it('during its own handler changes nothing: a done answer still deletes the task', async () => {
+    let h!: Harness<{ nowMs: number }>
+    h = await harness({ handlers: { a: async (task, ctx) => { h.sched.ensure({ id: task.id, kind: 'a', dueAtMs: ctx.nowMs + 1_000 }); await null; return { done: true } } } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'e1', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([])
+    expect(await alarmAt(h.stub)).toBeNull()
+  })
+  it('revives a quarantined task of the same kind, and only that kind', async () => {
+    const h = await harness({ handlers: {} })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'seed', kind: 'usage-sweep', dueAtMs: T }); await h.sched.settled() })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([{ id: 'seed', kind: 'usage-sweep', due_at_ms: T, attempts: 0, state: 'quarantined' }])
+    await inObject(h.stub, async () => { h.sched.ensure({ id: 'seed', kind: 'other', dueAtMs: T + 9 }); await h.sched.settled() })
+    expect(await rows(h.stub)).toEqual([{ id: 'seed', kind: 'usage-sweep', due_at_ms: T, attempts: 0, state: 'quarantined' }])
+    await inObject(h.stub, async () => { h.sched.ensure({ id: 'seed', kind: 'usage-sweep', dueAtMs: T + 9 }); await h.sched.settled() })
+    expect(await rows(h.stub)).toEqual([{ id: 'seed', kind: 'usage-sweep', due_at_ms: T + 9, attempts: 0, state: 'ready' }])
+    expect(await alarmAt(h.stub)).toBe(T + 9)
   })
 })
 

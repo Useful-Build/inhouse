@@ -126,8 +126,11 @@ export interface ChatFile {
 export interface FileLedgerPort {
   /** Flip the turn's pending output at `path` with this hash to saved (superseding the older saved row), idempotent. */
   confirm(chatId: string, turnId: string, path: string, sha256: string, nowMs: number): Promise<ChatFile | null>
-  /** Whether every id is an `input` of this chat. */
-  inputsOf(chatId: string, fileIds: readonly string[]): Promise<{ ok: true } | { missing: string[] }>
+  /**
+   * The stored `input` rows of this chat for these ids, in the order asked, or the ids that aren't one. Route 29 builds
+   * a turn's attachments (paths and names) from these rows, never from the names the client sent.
+   */
+  inputsOf(chatId: string, fileIds: readonly string[]): Promise<{ ok: true; files: ChatFile[] } | { missing: string[] }>
 }
 
 /** The ports compose.ts builds for one BrandAgent. */
@@ -165,6 +168,9 @@ export interface ModelCallUsage {
 export type AdmitAnswer = { granted: true } | { refused: 'cap_reached' | 'turn_budget' | 'budget_busy' } | { busy: true }
 /** `gone`: the row was already closed (lease or unconfirmed grant): abort the upstream call. */
 export type LeaseAnswer = { ok: true } | { gone: true }
+
+/** Whose runs a read covers: one person's own, or every chat's (Inhouse under a grant). Never implied by a null. */
+export type RunScope = { owner: string } | { all: true }
 
 /** Who asks, as an API handler passes it on (a person, the smoke member, or Inhouse under a grant). */
 export interface Actor {
@@ -226,10 +232,10 @@ export interface BrandAgentRpc {
   resume(by: Actor): Promise<PauseState>
   getPause(): Promise<PauseState>
   resetSession(chatId: string, by: Actor): Promise<{ ok: true } | Refusal>
-  /** The runs a caller may attach to: a person's own (`ownerId`), or every chat's for Inhouse under a grant (null). */
-  activeRuns(ownerId: string | null): Promise<ActiveRun[]>
-  /** A run's or a turn's trace; null when it isn't there or isn't the owner's. */
-  trace(id: string, ownerId: string | null): Promise<Trace | null>
+  /** The runs a caller may attach to, in its scope. */
+  activeRuns(scope: RunScope): Promise<ActiveRun[]>
+  /** A run's or a turn's trace; null when it isn't there or isn't in the scope. */
+  trace(id: string, scope: RunScope): Promise<Trace | null>
   onMemberRemoved(memberId: string): Promise<void>
   onGrantEnded(grantId: string): Promise<void>
   /** A Runner's container exited: the pool names that runner's turns once per generation, and the BrandAgent fences them. */

@@ -22,6 +22,7 @@ export class FakeRunnerPool implements RunnerPoolPort {
     this.calls.push({ method: 'place', args: [rs, gen] })
     const answer = typeof this.placeAnswer === 'function' ? await this.placeAnswer(rs, gen) : this.placeAnswer
     if ('queued' in answer && !this.queue.includes(rs.runId)) this.queue.push(rs.runId)
+    if ('admitted' in answer) this.queue = this.queue.filter(t => t !== rs.runId)
     return answer
   }
   async interrupt(runner: string, turnId: string) { this.calls.push({ method: 'interrupt', args: [runner, turnId] }) }
@@ -32,9 +33,19 @@ export class FakeRunnerPool implements RunnerPoolPort {
   }
   turnEnded(runner: string, turnId: string) { this.calls.push({ method: 'turnEnded', args: [runner, turnId] }) }
   health() { return this.healthAnswer }
-  drain(nowMs: number) { this.calls.push({ method: 'drain', args: [nowMs] }); return this.drainAnswer }
+  /** Like the real one: the drain holds 30 minutes from `nowMs`; `drainState` reports it. */
+  drain(nowMs: number) {
+    this.calls.push({ method: 'drain', args: [nowMs] })
+    this.drainAnswer = { ...this.drainAnswer, drainingUntilMs: nowMs + 30 * 60_000 }
+    return this.drainAnswer
+  }
   drainState() { this.calls.push({ method: 'drainState', args: [] }); return this.drainAnswer }
-  async warmup() { this.calls.push({ method: 'warmup', args: [] }); return this.warmupAnswer }
+  /** Like the real one: a warm-up that succeeds clears the drain. */
+  async warmup() {
+    this.calls.push({ method: 'warmup', args: [] })
+    if ('ok' in this.warmupAnswer) this.drainAnswer = { ...this.drainAnswer, drainingUntilMs: null }
+    return this.warmupAnswer
+  }
   containerExited(runner: string, gen: number) {
     this.calls.push({ method: 'containerExited', args: [runner, gen] })
     const key = `${runner} ${gen}`

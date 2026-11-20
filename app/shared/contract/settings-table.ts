@@ -46,8 +46,11 @@ export const capOk = (v: string) => CAP_PATTERN.test(v) && Number(v.slice(1)) > 
  * compared with it in settings-hostlist.test.ts): lowercase labels, at least two, no trailing dot.
  */
 export const HOSTNAME_PATTERN = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/
-/** A name whose last label is all digits reads as an IPv4 literal (`10.0.0.1`): never a WebFetch host. */
-const NUMERIC_TLD = /\.\d+$/
+/**
+ * A name whose last label is all digits or `0x` hex reads as an IPv4 literal to a URL parser (`10.0.0.1`,
+ * `0x7f.0x1`, `1.0x7f`): never a WebFetch host.
+ */
+const NUMERIC_TLD = /\.(\d+|0x[0-9a-f]*)$/i
 export const HOSTLIST_MAX_HOSTS = 50
 export const HOSTLIST_MAX_CHARS = 4000
 /**
