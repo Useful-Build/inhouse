@@ -62,6 +62,13 @@ export interface SocketAttachment {
   p: SocketPrincipal
   leaseEndsMs: number
   runs: Record<string, number>
+  /**
+   * Inhouse attaches waiting on their `support.attach` line, by run: the attach's number. A detach, or a newer attach of
+   * the same run, takes the entry away, and the waiting attach then sends nothing.
+   */
+  pending?: Record<string, number>
+  /** The last pending attach's number. */
+  n?: number
   /** Set when the object closed it (a closing socket can still be listed for a while, docs). */
   closed?: true
 }
@@ -173,7 +180,11 @@ export class SocketHub {
     )
     const att: SocketAttachment = { p: p.data, leaseEndsMs, runs: {} }
     const code = this.verdict(att, now)
-    if (code !== null) return { close: code, reason: code === CLOSE_GRANT_ENDED ? 'grant_ended' : 'reauth' }
+    if (code !== null) {
+      // A member the removed set refuses may have been re-invited since (P2 keeps the id): the sweep checks D1 now.
+      if (this.inSet('member', p.data.memberId)) this.d.wakeBy(now)
+      return { close: code, reason: code === CLOSE_GRANT_ENDED ? 'grant_ended' : 'reauth' }
+    }
     const tags = [`m:${p.data.memberId}`]
     if (p.data.grantId !== null) tags.push(`g:${p.data.grantId}`)
     return { accept: att, tags }
@@ -226,6 +237,7 @@ export class SocketHub {
     const { runId } = msg.data
     if (msg.data.type === 'detach') {
       delete att.runs[runId]
+      if (att.pending) delete att.pending[runId]
       this.write(ws, att)
       return
     }
@@ -233,27 +245,50 @@ export class SocketHub {
     const run = this.runOf(runId)
     // Another person's run is the same answer as no run (BD11; an Admin's included). Inhouse reads any under its grant.
     if (!run || (att.p.kind !== 'inhouse' && run.owner_id !== att.p.memberId)) return this.refuse(ws, runId, 'not_found')
-    if (!(runId in att.runs) && Object.keys(att.runs).length >= MAX_RUNS_PER_SOCKET) return this.refuse(ws, runId, 'rate_limited')
+    if (this.full(att, runId)) return this.refuse(ws, runId, 'rate_limited')
     if (att.p.kind === 'inhouse') {
+      // Marked before the await, so a detach (or a newer attach of this run) during it is seen after it.
+      const n = (att.n ?? 0) + 1
+      att.n = n
+      att.pending = { ...att.pending, [runId]: n }
+      this.write(ws, att)
+      let failed = false
       try {
         await this.d.auditAttach(att.p, runId)
       } catch (err) {
         console.error({ event: 'support_attach_unlogged', error: err instanceof Error ? err.name : 'unknown' })
-        return this.refuse(ws, runId, 'unavailable')
+        failed = true
       }
-      // Decided again as things are after the await: the socket may be closed, its grant ended, its cursors moved.
+      // Decided again as things are after the await: the socket may be closed, its grant ended, its cursors moved, the
+      // run detached.
       att = this.read(ws)
       if (!att || att.closed) return
+      const mine = att.pending?.[runId] === n
+      if (mine) {
+        delete att.pending![runId]
+        this.write(ws, att)
+      }
       if (!this.stands(ws, att)) return
+      if (failed) return mine ? this.refuse(ws, runId, 'unavailable') : undefined
+      if (!mine) return
+      if (this.full(att, runId)) return this.refuse(ws, runId, 'rate_limited')
     }
     this.attachNow(ws, att, runId, fromSeq)
+  }
+
+  /** Whether following one more run would pass the per-socket bound (runs followed and attaches still pending). */
+  private full(att: SocketAttachment, runId: string): boolean {
+    const held = new Set([...Object.keys(att.runs), ...Object.keys(att.pending ?? {})])
+    held.delete(runId)
+    return held.size >= MAX_RUNS_PER_SOCKET
   }
 
   /** The attach's synchronous step (4.2.5): cursor, one burst, then `attached`. */
   private attachNow(ws: HubSocket, att: SocketAttachment, runId: string, fromSeq: number) {
     const run = this.runOf(runId)
     if (!run) return this.refuse(ws, runId, 'not_found')
-    att.runs[runId] = fromSeq
+    // A cursor is never ahead of the run: events up to a `fromSeq` past `last_seq` would otherwise never be sent.
+    att.runs[runId] = Math.min(fromSeq, run.last_seq)
     try {
       this.pump(ws, att, runId, run.chat_id)
       this.send(ws, { type: 'attached', runId, lastSeq: run.last_seq, live: run.state === 'live' })

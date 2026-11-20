@@ -23,6 +23,7 @@ import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { Refusal } from './ports.ts'
 import { hashRunToken } from './tokens.ts'
 import type { FakeSocket } from './testing/fake-socket.ts'
+import { runAuthoritySweep } from './authority.ts'
 
 const HOUR = 60 * MIN
 const owner: SocketPrincipal = { kind: 'person', memberId: MEMBER, role: 'member', grantId: null, grantEndsAtMs: null, expMs: T0 + 2 * HOUR, requestId: 'req-owner' }
@@ -420,6 +421,8 @@ describe('the authority sweep and grant expiry (4.10, D1)', () => {
     await h.tick(30 * MIN)
     expect(inSet(h, 'grant')).toContain(g)
     expect(ws.closed).toEqual({ code: 4403, reason: 'grant_ended' })
+    // Done once the grant ended: never rescheduled at a past time (a hot alarm loop).
+    expect(h.dueTasks().map(t => t.id)).not.toContain(`grant-expiry:${g}`)
   }))
 
   it('onGrantCreated schedules grant-expiry at the end; an early run waits for D1\'s end', () => inAgent(async h => {
@@ -471,5 +474,177 @@ describe('run tokens stay on their own chat', () => {
     expect(grantA).toMatchObject({ chatId: 'chat-a', turnId: a.turnId, sessionId: h.turn(a.turnId).session_id })
     expect(grantB).toMatchObject({ chatId: 'chat-b', turnId: b.turnId, sessionId: h.turn(b.turnId).session_id })
     expect(h.turn(a.turnId).session_id).not.toBe(h.turn(b.turnId).session_id)
+  }))
+})
+
+// Round 1 fold (#166 reviews, p3-w1-pr4-fold-r1.md). Ways it can fail, written down first:
+//  1. a re-invited member stays refused when nothing else keeps the sweep running (O1/F1), also after a sweep whose
+//     read predates the re-invite (interleaving B);
+//  2. the sweep takes a member out of the removed set although a removal landed during its read (O2/F2), or misses a
+//     removal committed between two sweeps' reads (F3);
+//  3. an Inhouse detach during the support.attach await is undone by the attach (O3); concurrent Inhouse attaches pass
+//     the per-socket bound;
+//  4. a quarantined sweep never comes back, or a D1 outage keeps an idle expired socket open (O4/F5);
+//  5. a cursor is set past the run's last seq and later events never go out (F7).
+describe('round 1 fold', () => {
+  const db = env.DB
+  const member = async (id: string, status: 'active' | 'removed', removedAt: number | null) => {
+    await db.prepare("INSERT OR REPLACE INTO members (id, kind, role, status, name, email_norm, subject, rev, created_at_ms, removed_at_ms) VALUES (?, 'person', 'member', ?, 'Test', ?, ?, 1, 0, ?)")
+      .bind(id, status, `${id}@example.test`, `sub-${id}`, removedAt).run()
+  }
+  const inSet = (h: Harness) => h.sql.exec<{ id: string }>("SELECT id FROM authority WHERE kind = 'member'").toArray().map(r => r.id)
+  const sweepTask = (h: Harness) => h.sql.exec<{ due_at_ms: number; state: string }>("SELECT due_at_ms, state FROM due_tasks WHERE id = 'authority-sweep'").toArray()[0] ?? null
+  const rid = (prefix: string) => `${prefix}${Math.random().toString(36).slice(2, 8)}`
+  const deps = (h: Harness, d: D1Database = db) => ({
+    sql: h.sql, db: d, scheduler: h.sched, now: () => h.clock.now, sockets: h.hub,
+    onMemberRemoved: (id: string) => h.core.onMemberRemoved(id), onGrantEnded: (id: string) => h.core.onGrantEnded(id),
+  })
+  /** The sweep with its D1 batch held after the read ran (the read is taken; the writes wait). */
+  const gatedSweep = (h: Harness) => {
+    const gate = deferred()
+    const read = deferred()
+    const gdb = { prepare: (q: string) => db.prepare(q), batch: async (b: D1PreparedStatement[]) => { const r = await db.batch(b); read.resolve(); await gate.promise; return r } } as unknown as D1Database
+    const run = runAuthoritySweep(deps(h, gdb))
+    return { read: read.promise, release: () => gate.resolve(), run }
+  }
+
+  it('a re-invited member with nothing else open: the refused send runs the sweep at once, then they are admitted', () => inAgent(async h => {
+    const id = rid('m_ri')
+    await member(id, 'removed', T0)
+    h.core.onMemberRemoved(id)
+    await member(id, 'active', null)
+    h.clock.now += SEC
+    expect(sweepTask(h)).toBeNull()
+    expect(await h.submit('c_ri', 'key-ri01', { member: id })).toEqual({ refused: { code: 'forbidden', reason: 'removed' } })
+    expect(sweepTask(h)).toEqual({ due_at_ms: T0 + SEC, state: 'ready' })
+    await h.tick(0)
+    expect(inSet(h)).not.toContain(id)
+    expect(ok(await h.submit('c_ri', 'key-ri02', { member: id })).position).toBe('starting')
+  }))
+
+  it('a re-invited member with nothing else open: the refused upgrade runs the sweep at once, then it is accepted', () => inAgent(async h => {
+    const id = rid('m_ru')
+    await member(id, 'removed', T0)
+    h.core.onMemberRemoved(id)
+    await member(id, 'active', null)
+    h.clock.now += SEC
+    const p = { ...owner, memberId: id }
+    expect(h.connect(p).answer).toEqual({ close: 4401, reason: 'reauth' })
+    expect(sweepTask(h)).toEqual({ due_at_ms: T0 + SEC, state: 'ready' })
+    await h.tick(0)
+    expect(h.connect(p).ws).not.toBeNull()
+  }))
+
+  it('interleaving B: removal (call lost), sweep read, re-invite, sweep write: the next refusal repairs it', () => inAgent(async h => {
+    const id = rid('m_b')
+    await member(id, 'removed', T0)
+    const g = gatedSweep(h)
+    await g.read
+    await member(id, 'active', null)
+    h.clock.now += SEC
+    g.release()
+    await g.run
+    expect(inSet(h), 'the stale read put them in').toContain(id)
+    expect(sweepTask(h), 'nothing open: no sweep comes back by itself').toBeNull()
+    h.clock.now += SEC
+    expect(await h.submit('c_b', 'key-b0001', { member: id })).toEqual({ refused: { code: 'forbidden', reason: 'removed' } })
+    await h.tick(0)
+    expect(inSet(h)).not.toContain(id)
+    expect(ok(await h.submit('c_b', 'key-b0002', { member: id })).position).toBe('starting')
+  }))
+
+  for (const advance of [0, SEC]) {
+    it(`interleaving C: re-invited, sweep read, removed again with its call (clock +${advance}), sweep write: stays removed`, () => inAgent(async h => {
+      const id = rid('m_c')
+      await member(id, 'removed', T0 - HOUR)
+      h.core.onMemberRemoved(id)
+      await member(id, 'active', null)
+      h.clock.now += SEC
+      const g = gatedSweep(h)
+      await g.read
+      h.clock.now += advance
+      await member(id, 'removed', h.clock.now)
+      h.core.onMemberRemoved(id)
+      g.release()
+      await g.run
+      expect(inSet(h)).toContain(id)
+    }))
+  }
+
+  it('a removal committed while one sweep read is seen by the next sweep (the read overlaps its cursor)', () => inAgent(async h => {
+    const id = rid('m_ov')
+    h.clock.now += HOUR
+    const g = gatedSweep(h)
+    await g.read
+    // Stamped just before the first read, committed after it.
+    await member(id, 'removed', h.clock.now - SEC)
+    g.release()
+    await g.run
+    expect(inSet(h)).not.toContain(id)
+    h.clock.now += 5 * MIN
+    await runAuthoritySweep(deps(h))
+    expect(inSet(h)).toContain(id)
+  }))
+
+  it('an Inhouse detach during the support.attach await: nothing is attached, no frame follows', () => inAgent(async h => {
+    const a = await liveRun(h)
+    const ws = accepted(h, inhouse)
+    const gate = deferred()
+    h.attachAudit.gate = gate.promise
+    const pending = attach(h, ws, a.runId, 3)
+    await settle()
+    await h.say(ws, { type: 'detach', runId: a.runId })
+    gate.resolve()
+    await pending
+    expect(ws.take()).toEqual([])
+    h.push(a.turnId, ev.text('after detach'))
+    expect(ws.take()).toEqual([])
+  }))
+
+  it('Inhouse attaches waiting on their line count toward the 100 runs', () => inAgent(async h => {
+    const ws = accepted(h, inhouse)
+    const ids: string[] = []
+    for (let i = 0; i < 101; i++) {
+      const id = `r_${String(i).padStart(22, 'B')}`
+      h.sql.exec("INSERT INTO runs (run_id, chat_id, owner_id, state, last_seq, started_at_ms) VALUES (?, ?, ?, 'ended', 0, ?)", id, `c${i}`, MEMBER, T0)
+      ids.push(id)
+    }
+    const gate = deferred()
+    h.attachAudit.gate = gate.promise
+    const pending = ids.map(id => attach(h, ws, id))
+    await settle()
+    gate.resolve()
+    await Promise.all(pending)
+    const lines = ws.take()
+    expect(lines.filter(l => l === 'attached 0 ended')).toHaveLength(100)
+    expect(lines.filter(l => l === 'refused rate_limited')).toHaveLength(1)
+    expect(h.attachAudit.lines, 'no support.attach line for an attach the socket can\'t hold').toHaveLength(100)
+  }))
+
+  it('a quarantined sweep is revived by the next send and by the next socket', () => inAgent(async h => {
+    const quarantine = () => h.sql.exec("INSERT OR REPLACE INTO due_tasks (id, kind, gen, due_at_ms, attempts, state) VALUES ('authority-sweep', 'authority-sweep', 7, ?, 10, 'quarantined')", T0)
+    quarantine()
+    ok(await h.submit('c_q', 'key-q0001'))
+    expect(sweepTask(h)).toEqual({ due_at_ms: T0 + 5 * MIN, state: 'ready' })
+    quarantine()
+    accepted(h, smoke)
+    expect(sweepTask(h)).toEqual({ due_at_ms: T0 + 5 * MIN, state: 'ready' })
+  }))
+
+  it('D1 failing: the sweep still closes an idle socket whose lease ended', () => inAgent(async h => {
+    const ws = accepted(h, { ...owner, expMs: T0 + 2 * MIN })
+    h.clock.now = T0 + 2 * MIN
+    const down = { prepare: (q: string) => db.prepare(q), batch: async () => { throw new Error('D1 down') } } as unknown as D1Database
+    await expect(runAuthoritySweep(deps(h, down))).rejects.toThrow('D1 down')
+    expect(ws.closed).toEqual({ code: 4401, reason: 'reauth' })
+  }))
+
+  it('an attach from past the run\'s last seq starts at the last seq, so the next event goes out', () => inAgent(async h => {
+    const a = await liveRun(h)
+    const ws = accepted(h, owner)
+    await attach(h, ws, a.runId, 99)
+    expect(ws.take()).toEqual(['attached 3 live'])
+    h.push(a.turnId, ev.text('next'))
+    expect(ws.take()).toEqual(['frame 4 part'])
   }))
 })

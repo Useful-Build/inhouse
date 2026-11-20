@@ -242,7 +242,11 @@ export class AgentCore {
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
     const member = t.by.memberId
-    if (this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", member).toArray().length > 0) return refuse('forbidden', 'removed')
+    if (this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", member).toArray().length > 0) {
+      // A re-invited member keeps their id (P2) and nothing tells the object: the sweep checks D1 now (authority.ts).
+      sweepBy(this.sql, this.d.scheduler, this.d.now())
+      return refuse('forbidden', 'removed')
+    }
     if (this.paused()) return refuse('forbidden', 'paused')
     if (this.draining_()) return refuse('unavailable', 'draining')
     const cs = this.chatState(t.chatId)

@@ -19,11 +19,13 @@ export const SWEEP_OVERLAP_MS = 15 * 60_000
 export const GRANT_EXPIRY_PREFIX = 'grant-expiry:'
 const CURSOR_FLAG = 'authority_cursor_ms'
 
-/** Makes the sweep run by `atMs` (moves it earlier, never later). */
+/**
+ * Makes the sweep run by `atMs` (moves a ready one earlier, never later). A quarantined sweep (10 failures, D1 down) is
+ * revived here, by the next submit, upgrade or attach: authority must not stop for good.
+ */
 export function sweepBy(sql: SqlStorage, scheduler: Scheduler, atMs: number) {
   const row = sql.exec<{ due_at_ms: number; state: string }>('SELECT due_at_ms, state FROM due_tasks WHERE id = ?', SWEEP_ID).toArray()[0]
   if (row && row.state === 'ready' && row.due_at_ms <= atMs) return
-  if (row && row.state !== 'ready') return
   scheduler.schedule({ id: SWEEP_ID, kind: 'authority-sweep', dueAtMs: atMs })
 }
 
@@ -54,6 +56,8 @@ const ids = (sql: SqlStorage, kind: 'member' | 'grant') =>
 
 /** One `authority-sweep` run. D1 failing throws: the scheduler retries with its backoff. */
 export async function runAuthoritySweep(d: AuthorityDeps): Promise<TaskResult> {
+  // Lease ends need no D1: closed first, so a D1 outage doesn't keep an idle expired socket open.
+  d.sockets?.sweep()
   const readAt = d.now()
   const cursor = d.sql.exec<{ value: number | null }>('SELECT value FROM flags WHERE key = ?', CURSOR_FLAG).toArray()[0]?.value ?? null
   const from = cursor === null ? 0 : cursor - SWEEP_OVERLAP_MS

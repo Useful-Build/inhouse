@@ -66,6 +66,9 @@ export async function removeMember(c: ApiCtx & { env: Pick<Env, 'BRAND_AGENT'> }
   // Decision 19b: the Inhouse team never removes an Admin (checked in the statement, see members.remove).
   const done = await storesOf(c).members.remove({ id, ifRev: query.ok.ifRev, notAdmin: c.principal.kind === 'inhouse' }, writer(c))
   if ('ok' in done) {
+    // Awaited, with no timeout of its own: the object hears before the answer (so the order is observable and a test
+    // can pin it), at the price of a slow object delaying the Admin's answer. A failure is caught, logged and repaired
+    // by the sweep.
     try {
       await brandAgent(c.env).onMemberRemoved(id)
     } catch (err) {

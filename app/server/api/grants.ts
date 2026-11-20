@@ -15,7 +15,11 @@ export async function listGrants(c: ApiCtx): Promise<Response> {
   return apiJson({ items: await storesOf(c).grants.list({ nowMs: c.nowMs, requestId: c.requestId }) })
 }
 
-/** The BrandAgent's side of a grant (P3 design 4.10); a lost call is repaired by the object's authority sweep. */
+/**
+ * The BrandAgent's side of a grant (P3 design 4.10); a lost call is repaired by the object's authority sweep. Awaited,
+ * with no timeout of its own: the object hears before the answer (an observable order), at the price of a slow object
+ * delaying the Admin's answer.
+ */
 async function tellAgent(c: ApiCtx & { env: Pick<Env, 'BRAND_AGENT'> }, call: 'onGrantCreated' | 'onGrantEnded', act: () => Promise<void>) {
   try {
     await act()
