@@ -153,6 +153,21 @@ describe('checkAccess cases', () => {
 const inhouseWriteProblems = (rows: readonly AccessRow[]) =>
   rows.filter(x => x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report' && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
 
+/**
+ * Pairs of routes with the same method where one concrete path matches both (equal length, every segment literal-equal
+ * or a `:param` on either side). api.ts takes the access row from the pattern matchRoute found first, so a shadowed
+ * route would be served under the other route's row.
+ */
+const shadowProblems = (table: readonly { method: string; pattern: string }[]) => {
+  const problems: string[] = []
+  table.forEach((a, i) => table.slice(i + 1).forEach(b => {
+    if (a.method !== b.method) return
+    const x = a.pattern.split('/'), y = b.pattern.split('/')
+    if (x.length === y.length && x.every((seg, k) => seg === y[k] || seg.startsWith(':') || y[k].startsWith(':'))) problems.push(`${a.method} ${a.pattern} / ${b.pattern}`)
+  }))
+  return problems
+}
+
 /** The closed list of `open` rows (matrix.ts): only the health check. */
 const OPEN_ROWS = ['GET /api/health']
 const openProblems = (rows: readonly AccessRow[]) => {
@@ -166,7 +181,7 @@ const reportProblems = (rows: readonly AccessRow[]) => {
   const report = rows.filter(x => x.class === 'report')
   const keys = report.map(x => `${x.method} ${x.pattern}`)
   const problems = keys.filter(k => !REPORT_ROWS.includes(k)).map(k => `${k} is report`)
-  // An empty table (access-matrix.ts until PR0b) has no routes yet; a filled one needs every listed row as report.
+  // An empty table needs no report row; a filled one needs every listed row as report.
   if (rows.length) for (const k of REPORT_ROWS) if (!keys.includes(k)) problems.push(`${k} is not report`)
   for (const x of report) if ((x.services ?? []).length) problems.push(`${x.method} ${x.pattern} names a service`)
   return problems
@@ -188,6 +203,10 @@ describe('the invariant checks catch a bad row', () => {
     expect(openProblems(DESIGN_ROWS.map(r => (r === members ? { ...r, class: 'open' as const } : r)))).toEqual(['GET /api/members is open'])
     expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open'])
     expect(openProblems(DESIGN_ROWS)).toEqual([])
+  })
+  it('a route that shadows another: GET /api/members/:id beside GET /api/members/invites', () => {
+    expect(shadowProblems([{ method: 'GET', pattern: '/api/members/invites' }, { method: 'GET', pattern: '/api/members/:id' }])).toEqual(['GET /api/members/invites / /api/members/:id'])
+    expect(shadowProblems([{ method: 'POST', pattern: '/api/members/invites' }, { method: 'GET', pattern: '/api/members/:id' }])).toEqual([])
   })
   it('a non-GET brand_data, baseline or personal row listing inhouse', () => {
     const invites = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
@@ -249,10 +268,16 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
 invariants('the design rows (p2-design section 3)', DESIGN_ROWS, DESIGN_CAN_ROWS)
 invariants('server/access-matrix.ts', accessMatrix, committedCanRows)
 
+describe('the committed routes', () => {
+  it('no two routes with the same method match one concrete path (api.ts reads the row of the matched pattern)', () => {
+    expect(shadowProblems(routes)).toEqual([])
+  })
+})
+
 describe('the committed rows are the design', () => {
   it('server/access-matrix.ts equals DESIGN_ROWS and DESIGN_CAN_ROWS (the fixture is the independent copy)', () => {
-    expect(accessMatrix).toEqual(DESIGN_ROWS)
-    expect(committedCanRows).toEqual(DESIGN_CAN_ROWS)
+    expect(accessMatrix).toStrictEqual(DESIGN_ROWS)
+    expect(committedCanRows).toStrictEqual(DESIGN_CAN_ROWS)
   })
 })
 

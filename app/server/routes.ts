@@ -60,6 +60,25 @@ export interface Route { readonly method: Method; readonly pattern: string; read
 /** Every route whose handler hasn't landed yet: 503 `unavailable`. W2 and W3 replace them one by one. */
 const notYet: Handler = async () => apiError('unavailable')
 
+/**
+ * Hardening's reporter (worker/client-error.ts, shared with the demo Worker and left as is) with section 4's error
+ * bodies: its bare 400, 403, 413 and 429 become `invalid`, `forbidden`, `invalid` with reason `too_large` and
+ * `rate_limited` (keeping `Retry-After`); any other status passes through.
+ */
+export async function reportClientError(request: Request): Promise<Response> {
+  const res = await clientError(request, SECURITY_HEADERS)
+  switch (res.status) {
+    case 400: return apiError('invalid')
+    case 403: return apiError('forbidden')
+    case 413: return apiError('invalid', { reason: 'too_large' })
+    case 429: {
+      const retry = res.headers.get('Retry-After')
+      return apiError('rate_limited', retry === null ? {} : { headers: { 'Retry-After': retry } })
+    }
+    default: return res
+  }
+}
+
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [
   /* 1 */ { method: 'GET', pattern: '/api/health', handler: notYet },
@@ -82,8 +101,8 @@ export const routes: readonly Route[] = [
   /* 18 */ { method: 'POST', pattern: '/api/grants/:id/end', handler: notYet },
   /* 19 */ { method: 'GET', pattern: '/api/audit', handler: notYet },
   /* 20 */ { method: 'GET', pattern: '/api/audit/export.csv', handler: notYet },
-  // Hardening's reporter (worker/client-error.ts, shared with the demo Worker): a report row, so no stores.
-  /* 21 */ { method: 'POST', pattern: '/api/client-error', handler: async ({ request }) => clientError(request, SECURITY_HEADERS) },
+  // A report row, so no stores.
+  /* 21 */ { method: 'POST', pattern: '/api/client-error', handler: async ({ request }) => reportClientError(request) },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */
