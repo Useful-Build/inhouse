@@ -61,7 +61,7 @@ describe('the health route', () => {
     expect(JSON.stringify(out.body)).not.toContain('@')
   })
   it('fails the migration signal when a shipped migration is not applied (failure 4)', async () => {
-    const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => ['0001_members', '0002_settings', '0003_support_grants', '0005_service_rows', '0100_chats', '0140_memories', '0141_search'] } }
+    const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => ['0001_members', '0002_settings', '0003_support_grants', '0005_service_rows', '0100_chats', '0120_chat_files', '0140_memories', '0141_search'] } }
     const out = await call(health, { ...c, stores: behind })
     expect(out.status).toBe(503)
     expect(out.body.signals.find(s => s.name === 'migrations')).toEqual({ name: 'migrations', ok: false, detail: 'not applied: 0004_audit_log' })

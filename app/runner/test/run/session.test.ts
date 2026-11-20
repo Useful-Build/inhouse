@@ -1117,3 +1117,138 @@ describe('imports', () => {
     }
   })
 })
+
+// Structured output (R3 follow-up). Ways it could fail, written first:
+// - the format isn't passed to the SDK, or is passed when not asked for;
+// - a success's structured_output doesn't reach the terminal event, or reaches it when not asked for;
+// - a success without one, one over 64 KB, or the SDK's retries running out ends as anything but failed structured_output
+//   (the SDK throws after its error result: that must not read as a crash, sdk_error);
+// - a deferred call, an error result or a stop is turned into a structured-output failure.
+describe('structured output', () => {
+  const SCHEMA = { type: 'object', properties: { late_orders: { type: 'integer' } }, required: ['late_orders'] }
+  const asked = () => config({ outputFormat: { type: 'json_schema', schema: SCHEMA } })
+  const withOutput = (value: unknown) => ({ ...(result as object), structured_output: value }) as unknown as SDKMessage
+  const terminal = (h: ReturnType<typeof harness>) => h.events().at(-1)
+
+  it('the format goes to the SDK, and the success carries its value on the terminal event', async () => {
+    const q = fakeQuery([assistant, withOutput({ late_orders: 3 })])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: asked() })
+    await h.done
+    expect(q.calls[0]!.options.outputFormat).toEqual({ type: 'json_schema', schema: SCHEMA })
+    expect(terminal(h)).toEqual({ type: 'finished', subtype: 'success', isError: false, numTurns: 2, costUsd: 0.01, usage: { input_tokens: 5 }, structuredOutput: { late_orders: 3 } })
+  })
+
+  it('not asked: no format to the SDK, and a structured_output on the result is not passed on', async () => {
+    const q = fakeQuery([withOutput({ late_orders: 3 })])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(q.calls[0]!.options.outputFormat).toBeUndefined()
+    expect(terminal(h)).not.toHaveProperty('structuredOutput')
+    expect(terminal(h)).toMatchObject({ type: 'finished', subtype: 'success' })
+  })
+
+  it('asked, and a success without one: failed structured_output', async () => {
+    const h = harness(fakeQuery([result]).query)
+    h.deliver({ type: 'run', config: asked() })
+    await h.done
+    expect(terminal(h)).toEqual({ type: 'failed', reason: 'structured_output', message: 'the run ended (success) without the structured output it was asked for' })
+  })
+
+  it('asked, and one over 64 KB: failed structured_output; at the cap it passes', async () => {
+    const sized = (bytes: number) => ({ a: 'x'.repeat(bytes - 8) })
+    const over = harness(fakeQuery([withOutput(sized(64 * 1024 + 1))]).query)
+    over.deliver({ type: 'run', config: asked() })
+    await over.done
+    expect(terminal(over)).toMatchObject({ type: 'failed', reason: 'structured_output' })
+    const at = harness(fakeQuery([withOutput(sized(64 * 1024))]).query)
+    at.deliver({ type: 'run', config: asked() })
+    await at.done
+    expect(terminal(at)).toMatchObject({ type: 'finished', structuredOutput: sized(64 * 1024) })
+  })
+
+  it("the SDK's retries running out (its error result, then its throw): failed structured_output, not sdk_error", async () => {
+    const retries = { ...(result as object), subtype: 'error_max_structured_output_retries', is_error: true } as unknown as SDKMessage
+    const h = harness(fakeQuery([assistant, retries], { throwAt: 2 }).query)
+    h.deliver({ type: 'run', config: asked() })
+    await h.done
+    expect(terminal(h)).toEqual({ type: 'failed', reason: 'structured_output', message: 'the agent could not produce output matching the schema' })
+  })
+
+  it('asked, and the result is an error (is_error): it keeps its own end', async () => {
+    const h = harness(fakeQuery([{ ...(result as object), is_error: true } as unknown as SDKMessage]).query)
+    h.deliver({ type: 'run', config: asked() })
+    await h.done
+    expect(terminal(h)).toMatchObject({ type: 'finished', isError: true })
+    expect(terminal(h)).not.toHaveProperty('structuredOutput')
+  })
+
+  // #151 review round 1.
+  it('asked: a clean end of any subtype without an output (error_max_turns, is_error false) fails structured_output; is_error true keeps finished', async () => {
+    const maxTurns = harness(fakeQuery([{ ...(result as object), subtype: 'error_max_turns', is_error: false } as unknown as SDKMessage]).query)
+    maxTurns.deliver({ type: 'run', config: asked() })
+    await maxTurns.done
+    expect(terminal(maxTurns)).toEqual({ type: 'failed', reason: 'structured_output', message: 'the run ended (error_max_turns) without the structured output it was asked for' })
+    const isError = harness(fakeQuery([{ ...(result as object), subtype: 'error_max_turns', is_error: true } as unknown as SDKMessage]).query)
+    isError.deliver({ type: 'run', config: asked() })
+    await isError.done
+    expect(terminal(isError)).toMatchObject({ type: 'finished', subtype: 'error_max_turns', isError: true })
+  })
+
+  it('the 64 KB cap counts UTF-8 bytes, not characters: multibyte at the cap passes, one byte over fails', async () => {
+    // {"a":"…"} is 8 bytes of framing; each é is 2 bytes in UTF-8 but one character.
+    const atCap = { a: 'é'.repeat((64 * 1024 - 8) / 2) }
+    const overCap = { a: `${'é'.repeat((64 * 1024 - 8) / 2)}x` }
+    expect(JSON.stringify(overCap).length).toBeLessThan(64 * 1024)
+    const at = harness(fakeQuery([withOutput(atCap)]).query)
+    at.deliver({ type: 'run', config: asked() })
+    await at.done
+    expect(terminal(at)).toMatchObject({ type: 'finished', structuredOutput: atCap })
+    const over = harness(fakeQuery([withOutput(overCap)]).query)
+    over.deliver({ type: 'run', config: asked() })
+    await over.done
+    expect(terminal(over)).toEqual({ type: 'failed', reason: 'structured_output', message: 'the structured output is 65537 bytes, over the 65536-byte cap' })
+  })
+
+  it('an output 64 levels deep passes; 65 fails structured_output (before the channel would refuse it)', async () => {
+    const nest = (n: number): unknown => (n === 0 ? 1 : [nest(n - 1)])
+    const at = harness(fakeQuery([withOutput(nest(64))]).query)
+    at.deliver({ type: 'run', config: asked() })
+    await at.done
+    expect(terminal(at)).toMatchObject({ type: 'finished', structuredOutput: nest(64) })
+    const deep = harness(fakeQuery([withOutput(nest(65))]).query)
+    deep.deliver({ type: 'run', config: asked() })
+    await deep.done
+    expect(terminal(deep)).toEqual({ type: 'failed', reason: 'structured_output', message: 'the structured output nests deeper than 64 levels' })
+  })
+
+  // A result the SDK already gave wins over a stop that races it (no change in behaviour, pinned here).
+  it.each([
+    ['a success without an output', { subtype: 'success', is_error: false }, 'the run ended (success) without the structured output it was asked for'],
+    ['the retries running out', { subtype: 'error_max_structured_output_retries', is_error: true }, 'the agent could not produce output matching the schema'],
+  ])('a stop racing %s: failed structured_output, not stopped', async (_, over, message) => {
+    let wake!: () => void
+    const woken = new Promise<void>((r) => (wake = r))
+    const q = scriptedQuery(async function* () {
+      yield assistant
+      await woken
+      // The stop has arrived (stopping is set); the SDK still hands over its result.
+      yield { ...(result as object), ...over } as unknown as SDKMessage
+    })
+    const query: QueryFn = (params) => Object.assign(q.query(params), { interrupt: async () => wake() })
+    const h = harness(query)
+    h.deliver({ type: 'run', config: asked() })
+    await waitForTicks(() => h.events().some((e: { type: string }) => e.type === 'sdk'))
+    h.deliver({ type: 'stop', endWithinMs: 60_000 })
+    await h.done
+    expect(terminal(h)).toEqual({ type: 'failed', reason: 'structured_output', message })
+  })
+
+  it('asked, and the run deferred a call: deferred, then finished (the answer comes on the resume)', async () => {
+    const h = harness(fakeQuery([toolUse('t1'), deferredResult('t1')]).query)
+    h.deliver({ type: 'run', config: asked() })
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'sdk', 'deferred', 'checkpoint', 'finished'])
+  })
+})

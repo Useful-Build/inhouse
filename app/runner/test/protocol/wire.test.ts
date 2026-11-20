@@ -24,6 +24,10 @@ import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import {
   ACCEPTED_VERSIONS,
+  OUTPUT_SCHEMA_MAX_BYTES,
+  STRUCTURED_MAX_DEPTH,
+  STRUCTURED_OUTPUT_MAX_BYTES,
+  jsonDepth,
   ATTACHMENTS_MAX,
   AuditPost,
   PUSH_BATCH_MAX_BYTES,
@@ -135,7 +139,8 @@ describe('RunStart', () => {
     },
   )
 
-  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape))])('refuses a missing field', (start, key) => {
+  // outputFormat is the one optional field (v2, additive: structured output).
+  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => k !== 'outputFormat'))])('refuses a missing field', (start, key) => {
     const copy: Record<string, unknown> = { ...start }
     delete copy[key]
     expect(RunStart.safeParse(copy).success).toBe(false)
@@ -151,7 +156,16 @@ describe('RunStart', () => {
     expect(refused.error?.issues[0]?.path).toEqual(['prompt'])
   })
 
+  /** A 1,024-character path under `inputs/` from segments of at most 255 UTF-8 bytes ('€' is three), `first` leading. */
+  const longPath = (first: string) => {
+    let path = `inputs/${first}${'€'.repeat(85 - first.length)}`
+    while (path.length < 1024) path += `/${'€'.repeat(Math.min(85, 1024 - path.length - 1))}`
+    return path
+  }
+
   it('a RunStart at every field cap, its prompt written in the longest escapes, fits the body cap', () => {
+    expect(longPath('0')).toHaveLength(1024)
+    expect(longPath('0').split('/').slice(1).every((s) => new TextEncoder().encode(s).length <= 255)).toBe(true)
     const start: RunStart = {
       runId: 'r'.repeat(64),
       chatId: 'c'.repeat(64),
@@ -163,8 +177,10 @@ describe('RunStart', () => {
       sideModel: 'h'.repeat(128),
       // One byte of UTF-8 each, six in JSON.
       systemPrompt: '\u0001'.repeat(SYSTEM_PROMPT_MAX_BYTES),
-      // Each unique (a digit first), the rest six bytes each in JSON.
-      attachments: Array.from({ length: ATTACHMENTS_MAX }, (_, i) => `inputs/${i}${'\u0001'.repeat(1024 - 8)}`),
+      // Each unique (a digit first) and 1,024 characters long. A file name can't hold a control character (six bytes in
+      // JSON) or a segment over 255 UTF-8 bytes, so the longest JSON per character is a three-byte one ('€'), 85 to a
+      // 255-byte segment.
+      attachments: Array.from({ length: ATTACHMENTS_MAX }, (_, i) => longPath(`${i}`)),
       expect: { mainEntries: Number.MAX_SAFE_INTEGER, lastUuid: '\u0001'.repeat(256), lastUuidIndex: Number.MAX_SAFE_INTEGER - 1 },
       effort: 'medium',
       maxTurns: 500,
@@ -309,7 +325,7 @@ const parserFor = (name: string): ((raw: unknown) => unknown) => {
 describe('v2 wire fixtures (written by hand)', () => {
   const v2 = fixtures('v2')
   it('every v2 fixture parses to exactly what its bytes say', () => {
-    expect(v2.length).toBeGreaterThanOrEqual(22)
+    expect(v2.length).toBeGreaterThanOrEqual(25)
     for (const f of v2) expect(parserFor(f.name)(JSON.parse(f.text)), f.name).toEqual(JSON.parse(f.text))
   })
 
@@ -388,8 +404,15 @@ describe('RunStart v2 limits', () => {
     expect(ok({ ...first, attachments: paths(11) })).toBe(false)
     expect(ok({ ...first, attachments: ['outputs/a.pdf'] })).toBe(false)
     expect(ok({ ...first, attachments: ['a.pdf'] })).toBe(false)
-    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(1017)}`] })).toBe(true)
-    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(1018)}`] })).toBe(false)
+    // The path cap (1,024 characters) from segments at the 255-byte limit; one character more is refused.
+    const at = (last: number) => `inputs/${'a'.repeat(255)}/${'a'.repeat(255)}/${'a'.repeat(255)}/${'a'.repeat(last)}`
+    expect(at(249)).toHaveLength(1024)
+    expect(ok({ ...first, attachments: [at(249)] })).toBe(true)
+    expect(ok({ ...first, attachments: [at(250)] })).toBe(false)
+    // A segment of 255 bytes is carried; 256 is refused (the shared name rule), also when the bytes are multi-byte.
+    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(255)}`] })).toBe(true)
+    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(256)}`] })).toBe(false)
+    expect(ok({ ...first, attachments: [`inputs/${'é'.repeat(128)}`] })).toBe(false)
   })
 
   it('webFetchDomains: null (any public host), a list, or [] (none); never a missing key or a bad host', () => {
@@ -513,5 +536,77 @@ describe('push, audit, status and admission', () => {
     expect(RunAdmission.safeParse({ ok: true }).success).toBe(false)
     expect(RUN_REFUSAL_STATUS).toEqual({ session_pool_exhausted: 503, session_folder_parked: 503, chat_live: 409, run_live: 409 })
     expect(RunRefusal.safeParse({ error: 'the runner is stopping' }).success).toBe(false)
+  })
+})
+
+// Structured output (R3 follow-up). Ways it could fail: a schema or an output over its cap passes; an outputFormat with
+// another type, or an extra key, passes; a cap counted in characters rather than UTF-8 bytes lets multibyte text past it;
+// a schema or an output nested past 64 levels passes (the local channel would then refuse it), or a deep one throws; the
+// failure code is missing.
+describe('structured output on the wire', () => {
+  const first = fixture('run-start.first.json')
+  const ok = (v: Record<string, unknown>) => RunStart.safeParse(v).success
+  const sized = (bytes: number) => ({ a: 'x'.repeat(bytes - 8) })
+
+  it('outputFormat: json_schema with a schema object up to 16 KB; optional', () => {
+    expect(ok(first)).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: { type: 'object' } } })).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: sized(OUTPUT_SCHEMA_MAX_BYTES) } })).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: sized(OUTPUT_SCHEMA_MAX_BYTES + 1) } })).toBe(false)
+    expect(ok({ ...first, outputFormat: { type: 'text', schema: {} } })).toBe(false)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema' } })).toBe(false)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: [] } })).toBe(false)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: {}, strict: true } })).toBe(false)
+    expect(ok({ ...first, outputFormat: null })).toBe(false)
+  })
+
+  it('finished.structuredOutput: any JSON value up to 64 KB; optional', () => {
+    const f = { type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }
+    const body = (v: Record<string, unknown>) => RunEventBody.safeParse(v).success
+    expect(body(f)).toBe(true)
+    for (const v of [{ a: 1 }, [1, 2], 'text', 0, false, null]) expect(body({ ...f, structuredOutput: v }), JSON.stringify(v)).toBe(true)
+    expect(body({ ...f, structuredOutput: sized(STRUCTURED_OUTPUT_MAX_BYTES) })).toBe(true)
+    expect(body({ ...f, structuredOutput: sized(STRUCTURED_OUTPUT_MAX_BYTES + 1) })).toBe(false)
+  })
+
+  // #151 review round 1: multibyte at the caps, and the depth cap.
+  const multibyte = (bytes: number) => ({ a: 'é'.repeat((bytes - 8) / 2) })
+  const multibyteOver = (bytes: number) => ({ a: `${'é'.repeat((bytes - 8) / 2)}x` })
+  const nest = (n: number): unknown => (n === 0 ? 1 : [nest(n - 1)])
+  const nestObject = (n: number): Record<string, unknown> => ({ a: n === 1 ? 1 : nestObject(n - 1) })
+
+  it('the schema cap counts UTF-8 bytes: multibyte at 16 KB passes, one byte over fails', () => {
+    expect(JSON.stringify(multibyteOver(OUTPUT_SCHEMA_MAX_BYTES)).length).toBeLessThan(OUTPUT_SCHEMA_MAX_BYTES)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: multibyte(OUTPUT_SCHEMA_MAX_BYTES) } })).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: multibyteOver(OUTPUT_SCHEMA_MAX_BYTES) } })).toBe(false)
+  })
+
+  it('the output cap counts UTF-8 bytes: multibyte at 64 KB passes, one byte over fails', () => {
+    const f = { type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }
+    expect(JSON.stringify(multibyteOver(STRUCTURED_OUTPUT_MAX_BYTES)).length).toBeLessThan(STRUCTURED_OUTPUT_MAX_BYTES)
+    expect(RunEventBody.safeParse({ ...f, structuredOutput: multibyte(STRUCTURED_OUTPUT_MAX_BYTES) }).success).toBe(true)
+    expect(RunEventBody.safeParse({ ...f, structuredOutput: multibyteOver(STRUCTURED_OUTPUT_MAX_BYTES) }).success).toBe(false)
+  })
+
+  it('depth: a schema or an output 64 levels deep passes, 65 fails; 5000 deep is refused, never thrown', () => {
+    const f = { type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: nestObject(64) } })).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: nestObject(65) } })).toBe(false)
+    expect(RunEventBody.safeParse({ ...f, structuredOutput: nest(64) }).success).toBe(true)
+    expect(RunEventBody.safeParse({ ...f, structuredOutput: nest(65) }).success).toBe(false)
+    let deep: Record<string, unknown> = { type: 'object' }
+    for (let i = 0; i < 5000; i++) deep = { not: deep }
+    expect(() => RunStart.safeParse({ ...first, outputFormat: { type: 'json_schema', schema: deep } })).not.toThrow()
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: deep } })).toBe(false)
+    expect(jsonDepth(nest(64))).toBe(64)
+    expect(jsonDepth(nest(65))).toBe(65)
+    expect(jsonDepth(nest(200))).toBe(STRUCTURED_MAX_DEPTH + 1)
+    expect(jsonDepth('x')).toBe(0)
+    expect(jsonDepth({})).toBe(1)
+  })
+
+  it('a failed run can say structured_output', () => {
+    expect(RunEventBody.safeParse({ type: 'failed', reason: 'structured_output', message: 'x' }).success).toBe(true)
+    expect(RunEventBody.safeParse({ type: 'failed', reason: 'structured', message: 'x' }).success).toBe(false)
   })
 })

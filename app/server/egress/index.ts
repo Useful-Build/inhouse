@@ -5,10 +5,13 @@
 import { WorkerEntrypoint } from 'cloudflare:workers'
 import { EGRESS_ROUTES, hashRunToken } from '../do/brand-agent/tokens.ts'
 import type { EgressRoute } from '../do/brand-agent/tokens.ts'
+import { newFileId } from '../files-io/bytes.ts'
+import { fileStore } from '../files-io/store.ts'
 import type { SettingsView } from '../model/catalog.ts'
 import { auditRoute } from './audit.ts'
 import type { EgressDeps, EgressRpc, McpHandler } from './deps.ts'
 import { eventsRoute } from './events.ts'
+import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
 import type { AiGatewayBinding } from './gateway.ts'
 import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
@@ -64,8 +67,7 @@ export async function handleEgress(request: Request, d: EgressDeps): Promise<Res
       if (request.method !== 'POST') return jsonAnswer({ error: 'method' }, 405)
       return d.mcp(withoutToken(request), { memberId: grant.memberId, chatId: grant.chatId, runId: grant.runId, turnId: grant.turnId })
     case 'files':
-      // PR 2 (feat/chat-w3-files) serves the chat's files with its table (0120).
-      return jsonAnswer({ error: 'not_built' }, 503)
+      return filesRoute(request, path, grant, d)
   }
 }
 
@@ -97,6 +99,8 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     settings: () => brandSettings(env.DB),
     bucket: env.FILES,
     db: env.DB,
+    files: fileStore({ db: env.DB, bucket: env.FILES }),
+    newFileId,
     mcp: mcpNotBuilt,
     waitUntil: p => ctx.waitUntil(p),
     setInterval: (fn, ms) => setInterval(fn, ms),

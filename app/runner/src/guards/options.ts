@@ -14,6 +14,9 @@ import { webFetchAllowRules, webFetchHook } from './webfetch.ts'
 
 type Settings = Exclude<Options['settings'], string | undefined>
 
+/** The tool the SDK adds for structured output (Agent SDK structured outputs docs, read 2026-11-20). */
+export const STRUCTURED_OUTPUT_TOOL = 'StructuredOutput'
+
 /** Options only the guards set. A base that carries any of them is refused. */
 export const GUARDED_OPTIONS = [
   'tools',
@@ -108,7 +111,7 @@ export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
 
 export function guardedOptions(
   base: Options,
-  config: Pick<RunConfig, 'webFetchDomains'>,
+  config: Pick<RunConfig, 'webFetchDomains' | 'outputFormat'>,
   run: RunContext,
   deps: QueryGuardDeps & { workRoot: string; usersRoot: string; pluginDir: string; cliPath: string },
 ): Options {
@@ -116,6 +119,10 @@ export function guardedOptions(
     if (Object.hasOwn(base, key) && (base as Record<string, unknown>)[key] !== undefined) {
       throw new GuardConfigError(`the base options set "${key}", which only the guards set`)
     }
+  }
+  // Structured output only as the run config asks: the base's outputFormat must be the config's, or absent with it.
+  if (JSON.stringify(base.outputFormat ?? null) !== JSON.stringify(config.outputFormat ?? null)) {
+    throw new GuardConfigError("the base options' outputFormat isn't the run config's")
   }
   if (!Array.isArray(base.settingSources) || base.settingSources.length !== 0) {
     throw new GuardConfigError('settingSources must be [] (no settings file is read)')
@@ -188,7 +195,8 @@ export function guardedOptions(
 
   return {
     ...base,
-    tools: [...BUILT_IN_TOOLS],
+    // The SDK's StructuredOutput tool only with structured output asked for (outputFormat); never otherwise.
+    tools: [...BUILT_IN_TOOLS, ...(config.outputFormat ? [STRUCTURED_OUTPUT_TOOL] : [])],
     // Pre-approved; `dontAsk` refuses everything else. Edits only inside the session folder (the deny rules above
     // carve out .claude/ and .mcp.json, and name the home); WebFetch to the listed domains, or any (null: the hook decides).
     allowedTools: [
@@ -196,6 +204,7 @@ export function guardedOptions(
       `Edit(${abs(cwd)}/**)`,
       ...webFetchAllowRules(domains),
       `mcp__${INHOUSE_MCP_SERVER}`,
+      ...(config.outputFormat ? [STRUCTURED_OUTPUT_TOOL] : []),
     ],
     permissionMode: 'dontAsk',
     strictMcpConfig: true,
