@@ -9,9 +9,10 @@
 //   records), a `fail` step for a hook that denied a call (an `approval` step for one deferred to a person; an allowed
 //   hook adds nothing beside its step), one `model` step per model call that was granted (its grant to its close).
 //   `cost` and `tokens` from the calls (closed at their price, open at their worst case, as the usage sweep reads them).
-// - The runs signal: `runs_failed` is red when at least 5 turns ended in the last hour and over 20% of them failed for a
-//   reason other than the caps and the brand's own choices (`cap_reached`, `turn_budget`, `budget_busy`, `model_off`;
-//   stop and interrupt aren't failures; #159 round 1); `runs_stuck` counts turns
+// - The runs signal: `runs_failed` is red when 3 turns of the last hour failed, or over 20% of them once at least 5 ended
+//   (#159 rounds 1 and 2: a total outage at low volume still shows), counting failures other than the caps and the
+//   brand's own choices (`cap_reached`, `turn_budget`, `budget_busy`, `model_off`; stop and interrupt aren't failures);
+//   `runs_stuck` counts turns
 //   the watchdog should have ended (a `starting` turn 5 minutes past its deadline; a running one 5 minutes past the
 //   45-minute turn life); `session_damaged` counts chats damaged in the last 24 hours; `scheduler` counts quarantined
 //   due tasks. Counts only.
@@ -28,6 +29,8 @@ const STUCK_SLACK_MS = 5 * 60_000
 const FAILED_SHARE_MAX = 0.2
 /** Fewer turns than this in the hour: the share isn't judged (one failure of two isn't an outage). */
 const FAILED_SAMPLE_MIN = 5
+/** This many failures in the hour are red whatever the volume. */
+const FAILED_COUNT_MAX = 3
 
 interface RunRow { [k: string]: SqlStorageValue; run_id: string; chat_id: string; owner_id: string; state: string; last_seq: number; started_at_ms: number; ended_at_ms: number | null }
 interface TurnRead {
@@ -105,6 +108,9 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
 export function runsHealth(sql: SqlStorage, nowMs: number, quarantined: number): RunsHealth {
   const n = (q: string, ...a: SqlStorageValue[]) => sql.exec<{ n: number }>(q, ...a).one().n
   const ended = n("SELECT COUNT(*) AS n FROM turns WHERE state = 'ended' AND ended_at_ms >= ?", nowMs - HOUR_MS)
+  // Known gap (#159 round 2): with `budget_busy` left out, a gate that refuses `held` when it shouldn't (the round 1 F1
+  // class) shows on no signal here; only the gate's tests cover it. A hold that leaks still shows on W4's
+  // `usage_stranded` after about 2 hours.
   const failed = n(
     "SELECT COUNT(*) AS n FROM turns WHERE state = 'ended' AND ended_at_ms >= ? AND outcome = 'failed' AND COALESCE(failure, '') NOT IN ('cap_reached', 'turn_budget', 'budget_busy', 'model_off')",
     nowMs - HOUR_MS)
@@ -114,7 +120,7 @@ export function runsHealth(sql: SqlStorage, nowMs: number, quarantined: number):
     nowMs - STUCK_SLACK_MS, nowMs - TURN_LIFE_MS - STUCK_SLACK_MS)
   const damaged = n('SELECT COUNT(*) AS n FROM chat_state WHERE damaged_at_ms >= ?', nowMs - DAY_MS)
   return {
-    failures: { ok: ended < FAILED_SAMPLE_MIN || failed / ended <= FAILED_SHARE_MAX, detail: `${failed} of ${ended} failed in the last hour` },
+    failures: { ok: failed < FAILED_COUNT_MAX && (ended < FAILED_SAMPLE_MIN || failed / ended <= FAILED_SHARE_MAX), detail: `${failed} of ${ended} failed in the last hour` },
     stuck: { ok: stuck === 0, detail: `${stuck} stuck` },
     damaged: { ok: damaged === 0, detail: `${damaged} damaged in 24 h` },
     quarantined: { ok: quarantined === 0, detail: `${quarantined} quarantined` },

@@ -124,22 +124,32 @@ describe('the runs signal', () => {
 
   // #159 round 1 (Opus F8, Sonnet L5): an admin switching a model off and a brand busy at its cap aren't failures, and
   // the ratio needs at least 5 turns in the hour.
-  it('runs_failed leaves out model_off and budget_busy and needs 5 ended turns', () => inAgent(async h => {
+  // #159 round 1 (Opus F8, Sonnet L5) and round 2 (Opus high): an admin switching a model off and a brand busy at its cap
+  // aren't failures; red at 3 failures in the hour whatever the volume (a total outage at low volume), and over 20% once
+  // at least 5 turns ended.
+  it('runs_failed: red at 3 failures or over 20% of 5+ turns; model_off and budget_busy left out', () => inAgent(async h => {
     let n = 0
+    const key = () => `key-rf${String(++n).padStart(3, '0')}`
     const failSdk = async () => {
-      const t = ok(await h.submit(`f${++n}`, `key-rf${String(n).padStart(3, '0')}`))
+      const t = ok(await h.submit(`f${n + 1}`, key()))
       await settle()
       h.push(t.turnId, ev.started(), ev.failed('sdk_error'), ev.released(null, false))
       await settle()
     }
+    const succeed = async () => {
+      const t = ok(await h.submit(`f${n + 1}`, key()))
+      await settle()
+      h.push(t.turnId, ...fullAnswer('fine', 2))
+      await settle()
+    }
     const failOff = async () => {
       h.modelsOff.add('sonnet')
-      ok(await h.submit(`f${++n}`, `key-rf${String(n).padStart(3, '0')}`))
+      ok(await h.submit(`f${n + 1}`, key()))
       await settle()
       h.modelsOff.delete('sonnet')
     }
     const failBusy = async () => {
-      const t = ok(await h.submit(`f${++n}`, `key-rf${String(n).padStart(3, '0')}`))
+      const t = ok(await h.submit(`f${n + 1}`, key()))
       await settle()
       h.usage.extendRefusal = 'held'
       void h.core.admitModelCall(t.turnId, 'x1', { model: 'claude-sonnet-5-5', inputTokens: 1, maxTokens: 1, modifiers: {}, micro: 900_000 })
@@ -148,11 +158,18 @@ describe('the runs signal', () => {
       h.push(t.turnId, ev.released(null, false))
       await settle()
     }
-    for (let i = 0; i < 4; i++) await failSdk()
-    // 4 of 4 failed, but under 5 turns: not judged.
-    expect(h.core.runsHealth(0).failures).toEqual({ ok: true, detail: '4 of 4 failed in the last hour' })
-    await failSdk()
-    expect(h.core.runsHealth(0).failures).toEqual({ ok: false, detail: '5 of 5 failed in the last hour' })
+    const hour = async (fails: number, oks: number) => {
+      h.clock.now += 3_600_001
+      for (let i = 0; i < fails; i++) await failSdk()
+      for (let i = 0; i < oks; i++) await succeed()
+      return h.core.runsHealth(0).failures
+    }
+    expect(await hour(3, 0)).toEqual({ ok: false, detail: '3 of 3 failed in the last hour' })
+    expect(await hour(2, 2)).toEqual({ ok: true, detail: '2 of 4 failed in the last hour' })
+    expect(await hour(4, 0)).toEqual({ ok: false, detail: '4 of 4 failed in the last hour' })
+    expect(await hour(1, 4)).toEqual({ ok: true, detail: '1 of 5 failed in the last hour' })
+    expect(await hour(2, 3)).toEqual({ ok: false, detail: '2 of 5 failed in the last hour' })
+    expect(await hour(2, 8)).toEqual({ ok: true, detail: '2 of 10 failed in the last hour' })
     // A new hour: 1 sdk_error, 2 model_off, 2 budget_busy → 1 of 5 failed (20%, not over).
     h.clock.now += 3_600_001
     await failSdk()
