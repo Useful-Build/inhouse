@@ -16,7 +16,7 @@ const ARRAY_CAPS: Record<string, Record<string, number>> = {
     'order.returns': LIMITS.orderGet.returns,
     'order.returns.lines': LIMITS.orderGet.returnLines,
   },
-  refunds_search: { items: LIMITS.refundsSearch.maxItems, 'items.lines': LIMITS.refundsSearch.refundLines },
+  refunds_search: { items: LIMITS.refundsSearch.maxItems, 'items.lines': LIMITS.refundsSearch.refundLines, ordersWithUnreadRefunds: LIMITS.refundsSearch.maxFirst },
   returns_search: { items: LIMITS.returnsSearch.maxItems, 'items.lines': LIMITS.returnsSearch.returnLines },
   products_search: { items: LIMITS.productsSearch.maxFirst, 'items.variants': LIMITS.productsSearch.variants },
   inventory_levels_get: { matches: LIMITS.inventoryLevelsGet.first, 'matches.levels': LIMITS.inventoryLevelsGet.levels },

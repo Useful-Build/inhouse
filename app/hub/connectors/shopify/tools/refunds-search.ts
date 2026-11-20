@@ -49,6 +49,10 @@ function map(d: Data, i: Input, first: number) {
   const from = Date.parse(i.createdFrom)
   const to = i.createdTo === undefined ? Infinity : Date.parse(i.createdTo)
   const items = []
+  // Every scanned order whose refund list came back full: it may hold refunds past the first L.scan, which neither
+  // this tool nor order_get can read, whatever the window held (an order whose first refunds are all outside the
+  // window yields no item, so a per-item flag can't carry this). At most `first` names, each capped.
+  const ordersWithUnreadRefunds: string[] = []
   for (const o of within(d.orders.nodes, first)) {
     // The window first, then the cap: an in-window refund after out-of-window ones still shows. A list that came back
     // full may hold more refunds than were sent, so it also says more.
@@ -59,6 +63,7 @@ function map(d: Data, i: Input, first: number) {
       return createdAt.ms >= from && createdAt.ms < to ? [{ r, createdAt }] : []
     })
     const more = inWindow.length > L.refunds || refunds.length === L.scan
+    if (refunds.length === L.scan) ordersWithUnreadRefunds.push(cap({ truncated: false }, o.name, CAPS.orderName))
     for (const { r, createdAt } of inWindow.slice(0, L.refunds)) {
       const cut: Cut = { truncated: false }
       items.push({
@@ -74,7 +79,7 @@ function map(d: Data, i: Input, first: number) {
       })
     }
   }
-  return { items, nextCursor: nextCursor(d.orders.pageInfo) }
+  return { items, ordersWithUnreadRefunds, nextCursor: nextCursor(d.orders.pageInfo) }
 }
 
 export const refundsSearch: ToolDef<Input> = {
@@ -82,10 +87,11 @@ export const refundsSearch: ToolDef<Input> = {
   description:
     'List refunds created in a time window, optionally only those on orders with a sku. createdFrom (required) and ' +
     `createdTo are ISO 8601 instants. Scans up to \`first\` refunded orders per call (1 to ${L.maxFirst}, default ${L.defaultFirst}), most ` +
-    `recently updated first, and returns their refunds in the window, up to ${L.refunds} per order (moreRefunds: the order may have ` +
-    `more; use order_get): order name, date, note (up to ${CAPS.refundNoteSearch} characters), amount in minor units and up to ${L.refundLines} ` +
-    'refunded lines (sku, quantity, restock type). Pass nextCursor as `after` with the same filters for more. Use it ' +
-    'for refund spikes by product and reason.',
+    `recently updated first, and returns their refunds in the window, up to ${L.refunds} per order: order name, date, note (up to ` +
+    `${CAPS.refundNoteSearch} characters), amount in minor units and up to ${L.refundLines} refunded lines (sku, quantity, restock type). ` +
+    `These tools read only an order's first ${L.scan} refunds: an order named in ordersWithUnreadRefunds, or an item with ` +
+    'moreRefunds, has refunds they can\'t show. Pass nextCursor as `after` with the same filters for more. Use it for refund ' +
+    'spikes by product and reason.',
   mode: 'read',
   input,
   run: (ctx, i) => {

@@ -121,10 +121,10 @@ export const orderGet: ToolDef<Input> = {
   name: 'order_get',
   description:
     `Get one order by its name as shown in results (for example #1001): up to ${L.lines} lines (sku, title, current and ` +
-    `unfulfilled quantity, unit price), up to ${L.refunds} refunds (date, note, amount, up to ${L.refundLines} refunded lines with sku, quantity ` +
+    `unfulfilled quantity, unit price), the first ${L.refunds} refunds (date, note, amount, up to ${L.refundLines} refunded lines with sku, quantity ` +
     `and restock type) and up to ${L.returns} returns (name, status, date, up to ${L.returnLines} lines with sku, quantity, unprocessed ` +
-    'quantity and reason). Returns order: null when no order has that name. Customer names, emails, phones and ' +
-    'addresses are never available.',
+    'quantity and reason). moreRefunds: true means the order has refunds these tools can\'t show. Returns order: null ' +
+    'when no order has that name. Customer names, emails, phones and addresses are never available.',
   mode: 'read',
   input,
   run: (ctx, i) => runQuery(ctx, ORDER_GET, variablesFor(i), parser, d => map(d, i.name)),

@@ -136,7 +136,7 @@ export const RESULT_FIELDS: Readonly<Record<string, readonly string[]>> = {
   refunds_search: [
     'items.orderId', 'items.orderName', 'items.createdAt.iso', 'items.createdAt.ms', 'items.note',
     'items.amount.minor', 'items.amount.currency', 'items.lines.sku', 'items.lines.quantity',
-    'items.lines.restockType', 'items.moreLines', 'items.moreRefunds', 'items.truncated', 'nextCursor',
+    'items.lines.restockType', 'items.moreLines', 'items.moreRefunds', 'items.truncated', 'ordersWithUnreadRefunds', 'nextCursor',
   ],
   returns_search: [
     'items.orderId', 'items.orderName', 'items.returnName', 'items.status', 'items.createdAt.iso',
