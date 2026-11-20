@@ -28,4 +28,9 @@ export interface TableEntry {
   personKeys: readonly string[]
   /** Included in "Export everything" (P8). */
   export: boolean
+  /**
+   * `d1` only: a derived index (an FTS5 table), rebuilt from the tables in `from` rather than backed up. The backup
+   * skips it and its FTS5 shadow tables and lists it in the manifest; a restore records it as needing a rebuild (P8).
+   */
+  derived?: { from: readonly string[] }
 }
