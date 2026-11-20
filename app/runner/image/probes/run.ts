@@ -819,7 +819,8 @@ async function isolation() {
     bash(`ln -s ${aOpen} link-a && ls -l link-a`),
     () => ({ tool: 'Read', input: { file_path: join(wd, 'link-a') } }),
   ]
-  const procGrep = () => ({ tool: 'Grep', input: { pattern: 'CANARY.A|^Uid:', path: '/proc', glob: '*/status', output_mode: 'files_with_matches' } })
+  // `glob: 'status'` (a basename, matched at any depth): '*/status' found nothing with the rule out in CI.
+  const procGrep = () => ({ tool: 'Grep', input: { pattern: 'CANARY.A|^Uid:', path: '/proc', glob: 'status', output_mode: 'files_with_matches' } })
   const [a1, a2] = split(a.run.token)
   const tokenProbes = (b: string): ShellProbe[] => {
     const [b1, b2] = split(b)
