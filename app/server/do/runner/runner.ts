@@ -47,6 +47,7 @@ export interface ContainerPort<B> {
   interceptOutboundHttps(addr: string, binding: B): Promise<void>
   interceptAllOutboundHttp(binding: B): Promise<void>
   getTcpPort(port: number): { fetch(input: string, init?: RequestInit): Promise<Response> }
+  destroy(): Promise<void>
 }
 
 /** The Runner's own durable numbers (its SQLite): the container generation, its negotiated version, the last exit reported. */
@@ -101,7 +102,7 @@ export interface StatusResult {
   containerGone: boolean
 }
 
-export type WarmResult = { ok: true; gen: number; protocol: number } | { ok: false; why: 'protocol' | 'health' | 'start'; detail: string }
+export type WarmResult = { ok: true; gen: number; protocol: number } | { ok: false; why: 'protocol' | 'health' | 'start' | 'busy'; detail: string }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200)
 
@@ -211,11 +212,23 @@ export class RunnerCore<B> {
     return this.#action(turnId, 'stop')
   }
 
-  /** Warm-up (route 48): the container up, a fresh `/protocol` with a shared version, then `/health` ok on it. */
-  async warm(): Promise<WarmResult> {
+  /**
+   * Warm-up (route 48): the container up, a fresh `/protocol` with a shared version, then `/health` ok on it.
+   * `newerThan`: the generation the container had when the drain began. A Worker-only deploy rolls no container, so an
+   * equal or older one is replaced here when it runs nothing (`/health` live 0); while it runs turns: `busy`.
+   */
+  async warm(newerThan: number | null = null): Promise<WarmResult> {
     let up: { gen: number; protocol: number | null }
     try {
       up = await this.#up()
+      if (newerThan !== null && up.gen <= newerThan) {
+        const live = await this.#live(up.protocol)
+        if (live > 0) return { ok: false, why: 'busy', detail: `${live} run(s) on the container from before the drain` }
+        await this.#d.container.destroy()
+        if (this.#d.container.running) return { ok: false, why: 'start', detail: 'the container from before the drain is still running' }
+        await this.#reportExit(up.gen, 'replaced at warm-up')
+        up = await this.#up()
+      }
       // Asked again on this generation even when it was negotiated earlier: warm-up proves the container as it is now.
       this.#d.state.setProtocol(up.gen, undefined)
       up = { gen: up.gen, protocol: await this.#negotiate(up.gen, true) }
@@ -235,6 +248,17 @@ export class RunnerCore<B> {
     } catch (e) {
       return { ok: false, why: 'health', detail: errorText(e) }
     }
+  }
+
+  /** The runner's live runs, from `/health`. */
+  async #live(protocol: number | null): Promise<number> {
+    if (protocol === null) throw new Error('no shared protocol version with the runner')
+    const res = await this.#port().fetch('http://runner/health', { signal: this.#timeout(CALL_TIMEOUT_MS) })
+    if (res.status !== 200) {
+      await res.body?.cancel()
+      throw new Error(`health answered ${res.status}`)
+    }
+    return Health.parse(await res.json()).live
   }
 
   async #action(turnId: string, action: 'interrupt' | 'stop'): Promise<void> {

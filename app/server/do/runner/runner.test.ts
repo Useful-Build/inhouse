@@ -56,6 +56,12 @@ class FakeContainer implements ContainerPort<Binding> {
     this.log.push('intercept')
     this.intercepts.push({ method: 'all-http', addr: null, binding })
   }
+  destroys = 0
+  async destroy() {
+    this.log.push('destroy')
+    this.destroys++
+    this.exit(0)
+  }
   getTcpPort(port: number) {
     if (port !== 8080) throw new Error(`unexpected port ${port}`)
     return {
@@ -441,6 +447,37 @@ describe('warm', () => {
     const { core } = make(c, state)
     expect(await core.warm()).toEqual({ ok: true, gen: 1, protocol: 2 })
     expect(c.requests.map(r => r.path)).toEqual(['/protocol', '/protocol', '/health'])
+  }))
+
+  it('a container no newer than the drain\'s, running nothing: replaced by a new generation, its exit reported once', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2])
+    const m = make(c, state)
+    await m.core.admit(RS)
+    expect(await m.core.warm(1)).toEqual({ ok: true, gen: 2, protocol: 2 })
+    expect(c.destroys).toBe(1)
+    expect(c.starts).toHaveLength(2)
+    await settle()
+    expect(m.exits).toEqual([['runner-0', 1, 1]])
+  }))
+
+  it('a container no newer than the drain\'s still running turns: busy, nothing destroyed', t(async state => {
+    const c = new FakeContainer()
+    const base = v2Runner([2])
+    c.route = (path, init) => (path === '/health' ? json(200, { ok: true, protocol: 2, live: 1, memory: { totalBytes: null, availableBytes: null, rssBytes: 1, heapUsedBytes: 1 } }) : base(path, init))
+    const m = make(c, state)
+    await m.core.admit(RS)
+    expect(await m.core.warm(1)).toMatchObject({ ok: false, why: 'busy' })
+    expect(c.destroys).toBe(0)
+  }))
+
+  it('a container newer than the drain\'s is kept', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2])
+    const m = make(c, state)
+    await m.core.admit(RS)
+    expect(await m.core.warm(0)).toEqual({ ok: true, gen: 1, protocol: 2 })
+    expect(c.destroys).toBe(0)
   }))
 
   it('a failing /health refuses', t(async state => {

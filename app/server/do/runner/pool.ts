@@ -12,7 +12,7 @@
 //   | 409 chat_live                  | requeued                               | up                                   |
 //   | 503 session_pool_exhausted     | next candidate                         | refused, 5 s cool-down               |
 //   | 503 session_folder_parked      | refused `files`                        | up                                   |
-//   | typed 5xx (stopping, no user)  | requeued                               | 5 s cool-down (state, protocol kept) |
+//   | typed 5xx (stopping, no user)  | next candidate (queued when none left) | 5 s cool-down (state, protocol kept) |
 //   | typed 4xx                      | refused `rejected` (W1 fails it)       | untouched                            |
 //   | no shared version, 426         | next candidate                         | protocol (never picked)              |
 //   | never answered /protocol       | next candidate                         | sleeping, protocol cleared, 5 s      |
@@ -44,6 +44,12 @@ export const SUSPECT_COOLDOWN_MS = 60_000
  * start), and every other due task of the BrandAgent waits behind the pass. The rest go in the next pass, at once.
  */
 export const RETRY_PASS_MAX = 3
+/**
+ * A runner with an admission in flight longer than this isn't offered new turns until it answers: a healthy runner
+ * admits in milliseconds, and without this every turn placed in the 15 s before a hung admission times out (and makes
+ * the runner suspect) would pile onto it.
+ */
+export const SLOW_ADMIT_MS = 3_000
 /** `pool_shortfall`: a turn queued longer than this, or a `pool_full`, within the window. */
 export const SHORTFALL_WAIT_MS = 30_000
 export const SHORTFALL_WINDOW_MS = 15 * 60_000
@@ -61,7 +67,8 @@ export interface RunnerRpc {
   status(turnId: string): Promise<StatusResult>
   interrupt(turnId: string): Promise<void>
   stop(turnId: string): Promise<void>
-  warm(): Promise<WarmResult>
+  /** `newerThan`: the container generation at the drain; an older or equal one is replaced when idle. */
+  warm(newerThan: number | null): Promise<WarmResult>
 }
 
 /** The BrandAgent's parts (its SQLite, scheduler, clock and W1's placement hooks), the pool size and the Runners. */
@@ -97,8 +104,12 @@ const HOUR_MS = 3_600_000
 
 export class RunnerPool implements RunnerPoolPort {
   readonly #d: PoolDeps
-  /** Admissions in flight (turn id → runner): their own answer decides them, never a container exit meanwhile. */
-  readonly #placing = new Map<string, string>()
+  /**
+   * Admissions in flight (turn id → runner and start time): their own answer decides them, never a container exit
+   * meanwhile; a second `place` of the same turn answers ambiguous (that admission decides it); a runner with one in
+   * flight past `SLOW_ADMIT_MS` isn't picked.
+   */
+  readonly #placing = new Map<string, { runner: string; atMs: number }>()
 
   constructor(deps: PoolDeps) {
     if (!Number.isInteger(deps.size) || deps.size < 1) throw new Error(`RUNNER_POOL must be a whole number of at least 1, got ${deps.size}`)
@@ -118,7 +129,7 @@ export class RunnerPool implements RunnerPoolPort {
     const turnId = rs.runId
     // A second placement of a turn whose admission is in flight: that admission decides it.
     const inFlight = this.#placing.get(turnId)
-    if (inFlight !== undefined) return { ambiguous: inFlight }
+    if (inFlight !== undefined) return { ambiguous: inFlight.runner }
     if (!this.#draining(this.#d.now()) && !this.#isQueued(turnId) && this.#queueHead() !== null) {
       // FIFO: a new turn waits behind the queue (the retry pass places queued turns in order).
       this.#enqueue(turnId)
@@ -140,7 +151,7 @@ export class RunnerPool implements RunnerPoolPort {
       this.#d.sql.exec('UPDATE turns SET runner = ? WHERE turn_id = ? AND gen = ?', r.runner, turnId, gen)
       if (r.state === 'sleeping') this.#setState(r.runner, 'starting')
       let a: AdmitResult
-      this.#placing.set(turnId, r.runner)
+      this.#placing.set(turnId, { runner: r.runner, atMs: this.#d.now() })
       try {
         a = await this.#d.runner(r.runner).admit(rs)
       } catch {
@@ -168,9 +179,9 @@ export class RunnerPool implements RunnerPoolPort {
         return { refused: 'rejected', status: a.rejected }
       }
       if ('unavailable' in a) {
+        // The runner stated it didn't admit (any typed 5xx): cool it and try the next one; queued only when none is left.
         this.#d.sql.exec('UPDATE pool_runners SET refused_until_ms = ? WHERE runner = ?', this.#d.now() + REFUSED_COOLDOWN_MS, r.runner)
-        this.#enqueue(turnId)
-        return { queued: true }
+        continue
       }
       if ('placementError' in a) {
         this.#d.sql.exec("UPDATE pool_runners SET state = 'sleeping', refused_until_ms = ?, protocol = NULL WHERE runner = ?", this.#d.now() + REFUSED_COOLDOWN_MS, r.runner)
@@ -204,7 +215,9 @@ export class RunnerPool implements RunnerPoolPort {
     const rows = this.#d.sql
       .exec<Omit<RunnerRow, 'idx'> & { idx: number }>(`SELECT *, ${RUNNER_IDX} AS idx FROM pool_runners WHERE ${RUNNER_IDX} < ? ORDER BY idx`, this.#d.size)
       .toArray() as RunnerRow[]
-    const free = (r: RunnerRow) => !tried.has(r.runner) && (live.get(r.runner) ?? 0) < PER_RUNNER && (r.refused_until_ms ?? 0) <= now
+    const slow = new Set([...this.#placing.values()].filter(p => now - p.atMs > SLOW_ADMIT_MS).map(p => p.runner))
+    const free = (r: RunnerRow) =>
+      !tried.has(r.runner) && !slow.has(r.runner) && (live.get(r.runner) ?? 0) < PER_RUNNER && (r.refused_until_ms ?? 0) <= now
     // `starting`: another placement is waking it; an admission there joins that start.
     const up = rows.find(r => (r.state === 'up' || r.state === 'starting' || r.state === 'refused') && free(r))
     if (up) return up
@@ -272,12 +285,14 @@ export class RunnerPool implements RunnerPoolPort {
   /**
    * The `pool-retry` task, over the queue in FIFO order: a turn queued 60 s is expired (`placementExpired`, its row
    * deleted only once that succeeded); the others are handed back to W1 while a slot is free (or a drain began: `place`
-   * then answers `draining` and W1 requeues it in its run), at most `RETRY_PASS_MAX` a pass. A turn that stays queued (a
-   * `409 chat_live`) doesn't hold the ones behind it. Reschedules itself while the queue isn't empty.
+   * then answers `draining` and W1 requeues it in its run). At most `RETRY_PASS_MAX` turns leave the queue in a pass
+   * (placed, failed or expired); a turn that stays queued (a `409 chat_live`, no runner left) doesn't count and doesn't
+   * hold the ones behind it. Reschedules itself at once only when the cap stopped the pass, else after the usual 5 s.
    */
   async retryQueue(): Promise<void> {
     const rows = this.#d.sql.exec<{ turn_id: string; queued_at_ms: number }>('SELECT turn_id, queued_at_ms FROM pool_queue ORDER BY queued_at_ms, rowid').toArray()
-    let tried = 0
+    let left = 0
+    let capped = false
     let full = false
     for (const row of rows) {
       if (!this.#isQueued(row.turn_id)) continue
@@ -286,20 +301,25 @@ export class RunnerPool implements RunnerPoolPort {
         this.#d.sql.exec('DELETE FROM pool_queue WHERE turn_id = ?', row.turn_id)
         this.#mark('pool_full', this.#d.now())
         this.#mark('shortfall', this.#d.now())
+        left++
         continue
       }
-      if (full || tried >= RETRY_PASS_MAX) continue
+      if (full) continue
+      if (left >= RETRY_PASS_MAX) {
+        capped = true
+        continue
+      }
       if (!this.#draining(this.#d.now()) && this.#pick(new Set()) === null) {
         full = true
         continue
       }
-      tried++
       await this.#d.hooks.retryPlacement(row.turn_id)
+      if (!this.#isQueued(row.turn_id)) left++
     }
     const head = this.#queueHead()
     if (head !== null) {
       const now = this.#d.now()
-      const next = tried >= RETRY_PASS_MAX && !full ? now : Math.max(now, Math.min(now + RETRY_AFTER_MS, head.queuedAtMs + QUEUE_MAX_MS))
+      const next = capped ? now : Math.max(now, Math.min(now + RETRY_AFTER_MS, head.queuedAtMs + QUEUE_MAX_MS))
       this.#d.scheduler.schedule({ id: POOL_RETRY_TASK, kind: POOL_RETRY_TASK, dueAtMs: next })
     }
   }
@@ -350,7 +370,7 @@ export class RunnerPool implements RunnerPoolPort {
       .exec<{ turn_id: string }>(`SELECT turn_id FROM turns WHERE runner = ? AND state IN ${UNFINISHED} ORDER BY turn_id`, runner)
       .toArray()
       .map(t => t.turn_id)
-      .filter(id => this.#placing.get(id) !== runner)
+      .filter(id => this.#placing.get(id)?.runner !== runner)
   }
 
   // ---------- drain and warm-up ----------
@@ -412,16 +432,19 @@ export class RunnerPool implements RunnerPoolPort {
 
   /**
    * Route 48: runners `0 .. min(2, N) - 1` up on a container that answered `/protocol` with a shared version and
-   * `/health` ok. Then the drain clears, the placement queue starts and every live run advances. A drain asked again
-   * while the warm-up ran isn't cleared.
+   * `/health` ok, newer than the container it had when the drain began (a Worker-only deploy rolls no container, so an
+   * idle one from before is replaced; one still running turns keeps the drain on). Then the drain clears, the placement
+   * queue starts and every live run advances. A drain asked again while the warm-up ran isn't cleared.
    */
   async warmup(): Promise<{ ok: true } | Refusal> {
     const until = this.#flag('draining_until_ms')
+    const draining = this.#draining(this.#d.now())
     const names = Array.from({ length: Math.min(WARM_RUNNERS, this.#d.size) }, (_, i) => runnerName(i))
     const results = await Promise.all(
       names.map(async (n): Promise<WarmResult> => {
+        const drainGen = draining ? this.#d.sql.exec<{ drain_gen: number | null }>('SELECT drain_gen FROM pool_runners WHERE runner = ?', n).one().drain_gen : null
         try {
-          return await this.#d.runner(n).warm()
+          return await this.#d.runner(n).warm(drainGen)
         } catch (e) {
           return { ok: false, why: 'start', detail: e instanceof Error ? e.message : String(e) }
         }
@@ -431,10 +454,12 @@ export class RunnerPool implements RunnerPoolPort {
     results.forEach((w, i) => {
       if (w.ok) {
         const before = this.#d.sql.exec<{ drain_gen: number | null }>('SELECT drain_gen FROM pool_runners WHERE runner = ?', names[i]).one().drain_gen
-        if (before !== null && w.gen <= before) stale = true
+        if (draining && before !== null && w.gen <= before) stale = true
         this.#d.sql.exec("UPDATE pool_runners SET state = 'up', refused_until_ms = NULL, protocol = ?, container_gen = ? WHERE runner = ?", w.protocol, w.gen, names[i])
       } else if (w.why === 'protocol') this.#setState(names[i], 'protocol')
     })
+    // A container from before the drain still running turns: the drain goes on.
+    if (results.some(w => !w.ok && w.why === 'busy')) return { refused: { code: 'unavailable', reason: 'draining' } }
     if (results.some(w => !w.ok)) return { refused: { code: 'unavailable' } }
     // The container from before the drain still runs (the rollout hasn't replaced it): not the new generation yet.
     if (stale) return { refused: { code: 'unavailable', reason: 'draining' } }

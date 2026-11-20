@@ -91,6 +91,9 @@ type Op =
   | { k: 'mode'; r: number; mode: Mode }
   | { k: 'exit'; r: number }
   | { k: 'tick'; ms: number }
+  /** Route 46, then (`warm`) route 48. */
+  | { k: 'drain' }
+  | { k: 'warm' }
 
 const N = 3
 const CAP = 25
@@ -102,16 +105,17 @@ const PASS_MAX = 3
  * isn't picked for this long (0 clears it; absent leaves it); `awake`: up-class (`false`: sleeping); `protocolBad`:
  * never picked; `keeps`: the turn stays counted on the runner.
  */
-const TABLE: Record<Answer, { turn: 'admitted' | 'ambiguous' | 'next' | 'queued' | 'files' | 'rejected'; keeps: boolean; cool?: number; awake?: boolean; protocolBad?: boolean }> = {
-  ok: { turn: 'admitted', keeps: true, cool: 0, awake: true, protocolBad: false },
+const TABLE: Record<Answer, { turn: 'admitted' | 'ambiguous' | 'next' | 'queued' | 'files' | 'rejected'; keeps: boolean; cool?: number; awake?: boolean; protocolBad?: boolean; gen?: true }> = {
+  ok: { turn: 'admitted', keeps: true, cool: 0, awake: true, protocolBad: false, gen: true },
   ambiguous: { turn: 'ambiguous', keeps: true, cool: 60_000 },
   run_live: { turn: 'ambiguous', keeps: true },
-  chat_live: { turn: 'queued', keeps: false, awake: true },
-  exhausted: { turn: 'next', keeps: false, cool: 5_000, awake: true },
-  parked: { turn: 'files', keeps: false, awake: true },
-  unavailable: { turn: 'queued', keeps: false, cool: 5_000 },
+  chat_live: { turn: 'queued', keeps: false, awake: true, gen: true },
+  exhausted: { turn: 'next', keeps: false, cool: 5_000, awake: true, gen: true },
+  parked: { turn: 'files', keeps: false, awake: true, gen: true },
+  /** Any typed 5xx: the runner said it didn't admit; the next candidate, queued only when none is left. */
+  unavailable: { turn: 'next', keeps: false, cool: 5_000 },
   down: { turn: 'next', keeps: false, cool: 5_000, awake: false, protocolBad: false },
-  protocol: { turn: 'next', keeps: false, protocolBad: true },
+  protocol: { turn: 'next', keeps: false, protocolBad: true, gen: true },
   rejected: { turn: 'rejected', keeps: false },
 }
 
@@ -121,6 +125,8 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 3, arbitrary: fc.record({ r: fc.nat(N - 1), mode: fc.constantFrom<Mode>('ok', 'ok', 'ok', 'ok', 'ambiguous', 'run_live', 'chat_live', 'exhausted', 'parked', 'unavailable', 'down', 'protocol') }).map<Op>(x => ({ k: 'mode', ...x })) },
   { weight: 1, arbitrary: fc.nat(N - 1).map<Op>(r => ({ k: 'exit', r })) },
   { weight: 3, arbitrary: fc.constantFrom(1_000, 5_000, 30_000, 61_000).map<Op>(ms => ({ k: 'tick', ms })) },
+  { weight: 1, arbitrary: fc.constant<Op>({ k: 'drain' }) },
+  { weight: 1, arbitrary: fc.constant<Op>({ k: 'warm' }) },
 )
 
 interface PlaceCtx { newcomer: boolean; tried: number[]; expect: string | 'pending' }
@@ -128,7 +134,9 @@ interface PlaceCtx { newcomer: boolean; tried: number[]; expect: string | 'pendi
 class Ledger {
   now = T0
   violations: string[] = []
-  runners = Array.from({ length: N }, () => ({ unfinished: new Set<string>(), coolUntil: 0, awake: false, protocolBad: false, mode: 'ok' as Mode, gen: 1 }))
+  runners = Array.from({ length: N }, () => ({ unfinished: new Set<string>(), coolUntil: 0, awake: false, protocolBad: false, mode: 'ok' as Mode, gen: 1, seenGen: null as number | null, drainGen: null as number | null }))
+  drainUntil: number | null = null
+  draining() { return this.drainUntil !== null && this.drainUntil > this.now }
   /** FIFO: insertion order; turn → queued at. */
   queue = new Map<string, number>()
   ambiguous = new Set<string>()
@@ -152,6 +160,11 @@ class Ledger {
   placeStarts(t: string) {
     const ctx: PlaceCtx = { newcomer: !this.queue.has(t), tried: [], expect: 'pending' }
     this.places.set(t, ctx)
+    if (this.draining()) {
+      ctx.expect = 'draining'
+      this.queue.delete(t)
+      return
+    }
     if ((ctx.newcomer && this.queue.size > 0) || this.pick([]) === null) {
       ctx.expect = 'queued'
       this.enqueue(t)
@@ -176,9 +189,13 @@ class Ledger {
     if (e.cool !== undefined) r.coolUntil = e.cool === 0 ? 0 : this.now + e.cool
     if (e.awake !== undefined) r.awake = e.awake
     if (e.protocolBad !== undefined) r.protocolBad = e.protocolBad
+    if (e.gen) r.seenGen = r.gen
     if (e.turn === 'ambiguous') this.ambiguous.add(t)
     if (e.turn === 'next') {
-      if (this.pick(ctx.tried) === null) {
+      if (this.draining()) {
+        ctx.expect = 'draining'
+        this.queue.delete(t)
+      } else if (this.pick(ctx.tried) === null) {
         ctx.expect = 'queued'
         this.enqueue(t)
       }
@@ -225,12 +242,13 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
     if ('admitted' in a) sql.exec("UPDATE turns SET state = 'live' WHERE turn_id = ?", id)
     else if ('refused' in a) sql.exec("UPDATE turns SET state = 'ended' WHERE turn_id = ?", id)
   }
-  let pass: { calls: string[]; order: string[] } | null = null
+  let pass: { calls: string[]; order: string[]; left: number } | null = null
   const hooks: PlacementHooks = {
     retryPlacement: async id => {
       if (pass === null || !L.queue.has(id)) return L.violate(`${id}: retried while not queued`)
       pass.calls.push(id)
       if (!L.ambiguous.has(id)) await placeAndApply(id)
+      if (!L.queue.has(id)) pass.left++
     },
     placementExpired: async id => {
       const at = L.queue.get(id)
@@ -253,7 +271,19 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
     status: async () => ({ state: 'live', containerGone: false }),
     interrupt: async () => {},
     stop: async () => {},
-    warm: async () => ({ ok: true, gen: L.runners[i].gen, protocol: 2 }),
+    warm: async newerThan => {
+      const r = L.runners[i]
+      const want = L.draining() ? r.drainGen : null
+      if (newerThan !== want) L.violate(`warm runner-${i}: asked for newer than ${newerThan}, the ledger has ${want}`)
+      if (newerThan !== null && r.gen <= newerThan) {
+        if (r.unfinished.size > 0) return { ok: false, why: 'busy', detail: 'runs on the old container' }
+        // Idle: the Runner replaces it, and reports the old generation's exit (it fences nothing).
+        const fenced = pool.containerExited(`runner-${i}`, r.gen)
+        if (JSON.stringify(fenced) !== '[]') L.violate(`warm runner-${i}: the replaced container fenced ${JSON.stringify(fenced)}`)
+        r.gen++
+      }
+      return { ok: true, gen: r.gen, protocol: 2 }
+    },
   })
   const pool = new RunnerPool({ sql, scheduler: sched, now: () => L.now, size: N, runner: name => fake(Number(name.slice(7))), hooks })
 
@@ -288,6 +318,29 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
         r.protocolBad = false
         r.gen++
       }
+    } else if (op.k === 'drain') {
+      if (!L.draining()) for (const r of L.runners) r.drainGen = r.seenGen
+      L.drainUntil = L.now + 1_800_000
+      pool.drain(L.now)
+    } else if (op.k === 'warm') {
+      const warmed = L.runners.slice(0, 2)
+      const busy = L.draining() && warmed.some(r => r.drainGen !== null && r.gen <= r.drainGen && r.unfinished.size > 0)
+      const res = await s.waitFor(pool.warmup())
+      const want = busy ? { refused: { code: 'unavailable', reason: 'draining' } } : { ok: true }
+      if (JSON.stringify(res) !== JSON.stringify(want)) L.violate(`warm-up answered ${JSON.stringify(res)}, the ledger says ${JSON.stringify(want)}`)
+      for (const r of warmed) {
+        if (!(L.draining() && r.drainGen !== null && r.gen <= r.drainGen && r.unfinished.size > 0)) {
+          // warm() above already moved a replaced container's gen on.
+          r.awake = true
+          r.coolUntil = 0
+          r.protocolBad = false
+          r.seenGen = r.gen
+        }
+      }
+      if (!busy) {
+        L.drainUntil = null
+        for (const r of L.runners) r.drainGen = null
+      }
     } else {
       L.now += op.ms
     }
@@ -295,15 +348,19 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
     if (due !== undefined && due.dueAtMs <= L.now) {
       sched.tasks.delete('pool-retry')
       const order = [...L.queue.keys()].filter(id => L.now - L.queue.get(id)! < QUEUE_MS)
-      const slot = L.pick([]) !== null
-      pass = { calls: [], order }
+      const expiring = L.queue.size - order.length
+      const slot = L.pick([]) !== null || L.draining()
+      pass = { calls: [], order, left: 0 }
       await s.waitFor(pool.retryQueue())
-      const { calls } = pass
+      const { calls, left } = pass
       pass = null
-      if (calls.length > PASS_MAX) L.violate(`a pass placed ${calls.length}`)
+      if (left > PASS_MAX) L.violate(`${left} turns left the queue in one pass`)
       const inOrder = calls.every((id, k) => k === 0 || order.indexOf(id) > order.indexOf(calls[k - 1]))
       if (!inOrder) L.violate(`a pass retried out of FIFO order: ${calls.join(',')} of ${order.join(',')}`)
-      if (order.length > 0 && slot && calls.length === 0) L.violate('a pass with a free slot handed nothing back')
+      if (order.length > 0 && slot && calls.length === 0 && expiring < PASS_MAX) L.violate('a pass with a free slot handed nothing back')
+      // A pass reschedules itself at once only when the cap stopped it (no hot loop on turns that stay queued).
+      const again = sched.tasks.get('pool-retry')
+      if (again !== undefined && again.dueAtMs <= L.now && left + expiring < PASS_MAX) L.violate(`a pass with ${left + expiring} turns gone rescheduled at once`)
       for (const [id, at] of L.queue) if (L.now - at >= QUEUE_MS) L.violate(`${id}: still queued after ${L.now - at} ms`)
     }
     for (const { runner, c } of sql.exec<{ runner: string; c: number }>("SELECT runner, COUNT(*) AS c FROM turns WHERE runner IS NOT NULL AND state IN ('starting','live','ending') GROUP BY runner").toArray()) {
@@ -400,14 +457,81 @@ describe('routing', () => {
     })
   })
 
-  it('a typed 503 (stopping): the turn requeues, the runner cools 5 s but stays up with its protocol (H2)', async () => {
+  it.each([
+    ['503 stopping', 'the runner is stopping'],
+    ['500 no session user', 'could not set up the session user'],
+    ['500 uid busy', 'the session user still has a live run'],
+  ])('a typed 5xx (%s) moves the turn to the next runner; runner-0 cools 5 s, stays up with its protocol', async (_label, error) => {
     await inObject(async sql => {
       w1Tables(sql)
       sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
-      const pool = poolWith(sql, () => async () => ({ unavailable: 'the runner is stopping', gen: 1 }))
+      const admits: string[] = []
+      const pool = poolWith(sql, name => async start => {
+        admits.push(`${start.runId}@${name}`)
+        return name === 'runner-0' ? { unavailable: error, gen: 1 } : { accepted: true, gen: 1, protocol: 2 }
+      })
       sql.exec("UPDATE pool_runners SET state = 'up', protocol = 2 WHERE runner = 'runner-0'")
-      expect(await pool.place(rs('t_a'), 1)).toEqual({ queued: true })
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-1' })
+      expect(admits).toEqual(['t_a@runner-0', 't_a@runner-1'])
       expect(sql.exec("SELECT state, refused_until_ms, protocol FROM pool_runners WHERE runner = 'runner-0'").one()).toEqual({ state: 'up', refused_until_ms: T0 + 5_000, protocol: 2 })
+    })
+  })
+
+  it('a typed 5xx from every runner: queued only when none is left', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      const admits: string[] = []
+      const pool = poolWith(sql, name => async start => {
+        admits.push(`${start.runId}@${name}`)
+        return { unavailable: 'the runner is stopping', gen: 1 }
+      })
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ queued: true })
+      expect(admits).toEqual(['t_a@runner-0', 't_a@runner-1'])
+    })
+  })
+
+  it('a runner with an admission in flight over 3 s gets no new turns until it answers', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_hung', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
+      const clock = { now: T0 }
+      let open!: () => void
+      const barrier = new Promise<void>(r => (open = r))
+      const pool = poolWith(sql, () => async start => {
+        if (start.runId === 't_hung') await barrier
+        return { accepted: true, gen: 1, protocol: 2 }
+      }, clock)
+      sql.exec("UPDATE pool_runners SET state = 'up'")
+      const hung = pool.place(rs('t_hung'), 1)
+      clock.now = T0 + 3_000
+      expect(await pool.place(rs('t_b'), 1)).toEqual({ admitted: 'runner-0' })
+      clock.now = T0 + 3_001
+      expect(await pool.place(rs('t_c'), 1)).toEqual({ admitted: 'runner-1' })
+      open()
+      expect(await hung).toEqual({ admitted: 'runner-0' })
+    })
+  })
+
+  it('three turns still answered chat_live at the head: the 4th is placed in the same pass, and no pass reschedules at once', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      const ids = ['t_1', 't_2', 't_3', 't_4']
+      for (const id of ids) sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES (?, 'starting', 1)", id)
+      const clock = { now: T0 }
+      const sched = new FakeScheduler()
+      let live = true
+      const hooks: PlacementHooks = { retryPlacement: async id => void (await pool.place(rs(id), 1)), placementExpired: async () => {} }
+      const pool = poolWith(sql, () => async start => (live || start.runId !== 't_4' ? { refused: 'chat_live', gen: 1 } : { accepted: true, gen: 1, protocol: 2 }), clock, hooks, sched)
+      for (const id of ids) {
+        expect(await pool.place(rs(id), 1)).toEqual({ queued: true })
+        clock.now += 1
+      }
+      live = false
+      clock.now = T0 + 5_000
+      await pool.retryQueue()
+      expect(pool.queued()).toEqual(['t_1', 't_2', 't_3'])
+      expect(sched.tasks.get('pool-retry')?.dueAtMs).toBe(T0 + 10_000)
     })
   })
 
@@ -511,7 +635,7 @@ interface DrainRig {
   sched: FakeScheduler
   clock: { now: number }
   admit: (start: RunStart) => Promise<AdmitResult>
-  warm: (name: string) => Promise<WarmResult>
+  warm: (name: string, newerThan: number | null) => Promise<WarmResult>
   retried: string[]
 }
 function drainRig(sql: SqlStorage): DrainRig {
@@ -533,7 +657,7 @@ function drainRig(sql: SqlStorage): DrainRig {
       admit: start => rig.admit(start),
       status: async () => ({ state: 'live', containerGone: false }),
       interrupt: async () => {}, stop: async () => {},
-      warm: () => rig.warm(name),
+      warm: newerThan => rig.warm(name, newerThan),
     }),
     hooks: { retryPlacement: async id => void rig.retried.push(id), placementExpired: async () => {} },
   })
@@ -703,11 +827,29 @@ describe('warm-up', () => {
       const rig = drainRig(sql)
       sql.exec("UPDATE pool_runners SET state = 'up', container_gen = 4 WHERE runner IN ('runner-0', 'runner-1')")
       rig.pool.drain(rig.clock.now)
-      rig.warm = async name => ({ ok: true, gen: name === 'runner-0' ? 5 : 4, protocol: 2 })
+      const asked: (number | null)[] = []
+      // runner-1's pre-drain container still runs a turn (the Runner answers busy); runner-0's was replaced.
+      rig.warm = async (name, newerThan) => {
+        asked.push(newerThan)
+        return name === 'runner-0' ? { ok: true, gen: 5, protocol: 2 } : { ok: false, why: 'busy', detail: '1 run' }
+      }
       expect(await rig.pool.warmup()).toEqual({ refused: { code: 'unavailable', reason: 'draining' } })
+      expect(asked).toEqual([4, 4])
       expect(rig.pool.drainState().drainingUntilMs).toBe(T0 + 1_800_000)
+      // A Runner that (wrongly) kept the old generation is still refused.
+      rig.warm = async () => ({ ok: true, gen: 4, protocol: 2 })
+      expect(await rig.pool.warmup()).toEqual({ refused: { code: 'unavailable', reason: 'draining' } })
+      // runner-1 went idle and was replaced too.
       rig.warm = async () => ({ ok: true, gen: 5, protocol: 2 })
       expect(await rig.pool.warmup()).toEqual({ ok: true })
+      // No drain now: warm-up asks for no particular generation.
+      asked.length = 0
+      rig.warm = async (_n, newerThan) => {
+        asked.push(newerThan)
+        return { ok: true, gen: 5, protocol: 2 }
+      }
+      expect(await rig.pool.warmup()).toEqual({ ok: true })
+      expect(asked).toEqual([null, null])
     })
   })
 

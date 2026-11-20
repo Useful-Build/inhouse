@@ -48,8 +48,8 @@ export class Runner extends DurableObject<Env> {
   stop(turnId: string): Promise<void> {
     return this.#runner.stop(turnId)
   }
-  warm(): Promise<WarmResult> {
-    return this.#runner.warm()
+  warm(newerThan: number | null): Promise<WarmResult> {
+    return this.#runner.warm(newerThan)
   }
 
   async fetch(): Promise<Response> {
