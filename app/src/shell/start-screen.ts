@@ -11,6 +11,5 @@ export function startScreen(data: Pick<AgentData, 'resources'>): StartScreen {
   if (r.status === 'ready') return 'app'
   if (r.status === 'loading') return 'not-connected'
   if (notOnTeam(data)) return 'not-on-team'
-  if (r.error === 'unauthorized') return 'signed-out'
-  return 'load-error'
+  return 'not-connected'
 }
