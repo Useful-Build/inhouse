@@ -58,11 +58,39 @@ export function cliEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out
 }
 
+/** The `inhouse` MCP server's name (R2's guard allows only it). */
+export const INHOUSE_SERVER = 'inhouse'
+
+/**
+ * The engine's model settings for a run (Claude Code's env-vars page, read 2026-11-20). Every alias resolves to a model
+ * the egress allows (the run's `model` or `sideModel`): `ANTHROPIC_DEFAULT_HAIKU_MODEL` is the `haiku` alias and the
+ * background model; subagents run on the turn's model (`CLAUDE_CODE_SUBAGENT_MODEL`, forced so a model Claude names
+ * when it spawns one doesn't win); the `sonnet`, `opus` and `fable` aliases resolve to the turn's model too.
+ * `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` holds every model to a 200K window, the window the Worker's per-model ceiling
+ * assumes.
+ */
+export function modelEnv(config: Pick<RunConfig, 'model' | 'sideModel'>): Record<string, string> {
+  return {
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: config.sideModel,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: config.model,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: config.model,
+    ANTHROPIC_DEFAULT_FABLE_MODEL: config.model,
+    CLAUDE_CODE_SUBAGENT_MODEL: config.model,
+    CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
+    CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
+  }
+}
+
 export function baseOptions(config: RunConfig, cwd: string, env: Record<string, string>, abortController: AbortController, sessionStore?: Options['sessionStore']): Options {
+  // The `inhouse` server goes through the root's proxy (sessionEnv() always sets INHOUSE_PROXY_URL; a bare test env
+  // without it gets no server).
+  const proxy = env.INHOUSE_PROXY_URL
   return {
     cwd,
-    env,
+    env: { ...env, ...modelEnv(config) },
     abortController,
+    systemPrompt: config.systemPrompt,
+    ...(proxy ? { mcpServers: { [INHOUSE_SERVER]: { type: 'http', url: `${proxy.replace(/\/$/, '')}/mcp/` } } } : {}),
     model: config.model,
     effort: config.effort,
     maxTurns: config.maxTurns,
@@ -302,7 +330,19 @@ export async function runSession(deps: {
 
   // 1. The guarded options, before anything touches the work folder: a guard that refuses this run ends it here, typed,
   // with the folder as the host left it.
-  const store = createStoreAdapter({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl })
+  // A resume is checked against the Worker's `expect` on the SDK's first load of the main transcript, which comes
+  // before any model call; a mismatch aborts the query and the run fails `store`.
+  let resumeRefused: string | null = null
+  const store = createStoreAdapter({
+    fetch: deps.io.fetch,
+    proxyUrl: deps.io.proxyUrl,
+    expect: config.resume ? config.expect : null,
+    onResumeRefused: (why) => {
+      resumeRefused = why
+      log({ type: 'resume_refused', why })
+      abort.abort()
+    },
+  })
   let options: Options
   try {
     options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort, store.store), config, { audit })
@@ -339,6 +379,8 @@ export async function runSession(deps: {
   let result: Result | null = null
   let thrown: unknown = null
   let threw = false
+  // From here the transcript may change: the root tells the Worker (`released.queryRan`).
+  await channel.send({ type: 'query_started' })
   try {
     q = deps.query({ prompt, options })
     // A stop or interrupt that came while the query was being set up.
@@ -367,7 +409,13 @@ export async function runSession(deps: {
 
   // 4. The end: the deferred call, files, the store, then the one terminal event.
   let terminal: Extract<SessionEvent, { type: 'finished' | 'failed' }>
-  if (result !== null && (!threw || stopping || abort.signal.aborted)) {
+  const check = store.resumeCheck()
+  if (resumeRefused !== null || check.state === 'failed') {
+    terminal = { type: 'failed', reason: 'store', message: `the store doesn't hold the transcript to resume: ${resumeRefused ?? (check.state === 'failed' ? check.error : '')}`.slice(0, 2000) }
+  } else if (check.state === 'pending') {
+    // The SDK never loaded the main transcript: nothing proved the resume ran on the expected transcript.
+    terminal = { type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' }
+  } else if (result !== null && (!threw || stopping || abort.signal.aborted)) {
     // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept).
     terminal = finishedEvent(result)
     const deferred = result.subtype === 'success' ? result.deferred_tool_use : undefined
@@ -388,12 +436,12 @@ export async function runSession(deps: {
   if (cp === null) await emit({ type: 'mirror_error', message: "the store's checkpoint did not finish before the stop's deadline" })
   else {
     if (cp.value.repaired > 0) log({ type: 'store_repaired', batches: cp.value.repaired })
-    // Protocol v2's checkpoint reports the store's whole main transcript. A first run that wrote none leaves it empty;
-    // a resume that wrote none can't say what the store holds without loading it (R3's second PR does that load), so
-    // until then that's a mirror error rather than a guess.
+    // Protocol v2's checkpoint reports the store's whole main transcript (the adapter loads the SDK's main key when this
+    // run wrote none). A first run that neither wrote nor loaded one leaves it empty (`mainEntries: 0`: no transcript
+    // to resume); a resume that never loaded one can't say, so that's a mirror error rather than a guess.
     const main = cp.value.ok ? (cp.value.main ?? (config.resume ? null : { mainEntries: 0, lastUuid: null, lastUuidIndex: null })) : null
     if (cp.value.ok && main !== null) await emit({ type: 'checkpoint', ...main, runEntries: cp.value.entries })
-    else await emit({ type: 'mirror_error', message: cp.value.ok ? 'a resume that wrote no main transcript' : cp.value.error })
+    else await emit({ type: 'mirror_error', message: cp.value.ok ? 'a resume that never loaded its transcript' : cp.value.error })
   }
   if (!filesDone && !deadlineCut.signal.aborted) filesDone = await files.save(before, emit, deadlineCut.signal)
   if (!filesDone) log({ type: 'files_save_cut', why: "the stop's deadline" })

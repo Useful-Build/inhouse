@@ -52,7 +52,7 @@ function workDir() {
   return d
 }
 
-function harness(query: QueryFn, guards: QueryGuards = testQueryGuards, opts: { egress?: FakeEgress; auditTimeoutMs?: number; cwd?: string } = {}) {
+function harness(query: QueryFn, guards: QueryGuards = testQueryGuards, opts: { egress?: FakeEgress; auditTimeoutMs?: number; cwd?: string; env?: Record<string, string> } = {}) {
   const sent: any[] = []
   let handler: (line: LineResult) => void = () => {}
   let onClose: () => void = () => {}
@@ -64,7 +64,7 @@ function harness(query: QueryFn, guards: QueryGuards = testQueryGuards, opts: { 
     query,
     guards,
     cwd,
-    env: { PATH: '/bin', NODE_CHANNEL_FD: '3', NODE_CHANNEL_SERIALIZATION_MODE: 'json' },
+    env: { PATH: '/bin', NODE_CHANNEL_FD: '3', NODE_CHANNEL_SERIALIZATION_MODE: 'json', ...opts.env },
     io: { fetch: egress.fetch, proxyUrl: PROXY_URL },
     log: (e) => logs.push(e),
     auditTimeoutMs: opts.auditTimeoutMs,
@@ -149,10 +149,34 @@ describe('runSession', () => {
       tools: ['Read'],
     })
     expect(options.resume).toBeUndefined()
-    expect(options.env).toEqual({ PATH: '/bin' })
+    // The model settings (Claude Code's env-vars page): every alias on a model the egress allows, subagents forced onto
+    // the turn's model, a 200K window.
+    expect(options.env).toEqual({
+      PATH: '/bin',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-5-5',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-5-5',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-sonnet-5-5',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-sonnet-5-5',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5',
+      CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
+      CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
+    })
+    expect(options.systemPrompt).toBe(c.systemPrompt)
+    // No proxy in this env: no inhouse server (production's sessionEnv always sets it; the next test).
+    expect(options.mcpServers).toBeUndefined()
     expect(options.sessionStore).toBeDefined()
     expect(h.events().map((e) => e.type)).toEqual(['sdk', 'sdk', 'checkpoint', 'finished'])
     expect(h.events().at(-1)).toEqual({ type: 'finished', subtype: 'success', isError: false, numTurns: 2, costUsd: 0.01, usage: { input_tokens: 5 } })
+  })
+
+  it("the inhouse server goes through the proxy, and the system prompt is the run's own", async () => {
+    const q = fakeQuery([assistant, result])
+    const h = harness(q.query, testQueryGuards, { env: { INHOUSE_PROXY_URL: 'http://127.0.0.1:8081' } })
+    h.deliver({ type: 'run', config: config({ systemPrompt: 'You answer for the brand.' }) })
+    await h.done
+    const { options } = q.calls[0]!
+    expect(options.mcpServers).toEqual({ inhouse: { type: 'http', url: 'http://127.0.0.1:8081/mcp/' } })
+    expect(options.systemPrompt).toBe('You answer for the brand.')
   })
 
   it('resume: true passes resume, not sessionId; "" is passed as the prompt', async () => {

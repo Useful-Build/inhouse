@@ -83,6 +83,7 @@ const FilePath = z.string().max(1024)
 export const ResumeExpect = z
   .strictObject({ mainEntries: z.int().min(1), lastUuid: z.string().min(1).max(256).nullable(), lastUuidIndex: z.int().nonnegative().nullable() })
   .superRefine(checkLastUuid)
+export type ResumeExpect = z.infer<typeof ResumeExpect>
 
 /** `lastUuid` and `lastUuidIndex` are both null or both set, and the index is inside `mainEntries`. */
 function checkLastUuid(v: { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null }, ctx: z.RefinementCtx) {

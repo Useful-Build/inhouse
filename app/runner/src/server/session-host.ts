@@ -20,9 +20,9 @@
 // outlives it inside that group. A process that left the group (setsid) is `SessionUsers.release()`'s to end (seam.ts).
 import { spawn, type ChildProcess } from 'node:child_process'
 import type { Duplex, Readable } from 'node:stream'
-import { SDK_MESSAGE_MAX_BYTES } from '../../../shared/protocol/index.ts'
+import { SDK_MESSAGE_MAX_BYTES, type AuditEntry } from '../../../shared/protocol/index.ts'
 import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '../protocol/ndjson.ts'
-import { capSdkMessage, monotonicMs, parseSessionMessage, type RootMessage, type RunConfig } from '../protocol/local.ts'
+import { capSdkMessage, monotonicMs, parseSessionMessage, type RootMessage, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import type { SessionUser } from '../session/seam.ts'
 import type { RunStream } from './run-stream.ts'
 
@@ -55,7 +55,7 @@ export type SessionHandle = {
   interrupt(): void
   /** The SIGTERM path: ask the session to interrupt, flush and end; kill its group if it hasn't exited after the grace. */
   stop(): void
-  /** Backpressure from the Worker's response: stop reading the session's events until `resume()`. A no-op once it has exited. */
+  /** Backpressure from the push buffer: stop reading the session's events until `resume()`. A no-op once it has exited. */
   pause(): void
   resume(): void
   /** Resolves once the process has exited, its pipes have closed, its group has been killed and the run has ended. */
@@ -83,8 +83,18 @@ export function hostSession(opts: {
   config: RunConfig
   stopGraceMs: number
   log: (entry: Record<string, unknown>) => void
-  /** Whether an event written now reaches the Worker (its response is open). An audit entry is acked only then. */
-  canWrite: () => boolean
+  /**
+   * Records a blocking audit entry durably (the egress's `/audit/`); true only once the Worker answered 204 before
+   * `expiresAt` (`monotonicMs()`). The session's hook is acked only on true; anything else denies its call.
+   */
+  recordAudit: (entry: AuditEntry, expiresAt: number) => Promise<boolean>
+  /** The session is about to call `query()` (it may change the transcript from here). */
+  onQueryStarted: () => void
+  /**
+   * The run's store result, whenever it comes, even after the run's terminal event (a root-emitted timeout, say):
+   * a `checkpoint`'s state, or null for a `mirror_error`. The root carries it in `released`.
+   */
+  onStoreResult: (checkpoint: { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null } | null) => void
   maxLineBytes?: number
 }): SessionHandle {
   const { child, stream, config, log } = opts
@@ -138,13 +148,20 @@ export function hostSession(opts: {
   }
 
   const nack = (id: number, error: string) => send({ type: 'audit_nack', id, error })
+  const storeResult = (event: SessionEvent) => {
+    if (event.type === 'checkpoint') opts.onStoreResult({ mainEntries: event.mainEntries, lastUuid: event.lastUuid, lastUuidIndex: event.lastUuidIndex })
+    else if (event.type === 'mirror_error') opts.onStoreResult(null)
+  }
   const onLine = (line: LineResult) => {
     if (stream.ended) {
       // The run is over, but the session may still be running: an audit entry gets its nack at once, so the hook
-      // refuses its call now rather than wait out its timeout (and the session can end in time). Nothing else is read.
+      // refuses its call now rather than wait out its timeout (and the session can end in time). Its store result is
+      // kept for `released`; nothing else is read.
       if (!line.ok) return
       const late = parseSessionMessage(line.value)
-      if (late.ok && late.message.type === 'audit') nack(late.message.id, 'the run has ended')
+      if (!late.ok) return
+      if (late.message.type === 'audit') nack(late.message.id, 'the run has ended')
+      else if (late.message.type === 'event') storeResult(late.message.event)
       return
     }
     if (!line.ok) return failProtocol(line.error)
@@ -161,15 +178,26 @@ export function hostSession(opts: {
       return
     }
     if (!sentRun) return failProtocol('an event before ready')
+    if (m.type === 'query_started') return opts.onQueryStarted()
     if (m.type === 'audit') {
-      // Acked only once the entry is on the Worker's stream; otherwise the session's hook must not let the call run.
-      if (!opts.canWrite()) return nack(m.id, 'the run has ended or the Worker has gone')
       // It sat in the pipe past the time the hook waits (the root wasn't reading): the call was refused already.
       if (monotonicMs() >= m.expiresAt) return nack(m.id, 'the entry expired before the root read it')
-      stream.emit({ type: 'audit', entry: m.entry })
-      return send({ type: 'audit_ack', id: m.id })
+      // Acked only once the Worker holds the entry (its 204); otherwise the session's hook must not let the call run.
+      const { id, entry, expiresAt } = m
+      void opts.recordAudit(entry, expiresAt).then(
+        (ok) => {
+          if (!ok) return nack(id, 'the Worker did not record the entry')
+          if (stream.ended || monotonicMs() >= expiresAt) return nack(id, stream.ended ? 'the run has ended' : 'the entry expired before the Worker recorded it')
+          // The trace copy; the durable one is the Worker's.
+          stream.emit({ type: 'audit', entry })
+          send({ type: 'audit_ack', id })
+        },
+        () => nack(id, 'the Worker did not record the entry'),
+      )
+      return
     }
     let event = m.event
+    storeResult(event)
     if (event.type === 'sdk') {
       const capped = capSdkMessage(event.message, SDK_MESSAGE_MAX_BYTES)
       if (capped === null) return failProtocol('an sdk message JSON cannot encode')

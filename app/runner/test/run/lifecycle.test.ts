@@ -1,8 +1,8 @@
-// The root's run lifecycle around the session process: start, stop, hang-up, shutdown, and what each leaves behind.
+// The root's run lifecycle around the session process: start, stop, the Worker's end, shutdown, and what each leaves behind.
 // Ways it could fail, written first:
 // - a stop or interrupt that lands while the run is still starting (allocating, or spawned but not ready) is lost, and
 //   the run carries on;
-// - the Worker hangs up at some stage and the run keeps going, or keeps its chat, uid or token;
+// - the Worker ends the run (a 410, or an ack with stop) and the run keeps going, or keeps its chat, uid or token;
 // - a spawn that throws leaves the run listed, the chat taken (409 forever) or the token mapped;
 // - the chat frees before release() settles, so the next run's allocate races the last run's release;
 // - a timeout racing the session's finish gives two ends;
@@ -111,58 +111,41 @@ describe('a stop or interrupt while the run is starting', () => {
   })
 })
 
-describe('the Worker hangs up', () => {
-  it('during allocate: nothing is spawned, the user is released and the chat frees', async () => {
-    const allocating = gate()
-    const spawned: ChildProcess[] = []
-    const users = testSessionUsers({ onAllocate: () => allocating.promise })
-    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users }), async (root) => {
-      const start = runStart({ prompt: 'echo:m:3' })
-      const run = openRun(root, start)
-      await waitFor(() => users.allocated.length === 1)
-      run.hangUp()
-      await expect(run.done).rejects.toThrow()
-      await waitFor(() => root.logs.some((l) => l.type === 'worker_hung_up'), 'the root saw the hang-up')
-      allocating.open()
-      await waitFor(() => root.liveCount() === 0)
-      expect(spawned).toHaveLength(0)
-      expect(users.released).toEqual([start.chatId])
-      expect(root.logs).toContainEqual(expect.objectContaining({ type: 'run_abandoned', runId: start.runId }))
-    })
-  })
-
+describe('the Worker ends the run (protocol v2: a hang-up no longer exists; a 410 or a fence does it)', () => {
   it.each([
     ['before ready', 'hold-ready'],
     ['mid-run', null],
-  ])('%s: the session is stopped and the run, chat and token are gone', async (_, marker) => {
+  ])('a 410 %s: the session is stopped, nothing more is pushed, and the run, chat and token are gone', async (_, marker) => {
     const spawned: ChildProcess[] = []
     const users = testSessionUsers({ onAllocate: (_k, dir) => (marker ? writeFileSync(join(dir, marker), '') : undefined) })
-    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users, stopGraceMs: 50 }), async (root) => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users, stopGraceMs: 50, pushFlushMs: 20 }), async (root) => {
       const start = runStart({ prompt: 'hang' })
+      root.egress.onPush = (b) => (b.turnId === start.runId ? new Response('ended', { status: 410 }) : null)
       const run = openRun(root, start)
-      await waitFor(() => spawned.length === 1 && run.events.length >= 1)
-      run.hangUp()
-      await expect(run.done).rejects.toThrow()
-      await waitFor(() => root.liveCount() === 0)
+      await run.admitted
+      await waitFor(() => spawned.length === 1 && root.logs.some((l) => l.type === 'push_gone'), 'the 410')
+      await waitFor(() => root.liveCount() === 0, 'the run to end')
       expect(spawned[0]!.exitCode !== null || spawned[0]!.signalCode !== null).toBe(true)
       expect(users.released).toEqual([start.chatId])
       expect(root.tokenForUid(users.uids.get(start.chatId)!)).toBeNull()
+      // One batch went, and nothing after its 410.
+      expect(root.egress.pushes.filter((p) => p.runId === start.runId)).toHaveLength(1)
     })
   })
-})
 
-describe('a hang-up at admission', () => {
-  // The Worker's connection is gone as the body ends, before the run's own close listener is attached.
-  it('a hang-up as the body ends is seen at admission: nothing is spawned and the user is released', async () => {
+  it('an ack with stop: true stops the run; its terminal event and released still reach the Worker', async () => {
     const spawned: ChildProcess[] = []
-    const users = testSessionUsers()
-    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users }), async (root) => {
-      root.server.prependListener('request', (req) => req.once('end', () => req.socket.destroy()))
-      const start = runStart({ prompt: 'echo:m:3' })
-      await expect(openRun(root, start).done).rejects.toThrow()
-      await waitFor(() => root.logs.some((l) => l.type === 'run_abandoned') && root.liveCount() === 0, 'the run was abandoned')
-      expect(spawned).toHaveLength(0)
-      expect(users.released).toEqual([start.chatId])
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 2000, pushFlushMs: 20 }), async (root) => {
+      const start = runStart({ prompt: 'hang' })
+      root.egress.stopRuns.add(start.runId)
+      const run = openRun(root, start)
+      const events = await run.done
+      // The first push (`started`, on the flush timer) is acked with stop: the run ends stopped, whatever stage it was at.
+      expect(events[0]?.type).toBe('started')
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'stopped' })
+      expect(await run.released).toMatchObject({ type: 'released', checkpoint: null, queryRan: false })
+      expect(root.logs).toContainEqual({ type: 'worker_fenced', runId: start.runId })
+      expect(root.egress.violations).toEqual([])
     })
   })
 })
@@ -324,12 +307,17 @@ describe('the chat slot and the token', () => {
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
       const first = runStart({ prompt: 'echo:m:1', runToken: 'tok_first_run_000000000001' })
       const run = openRun(root, first)
-      await run.done
+      await waitFor(() => run.events.some((e) => e.type === 'finished'), 'the terminal event')
       await waitFor(() => root.liveCount() === 1 && root.tokenForUid(users.uids.get(first.chatId)!) === null)
       const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: protocolHeaders, body: JSON.stringify(runStart({ chatId: first.chatId })) })
       expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'chat_live' })
+      // `released` waits for release() too: the Worker starts the chat's next turn only after it.
+      for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r))
+      expect(run.events.some((e) => e.type === 'released')).toBe(false)
       releasing.open()
-      await waitFor(() => root.liveCount() === 0)
+      await run.released
+      expect(root.liveCount()).toBe(0)
       const again = await postRun(root, runStart({ chatId: first.chatId }))
       expect(again.at(-1)?.type).toBe('finished')
     })

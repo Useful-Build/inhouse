@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createProxy } from './proxy/server.ts'
 import { apiPeerAllowed, readPeerUid } from './proxy/proc-net.ts'
 import { createRoot } from './server/app.ts'
+import type { PushFetch } from './server/pusher.ts'
 import { readMemory } from './server/memory.ts'
 import { productionSessionUsers } from './server/production.ts'
 import { spawnSessionProcess } from './server/session-host.ts'
@@ -30,6 +31,8 @@ const root = createRoot({
   users,
   spawnSession: spawnSessionProcess(sessionEntry),
   proxyPort,
+  egressUrl: upstream.href,
+  fetch: globalThis.fetch as PushFetch,
   stopGraceMs: 10_000,
   runTimeoutMs: 30 * 60_000,
   memory: readMemory,
