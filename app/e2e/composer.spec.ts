@@ -1,6 +1,6 @@
 // PR 4, the composer: a growing multi-line field, Send that turns into Stop mid-answer and is off while empty,
 // files by paste and drop with a limit, and a draft kept per chat (and Today's apart).
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Locator, Page } from '@playwright/test'
 import { atRest } from './states.js'
 

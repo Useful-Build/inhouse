@@ -11,7 +11,7 @@
 // card's edge through Select. On a phone: the answer row is Copy, steps and "···" (D3) with the thumbs as radio items,
 // every step name in the trace reads in full, Send now on the last queued message puts focus on "+" (never Stop), and
 // Select mode's bar never covers the last chat.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
@@ -27,7 +27,7 @@ async function start(page: Page, hash: string) {
   await page.goto('/?demo' + hash)
 }
 
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => null))))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msg = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })

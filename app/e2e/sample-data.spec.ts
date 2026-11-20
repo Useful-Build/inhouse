@@ -1,7 +1,7 @@
 // Every control shows real sample data and works: Settings dropdowns, text fields and search, the chats
 // (each opens its own conversation, See all lists them), and the search boxes and pickers on other pages.
 import { readFileSync, readdirSync } from 'node:fs'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

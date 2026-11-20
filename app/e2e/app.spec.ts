@@ -1,6 +1,6 @@
 // End-to-end checks for the app as a whole.
 // Each test starts from a clean demo state at a given stage and scenario.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

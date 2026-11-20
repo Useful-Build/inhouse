@@ -1,6 +1,6 @@
 // PR 4 at 390 px: no card cuts a word at Watch, Act or Run; Today has no sort and Approvals' header stays on one line with
 // Approve all low-risk alone; each draft is Approve (or Review) plus "···"; an approved row's time and Undo wrap under its text.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { expectNothingCut, start, STAGES } from './today-approvals-helpers.js'
 
