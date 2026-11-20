@@ -36,8 +36,17 @@ const productURL = `http://localhost:${productPort}`
 // `wrangler dev` with a fresh local D1 (migrated and seeded first) and this run's test issuer key.
 // Run: npm run build:product-test && E2E_TEST_BUILD=1 E2E_PREBUILT=1 npx playwright test --project=api --project=real-desktop --project=real-phone
 // e2e/smoke/ (the `smoke` project, below) is ignored by every other project the same way, so it joins this pattern.
+// E2E_TEST_BUILD_REMOTE: the same projects against a test build deployed elsewhere (the private ops repo's per-PR
+// test-deploy workflow): BASE_URL and TEST_BUILD_INHOUSE_URL are its two origins and TEST_ISSUER_PRIVATE_JWK_FILE that
+// deploy's private key (e2e/support/test-build/issuer.ts reads all three). No local server starts and no prebuilt build
+// is needed; a test that reads or writes the local D1 (e2e/api/db.ts) skips itself there.
 const testBuild = /e2e[\\/](api|real|smoke)[\\/]/
-const testBuildOn = !!process.env.E2E_TEST_BUILD
+const testBuildRemote = !!process.env.E2E_TEST_BUILD_REMOTE
+const testBuildOn = !!process.env.E2E_TEST_BUILD || testBuildRemote
+if (testBuildRemote) {
+  const missing = ['BASE_URL', 'TEST_BUILD_INHOUSE_URL', 'TEST_ISSUER_PRIVATE_JWK_FILE'].filter(name => !process.env[name])
+  if (missing.length > 0) throw new Error(`E2E_TEST_BUILD_REMOTE=1 runs against a deployed test build and needs ${missing.join(', ')}.`)
+}
 const testBuildPortNumber = testBuildPort()
 const visualMatch = noVisual ? { testIgnore: /.*/ } : { testMatch: /visual\.spec/, testIgnore: [ship, product, testBuild] }
 const shipUse = (width: number, height: number) => ({
@@ -70,7 +79,7 @@ const productWorkerConfig = 'dist-product/inhouse_product/wrangler.json'
 if (process.env.E2E_PRODUCT && !existsSync(new URL(productWorkerConfig, import.meta.url))) {
   throw new Error(`E2E_PRODUCT=1 serves the prebuilt product build, and ${productWorkerConfig} is missing. Run \`npm run build:product\` first.`)
 }
-if (testBuildOn && !existsSync(new URL(TEST_BUILD_WORKER_CONFIG, import.meta.url))) {
+if (testBuildOn && !testBuildRemote && !existsSync(new URL(TEST_BUILD_WORKER_CONFIG, import.meta.url))) {
   throw new Error(`E2E_TEST_BUILD=1 serves the prebuilt test build, and ${TEST_BUILD_WORKER_CONFIG} is missing. Run \`npm run build:product-test\` first.`)
 }
 const testBuildProjects: PlaywrightTestProject[] = testBuildOn
@@ -119,7 +128,7 @@ const testBuildServer = () => ({
 const webServers = [
   ...(process.env.BASE_URL || process.env.SMOKE_BASE_URL || testBuildOn ? [] : [demoServer]),
   ...(process.env.E2E_PRODUCT ? [productServer] : []),
-  ...(testBuildOn ? [testBuildServer()] : []),
+  ...(testBuildOn && !testBuildRemote ? [testBuildServer()] : []),
 ]
 
 export default defineConfig({
