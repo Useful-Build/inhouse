@@ -200,7 +200,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
     : offHere > 0 ? `${onTools.length} of ${TOOL_KEYS.length} tools on in this chat`
       : counts.reading < counts.connected ? `${counts.reading} of ${counts.connected} tools connected` : `${counts.reading} tools connected`
   const modes = thinkingModes(data, ctx.agent.settings).filter(m => m.on)
-  const sel = activeMode(data, ctx.agent.settings, modelSel)?.id ?? ''
+  const sel = activeMode(data, ctx.agent.settings, modelSel)!.id
   const modelLabel = modes.find(m => m.id === sel)?.label ?? ''
 
   // The tools switches for this chat and Manage tools: the tools menu, or "+" on a phone.
@@ -317,13 +317,9 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
               <>
                 <DropdownMenuSeparator className="mx-1.5 my-1" />
                 {toolItems}
-                {modes.length > 0 && (
-                  <>
-                    <DropdownMenuSeparator className="mx-1.5 my-1" />
-                    <DropdownMenuLabel className="px-2.5 pt-2 pb-1 text-sm font-normal text-muted-foreground">Model</DropdownMenuLabel>
-                    <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
-                  </>
-                )}
+                <DropdownMenuSeparator className="mx-1.5 my-1" />
+                <DropdownMenuLabel className="px-2.5 pt-2 pb-1 text-sm font-normal text-muted-foreground">Model</DropdownMenuLabel>
+                <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
               </>
             )}
           </DropdownMenuContent>
@@ -351,7 +347,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
           </DropdownMenuContent>
         </DropdownMenu>}
         <div className="min-w-0 flex-1" />
-        {!slim && modes.length > 0 && <DropdownMenu modal={false} open={pop === 'model'} onOpenChange={onOpen('model')}>
+        {!slim && <DropdownMenu modal={false} open={pop === 'model'} onOpenChange={onOpen('model')}>
           <Tip label="Model">
             <DropdownMenuTrigger asChild>
               <button type="button" aria-label={`Model: ${modelLabel}`}
