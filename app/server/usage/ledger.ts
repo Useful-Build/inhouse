@@ -14,7 +14,7 @@
 // https://code.claude.com/docs/en/agent-sdk/cost-tracking), so it's stored beside the bill, never added.
 import { StoreUnavailableError } from '../db/sql.ts'
 import type { ReserveInput, UsageLedgerPort } from '../do/brand-agent/ports.ts'
-import { TURN_CEILING_MICRO, turnCeilingMicro } from './ceilings.ts'
+import { TURN_CEILING_MICRO } from '../model/catalog.ts'
 import { monthOf, zoneOf } from './month.ts'
 import { ALERT_PCT_SQL, CAP_MICRO_SQL } from './settings-sql.ts'
 
@@ -97,7 +97,8 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
   return {
     async reserve(t: ReserveInput) {
       const turnId = id('turn id', t.turnId)
-      turnCeilingMicro(t.model)
+      // route 29 only lets catalogue models through; a model with no ceiling could never extend, so refuse it loudly.
+      if (TURN_CEILING_MICRO[t.model] === undefined) throw new Error(`usage: no per-turn ceiling for model ${t.model}`)
       const month = monthOf(t.nowMs, await tzNow())
       const s = stamp()
       const r = await batch([

@@ -19,6 +19,9 @@
 //     `max_instances` = 3 x RUNNER_POOL (p3-design section 7);
 //   - (P3) a test-build config (the test issuer on) with an AI binding or a gateway var or secret: tests never reach the
 //     gateway (p3-design section 13). A test config is refused anyway; this names the gateway too, so it can't creep in;
+//   - (P3) a config with the AI binding or an `AI_GATEWAY_ID` var whose `AI_GATEWAY_ID` is empty or not a gateway id
+//     (the egress calls `env.AI.gateway(AI_GATEWAY_ID)`, p3-design 8.2); the template ships it empty, so only a filled
+//     config (the release's) passes;
 //   - a brand origin is on `workers.dev` (preview URLs live there too: `<version>-<worker>.<subdomain>.workers.dev`);
 //   - `workers_dev` or `preview_urls` isn't explicitly false (wrangler turns both on when they're left out).
 import { readFileSync } from 'node:fs'
@@ -127,6 +130,11 @@ export function checkConfig(config) {
       auds.set(app.aud, i)
     }
   })
+  if (config.ai !== undefined || Object.hasOwn(vars, 'AI_GATEWAY_ID')) {
+    if (typeof vars.AI_GATEWAY_ID !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(vars.AI_GATEWAY_ID)) {
+      failures.push('vars.AI_GATEWAY_ID must name the AI Gateway (lowercase letters, digits and dashes): the egress calls the model through it')
+    }
+  }
   const tokens = access?.serviceTokens && typeof access.serviceTokens === 'object' ? access.serviceTokens : {}
   for (const service of Object.values(tokens)) {
     if (!['monitor', 'smoke', 'release'].includes(service)) failures.push(`INHOUSE_ACCESS.serviceTokens maps a token to "${String(service)}" (only monitor, smoke or release)`)
