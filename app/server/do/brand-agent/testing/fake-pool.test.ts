@@ -37,3 +37,12 @@ describe('the fake pool queue', () => {
     expect(pool.calls.map(c => c.method).slice(-3)).toEqual(['clearQueue', 'clearQueue', 'retryQueue'])
   })
 })
+
+describe('a rejected RunStart', () => {
+  it('is a typed refusal with the runner\'s status, never queued', async () => {
+    const pool = new FakeRunnerPool()
+    pool.placeAnswer = { refused: 'rejected', status: 413 }
+    expect(await pool.place(rs('t_9'), 1)).toEqual({ refused: 'rejected', status: 413 })
+    expect(pool.queue).toEqual([])
+  })
+})

@@ -50,10 +50,14 @@ export interface RunnerPoolPort {
   /**
    * Place a turn (`rs.runId` is the turn id) on a runner. `admitted`: the runner's name; `queued`: in the placement
    * queue (the turn stays `starting`, inside its 3-minute deadline, until a hook calls back); a definite refusal;
-   * `ambiguous`: the request may have reached the runner named (never try another).
+   * `ambiguous`: the request may have reached the runner named (never try another). `rejected`: the runner refused the
+   * RunStart itself with a typed 4xx (400, 413): the BrandAgent fails the turn `protocol` (no other runner would take it).
    * `gen` is the turn's generation at the claim, so an answer for an older attempt can be told apart.
    */
-  place(rs: RunStart, gen: number): Promise<{ admitted: string } | { queued: true } | { refused: 'pool_full' | 'files' | 'draining' } | { ambiguous: string }>
+  place(rs: RunStart, gen: number): Promise<
+    | { admitted: string } | { queued: true } | { refused: 'pool_full' | 'files' | 'draining' } | { refused: 'rejected'; status: number }
+    | { ambiguous: string }
+  >
   interrupt(runner: string, turnId: string): Promise<void>
   stop(runner: string, turnId: string): Promise<void>
   /** `containerGone`: the runner's container generation is gone or not running (design 1.3's second condition). */
@@ -61,7 +65,11 @@ export interface RunnerPoolPort {
   /** The turn released its runner (the next placement may use the slot). */
   turnEnded(runner: string, turnId: string): void
   health(): PoolHealth
-  /** Route 46 (W2 fit point 4): writes `draining_since_ms` and `draining_until_ms` in `flags` synchronously. */
+  /**
+   * Route 46 (W2 fit point 4): writes `draining_since_ms` and `draining_until_ms` in `flags` synchronously. The flags
+   * can outlive the drain's expiry, so a reader (the pool, the BrandAgent's admission) counts a drain only while
+   * `draining_until_ms > now`, never from the flag being present.
+   */
   drain(nowMs: number): DrainState
   /** Route 47. */
   drainState(): DrainState
