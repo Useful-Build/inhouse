@@ -50,3 +50,13 @@ export const InviteInputSchema = z.object({
   role: MemberRoleSchema,
 }).strict()
 export type InviteInput = z.infer<typeof InviteInputSchema>
+
+/** A record's revision as a write sends it back (p2-design section 5): the `rev` it last read. */
+export const IfRevSchema = z.number().int().min(0)
+
+/** `PUT /api/members/:id/role`. */
+export const RoleChangeInputSchema = z.object({ role: MemberRoleSchema, ifRev: IfRevSchema }).strict()
+export type RoleChangeInput = z.infer<typeof RoleChangeInputSchema>
+
+/** `DELETE /api/members/:id?ifRev=`: the query, as text. */
+export const MemberRemoveQuerySchema = z.object({ ifRev: z.string().regex(/^(0|[1-9]\d{0,8})$/).transform(Number) }).strict()

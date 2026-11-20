@@ -1,0 +1,83 @@
+// What the members and settings handlers share: the context they read (the part of server/routes.ts's
+// `HandlerContext` they use), the body and query parsing (400 `invalid`) and the keyset cursor (p2-design section 5).
+import type { z } from 'zod'
+import { PageRequestSchema } from '../../shared/contract/paging.ts'
+import { apiError } from '../http.ts'
+import type { At } from './members.ts'
+import type { HandlerContext } from '../routes.ts'
+import type { Stores } from './stores.ts'
+
+export type ApiCtx = Pick<HandlerContext, 'request' | 'principal' | 'params' | 'requestId' | 'nowMs' | 'stores' | 'access'>
+
+/**
+ * The request's stores as W2's `Stores` (server/index.ts passes `openStores`, a superset of `AuthStores`). Fails loud
+ * when the route has none or they aren't W2's.
+ */
+export function storesOf(c: ApiCtx): Stores {
+  const s = c.stores
+  if (!s || !('settings' in s)) throw new Error("this route has no stores, or they aren't the D1 stores")
+  return s as Stores
+}
+
+/** The member id a write is made by. Every route that writes allows only principals with a member row. */
+export function writer(c: ApiCtx): At {
+  const p = c.principal
+  if (p.kind === 'service' && p.name === 'monitor') throw new Error('monitor writes nothing')
+  return { actorId: p.memberId, requestId: c.requestId, nowMs: c.nowMs }
+}
+
+/** The bodies these routes take are small; anything past this is refused unread. */
+const MAX_BODY_BYTES = 16 * 1024
+
+/** The JSON body parsed by `schema`, or the 400 `invalid` answer. */
+export async function readBody<S extends z.ZodType>(request: Request, schema: S): Promise<{ ok: z.infer<S> } | { error: Response }> {
+  const declared = Number(request.headers.get('Content-Length') ?? '0')
+  if (declared > MAX_BODY_BYTES) return { error: apiError('invalid') }
+  const text = await request.text()
+  if (text.length > MAX_BODY_BYTES) return { error: apiError('invalid') }
+  let json: unknown
+  try {
+    json = JSON.parse(text)
+  } catch {
+    return { error: apiError('invalid') }
+  }
+  const parsed = schema.safeParse(json)
+  return parsed.success ? { ok: parsed.data } : { error: apiError('invalid') }
+}
+
+/** The query string parsed by `schema` (every parameter, so an unknown one is refused by a strict schema), or 400. */
+export function readQuery<S extends z.ZodType>(request: Request, schema: S): { ok: z.infer<S> } | { error: Response } {
+  const params = new URL(request.url).searchParams
+  const query: Record<string, string> = {}
+  for (const [k, v] of params) {
+    if (Object.hasOwn(query, k)) return { error: apiError('invalid') }
+    query[k] = v
+  }
+  const parsed = schema.safeParse(query)
+  return parsed.success ? { ok: parsed.data } : { error: apiError('invalid') }
+}
+
+const toBase64url = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+
+/** The opaque cursor for a page that ended at `key`. */
+export const encodeCursor = (key: string): string => toBase64url(key)
+
+/** The key a cursor names, or null when it isn't one of ours. */
+export function decodeCursor(cursor: string): string | null {
+  try {
+    const bin = atob(cursor.replaceAll('-', '+').replaceAll('_', '/'))
+    const key = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bin, ch => ch.charCodeAt(0)))
+    return encodeCursor(key) === cursor ? key : null
+  } catch {
+    return null
+  }
+}
+
+/** `?limit=&cursor=` as a page request: the limit (1 to 100, default 50) and the key to start after. */
+export function readPage(request: Request): { ok: { limit: number; after: string | null } } | { error: Response } {
+  const q = readQuery(request, PageRequestSchema)
+  if ('error' in q) return q
+  if (q.ok.cursor === undefined) return { ok: { limit: q.ok.limit, after: null } }
+  const after = decodeCursor(q.ok.cursor)
+  return after === null ? { error: apiError('invalid') } : { ok: { limit: q.ok.limit, after } }
+}
