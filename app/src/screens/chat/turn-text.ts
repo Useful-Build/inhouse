@@ -19,6 +19,7 @@ export const FAILURE_TEXT: Record<TurnFailure, string> = {
   [FAIL.budgetBusy]: "This answer waited for others to finish and didn't get its turn. Try again in a minute.",
   [FAIL.poolFull]: 'Your Inhouse agent is busy right now. Try again in a moment.',
   [FAIL.unknown]: RUN_FAILED,
+  [FAIL.modelOff]: "The model for this answer is switched off, so it didn't run. Pick another model and ask again.",
 }
 
 /** Why a turn that was waiting never ran. Null: nothing to say (the person removed or deleted it). */
