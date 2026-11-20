@@ -20,10 +20,10 @@ export interface TableEntry {
   name: string
   retention: RetentionClass
   /**
-   * Where a person's member id sits: a column (d1), a field (do) or a key segment (r2, as `<memberId>` in the pattern);
-   * null when the store holds nothing of a person's.
+   * Every place a person's member id sits: a column (d1; `column:$.path` for a member id inside a JSON column), a field
+   * (do) or a key segment (r2, as `<memberId>` in the pattern). Empty when the store holds nothing of a person's.
    */
-  personKey: string | null
+  personKeys: readonly string[]
   /** Included in "Export everything" (P8). */
   export: boolean
 }

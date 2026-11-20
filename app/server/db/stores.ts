@@ -2,7 +2,7 @@
 // env (server/api.ts `ApiParts.stores`). Every method takes data and returns data: none hands out a statement, a
 // batch or a sub-store (the store contract in server/routes.ts), so the stores close cleanly after an access refusal.
 import type { AuditSink, AuthStores, GrantStore, MemberDirectory } from '../auth/stores.ts'
-import { auditInsert } from './audit.ts'
+import { AuditKeyMissingError, auditInsert } from './audit.ts'
 import type { AuditHook } from './audit.ts'
 import { grantStore } from './grants.ts'
 import { memberStore } from './members.ts'
@@ -30,7 +30,7 @@ export interface StoresEnv {
  */
 export function openStores(env: StoresEnv, hook?: AuditHook): Stores {
   const hashKey = env.AUDIT_HASH_KEY
-  if (!hashKey) throw new Error('AUDIT_HASH_KEY is not set')
+  if (!hashKey) throw new AuditKeyMissingError()
   const db = env.DB
   const members = memberStore({ db, hook })
   const audit: AuditSink = {

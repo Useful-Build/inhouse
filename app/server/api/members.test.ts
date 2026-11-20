@@ -2,7 +2,7 @@
 //  1. a body or query that breaks its schema reaches the data layer (no ifRev, a bad role, an extra field, a bad cursor);
 //  2. two writes with the same ifRev both apply; a conflict comes back without the current record;
 //  3. the log gains a line for a refused or conflicting write, or none for one that applied; the actor isn't a member id;
-//  4. paging skips or repeats a member, or lists a removed one;
+//  4. paging skips or repeats a member, or leaves out a removed one (history names them), or shows it as open;
 //  5. a second invite for an open email goes through.
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
@@ -117,23 +117,31 @@ describe('one write, one line (failure 3)', () => {
 })
 
 describe('paging (failure 4)', () => {
-  test.prop([fc.integer({ min: 0, max: 12 }), fc.integer({ min: 1, max: 5 }), fc.integer({ min: 0, max: 3 })], { numRuns: 15 })('every open member once, in id order, removed ones left out', async (n, limit, removedCount) => {
+  test.prop([fc.integer({ min: 0, max: 12 }), fc.integer({ min: 1, max: 5 }), fc.integer({ min: 0, max: 3 })], { numRuns: 15 })('every person row once, in id order, removed ones with their status', async (n, limit, removedCount) => {
     await reset(db)
     admin = await person(stores, { email: `padm-${uniq()}@example.test`, subject: `spadm-${uniq()}`, role: 'admin' })
     const ids = [admin]
     for (let i = 0; i < n; i++) ids.push((await invite({ name: 'Pip Example', email: `p${i}-${uniq()}@example.test`, role: 'member' })).body.id as string)
-    for (const id of ids.slice(1, 1 + removedCount)) await remove(id, `?ifRev=${await rev(id)}`)
-    const want = ids.filter((_, i) => i === 0 || i > removedCount).sort()
+    const removedIds = ids.slice(1, 1 + removedCount)
+    for (const id of removedIds) await remove(id, `?ifRev=${await rev(id)}`)
+    // Every person row the database holds (earlier runs' rows are removed by reset()), with its status.
+    const rows = (await db.prepare("SELECT id, status FROM members WHERE kind = 'person' ORDER BY id").all<{ id: string; status: string }>()).results
+    const want = rows.map(r => r.id)
+    expect(want).toEqual(expect.arrayContaining(ids))
+    const statusOf = new Map<string, string>()
     const seen: string[] = []
     let cursor: string | null = null
-    for (let pages = 0; pages < 50; pages++) {
+    for (let pages = 0; pages < 10_000; pages++) {
       const r = await json(listMembers(ctx(stores, as(), { path: `/api/members?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}` }).c))
       const page = pageOf(MemberRecordSchema).parse(r.body)
       expect(page.items.length).toBeLessThanOrEqual(limit)
       seen.push(...page.items.map(m => m.id))
+      for (const m of page.items) statusOf.set(m.id, m.status)
       cursor = page.nextCursor
       if (!cursor) break
     }
     expect(seen).toEqual(want)
+    for (const r of rows) expect(statusOf.get(r.id)).toBe(r.status)
+    for (const id of removedIds) expect(statusOf.get(id)).toBe('removed')
   })
 })

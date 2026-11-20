@@ -218,10 +218,13 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
 
     // ---------- the members routes ----------
 
-    /** One page of the team (people not removed), by id. */
+    /**
+     * One page of every person row (invited, active and removed, each with its status; a pseudonymised one under its
+     * pseudonym), by id: history names removed people too. The Members page shows the open ones.
+     */
     async list(page: { limit: number; afterId: string | null }): Promise<{ items: MemberRecord[]; lastId: string | null }> {
       const rows = await all<MemberRow>(db, stmt(
-        `SELECT * FROM members WHERE kind = 'person' AND ${OPEN} AND id > ? ORDER BY id LIMIT ?`, page.afterId ?? '', page.limit + 1,
+        `SELECT * FROM members WHERE kind = 'person' AND id > ? ORDER BY id LIMIT ?`, page.afterId ?? '', page.limit + 1,
       ))
       const more = rows.length > page.limit
       const items = rows.slice(0, page.limit).map(memberRecord)
@@ -322,13 +325,13 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
     row,
 
     /**
-     * P8's person deletion (no route until then): the row keeps its id and becomes "Former member"; title, email and
-     * photo key go; the audit log is untouched (decision Q3). Never the last active Admin. Writes no audit line.
+     * P8's person deletion (no route until then): the row keeps its id and becomes "Former member"; title, email,
+     * photo key and Access subject go (the identity can be invited again as someone new); the audit log is untouched (decision Q3). Never the last active Admin. Writes no audit line.
      */
     async pseudonymise(id: string, at: At): Promise<{ ok: MemberRecord } | { refused: 'not_found' | 'last_admin' }> {
       const stamp = writeStamp(at.requestId)
       const [change] = await runBatch(db, [stmt(
-        `UPDATE members SET name = ?, title = NULL, email_norm = NULL, photo_key = NULL, status = 'removed',
+        `UPDATE members SET name = ?, title = NULL, email_norm = NULL, photo_key = NULL, subject = NULL, status = 'removed',
            removed_at_ms = COALESCE(removed_at_ms, ?), pseudonymised_at_ms = ?, rev = rev + 1, req_id = ?
          WHERE id = ? AND kind = 'person' AND pseudonymised_at_ms IS NULL
            AND (role <> 'admin' OR status <> 'active' OR ${ANOTHER_ADMIN})`,

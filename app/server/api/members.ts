@@ -6,7 +6,7 @@ import { apiError, apiJson } from '../http.ts'
 import { encodeCursor, readBody, readPage, readQuery, storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
 
-/** `GET /api/members?cursor&limit`: the people on the team (invited and active), by id. */
+/** `GET /api/members?cursor&limit`: every person row with its status (removed ones too, for history), by id. */
 export async function listMembers(c: ApiCtx): Promise<Response> {
   const page = readPage(c.request)
   if ('error' in page) return page.error

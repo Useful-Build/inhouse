@@ -14,7 +14,7 @@ export interface Seeded {
 
 export async function seedBrand(db: D1Database, stores: Stores, nowMs: number): Promise<Seeded> {
   const people = await db.prepare("SELECT COUNT(*) AS n FROM members WHERE kind = 'person'").first<number>('n')
-  if (people !== 0) throw new Error('seed: this database already has people; seed a fresh one')
+  if (people !== 0) throw new Error('seed: this database already has people (seeded before, or a seed that failed part way)')
   let tick = 0
   const at = (actorId: string): At => ({ actorId, requestId: `seed-${crypto.randomUUID()}`, nowMs: nowMs + tick++ * 60_000 })
   const signIn = async (p: { subject: string; email: string }) => {

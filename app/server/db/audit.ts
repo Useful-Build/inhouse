@@ -41,6 +41,14 @@ export function auditInsert(line: LineInput, guard: Guard | null): Stmt {
   )
 }
 
+/** `AUDIT_HASH_KEY` is unset: logged by name (api.ts logs `err.name`), so the 503's cause is plain in the logs. */
+export class AuditKeyMissingError extends Error {
+  constructor() {
+    super('AUDIT_HASH_KEY is not set')
+    this.name = 'AuditKeyMissingError'
+  }
+}
+
 const keys = new Map<string, Promise<CryptoKey>>()
 
 /**
@@ -48,7 +56,7 @@ const keys = new Map<string, Promise<CryptoKey>>()
  * same value always gives the same hash (so two lines can be compared), and the key never leaves the Worker.
  */
 export async function redact(hashKey: string, value: string): Promise<{ len: number; hash: string }> {
-  if (!hashKey) throw new Error('AUDIT_HASH_KEY is not set')
+  if (!hashKey) throw new AuditKeyMissingError()
   let key = keys.get(hashKey)
   if (!key) {
     key = crypto.subtle.importKey('raw', new TextEncoder().encode(hashKey), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])

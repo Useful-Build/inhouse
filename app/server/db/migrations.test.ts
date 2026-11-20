@@ -41,6 +41,18 @@ describe('the audit log is append-only (failure 2)', () => {
     expect(await db.prepare("SELECT name FROM members WHERE id = 'm_smoke'").first('name')).toBe('Smoke check')
   })
 
+  it('refuses an insert onto an existing id (REPLACE INTO, INSERT OR REPLACE); a new line still goes in', async () => {
+    const { meta } = await line()
+    const id = meta.last_row_id
+    for (const verb of ['REPLACE INTO', 'INSERT OR REPLACE INTO']) {
+      await expect(db.prepare(`${verb} audit_log (id, at_ms, actor_id, action, args_json, req_id) VALUES (?, 2, 'm_system', 'x', '{}', 'r2')`).bind(id).run()).rejects.toThrow(/append-only/)
+    }
+    expect(await db.prepare('SELECT action FROM audit_log WHERE id = ?').bind(id).first('action')).toBe('grant.expired')
+    const next = await line()
+    expect(next.meta.last_row_id).toBeGreaterThan(id)
+    expect((await db.prepare('INSERT INTO audit_log (id, at_ms, actor_id, action, req_id) VALUES (?, 1, ?, ?, ?)').bind(next.meta.last_row_id + 10, 'm_system', 'grant.expired', 'r').run()).meta.changes).toBe(1)
+  })
+
   it('names its actor by a member row (foreign key)', async () => {
     await expect(db.prepare("INSERT INTO audit_log (at_ms, actor_id, action, req_id) VALUES (1, 'm_nobody', 'grant.expired', 'r')").run()).rejects.toThrow(/FOREIGN KEY/)
   })

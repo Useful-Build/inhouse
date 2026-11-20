@@ -6,7 +6,8 @@
 //  4. some sequence of role changes and removals leaves no active Admin;
 //  5. a change applies while its audit line fails (not one transaction);
 //  6. a brand-app sign-in yields an Inhouse or service principal;
-//  7. pseudonymising loses the id or edits the audit log.
+//  7. pseudonymising loses the id or edits the audit log, or keeps the Access subject (the same identity, invited again,
+//     would then be refused as removed instead of binding the new invite).
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -220,5 +221,26 @@ describe('pseudonymise (failure 7)', () => {
     expect(await linesSince(db, 0)).toEqual(lines)
     expect(await stores.members.pseudonymise(admin, at(admin))).toEqual({ refused: 'last_admin' })
     expect(await stores.members.profile(id)).toEqual({ name: 'Former member', email: null, photoKey: null })
+    const listed = []
+    for (let after: string | null = null, page = await stores.members.list({ limit: 100, afterId: null }); ; page = await stores.members.list({ limit: 100, afterId: after })) {
+      listed.push(...page.items)
+      if (page.lastId === null) break
+      after = page.lastId
+    }
+    expect(listed.find(m => m.id === id)).toMatchObject({ name: 'Former member', status: 'removed', email: null })
+  })
+
+  it('clears the subject: the same identity, invited again, binds to the new invite', async () => {
+    const k = uniq()
+    const admin = await person(stores, { email: `l0-${k}@example.test`, subject: `sl0-${k}`, role: 'admin' })
+    const email = `l1-${k}@example.test`
+    const old = await person(stores, { email, subject: `sl1-${k}`, role: 'member' })
+    expect(await stores.members.pseudonymise(old, at(admin))).toHaveProperty('ok')
+    expect((await row(old))!.subject).toBeNull()
+    const again = await stores.members.invite({ name: 'Lou Example', email, role: 'member' }, at(admin))
+    if (!('ok' in again)) throw new Error('expected an invite')
+    expect(again.ok.id).not.toBe(old)
+    expect(await signIn(`sl1-${k}`, email)).toMatchObject({ ok: { memberId: again.ok.id } })
+    expect(await row(old)).toMatchObject({ status: 'removed', subject: null })
   })
 })

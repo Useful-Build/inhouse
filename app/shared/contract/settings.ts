@@ -115,7 +115,7 @@ export const SettingRecordSchema = z.object({
 export type SettingRecord = z.infer<typeof SettingRecordSchema>
 
 /** `PUT /api/settings/<scope>/:key`: the value (checked against the key's spec, or null to reset) and the rev last read. */
-export const SettingWriteInputSchema = z.object({ value: z.unknown(), ifRev: z.number().int().min(0) }).strict()
+export const SettingWriteInputSchema = z.object({ value: z.unknown(), ifRev: z.number().int().min(0).max(999_999_999) }).strict()
   .refine(v => v.value !== undefined, { path: ['value'], message: 'Required (null resets)' })
 
 /** `GET /api/settings/<scope>`: every key of the scope that has a value or a history. A key not listed was never set (rev 0). */

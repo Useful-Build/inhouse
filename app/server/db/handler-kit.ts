@@ -26,18 +26,46 @@ export function writer(c: ApiCtx): At {
   return { actorId: p.memberId, requestId: c.requestId, nowMs: c.nowMs }
 }
 
-/** The bodies these routes take are small; anything past this is refused unread. */
-const MAX_BODY_BYTES = 16 * 1024
+/** The bodies these routes take are small; anything past this many bytes is refused. */
+export const MAX_BODY_BYTES = 16 * 1024
 
-/** The JSON body parsed by `schema`, or the 400 `invalid` answer. */
+/**
+ * The body's bytes, read from the stream and counted as they arrive: null past `max` bytes, whatever `Content-Length`
+ * says or whether it's sent at all (a chunked body has none). Stops reading at the cap.
+ */
+async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
+  const declared = request.headers.get('Content-Length')
+  if (declared !== null && Number(declared) > max) return null
+  if (!request.body) return new Uint8Array()
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > max) {
+      await reader.cancel()
+      return null
+    }
+    chunks.push(value)
+  }
+  const out = new Uint8Array(size)
+  let at = 0
+  for (const c of chunks) {
+    out.set(c, at)
+    at += c.byteLength
+  }
+  return out
+}
+
+/** The JSON body parsed by `schema`, or the 400 `invalid` answer (over the cap, not UTF-8, not JSON, or off-schema). */
 export async function readBody<S extends z.ZodType>(request: Request, schema: S): Promise<{ ok: z.infer<S> } | { error: Response }> {
-  const declared = Number(request.headers.get('Content-Length') ?? '0')
-  if (declared > MAX_BODY_BYTES) return { error: apiError('invalid') }
-  const text = await request.text()
-  if (text.length > MAX_BODY_BYTES) return { error: apiError('invalid') }
+  const bytes = await readCapped(request, MAX_BODY_BYTES)
+  if (bytes === null) return { error: apiError('invalid') }
   let json: unknown
   try {
-    json = JSON.parse(text)
+    json = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
   } catch {
     return { error: apiError('invalid') }
   }
