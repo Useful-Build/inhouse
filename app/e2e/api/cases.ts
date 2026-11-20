@@ -58,6 +58,7 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/grants/:id/end': { design: d('baseline', ['admin']), path: `/api/grants/${NO_GRANT}/end`, json: {}, passes: 400 },
   'GET /api/audit': { design: d('brand_data', ALL), path: '/api/audit', passes: 200 },
   'GET /api/audit/export.csv': { design: d('brand_data', ALL), path: '/api/audit/export.csv', passes: 200 },
+  // Class 'report' is the agreed change from PR0b (server/auth/matrix.ts:15): both hosts post it, never a service token.
   'POST /api/client-error': { design: d('report', ALL), path: '/api/client-error', json: {}, passes: 204 },
 }
 

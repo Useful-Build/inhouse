@@ -13,7 +13,7 @@ test.describe('ifRev on a setting', () => {
   type Scope = 'personal' | 'brand' | 'technical'
   // Any key of the kind will do: the registry names one and the values it takes.
   const make = (name: string, who: typeof admin, scope: Scope, kind: 'bool' | 'enum') => {
-    const key = someKey(scope, kind, scope === 'technical' ? ['stage'] : [])
+    const key = someKey(scope, kind, scope === 'technical' ? ['stage', 'd:chats'] : [])
     return { name, who, scope, key, first: sampleValue(key, 0), second: sampleValue(key, 1) }
   }
   const cases = [
@@ -92,13 +92,15 @@ test.describe('ifRev on members and grants', () => {
 
 test.describe('paging', () => {
   test.beforeAll(async ({ request }) => {
-    // Enough lines for several pages at limit 2 or 3, whatever ran before: invites are cheap writes by the Admin.
     // Past 100 lines, so a cursor that stops early at the page maximum fails the totals below.
-    do {
+    const count = () => readSql<{ n: number }>('SELECT COUNT(*) AS n FROM audit_log')[0].n
+    const shortfall = Math.max(0, 101 - count())
+    for (let i = 0; i < shortfall; i++) {
       const who = newIdentity('page')
       const r = await call(request, admin, 'POST', '/api/members/invites', { json: { name: who.name, email: who.email, role: 'member' } })
       expect(r.status, r.text).toBe(201)
-    } while (readSql<{ n: number }>('SELECT COUNT(*) AS n FROM audit_log')[0].n <= 100)
+    }
+    expect(count(), 'invites write one line each').toBeGreaterThan(100)
   })
 
   test('the audit log pages newest first to a null cursor with no line twice, and the pages add up to the whole', async ({ request }) => {
