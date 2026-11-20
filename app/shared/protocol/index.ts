@@ -108,8 +108,9 @@ export const RunStartFields = z.strictObject({
   systemPrompt: z.string().refine((p) => utf8.encode(p).length <= SYSTEM_PROMPT_MAX_BYTES, { message: `system prompt over ${SYSTEM_PROMPT_MAX_BYTES} bytes` }),
   /**
    * This turn's attachments, paths under `inputs/`: restored first; the Worker names them in the prompt. Each is a name
-   * the files route can carry (`badFileName`: no empty, `.` or `..` segment, `#`, `\` or unpaired surrogate, so not
-   * `inputs/` alone), and none twice.
+   * the files route can carry (`badFileName`: no empty, `.` or `..` segment, `#`, `\`, control character, segment over
+   * 255 UTF-8 bytes or unpaired surrogate, so not `inputs/` alone), and none twice. The 1,024-character cap is the whole
+   * path's: a path that long has several segments.
    */
   attachments: z
     .array(FilePath.startsWith('inputs/').refine((p) => !badFileName(p), { message: 'a name the files route cannot carry' }))
@@ -171,7 +172,10 @@ export const SDK_MESSAGE_MAX_BYTES = 256 * 1024
 export const FailureReason = z.enum(['session_crashed', 'protocol', 'store', 'files', 'interrupted', 'stopped', 'timeout', 'sdk_error'])
 export type FailureReason = z.infer<typeof FailureReason>
 
-/** `bad_name`: a name the files route can't carry (a `#` or `\`, a `.` or `..` segment, an unpaired surrogate). */
+/**
+ * `bad_name`: a name the files route can't carry (a `#` or `\`, a `.` or `..` segment, a control character, a segment
+ * over 255 UTF-8 bytes, an unpaired surrogate).
+ */
 export const FileRefusalReason = z.enum(['too_large', 'too_many', 'type_not_allowed', 'save_failed', 'bad_name'])
 
 /** Caps on the open shapes a session sends, as JSON bytes. An event over one fails the parse (`protocol`). */

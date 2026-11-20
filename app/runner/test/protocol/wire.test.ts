@@ -151,7 +151,16 @@ describe('RunStart', () => {
     expect(refused.error?.issues[0]?.path).toEqual(['prompt'])
   })
 
+  /** A 1,024-character path under `inputs/` from segments of at most 255 UTF-8 bytes ('€' is three), `first` leading. */
+  const longPath = (first: string) => {
+    let path = `inputs/${first}${'€'.repeat(85 - first.length)}`
+    while (path.length < 1024) path += `/${'€'.repeat(Math.min(85, 1024 - path.length - 1))}`
+    return path
+  }
+
   it('a RunStart at every field cap, its prompt written in the longest escapes, fits the body cap', () => {
+    expect(longPath('0')).toHaveLength(1024)
+    expect(longPath('0').split('/').slice(1).every((s) => new TextEncoder().encode(s).length <= 255)).toBe(true)
     const start: RunStart = {
       runId: 'r'.repeat(64),
       chatId: 'c'.repeat(64),
@@ -163,8 +172,10 @@ describe('RunStart', () => {
       sideModel: 'h'.repeat(128),
       // One byte of UTF-8 each, six in JSON.
       systemPrompt: '\u0001'.repeat(SYSTEM_PROMPT_MAX_BYTES),
-      // Each unique (a digit first), the rest six bytes each in JSON.
-      attachments: Array.from({ length: ATTACHMENTS_MAX }, (_, i) => `inputs/${i}${'\u0001'.repeat(1024 - 8)}`),
+      // Each unique (a digit first) and 1,024 characters long. A file name can't hold a control character (six bytes in
+      // JSON) or a segment over 255 UTF-8 bytes, so the longest JSON per character is a three-byte one ('€'), 85 to a
+      // 255-byte segment.
+      attachments: Array.from({ length: ATTACHMENTS_MAX }, (_, i) => longPath(`${i}`)),
       expect: { mainEntries: Number.MAX_SAFE_INTEGER, lastUuid: '\u0001'.repeat(256), lastUuidIndex: Number.MAX_SAFE_INTEGER - 1 },
       effort: 'medium',
       maxTurns: 500,
@@ -388,8 +399,15 @@ describe('RunStart v2 limits', () => {
     expect(ok({ ...first, attachments: paths(11) })).toBe(false)
     expect(ok({ ...first, attachments: ['outputs/a.pdf'] })).toBe(false)
     expect(ok({ ...first, attachments: ['a.pdf'] })).toBe(false)
-    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(1017)}`] })).toBe(true)
-    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(1018)}`] })).toBe(false)
+    // The path cap (1,024 characters) from segments at the 255-byte limit; one character more is refused.
+    const at = (last: number) => `inputs/${'a'.repeat(255)}/${'a'.repeat(255)}/${'a'.repeat(255)}/${'a'.repeat(last)}`
+    expect(at(249)).toHaveLength(1024)
+    expect(ok({ ...first, attachments: [at(249)] })).toBe(true)
+    expect(ok({ ...first, attachments: [at(250)] })).toBe(false)
+    // A segment of 255 bytes is carried; 256 is refused (the shared name rule), also when the bytes are multi-byte.
+    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(255)}`] })).toBe(true)
+    expect(ok({ ...first, attachments: [`inputs/${'a'.repeat(256)}`] })).toBe(false)
+    expect(ok({ ...first, attachments: [`inputs/${'é'.repeat(128)}`] })).toBe(false)
   })
 
   it('webFetchDomains: null (any public host), a list, or [] (none); never a missing key or a bad host', () => {
