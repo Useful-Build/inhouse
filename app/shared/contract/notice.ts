@@ -1,6 +1,6 @@
 // Notices (what a write or a hold tells the person) and the bell's notifications.
 import { z } from 'zod'
-import { AgentErrorCodeSchema } from './common.ts'
+import { AgentErrorCodeSchema, InstantSchema } from './common.ts'
 
 export const AgentNoticeSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('approval.sent'), id: z.string(), text: z.string() }),
@@ -24,8 +24,7 @@ export const AgentNotificationSchema = z.object({
   who: z.string(),
   /** A person's name when one did it: the bell shows their avatar. */
   person: z.string().optional(),
-  /** When, as shown. */
-  at: z.string(),
+  at: InstantSchema,
   unread: z.boolean(),
   /** It says something is waiting for the person: "You're all caught up" never shows above it. */
   waiting: z.boolean().optional(),

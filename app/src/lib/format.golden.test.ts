@@ -1,15 +1,15 @@
-// The golden file of display strings (P1, C1): every sample value that is an instant, an amount, a schedule time or a
-// duration, as the UI shows it before C1 changes any formatter. The keys name where the string shows; the values are what
-// today's code writes there. Written by `npx vitest run src/lib/format.golden.test.ts -u` (a file snapshot); a plain run
-// checks that today's code still writes exactly what the file holds. C1's differential test takes over this file:
-// the new formatters, fed the new `{ iso, ms }`, `{ minor, currency }`, `{ hour, minute }` and ms values, must write the
-// same strings.
+// The differential test of C1 (P1): the golden file holds every display string the UI showed before C1, for every sample
+// value that is an instant, an amount, a schedule time or a duration, captured from the code before any formatter
+// changed (PR #58). The keys name where the string shows. This test writes the same strings with the C1 formatters in
+// format.ts, fed the new `{ iso, ms }`, `{ minor, currency }`, `{ hour, minute }` and ms values, and checks they equal
+// the file exactly. The file is never rewritten: a string that differs is a change on screen.
 // The strings that change with the stage or the scenario (chats, Library, Activity, the audit log, the bell, problems,
 // tools and routines) are captured in Act on a normal day, then again in Watch, in Run and on the First day: a variant
 // is written as `<key>@<variant>` only where its string differs from Act's or Act has no such key.
 import { expect, test, vi } from 'vitest'
 import tracesJson from '@sample/traces.json'
-import type { AgentData, AgentState, RoutineCard, RunEvent, Scenario, Stage, StageIndex, Trace } from '../agent/types'
+import golden from './format.golden.json'
+import type { AgentData, AgentState, Instant, RoutineCard, RunEvent, Scenario, Stage, StageIndex, Trace } from '../agent/types'
 
 // The mock reads and writes localStorage when it starts: an empty one in memory, so it starts fresh and quietly.
 const store = new Map<string, string>()
@@ -19,42 +19,20 @@ vi.stubGlobal('localStorage', {
   removeItem: (k: string) => { store.delete(k) },
 })
 const { MockAgent } = await import('../agent/mock')
-const { DEMO_LATEST, DEMO_START, demoNow, fmtCount, fmtDay, fmtTime, fmtWeekday, parseLocal } = await import('../agent/clock')
-const { capStatus, defaultModeId, fmtSeconds, toolView, whenOf } = await import('../state/derive')
+const { instantOf } = await import('./format')
+const { DEMO_LATEST, DEMO_START, demoNow } = await import('../agent/clock')
+const { capStatus, defaultModeId, lastRunLine, sinceLine, toolView, usageSummary, whenOf } = await import('../state/derive')
 const { checkField } = await import('../screens/settings/content')
+const F = await import('./format')
+const { display, nowOf } = await import('../state/display')
+const d = display()
 
-// Two screen-local formatters, copied as they are today (C1 moves both into format.ts):
-/** src/screens/Usage.tsx:15, the Usage page's amounts. */
-const usageMoney = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-/** src/screens/settings/content.ts:206, the Settings rows "Monthly cap" and "Spent so far". */
-const settingsCap = (cap: number) => `$${cap}`
-const settingsSpent = (spent: number) => `$${spent.toFixed(2)}`
-/** src/screens/Usage.tsx:64-73, the sentence under the month's amount and the note beside the cap bar, as they are today. */
-const usageHeader = (m: { total: number; cap: number; alertAt: number; daily: number[] }, thisMonth: boolean, reached: boolean) => {
-  const { total, daily: days } = m
-  const pct = Math.min(100, Math.round(total / m.cap * 100)) + '%'
-  const over = total > m.cap
-  const cap = thisMonth && reached
-  const hint = !thisMonth
-    ? over ? `Went over your $${fmtCount(m.cap)} cap` : `Finished under your $${fmtCount(m.cap)} cap`
-    : cap
-      ? `Cap reached with ${30 - days.length} days of the month left`
-      : `On track for about $${fmtCount(Math.round(total / days.length * 30))} this month, ${total / days.length * 30 > m.cap ? 'over' : 'under'} your cap`
-  const capNote = !thisMonth
-    ? over ? `Closed at ${Math.round(total / m.cap * 100)}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
-    : cap
-      ? 'Cap reached today. Routines and jobs are paused until an admin raises it.'
-      : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses routines and jobs at the cap.`
-  return { hint, capNote }
-}
-/** src/overlays/TraceWindow.tsx:41 and :103-105, the time axis over the steps. */
-const TICK_CANDIDATES = [0.5, 1, 2, 5, 10, 15, 20, 30, 50, 60, 100, 120]
-const traceTicks = (D: number) => {
-  const stepT = TICK_CANDIDATES.find(c => D / c <= 3.2) ?? 120
-  const ticks: string[] = []
-  for (let v = 0; v <= D; v += stepT) ticks.push(v === 0 ? '0s' : fmtSeconds(v))
-  return ticks
-}
+/** Now on the demo clock: what relative labels ("Today", "Yesterday") are measured from. */
+const now = () => nowOf(agent.getSnapshot())
+// Each call site's own helper from format.ts, so this checks the code the screen runs: fmtUsageMoney and fmtSpentOfCap
+// (src/screens/Usage.tsx), fmtNextRun (src/screens/chat/Parts.tsx), fmtAuditDay, fmtCapSetting and fmtSpentSetting
+// (src/screens/settings/content.ts), traceTicks (src/overlays/TraceWindow.tsx) and fmtAnswerBar (src/screens/Chats.tsx).
+const usageMoney = (major: number) => F.fmtUsageMoney(major, 'USD', d)
 
 const agent = new MockAgent()
 const SCENARIO_KEY: Record<Scenario, string> = { Normal: 'normal', 'First day': 'firstDay', Loading: 'loading', 'Tool disconnected': 'toolDisconnected', 'Cap reached': 'capReached' }
@@ -83,17 +61,17 @@ function stageSections(stage: Stage, scenario: Scenario): Record<string, string>
 
   // ---------- chats: the list's time or date and its group, the work rows and the routine cards
   for (const c of data.chat.chats) {
-    put(`chats.${c.id}.at`, c.at)
-    put(`chats.${c.id}.day`, c.day)
+    put(`chats.${c.id}.at`, F.fmtWhen(c.at, now(), d))
+    put(`chats.${c.id}.day`, F.fmtDayGroup(c.at, now(), d))
     c.turns.forEach((t, ti) => {
       if (t.role !== 'agent') return
       t.parts.forEach((p, pi) => {
         const k = `chats.${c.id}.turn${ti}.part${pi}`
-        if (p.type === 'workRow') put(`${k}.time`, p.time)
+        if (p.type === 'workRow') put(`${k}.time`, F.fmtTime(p.at, d))
         if (p.type === 'routine') {
-          put(`${k}.routine.time`, p.routine.time)
+          put(`${k}.routine.time`, F.fmtClock(p.routine.time, d))
           put(`${k}.routine.when`, whenOf(p.routine))
-          put(`${k}.routine.next`, p.routine.next)
+          put(`${k}.routine.next`, F.fmtNextRun(p.routine.next, d))
         }
       })
     })
@@ -101,55 +79,55 @@ function stageSections(stage: Stage, scenario: Scenario): Record<string, string>
 
   // ---------- Library: the card's date, the viewer's Date row and a media file's length
   for (const f of agent.listFiles()) {
-    put(`library.${f.id}.date`, f.date)
-    put(`library.${f.id}.viewerDate`, `${fmtWeekday(parseLocal(f.at))}, ${fmtTime(parseLocal(f.at))}`)
-    if (f.duration !== undefined) put(`library.${f.id}.duration`, f.duration)
+    put(`library.${f.id}.date`, F.fmtWhen(f.at, now(), d))
+    put(`library.${f.id}.viewerDate`, F.fmtWeekdayTime(f.at, d))
+    if (f.durationMs !== undefined) put(`library.${f.id}.duration`, F.fmtMediaLength(f.durationMs, d))
   }
 
   // ---------- Activity's fixed lines and the audit log
-  data.activity.today.forEach((l, i) => put(`activity.today.${i}.t`, l.t))
+  data.activity.today.forEach((l, i) => put(`activity.today.${i}.t`, F.fmtTime(l.at, d)))
   data.activity.earlier.forEach((l, i) => {
-    put(`activity.earlier.${i}.day`, l.day ?? '')
-    put(`activity.earlier.${i}.t`, l.t)
+    put(`activity.earlier.${i}.day`, F.fmtWeekday(l.at, d))
+    put(`activity.earlier.${i}.t`, F.fmtTime(l.at, d))
   })
   data.auditLog.forEach((e, i) => {
-    put(`audit.${i}.day`, e.day)
-    put(`audit.${i}.at`, e.at)
+    put(`audit.${i}.day`, F.fmtAuditDay(e.at, now(), d))
+    put(`audit.${i}.at`, F.fmtWhen(e.at, now(), d))
   })
 
   // ---------- the bell
-  for (const n of agent.listNotifications()) put(`notifications.${n.id}.at`, n.at)
+  for (const n of agent.listNotifications()) put(`notifications.${n.id}.at`, F.fmtWhen(n.at, now(), d))
 
   // ---------- problems: the amount on the card and when the draft was made
   for (const p of data.problems) {
-    put(`problems.${p.id}.cost`, p.cost)
-    put(`problems.${p.id}.draftedAt`, p.draftedAt)
+    put(`problems.${p.id}.cost`, F.fmtMoney(p.cost, d))
+    put(`problems.${p.id}.draftedAt`, F.fmtTime(p.draftedAt, d))
   }
 
   // ---------- tools and channels: connected since, last read, going live
   for (const key of Object.keys(data.tools.details)) {
     const v = toolView(ctx, key)
-    put(`tools.${key}.since`, data.tools.details[key].since)
+    put(`tools.${key}.since`, sinceLine(data.tools.details[key], d))
     put(`tools.${key}.listLine`, v.listLine)
     put(`tools.${key}.connectedRow`, v.connectedRow)
     put(`tools.${key}.lastRead`, v.lastRead)
   }
-  for (const c of data.tools.channels) put(`channels.${c.key}.since`, c.since)
+  for (const c of data.tools.channels) put(`channels.${c.key}.since`, F.fmtDay(c.since, d))
 
   // ---------- routines: the schedule, the next run and the last run
   for (const r of data.routines) {
-    put(`routines.${r.id}.time`, r.time)
+    put(`routines.${r.id}.time`, F.fmtClock(r.time, d))
     put(`routines.${r.id}.when`, whenOf(r))
-    put(`routines.${r.id}.next`, r.next)
-    if (r.last !== undefined) put(`routines.${r.id}.last`, r.last)
+    put(`routines.${r.id}.next`, F.fmtWeekdayAt(r.next, d))
+    if (r.last !== undefined) put(`routines.${r.id}.last`, lastRunLine(r.last, now()))
   }
   return out
 }
 
-/** The answer bar under an answer given in this session (src/screens/Chats.tsx:280): mode, steps, time taken and when. */
-const answerBar = (data: AgentData, trace: Trace, at: number) => {
-  const modelLabel = data.models.find(x => x.id === defaultModeId(data, agent.getSnapshot().settings))?.label
-  return [modelLabel, `${trace.steps.length - 1} steps`, fmtSeconds(trace.duration), fmtTime(new Date(at))].filter(Boolean).join(' · ')
+/** The answer bar under an answer given in this session (src/screens/Chats.tsx): mode, steps, time taken and when. */
+const answerBar = (data: AgentData, trace: Trace, at: Instant) => {
+  const model = data.models.find(x => x.id === defaultModeId(data, agent.getSnapshot().settings))?.label
+  return F.fmtAnswerBar({ model, steps: trace.steps.length - 1, durationMs: trace.durationMs, at }, d)
 }
 
 /** Asks for a routine in a chat and returns the card it made, with the answer bar's text as the store stamps it. */
@@ -163,7 +141,7 @@ async function askRoutine(chatId: string, q: string): Promise<{ routine: Routine
       if (ev.type === 'part') {
         const trace = agent.getTrace(ev.trace)
         if (!trace) throw new Error(`No trace ${ev.trace}`)
-        bars.push(answerBar(agent.read(), trace, demoNow(agent.getSnapshot().demoStartedAt).getTime()))
+        bars.push(answerBar(agent.read(), trace, instantOf(now())))
       }
     }
   })()
@@ -192,12 +170,12 @@ async function capture(): Promise<Record<string, string>> {
   const put = putter(out)
 
   // ---------- the demo clock: what every stamp (approved, set aside, paused, Run now, a chat started) is written with
-  put('clock.start.time', fmtTime(DEMO_START))
-  put('clock.start.day', fmtDay(DEMO_START))
-  put('clock.start.weekday', fmtWeekday(DEMO_START))
-  put('clock.latest.time', fmtTime(DEMO_LATEST))
-  put('clock.plus3min.time', fmtTime(demoNow(0, 3 * 60_000)))
-  put('clock.plus1h59.time', fmtTime(demoNow(0, 119 * 60_000)))
+  put('clock.start.time', F.fmtTime(DEMO_START.getTime(), d))
+  put('clock.start.day', F.fmtDay(DEMO_START.getTime(), d))
+  put('clock.start.weekday', F.fmtWeekday(DEMO_START.getTime(), d))
+  put('clock.latest.time', F.fmtTime(DEMO_LATEST.getTime(), d))
+  put('clock.plus3min.time', F.fmtTime(demoNow(0, 3 * 60_000).getTime(), d))
+  put('clock.plus1h59.time', F.fmtTime(demoNow(0, 119 * 60_000).getTime(), d))
 
   // ---------- the stage sections: Act on a normal day in full, then each variant where it differs
   const base = stageSections('Act', 'Normal')
@@ -209,24 +187,25 @@ async function capture(): Promise<Record<string, string>> {
   // ---------- Tools: the disconnected scenario
   const disc = at('Act', 'Tool disconnected')
   const lost = disc.data.scenarios.toolDisconnected
-  put('scenarios.toolDisconnected.at', lost.at)
+  put('scenarios.toolDisconnected.at', F.fmtTime(lost.at, d))
   put(`scenarios.toolDisconnected.${lost.tool}.statusText`, toolView(disc.ctx, lost.tool).statusText)
   put(`scenarios.toolDisconnected.${lost.tool}.lastRead`, toolView(disc.ctx, lost.tool).lastRead)
 
   // ---------- traces: cost, how long the run and each step took
   const traceLines = (prefix: string, t: Trace) => {
-    put(`${prefix}.cost`, t.cost)
-    put(`${prefix}.duration`, fmtSeconds(t.duration))
-    t.steps.forEach((s, i) => put(`${prefix}.steps.${i}`, fmtSeconds(s.end - s.start)))
-    // The trace window (src/overlays/TraceWindow.tsx:105,154,193-194): the axis, a failed step on a phone and on a
-    // computer, and the top row with the run's cost.
-    put(`${prefix}.ticks`, traceTicks(t.duration).join(' | '))
+    const cost = F.fmtMoney(t.cost, d, { cents: 'always' })
+    put(`${prefix}.cost`, cost)
+    put(`${prefix}.duration`, F.fmtDuration(t.durationMs, d))
+    t.steps.forEach((s, i) => put(`${prefix}.steps.${i}`, F.fmtDuration(s.endMs - s.startMs, d)))
+    // The trace window (src/overlays/TraceWindow.tsx): the axis, a failed step on a phone and on a computer, and the top
+    // row with the run's cost.
+    put(`${prefix}.ticks`, F.traceTicks(t.durationMs, d).map(k => k.label).join(' | '))
     t.steps.forEach((s, i) => {
       if (s.kind === 'fail') {
-        put(`${prefix}.steps.${i}.phone`, 'Failed after ' + fmtSeconds(Math.max(0, s.end - s.start)))
-        put(`${prefix}.steps.${i}.row`, 'failed after ' + fmtSeconds(Math.max(0, s.end - s.start)))
+        put(`${prefix}.steps.${i}.phone`, 'Failed after ' + F.fmtDuration(Math.max(0, s.endMs - s.startMs), d))
+        put(`${prefix}.steps.${i}.row`, 'failed after ' + F.fmtDuration(Math.max(0, s.endMs - s.startMs), d))
       }
-      if (s.kind === 'root') put(`${prefix}.steps.${i}.row`, fmtSeconds(s.end - s.start) + ' · ' + t.cost)
+      if (s.kind === 'root') put(`${prefix}.steps.${i}.row`, F.fmtDuration(s.endMs - s.startMs, d) + ' · ' + cost)
     })
   }
   const traceIds = Object.keys(tracesJson.traces)
@@ -245,20 +224,22 @@ async function capture(): Promise<Record<string, string>> {
     const status = capStatus(u.ctx)
     const s = SCENARIO_KEY[sc]
     put(`usage.${s}.capBanner`, status.bannerText)
-    put(`usage.${s}.settings.cap`, settingsCap(u.data.usage.cap))
-    put(`usage.${s}.settings.spent`, settingsSpent(status.spent))
+    // src/screens/settings/content.ts: the Settings rows "Monthly cap" (a field's value) and "Spent so far".
+    put(`usage.${s}.settings.cap`, F.fmtCapSetting(u.data.usage.cap, d))
+    put(`usage.${s}.settings.spent`, F.fmtSpentSetting(status.spent, d))
     for (const m of u.data.usageMonths) {
       const k = `usage.${s}.${m.month}`
       const thisMonth = m === u.data.usageMonths[0]
-      const head = usageHeader(thisMonth ? { ...m, cap: status.cap, alertAt: status.alertAt } : m, thisMonth, status.reached)
+      const head = usageSummary(thisMonth ? { ...m, cap: status.cap, alertAt: status.alertAt } : m, thisMonth, thisMonth && status.reached)
+      const total = F.majorOf(m.total), daily = m.daily.map(F.majorOf)
       put(`${k}.hint`, head.hint)
       put(`${k}.capNote`, head.capNote)
-      put(`${k}.card`, `${usageMoney(m.total)} of $${fmtCount(m.cap)}`)
-      put(`${k}.capHint`, `$${fmtCount(m.cap)}`)
-      put(`${k}.projection`, `$${fmtCount(Math.round(m.total / m.daily.length * 30))}`)
-      put(`${k}.peak`, usageMoney(Math.max(...m.daily)))
-      m.daily.forEach((v, i) => put(`${k}.daily.${i}`, usageMoney(v)))
-      for (const [tab, rows] of Object.entries(m.breakdown)) rows.forEach((r, i) => put(`${k}.${tab}.${i}`, usageMoney(r.dollars)))
+      put(`${k}.card`, F.fmtSpentOfCap(m.total, m.cap, d))
+      put(`${k}.capHint`, F.fmtMoney(m.cap, d))
+      put(`${k}.projection`, F.fmtMoney(F.moneyOf(Math.round(total / daily.length * 30), m.total.currency), d))
+      put(`${k}.peak`, usageMoney(Math.max(...daily)))
+      daily.forEach((v, i) => put(`${k}.daily.${i}`, usageMoney(v)))
+      for (const [tab, rows] of Object.entries(m.breakdown)) rows.forEach((r, i) => put(`${k}.${tab}.${i}`, usageMoney(F.majorOf(r.spent))))
     }
   }
 
@@ -277,32 +258,31 @@ async function capture(): Promise<Record<string, string>> {
     const { routine, bar } = await askRoutine('golden', q)
     const k = `created.${i}`
     put(`${k}.ask`, q)
-    put(`${k}.card.time`, routine.time)
+    put(`${k}.card.time`, F.fmtClock(routine.time, d))
     put(`${k}.card.when`, whenOf(routine))
-    put(`${k}.card.next`, routine.next)
+    put(`${k}.card.next`, F.fmtNextRun(routine.next, d))
     put(`${k}.answerBar`, bar)
     // The Routines page lists a routine made in a chat from the agent's state (src/screens/Routines.tsx:29).
     const row = agent.getSnapshot().routinesExtra.find(r => r.id === routine.id)
     if (!row) throw new Error(`Routine ${routine.id} isn't on the Routines page`)
-    put(`${k}.routines.time`, row.time)
+    put(`${k}.routines.time`, F.fmtClock(row.time, d))
     put(`${k}.routines.when`, whenOf(row))
-    put(`${k}.routines.next`, row.next)
+    put(`${k}.routines.next`, F.fmtNextRun(row.next, d))
   }
-  // The chat the person starts, listed with the demo clock's time (store.ts:313).
-  put('created.chatListAt', fmtTime(demoNow(agent.getSnapshot().demoStartedAt)))
+  // The chat the person starts, stamped on the demo clock (store.ts) and listed by src/ui/chat.tsx.
+  put('created.chatListAt', F.fmtWhen(instantOf(now()), now(), d))
 
   at('Act', 'Normal')
   return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)))
 }
 
-/** The file as JSON with no-break spaces written as `\u00a0`, so a reader sees where the UI keeps a time on one line. */
-const serialize = (x: Record<string, string>) => JSON.stringify(x, null, 2).replaceAll('\u00a0', '\\u00a0') + '\n'
-
-test("the golden file holds what today's code shows for every time, amount, schedule and duration in the sample data", async () => {
+test('the C1 formatters write exactly the golden strings for every time, amount, schedule and duration in the sample data', async () => {
   // Fake timers so the routine requests answer at once; the demo clock moves only as the test sets it.
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
   try {
-    await expect(serialize(await capture())).toMatchFileSnapshot('./format.golden.json')
+    const out = await capture()
+    expect(Object.keys(out).length).toBe(681)
+    expect(out).toEqual(golden)
   } finally {
     vi.useRealTimers()
   }

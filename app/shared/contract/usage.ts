@@ -1,5 +1,6 @@
 // Spend against the monthly cap, by day and by person, job, model and tool.
 import { z } from 'zod'
+import { MoneySchema } from './common.ts'
 
 export const UsageRowSchema = z.object({
   name: z.string(),
@@ -7,20 +8,21 @@ export const UsageRowSchema = z.object({
   sub: z.string(),
   /** The same line once a channel is connected: `{channel}` stands for the channel's name. Missing: `sub` always. */
   subWithChannel: z.string().optional(),
-  dollars: z.number(),
+  spent: MoneySchema,
   conversations: z.number(),
 })
 export type UsageRow = z.infer<typeof UsageRowSchema>
 
 export const UsageDataSchema = z.object({
   month: z.string(),
-  cap: z.number(),
+  cap: MoneySchema,
+  /** Percent of the cap. */
   alertAt: z.number(),
-  total: z.number(),
+  total: MoneySchema,
   conversations: z.number(),
   questionsAsked: z.number(),
   jobsRun: z.number(),
-  daily: z.array(z.number()),
+  daily: z.array(MoneySchema),
   breakdown: z.record(z.enum(['person', 'job', 'model', 'tool']), z.array(UsageRowSchema)),
 })
 export type UsageData = z.infer<typeof UsageDataSchema>

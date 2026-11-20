@@ -1,17 +1,12 @@
 // Activity's fixed lines and the audit log (changes to how the agent may work).
 import { z } from 'zod'
-import { StageSchema } from './common.ts'
+import { InstantSchema, ProseSchema, StageSchema } from './common.ts'
 
-export const AuditEntrySchema = z.object({ day: z.string(), who: z.string(), what: z.string(), detail: z.string(), at: z.string() })
+export const AuditEntrySchema = z.object({ at: InstantSchema, who: z.string(), what: z.string(), detail: z.string() })
 export type AuditEntry = z.infer<typeof AuditEntrySchema>
 
 export const ActivityLineSchema = z.object({
-  /** Missing for lines that belong to today. */
-  day: z.string().optional(),
-  /** Shown ("6:00 AM"). Never sort on it: use `atMin`. */
-  t: z.string(),
-  /** The same time as minutes since midnight, for sorting inside a day. */
-  atMin: z.number(),
+  at: InstantSchema,
   kind: z.enum(['read', 'change', 'needs', 'problem']),
   /** Shown only from this stage up. */
   minStage: StageSchema.optional(),
@@ -19,7 +14,8 @@ export const ActivityLineSchema = z.object({
   who: z.string(),
   why: z.string(),
   result: z.string(),
-  by: z.string(),
+  /** Who did it, and when where it says ("approved by Dana Kim at {at:time}"). */
+  by: ProseSchema,
   /** The run's recorded steps. Missing for a routine whose steps weren't recorded. */
   trace: z.string().optional(),
 })

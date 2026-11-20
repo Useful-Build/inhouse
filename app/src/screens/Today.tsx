@@ -3,6 +3,8 @@ import { Fragment } from 'react'
 import { Composer } from '../components/Composer'
 import { amountOf, flags, handled, issueCards, pendingIds, todayCopy, TONE_TEXT } from '../state/derive'
 import { sevClass } from '../ui/severity'
+import { fmtMoney } from '../lib/format'
+import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -153,7 +155,7 @@ export function Today() {
                   <div className="mt-3 flex flex-col gap-3 border-t border-divider pt-3">
                     <div>
                       <div className={`flex flex-wrap items-baseline gap-x-1.5 ${done}`}>
-                        <span className="text-xl font-semibold tracking-stat tabular-nums">{p.cost}</span>
+                        <span className="text-xl font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>
                         <span className="text-xs text-pretty text-muted-foreground">{p.costNote}</span>
                       </div>
                       {/* Two lines tall on desktop, so every footer in a grid row lines up whether the status wraps or not. */}
