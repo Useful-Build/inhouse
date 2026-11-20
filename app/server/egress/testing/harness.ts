@@ -77,6 +77,8 @@ export async function harness(over: Partial<EgressDeps> = {}, grant: RunGrant = 
     settings: async (): Promise<SettingsView> => ({ ...h.settings }),
     bucket: undefined as unknown as EgressDeps['bucket'],
     db: undefined as unknown as D1Database,
+    files: undefined as unknown as EgressDeps['files'],
+    newFileId: () => `f_${String(++n).padStart(22, '0')}`,
     mcp,
     waitUntil: p => void h.waits.push(p),
     setInterval: fn => {
