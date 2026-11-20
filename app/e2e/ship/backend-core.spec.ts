@@ -22,7 +22,7 @@
 // a name or time zone is picked as "not the current one", and each invited person is new.
 import { deflateSync } from 'node:zlib'
 import { readFile } from 'node:fs/promises'
-import type { BrowserContext, Page } from '@playwright/test'
+import type { Browser, BrowserContext, Page } from '@playwright/test'
 import { AUDIT_CSV_HEADER } from '../../shared/csv.ts'
 import { parseCsv } from '../api/kit.ts'
 import { inhouse, originFor, people, signInAs } from '../support/clients/real.js'
@@ -76,9 +76,65 @@ async function openAs(context: BrowserContext, page: Page, who: Who) {
   await ready(page)
 }
 
-/** Signs the context in as someone who isn't seeded (the test issuer mints any subject; its email is `<subject>@example.test`). */
-async function signInSubject(context: BrowserContext, subject: string) {
-  await context.setExtraHTTPHeaders(await signIn(subject, 'brand'))
+// One browser context per person: a second person's tab never shares a context (and so never its sign-in header) with the
+// first, so a background request from either tab can't go out as the wrong person. The test's own `context` and `page` are
+// the first person (they carry the video). The others are closed after the test. They have no video and no CSP guard: the
+// `real` project's specs guard every page of the product.
+const opened: BrowserContext[] = []
+test.afterEach(async () => { for (const c of opened.splice(0)) await c.close() })
+
+/** A new context shaped like the project's (viewport, touch). */
+async function newContext(browser: Browser, headers?: Record<string, string>): Promise<BrowserContext> {
+  const { viewport, hasTouch, isMobile, userAgent, deviceScaleFactor } = test.info().project.use
+  const context = await browser.newContext({ viewport, hasTouch, isMobile, userAgent, deviceScaleFactor, ...(headers ? { extraHTTPHeaders: headers } : {}) })
+  opened.push(context)
+  return context
+}
+
+/** A new page for a seeded person, on their app, loaded. */
+async function pageFor(browser: Browser, who: Who): Promise<{ context: BrowserContext; page: Page }> {
+  const context = await newContext(browser)
+  const page = await context.newPage()
+  await openAs(context, page, who)
+  return { context, page }
+}
+
+/** A new page for someone who isn't seeded (the test issuer mints any subject; its email is `<subject>@example.test`), on the brand app. */
+async function pageForSubject(browser: Browser, subject: string): Promise<Page> {
+  const context = await newContext(browser, await signIn(subject, 'brand'))
+  const page = await context.newPage()
+  await page.goto(`${appOrigin('brand')}/`)
+  return page
+}
+
+/** Every audit line of the three kinds S7 looks for, counted through the API (all pages). */
+async function auditCounts(page: Page) {
+  const counts = { gave: 0, looked: 0, ended: 0 }
+  let cursor: string | null = null
+  do {
+    const r = await api(page, 'GET', `/api/audit?limit=100${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`)
+    expect(r.status).toBe(200)
+    for (const line of r.json.items as { what: string }[]) {
+      if (line.what === 'gave the Inhouse team access') counts.gave++
+      else if (line.what === 'looked at brand data') counts.looked++
+      else if (/^ended the Inhouse team.s access$/.test(line.what)) counts.ended++
+    }
+    cursor = r.json.nextCursor
+  } while (cursor !== null)
+  return counts
+}
+
+/** A member by email, looked up through every page of the list. */
+async function findMember(page: Page, email: string): Promise<{ id: string; rev: number }> {
+  let cursor: string | null = null
+  do {
+    const r = await api(page, 'GET', `/api/members?limit=100${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`)
+    expect(r.status).toBe(200)
+    const found = (r.json.items as { id: string; rev: number; email: string }[]).find(m => m.email === email)
+    if (found) return found
+    cursor = r.json.nextCursor
+  } while (cursor !== null)
+  throw new Error(`${email} is not in the member list.`)
 }
 
 /** A request from inside the page: same origin, so it carries the page's sign-in and its Origin (the API refuses a write without it). */
@@ -176,25 +232,36 @@ test('S3: The audit log shows that change with your name and the time; Export CS
   await page.reload()
   await ready(page)
   await settingsPage(page, 'Team settings', 'Audit log')
-  // The newest line first: the person, what they did, the setting and its value, and the time of day.
-  const line = main(page).locator('div.py-4').filter({ hasText: `${people.admin.name} changed a setting` }).filter({ hasText: `Time zone: ${zone.id}` }).first()
-  await expect(line).toBeVisible()
+  // The newest setting line first (the log runs newest first): this write, not an older one. The zone just picked differs
+  // from the one before it, so an older line can't pass for this one: the person, what they did, the setting and its value, and the time of day.
+  const line = main(page).locator('div.py-4').filter({ hasText: 'changed a setting' }).first()
+  await expect(line).toContainText(`${people.admin.name} changed a setting`)
+  await expect(line).toContainText(`Time zone: ${zone.id}`)
   await expect(line).toContainText(new RegExp(`Time zone: ${zone.id.replace('/', '\\/')}\\s*·\\s*\\d{1,2}:\\d{2}\\s*[AP]M`))
   // The button on the page is "Download CSV" (the plan's "Export CSV"). The file is the log as the server writes it.
   const [download] = await Promise.all([page.waitForEvent('download'), main(page).getByRole('button', { name: 'Download CSV' }).click()])
   expect(download.suggestedFilename()).toBe('inhouse-audit-log.csv')
   const rows = parseCsv(await readFile(await download.path(), 'utf8'))
   expect(rows[0]).toEqual([...AUDIT_CSV_HEADER])
-  expect(rows.some(r => r[1] === people.admin.name && r[2] === 'changed a setting' && r[3] === `Time zone: ${zone.id}`), 'the new line is in the file').toBe(true)
+  // The file runs newest first too: its first setting line is this write.
+  const newest = rows.slice(1).find(r => r[2] === 'changed a setting')
+  expect(newest?.[1], 'the newest setting line in the file is the Admin\'s').toBe(people.admin.name)
+  expect(newest?.[3], 'and it is this write').toBe(`Time zone: ${zone.id}`)
 })
 
 test('S4: Upload a profile photo, reload, and it shows in your avatar', async ({ context, page }) => {
   await openAs(context, page, 'admin')
   await settingsPage(page, 'Your settings', 'General')
   // Start with none: an earlier run's photo would show the avatar before the upload does.
+  const photoCall = (method: string) => page.waitForResponse(r => r.request().method() === method && new URL(r.url()).pathname === '/api/photo' && r.ok())
+  const removed = photoCall('DELETE')
   await row(page, 'Photo').getByRole('button', { name: 'Remove', exact: true }).click()
+  await removed
   await expect(main(page).locator('img')).toHaveCount(0)
+  // The photo shows at once and is saved after: the reload waits for the Worker's answer.
+  const uploaded = photoCall('PUT')
   await page.locator('input[type="file"][aria-label="Photo file"]').setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: png(48, [36, 99, 235]) })
+  await uploaded
   const avatar = main(page).locator('img')
   await expect(avatar).toHaveJSProperty('complete', true)
   await expect(avatar).toHaveCount(1)
@@ -220,12 +287,21 @@ test('S5: As a Member, the team pages are read-only and an admin-only action isn
   await expect(main(page).getByRole('textbox', { name: 'Monthly cap' })).toHaveCount(0)
   // The admin-only actions aren't offered: Invite, Remove and the support grant.
   await settingsPage(page, 'Team settings', 'Members')
+  // First prove the list loaded (the seeded Admin and the Member themself are on it, and nothing failed), so the absences below mean something.
+  await expect(main(page).getByText(people.admin.name, { exact: true })).toBeVisible()
+  await expect(main(page).getByText(people.dana.name, { exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
   await expect(main(page).getByRole('button', { name: 'Invite', exact: true })).toHaveCount(0)
   await expect(main(page).getByRole('button', { name: /^Remove / })).toHaveCount(0)
   await settingsPage(page, 'Team settings', 'Data and access')
   await expect(main(page).getByText('Where your data stays', { exact: true })).toBeVisible()
   await expect(main(page).getByText('Inhouse team access', { exact: true })).toHaveCount(0)
   // The audit log is brand data a Member may read and export (access matrix rows 19 and 20), so its download is offered.
+  await settingsPage(page, 'Team settings', 'Audit log')
+  await expect(main(page).getByRole('button', { name: 'Download CSV' })).toBeVisible()
+  // And nothing is checked only in the page: the same invite, sent straight to the Worker as a Member, is refused.
+  const refused = await api(page, 'POST', '/api/members/invites', { name: 'Ship refused', email: `refused-${crypto.randomUUID().slice(0, 8)}@example.test`, role: 'member' })
+  expect(refused.status).toBe(403)
 })
 
 test('S6: Two tabs edit the same setting; the second save shows a conflict with the current value', async ({ context, page }) => {
@@ -245,12 +321,14 @@ test('S6: Two tabs edit the same setting; the second save shows a conflict with 
   await expect(zoneBox(second)).toHaveAttribute('aria-label', `Time zone: ${first.label}`)
 })
 
-test('S7: The Admin grants the Inhouse team support access; the Inhouse principal sees the audit log. After the grant ends, the audit log is refused, the technical settings and grants still load, and the audit log shows the grant and its end', async ({ context, page, request }) => {
+test('S7: The Admin grants the Inhouse team support access; the Inhouse principal sees the audit log. After the grant ends, the audit log is refused, the technical settings and grants still load, and the audit log shows the grant and its end', async ({ browser, context, page, request }) => {
   await openAs(context, page, 'admin')
   // Start with no grant: one left by a failed run would make "Grant" a 409.
   const open = await api(page, 'GET', '/api/grants')
   expect(open.status).toBe(200)
   for (const g of open.json.items.filter((x: { live: boolean }) => x.live)) expect((await api(page, 'POST', `/api/grants/${g.id}/end`, { ifRev: g.rev })).status).toBe(200)
+  // Earlier runs left their own lines in the log, so each kind is counted now and must grow by this run's.
+  const before = await auditCounts(page)
   await settingsPage(page, 'Team settings', 'Data and access')
   const access = row(page, 'Inhouse team access')
   // Team pages are read-only on a phone, so the grant is given and ended through the same route the buttons call.
@@ -266,18 +344,14 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   }
   await expect(access).toContainText('Live until')
 
-  // The Inhouse team member, on the Inhouse app: the audit log is open to them while the grant is live.
-  await signInAs(context, 'inhouse')
-  const alex = await context.newPage()
-  await alex.goto(`${originFor('inhouse')}/`)
-  await ready(alex)
+  // The Inhouse team member, on the Inhouse app and in their own browser: the audit log is open to them while the grant is live.
+  const { context: alexContext, page: alex } = await pageFor(browser, 'inhouse')
   await expect(await accountMenu(alex)).toContainText('Inhouse team')
   await closeMenu(alex)
   await settingsPage(alex, 'Team settings', 'Audit log')
   await expect(main(alex)).toContainText('gave the Inhouse team access')
 
   // The Admin ends it (End now; the route the button calls on a phone).
-  await signInAs(context, 'admin')
   if (phone()) {
     const live = (await api(page, 'GET', '/api/grants')).json.items.find((g: { live: boolean }) => g.live)
     expect((await api(page, 'POST', `/api/grants/${live.id}/end`, { ifRev: live.rev })).status).toBe(200)
@@ -287,11 +361,13 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   } else await access.getByRole('button', { name: 'End now', exact: true }).click()
   await expect(access).toContainText('Ended')
 
-  // The Inhouse team again: the audit log is refused, what the grant never covered still loads.
-  await signInAs(context, 'inhouse')
+  // The Inhouse team again (a fresh token: the first is minutes old by now): the audit log is refused, what the grant never covered still loads.
+  await signInAs(alexContext, 'inhouse')
   await alex.reload()
   await ready(alex)
   await settingsPage(alex, 'Team settings', 'Audit log')
+  // The same page that listed the grant line a minute ago lists none: the client asks only when `me().can.viewAudit` is true, so the
+  // refusal shows as an empty log (no load error); the Worker's own answer is the 403 below.
   await expect(main(alex)).toContainText('Nothing changed yet')
   await expect(main(alex)).not.toContainText('gave the Inhouse team access')
   await expect(main(alex).getByRole('button', { name: 'Download CSV' })).toHaveCount(0)
@@ -306,17 +382,22 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   expect((await at('/api/grants')).status(), 'the grant list is baseline').toBe(200)
   expect((await at('/api/settings/technical')).status(), 'technical settings are baseline').toBe(200)
 
-  // The Admin's audit log keeps the whole story: the grant, its use and its end.
+  // The Admin's audit log keeps the whole story: the grant, its use and its end, each one more than before.
   await signInAs(context, 'admin')
   await page.reload()
   await ready(page)
+  const after = await auditCounts(page)
+  expect(after.gave, 'one grant line more').toBe(before.gave + 1)
+  expect(after.ended, 'one end line more').toBe(before.ended + 1)
+  expect(after.looked, 'the Inhouse team\'s reads while it was live').toBeGreaterThan(before.looked)
   await settingsPage(page, 'Team settings', 'Audit log')
+  // On the page: the newest line is the end (nothing else wrote after it), and the grant and its use are on it.
+  await expect(main(page).locator('div.py-4').first()).toContainText(new RegExp(`${people.admin.name} ended the Inhouse team.s access`))
   await expect(main(page)).toContainText(`${people.admin.name} gave the Inhouse team access`)
   await expect(main(page)).toContainText('looked at brand data')
-  await expect(main(page)).toContainText(new RegExp(`${people.admin.name} ended the Inhouse team.s access`))
 })
 
-test('S8: The Admin invites a person; their first sign-in lands as a Member with their name', async ({ context, page }) => {
+test('S8: The Admin invites a person; their first sign-in lands as a Member with their name', async ({ browser, context, page }) => {
   const who = newPerson('invitee')
   await openAs(context, page, 'admin')
   await settingsPage(page, 'Team settings', 'Members')
@@ -325,44 +406,37 @@ test('S8: The Admin invites a person; their first sign-in lands as a Member with
   await expect(main(page).getByText(who.name, { exact: true })).toBeVisible()
   if (!phone()) await expect(row(page, who.name)).toContainText('Invited')
 
-  await signInSubject(context, who.subject)
-  const theirs = await context.newPage()
-  await theirs.goto(`${appOrigin('brand')}/`)
+  const theirs = await pageForSubject(browser, who.subject)
   await ready(theirs)
   const menu = await accountMenu(theirs)
   await expect(menu).toContainText(who.name)
   await expect(menu).toContainText(`${who.email} · Member`)
 })
 
-test('S9: A person who wasn\'t invited sees "You\'re not on this team". A removed member\'s next request is refused', async ({ context, page, request }) => {
+test('S9: A person who wasn\'t invited sees "You\'re not on this team". A removed member\'s next request is refused', async ({ browser, context, page, request }) => {
   // Never invited.
   const stranger = newPerson('stranger')
-  await signInSubject(context, stranger.subject)
-  await page.goto(`${appOrigin('brand')}/`)
-  await expect(h1(page)).toHaveText("You're not on this team")
-  await expect(main(page)).toContainText('Ask an admin to invite you')
+  const outsider = await pageForSubject(browser, stranger.subject)
+  await expect(h1(outsider)).toHaveText("You're not on this team")
+  await expect(main(outsider)).toContainText('Ask an admin to invite you')
 
   // Invited, signed in once, then removed by the Admin.
   const leaver = newPerson('leaver')
   await openAs(context, page, 'admin')
   await settingsPage(page, 'Team settings', 'Members')
   await invite(page, leaver)
-  await signInSubject(context, leaver.subject)
-  const theirs = await context.newPage()
-  await theirs.goto(`${appOrigin('brand')}/`)
+  const theirs = await pageForSubject(browser, leaver.subject)
   await ready(theirs)
   await expect(await accountMenu(theirs)).toContainText(leaver.name)
 
   // The Admin's page still holds the invite as it was before the first sign-in (a stale record: removing it would be a
   // conflict), so the Admin reloads, as a person would to see the invite become a member.
-  await signInAs(context, 'admin')
   await page.reload()
   await ready(page)
   await settingsPage(page, 'Team settings', 'Members')
   if (phone()) {
     // The Remove button is on the desktop page only (team pages are read-only on a phone): the same route, from the page.
-    const list = await api(page, 'GET', '/api/members?limit=100')
-    const found = list.json.items.find((m: { email: string }) => m.email === leaver.email)
+    const found = await findMember(page, leaver.email)
     expect((await api(page, 'DELETE', `/api/members/${found.id}?ifRev=${found.rev}`)).status).toBe(200)
   } else {
     await main(page).getByRole('button', { name: `Remove ${leaver.name}` }).click()
@@ -371,7 +445,6 @@ test('S9: A person who wasn\'t invited sees "You\'re not on this team". A remove
   }
 
   // Their very next request is refused, and the page says so.
-  await signInSubject(context, leaver.subject)
   expect((await request.get(`${appOrigin('brand')}/api/me`, { headers: await signIn(leaver.subject, 'brand') })).status()).toBe(403)
   await theirs.reload()
   await expect(h1(theirs)).toHaveText("You're not on this team")

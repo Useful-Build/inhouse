@@ -12,10 +12,9 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts`: on the test build, `build=test`), never in CI's normal run.
 - Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
-- Audit log: the download is checked on desktop only (its content in `sample-data.spec.ts`); the phone check sees the button.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
-- Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; the specs check the link, not the Access session ending.
+- Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; no e2e spec checks it (only `src/agent/http/client.test.ts` checks the logout URL).
 
 ## Today
 
@@ -310,7 +309,7 @@ Test build: the product Worker's API and app (P2)
 Backend core: account menu, name and role (P2, test build)
   Path:     sign in as a seeded person -> sidebar -> account and settings
   Selector: menu "Account" (name, `<email> · <role>`), items Your settings, Team settings, Sign out
-  Expected: the menu shows the signed-in person's own name, email and role (Admin, Member or Inhouse team); Sign out goes to Access's logout
+  Expected: the menu shows the signed-in person's own name, email and role (Admin, Member or Inhouse team); Sign out goes to Access's logout (not checked in e2e)
   Covered:  e2e/ship/backend-core.spec.ts (S1, S5, S7, S8)
 
 Backend core: Members page, invite and remove (P2, test build)
@@ -346,7 +345,7 @@ Backend core: Who can get in, support grants (P2, test build)
 Backend core: "You're not on this team" (P2, test build)
   Path:     sign in as someone who wasn't invited, or was removed -> any URL
   Selector: heading "You're not on this team", button "Sign out"
-  Expected: one screen in place of every page, with a Sign out link to Access
+  Expected: one screen in place of every page, with a Sign out link to Access (not checked in e2e)
   Covered:  e2e/ship/backend-core.spec.ts (S9)
 
 Test build and release smoke (P2)
