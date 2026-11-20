@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
-import { CONNECTION_TEXT, NOTICE_TEXT } from './chat/turn-text'
+import { CONNECTION_TEXT, NOTICE_TEXT } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'

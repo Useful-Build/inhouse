@@ -6,27 +6,27 @@ import {
   problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
-import { clockTimeOf, sampleAt } from './data'
+import { sampleAt } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
-  AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, ActiveRun, ChatEvent, ChatList, ChatPage, ChatSendInput, ChatSummary, ChatThread, LinkState, RunFrame, SendTurnResult, StoredMessage, TurnFailure, ClockTime, DemoContext,
+  AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, ActiveRun, ChatList, ChatPage, ChatSendInput, ChatSummary, ChatThread, LinkState, RunFrame, SendTurnResult, StoredMessage, ClockTime, DemoContext,
   Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, Scenario, SeedTurn, SetAsideReason, SetAsideRecord,
-  SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData,
+  SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, stageIndex } from './types'
+import type { ChatEngine, Host } from './mock-chat'
 import { shownClock, shownDateTimeIn, shownTimeOn } from './upgrade-times'
-import { DEMO_START, demoDayAt, demoNow, nextLocalRun } from './demo-clock'
+import { DEMO_START, demoDayAt, demoNow } from './demo-clock'
 import { instantOf } from '../lib/format'
-import { INVALID, NOT_FOUND, REASON, CONFLICT, FORBIDDEN, RATE_LIMITED } from '../../shared/contract/error-codes'
+import { INVALID, NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ErrorReason } from '../../shared/contract/common'
-import { FAIL, NOTICE } from '../../shared/contract/chat-codes'
 import type { SupportGrant } from '../../shared/contract/grants'
 import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS } from '../../shared/contract/keys'
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
-import { listNames, pendingIds, visibleProblems } from '../state/derive'
+import { pendingIds, visibleProblems } from '../state/derive'
 
 /**
  * Test hook: a brand other than the sample one. `localStorage['inhouse.demo.data.v1']` is `{ "brandName"?: string, "channels"?: false }`:
@@ -113,7 +113,6 @@ const initialState = (): AgentState => ({
 
 // ---------- the read-only snapshot ----------
 
-const cap1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 /** A sample routine's id, from its name: "Morning check" is "routine-morning-check". */
 const routineIdOf = (name: string) => 'routine-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
@@ -537,223 +536,24 @@ const sanitize = (raw: unknown): Loaded => {
 }
 
 
-// ---------- request parsing for scripted routine and skill replies ----------
-
-const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-
-/** A clock time read from a request: hours 0 to 23 and minutes. */
-type Clock = { h: number; m: number }
-/** Words that may follow a bare "at 7" when it is a time ("at 7 every day"), unlike "at 3 weeks of stock". A full stop
- * counts only when no digit follows ("at 9.30" is not 9 o'clock). */
-const AFTER_BARE = "(?=\\s*(?:$|[,;:!?]|\\.(?!\\d)|(?:on|every|each|and|to|in|for|with|the|o['\u2019]clock|sharp|daily|weekly|tomorrow|tonight|morning|evening|night|afternoon)\\b))"
-const DAY_WORD = '(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|day|morning|evening|night|afternoon|week|weekdays?)'
-const WEEKDAY = '(?:mon|tues|wednes|thurs|fri|satur|sun)days?'
-const PART_OF_DAY = '(?:morning|afternoon|evening|night)'
-/** "every Monday", "each weekday", "daily": the phrase that makes a request a schedule. */
-const SCHEDULE_PHRASE = `(?:(?:every|each)\\s+${DAY_WORD}|daily|weekly)`
-/** The days a schedule runs on: "every Monday", "each Tuesday and Thursday", "every week on Friday", "weekly on Friday".
- *  A weekday the task names ("send the Friday numbers") isn't one. */
-const SCHEDULE_DAYS = new RegExp(`\\b(?:(?:every|each)\\s+(?:week,?\\s+on\\s+)?|weekly,?\\s+on\\s+)${WEEKDAY}(?:\\s*(?:,|and|&|or)\\s*(?:(?:every|each|on)\\s+)?${WEEKDAY})*`, 'gi')
-/** The schedule phrase straight before its time, with a day or a part of the day between ("every week on Monday at 9",
- *  "every Monday morning at 6"). */
-const SCHEDULE_LEAD = new RegExp(`\\b${SCHEDULE_PHRASE}(?:\\s+on\\s+${WEEKDAY})?(?:\\s+(?:in\\s+the\\s+)?${PART_OF_DAY})?,?\\s+(?=at\\s)`, 'i')
-/** Counts that follow a number and make it not an hour: "at 3 weeks of stock", "at 2 SKUs", "at 10 minutes past 9". */
-const NOT_AN_HOUR = '(?!\\s*(?:%|(?:weeks?|days?|hours?|minutes?|units?|orders?|items?|skus?|products?|pieces?|percent|times|of)\\b))'
-/** The time straight after the schedule phrase. A bare "at N" is a time whatever word follows ("Every morning at 6
- *  summarize refunds"), unless a count does ("every Monday at 3 orders late") or it goes on as a number ("at 9.30"). */
-const LEAD_FORMS: [RegExp, 'ampm' | 'clock' | 'bare'][] = [
-  [/^at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?![a-z])/i, 'ampm'],
-  [/^at\s+(\d{1,2}):(\d{2})\b/, 'clock'],
-  [new RegExp(`^at\\s+(\\d{1,2})(?![\\d:]|\\.\\d)${NOT_AN_HOUR}`, 'i'), 'bare'],
-]
-const TIME_FORMS: [RegExp, 'ampm' | 'clock' | 'bare'][] = [
-  [/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?![a-z])/i, 'ampm'],
-  [/\b(\d{1,2}):(\d{2})\b/, 'clock'],
-  [new RegExp(`\\bat\\s+(\\d{1,2})${AFTER_BARE}`, 'i'), 'bare'],
-]
-/** A part of the day right after the time ("at 7 in the evening", "at 9 tonight"). */
-const PART_AFTER = /^\s*(?:in\s+the\s+)?(?:mornings?|afternoons?|evenings?|nights?|tonight)\b/i
-/** A time a form matched, or null when it can't be one ("at 25", "7:75", "13pm"). `ctx` is the text whose part of the day counts. */
-const clockOf = (m: RegExpExecArray, form: 'ampm' | 'clock' | 'bare', ctx: string): Clock | null => {
-  let h = Number(m[1])
-  const min = form === 'bare' ? 0 : Number(m[2] ?? 0)
-  if (min > 59) return null
-  if (form === 'ampm') {
-    if (h < 1 || h > 12) return null
-    const pm = m[3].toLowerCase() === 'pm'
-    return { h: (h % 12) + (pm ? 12 : 0), m: min }
-  }
-  if (h > 23 || (form === 'bare' && (h < 1 || h > 12))) return null
-  if (h <= 12) {
-    if (/\bmornings?\b/i.test(ctx)) h %= 12
-    else if (/\b(afternoons?|evenings?|nights?|tonight)\b/i.test(ctx)) h = h === 12 && /\b(evenings?|nights?|tonight)\b/i.test(ctx) ? 0 : (h % 12) + 12
-    else if (h >= 1 && h <= 6) h += 12
-  }
-  return { h, m: min }
-}
-/**
- * The time a request names, or null when it names none or one that can't be ("at 25", "7:75", "13pm"): the agent then
- * asks for the time. The time straight after the schedule phrase wins over later times in the task ("every day at 7 list
- * what sold at 6"), and only its own part of the day counts. Morning means AM; afternoon, evening and night mean PM.
- * Otherwise a bare hour from 1 to 6 is PM ("at 4" is 4:00 PM) and from 7 to 11 AM. "16:00" is read as 24-hour.
- */
-const timeIn = (q: string): Clock | null => {
-  const lead = SCHEDULE_LEAD.exec(q)
-  if (lead) {
-    const rest = q.slice(lead.index + lead[0].length)
-    for (const [re, form] of LEAD_FORMS) {
-      const m = re.exec(rest)
-      if (m) return clockOf(m, form, lead[0] + (PART_AFTER.exec(rest.slice(m[0].length))?.[0] ?? ''))
-    }
-  }
-  for (const [re, form] of TIME_FORMS) {
-    const m = re.exec(q)
-    if (m) return clockOf(m, form, q)
-  }
-  if (/\bnoon\b/i.test(q)) return { h: 12, m: 0 }
-  if (/\bmidnight\b/i.test(q)) return { h: 0, m: 0 }
-  return null
-}
-
-/** The next run on the demo clock, after now. */
-const nextRun = (freq: string, day: string, at: Clock, now: Date): Instant =>
-  nextLocalRun(at.h, at.m, now, wd => (freq === 'Weekly' ? WEEKDAYS[(wd + 6) % 7] === day : day !== 'Weekdays' || (wd > 0 && wd < 6)))
-
-/** A name from a request's first words, with the person's own capitals (product and tool names stay as typed). */
-const shortName = (clause: string, fallback: string) => {
-  const words = clause.replace(/[.?!]+$/, '').split(/\s+/).filter(Boolean).slice(0, 4)
-  return words.length ? cap1(words.join(' ')) : fallback
-}
-
-/** The schedule and time phrases in a request, wherever they are, so what's left names the routine. */
-const NOT_THE_NAME = [
-  /^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:remind\s+me\s+(?:to\s+)?)?/i,
-  // "every Monday morning": the part of the day goes with the schedule.
-  new RegExp(`\\b(?:on\\s+)?(?:(?:every|each)\\s+${DAY_WORD}|daily|weekly|weekdays?|(?:mon|tues|wednes|thurs|fri|satur|sun)days?)\\b(?:\\s+(?:in\\s+the\\s+)?${PART_OF_DAY}\\b)?`, 'gi'),
-  /\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)(?![a-z])(?:\s*(?:o['\u2019]clock|sharp)\b)?/gi,
-  /\bat\s+\d{1,2}(?::\d{2})?\b(?:\s*(?:o['\u2019]clock|sharp)\b)?/gi,
-  /\b(?:at\s+)?(?:noon|midnight)\b(?:\s*sharp\b)?/gi,
-  /\bin the (?:morning|afternoon|evening)\b/gi,
-  /\bplease\b/gi,
-]
-const nameOf = (q: string) => {
-  // A name is a few words: past 500 characters is never needed, and keeps the trims below quick on a long paste.
-  let rest = q.slice(0, 500)
-  for (const re of NOT_THE_NAME) rest = rest.replace(re, ' ')
-  rest = rest.replace(/\s+/g, ' ').replace(/^[\s,;:.-]+|[\s,;:.?!-]+$/g, '').replace(/^(?:and|to|then)\s+/i, '')
-  return shortName(rest, 'New routine')
-}
-
-/** A routine from a request, or null when it doesn't say the day and time clearly enough: the agent asks for them. */
-function routineFromRequest(q: string, stage: number, id: string, now: Date): RoutineCard | null {
-  const script = chatScript.scripted.find(x => x.match.startsWith('every|'))! as unknown as { example: { ask: string; routine: { name: string; freq: string; day: string; time: string } }; ActRun: { type: string; note?: Record<string, string> }[] }
-  const notes = script.ActRun.find(x => x.type === 'routine')?.note
-  if (!notes) throw new Error('chat-script.json: the routine reply has no routine part with notes.')
-  const note = stage === 2 ? notes.Run : notes.Act
-  let name: string, freq: string, day: string, at: Clock | null
-  if (q.trim().toLowerCase() === script.example.ask.toLowerCase()) {
-    let time: string
-    ;({ name, freq, day, time } = script.example.routine)
-    const t = clockTimeOf('the example routine in chat-script.json', time)
-    at = { h: t.hour, m: t.minute }
-  } else {
-    // Only the days the schedule names: "every Monday at 9 send the Friday numbers" runs on Monday.
-    const named = [...q.matchAll(SCHEDULE_DAYS)].map(x => x[0]).join(' ')
-    const weekdays = WEEKDAYS.filter(d => new RegExp(`\\b${d}s?\\b`, 'i').test(named))
-    const weekday = weekdays[0]
-    // "every Tuesday and Thursday": a routine runs on one day of the week, so the agent asks rather than pick one.
-    if (weekdays.length > 1) return null
-    if (/\bweekdays?\b/i.test(q)) { freq = 'Daily'; day = 'Weekdays' }
-    else if (weekday) { freq = 'Weekly'; day = weekday }
-    else if (/\b(daily|every day|each day|every (morning|evening|night|afternoon)|each (morning|evening|night|afternoon))\b/i.test(q)) { freq = 'Daily'; day = 'Every day' }
-    // "Weekly" with no day: the agent asks rather than picking Monday.
-    else return null
-    at = timeIn(q)
-    name = nameOf(q)
-  }
-  if (!at) return null
-  return { id, name, freq, day, time: { hour: at.h, minute: at.m }, next: nextRun(freq, day, at, now), note, what: q }
-}
-
-// A routine is made only from a request (not a question) with a schedule and a time. "How much did we refund each customer
-// last week?" is a plain question; "Remind me every Friday" gets asked for a time and makes nothing yet. A polite request
-// ("Can you email me daily at 9am?") is a request, question mark or not.
-const QUESTION_WORD = /^(how|what|which|why|when|where|who|whom|whose|is|are|was|were|do|does|did|can|could|should|would|will|has|have|had|any)\b/i
-const POLITE = /^(?:(?:can|could|would|will)\s+you\b|please\b)/i
-/** A polite opener that asks to be told something is a question, schedule words or not ("Can you explain how routines run every morning?"). */
-const ASKS_TO_BE_TOLD = /^(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:explain|tell\s+me\s+why|show\s+me\s+how)\b/i
-const SCHEDULE = new RegExp(`\\b(?:(?:every|each)\\s+${DAY_WORD}|daily|weekly)\\b`, 'i')
-/** A request, not a question: no question mark and no question word first, unless it opens with "can you" or "please". */
-const isRequest = (q: string) => !ASKS_TO_BE_TOLD.test(q.trim()) && (POLITE.test(q.trim()) || (!q.includes('?') && !QUESTION_WORD.test(q.trim())))
-const isScheduleRequest = (q: string) => isRequest(q) && SCHEDULE.test(q)
-const ASK_FOR_TIME = 'What time should it run? Tell me the day and the time, like "every Friday at 9\u00a0AM", and I\'ll set it up.'
-
-function skillFromRequest(q: string, stage: number): SkillCard {
-  const modes = (chatScript.scripted.find(x => x.match.endsWith('skill'))! as unknown as { reply: { type: string; mode?: Record<string, string> }[] }).reply.find(x => x.type === 'skill')?.mode
-  if (!modes) throw new Error('chat-script.json: the skill reply has no skill part with modes.')
-  // A skill's name and description are a few words: past 500 characters is never needed, and keeps the trim below quick on a long paste.
-  const m = /\bskill\b\s*(?:that|to|which|for|who)?\s*(.*)$/i.exec(q.slice(0, 500))
-  // "Can you build a skill?" names nothing after the word: the description is the request itself, never a lone ".".
-  const rest = (m?.[1] ?? '').replace(/[\s.?!]+$/, '').trim()
-  const desc = rest ? cap1(`${rest}.`) : q
-  const toolNames = Object.values(tools.details).map(d => d.name).filter(n => new RegExp(`\\b${n}\\b`, 'i').test(q))
-  return {
-    name: shortName(rest, 'New skill'),
-    desc,
-    tools: toolNames.length ? toolNames.join(' · ') : 'Shopify',
-    mode: ['Watch', 'Act', 'Run'].map(s => modes[s])[stage],
-  }
-}
-
 // ---------- the mock ----------
 
-type Script = { thinking: string[]; delayMs: number; parts: MessagePart[]; trace: TraceKey; after?: (info: RunInfo, replaces?: string) => void }
-
-// ---------- a formatted answer (code block, wide table, list, quote, link) ----------
-
-/** Asked for a query or formula, the agent answers in markdown: the one sample answer with a code block and a wide table. */
-const QUERY_ASK = /\b(sql|query|formula)\b/i
-const QUERY_ANSWER = [
-  "Here's the query I ran on **Shopify** for last week (Nov 7 to 13), grouped by SKU:",
-  '',
-  '```sql',
-  'SELECT sku, product, SUM(quantity) AS units, SUM(total_price) AS sales, COUNT(refund_id) AS refunds',
-  'FROM orders',
-  "WHERE created_at BETWEEN '2026-11-07' AND '2026-11-13'",
-  'GROUP BY sku, product',
-  'ORDER BY units DESC;',
-  '```',
-  '',
-  '### Last week by SKU',
-  '',
-  '| SKU | Product | Units | Sales | Average order | Refunds | Channel | Best day |',
-  '|---|---|---|---|---|---|---|---|',
-  '| CB-750-OL | Cairn Insulated Bottle, Olive | 126 | $3,150 | $25.00 | 2 | Shopify | Thu, Nov 12 |',
-  '| SF-M-BLK | Summit Fleece, Black, M | 94 | $7,990 | $85.00 | 3 | Shopify | Sat, Nov 7 |',
-  '| TS-L-NAV | Trail Shell Jacket, Navy, L | 71 | $16,898 | $238.00 | 4 | Shopify | Sun, Nov 8 |',
-  '',
-  '- **Cairn Insulated Bottle** sold the most units.',
-  '- Refunds were `14` in total, about the same as the week before.',
-  '1. Copy the query to run it again.',
-  '2. Open [Shopify](#/tools/shopify) to see the orders.',
-  '',
-  "> These are Shopify orders only. [Amazon orders](javascript:void(0)) aren't in this query.",
-].join('\n')
+export type Script = { thinking: string[]; delayMs: number; parts: MessagePart[]; trace: TraceKey; after?: (info: RunInfo, replaces?: string) => void }
 
 /** What a run replayed and made: its recorded trace, and the routine or skill it created (Regenerate updates those in place).
  *  `kept` is a routine an earlier run made that this failed run left standing: the next answer updates it in place, so it
  *  isn't made twice, but never takes it back (this run didn't make it). A failed run carries the earlier `skill` as its own.
  *  One per turn: the first turn's id is the run's, a turn started by `send` is `${runId}-t${n}`. */
-type RunInfo = { trace: TraceKey; routine?: string; kept?: string; skill?: string }
+export type RunInfo = { trace: TraceKey; routine?: string; kept?: string; skill?: string }
 /** One turn of a run in the mock (the server's `turns` row): its state, and the two ways to end it early. */
-interface MockTurn {
+export interface MockTurn {
   turnId: string; runId: string; chatId: string; input: ChatSendInput; ord: number; queuedAt: Instant
   state: 'queued' | 'live' | 'ended'
   /** `interrupt` ends this turn and keeps the session; `stop` is the hard stop. Both end only this turn. */
   interrupt: AbortController; hard: AbortController
 }
 /** A run in the mock: its events by seq (kept, so any attach replays them), who follows it, and its turns. */
-interface MockRun { runId: string; chatId: string; frames: RunFrame[]; live: boolean; turns: MockTurn[]; subs: Set<(f: RunFrame) => void>; info?: RunInfo }
+export interface MockRun { runId: string; chatId: string; frames: RunFrame[]; live: boolean; turns: MockTurn[]; subs: Set<(f: RunFrame) => void>; info?: RunInfo }
 /** What `scriptNextTurn` can make the next turn do (a test hook: the real target scripts the same through its scripted model). */
 export type ScriptedTurn = 'turnBudget' | 'maxTurns' | 'capReached' | 'budgetBusyThenStart' | 'budgetBusyThenFail' | 'sessionDamaged' | 'crash'
 
@@ -765,8 +565,6 @@ function traceKey(t: string): TraceKey {
   if (!Object.hasOwn(traces, k)) throw new Error(`Sample data: unknown trace "${t}".`)
   return k
 }
-/** A question as typed, for matching a seeded one: case, spaces and the closing punctuation don't count. */
-const norm = (q: string) => q.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.?!]+$/, '')
 
 const loadRunInfo = (): Map<string, RunInfo> => {
   try {
@@ -799,14 +597,12 @@ export class MockAgent implements AgentClient {
   private noticeListeners = new Set<(n: AgentNotice) => void>()
   private holdTimers: Record<string, ReturnType<typeof setTimeout>> = {}
   private mockRuns = new Map<string, MockRun>()
-  private turnsById = new Map<string, MockTurn>()
-  /** `chatId/clientTurnKey` to what the send answered, so a retry answers the same turn. */
-  private sendKeys = new Map<string, { hash: string; result: SendTurnResult }>()
   /** The chat's messages the server stored (D1), beyond the sample chats' own turns. */
   private history = new Map<string, StoredMessage[]>()
-  private damaged = new Set<string>()
-  private scripted: ScriptedTurn | null = null
-  private idSeq = 0
+  scripted: ScriptedTurn | null = null
+  /** The chat engine (mock-chat.ts): runs, turns and the chat reads. Loads with the first send, so it isn't in Today's first load. */
+  private engine: ChatEngine | null = null
+  readonly k = { chats, ME_ID, SESSION, FINISHED, THINKING_STEP_MS, tools, traceKey, meName: () => this.meName() }
   private linkState: LinkState = 'live'
   private linkListeners = new Set<(l: LinkState) => void>()
   /** Run id to what it replayed and made, saved (bounded) so a saved chat's run ids keep their steps after a reload. */
@@ -829,6 +625,8 @@ export class MockAgent implements AgentClient {
     // the upgrade reads what this one saves (the storage event), and its own reader would drop what it can't read.
     if (!started || filledFromNow) this.commit({})
     this.resumeHolds()
+    // The chat engine loads now, in the background: not part of the first load, and ready before the first send.
+    void this.loadEngine()
     // Another tab changed the saved state: take it, so two open tabs don't overwrite each other.
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', e => { if (e.key === STORAGE_KEY || e.key === null) this.syncFromStorage() })
@@ -1012,7 +810,7 @@ export class MockAgent implements AgentClient {
     Object.values(this.holdTimers).forEach(clearTimeout)
     this.holdTimers = {}
     this.mockRuns.forEach(r => r.turns.forEach(t => t.hard.abort()))
-    this.mockRuns.clear(); this.turnsById.clear(); this.sendKeys.clear(); this.history.clear(); this.damaged.clear(); this.scripted = null
+    this.mockRuns.clear(); this.history.clear(); this.engine?.clear(); this.scripted = null
     this.created.clear(); this.createdInfo.clear()
     this.runInfo.clear()
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
@@ -1097,7 +895,7 @@ export class MockAgent implements AgentClient {
     const { at } = this.stamp()
     const done = this.writeThen({ paused: at }, at)
     // A paused agent ends what is running and cancels what waits (the server's fence).
-    if (this.state.paused === at) this.fence(() => true, 'paused')
+    if (this.state.paused === at) this.engine?.fence(() => true, 'paused')
     return done
   }
   resume() { return this.write({ paused: null }) }
@@ -1437,7 +1235,7 @@ export class MockAgent implements AgentClient {
   }
 
   /** Remembers what a run replayed and made, keeping the newest RUNS_KEPT. */
-  private saveRunInfo(runId: string, info: RunInfo) {
+  saveRunInfo(runId: string, info: RunInfo) {
     this.runInfo.delete(runId)
     this.runInfo.set(runId, { ...info })
     while (this.runInfo.size > RUNS_KEPT) this.runInfo.delete(this.runInfo.keys().next().value!)
@@ -1447,117 +1245,8 @@ export class MockAgent implements AgentClient {
 
   // ----- chat -----
 
-  /** A seeded turn's own answer when the question is one a chat already asked: this chat's first, then any chat's. */
-  private seeded(q: string, chatId: string): Script | null {
-    const stage = this.demo.stage
-    const want = norm(q)
-    const order = [...chats.filter(c => c.id === chatId), ...chats.filter(c => c.id !== chatId)]
-    for (const c of order) {
-      for (let t = 0; t < c.turns.length; t++) {
-        const turn = c.turns[t]
-        if (turn.role !== 'user' || norm(turn.text) !== want) continue
-        const answers: Extract<SeedTurn, { role: 'agent' }>[] = []
-        for (let j = t + 1; j < c.turns.length; j++) {
-          const a = c.turns[j]
-          if (a.role === 'user') break
-          if (!a.stage || a.stage === stage) answers.push(a)
-        }
-        if (!answers.length) continue
-        const fb = chatScript.fallback
-        return { thinking: fb.thinking, delayMs: fb.delayMs, trace: traceKey(answers[0].trace), parts: answers.flatMap(a => a.parts) }
-      }
-    }
-    return null
-  }
-
-  private script(q: string, chatId: string): Script {
-    const S = stageIndex(this.demo.stage)
-    const sc = chatScript.scripted
-    const pick = (match: string) => {
-      const e = sc.find(x => x.match === match)
-      if (!e) throw new Error(`chat-script.json has no entry for ${match}`)
-      return e
-    }
-    const fb = chatScript.fallback
-    const text = (t: string): MessagePart => ({ type: 'text', text: t })
-
-    // Nothing read yet: even a seeded question gets "I can't see your tools yet" (day one) or "still reading" (loading).
-    if (this.demo.scenario === 'First day') {
-      return { thinking: fb.thinking, delayMs: fb.delayMs, parts: [text(chatScript.firstDay)], trace: traceKey(chatScript.firstDayTrace) }
-    }
-    if (this.demo.scenario === 'Loading') {
-      return { thinking: fb.thinking, delayMs: fb.delayMs, parts: [text(chatScript.loading)], trace: traceKey(chatScript.loadingTrace) }
-    }
-    const disc = pick('gorgias|ticket|refund|customer service') as { match: string; delayMs: number; reply: { text: string }[]; trace: string }
-    if (this.demo.scenario === 'Tool disconnected' && new RegExp(disc.match, 'i').test(q)) {
-      return { thinking: fb.thinking, delayMs: fb.delayMs, parts: [{ type: 'error', text: disc.reply[0].text, retryQuestion: q }], trace: traceKey(disc.trace) }
-    }
-    // A question a chat already asked gets that chat's own answer (Regenerate on a seeded chat, the suggestions).
-    const seeded = this.seeded(q, chatId)
-    if (seeded) return seeded
-    const more = /^Tell me more about: (.+)$/i.exec(q.trim())
-    const p = more && problems.find(x => x.title === more[1].trim())
-    if (p) {
-      const s = pick('Tell me more about: {problem title}') as { thinking: string[]; delayMs: number }
-      const found = p.found.map(([t]) => t).join('')
-      return { thinking: s.thinking, delayMs: s.delayMs, trace: 'generic', parts: [text(`${found} Suggested next step: ${p.next}.`)] }
-    }
-    // The same guard as routines: "Any new skill ideas?" is a question, not a request to make one.
-    if (isRequest(q) && /\b(create|make|build|add|new|teach)\b.{0,14}\bskill\b/i.test(q)) {
-      const s = pick('(create|make|build|add|new|teach) … skill') as { thinking: string[]; delayMs: number; reply: { type: string; text?: string }[]; trace: string }
-      const skill = skillFromRequest(q, S)
-      // The answer's footer links its steps, so the reply carries no work row of its own (one link per answer).
-      return {
-        thinking: s.thinking, delayMs: s.delayMs, trace: traceKey(s.trace),
-        parts: [text(s.reply.find(x => x.type === 'text')!.text!), { type: 'skill', skill }],
-        after: (info, replaces) => {
-          const def: SkillDef = { n: skill.name, d: skill.desc, icon: 'menu_book', need: 0, by: `${this.meName()}, in a chat`, used: 'New today', mine: true }
-          // Regenerate or Edit of the question that made a skill updates that skill instead of adding a second.
-          const old = replaces ? this.runInfo.get(replaces)?.skill : undefined
-          const at = old === undefined ? -1 : this.state.skillsExtra.findIndex(x => x.n === old)
-          const skillsExtra = at < 0 ? [def, ...this.state.skillsExtra] : this.state.skillsExtra.map((x, i) => (i === at ? def : x))
-          this.commit({ skillsExtra })
-          info.skill = def.n
-        },
-      }
-    }
-    const r = pick('every|each|daily|weekly|remind|routine|schedule') as { match: string; thinking: string[]; delayMs: number; Watch: { type: string; text: string }[]; ActRun: { type: string; text?: string }[]; trace: string }
-    if (isScheduleRequest(q)) {
-      if (S === 0) {
-        return { thinking: r.thinking, delayMs: r.delayMs, trace: 'generic', parts: [text(r.Watch[0].text), { type: 'notInThisStage', text: r.Watch[1].text }] }
-      }
-      // A schedule with no time (or no day, or a time that can't be) makes nothing yet: the agent asks.
-      const routine = routineFromRequest(q, S, '', demoNow(this.startedAt))
-      if (!routine) return { thinking: r.thinking.slice(0, 1), delayMs: fb.delayMs, trace: 'generic', parts: [text(ASK_FOR_TIME)] }
-      return {
-        thinking: r.thinking, delayMs: r.delayMs, trace: traceKey(r.trace),
-        parts: [text(r.ActRun.find(x => x.type === 'text')!.text!), { type: 'routine', routine }],
-      }
-    }
-    if (/stuck/i.test(q)) {
-      const s = pick('stuck') as { thinking: string[]; delayMs: number }
-      const seedText = (chatScript.seedThread.turns[1] as { agent: { text?: string }[] }).agent[0].text!
-      return { thinking: s.thinking, delayMs: s.delayMs, trace: 'stuck', parts: [text(seedText), { type: 'table', table: seedTable }] }
-    }
-    if (QUERY_ASK.test(q)) {
-      return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'query', parts: [text(QUERY_ANSWER)] }
-    }
-    const plain = (match: string, re: RegExp): Script | null => {
-      const s = pick(match) as { thinking: string[]; delayMs: number; reply: { text: string }[]; trace: string }
-      return re.test(q) ? { thinking: s.thinking, delayMs: s.delayMs, trace: traceKey(s.trace), parts: [text(s.reply[0].text)] } : null
-    }
-    // "Black Friday" is checked before "Friday", so the dictated question gets its own answer.
-    const scripted = plain('refund', /refund/i) ?? plain('black friday|run out', /black friday|run out/i) ?? plain('friday|feature|email', /friday|feature|email/i)
-    if (scripted) return scripted
-    // Off-script (decision D8): what the agent can't answer from the tools, then the suggested questions as chips.
-    // The tools it can read now: not the one whose login expired.
-    const { connection } = this.read().tools
-    const readable = listNames(tools.connected.filter(k => !connection[k]).map(k => tools.details[k].name))
-    return { thinking: fb.thinking, delayMs: fb.delayMs, trace: traceKey(fb.trace), parts: [text(fb.reply[0].text.replace('{tools}', readable)), { type: 'suggestions', questions: chatScript.suggestions }] }
-  }
-
   /** A routine part's card, saved as it appears. With `replaces`, the routine that run made is updated in place (same id). */
-  private saveRoutine(part: Extract<MessagePart, { type: 'routine' }>, replaces: string | undefined, info: RunInfo): MessagePart {
+  saveRoutine(part: Extract<MessagePart, { type: 'routine' }>, replaces: string | undefined, info: RunInfo): MessagePart {
     const was = replaces ? this.runInfo.get(replaces) : undefined
     const old = was?.routine ?? was?.kept
     const reuse = old !== undefined && this.state.routinesExtra.some(x => x.id === old) ? old : null
@@ -1577,7 +1266,7 @@ export class MockAgent implements AgentClient {
    * The replacing answer made no routine in place of the one the replaced run made: that routine is deleted the way a
    * person deletes one (`routinesDeleted`), so Regenerate's Undo can restore it. A skill is never taken back.
    */
-  private takeBack(replaced: string, info: RunInfo) {
+  takeBack(replaced: string, info: RunInfo) {
     const old = this.runInfo.get(replaced)
     if (!old?.routine || info.routine) return
     const rec = `routine:${old.routine}`
@@ -1590,7 +1279,7 @@ export class MockAgent implements AgentClient {
   // ----- chats (the server's side of C4, in memory and in the saved state) -----
 
   /** A chat's id and when it began, for the sample chats the scenario shows and the ones the app made. */
-  private chatUniverse(): { id: string; title: string; at: Instant }[] {
+  chatUniverse(): { id: string; title: string; at: Instant }[] {
     const seed = this.read().chat.chats.map(c => ({ id: c.id, title: c.title, at: c.at }))
     const made = [...this.created].flatMap(id => { const i = this.createdInfo.get(id); return i ? [{ id, ...i }] : [] })
     return [...made, ...seed]
@@ -1619,8 +1308,8 @@ export class MockAgent implements AgentClient {
     }
   }
   /** A paging cursor: opaque to the caller, base64url (no padding) of the last key. */
-  private cursorOf = (key: string) => btoa(key).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-  private keyOf(cursor: string): string | null {
+  cursorOf = (key: string) => btoa(key).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  keyOf(cursor: string): string | null {
     try { return atob(cursor.replace(/-/g, '+').replace(/_/g, '/')) } catch { return null }
   }
 
@@ -1653,301 +1342,34 @@ export class MockAgent implements AgentClient {
     return Promise.resolve()
   }
 
-  listChats(opts: { cursor?: string; limit?: number; deleted?: boolean } = {}): Promise<ChatList> {
-    const limit = opts.limit ?? 50
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return this.rejected(INVALID, 'The page size must be 1 to 100.', true)
-    let all = this.chatUniverse().map(c => this.summary(c)).filter(c => c.deleted === !!opts.deleted)
-      .sort((a, b) => b.at.ms - a.at.ms || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
-    if (opts.cursor !== undefined) {
-      const key = this.keyOf(opts.cursor)
-      const m = key === null ? null : /^(-?\d+):(.*)$/.exec(key)
-      if (!m) return this.rejected(INVALID, 'That page cursor is not valid.', true)
-      const [ms, id] = [Number(m[1]), m[2]]
-      all = all.filter(c => c.at.ms < ms || (c.at.ms === ms && c.id < id))
+  // ----- the chat engine: C4's reads and C5's runs (mock-chat.ts) -----
+
+  private loadEngine = async (): Promise<ChatEngine> => {
+    if (!this.engine) {
+      const { ChatEngine: Engine } = await import('./mock-chat')
+      this.engine ??= new Engine(this as unknown as Host)
     }
-    const items = all.slice(0, limit)
-    const last = items.at(-1)
-    for (const c of items) this.seen[`chat:${c.id}`] = c.rev
-    return Promise.resolve({ items, nextCursor: all.length > limit && last ? this.cursorOf(`${last.at.ms}:${last.id}`) : null })
+    return this.engine
   }
-
-  /** The sample chat's turns as stored messages: ids from the chat's place in the list, so they never change. */
-  private seedMessages(id: string): StoredMessage[] {
-    const ci = chats.findIndex(c => c.id === id)
-    if (ci < 0) return []
-    const c = chats[ci]
-    const id22 = (kind: string, a: number, b: number) => `${kind}_${`s${a.toString(36).padStart(3, '0')}${b.toString(36).padStart(3, '0')}`.padEnd(22, '0')}`
-    const runId = id22('r', ci, 0)
-    const out: StoredMessage[] = []
-    let turnId = '', n = 0
-    c.turns.forEach((t, j) => {
-      if (t.role === 'user') {
-        turnId = id22('t', ci, j); n = 0
-        out.push({ id: `${turnId}.u`, role: 'user', text: t.text, turnId, runId, pos: out.length, at: c.at })
-        return
-      }
-      if (t.stage !== undefined && t.stage !== this.demo.stage) return
-      for (const part of t.parts) out.push({ id: `${turnId}.${n++}`, role: 'agent', part, trace: t.trace, model: t.model, at: c.at, turnId, runId, pos: out.length })
-    })
-    return out
-  }
-  private allMessages(id: string): StoredMessage[] { return [...this.seedMessages(id), ...(this.history.get(id) ?? [])] }
-
-  getChat(id: string, cursor?: string): Promise<ChatPage> {
-    const base = this.chatBase(id) ?? this.read().chat.chats.find(c => c.id === id)
-    if (!base) return this.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
-    const all = this.allMessages(id)
-    let below = all.length
-    if (cursor !== undefined) {
-      const key = this.keyOf(cursor)
-      const m = key === null ? null : /^p(\d+)$/.exec(key)
-      if (!m) return this.rejected(INVALID, 'That page cursor is not valid.', true)
-      below = Number(m[1])
-    }
-    const size = 50
-    const page = all.filter(m => m.pos < below).slice(-size).reverse()
-    const first = page.at(-1)
-    const runs: ActiveRun[] = [...this.mockRuns.values()].filter(r => r.live && r.chatId === id).map(r => ({ runId: r.runId, chatId: r.chatId, lastSeq: r.frames.length, live: true }))
-    const chat = this.summary(base)
-    this.seen[`chat:${id}`] = chat.rev
-    return Promise.resolve({ chat, messages: page, nextCursor: first && first.pos > 0 ? this.cursorOf(`p${first.pos}`) : null, runs })
-  }
-
-  resetSession(chatId: string): Promise<void> {
-    if (!this.knownChat(chatId)) return this.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
-    this.damaged.delete(chatId)
-    return Promise.resolve()
-  }
-
-  // ----- chat runs -----
-
-  private id22(kind: 'r' | 't'): string { return `${kind}_${(SESSION + (++this.idSeq).toString(36).padStart(6, '0')).padEnd(22, '0').slice(0, 22)}` }
-  private nowInstant = (): Instant => instantOf(demoNow(this.startedAt).getTime())
-
-  private emit(run: MockRun, event: ChatEvent) {
-    const frame: RunFrame = { runId: run.runId, seq: run.frames.length + 1, at: this.nowInstant(), event }
-    run.frames.push(frame)
-    for (const sub of [...run.subs]) sub(frame)
-  }
-
-  /** The send's refusals and checks, in the design's order (4.3). Null when the send may go on. */
-  private sendRefusal(input: ChatSendInput): Promise<never> | null {
-    if (!/^[A-Za-z0-9_-]{8,64}$/.test(input.clientTurnKey)) return this.rejected(INVALID, 'The send needs a key of 8 to 64 letters, numbers, _ or -.', true)
-    if (!input.text.trim()) return this.rejected(INVALID, 'There is nothing to send.', true)
-    if ((input.attachments?.length ?? 0) > 10) return this.rejected(INVALID, 'A message takes at most 10 files.', true, { reason: REASON.tooMany })
-    if (!models.some(m => m.id === input.model)) return this.rejected(INVALID, `"${input.model}" isn't a model.`, true)
-    return null
-  }
-
-  send(chatId: string, input: ChatSendInput): Promise<SendTurnResult> {
-    if (!this.knownChat(chatId) || this.state.chatDeleted[chatId]) return this.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
-    const bad = this.sendRefusal(input)
-    if (bad) return bad
-    // The same key and payload answers the same turn; the same key with another payload is refused. Checked before any other rule.
-    const hash = JSON.stringify([input.text, input.quote ?? null, input.priority ?? 'next', input.model, input.replacesRun ?? null, input.attachments ?? []])
-    const keyed = this.sendKeys.get(`${chatId}/${input.clientTurnKey}`)
-    if (keyed) return keyed.hash === hash ? Promise.resolve(keyed.result) : this.rejected(CONFLICT, 'That key was already used for another message.', true, { reason: REASON.keyReused })
-    if (this.state.paused !== null) return this.rejected(FORBIDDEN, 'Your Inhouse agent is paused.', true, { reason: REASON.paused })
-    if (this.damaged.has(chatId)) return this.rejected(CONFLICT, "This chat's memory couldn't be saved. Start it fresh to go on.", true, { reason: REASON.sessionDamaged })
-    const live = [...this.mockRuns.values()].find(r => r.live && r.chatId === chatId)
-    const waiting = [...this.mockRuns.values()].flatMap(r => r.turns).filter(t => t.chatId === chatId && t.state === 'queued').length
-    if (waiting >= 10) return this.rejected(RATE_LIMITED, 'Too many messages are waiting in this chat.', true, { reason: REASON.queueFull })
-    const priority = input.priority ?? 'next'
-    const run: MockRun = live ?? { runId: this.id22('r'), chatId, frames: [], live: true, turns: [], subs: new Set() }
-    const turn: MockTurn = {
-      turnId: this.id22('t'), runId: run.runId, chatId, input: { ...input, priority }, ord: ++this.idSeq, queuedAt: this.nowInstant(), state: 'queued',
-      interrupt: new AbortController(), hard: new AbortController(),
-    }
-    const result: SendTurnResult = { runId: run.runId, turnId: turn.turnId, messageId: `${turn.turnId}.u`, position: live && run.turns.some(t => t.state !== 'ended') ? 'queued' : 'starting' }
-    this.sendKeys.set(`${chatId}/${input.clientTurnKey}`, { hash, result })
-    this.turnsById.set(turn.turnId, turn)
-    run.turns.push(turn)
-    if (!live) {
-      this.mockRuns.set(run.runId, run)
-      this.emit(run, { type: 'run.started', runId: run.runId, chatId })
-    }
-    this.emit(run, {
-      type: 'turn.queued', turnId: turn.turnId, messageId: result.messageId, text: input.text, ...(input.quote !== undefined ? { quote: input.quote } : {}),
-      attachments: input.attachments ?? [], priority, by: ME_ID,
-    })
-    if (!live) void this.drive(run)
-    // `now` ends the live turn (the engine has no mid-turn input) and goes next; it never ends a turn that started after the send.
-    else if (priority === 'now') run.turns.find(t => t.state === 'live')?.interrupt.abort()
-    return Promise.resolve(result)
-  }
-
-  private rank = (t: MockTurn) => ({ now: 0, next: 1, later: 2 }[t.input.priority ?? 'next'])
-  private pickNext(run: MockRun): MockTurn | undefined {
-    return run.turns.filter(t => t.state === 'queued').sort((a, b) => this.rank(a) - this.rank(b) || a.ord - b.ord)[0]
-  }
-
-  /** A turn that never ran: out of the queue, with the reason. */
-  private cancel(run: MockRun, turn: MockTurn, why: Extract<ChatEvent, { type: 'turn.cancelled' }>['why']) {
-    if (turn.state === 'ended') return
-    turn.state = 'ended'
-    turn.hard.abort()
-    this.emit(run, { type: 'turn.cancelled', turnId: turn.turnId, why })
-  }
-
-  private async drive(run: MockRun) {
-    const began = Date.now()
-    let count = 0
-    try {
-      for (let turn = this.pickNext(run); turn; turn = this.pickNext(run)) {
-        if (await this.runTurn(run, turn)) count++
-      }
-    } finally {
-      // Over the moment nothing waits: a message sent after this starts a run of its own.
-      run.live = false
-      const last = [...run.turns].reverse().find(t => this.traceOf(t.turnId))
-      const t = last ? this.traceOf(last.turnId) : null
-      this.emit(run, { type: 'run.finished', runId: run.runId, turns: count, durationMs: t?.durationMs ?? Date.now() - began, cost: t?.cost ?? { minor: 0, currency: 'USD' } })
-    }
-  }
-
-  /** Waits `ms` of demo time, or until the turn is ended early. */
-  private pause_(ms: number, turn: MockTurn): Promise<void> {
-    return new Promise<void>(resolve => {
-      const signals = [turn.interrupt.signal, turn.hard.signal]
-      if (signals.some(x => x.aborted)) { resolve(); return }
-      let t: ReturnType<typeof setTimeout> | undefined = undefined
-      const done = () => { clearTimeout(t); signals.forEach(x => x.removeEventListener('abort', done)); resolve() }
-      t = setTimeout(done, ms)
-      signals.forEach(x => x.addEventListener('abort', done, { once: true }))
-    })
-  }
-
-  private finish(run: MockRun, turn: MockTurn, outcome: 'done' | 'interrupted' | 'stopped' | 'failed', reason?: TurnFailure) {
-    turn.state = 'ended'
-    this.emit(run, { type: 'turn.finished', turnId: turn.turnId, outcome, ...(reason ? { reason } : {}) })
-  }
-
-  /** What the server stores once the turn ends (D1): the question and the parts that were written. */
-  private project(run: MockRun, turn: MockTurn, parts: { messageId: string; part: MessagePart; at: Instant }[], info: RunInfo, model: string) {
-    const list = this.history.get(turn.chatId) ?? []
-    let pos = this.seedMessages(turn.chatId).length + list.length
-    const atts = turn.input.attachments?.map(a => ({ name: a.name, meta: '', icon: 'description' }))
-    const user: StoredMessage = {
-      id: `${turn.turnId}.u`, role: 'user', text: turn.input.text, ...(turn.input.quote !== undefined ? { quote: turn.input.quote } : {}), ...(atts?.length ? { atts } : {}),
-      turnId: turn.turnId, runId: run.runId, pos: pos++, at: turn.queuedAt,
-    }
-    const answers = parts.map((p): StoredMessage => ({ id: p.messageId, role: 'agent', part: p.part, trace: turn.turnId, model, at: p.at, turnId: turn.turnId, runId: run.runId, pos: pos++ }))
-    this.history.set(turn.chatId, [...list, user, ...answers])
-    void info
-  }
-
-  /** Runs one turn to its end. True when it started (a cancelled one didn't). */
-  private async runTurn(run: MockRun, turn: MockTurn): Promise<boolean> {
-    const { input } = turn
-    const forced = this.scripted
-    this.scripted = null
-    if (forced === 'capReached') {
-      this.emit(run, { type: 'notice', code: NOTICE.capReached })
-      this.finish(run, turn, 'failed', FAIL.capReached)
-      return false
-    }
-    if (forced === 'budgetBusyThenStart' || forced === 'budgetBusyThenFail') {
-      // Back to waiting, not failed: it tries again every 15 s, and gives up after 2 minutes.
-      this.emit(run, { type: 'notice', code: NOTICE.budgetBusy })
-      await this.pause_(forced === 'budgetBusyThenStart' ? 15_000 : 120_000, turn)
-      if (turn.state === 'ended') return false
-      if (forced === 'budgetBusyThenFail') { this.finish(run, turn, 'failed', FAIL.budgetBusy); return false }
-    }
-    turn.state = 'live'
-    this.emit(run, { type: 'turn.started', turnId: turn.turnId, model: input.model })
-    const s = this.script(input.text.trim(), turn.chatId)
-    let info: RunInfo = { trace: s.trace }
-    this.saveRunInfo(turn.turnId, info)
-    let stepN = 0
-    const step = (label: string) => this.emit(run, { type: 'step', turnId: turn.turnId, stepId: `${turn.turnId}.s${stepN++}`, label })
-    const ended = () => turn.interrupt.signal.aborted || turn.hard.signal.aborted
-    step('Reading your question…')
-    let elapsed = 0, i = 0
-    while (elapsed < s.delayMs && !ended()) {
-      const slice = Math.min(THINKING_STEP_MS, s.delayMs - elapsed)
-      await this.pause_(slice, turn)
-      if (ended()) break
-      elapsed += slice
-      if (elapsed < s.delayMs) step(s.thinking[Math.min(i++, s.thinking.length - 1)])
-    }
-    const written: { messageId: string; part: MessagePart; at: Instant }[] = []
-    if (!ended()) {
-      if (forced === 'crash') { this.finish(run, turn, 'failed', FAIL.sessionCrashed); this.project(run, turn, written, info, input.model); return true }
-      const replaces = input.replacesRun
-      // A routine or skill the answer makes is saved as its card appears, so its id comes from what is saved at that moment.
-      const chosen = forced === 'turnBudget' || forced === 'maxTurns' ? s.parts.slice(0, 1) : s.parts
-      let n = 0
-      for (const part of chosen) {
-        const out = part.type === 'routine' && part.routine.id === '' ? this.saveRoutine(part, replaces, info) : part
-        const at = this.nowInstant()
-        written.push({ messageId: `${turn.turnId}.${n++}`, part: out, at })
-        this.emit(run, { type: 'part', turnId: turn.turnId, messageId: `${turn.turnId}.${n - 1}`, part: out, model: input.model, at })
-      }
-      if (forced !== 'turnBudget' && forced !== 'maxTurns') s.after?.(info, replaces)
-      const failed = s.parts.some(x => x.type === 'error')
-      // An answer that failed replaces nothing: what the earlier run made stays, and this run carries it on, so the next
-      // answer in the chain (Try again, or Regenerate of the error) updates it instead of making a second.
-      if (replaces && !failed) this.takeBack(replaces, info)
-      const was = replaces && failed ? this.runInfo.get(replaces) : undefined
-      if (was) { info.kept = was.routine ?? was.kept; info.skill = was.skill }
-      this.saveRunInfo(turn.turnId, info)
-      if (!run.info || info.routine || info.skill) { run.info = info; this.saveRunInfo(run.runId, info) }
-      if (forced === 'turnBudget') this.finish(run, turn, 'failed', FAIL.turnBudget)
-      else if (forced === 'maxTurns') this.finish(run, turn, 'failed', FAIL.maxTurns)
-      else this.finish(run, turn, 'done')
-      if (forced === 'sessionDamaged') { this.damaged.add(turn.chatId); this.emit(run, { type: 'notice', code: NOTICE.sessionDamaged }) }
-    } else {
-      this.finish(run, turn, turn.hard.signal.aborted ? 'stopped' : 'interrupted')
-    }
-    this.project(run, turn, written, info, input.model)
-    info = { trace: info.trace }
-    return true
-  }
+  /** Waits for the engine. The app asks at start, so a first send isn't waiting on its chunk; the tests wait for it too. */
+  preload(): Promise<void> { return this.loadEngine().then(() => undefined) }
+  async listChats(opts: { cursor?: string; limit?: number; deleted?: boolean } = {}): Promise<ChatList> { return (await this.loadEngine()).listChats(opts) }
+  async getChat(id: string, cursor?: string): Promise<ChatPage> { return (await this.loadEngine()).getChat(id, cursor) }
+  async resetSession(chatId: string): Promise<void> { return (await this.loadEngine()).resetSession(chatId) }
+  async send(chatId: string, input: ChatSendInput): Promise<SendTurnResult> { return (await this.loadEngine()).send(chatId, input) }
+  // Before the first send nothing runs: a turn can't be found, there are no active runs and nothing to attach to.
+  interrupt(turnId: string): Promise<void> { return this.engine ? this.engine.interrupt(turnId) : this.rejected(NOT_FOUND, 'That answer is not here.', true) }
+  stop(turnId: string): Promise<void> { return this.engine ? this.engine.stop(turnId) : this.rejected(NOT_FOUND, 'That answer is not here.', true) }
+  activeRuns(): Promise<ActiveRun[]> { return this.engine ? this.engine.activeRuns() : Promise.resolve([]) }
+  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq = 0): () => void { return this.engine ? this.engine.attach(runId, onFrame, fromSeq) : () => undefined }
 
   /** The next turn of the run this test hook names starts as it says (a spending cap, a busy budget, a damaged session). */
   scriptNextTurn(kind: ScriptedTurn | null) { this.scripted = kind }
   /** Test hook: the connection state the app shows (the mock has no socket). */
   setLink(state: LinkState) { this.linkState = state; this.linkListeners.forEach(l => l(state)) }
 
-  interrupt(turnId: string): Promise<void> { return this.endTurn(turnId, 'interrupt') }
-  stop(turnId: string): Promise<void> { return this.endTurn(turnId, 'hard') }
-  private endTurn(turnId: string, how: 'interrupt' | 'hard'): Promise<void> {
-    const turn = this.turnsById.get(turnId)
-    const run = turn && this.mockRuns.get(turn.runId)
-    if (!turn || !run) return this.rejected(NOT_FOUND, 'That answer is not here.', true)
-    if (turn.state === 'ended') return this.rejected(CONFLICT, FINISHED, true, { reason: REASON.turnEnded })
-    if (turn.state === 'queued') this.cancel(run, turn, 'removed')
-    else (how === 'interrupt' ? turn.interrupt : turn.hard).abort()
-    return Promise.resolve()
-  }
-
-  activeRuns(): Promise<ActiveRun[]> {
-    return Promise.resolve([...this.mockRuns.values()].filter(r => r.live).map(r => ({ runId: r.runId, chatId: r.chatId, lastSeq: r.frames.length, live: true })))
-  }
-
-  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq = 0): () => void {
-    const run = this.mockRuns.get(runId)
-    if (!run) return () => undefined
-    // The replay and the subscription are one step: nothing sent in between is missed or sent twice.
-    for (const f of run.frames) if (f.seq > fromSeq) onFrame(f)
-    run.subs.add(onFrame)
-    return () => { run.subs.delete(onFrame) }
-  }
-
   link = (): LinkState => this.linkState
   onLink = (l: (s: LinkState) => void) => { this.linkListeners.add(l); return () => { this.linkListeners.delete(l) } }
-
-  /** Everything live ends: queued turns are cancelled with `why`, live ones are stopped (pause, delete). */
-  private fence(match: (run: MockRun) => boolean, why: 'paused' | 'deleted') {
-    for (const run of this.mockRuns.values()) {
-      if (!run.live || !match(run)) continue
-      if (why === 'paused') this.emit(run, { type: 'notice', code: 'paused' })
-      for (const t of run.turns) {
-        if (t.state === 'queued') this.cancel(run, t, why)
-        else if (t.state === 'live') t.hard.abort()
-      }
-    }
-  }
 
   // ----- managing chats -----
 
@@ -1983,7 +1405,7 @@ export class MockAgent implements AgentClient {
     for (const id of ids) chatDeleted[id] = true
     const done = this.writeRecs(ids.map(id => [`chat:${id}`, 1] as [string, number]), { chatDeleted })
     // Their queued turns are cancelled and their live one stopped, once the delete is saved.
-    if (this.state.chatDeleted === chatDeleted) this.fence(run => ids.includes(run.chatId), 'deleted')
+    if (this.state.chatDeleted === chatDeleted) this.engine?.fence(run => ids.includes(run.chatId), 'deleted')
     return done
   }
   restoreChats(ids: string[]) {

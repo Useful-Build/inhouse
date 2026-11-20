@@ -36,6 +36,7 @@ const now = () => nowOf()
 const usageMoney = (major: number) => F.fmtUsageMoney(major, 'USD', d)
 
 const agent = new MockAgent()
+await agent.preload() // the chat engine loads in the background in the app; the fake clock mustn't wait on it
 const SCENARIO_KEY: Record<Scenario, string> = { Normal: 'normal', 'First day': 'firstDay', Loading: 'loading', 'Tool disconnected': 'toolDisconnected', 'Cap reached': 'capReached' }
 /** The data, state and a Ctx for a stage and scenario. */
 const at = (stage: Stage, scenario: Scenario) => {

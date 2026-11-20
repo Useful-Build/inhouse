@@ -6,9 +6,8 @@ import { agent, demo as demoControls, now } from '../agent'
 import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, Stage } from '../agent/types'
 import { AgentError, SCENARIOS, STAGES, stageIndex } from '../agent/types'
 import { REASON } from '../../shared/contract/error-codes'
-import { emptyView, reduce, refOf, rememberAttachments, upsert } from '../screens/chat/view'
 import type { ChatView } from '../screens/chat/view'
-import { NO_MODEL_TEXT, RELOAD_NOTE, RUN_FAILED, STOPPED_NOTE, sendFailureText } from '../screens/chat/turn-text'
+import { NO_MODEL_TEXT, RELOAD_NOTE, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from '../screens/chat/notes'
 import { productStage } from './stage'
 import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/upgrade-times'
 import { instantOf } from '../lib/format'
@@ -724,12 +723,17 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   // Chats started before a reload: the agent learns them again before anything reads the chat list.
   session.started?.forEach(createChat)
 
+  /** The run reducer and the words about a turn's end load with the first send, not with the page (Today's JS budget). */
+  let chat: typeof import('../screens/chat/run') | null = null
+  const loadChat = async () => (chat ??= await import('../screens/chat/run'))
+  const lib = () => { if (!chat) throw new Error('The chat code is not loaded: a run starts only after loadChat().'); return chat }
+
   /** What a frame changes in the store: the chat's view, its messages and the run's line above the composer. */
   const takeFrame = (cid: string, token: number, f: RunFrame) => {
     const cur = own(get().runs, cid)
     if (cur?.token !== token) return
     const prev = own(get().views, cid) ?? emptyView()
-    const next = reduce(prev, f.event, f.at, f.runId)
+    const next = lib().reduce(prev, f.event, f.at, f.runId)
     if (next === prev) return
     for (const m of next.messages) if (!prev.messages.includes(m)) addTo(cid, m)
     const done = f.event.type === 'run.finished'
@@ -754,7 +758,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   // Answers still being written on the agent's side (the page reloaded, or another tab sent): follow each from its first event.
   // Messages are keyed by id, so what the history already shows isn't added twice. The reload note was about a run that
   // stopped; this one didn't, so its note goes.
-  void agent.activeRuns().then(list => {
+  void agent.activeRuns().then(async list => {
+    if (list.length) await loadChat()
     const known = new Set(agent.allChatIds())
     for (const r of list) {
       if (own(get().runs, r.chatId) || !known.has(r.chatId)) continue
@@ -782,11 +787,12 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     if (!mode) { failed(NO_MODEL_TEXT); return }
     if (!existing) {
       set(s => ({ runs: { ...s.runs, [cid]: { runId: null, turnId: null, text: 'Reading your question…', token, sent: [] } } }))
-      rememberAttachments(o.atts)
       addTo(cid, { id: local, role: 'user', text: q, quote: o.quote, atts: o.atts.length ? o.atts : undefined })
-    } else rememberAttachments(o.atts)
+    }
     sendKeys.set(sendKey, key)
     try {
+      const { refOf, rememberAttachments } = await loadChat()
+      rememberAttachments(o.atts)
       const result = await agent.send(cid, {
         clientTurnKey: key, text: q, ...(o.quote !== undefined ? { quote: o.quote } : {}), priority, model: mode.id,
         ...(o.replacesRun !== undefined ? { replacesRun: o.replacesRun } : {}), ...(o.atts.length ? { attachments: o.atts.map(refOf) } : {}),
@@ -808,7 +814,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       console.warn('Inhouse: the agent did not take the message.', e)
       if (e instanceof AgentError && e.reason === REASON.sessionDamaged) set(s => ({ views: { ...s.views, [cid]: { ...(own(s.views, cid) ?? emptyView()), damaged: true } } }))
       if (own(get().runs, cid)?.token === token && !existing) forgetRun(cid)
-      failed(e instanceof AgentError ? sendFailureText(e) : RUN_FAILED)
+      failed(e instanceof AgentError && chat ? chat.sendFailureText(e) : RUN_FAILED)
     }
   }
 

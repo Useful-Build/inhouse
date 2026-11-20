@@ -23,6 +23,8 @@ async function load() {
   vi.resetModules()
   const store = await import('./store')
   const { agent } = await import('../agent')
+  await import('../screens/chat/run') // the store loads it with the first send; warm, so a fake clock never waits on it
+  await (agent as unknown as MockAgent).preload()
   return { store, mock: agent as unknown as MockAgent, ui: () => store.useUi.getState() }
 }
 type Loaded = Awaited<ReturnType<typeof load>>

@@ -5,7 +5,8 @@
 import type { Attachment, AttachmentRef, ChatMessage, Instant } from '../../agent/types'
 import type { ChatEvent, TurnFailure } from '../../../shared/contract/runs'
 import { NOTICE } from '../../../shared/contract/chat-codes'
-import { CANCELLED_TEXT, FAILURE_TEXT, NOTICE_TEXT, RUN_FAILED, STOPPED_NOTE } from './turn-text'
+import { NOTICE_TEXT, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from './notes'
+import { CANCELLED_TEXT, FAILURE_TEXT } from './turn-text'
 
 export type NoticeCode = Extract<ChatEvent, { type: 'notice' }>['code']
 
@@ -34,7 +35,7 @@ export interface ChatView {
   files: { turnId: string; fileId: string; name: string; bytes: number; contentType: string }[]
 }
 
-export const emptyView = (): ChatView => ({ messages: [], queued: [], turns: {}, live: null, thinking: null, notice: null, budgetWait: false, damaged: false, openRuns: [], files: [] })
+export { emptyView }
 
 /** What the composer knew about each file it sent (its size line and icon), by name: the run's events carry only the name. */
 const attachmentCatalog = new Map<string, Attachment>()
@@ -53,15 +54,6 @@ export function refOf(a: Attachment): AttachmentRef {
     id += chars[h % 64]
   }
   return { fileId: `f_${id}`, name: a.name }
-}
-
-/** Adds a message, or replaces the one with its id where it stands. */
-export function upsert(messages: ChatMessage[], m: ChatMessage): ChatMessage[] {
-  const i = messages.findIndex(x => x.id === m.id)
-  if (i < 0) return [...messages, m]
-  const next = messages.slice()
-  next[i] = m
-  return next
 }
 
 const userMessage = (t: TurnInfo, messageId: string): ChatMessage => ({

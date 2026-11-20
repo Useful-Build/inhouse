@@ -159,6 +159,8 @@ Object.defineProperty(globalThis, 'localStorage', { value: shim, configurable: t
 const { agent: entryAgent, demo } = await import('../index')
 if (!demo) throw new Error('The contract suite needs the demo entry (its mock and demo.reset()); is @client the product entry?')
 const mockAgent = entryAgent as MockAgent
+// The chat engine loads in the background in the app; the suite's fake clock mustn't wait on it.
+await mockAgent.preload()
 
 /** Where the mock saves its state (its own constant isn't exported): the proxy keeps this in step when it takes a change back. */
 const MOCK_STORAGE_KEY = 'inhouse.demo.v2'
