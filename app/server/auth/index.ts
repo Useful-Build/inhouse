@@ -4,7 +4,7 @@ import type { AuthStores } from './stores.ts'
 
 export { authenticate, authenticateUpgrade, checkOrigin } from './authenticate.ts'
 export type { AuthOutcome } from './authenticate.ts'
-export { AccessRefusedError, checkAccess, objectGate } from './matrix.ts'
+export { AccessRefusedError, StoresClosedError, checkAccess, closedAfterRefusal, objectGate } from './matrix.ts'
 export type { Principal } from './principal.ts'
 export type { AuthStores } from './stores.ts'
 

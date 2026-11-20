@@ -1,6 +1,6 @@
 // The route table (p2-design section 3). Orchestrator only: a worker's module exports its handlers and its PR body
 // lists the routes; the orchestrator adds them here. Every route also has a row in access-matrix.ts.
-import type { Principal } from './auth/index.ts'
+import type { AuthStores, Principal } from './auth/index.ts'
 import type { RequireObject } from './auth/matrix.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
@@ -13,6 +13,13 @@ export interface HandlerContext {
   /** The `:name` segments of the route's pattern. */
   params: Record<string, string>
   requestId: string
+  /** The request's one clock (api.ts reads it once): a handler never calls `Date.now()`. */
+  nowMs: number
+  /**
+   * The request's stores. Every call throws once an object check has refused (a swallowed `AccessRefused` can't
+   * write). Absent on a `report` row: its handler can only log.
+   */
+  stores?: AuthStores
   /**
    * On a row whose rule needs the object (`personal`, an Admin on an `adminWrite` row): call `requireObject` with it
    * before acting. It throws on refusal (403); a 2xx without a passing call becomes 500.

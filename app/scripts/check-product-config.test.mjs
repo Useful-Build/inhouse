@@ -1,9 +1,10 @@
 // scripts/check-product-config.mjs: one failing fixture per rule (each must exit 1 and name its rule), one passing
-// fixture (exit 0), the test build's own config refused (exit 1, as CI requires), and usage or an unreadable file exit 2.
+// fixture per JSONC shape the parser must take (exit 0), the test build's own config refused (exit 1, as CI requires), and usage or an unreadable file exit 2.
 import { spawnSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
+import { stripJsonc } from './check-product-config.mjs'
 
 const script = fileURLToPath(new URL('./check-product-config.mjs', import.meta.url))
 const fixtures = fileURLToPath(new URL('./check-product-config-fixtures/', import.meta.url))
@@ -13,7 +14,9 @@ const run = (...args) => spawnSync(process.execPath, [script, ...args], { encodi
 const RULE_TEXT = {
   'test-build-var': 'vars.INHOUSE_TEST_BUILD is set',
   'test-issuer-jwks': 'vars.TEST_ISSUER_JWKS is set',
-  'test-build-var-in-env': 'env.staging.vars.INHOUSE_TEST_BUILD is set',
+  'env-block': 'env is set: a deployable config has no env blocks',
+  'apps-no-inhouse': 'must be exactly one "brand" app and one "inhouse" app',
+  'apps-two-brands': 'must be exactly one "brand" app and one "inhouse" app',
   'team-domain': 'teamDomain must be https://<name>.cloudflareaccess.com',
   'access-not-json': 'INHOUSE_ACCESS is missing or not JSON',
   'app-no-origin': 'has no origin',
@@ -48,10 +51,18 @@ describe('check-product-config', () => {
     })
   }
 
-  test('passes the deployable fixture with exit 0', () => {
-    const r = run(`${fixtures}pass.jsonc`)
-    expect(r.stderr).toBe('')
-    expect(r.status).toBe(0)
+  for (const pass of readdirSync(fixtures).filter(f => f.startsWith('pass'))) {
+    test(`passes ${pass} with exit 0`, () => {
+      const r = run(`${fixtures}${pass}`)
+      expect(r.stderr).toBe('')
+      expect(r.status).toBe(0)
+    })
+  }
+
+  test('stripJsonc drops a trailing comma before comments and the closing bracket, and keeps commas in strings', () => {
+    expect(JSON.parse(stripJsonc('{"a": 1, // c\n /* d */ }'))).toEqual({ a: 1 })
+    expect(JSON.parse(stripJsonc('[1, /* x */\n]'))).toEqual([1])
+    expect(JSON.parse(stripJsonc('{"a": ",}", "b": [1, 2], /* , */ "c": 3}'))).toEqual({ a: ',}', b: [1, 2], c: 3 })
   })
 
   test('refuses wrangler.test.jsonc with exit 1, listing every reason', () => {

@@ -4,7 +4,7 @@
 // and no-store: the errors through server/http.ts, and a handler's own Response is wrapped here, so no handler can opt
 // out. Its parts come in as `ApiParts` (server/index.ts passes the real ones), so tests can drive the path itself.
 import type { AccessRow } from './access-matrix.ts'
-import { AccessRefusedError, objectGate } from './auth/index.ts'
+import { AccessRefusedError, closedAfterRefusal, objectGate } from './auth/index.ts'
 import type { AuthStores, authenticate, checkAccess, checkOrigin } from './auth/index.ts'
 import { SECURITY_HEADERS, apiError } from './http.ts'
 import { respond, withSecurityHeaders } from '../shared/security-headers.ts'
@@ -23,7 +23,13 @@ export interface ApiParts {
 
 export async function api(parts: ApiParts, request: Request, env: Env, ctx: ExecutionContext, requestId: string): Promise<Response> {
   const nowMs = Date.now()
-  const stores = parts.stores(env)
+  let stores: AuthStores
+  try {
+    stores = parts.stores(env)
+  } catch (err) {
+    console.error({ event: 'auth_store_failed', requestId, error: err instanceof Error ? err.name : 'unknown' })
+    return apiError('unavailable')
+  }
   const auth = await parts.authenticate(request, env, stores, nowMs, requestId)
   if ('refused' in auth) return apiError(auth.refused, 'reason' in auth ? { reason: auth.reason } : {})
   const { principal } = auth
@@ -55,17 +61,23 @@ export async function api(parts: ApiParts, request: Request, env: Env, ctx: Exec
     }
   }
   const gate = objectGate(principal, row, nowMs)
+  // A `report` row's handler gets no stores; every other handler's stores close at the first refusal.
+  const handlerStores = row.class === 'report' ? undefined : closedAfterRefusal(stores, () => gate.refusal !== null)
   let response: Response
   try {
-    response = await found.route.handler({ request, env, ctx, principal, params: found.params, requestId, access: { requireObject: gate.requireObject } })
+    response = await found.route.handler({
+      request, env, ctx, principal, params: found.params, requestId, nowMs, stores: handlerStores, access: { requireObject: gate.requireObject },
+    })
   } catch (err) {
+    // A refusal answers 403 whatever the handler threw after it (a closed store's StoresClosed included).
+    if (gate.refusal) return apiError('forbidden', gate.refusal.reason ? { reason: gate.refusal.reason } : {})
     if (err instanceof AccessRefusedError) return apiError('forbidden', err.reason ? { reason: err.reason } : {})
     throw err
   }
   // Fails closed on the outcome, not the call: any refusal is 403 whatever the handler answered (it may have caught it),
-  // and a row whose rule needs the object never answers 2xx without a passing check.
+  // and a row whose rule needs the object never answers 1xx or 2xx (a 101 upgrade included) without a passing check.
   if (gate.refusal) return apiError('forbidden', gate.refusal.reason ? { reason: gate.refusal.reason } : {})
-  if (decision.objectCheck === 'required' && response.status >= 200 && response.status < 300 && !gate.passed) {
+  if (decision.objectCheck === 'required' && response.status < 300 && !gate.passed) {
     console.error({ event: 'object_check_skipped', requestId, method: row.method, pattern: row.pattern })
     return apiError('unknown')
   }

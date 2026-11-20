@@ -23,9 +23,18 @@ const principal: fc.Arbitrary<Principal> = fc.oneof(
   fc.constant(principals.smoke()),
   fc.constant(principals.monitor()),
 )
+// A valid `tm:<id>:on` with something before or after it (`xtm:a:on`, `tm:a:onx`, a trailing newline): the anchors.
+const anchorBreaking = fc.tuple(fc.constantFrom('', 'x', ' ', '\n', 'tm:', ':'), fc.constantFrom('tm:gpt:on', 'tm:a:on'), fc.constantFrom('', 'x', ' ', '\n', ':on', ':'))
+  .map(([before, key, after]) => before + key + after)
+/** The rule without a regex: three `:` parts, `tm`, a non-empty id, `on`. */
+const isSwitchKey = (k: unknown) => {
+  if (typeof k !== 'string') return false
+  const parts = k.split(':')
+  return parts.length === 3 && parts[0] === 'tm' && parts[1] !== '' && parts[2] === 'on'
+}
 const object: fc.Arbitrary<AccessObject | undefined> = fc.option(fc.record({
   ownerId: fc.option(memberId, { nil: undefined }),
-  settingKey: fc.option(fc.oneof(fc.constantFrom('tm:gpt:on', 'tm:x:on', 'tm::on', 'tm:a:b:on', 'brand:name', 'tm:x:off'), fc.string()), { nil: undefined }),
+  settingKey: fc.option(fc.oneof(fc.constantFrom('tm:gpt:on', 'tm:x:on', 'tm::on', 'tm:a:b:on', 'brand:name', 'tm:x:off'), anchorBreaking, fc.string()), { nil: undefined }),
   value: fc.option(fc.oneof(fc.constantFrom('off', 'on', 'OFF', false, 0), fc.anything()), { nil: undefined }),
 }, { requiredKeys: [] }), { nil: undefined })
 const ok = (d: ReturnType<typeof checkAccess>) => 'ok' in d && !d.objectCheck
@@ -63,15 +72,20 @@ describe('checkAccess properties', () => {
       expect(err).toBeInstanceOf(AccessRefusedError)
       passed = false
     }
-    const allowed = !!r.adminWrite && typeof o?.settingKey === 'string' && /^tm:[^:]+:on$/.test(o.settingKey) && o.value === 'off'
+    const allowed = !!r.adminWrite && isSwitchKey(o?.settingKey) && o?.value === 'off'
     expect(passed).toBe(allowed)
     expect(gate.passed).toBe(allowed)
+  })
+
+  test.prop([fc.oneof(anchorBreaking, fc.string()), fc.constantFrom('off', 'on')])('row 12 lets an Admin write exactly the keys tm:<id>:on, anchored', (key, value) => {
+    const row12 = rowFor(DESIGN_ROWS, 'PUT', '/api/settings/technical/:key')!
+    expect(ok(checkAccess(principals.admin(), row12, { settingKey: key, value }, NOW))).toBe(isSwitchKey(key) && value === 'off')
   })
 
   test.prop([principal, row, object])('Inhouse never writes brand_data, baseline or personal; monitor only reads open rows; smoke only reads', (p, r, o) => {
     const d = checkAccess(p, r, o, NOW)
     if (!('ok' in d)) return
-    if (p.kind === 'inhouse') expect(r.method === 'GET' || r.class === 'technical').toBe(true)
+    if (p.kind === 'inhouse') expect(r.method === 'GET' || r.class === 'technical' || r.class === 'report').toBe(true)
     if (p.kind === 'service' && p.name === 'monitor') expect(r.class === 'open' && r.method === 'GET').toBe(true)
     if (p.kind === 'service') expect(r.method).toBe('GET')
     if (r.class === 'open') expect(p.kind).toBe('service')
@@ -112,8 +126,18 @@ describe('checkAccess cases', () => {
     const noAdmin: AccessRow = { method: 'PUT', pattern: '/x', class: 'technical', allow: ['inhouse'], adminWrite: true }
     expect(ok(checkAccess(principals.admin(), noAdmin, ADMIN_WRITE_OBJECT, NOW))).toBe(false)
   })
-  it('row 21 (POST /api/client-error, baseline) refuses Inhouse although section 3 lists it', () => {
-    expect(checkAccess(principals.inhouse(), r('POST', '/api/client-error'), undefined, NOW)).toEqual({ refused: 'forbidden' })
+  it('row 21 (POST /api/client-error, report) lets Inhouse, Members and Admins post without a grant, never a service', () => {
+    const row21 = r('POST', '/api/client-error')
+    for (const p of [principals.inhouse(), principals.member(), principals.admin()]) expect(checkAccess(p, row21, undefined, NOW)).toEqual({ ok: true })
+    for (const p of [principals.smoke(), principals.monitor()]) expect(checkAccess(p, row21, undefined, NOW)).toEqual({ refused: 'forbidden' })
+  })
+  it('a report row answers only POST, and only for the roles in allow', () => {
+    for (const method of ['GET', 'PUT', 'DELETE'] as const) {
+      expect(checkAccess(principals.member(), { method, pattern: '/x', class: 'report', allow: ['member', 'admin', 'inhouse'] }, undefined, NOW)).toEqual({ refused: 'forbidden' })
+    }
+    const noInhouse: AccessRow = { method: 'POST', pattern: '/x', class: 'report', allow: ['member'] }
+    expect(checkAccess(principals.inhouse(), noInhouse, undefined, NOW)).toEqual({ refused: 'forbidden' })
+    expect(checkAccess(principals.admin(), noInhouse, undefined, NOW)).toEqual({ refused: 'forbidden' })
   })
   it('can: an Admin may switch a model off but not edit technical; Inhouse edits technical', () => {
     const admin = canFor(principals.admin(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
@@ -136,7 +160,7 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
     it('no row lets Inhouse write brand_data, baseline or personal, and no personal row allows Inhouse', () => {
       const ih = principals.inhouse({ id: 'g', endsAtMs: Number.MAX_SAFE_INTEGER })
       for (const x of rows) {
-        if (x.method !== 'GET' && x.class !== 'technical') expect(ok(checkAccess(ih, x, { ownerId: 'm_ih' }, NOW))).toBe(false)
+        if (x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report') expect(ok(checkAccess(ih, x, { ownerId: 'm_ih' }, NOW))).toBe(false)
         if (x.class === 'personal') expect(x.allow).not.toContain('inhouse')
       }
     })
@@ -145,6 +169,15 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
         expect(x.allow).toContain('inhouse')
         if (x.method !== 'GET') expect(ok(checkAccess(principals.admin(), x, ADMIN_WRITE_OBJECT, NOW))).toBe(!!x.adminWrite)
         if (x.adminWrite) expect(x.allow).toContain('admin')
+      }
+    })
+    it('no non-GET row outside technical and report lists inhouse; a report row is POST and names no service', () => {
+      for (const x of rows) {
+        if (x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report') expect(x.allow, `${x.method} ${x.pattern}`).not.toContain('inhouse')
+        if (x.class === 'report') {
+          expect(x.method).toBe('POST')
+          expect(x.services ?? []).toEqual([])
+        }
       }
     })
     it('monitor only on open rows, smoke only on GET rows', () => {

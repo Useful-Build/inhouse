@@ -1,4 +1,4 @@
-// check-product-config fixture: refused, rule "test-build-var-in-env".
+// check-product-config fixture: deployable, with a trailing comma before a comment and the closing brace.
 {
 	"name": "inhouse-product",
 	"main": "server/index.ts",
@@ -6,12 +6,6 @@
 		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://example-team.cloudflareaccess.com\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://brand.example.test\",\"aud\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse.example.test\",\"aud\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}],\"serviceTokens\":{\"monitor-client.access\":\"monitor\",\"smoke-client.access\":\"smoke\"}}"
 	},
 	"workers_dev": false,
-	"preview_urls": false,
-	"env": {
-		"staging": {
-			"vars": {
-				"INHOUSE_TEST_BUILD": "1"
-			}
-		}
-	}
+	"preview_urls": false, // the trailing comma, then this comment
+	/* and a block comment */
 }

@@ -3,20 +3,25 @@
 // yields Inhouse; a service token never yields a person or Inhouse and never works on the Inhouse host; a request other
 // than GET and HEAD without the exact Origin is refused. Then the unit cases the brief lists.
 import { fc, test } from '@fast-check/vitest'
-import { SignJWT, UnsecuredJWT, importJWK } from 'jose'
+import { SignJWT, UnsecuredJWT, createLocalJWKSet, importJWK } from 'jose'
+import type { JWTVerifyGetKey } from 'jose'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { authenticate, authenticateUpgrade, checkOrigin, remoteKeys } from './authenticate.ts'
 import type { AuthOutcome } from './authenticate.ts'
-import { mintPerson, mintService } from './test-issuer-mint.ts'
+import { TEST_ISSUER, mintPerson, mintService } from './test-issuer-mint.ts'
 import { BRAND, INHOUSE, MONITOR_ID, SMOKE_ID, SMOKE_MEMBER, TEAM, authEnv, config, fakeStores, issuer, req } from '../testing/auth-fixtures.ts'
 import type { Issuer } from '../testing/auth-fixtures.ts'
 
 const NOW = Date.parse('2026-11-20T10:00:00.000Z')
 let good: Issuer
 let other: Issuer
+/** good's public key with no `alg`: jose's local set then offers it for any RSA alg, so only `algorithms` refuses one. */
+let algless: JWTVerifyGetKey
 beforeAll(async () => {
   good = await issuer()
   other = await issuer()
+  const { alg: _alg, ...pub } = good.key.jwks.keys[0]
+  algless = createLocalJWKSet({ keys: [pub] })
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -29,10 +34,12 @@ const service = (clientId: string, o: Partial<Parameters<typeof mintService>[0]>
   mintService({ key: good.key.privateJwk, aud: BRAND.aud, iss: TEAM, clientId, nowMs: NOW, ...o })
 const people = { 'sub-1': { role: 'admin' as const }, 'sub-gone': 'removed' as const, 'sub-ih': 'wrong_kind' as const }
 
-async function run(token: string | null, origin: string = BRAND.origin, o: { now?: number; stores?: ReturnType<typeof fakeStores>; env?: object; keys?: Issuer['keys'] } = {}) {
+async function run(token: string | null, origin: string = BRAND.origin, o: { now?: number; stores?: ReturnType<typeof fakeStores>; env?: object; keys?: Issuer['keys'] | null; testBuild?: boolean } = {}) {
   const s = o.stores ?? fakeStores({ people })
   const headers: Record<string, string> = token === null ? {} : { 'Cf-Access-Jwt-Assertion': token }
-  const out = await authenticate(req(origin, headers), (o.env ?? authEnv()) as never, s.stores, o.now ?? NOW, 'req-1', o.keys ?? good.keys)
+  // `keys: null`: no override, so authenticate picks the key set itself.
+  const keys = o.keys === null ? undefined : (o.keys ?? good.keys)
+  const out = await authenticate(req(origin, headers), (o.env ?? authEnv()) as never, s.stores, o.now ?? NOW, 'req-1', keys, o.testBuild)
   return { out, calls: s.calls }
 }
 const principalOf = (out: AuthOutcome) => ('principal' in out ? out.principal : null)
@@ -63,7 +70,8 @@ describe('properties', () => {
       token = await new SignJWT({ email: 'a@example.test' }).setProtectedHeader({ alg, kid: good.key.privateJwk.kid }).setIssuer(iss.v).setAudience(aud.v).setSubject('sub-1').setIssuedAt(NOW / 1000).setExpirationTime(NOW / 1000 + 600).sign(key)
     }
     const allRight = iss.ok && aud.ok && host.ok && alg === 'RS256'
-    const { out } = await run(token, host.v)
+    // RS384 and PS256 against the alg-less key: the key would verify them, so only `algorithms` refuses them.
+    const { out } = await run(token, host.v, alg === 'RS384' || alg === 'PS256' ? { keys: algless } : {})
     if (allRight) expect(principalOf(out)?.kind).toBe('person')
     else expect(out, `${iss.v} ${aud.v} ${host.v} ${alg}`).toEqual({ refused: 'unauthorized' })
   }
@@ -180,6 +188,40 @@ describe('binding (through in-memory stores)', () => {
   it('answers 503 with no principal when the stores fail', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     expect((await run(await person(), BRAND.origin, { stores: fakeStores({ fail: true }) })).out).toEqual({ refused: 'unavailable' })
+  })
+})
+
+describe('RS256 only', () => {
+  it('the alg-less key verifies an RS256 token (so the RS384 and PS256 refusals above are the algorithms list)', async () => {
+    expect(principalOf((await run(await person(), BRAND.origin, { keys: algless })).out)?.kind).toBe('person')
+  })
+})
+
+describe('the test-issuer gate (the compiled-in flag through the seam; vitest defines it false)', () => {
+  const testEnv = (jwks?: object) => ({ ...authEnv(), INHOUSE_TEST_BUILD: '1', ...(jwks ? { TEST_ISSUER_JWKS: JSON.stringify(jwks) } : {}) })
+  const testToken = () => person({ iss: TEST_ISSUER })
+
+  it('flag off (the default here): a test-issuer token is refused even with INHOUSE_TEST_BUILD=1 and the JWKS var', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // The keys are the token's own, so only the issuer refuses it: the team domain's stays in force.
+    expect((await run(await testToken(), BRAND.origin, { env: testEnv(good.key.jwks), keys: good.keys })).out).toEqual({ refused: 'unauthorized' })
+    expect(principalOf((await run(await person(), BRAND.origin, { env: testEnv(good.key.jwks), keys: good.keys })).out)?.kind).toBe('person')
+  })
+  it('flag on and INHOUSE_TEST_BUILD=1: the issuer swaps to the test issuer, verified from TEST_ISSUER_JWKS', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const env = testEnv(good.key.jwks)
+    expect(principalOf((await run(await testToken(), BRAND.origin, { env, keys: null, testBuild: true })).out)?.kind).toBe('person')
+    expect((await run(await person(), BRAND.origin, { env, keys: null, testBuild: true })).out).toEqual({ refused: 'unauthorized' })
+  })
+  it('flag on without the JWKS var: 503, never a principal', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect((await run(await testToken(), BRAND.origin, { env: testEnv(), keys: null, testBuild: true })).out).toEqual({ refused: 'unavailable' })
+    expect(warn.mock.calls).toEqual([[{ event: 'auth_refused', class: 'keys_unavailable', requestId: 'req-1' }]])
+  })
+  it('flag on but INHOUSE_TEST_BUILD unset: the team domain stays the issuer', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect((await run(await testToken(), BRAND.origin, { env: authEnv(), keys: good.keys, testBuild: true })).out).toEqual({ refused: 'unauthorized' })
+    expect(principalOf((await run(await person(), BRAND.origin, { env: authEnv(), keys: good.keys, testBuild: true })).out)?.kind).toBe('person')
   })
 })
 

@@ -25,13 +25,17 @@ export function buildMe(principal: Exclude<Principal, { name: 'monitor' }>, prof
   }
 }
 
-/** The route's handler, given the stores, the committed rows and their `CanRows` (server/routes.ts wires it). */
-export function meHandler(deps: { stores: (env: Env) => AuthStores; rows: readonly AccessRow[]; canRows: CanRows; now?: () => number }): Handler {
-  return async ({ env, principal, requestId }) => {
+/**
+ * The route's handler, given the committed rows and their `CanRows` (server/routes.ts wires it). It reads the stores
+ * and the clock from its context: `nowMs` is the request's one clock, so `can` and `grant` match what api.ts decided.
+ */
+export function meHandler(deps: { rows: readonly AccessRow[]; canRows: CanRows }): Handler {
+  return async ({ principal, requestId, nowMs, stores }) => {
     if (principal.kind === 'service' && principal.name === 'monitor') return apiError('forbidden')
+    if (!stores) throw new Error('GET /api/me has no stores: its row must not be a report row')
     let profile: Awaited<ReturnType<AuthStores['members']['profile']>>
     try {
-      profile = await deps.stores(env).members.profile(principal.memberId)
+      profile = await stores.members.profile(principal.memberId)
     } catch (err) {
       console.error({ event: 'me_profile_failed', requestId, error: err instanceof Error ? err.name : 'unknown' })
       return apiError('unavailable')
@@ -40,6 +44,6 @@ export function meHandler(deps: { stores: (env: Env) => AuthStores; rows: readon
       console.error({ event: 'me_without_member_row', requestId })
       return apiError('unknown')
     }
-    return apiJson(buildMe(principal, profile, deps.rows, deps.canRows, (deps.now ?? Date.now)()))
+    return apiJson(buildMe(principal, profile, deps.rows, deps.canRows, nowMs))
   }
 }

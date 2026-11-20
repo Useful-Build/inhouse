@@ -20,11 +20,11 @@ export type AuthOutcome =
   | { refused: 'forbidden'; reason: 'not_invited' | 'removed' | 'bad_origin' }
   | { refused: 'unavailable' }
 
-/** Vars the test build adds (wrangler.test.jsonc and the test runner's `--var`); absent from the product's Env. */
 /** Compile-time: true only in `vite build --mode product-test` (server/build-flags.d.ts; declared here too so the
  * server tests' tsconfig, which doesn't include that file, types it). */
 declare const __INHOUSE_TEST_BUILD__: boolean
 
+/** Vars the test build adds (wrangler.test.jsonc and the test runner's `--var`); absent from the product's Env. */
 type AuthEnv = Pick<Env, 'INHOUSE_ACCESS'> & { INHOUSE_TEST_BUILD?: string; TEST_ISSUER_JWKS?: string }
 
 const TOKEN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
@@ -71,8 +71,11 @@ const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v !== ''
 /**
  * The request's principal or its refusal. `keys` replaces the key set (tests: a local one, no network). Test build
  * only (compiled in AND `INHOUSE_TEST_BUILD === '1'`): the test issuer's iss and keys instead of the team domain's.
+ * `compiledTestBuild` is a seam for the unit tests (vitest defines the flag false): the API passes nothing, so it's the
+ * compile-time flag; and outside the test build `@test-issuer` is issuer-off.ts, whose empty `iss` and throwing key
+ * set mean even `true` here trusts nothing (503).
  */
-export async function authenticate(request: Request, env: AuthEnv, stores: AuthStores, nowMs: number, requestId: string, keys?: JWTVerifyGetKey): Promise<AuthOutcome> {
+export async function authenticate(request: Request, env: AuthEnv, stores: AuthStores, nowMs: number, requestId: string, keys?: JWTVerifyGetKey, compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__): Promise<AuthOutcome> {
   const config = loadAccessConfig(env.INHOUSE_ACCESS)
   if (!config) return refuse({ refused: 'unavailable' }, 'config_invalid', requestId)
 
@@ -85,7 +88,7 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
   let issuer = config.teamDomain
   let keySet = keys
   try {
-    if (__INHOUSE_TEST_BUILD__ && env.INHOUSE_TEST_BUILD === '1') {
+    if (compiledTestBuild && env.INHOUSE_TEST_BUILD === '1') {
       issuer = TEST_ISSUER
       keySet ??= testIssuerKeys(env)
     }

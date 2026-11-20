@@ -7,7 +7,8 @@ import { api } from '../api.ts'
 import type { ApiParts } from '../api.ts'
 import type { Handler, Route } from '../routes.ts'
 import { apiJson } from '../http.ts'
-import { authenticate, checkAccess, checkOrigin } from './index.ts'
+import { StoresClosedError, authenticate, checkAccess, checkOrigin } from './index.ts'
+import type { AuthStores } from './index.ts'
 import { mintPerson, mintService } from './test-issuer-mint.ts'
 import { buildMe, meHandler } from './me-handler.ts'
 import { MeSchema } from '../../shared/contract/me.ts'
@@ -21,18 +22,21 @@ const ok: Handler = async () => apiJson({ ok: true })
 const routeTable = (handlers: Partial<Record<string, Handler>> = {}): Route[] =>
   DESIGN_ROWS.map(r => ({ method: r.method, pattern: r.pattern, handler: handlers[`${r.method} ${r.pattern}`] ?? ok }))
 
-function setup(o: { access?: unknown; stores?: ReturnType<typeof fakeStores>; handlers?: Partial<Record<string, Handler>> } = {}) {
+function setup(o: { access?: unknown; stores?: ReturnType<typeof fakeStores>; handlers?: Partial<Record<string, Handler>>; storesThrow?: boolean } = {}) {
   const s = o.stores ?? fakeStores({ people: { admin: { role: 'admin' }, member: { role: 'member' } }, grant: { id: 'g_1', endsAtMs: Date.now() + 3_600_000 } })
   const parts: ApiParts = {
     authenticate: (r, e, st, n, id) => authenticate(r, e, st, n, id, good.keys),
     checkOrigin, checkAccess,
-    stores: () => s.stores,
+    stores: () => {
+      if (o.storesThrow) throw new TypeError('no D1 binding')
+      return s.stores
+    },
     routes: routeTable(o.handlers),
     accessMatrix: DESIGN_ROWS,
   }
   const env = { ...baseEnv, ...authEnv(o.access) } as Env
   const call = (origin: string, path: string, init: RequestInit = {}) => api(parts, new Request(`${origin}${path}`, init), env, ctx, 'req-1')
-  return { call, calls: s.calls }
+  return { call, calls: s.calls, parts }
 }
 const as = async (who: 'admin' | 'member' | 'inhouse') =>
   mintPerson({ key: good.key.privateJwk, iss: TEAM, aud: who === 'inhouse' ? INHOUSE.aud : BRAND.aud, sub: who, email: `${who}@example.test` })
@@ -60,6 +64,18 @@ describe('the request path', () => {
     expect(pre.status).toBe(405)
     expect(pre.headers.get('Access-Control-Allow-Origin')).toBeNull()
     expect(pre.headers.get('Cache-Control')).toBe('no-store')
+    vi.restoreAllMocks()
+  })
+  it('answers 503 unavailable and logs auth_store_failed (class only) when the stores cannot be made', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const handler = vi.fn(ok)
+    const { call } = setup({ storesThrow: true, handlers: { 'GET /api/me': handler } })
+    const res = await call(BRAND.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': await as('member') } })
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ error: { code: 'unavailable' } })
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
+    expect(error.mock.calls).toEqual([[{ event: 'auth_store_failed', requestId: 'req-1', error: 'TypeError' }]])
+    expect(handler).not.toHaveBeenCalled()
     vi.restoreAllMocks()
   })
   it('refuses a write without the exact Origin (403 bad_origin) before the handler', async () => {
@@ -116,6 +132,54 @@ describe('the object check', () => {
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: { code: 'forbidden', reason: 'admin_read_only' } })
   })
+  it('closes the stores at the refusal: a handler that swallows it and then writes stores nothing', async () => {
+    const s = fakeStores({ people: { admin: { role: 'admin' } } })
+    let thrown: unknown
+    const { call } = setup({ stores: s, handlers: { 'PUT /api/settings/technical/:key': async c => {
+      try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
+      try {
+        await c.stores!.audit.supportAccess({ kind: 'inhouse', memberId: 'm_x', subject: 's', grant: null, requestId: c.requestId }, { method: 'PUT', route: '/x', nowMs: c.nowMs })
+      } catch (err) { thrown = err }
+      return apiJson({ wrote: true })
+    } } })
+    const res = await call(BRAND.origin, '/api/settings/technical/tm:gpt:on', { method: 'PUT', headers: { 'Cf-Access-Jwt-Assertion': await as('admin'), Origin: BRAND.origin } })
+    expect(thrown).toBeInstanceOf(StoresClosedError)
+    expect(s.calls.supportAccess).toEqual([])
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: { code: 'forbidden', reason: 'admin_read_only' } })
+  })
+  it('answers 403, not 500, when the closed store throws out of the handler', async () => {
+    const res = await put(async c => {
+      try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
+      await c.stores!.members.profile('m_x')
+      return apiJson({})
+    })
+    expect(res.status).toBe(403)
+  })
+  it('leaves the stores open while no check has refused', async () => {
+    const res = await put(async c => {
+      const before = await c.stores!.members.profile('m_x')
+      c.access.requireObject({ settingKey: c.params.key, value: 'off' })
+      return apiJson({ before, after: await c.stores!.members.profile('m_y') })
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ before: { name: 'Name m_x' }, after: { name: 'Name m_y' } })
+  })
+  it('needs a passing call for a 1xx too: a 101 upgrade without one is 500, with one it stays 101', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const upgrade = (check: boolean): Handler => async c => {
+      if (check) c.access.requireObject({ ownerId: 'm_member' })
+      const pair = new WebSocketPair()
+      pair[1].accept()
+      return new Response(null, { status: 101, webSocket: pair[0] })
+    }
+    for (const check of [false, true]) {
+      const { call } = setup({ handlers: { 'GET /api/settings/personal': upgrade(check) } })
+      const res = await call(BRAND.origin, '/api/settings/personal', { headers: { 'Cf-Access-Jwt-Assertion': await as('member'), Upgrade: 'websocket', Origin: BRAND.origin } })
+      expect(res.status, `requireObject called: ${check}`).toBe(check ? 101 : 500)
+    }
+    vi.restoreAllMocks()
+  })
   it('answers 403 admin_read_only when the object fails, and 200 when it passes', async () => {
     const refused = await put(async c => { c.access.requireObject({ settingKey: c.params.key, value: 'on' }); return apiJson({}) })
     expect(refused.status).toBe(403)
@@ -152,7 +216,7 @@ describe('me', () => {
   })
   it('answers GET /api/me through the path, for a person and for smoke', async () => {
     const s = fakeStores({ people: { member: { role: 'member' } } })
-    const handler = meHandler({ stores: () => s.stores, rows: DESIGN_ROWS, canRows: DESIGN_CAN_ROWS })
+    const handler = meHandler({ rows: DESIGN_ROWS, canRows: DESIGN_CAN_ROWS })
     const { call } = setup({ stores: s, handlers: { 'GET /api/me': handler } })
     const res = await call(BRAND.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': await as('member') } })
     expect(res.status).toBe(200)
@@ -162,6 +226,36 @@ describe('me', () => {
     expect((await call(BRAND.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': smoke } })).status).toBe(200)
     const monitor = await mintService({ key: good.key.privateJwk, iss: TEAM, aud: BRAND.aud, clientId: MONITOR_ID })
     expect((await call(BRAND.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': monitor } })).status).toBe(403)
+  })
+})
+
+describe('the clock', () => {
+  it("me reads the request's one nowMs: a grant ending after it but before a later clock read is still live", async () => {
+    const token = await as('inhouse')
+    const T = Date.now()
+    const s = fakeStores({ grant: { id: 'g_1', endsAtMs: T + 1 } })
+    const { call } = setup({ stores: s, handlers: { 'GET /api/me': meHandler({ rows: DESIGN_ROWS, canRows: DESIGN_CAN_ROWS }) } })
+    // api.ts reads the clock once (T); any later read sees T + 10, after the grant ended.
+    vi.spyOn(Date, 'now').mockReturnValueOnce(T).mockReturnValue(T + 10)
+    const res = await call(INHOUSE.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': token } })
+    vi.restoreAllMocks()
+    expect(res.status).toBe(200)
+    const me = MeSchema.parse(await res.json())
+    expect(me.grant).toEqual({ id: 'g_1', endsAt: { iso: new Date(T + 1).toISOString(), ms: T + 1 } })
+    expect(me.can.viewMembers).toBe(true)
+  })
+})
+
+describe('a report row', () => {
+  it('reaches its handler from both hosts with no stores in the context', async () => {
+    let seen: { stores: AuthStores | undefined; has: boolean } | undefined
+    const { call } = setup({ handlers: { 'POST /api/client-error': async c => { seen = { stores: c.stores, has: 'stores' in c && c.stores !== undefined }; return new Response(null, { status: 204 }) } } })
+    for (const [who, origin] of [['member', BRAND.origin], ['inhouse', INHOUSE.origin]] as const) {
+      seen = undefined
+      const res = await call(origin, '/api/client-error', { method: 'POST', body: '{}', headers: { 'Cf-Access-Jwt-Assertion': await as(who), Origin: origin } })
+      expect(res.status, who).toBe(204)
+      expect(seen).toEqual({ stores: undefined, has: false })
+    }
   })
 })
 

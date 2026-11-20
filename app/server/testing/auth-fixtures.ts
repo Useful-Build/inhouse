@@ -75,7 +75,8 @@ export const principals = {
 }
 
 /**
- * The 21 rows of p2-design section 3 as written there (row 12 with `admin` in `allow`, per the review round 1 call), for
+ * The 21 rows of p2-design section 3 as written there (row 12 with `admin` in `allow` and row 21 a `report` row, per
+ * the review round 1 calls), for
  * the properties until PR0b commits server/access-matrix.ts; the invariants then run on the committed rows too.
  */
 export const DESIGN_ROWS: readonly AccessRow[] = [
@@ -99,8 +100,8 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/grants/:id/end', class: 'baseline', allow: ['admin'] },
   { method: 'GET', pattern: '/api/audit', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/audit/export.csv', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
-  // As section 3 lists it. `baseline` never lets Inhouse write, so checkAccess refuses Inhouse here: reported.
-  { method: 'POST', pattern: '/api/client-error', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  // Its own class (review round 1 call): the reporter posts from both hosts, and its handler gets no stores.
+  { method: 'POST', pattern: '/api/client-error', class: 'report', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */
