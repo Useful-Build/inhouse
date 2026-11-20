@@ -13,7 +13,7 @@
 //  5. a wait has no bound, or the bound fences the turn; a refusal fences the turn while a sibling still runs;
 //  6. a waiter survives a fence, `ending`, an interrupt or a stop;
 //  7. the sweep's reader counts a waiting call, misses an open one, or prices a cut call other than by 8.3.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { fc, test } from '@fast-check/vitest'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { AdmitAnswer, ModelCallUsage, ModelCallWorst, Refusal, UsageLedgerPort } from './ports.ts'
@@ -759,3 +759,91 @@ describe("the usage sweep's reader (8.3, 9; W4's `TurnCallsReader`)", () => {
 
 // Keeps the port's type in view for the wrappers above.
 export type _Ledger = UsageLedgerPort
+
+describe('#159 round 1 lows', () => {
+  it('retry backoff: no resend before 5 s, then none before 10 s after the second failure (M20)', () => inAgent(async h => {
+    const t = (await liveTurn(h)).turnId
+    ask(h, t, 'c1', 100_000)
+    await settle()
+    await h.core.renewModelCall(t, 'c1', U(0))
+    let fails = 2
+    const real = h.usage.close.bind(h.usage)
+    h.usage.close = async (...a) => {
+      if (fails > 0) { fails--; h.usage.calls.push({ method: 'close', args: a }); throw new StoreUnavailableError('usage ledger', new Error('D1 down')) }
+      return real(...a)
+    }
+    await h.core.releaseModelCall(t, 'c1', { usage: U(40_000), cut: false })
+    await settle()
+    const closes = () => h.usage.calls.filter(c => c.method === 'close').length
+    expect(closes()).toBe(1)
+    await h.tick(4_999)
+    expect(closes()).toBe(1)
+    await h.tick(1)
+    expect(closes()).toBe(2)
+    await h.tick(9_999)
+    expect(closes()).toBe(2)
+    await h.tick(1)
+    expect(closes()).toBe(3)
+    expect(h.usage.closed.get(`${t} c1`)).toBe(40_000)
+  }))
+
+  it('a reset frees a waiting call: it never holds the head of the queue (M15)', () => inAgent(async h => {
+    const t = (await liveTurn(h)).turnId
+    ;[1, 2, 3, 4].forEach(i => ask(h, t, `c${i}`, 10_000))
+    const c5 = ask(h, t, 'c5', 10_000)
+    await settle()
+    for (const i of [1, 2, 3, 4]) await h.core.renewModelCall(t, `c${i}`, U(0))
+    expect(c5.v).toBeUndefined()
+    const h2 = h.restart()
+    expect(h2.sql.exec<{ state: string }>("SELECT state FROM model_calls WHERE turn_id = ? AND call_id = 'c5'", t).one().state).toBe('freed')
+    await h2.core.releaseModelCall(t, 'c1', { usage: U(5_000), cut: false })
+    const c6 = ask(h2, t, 'c6', 10_000)
+    await settle()
+    expect(c6.v).toEqual(GRANTED)
+  }))
+
+  it('a requeue answers the attempt\'s waiting calls 503 (M16)', () => inAgent(async h => {
+    h.pool.placeAnswer = () => new Promise(() => {})
+    const a = ok(await h.submit('c1', 'key-rq001'))
+    await settle()
+    const t = a.turnId
+    expect(h.turn(t)).toMatchObject({ state: 'starting', placed: 1, pool_queued: 0 })
+    ;[1, 2, 3, 4].forEach(i => ask(h, t, `c${i}`, 10_000))
+    const c5 = ask(h, t, 'c5', 10_000)
+    await settle()
+    expect(c5.v).toBeUndefined()
+    h.pool.runnerTurns.set('runner-0', [t])
+    h.core.containerExited('runner-0', 1)
+    await settle()
+    expect(h.turn(t)).toMatchObject({ requeues: 1 })
+    expect(c5.v).toEqual(BUSY)
+  }))
+
+  it('a settle the ledger refuses for good is dropped: settled, logged, not sent again after a restart (M22)', () => inAgent(async h => {
+    const t = (await liveTurn(h)).turnId
+    ask(h, t, 'c1', 100_000)
+    await settle()
+    await h.core.renewModelCall(t, 'c1', U(0))
+    await h.core.releaseModelCall(t, 'c1', { usage: U(30_000), cut: false })
+    const errors = vi.spyOn(console, 'error')
+    h.usage.settle = async (...a) => { h.usage.calls.push({ method: 'settle', args: a }); throw new Error('usage: settle with a cost for a turn that holds nothing') }
+    h.push(t, ...fullAnswer('done', 2))
+    await settle()
+    expect(h.turn(t).settled).toBe(1)
+    expect(errors.mock.calls.some(c => (c[0] as { event?: string })?.event === 'ledger_call_dropped')).toBe(true)
+    errors.mockRestore()
+    const h2 = h.restart()
+    await h2.tick(60 * SEC)
+    expect(h2.usage.calls.filter(c => c.method === 'settle')).toHaveLength(1)
+  }))
+
+  it('the reader answers a cancelled turn (M4b)', () => inAgent(async h => {
+    await liveTurn(h)
+    const q = ok(await h.submit('c1', 'key-cnc01'))
+    await settle()
+    h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    await settle()
+    expect(h.turn(q.turnId).state).toBe('cancelled')
+    expect(turnCalls(h.sql, q.turnId)).toEqual({ micro: 0 })
+  }))
+})
