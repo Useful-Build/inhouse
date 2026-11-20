@@ -6,17 +6,16 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { expect } from '@playwright/test'
 
 const persist = fileURLToPath(new URL('../../.wrangler/test-build/v3/d1', import.meta.url))
-let found: string | undefined
-
+// Looked up on every call: a reset may recreate the persist folder, so a path kept from before could be gone.
 function dbFile(): string {
-  if (found) return found
   const files = readdirSync(persist, { recursive: true, withFileTypes: true }).filter(d => d.isFile() && d.name.endsWith('.sqlite')).map(d => join(d.parentPath, d.name))
   for (const f of files) {
     const db = new DatabaseSync(f, { readOnly: true })
     try {
-      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_log'").get() !== undefined) return (found = f)
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_log'").get() !== undefined) return f
     } finally {
       db.close()
     }
@@ -69,3 +68,14 @@ export const auditMax = (): number => readSql<{ n: number }>('SELECT COALESCE(MA
 export const auditAfter = (id: number): AuditRow[] => readSql<AuditRow>(`SELECT ${COLUMNS} FROM audit_log WHERE id > ? ORDER BY id`, id)
 
 export const auditWhere = (action: string): AuditRow[] => readSql<AuditRow>(`SELECT ${COLUMNS} FROM audit_log WHERE action = ? ORDER BY id`, action)
+
+/** What one write must leave: exactly one line since `mark`, of this action, by this member (a member id), with none of `avoid` (nor an email) in its arguments. */
+export function expectOneLine(mark: number, action: string, actorId: string, avoid: string[] = []): AuditRow {
+  const lines = auditAfter(mark)
+  expect(lines.map(l => l.action), 'a write adds exactly one line').toEqual([action])
+  const [line] = lines
+  expect(line.actor_id).toBe(actorId)
+  expect(line.actor_id).toMatch(/^m_/)
+  for (const text of ['@', 'example.test', ...avoid]) expect(line.args_json, `args hold no "${text}"`).not.toContain(text)
+  return line
+}

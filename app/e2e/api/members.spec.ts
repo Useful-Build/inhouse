@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { actor, allPages, call, expectConflict, expectError, me, newIdentity, personActor } from './kit.ts'
 import type { Actor } from './kit.ts'
+import { auditMax, expectOneLine } from './db.ts'
 
 const admin = actor('admin')
 test.describe.configure({ mode: 'serial' })
@@ -40,6 +41,8 @@ test('an invite is 201 with the invited member, and a second invite for the emai
   for (const email of [who.email, who.email.toUpperCase()]) {
     expectError(await call(request, admin, 'POST', '/api/members/invites', { json: { name: 'Again', email, role: 'member' } }), 409, 'conflict', 'already_member')
   }
+  // An email with spaces around it is not an email: 400, not a match for the open row.
+  expectError(await call(request, admin, 'POST', '/api/members/invites', { json: { name: 'Padded', email: ` ${who.email} `, role: 'member' } }), 400, 'invalid')
   // Bad bodies are 400.
   for (const json of [{}, { name: '', email: who.email, role: 'member' }, { name: 'X', email: 'not-an-email', role: 'member' }, { name: 'X', email: 'x@example.test', role: 'inhouse' }, { name: 'X', email: 'x@example.test', role: 'member', extra: 1 }]) {
     expectError(await call(request, admin, 'POST', '/api/members/invites', { json }), 400, 'invalid')
@@ -49,7 +52,9 @@ test('an invite is 201 with the invited member, and a second invite for the emai
 test('the first sign-in binds the invite and lands as a Member with the invited name', async ({ request }) => {
   const who = newIdentity('bind')
   const invited = await invite(request, who, 'member', 'Binder')
+  const mark = auditMax()
   const signedIn = await me(request, personActor(who))
+  expectOneLine(mark, 'member.bound', invited.id, [who.name])
   expect(signedIn).toMatchObject({ memberId: invited.id, name: who.name, email: who.email, role: 'member', grant: null })
   expect(signedIn.can).toMatchObject({ invite: false, changeRole: false, remove: false, grantSupport: false })
   expect(await find(request, invited.id)).toMatchObject({ status: 'active', role: 'member', name: who.name })
@@ -68,6 +73,17 @@ test('an invited Admin lands as an Admin', async ({ request }) => {
   } finally {
     await remove(request, invited.id)
   }
+})
+
+test('an Inhouse person\'s first sign-in makes one member row and one inhouse.first_sign_in line, and a second adds none', async ({ request }) => {
+  const who = newIdentity('inhouse')
+  const mark = auditMax()
+  const first = await me(request, personActor(who, 'inhouse'))
+  expect(first.role).toBe('inhouse')
+  expectOneLine(mark, 'inhouse.first_sign_in', first.memberId, [who.email])
+  const again = auditMax()
+  expect((await me(request, personActor(who, 'inhouse'))).memberId).toBe(first.memberId)
+  expect(auditMax()).toBe(again)
 })
 
 test('an uninvited identity is 403 not_invited, on any route, and makes no member', async ({ request }) => {
@@ -95,18 +111,28 @@ test('a re-invite restores the same id for the same subject, and gives a differe
   expectError(await call(request, personActor(who), 'GET', '/api/me'), 403, 'forbidden', 'removed')
 
   // The same email invited again: the removed row is invited again (same id), with the new role and title.
+  const adminId = (await me(request, admin)).memberId
+  let mark = auditMax()
   const again = await invite(request, { name: `${who.name} again`, email: who.email }, 'admin', 'Second')
   expect(again).toMatchObject({ id: first.id, status: 'invited', role: 'admin' })
+  expectOneLine(mark, 'member.reinvited', adminId, [who.name])
   // Signing in as the same subject restores that row.
+  mark = auditMax()
   const restored = await me(request, personActor(who))
   expect(restored).toMatchObject({ memberId: first.id, role: 'admin', name: `${who.name} again` })
+  expectOneLine(mark, 'member.restored', first.id, [who.name])
+  mark = auditMax()
+  await me(request, personActor(who))
+  expect(auditMax(), 'a second sign-in writes nothing').toBe(mark)
   await remove(request, first.id)
 
   // Invited once more, and a different subject signs in with the email: a new member, the old id stays removed.
   await invite(request, { name: `${who.name} third`, email: who.email }, 'member')
   const other = { ...who, sub: `${who.sub}-new` }
+  mark = auditMax()
   const fresh = await me(request, personActor(other))
   expect(fresh.memberId).not.toBe(first.id)
+  expect(JSON.parse(expectOneLine(mark, 'member.bound', fresh.memberId, [who.name]).args_json)).toMatchObject({ memberId: fresh.memberId, replaces: first.id })
   expect(fresh).toMatchObject({ role: 'member', name: `${who.name} third` })
   expect(await find(request, first.id)).toMatchObject({ status: 'removed' })
   expect(await find(request, fresh.memberId)).toMatchObject({ status: 'active' })
@@ -151,6 +177,7 @@ test('the last Admin can\'t be demoted or removed (409 last_admin), and a second
 test('a role change and a removal need their rev, and a stale one is 409 with the member as it is now', async ({ request }) => {
   const who = newIdentity('revs')
   const invited = await invite(request, who)
+  const mark = auditMax()
   expectError(await call(request, admin, 'PUT', `/api/members/${invited.id}/role`, { json: { role: 'admin' } }), 400, 'invalid')
   expectError(await call(request, admin, 'DELETE', `/api/members/${invited.id}`), 400, 'invalid')
   const stale = await call(request, admin, 'PUT', `/api/members/${invited.id}/role`, { json: { role: 'admin', ifRev: invited.rev + 7 } })
@@ -159,6 +186,7 @@ test('a role change and a removal need their rev, and a stale one is 409 with th
   expect(expectConflict(staleRemove)).toMatchObject({ id: invited.id, status: 'invited' })
   // Unknown members are 404.
   expectError(await call(request, admin, 'PUT', '/api/members/m_e2e_nobody/role', { json: { role: 'admin', ifRev: 1 } }), 404, 'not_found')
+  expect(auditMax(), 'no refused write added a line').toBe(mark)
   await me(request, personActor(who))
   await remove(request, invited.id)
 })

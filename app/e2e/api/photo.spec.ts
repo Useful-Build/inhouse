@@ -57,6 +57,9 @@ test.describe('refused uploads leave the photo as it was', () => {
     { name: 'an empty body', bytes: () => Buffer.alloc(0), contentType: 'image/png', reason: 'bad_type' },
     { name: 'a PNG sent as image/jpeg (mismatched Content-Type)', bytes: () => imageBytes('image/png'), contentType: 'image/jpeg', reason: 'bad_type' },
     { name: 'a JPEG sent as application/octet-stream', bytes: () => imageBytes('image/jpeg'), contentType: 'application/octet-stream', reason: 'bad_type' },
+    { name: 'RIFF....AVI declared as WebP', bytes: () => Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x24, 0, 0, 0]), Buffer.from('AVI '), Buffer.alloc(40)]), contentType: 'image/webp', reason: 'bad_type' },
+    { name: 'ff d8 alone declared as JPEG', bytes: () => Buffer.from([0xff, 0xd8]), contentType: 'image/jpeg', reason: 'bad_type' },
+    { name: 'a 4-byte PNG head', bytes: () => Buffer.from([0x89, 0x50, 0x4e, 0x47]), contentType: 'image/png', reason: 'bad_type' },
     { name: 'a PNG one byte over 1 MiB', bytes: () => imageBytes('image/png', MIB + 1), contentType: 'image/png', reason: 'too_large' },
   ]
   for (const bad of refused) {

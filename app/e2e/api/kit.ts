@@ -7,6 +7,8 @@ import type { APIRequestContext } from '@playwright/test'
 import type { JWK } from 'jose'
 import { mintPerson, mintService } from '../../server/auth/test-issuer-mint.ts'
 import type { MintOptions } from '../../server/auth/test-issuer-mint.ts'
+import { EXACT_ROWS } from '../../shared/contract/settings-table.ts'
+import type { SettingRow } from '../../shared/contract/settings-table.ts'
 import { SEED_INHOUSE, SEED_PEOPLE } from '../../server/seed/brand.ts'
 import { appOrigin, testAccessConfig } from '../support/test-build/issuer.ts'
 import type { AppName } from '../support/test-build/issuer.ts'
@@ -184,7 +186,8 @@ export function matrixRows(): Row[] {
   const rows = [...source.matchAll(re)].map(m => ({
     method: m[1], pattern: m[2], class: m[3], allow: list(m[4]), services: list(m[5]), adminWrite: m[6] !== undefined,
   }))
-  const lines = source.split('\n').filter(l => /^\s*\/\* \d+ \*\/ \{ method:/.test(l)).length
+  // Every row line, numbered or not (the canRows map has `{ method:` too, but no `class:`).
+  const lines = source.split('\n').filter(l => l.includes("{ method: '") && l.includes('class:')).length
   if (rows.length === 0 || rows.length !== lines) throw new Error(`access-matrix.ts: read ${rows.length} rows from ${lines} row lines; the row format changed, update kit.ts's matrixRows.`)
   return rows
 }
@@ -193,7 +196,7 @@ export function matrixRows(): Row[] {
 export function routeList(): [string, string][] {
   const source = appFile('server/routes.ts')
   const routes = [...source.matchAll(/\/\* \d+ \*\/ \{ method: '(\w+)', pattern: '([^']+)', handler:/g)].map(m => [m[1], m[2]] as [string, string])
-  const lines = source.split('\n').filter(l => /^\s*\/\* \d+ \*\/ \{ method:/.test(l)).length
+  const lines = source.split('\n').filter(l => l.includes("{ method: '") && l.includes('handler')).length
   if (routes.length === 0 || routes.length !== lines) throw new Error(`routes.ts: read ${routes.length} routes from ${lines} route lines; the format changed, update kit.ts's routeList.`)
   return routes
 }
@@ -237,6 +240,35 @@ export async function settingRev(request: APIRequestContext, who: Actor, scope: 
   const r = await call(request, who, 'GET', `/api/settings/${scope}`)
   expect(r.status, r.text).toBe(200)
   return (r.json.items.find((i: { key: string }) => i.key === key)?.rev as number | undefined) ?? 0
+}
+
+type Scope = 'personal' | 'brand' | 'technical'
+
+/** The registry's exact keys of a scope that match `pick`, never `g:name` (a rename, not a plain setting). */
+export function registryKeys(scope: Scope, pick: (row: SettingRow) => boolean = () => true): string[] {
+  return Object.entries(EXACT_ROWS).filter(([key, row]) => row.scope === scope && key !== 'g:name' && pick(row)).map(([key]) => key)
+}
+
+/** A key of the scope for a spec that only needs "some key", with the kind of value it takes. */
+export function someKey(scope: Scope, kind: 'bool' | 'enum' | 'redacted' | 'logged', skip: string[] = []): string {
+  const pick = (row: SettingRow) =>
+    kind === 'bool' ? row.rule.t === 'bool' : kind === 'enum' ? row.rule.t === 'enum' : kind === 'redacted' ? row.rule.t === 'text' && !row.auditSafe : row.auditSafe
+  const found = registryKeys(scope, pick).find(k => !skip.includes(k))
+  if (!found) throw new Error(`The settings registry has no ${kind} ${scope} key.`)
+  return found
+}
+
+/** Two different values the key accepts (`n` 0 or 1), from its rule. */
+export function sampleValue(key: string, n: 0 | 1): string | boolean {
+  const rule = EXACT_ROWS[key]?.rule
+  if (!rule) throw new Error(`${key} is not an exact registry key.`)
+  switch (rule.t) {
+    case 'bool': return n === 0
+    case 'enum': return rule.values[n]
+    case 'text': return n === 0 ? 'Sample text one' : 'Sample text two'
+    case 'cap': return n === 0 ? '$10' : '$20'
+    case 'member': throw new Error(`${key} takes a member id`)
+  }
 }
 
 /** Writes a setting at the rev it has now. */

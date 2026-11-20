@@ -2,7 +2,8 @@
 // the API specs use it to see the lazy `grant.expired` line, with no clock override anywhere on a request path. Its
 // `expiry_logged` is 0, so the first request that reads grants or the audit log writes the line, once.
 //   node e2e/support/test-build/expired-grant.ts [--persist-to <dir>]    (in app/, after migrate and seed)
-// Goes through `wrangler d1 execute --local --persist-to`, the way the migrate step does.
+// Goes through `wrangler d1 execute --local --persist-to`, the way the migrate step does. Exits 1 when no grant was inserted.
+// The `import.meta.main` guard stays: e2e/api/aa-expiry.spec.ts imports the id from this file.
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { SEED_PEOPLE } from '../../../server/seed/brand.ts'
@@ -23,5 +24,13 @@ if ((import.meta as { main?: boolean }).main) {
   const args = process.argv.slice(2)
   const persist = args[0] === '--persist-to' && args[1] ? args[1] : '.wrangler/test-build'
   const appDir = fileURLToPath(new URL('../../../', import.meta.url))
-  execFileSync('npx', ['wrangler', 'd1', 'execute', 'DB', '--local', '--config', 'wrangler.test.jsonc', '--persist-to', persist, '--command', expiredGrantSql(Date.now())], { cwd: appDir, stdio: 'inherit' })
+  const d1 = (sql: string, stdio: 'inherit' | 'pipe') =>
+    execFileSync('npx', ['wrangler', 'd1', 'execute', 'DB', '--local', '--config', 'wrangler.test.jsonc', '--persist-to', persist, '--json', '--command', sql], { cwd: appDir, stdio: ['ignore', stdio, 'inherit'], encoding: 'utf8' })
+  d1(expiredGrantSql(Date.now()), 'inherit')
+  // The INSERT matches no row when the seeded Admin is missing (no seed ran): fail loud, the API specs need this grant.
+  const check = JSON.parse(d1(`SELECT COUNT(*) AS n FROM support_grants WHERE id = '${SEED_EXPIRED_GRANT_ID}'`, 'pipe')) as { results: { n: number }[] }[]
+  if (check[0]?.results[0]?.n !== 1) {
+    console.error(`expired-grant: ${SEED_EXPIRED_GRANT_ID} was not inserted (is the local D1 seeded?).`)
+    process.exit(1)
+  }
 }

@@ -1,7 +1,8 @@
 // Revisions and paging (p2-design section 5): a stale `ifRev` is 409 with the record as it is now, a missing one is 400
 // (never last-write-wins), and the audit log and the member list page by keyset cursor to the end with no item twice.
 import { expect, test } from '@playwright/test'
-import { actor, allPages, call, expectConflict, expectError, newIdentity, personActor, putSetting, settingRev } from './kit.ts'
+import { actor, allPages, call, expectConflict, expectError, newIdentity, personActor, sampleValue, settingRev, someKey } from './kit.ts'
+import { auditMax, readSql } from './db.ts'
 
 const admin = actor('admin')
 const dana = actor('memberA')
@@ -9,10 +10,16 @@ const alex = actor('inhouse')
 test.describe.configure({ mode: 'serial' })
 
 test.describe('ifRev on a setting', () => {
-  const cases: { name: string; who: typeof admin; scope: 'personal' | 'brand' | 'technical'; key: string; first: string | boolean; second: string | boolean }[] = [
-    { name: 'a personal switch', who: dana, scope: 'personal', key: 'm:learn', first: true, second: false },
-    { name: 'a brand choice', who: admin, scope: 'brand', key: 's:currency', first: 'GBP (£)', second: 'EUR (€)' },
-    { name: 'a technical choice', who: alex, scope: 'technical', key: 'l:daily', first: '25 actions', second: '50 actions' },
+  type Scope = 'personal' | 'brand' | 'technical'
+  // Any key of the kind will do: the registry names one and the values it takes.
+  const make = (name: string, who: typeof admin, scope: Scope, kind: 'bool' | 'enum') => {
+    const key = someKey(scope, kind, scope === 'technical' ? ['stage'] : [])
+    return { name, who, scope, key, first: sampleValue(key, 0), second: sampleValue(key, 1) }
+  }
+  const cases = [
+    make('a personal switch', dana, 'personal', 'bool'),
+    make('a brand choice', admin, 'brand', 'enum'),
+    make('a technical choice', alex, 'technical', 'enum'),
   ]
   for (const c of cases) {
     test(`${c.name}: a stale ifRev is 409 with the current record, and the first write stands`, async ({ request }) => {
@@ -41,11 +48,16 @@ test.describe('ifRev on a setting', () => {
   }
 
   test('a key never set starts at rev 0, and ifRev 0 sets it once', async ({ request }) => {
-    // `d:chats` is written by no other spec; whatever its rev, the first write at ifRev 0 only works while it is 0.
-    const rev = await settingRev(request, alex, 'technical', 'd:chats')
-    const wrong = rev === 0 ? 1 : 0
-    expectConflict(await call(request, alex, 'PUT', '/api/settings/technical/d:chats', { json: { value: '6 months', ifRev: wrong } }))
-    expect((await putSetting(request, alex, 'technical', 'd:chats', '6 months')).status).toBe(200)
+    // `d:chats` is written by no other spec, and not by the seed: it must be absent from the list (never set, rev 0).
+    const key = 'd:chats'
+    const listed = (await call(request, alex, 'GET', '/api/settings/technical')).json.items.map((i: { key: string }) => i.key)
+    expect(listed, 'a key never set is not listed').not.toContain(key)
+    const path = `/api/settings/technical/${encodeURIComponent(key)}`
+    expectConflict(await call(request, alex, 'PUT', path, { json: { value: '6 months', ifRev: 1 } }))
+    const first = await call(request, alex, 'PUT', path, { json: { value: '6 months', ifRev: 0 } })
+    expect(first.status, first.text).toBe(200)
+    expect(first.json.rev).toBe(1)
+    expectConflict(await call(request, alex, 'PUT', path, { json: { value: '12 months', ifRev: 0 } }))
   })
 })
 
@@ -55,16 +67,18 @@ test.describe('ifRev on members and grants', () => {
     const invited = await call(request, admin, 'POST', '/api/members/invites', { json: { name: who.name, email: who.email, role: 'member' } })
     expect(invited.status, invited.text).toBe(201)
     const id = invited.json.id as string
+    const grant = await call(request, admin, 'POST', '/api/grants', { json: { hours: 1 } })
+    expect(grant.status, grant.text).toBe(201)
+    const mark = auditMax()
     expectError(await call(request, admin, 'PUT', `/api/members/${id}/role`, { json: { role: 'admin' } }), 400, 'invalid')
     expectError(await call(request, admin, 'DELETE', `/api/members/${id}`), 400, 'invalid')
     expectConflict(await call(request, admin, 'PUT', `/api/members/${id}/role`, { json: { role: 'admin', ifRev: 40 } }))
     expectConflict(await call(request, admin, 'DELETE', `/api/members/${id}?ifRev=40`))
 
-    const grant = await call(request, admin, 'POST', '/api/grants', { json: { hours: 1 } })
-    expect(grant.status, grant.text).toBe(201)
     try {
       expectError(await call(request, admin, 'POST', `/api/grants/${grant.json.id}/end`, { json: {} }), 400, 'invalid')
       expect(expectConflict(await call(request, admin, 'POST', `/api/grants/${grant.json.id}/end`, { json: { ifRev: 40 } }))).toMatchObject({ id: grant.json.id, live: true })
+      expect(auditMax(), 'no stale or missing ifRev added a line').toBe(mark)
     } finally {
       const ended = await call(request, admin, 'POST', `/api/grants/${grant.json.id}/end`, { json: { ifRev: grant.json.rev } })
       expect(ended.status, ended.text).toBe(200)
@@ -79,22 +93,25 @@ test.describe('ifRev on members and grants', () => {
 test.describe('paging', () => {
   test.beforeAll(async ({ request }) => {
     // Enough lines for several pages at limit 2 or 3, whatever ran before: invites are cheap writes by the Admin.
-    for (let i = 0; i < 4; i++) {
+    // Past 100 lines, so a cursor that stops early at the page maximum fails the totals below.
+    do {
       const who = newIdentity('page')
       const r = await call(request, admin, 'POST', '/api/members/invites', { json: { name: who.name, email: who.email, role: 'member' } })
       expect(r.status, r.text).toBe(201)
-    }
+    } while (readSql<{ n: number }>('SELECT COUNT(*) AS n FROM audit_log')[0].n <= 100)
   })
 
   test('the audit log pages newest first to a null cursor with no line twice, and the pages add up to the whole', async ({ request }) => {
     const whole = (await call(request, admin, 'GET', '/api/audit?limit=100')).json
     expect(whole.items.length).toBeGreaterThan(6)
-    for (const limit of [1, 2, 3, 7]) {
+    const total = readSql<{ n: number }>('SELECT COUNT(*) AS n FROM audit_log')[0].n
+    for (const limit of [1, 2, 3, 7, 100]) {
       const { items, pages } = await allPages<{ id: number }>(request, admin, '/api/audit', limit)
       const ids = items.map(i => i.id)
       expect(new Set(ids).size, `limit ${limit}: no line twice`).toBe(ids.length)
       expect(ids, `limit ${limit}: newest first`).toEqual([...ids].sort((a, b) => b - a))
-      expect(pages, `limit ${limit}: pages`).toBeGreaterThanOrEqual(Math.ceil(ids.length / limit))
+      expect(pages, `limit ${limit}: at least one page per ${limit} lines`).toBeGreaterThanOrEqual(Math.ceil(ids.length / limit))
+      expect(ids.length, `limit ${limit}: every stored line is paged`).toBe(total)
       expect(ids.slice(0, whole.items.length), `limit ${limit}: the first lines are the same`).toEqual(whole.items.map((i: { id: number }) => i.id))
     }
     // Page size and cursor are checked.
@@ -112,6 +129,7 @@ test.describe('paging', () => {
   test('the member list pages by id to a null cursor with no member twice', async ({ request }) => {
     const whole = (await allPages<{ id: string }>(request, admin, '/api/members', 100)).items.map(m => m.id)
     expect(whole.length).toBeGreaterThan(6)
+    const people = readSql<{ n: number }>("SELECT COUNT(*) AS n FROM members WHERE kind = 'person'")[0].n
     for (const limit of [1, 2, 5]) {
       const { items, pages } = await allPages<{ id: string }>(request, admin, '/api/members', limit)
       const ids = items.map(m => m.id)
@@ -119,6 +137,7 @@ test.describe('paging', () => {
       expect(ids, `limit ${limit}: the same members in the same order`).toEqual(whole)
       expect(ids, 'by id').toEqual([...ids].sort())
       expect(pages, `limit ${limit}: pages`).toBeGreaterThanOrEqual(Math.ceil(ids.length / limit))
+      expect(ids.length, `limit ${limit}: every person row is paged`).toBe(people)
     }
     for (const q of ['limit=0', 'limit=101', 'cursor=!!!', 'extra=1']) expectError(await call(request, admin, 'GET', `/api/members?${q}`), 400, 'invalid')
   })

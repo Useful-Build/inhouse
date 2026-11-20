@@ -3,9 +3,8 @@
 // written once, by the first request that reads grants or the audit log), and the audit log showing each step.
 import { expect, test } from '@playwright/test'
 import { auditText } from '../../shared/audit-text.ts'
-import { SEED_EXPIRED_GRANT_ID } from '../support/test-build/expired-grant.ts'
 import { actor, allPages, call, endLiveGrants, expectConflict, expectError, me } from './kit.ts'
-import { auditAfter, auditMax, auditWhere, readSql } from './db.ts'
+import { auditAfter, auditMax } from './db.ts'
 
 const admin = actor('admin')
 const alex = actor('inhouse')
@@ -35,6 +34,12 @@ test('an Admin gives a grant of 1 hour: live, with its end an hour on, audited a
 
 test('only an Admin gives a grant, only for 1, 4, 24 or 72 hours', async ({ request }) => {
   await endLiveGrants(request)
+  for (const hours of [4, 24, 72]) {
+    const r = await call(request, admin, 'POST', '/api/grants', { json: { hours } })
+    expect(r.status, r.text).toBe(201)
+    expect(r.json.endsAt.ms - r.json.createdAt.ms, `${hours} hours`).toBe(hours * 3_600_000)
+    await endLiveGrants(request)
+  }
   const mark = auditMax()
   for (const who of ['memberA', 'inhouse', 'smoke'] as const) expectError(await call(request, actor(who), 'POST', '/api/grants', { json: { hours: 1 } }), 403, 'forbidden')
   for (const hours of [0, 2, 5, 100, '1', null]) expectError(await call(request, admin, 'POST', '/api/grants', { json: { hours } }), 400, 'invalid')
@@ -84,32 +89,6 @@ test('ending a grant refuses the Inhouse team on its very next request, and each
   const lines = auditAfter(mark).filter(l => JSON.parse(l.args_json).grantId === made.json.id)
   expect(lines.map(l => l.action)).toEqual(['grant.created', 'support.access', 'support.access', 'support.access', 'grant.ended'])
   expect(lines.map(l => l.actor_id)).toEqual([adminId, alexId, alexId, alexId, adminId])
-})
-
-test('a grant past its end is not live, and its grant.expired line is written once, by the system', async ({ request }) => {
-  // Any grants or audit read sees it; do it twice to see the line isn't written again.
-  for (let i = 0; i < 2; i++) {
-    const list = await call(request, admin, 'GET', '/api/grants')
-    expect(list.status, list.text).toBe(200)
-    expect(list.json.items.find((g: { id: string }) => g.id === SEED_EXPIRED_GRANT_ID)).toMatchObject({ live: false, endedAt: null, endedBy: null })
-    expect((await call(request, admin, 'GET', '/api/audit')).status).toBe(200)
-  }
-  const expired = auditWhere('grant.expired').filter(l => JSON.parse(l.args_json).grantId === SEED_EXPIRED_GRANT_ID)
-  expect(expired).toHaveLength(1)
-  const [grant] = readSql<{ ends_at_ms: number; expiry_logged: number }>('SELECT ends_at_ms, expiry_logged FROM support_grants WHERE id = ?', SEED_EXPIRED_GRANT_ID)
-  expect(grant.expiry_logged).toBe(1)
-  expect(expired[0].at_ms, 'the line is dated at the grant\'s end').toBe(grant.ends_at_ms)
-  const [system] = readSql<{ kind: string; service_name: string }>('SELECT kind, service_name FROM members WHERE id = ?', expired[0].actor_id)
-  expect(system).toEqual({ kind: 'service', service_name: 'system' })
-
-  // The page shows it too, once, in the shared wording.
-  const { items } = await allPages<{ what: string; actorId: string }>(request, admin, '/api/audit', 100)
-  const wording = auditText({ action: 'grant.expired', grantId: SEED_EXPIRED_GRANT_ID }, () => null).what
-  expect(items.filter(i => i.what === wording && i.actorId === expired[0].actor_id)).toHaveLength(1)
-
-  // And it never made the Inhouse team's access depend on that flag.
-  await endLiveGrants(request)
-  expectError(await call(request, alex, 'GET', '/api/members'), 403, 'forbidden', 'grant_required')
 })
 
 test('the audit log shows grant.created, support.access, grant.ended and grant.expired', async ({ request }) => {

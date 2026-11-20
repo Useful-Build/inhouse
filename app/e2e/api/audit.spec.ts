@@ -4,8 +4,8 @@
 // so they're read from the test build's local D1 (db.ts).
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { actor, allPages, call, endLiveGrants, expectError, imageBytes, me, newIdentity, parseCsv, personActor, putSetting, settingRev } from './kit.ts'
-import { auditAfter, auditMax, readSql, writeSql } from './db.ts'
+import { actor, allPages, call, endLiveGrants, expectConflict, expectError, imageBytes, me, newIdentity, parseCsv, personActor, putSetting, sampleValue, settingRev, someKey } from './kit.ts'
+import { auditMax, expectOneLine, readSql, writeSql } from './db.ts'
 import type { AuditRow } from './db.ts'
 
 const admin = actor('admin')
@@ -20,17 +20,6 @@ test.beforeAll(async ({ request }) => {
 
 interface Line { id: number; at: { iso: string; ms: number }; actorId: string; who: string; what: string; detail: string }
 const pages = async (request: APIRequestContext) => (await allPages<Line>(request, admin, '/api/audit', 100)).items
-
-/** What one write must leave: exactly one line, of this action, by this member, with no personal text in its arguments. */
-function expectOneLine(mark: number, action: string, actorId: string, avoid: string[] = []): AuditRow {
-  const lines = auditAfter(mark)
-  expect(lines.map(l => l.action), 'a write adds exactly one line').toEqual([action])
-  const [line] = lines
-  expect(line.actor_id).toBe(actorId)
-  expect(line.actor_id).toMatch(/^m_/)
-  for (const text of ['@', 'example.test', ...avoid]) expect(line.args_json, `args hold no "${text}"`).not.toContain(text)
-  return line
-}
 
 test('every kind of write adds one line, by a member id, with no name or email in it', async ({ request }) => {
   const adminId = (await me(request, admin)).memberId
@@ -61,11 +50,12 @@ test('every kind of write adds one line, by a member id, with no name or email i
   expectOneLine(mark, 'member.removed', adminId, [who.name])
 
   // A personal switch: kept as it is (a boolean, audit-safe).
+  const switchKey = someKey('personal', 'bool')
   mark = auditMax()
-  expect((await putSetting(request, dana, 'personal', 'n:weekly', false)).status).toBe(200)
-  expect(JSON.parse(expectOneLine(mark, 'setting.changed', danaMe.memberId).args_json)).toMatchObject({ scope: 'personal', key: 'n:weekly', value: false })
+  expect((await putSetting(request, dana, 'personal', switchKey, false)).status).toBe(200)
+  expect(JSON.parse(expectOneLine(mark, 'setting.changed', danaMe.memberId).args_json)).toMatchObject({ scope: 'personal', key: switchKey, value: false })
 
-  // A personal name and a free-text channel: only their length and hash are kept.
+  // A personal name (about `g:name` itself, so the literal) and a free-text key: only their length and hash are kept.
   const secretText = `Audit Rename ${crypto.randomUUID().slice(0, 8)}`
   const original = (await call(request, dana, 'GET', '/api/me')).json.name as string
   mark = auditMax()
@@ -79,17 +69,23 @@ test('every kind of write adds one line, by a member id, with no name or email i
   } finally {
     expect((await putSetting(request, dana, 'personal', 'g:name', original)).status).toBe(200)
   }
+  const textKey = someKey('personal', 'redacted')
+  const text = 'Audit free text'
   mark = auditMax()
-  expect((await putSetting(request, dana, 'personal', 'n:channel', 'Audit channel text')).status).toBe(200)
-  expect(JSON.parse(expectOneLine(mark, 'setting.changed', danaMe.memberId, ['Audit channel text']).args_json).redacted).toMatchObject({ len: 18 })
+  expect((await putSetting(request, dana, 'personal', textKey, text)).status).toBe(200)
+  expect(JSON.parse(expectOneLine(mark, 'setting.changed', danaMe.memberId, [text]).args_json).redacted).toMatchObject({ len: text.length })
 
+  const brandKey = someKey('brand', 'enum')
+  const brandValue = sampleValue(brandKey, 1)
   mark = auditMax()
-  expect((await putSetting(request, admin, 'brand', 's:alert', '80%')).status).toBe(200)
-  expect(JSON.parse(expectOneLine(mark, 'setting.changed', adminId).args_json)).toMatchObject({ scope: 'brand', key: 's:alert', value: '80%' })
+  expect((await putSetting(request, admin, 'brand', brandKey, brandValue)).status).toBe(200)
+  expect(JSON.parse(expectOneLine(mark, 'setting.changed', adminId).args_json)).toMatchObject({ scope: 'brand', key: brandKey, value: brandValue })
 
+  const techKey = someKey('technical', 'redacted')
+  const techText = 'Signed, Audit Team'
   mark = auditMax()
-  expect((await putSetting(request, alex, 'technical', 't:signs', 'Signed, Audit Team')).status).toBe(200)
-  expect(JSON.parse(expectOneLine(mark, 'setting.changed', alexId, ['Signed, Audit Team']).args_json)).toMatchObject({ scope: 'technical', key: 't:signs', redacted: { len: 18 } })
+  expect((await putSetting(request, alex, 'technical', techKey, techText)).status).toBe(200)
+  expect(JSON.parse(expectOneLine(mark, 'setting.changed', alexId, [techText]).args_json)).toMatchObject({ scope: 'technical', key: techKey, redacted: { len: techText.length } })
 
   mark = auditMax()
   expect((await call(request, dana, 'PUT', '/api/photo', { bytes: imageBytes('image/png'), contentType: 'image/png' })).status).toBe(200)
@@ -109,32 +105,52 @@ test('every kind of write adds one line, by a member id, with no name or email i
 
 test('a write refused or changing nothing leaves no line: a stale ifRev, a bad body, a refusal, a removed photo twice', async ({ request }) => {
   const mark = auditMax()
-  const rev = await settingRev(request, dana, 'personal', 'n:slack')
-  const first = await call(request, dana, 'PUT', '/api/settings/personal/n:slack', { json: { value: true, ifRev: rev } })
+  const key = someKey('personal', 'bool')
+  const rev = await settingRev(request, dana, 'personal', key)
+  const first = await call(request, dana, 'PUT', `/api/settings/personal/${encodeURIComponent(key)}`, { json: { value: true, ifRev: rev } })
   expect(first.status, first.text).toBe(200)
   const afterFirst = auditMax()
   expect(afterFirst, 'the first write added its line').toBe(mark + 1)
 
   // The same ifRev again is stale now.
-  const stale = await call(request, dana, 'PUT', '/api/settings/personal/n:slack', { json: { value: false, ifRev: rev } })
+  const stale = await call(request, dana, 'PUT', `/api/settings/personal/${encodeURIComponent(key)}`, { json: { value: false, ifRev: rev } })
   expect(stale.status).toBe(409)
-  expect(stale.json.error.current).toMatchObject({ key: 'n:slack', value: true, rev: rev + 1 })
+  expect(stale.json.error.current).toMatchObject({ key, value: true, rev: rev + 1 })
   // Stale on a brand setting and a member's role.
-  const brandRev = await settingRev(request, admin, 'brand', 'm:ask')
-  expect((await call(request, admin, 'PUT', '/api/settings/brand/m:ask', { json: { value: true, ifRev: brandRev + 3 } })).status).toBe(409)
+  const brandKey = someKey('brand', 'bool')
+  const brandRev = await settingRev(request, admin, 'brand', brandKey)
+  expect((await call(request, admin, 'PUT', `/api/settings/brand/${encodeURIComponent(brandKey)}`, { json: { value: true, ifRev: brandRev + 3 } })).status).toBe(409)
   expect((await call(request, admin, 'PUT', '/api/members/m_e2e_nobody/role', { json: { role: 'admin', ifRev: 1 } })).status).toBe(404)
   // A bad value, a missing ifRev, a body that isn't JSON, a key of another scope.
-  expectError(await call(request, dana, 'PUT', '/api/settings/personal/n:slack', { json: { value: 'yes', ifRev: rev + 1 } }), 400, 'invalid')
-  expectError(await call(request, dana, 'PUT', '/api/settings/personal/n:slack', { json: { value: true } }), 400, 'invalid')
-  expectError(await call(request, dana, 'PUT', '/api/settings/personal/n:slack', { bytes: Buffer.from('nope'), contentType: 'application/json' }), 400, 'invalid')
+  expectError(await call(request, dana, 'PUT', `/api/settings/personal/${encodeURIComponent(key)}`, { json: { value: 'yes', ifRev: rev + 1 } }), 400, 'invalid')
+  expectError(await call(request, dana, 'PUT', `/api/settings/personal/${encodeURIComponent(key)}`, { json: { value: true } }), 400, 'invalid')
+  expectError(await call(request, dana, 'PUT', `/api/settings/personal/${encodeURIComponent(key)}`, { bytes: Buffer.from('nope'), contentType: 'application/json' }), 400, 'invalid')
   expectError(await call(request, dana, 'PUT', '/api/settings/personal/stage', { json: { value: 'Act', ifRev: 0 } }), 404, 'not_found', 'wrong_scope')
   // A refusal by role or by owner.
-  expectError(await call(request, dana, 'PUT', '/api/settings/brand/m:ask', { json: { value: true, ifRev: brandRev } }), 403, 'forbidden')
-  expectError(await call(request, alex, 'PUT', '/api/settings/personal/n:slack', { json: { value: true, ifRev: 0 } }), 403, 'forbidden')
+  expectError(await call(request, dana, 'PUT', `/api/settings/brand/${encodeURIComponent(brandKey)}`, { json: { value: true, ifRev: brandRev } }), 403, 'forbidden')
+  expectError(await call(request, alex, 'PUT', `/api/settings/personal/${encodeURIComponent(key)}`, { json: { value: true, ifRev: 0 } }), 403, 'forbidden')
   // Removing a photo that isn't there changes nothing and logs nothing.
   expect((await call(request, dana, 'DELETE', '/api/photo')).status).toBe(200)
   expect((await call(request, dana, 'DELETE', '/api/photo')).status).toBe(200)
   expect(auditMax(), 'no refused or empty write added a line').toBe(afterFirst)
+})
+
+test('a stale ifRev on a role change, a removal and a grant end leaves no line', async ({ request }) => {
+  const who = newIdentity('stale')
+  const invited = await call(request, admin, 'POST', '/api/members/invites', { json: { name: who.name, email: who.email, role: 'member' } })
+  expect(invited.status, invited.text).toBe(201)
+  await endLiveGrants(request)
+  const grant = await call(request, admin, 'POST', '/api/grants', { json: { hours: 1 } })
+  expect(grant.status, grant.text).toBe(201)
+  try {
+    const mark = auditMax()
+    expectConflict(await call(request, admin, 'PUT', `/api/members/${invited.json.id}/role`, { json: { role: 'admin', ifRev: invited.json.rev + 20 } }))
+    expectConflict(await call(request, admin, 'DELETE', `/api/members/${invited.json.id}?ifRev=${invited.json.rev + 20}`))
+    expectConflict(await call(request, admin, 'POST', `/api/grants/${grant.json.id}/end`, { json: { ifRev: grant.json.rev + 20 } }))
+    expect(auditMax(), 'no stale write added a line').toBe(mark)
+  } finally {
+    await endLiveGrants(request)
+  }
 })
 
 test('the CSV is the page: the same lines in the same order, every cell quoted', async ({ request }) => {

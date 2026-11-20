@@ -7,7 +7,7 @@ import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { auditText } from '../../shared/audit-text.ts'
 import { caseFor } from './cases.ts'
-import { actor, appOrigin, call, endLiveGrants, expectError, matrixRows, me, rowKey } from './kit.ts'
+import { actor, appOrigin, call, endLiveGrants, expectError, matrixRows, me, rowKey, someKey } from './kit.ts'
 import type { CallOptions, Row, Who } from './kit.ts'
 import { auditMax, auditAfter } from './db.ts'
 
@@ -17,17 +17,18 @@ const rows = matrixRows()
 
 type Verdict = { allowed: true } | { allowed: false; reason?: string }
 
-/** The design's rule for one row and one principal. */
+/** The design's rule for one route and one principal, from the case's `design` (cases.ts), never from the server's row. */
 function verdict(row: Row, who: Principal): Verdict {
+  const design = caseFor(row).design
   const read = row.method === 'GET'
   if (who === 'smoke' || who === 'monitor') {
     // A service token reaches only the rows that name it: monitor `open`, smoke some GET rows.
-    return { allowed: row.services.includes(who) }
+    return { allowed: design.services.includes(who) }
   }
-  if (row.class === 'open') return { allowed: false }
+  if (design.class === 'open') return { allowed: false }
   if (who === 'inhouse' || who === 'inhouseGrant') {
-    if (!row.allow.includes('inhouse')) return { allowed: false }
-    switch (row.class) {
+    if (!design.allow.includes('inhouse')) return { allowed: false }
+    switch (design.class) {
       case 'brand_data':
         if (!read) return { allowed: false }
         return who === 'inhouseGrant' ? { allowed: true } : { allowed: false, reason: 'grant_required' }
@@ -37,11 +38,11 @@ function verdict(row: Row, who: Principal): Verdict {
       default: return { allowed: false } // personal: never Inhouse
     }
   }
-  // A person: the row's allow list names the role. Admin's technical write goes on to the object rule (adminWrite).
+  // A person: the design's allow list names the role. Admin's technical write goes on to the object rule (adminWrite).
   const role = who === 'admin' ? 'admin' : 'member'
-  if (!row.allow.includes(role)) return { allowed: false }
-  if (row.class === 'technical' && !read && role === 'admin' && !row.adminWrite) return { allowed: false }
-  if (row.class === 'technical' && !read && role === 'member') return { allowed: false }
+  if (!design.allow.includes(role)) return { allowed: false }
+  if (design.class === 'technical' && !read && role === 'admin' && !design.adminWrite) return { allowed: false }
+  if (design.class === 'technical' && !read && role === 'member') return { allowed: false }
   return { allowed: true }
 }
 
@@ -56,6 +57,9 @@ async function sweep(request: APIRequestContext, row: Row, who: Principal): Prom
   if (v.allowed) expect(r.status, `${who} ${rowKey(row)}: ${r.text}`).toBe(c.passes)
   else expectError(r, 403, 'forbidden', v.reason)
 }
+
+/** The GET rows of these design classes (cases.ts) the Inhouse team may call, by the design's own table. */
+const designGets = (...classes: string[]) => rows.filter(r => r.method === 'GET' && classes.includes(caseFor(r).design.class) && caseFor(r).design.allow.includes('inhouse'))
 
 test.describe.configure({ mode: 'serial' })
 
@@ -97,16 +101,18 @@ test.describe('what the rows alone do not say', () => {
     const before = await read(a)
     // B writes a personal key: A's copy of it doesn't move. B's own list shows B's value, A's shows A's.
     const bBefore = await read(b)
-    const set = await call(request, b, 'PUT', '/api/settings/personal/n:channel', { json: { value: 'Only for B', ifRev: bBefore['n:channel']?.rev ?? 0 } })
+    const key = someKey('personal', 'redacted')
+    const set = await call(request, b, 'PUT', `/api/settings/personal/${encodeURIComponent(key)}`, { json: { value: 'Only for B', ifRev: bBefore[key]?.rev ?? 0 } })
     expect(set.status, set.text).toBe(200)
     const after = await read(a)
-    expect(after['n:channel']?.value ?? null, 'B\'s write must not show in A\'s settings').toBe(before['n:channel']?.value ?? null)
-    expect((await read(b))['n:channel'].value).toBe('Only for B')
+    expect(after[key]?.value ?? null, 'B\'s write must not show in A\'s settings').toBe(before[key]?.value ?? null)
+    expect((await read(b))[key].value).toBe('Only for B')
     // There is no path that names another member's personal settings: a member id in the key is not a key.
     const aimed = await call(request, b, 'PUT', `/api/settings/personal/${aMe.memberId}`, { json: { value: 'x', ifRev: 0 } })
     expect(aimed.status).toBe(404)
   })
 
+  // `stage` and `tm:fable:on` are literals on purpose: the spec is about them (a technical key, and the one an Admin may switch off).
   test('an Admin can\'t write a technical key, except switching a model off', async ({ request }) => {
     const admin = actor('admin')
     const tech = async () => Object.fromEntries((await call(request, admin, 'GET', '/api/settings/technical')).json.items.map((i: { key: string; value: unknown; rev: number }) => [i.key, i])) as Record<string, { value: unknown; rev: number }>
@@ -129,12 +135,10 @@ test.describe('what the rows alone do not say', () => {
   test('without a grant the Inhouse team reads baseline routes and technical settings, and no brand data', async ({ request }) => {
     await endLiveGrants(request)
     const alex = actor('inhouse')
-    for (const path of ['/api/me', '/api/settings/brand', '/api/settings/technical', '/api/grants']) {
-      expect((await call(request, alex, 'GET', path)).status, path).toBe(200)
+    for (const row of designGets('baseline', 'technical')) {
+      expect((await call(request, alex, 'GET', caseFor(row).path)).status, row.pattern).toBe(caseFor(row).passes)
     }
-    for (const path of ['/api/members', '/api/audit', '/api/audit/export.csv', '/api/members/m_e2e_nobody/photo']) {
-      expectError(await call(request, alex, 'GET', path), 403, 'forbidden', 'grant_required')
-    }
+    for (const row of designGets('brand_data')) expectError(await call(request, alex, 'GET', caseFor(row).path), 403, 'forbidden', 'grant_required')
     expect((await me(request, alex)).grant).toBeNull()
   })
 
@@ -145,19 +149,19 @@ test.describe('what the rows alone do not say', () => {
     const alex = actor('inhouse')
     try {
       const mark = auditMax()
-      const reads: [string, number][] = [['/api/members', 200], ['/api/audit', 200], ['/api/audit/export.csv', 200], ['/api/members/m_e2e_nobody/photo', 404]]
-      for (const [path, status] of reads) {
-        const r = await call(request, alex, 'GET', path)
-        expect(r.status, `${path}: ${r.text}`).toBe(status)
+      const reads = designGets('brand_data')
+      for (const row of reads) {
+        const r = await call(request, alex, 'GET', caseFor(row).path)
+        expect(r.status, `${row.pattern}: ${r.text}`).toBe(caseFor(row).passes)
       }
       const lines = auditAfter(mark).filter(l => l.action === 'support.access')
-      expect(lines.map(l => JSON.parse(l.args_json).route)).toEqual(reads.map(([p]) => p.replace('m_e2e_nobody', ':id')))
+      expect(lines.map(l => JSON.parse(l.args_json).route)).toEqual(reads.map(r => r.pattern))
       for (const l of lines) expect(JSON.parse(l.args_json)).toMatchObject({ method: 'GET', grantId: made.json.id })
       // The route pattern only: never an id.
       expect(lines.map(l => l.args_json).join('')).not.toContain('m_e2e_nobody')
       // Baseline and technical reads add no support.access line.
       const quiet = auditMax()
-      for (const path of ['/api/me', '/api/settings/brand', '/api/settings/technical', '/api/grants']) await call(request, alex, 'GET', path)
+      for (const row of designGets('baseline', 'technical')) await call(request, alex, 'GET', caseFor(row).path)
       expect(auditAfter(quiet).filter(l => l.action === 'support.access')).toEqual([])
       expect((await me(request, alex)).grant?.id).toBe(made.json.id)
     } finally {
