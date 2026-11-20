@@ -1,15 +1,22 @@
 // Ship spec for the backend core (P2): sign in, see your own name and role, change a setting, reload and it's there, the
 // audit log shows it, a photo, a Member's limits, two tabs in conflict, the support grant, an invite and a refused
 // person. S1 to S9 run on the TEST BUILD (`ship.yml` with build=test): the test issuer signs each seeded person in
-// (e2e/support/clients/real.ts), so nothing here is a secret and no run touches a house or brand account. S10 is the demo.
+// (e2e/support/clients/real.ts), so nothing here is a secret and no run touches a house or brand account.
+// S10 (the demo preview is unchanged) is NOT in this file: the test build has no demo to open. It is a separate run, P1's whole
+// ship spec on the PR's demo preview, a superset of its S1:
+//   gh workflow run ship.yml -f pr=<number> -f spec=agent-seam.spec.ts -f build=demo
 // Recorded at 1440x900 and 390x844. After the first load every page is opened through the UI, as a person would (the
 // account menu, then Settings; on a phone the sidebar is the drawer behind Menu).
 //
+// Phone: team pages are read-only there, so there is no Grant, End now or Remove button. S7's grant and end and S9's
+// removal call the same routes from the Admin's page on `ship-phone`, and every check of what the person then sees is in
+// the browser as on desktop.
+//
 // Run (the ship workflow builds and serves the test build itself):
 //   gh workflow run ship.yml -f pr=<number> -f spec=backend-core.spec.ts -f build=test
-// Locally, after `npm run build:product-test` (heavy lock): E2E_TEST_BUILD=1 E2E_PREBUILT=1 SHIP=1 BASE_URL=http://brand.localhost:8787
-//   TEST_BUILD_INHOUSE_URL=http://inhouse.localhost:8787 DEMO_BASE_URL=<a demo preview> npx playwright test e2e/ship/backend-core.spec.ts
-//   --project=ship-desktop --project=ship-phone, with the test build served as ship.yml serves it.
+// Locally, after `npm run build:product-test` (heavy lock), with the test build served as ship.yml serves it:
+//   SHIP=1 BASE_URL=http://brand.localhost:8787 TEST_BUILD_INHOUSE_URL=http://inhouse.localhost:8787 TEST_ISSUER_PRIVATE_JWK_FILE=<key file>
+//   npx playwright test e2e/ship/backend-core.spec.ts --project=ship-desktop --project=ship-phone
 //
 // The desktop and the phone project share one local database, so every scenario starts from whatever the last one left:
 // a name or time zone is picked as "not the current one", and each invited person is new.
@@ -20,7 +27,6 @@ import { AUDIT_CSV_HEADER } from '../../shared/csv.ts'
 import { parseCsv } from '../api/kit.ts'
 import { inhouse, originFor, people, signInAs } from '../support/clients/real.js'
 import type { Who } from '../support/clients/real.js'
-import { fxFor } from '../support/fx.js'
 import { appOrigin, expect, signIn, test } from '../support/test-build/index.js'
 
 const phone = () => test.info().project.name === 'ship-phone'
@@ -228,7 +234,7 @@ test('S6: Two tabs edit the same setting; the second save shows a conflict with 
   await expect(zoneBox(second)).toHaveAttribute('aria-label', `Time zone: ${first.label}`)
 })
 
-test('S7: The Admin grants the Inhouse team support access; the Inhouse principal sees the audit log. After the grant ends, the audit log is refused, baseline reads still load, and the audit log shows the grant and its end', async ({ context, page, request }) => {
+test('S7: The Admin grants the Inhouse team support access; the Inhouse principal sees the audit log. After the grant ends, the audit log is refused, the technical settings and grants still load, and the audit log shows the grant and its end', async ({ context, page, request }) => {
   await openAs(context, page, 'admin')
   // Start with no grant: one left by a failed run would make "Grant" a 409.
   const open = await api(page, 'GET', '/api/grants')
@@ -280,6 +286,9 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   await expect(main(alex).getByRole('button', { name: 'Download CSV' })).toHaveCount(0)
   await settingsPage(alex, 'Team settings', 'Data and access')
   await expect(row(alex, 'Inhouse team access')).toContainText('Ended')
+  // What the grant never covered still opens: the Models page reads the technical settings, and its values load.
+  await settingsPage(alex, 'Team settings', 'Models')
+  await expect(main(alex).getByRole('combobox', { name: /^How hard it thinks: / }).first()).toBeVisible()
   const sign = await signIn(inhouse.subject, 'inhouse')
   const at = (path: string) => request.get(`${appOrigin('inhouse')}${path}`, { headers: sign })
   expect((await at('/api/audit')).status()).toBe(403)
@@ -350,19 +359,4 @@ test('S9: A person who wasn\'t invited sees "You\'re not on this team". A remove
   expect((await request.get(`${appOrigin('brand')}/api/me`, { headers: await signIn(leaver.subject, 'brand') })).status()).toBe(403)
   await theirs.reload()
   await expect(h1(theirs)).toHaveText("You're not on this team")
-})
-
-test('S10: The demo preview is unchanged: Today opens at the morning start with the same six things', async ({ page }) => {
-  // P1's S1 (e2e/ship/agent-seam.spec.ts) is a test inside that file, not something another spec can call: importing the
-  // file would register all six of its tests here. This is its opening check; the whole of it re-runs with
-  // `gh workflow run ship.yml -f pr=<number> -f spec=agent-seam.spec.ts` (build=demo).
-  const demo = process.env.DEMO_BASE_URL
-  if (!demo) throw new Error('S10 needs DEMO_BASE_URL: the demo preview (or a demo build served beside the test build). The test build has no demo.')
-  const fx = fxFor(page, demo)
-  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
-  await page.goto(`${demo}/#/today`)
-  await expect(h1(page)).toContainText(`Good morning, ${fx.names.user.name.split(' ')[0]}.`)
-  await expect(h1(page)).toContainText('6 things need you. A fix is drafted for each.')
-  await expect(page.getByRole('article')).toHaveCount(6)
-  await expect(page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).locator('span.text-xl')).toHaveText('$8,400')
 })

@@ -352,7 +352,7 @@ Backend core: "You're not on this team" (P2, test build)
 Test build and release smoke (P2)
   Path:     `npm run build:product-test` -> `wrangler dev`; `e2e/smoke/` against the test build (CI) or a release (`SMOKE_BASE_URL`)
   Selector: the `api`, `real-desktop`, `real-phone` and `smoke` projects; `ship.yml` with `build=test`
-  Expected: the API specs, the CSP-guarded browser specs and the read-only smoke pass; the ship recording of S1 to S10 runs on the test build and never against a release
+  Expected: the API specs, the CSP-guarded browser specs and the read-only smoke pass; the ship recording of S1 to S9 runs on the test build (S10, the demo, is `agent-seam.spec.ts` with `build=demo`) and never against a release
   Covered:  e2e/api/*.spec.ts, e2e/real/skeleton.spec.ts, e2e/smoke/product.spec.ts, e2e/ship/backend-core.spec.ts
 
 Demo upgrade: a stored demo
