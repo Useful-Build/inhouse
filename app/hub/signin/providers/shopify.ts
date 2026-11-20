@@ -69,8 +69,27 @@ async function readCapped(res: Response, limit: number): Promise<string | null> 
   }
 }
 
+/**
+ * Runs `fn` under a deadline whose timer is cleared once `fn` settles (body read included). Not
+ * AbortSignal.timeout(): its timer outlives the call, and a Durable Object with a pending timer isn't idle, so
+ * eviction waits for it to fire (10 s after a grant, 15 s after a read, measured under workerd).
+ */
+async function withDeadline<T>(ms: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new DOMException('upstream deadline', 'TimeoutError')), ms)
+  try {
+    return await fn(controller.signal)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** POST https://<shop>.myshopify.com/admin/oauth/access_token, form encoded, no `scope`. */
-export async function requestGrant(upstream: Upstream, config: ShopifyConfig, nowMs: () => number): Promise<GrantOk | GrantFail> {
+export function requestGrant(upstream: Upstream, config: ShopifyConfig, nowMs: () => number): Promise<GrantOk | GrantFail> {
+  return withDeadline(GRANT_TIMEOUT_MS, signal => grant(upstream, config, nowMs, signal))
+}
+
+async function grant(upstream: Upstream, config: ShopifyConfig, nowMs: () => number, signal: AbortSignal): Promise<GrantOk | GrantFail> {
   const startMs = nowMs()
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
@@ -85,7 +104,7 @@ export async function requestGrant(upstream: Upstream, config: ShopifyConfig, no
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         body: body.toString(),
         redirect: 'manual',
-        signal: AbortSignal.timeout(GRANT_TIMEOUT_MS),
+        signal,
       }),
     )
   } catch {
@@ -123,13 +142,25 @@ type GraphQLError = { extensions?: { code?: unknown } }
 type Throttle = { requestedQueryCost?: unknown; currentlyAvailable?: unknown; restoreRate?: unknown }
 
 /** POST https://<shop>.myshopify.com/admin/api/<version>/graphql.json with the access token. */
-export async function sendRead(
+export function sendRead(
   upstream: Upstream,
   config: ShopifyConfig,
   token: string,
   apiVersion: string,
   document: string,
   variables: Record<string, unknown> | undefined,
+): Promise<ReadOutcome> {
+  return withDeadline(QUERY_TIMEOUT_MS, signal => read(upstream, config, token, apiVersion, document, variables, signal))
+}
+
+async function read(
+  upstream: Upstream,
+  config: ShopifyConfig,
+  token: string,
+  apiVersion: string,
+  document: string,
+  variables: Record<string, unknown> | undefined,
+  signal: AbortSignal,
 ): Promise<ReadOutcome> {
   let res: Response
   try {
@@ -139,7 +170,7 @@ export async function sendRead(
         headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Shopify-Access-Token': token },
         body: JSON.stringify(variables === undefined ? { query: document } : { query: document, variables }),
         redirect: 'manual',
-        signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+        signal,
       }),
     )
   } catch {
