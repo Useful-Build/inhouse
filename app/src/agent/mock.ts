@@ -11,11 +11,11 @@ import type { ProblemSeed, TraceKey } from './data'
 import type {
   AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, AskOptions, Attachment, ChatThread, ClockTime, DemoContext,
   Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, RunEvent, Scenario, SeedTurn, SendPriority, SetAsideReason, SetAsideRecord,
-  SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, Trace, UsageData,
+  SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, photoKey, stageIndex } from './types'
-import { nextLocalRun, shownClock, shownDateTimeIn, shownTimeOn } from './clock'
-import { DEMO_START, demoDayAt, demoNow } from './demo-clock'
+import { shownClock, shownDateTimeIn, shownTimeOn } from './upgrade-times'
+import { DEMO_START, demoDayAt, demoNow, nextLocalRun } from './demo-clock'
 import { instantOf } from '../lib/format'
 import { NOT_FOUND } from '../../shared/contract/error-codes'
 import { listNames, pendingIds, visibleProblems } from '../state/derive'
@@ -38,7 +38,8 @@ const override = (() => {
 /** True when the brand or channels came from the override: they were built at load, so only a reload drops them. */
 export const dataOverrideActive = !!override.brandName || override.channels === false
 const meta = override.brandName ? { ...sampleMeta, brand: { ...sampleMeta.brand, name: override.brandName } } : sampleMeta
-const tools = override.channels === false ? { ...sampleTools, channels: [] } : sampleTools
+/** Every tool connected and read: the scenarios below set `connection`, `setup` and `readDone` their own way. */
+const tools: ToolsData = { ...sampleTools, ...(override.channels === false ? { channels: [] } : {}), connection: {}, setup: {}, readDone: sampleTools.connected.length }
 
 /** v2: times are on the demo clock and records carry who did it. v1 is dropped. Before C1 (P1) a time was saved as it
  *  showed ("8:03 AM", with a sortable minute); `sanitize` turns those into instants, so the key doesn't change. */
@@ -64,7 +65,6 @@ const initialState = (): AgentState => ({
   routinesDeleted: {}, routineRuns: [],
   // managing chats
   chatTitles: {}, chatPinned: {}, chatDeleted: {},
-  demoStartedAt: Date.now(),
 })
 
 // ---------- the read-only snapshot ----------
@@ -159,7 +159,7 @@ function routineDefs(): RoutineDef[] {
 const DRAFT_TIMES = draftTimes()
 /** A problem's draft trace id: the recorded `draft` steps, titled for that problem (see `getTrace`). */
 const DRAFT_TRACE = 'draft:'
-/** Built once, so `read()` returns the same object every time. The data for the Normal, Tool disconnected and Cap reached scenarios. */
+/** Built once, so `read()` returns the same object every time. The data for the Normal scenario (and, with their changes below, the others). */
 const DATA: AgentData = {
   status: 'ready',
   meta,
@@ -176,11 +176,6 @@ const DATA: AgentData = {
   auditLog: auditLog as AgentData['auditLog'],
   activity: activityFixed,
   notifications: { teamRequests: notifications.teamRequests },
-  scenarios: {
-    firstDay: { setup: scenarios['First day'].today.setup as [string, string][] },
-    loading: { readDone: scenarios.Loading.today.readDone },
-    toolDisconnected: { tool: scenarios['Tool disconnected'].tool, at: sampleAt('the Tool disconnected scenario', scenarios['Tool disconnected'].at) },
-  },
   models,
   defaultModel,
   library: { places: library.places },
@@ -199,6 +194,20 @@ const NOTHING_YET = {
   usage: noUsage(usage), usageMonths: [noUsage(usage)],
   chat: { ...DATA.chat, chats: [] },
 } satisfies Partial<AgentData>
+const SETUP_DUE: ToolSetup['due'][] = ['today', 'tomorrow', 'this-week']
+/** Day one's setup list (scenarios.json): each of `being` (the tools being connected) the Inhouse team is setting up, by key, with when it should connect. Bad data stops the app. */
+function firstDaySetup(being: string[]): ToolsData['setup'] {
+  const out: ToolsData['setup'] = {}
+  for (const [key, when] of Object.entries(scenarios['First day'].today.setup)) {
+    if (!being.includes(key) || !Object.hasOwn(tools.details, key)) throw new Error(`Sample data: the First day setup names "${key}", which isn't a tool being connected.`)
+    const due = SETUP_DUE.find(d => d === when)
+    if (!due) throw new Error(`Sample data: the First day setup has "${key}" due "${when}", which isn't today, tomorrow or this-week.`)
+    out[key] = { due }
+  }
+  return out
+}
+/** The tools being connected on day one, in display order: the ones the agent will read, then the one already on its way. */
+const FIRST_DAY_TOOLS = [...tools.connected, ...tools.beingConnected.filter(k => !tools.connected.includes(k))]
 /**
  * Day one, before the agent has read anything: no tools or channels connected yet (the six are being connected, per
  * scenarios.json), nothing found, asked or run, no Library files and no notifications (see `listFiles` and
@@ -208,7 +217,7 @@ const NOTHING_YET = {
 const FIRST_DAY: AgentData = {
   ...DATA,
   ...NOTHING_YET,
-  tools: { ...DATA.tools, connected: [], channels: [], beingConnected: [...tools.connected, ...tools.beingConnected.filter(k => !tools.connected.includes(k))] },
+  tools: { ...DATA.tools, connected: [], channels: [], beingConnected: FIRST_DAY_TOOLS, setup: firstDaySetup(FIRST_DAY_TOOLS), readDone: 0 },
   routines: DATA.routines.filter(r => !r.inChat).map(({ last: _last, ...r }) => r),
   skills: skills.filter(s => !s.mine).map(s => ({ ...s, used: 'Not used yet' })),
 }
@@ -216,12 +225,18 @@ const FIRST_DAY: AgentData = {
  * Still loading: a real client starts here, with empty lists, until the agent's data arrives. The tools are known (the
  * morning check is reading them, scenarios.json `readDone` of them so far); everything they hold isn't yet.
  */
-const LOADING: AgentData = { ...DATA, ...NOTHING_YET, status: 'loading', routines: [], skills: [], skillSuggestions: [] }
+const LOADING: AgentData = { ...DATA, ...NOTHING_YET, status: 'loading', routines: [], skills: [], skillSuggestions: [], tools: { ...DATA.tools, readDone: scenarios.Loading.today.readDone } }
+/** One tool's login expired this morning (scenarios.json): it stays connected but can't be read. */
+const LOST_TOOL = scenarios['Tool disconnected'].tool
+if (!Object.hasOwn(tools.details, LOST_TOOL)) throw new Error('Sample data: the Tool disconnected scenario names an unknown tool.')
+const TOOL_DISCONNECTED: AgentData = {
+  ...DATA,
+  tools: { ...DATA.tools, connection: { [LOST_TOOL]: { status: 'disconnected', since: sampleAt('the Tool disconnected scenario', scenarios['Tool disconnected'].at) } } },
+}
 /** At the cap: this month's own usage with spend at the cap (usage.json `capReached`), so the chart, the cost per
  *  conversation and the breakdowns agree with it. Earlier months don't change. */
 const CAP_REACHED: AgentData = { ...DATA, usage: usageAtCap, usageMonths: [usageAtCap, ...usageHistory] }
-const DATA_FOR: Record<Scenario, AgentData> = { Normal: DATA, 'Tool disconnected': DATA, 'Cap reached': CAP_REACHED, 'First day': FIRST_DAY, Loading: LOADING }
-if (!Object.hasOwn(tools.details, DATA.scenarios.toolDisconnected.tool)) throw new Error('Sample data: the Tool disconnected scenario names an unknown tool.')
+const DATA_FOR: Record<Scenario, AgentData> = { Normal: DATA, 'Tool disconnected': TOOL_DISCONNECTED, 'Cap reached': CAP_REACHED, 'First day': FIRST_DAY, Loading: LOADING }
 /** The scenarios where the agent has read nothing yet. */
 const isNoData = (sc: Scenario) => sc === 'First day' || sc === 'Loading'
 
@@ -300,43 +315,63 @@ const savedStamp = (x: unknown): StampRecord | null => {
   const at = savedAt(x)
   return at ? { at, by: x.by } : null
 }
-/** The entries of a saved record that `conv` keeps. */
-const recConv = <T,>(v: unknown, conv: (x: unknown) => T | null): Record<string, T> =>
-  isRec(v) ? Object.fromEntries(Object.entries(v).flatMap(([k, x]) => { const c = conv(x); return c === null ? [] : [[k, c]] })) : {}
+/** The entries of a saved record that `conv` keeps; `onDrop` hears the key of each it can't. */
+const recConv = <T,>(v: unknown, conv: (x: unknown) => T | null, onDrop: (key: string) => void): Record<string, T> =>
+  isRec(v) ? Object.fromEntries(Object.entries(v).flatMap(([k, x]) => { const c = conv(x); if (c === null) onDrop(k); return c === null ? [] : [[k, c]] })) : {}
 
-const sanitize = (raw: unknown): AgentState => {
-  const init = initialState()
-  if (!isRec(raw)) return init
-  const demoStartedAt = typeof raw.demoStartedAt === 'number' && Number.isFinite(raw.demoStartedAt) ? raw.demoStartedAt : init.demoStartedAt
+/** A saved demo as it loads. */
+interface Loaded {
+  state: AgentState
+  /** When this demo started (epoch ms): the demo clock counts from it. A demo control, not agent state: saved beside the state. */
+  startedAt: number
+  /** Whether the saved demo carried its own start. False: the clock starts now and isn't saved yet. */
+  started: boolean
+  /** Whether the upgrade filled in a value from the clock now (a team request saved before C1 has no `at`). */
+  filledFromNow: boolean
+}
+
+/**
+ * The saved demo, keeping only known shapes. An entry it can't read (or convert from an older shape) is dropped and named
+ * in one console warning; an entry that names a routine that no longer exists is dropped on purpose, without one.
+ */
+const sanitize = (raw: unknown): Loaded => {
+  if (!isRec(raw)) return { state: initialState(), startedAt: Date.now(), started: false, filledFromNow: false }
+  const started = typeof raw.demoStartedAt === 'number' && Number.isFinite(raw.demoStartedAt)
+  const demoStartedAt = started ? raw.demoStartedAt as number : Date.now()
+  const dropped: string[] = []
+  const drop = (where: string) => { dropped.push(where) }
+  /** The items of a saved list that `conv` keeps; the index of each it can't is dropped as `field[i]`. */
+  const listConv = <T,>(field: string, v: unknown, conv: (x: unknown) => T | null): T[] =>
+    (isArr(v) ? v : []).flatMap((x, i) => { const c = conv(x); if (c === null) drop(`${field}[${i}]`); return c === null ? [] : [c] })
   const approved: AgentState['approved'] = {}
   for (const [id, r] of Object.entries(isRec(raw.approved) ? raw.approved : {})) {
-    if (!hasStrs(r, ['by', 'title', 'doneText']) || !(r.by as string).trim()) continue
-    const at = savedAt(r), loggedAt = savedLoggedAt(r)
-    if (!at || !loggedAt) continue
+    const at = isRec(r) ? savedAt(r) : null, loggedAt = isRec(r) ? savedLoggedAt(r) : null
+    if (!hasStrs(r, ['by', 'title', 'doneText']) || !(r.by as string).trim() || !at || !loggedAt) { drop(`approved.${id}`); continue }
     approved[id] = { at, by: r.by as string, loggedAt, title: r.title as string, doneText: r.doneText as string, partial: r.partial === true }
   }
-  const routinesExtra = (isArr(raw.routinesExtra) ? raw.routinesExtra : [])
-    .map(savedRoutine).filter((r): r is RoutineCard => r !== null)
+  const routinesExtra = listConv('routinesExtra', raw.routinesExtra, savedRoutine)
     // An id twice keeps the first.
     .filter((r, i, all) => all.findIndex(x => x.id === r.id) === i)
   // Routine entries and runs that name no routine are dropped.
   const known = (id: string) => DATA.routines.some(r => r.id === id) || routinesExtra.some(r => r.id === id)
   const now = instantOf(demoNow(demoStartedAt).getTime())
-  return {
+  const paused = savedPause(raw.paused)
+  if (paused === null && raw.paused !== null && raw.paused !== undefined) drop('paused')
+  const state: AgentState = {
     approved,
     sent: flagsOf(raw.sent),
-    undone: recConv(raw.undone, savedStamp),
+    undone: recConv(raw.undone, savedStamp, k => drop(`undone.${k}`)),
     edits: recOf(raw.edits, str),
-    paused: savedPause(raw.paused),
+    paused,
     toggles: recOf(raw.toggles, (x): x is boolean => typeof x === 'boolean'),
     routinesExtra,
-    skillsExtra: (isArr(raw.skillsExtra) ? raw.skillsExtra : []).filter((r): r is SkillDef => hasStrs(r, ['n', 'd', 'icon', 'by', 'used']) && !!(r.by as string).trim() && [0, 1, 2].includes(r.need as number)),
+    skillsExtra: listConv('skillsExtra', raw.skillsExtra, r => (hasStrs(r, ['n', 'd', 'icon', 'by', 'used']) && !!(r.by as string).trim() && [0, 1, 2].includes(r.need as number) ? r as SkillDef : null)),
     requestedTools: flagsOf(raw.requestedTools),
     requestedSkills: flagsOf(raw.requestedSkills),
     toolPaused: flagsOf(raw.toolPaused),
     forgot: flagsOf(raw.forgot),
     settings: recOf(raw.settings, str),
-    teamRequests: (isArr(raw.teamRequests) ? raw.teamRequests : []).map(r => savedRequest(r, now)).filter((r): r is TeamRequest => r !== null),
+    teamRequests: listConv('teamRequests', raw.teamRequests, r => savedRequest(r, now)),
     // The old notificationsRead / notificationRead flags are dropped: their notifications show unread once more.
     readNotices: flagsOf(raw.readNotices),
     libraryDeleted: flagsOf(raw.libraryDeleted),
@@ -344,21 +379,24 @@ const sanitize = (raw: unknown): AgentState => {
       if (!isRec(x) || !SET_ASIDE.includes(x.reason as SetAsideReason)) return null
       const stamp = savedStamp(x), loggedAt = savedLoggedAt(x)
       return stamp && loggedAt ? { reason: x.reason as SetAsideReason, ...stamp, loggedAt } : null
-    }),
+    }, k => drop(`setAside.${k}`)),
     routinesDeleted: Object.fromEntries(Object.keys(flagsOf(raw.routinesDeleted)).filter(known).map(id => [id, true as const])),
     // In the order `runRoutine` writes a run, so a state saved now loads as it was saved.
-    routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).flatMap((r): RoutineRun[] => {
-      if (!hasStrs(r, ['routine']) || !known(r.routine as string) || !(r.trace === undefined || str(r.trace)) || !(r.result === undefined || str(r.result))) return []
+    routineRuns: listConv('routineRuns', (isArr(raw.routineRuns) ? raw.routineRuns : []).filter(r => !isRec(r) || !str(r.routine) || known(r.routine)), (r): RoutineRun | null => {
+      if (!hasStrs(r, ['routine']) || !(r.trace === undefined || str(r.trace)) || !(r.result === undefined || str(r.result))) return null
       const at = savedAt(r)
-      return at ? [{ routine: r.routine as string, at, ...(r.result !== undefined ? { result: r.result as string } : {}), ...(r.trace !== undefined ? { trace: r.trace as string } : {}) }] : []
+      return at ? { routine: r.routine as string, at, ...(r.result !== undefined ? { result: r.result as string } : {}), ...(r.trace !== undefined ? { trace: r.trace as string } : {}) } : null
     }),
     // managing chats. A started chat's title, pin and delete are kept until Reset demo: its id is unique per page load
     // (chatIds.ts), so it can't be taken by a newer chat, and the app keeps the chat itself across a reload.
     chatTitles: Object.fromEntries(Object.entries(recOf(raw.chatTitles, (x): x is string => str(x) && x.trim() !== '')).map(([k, t]) => [k, t.slice(0, CHAT_TITLE_MAX)])),
     chatPinned: flagsOf(raw.chatPinned),
     chatDeleted: flagsOf(raw.chatDeleted),
-    demoStartedAt,
   }
+  if (dropped.length) console.warn(`Inhouse demo: dropped saved entries it could not read: ${dropped.join(', ')}.`)
+  // Only a request saved without its time gets `now` itself.
+  const filledFromNow = state.teamRequests.some(r => r.at === now)
+  return { state, startedAt: demoStartedAt, started, filledFromNow }
 }
 
 
@@ -604,6 +642,9 @@ export const MOCK_MARKER = 'inhouse-canary:mock'
 export class MockAgent implements AgentClient {
   readonly marker = MOCK_MARKER
   private state: AgentState
+  /** When this demo started (epoch ms): set at first load and by Reset demo. The demo clock counts from it. Saved with the
+   *  state under the same key, as it always was, but not part of `AgentState`: the real agent has no demo start. */
+  private startedAt: number
   private listeners = new Set<() => void>()
   private noticeListeners = new Set<(n: AgentNotice) => void>()
   private holdTimers: Record<string, ReturnType<typeof setTimeout>> = {}
@@ -616,13 +657,15 @@ export class MockAgent implements AgentClient {
   private demo: DemoContext = { stage: 'Act', scenario: 'Normal' }
 
   constructor() {
-    const { state, started, converted } = this.loadSaved()
+    const { state, startedAt, started, filledFromNow } = this.loadSaved()
     this.state = state
+    this.startedAt = startedAt
     // The demo clock counts from the first load: save that moment now, so a reload before any other write doesn't
-    // start the clock again at 8:00 AM while the app already shows later times. A state saved in an older shape (before
-    // C1) is saved back as converted, so what the upgrade filled in (a team request's `at`: now) is fixed by the upgrade,
-    // not set again at every load until the next write.
-    if (!started || converted) this.commit({})
+    // start the clock again at 8:00 AM while the app already shows later times. An upgrade that filled in a value from
+    // the clock now (a team request saved before C1 has no `at`) is saved too, so the next load doesn't set it again.
+    // Any other older shape is saved converted at the next real write, not on load: a tab still open on the build before
+    // the upgrade reads what this one saves (the storage event), and its own reader would drop what it can't read.
+    if (!started || filledFromNow) this.commit({})
     this.resumeHolds()
     // Another tab changed the saved state: take it, so two open tabs don't overwrite each other.
     if (typeof window !== 'undefined') {
@@ -632,29 +675,28 @@ export class MockAgent implements AgentClient {
 
   // ----- state plumbing -----
 
-  private load(): AgentState { return this.loadSaved().state }
-  /**
-   * The saved state, whether it carried its own `demoStartedAt` (false: the clock starts now and isn't saved yet), and
-   * whether loading changed it (an older shape converted, or entries dropped): then it isn't saved as it now is.
-   */
-  private loadSaved(): { state: AgentState; started: boolean; converted: boolean } {
+  /** The saved demo (see `sanitize`), or a fresh one when storage can't be read. */
+  private loadSaved(): Loaded {
     try {
-      const text = localStorage.getItem(STORAGE_KEY)
-      const raw: unknown = JSON.parse(text ?? 'null')
-      const state = sanitize(raw)
-      return { state, started: isRec(raw) && typeof raw.demoStartedAt === 'number' && Number.isFinite(raw.demoStartedAt), converted: text !== null && JSON.stringify(state) !== text }
+      return sanitize(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'))
     } catch (e) {
       console.warn('Inhouse demo: could not read saved state, starting fresh.', e)
-      return { state: initialState(), started: false, converted: false }
+      return { state: initialState(), startedAt: Date.now(), started: false, filledFromNow: false }
     }
   }
+
+  /** What is saved under STORAGE_KEY: the state with the demo's start, in the shape it always had. */
+  private saved(): string { return JSON.stringify({ ...this.state, demoStartedAt: this.startedAt }) }
+
+  /** DemoControls (demo-controls.ts): when this demo started, as epoch ms. The demo clock counts from it. */
+  demoStartedAt(): number { return this.startedAt }
 
   /** Apply a change and save it. A failed save is reported to the UI; `revert` also drops the change from memory. False when the save failed. */
   private commit(next: Partial<AgentState>, revert = false): boolean {
     const before = this.state
     this.state = { ...this.state, ...next }
     let ok = true
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state)) }
+    try { localStorage.setItem(STORAGE_KEY, this.saved()) }
     catch (e) {
       console.warn('Inhouse demo: could not save state.', e)
       ok = false
@@ -688,7 +730,9 @@ export class MockAgent implements AgentClient {
    */
   private syncFromStorage() {
     const wasSent = this.state.sent
-    this.state = this.load()
+    const { state, startedAt } = this.loadSaved()
+    this.state = state
+    this.startedAt = startedAt
     for (const id of Object.keys(this.holdTimers)) {
       if (this.state.approved[id] && !this.state.sent[id]) continue
       clearTimeout(this.holdTimers[id])
@@ -706,7 +750,7 @@ export class MockAgent implements AgentClient {
 
   /** Now on the demo clock: shown, sortable, and who is doing it. */
   private stamp(): StampRecord {
-    return { at: instantOf(demoNow(this.state.demoStartedAt).getTime()), by: this.state.settings['g:name']?.trim() || meta.currentUser.name }
+    return { at: instantOf(demoNow(this.startedAt).getTime()), by: this.state.settings['g:name']?.trim() || meta.currentUser.name }
   }
 
   getSnapshot = () => this.state
@@ -730,6 +774,7 @@ export class MockAgent implements AgentClient {
     this.runInfo.clear()
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
     try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
+    this.startedAt = Date.now()
     this.commit(initialState())
   }
 
@@ -859,7 +904,7 @@ export class MockAgent implements AgentClient {
     const S = stageIndex(stage)
     const st = this.state
     const data = this.read()
-    const ctx = { S, scenario, agent: st, data }
+    const ctx = { S, agent: st, data }
     // The same counts as Today: what's waiting in Act and Run, what Today lists in Watch.
     const nNeed = S >= 1 ? pendingIds(ctx).length : visibleProblems(ctx).length
     const out: AgentNotification[] = []
@@ -1048,7 +1093,7 @@ export class MockAgent implements AgentClient {
         return { thinking: r.thinking, delayMs: r.delayMs, trace: 'generic', parts: [text(r.Watch[0].text), { type: 'notInThisStage', text: r.Watch[1].text }] }
       }
       // A schedule with no time (or no day, or a time that can't be) makes nothing yet: the agent asks.
-      const routine = routineFromRequest(q, S, '', demoNow(this.state.demoStartedAt))
+      const routine = routineFromRequest(q, S, '', demoNow(this.startedAt))
       if (!routine) return { thinking: r.thinking.slice(0, 1), delayMs: fb.delayMs, trace: 'generic', parts: [text(ASK_FOR_TIME)] }
       return {
         thinking: r.thinking, delayMs: r.delayMs, trace: traceKey(r.trace),
@@ -1072,8 +1117,8 @@ export class MockAgent implements AgentClient {
     if (scripted) return scripted
     // Off-script (decision D8): what the agent can't answer from the tools, then the suggested questions as chips.
     // The tools it can read now: not the one whose login expired.
-    const off = this.demo.scenario === 'Tool disconnected' ? DATA.scenarios.toolDisconnected.tool : null
-    const readable = listNames(tools.connected.filter(k => k !== off).map(k => tools.details[k].name))
+    const { connection } = this.read().tools
+    const readable = listNames(tools.connected.filter(k => !connection[k]).map(k => tools.details[k].name))
     return { thinking: fb.thinking, delayMs: fb.delayMs, trace: traceKey(fb.trace), parts: [text(fb.reply[0].text.replace('{tools}', readable)), { type: 'suggestions', questions: chatScript.suggestions }] }
   }
 
@@ -1163,7 +1208,8 @@ export class MockAgent implements AgentClient {
           for (const part of s.parts) {
             // A routine from a request is saved as its card appears, so its id comes from what is saved at that moment.
             const out = part.type === 'routine' && part.routine.id === '' ? this.saveRoutine(part, replaces, info) : part
-            yield { type: 'part', part: out, trace: turnId }
+            // When it answered, on the demo clock. The model is the store's pick: the mock doesn't know it, so it sends none.
+            yield { type: 'part', part: out, trace: turnId, at: instantOf(demoNow(this.startedAt).getTime()) }
             if (out.type === 'approval') yield { type: 'approval.requested', approvalId: out.problemId }
           }
           s.after?.(info, replaces)

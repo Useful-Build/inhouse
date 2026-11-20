@@ -1,7 +1,7 @@
 // Today: greeting, composer, then the problem cards (or the first-day and loading states).
 import { Fragment } from 'react'
 import { Composer } from '../components/Composer'
-import { amountOf, flags, handled, issueCards, pendingIds, todayCopy, TONE_TEXT } from '../state/derive'
+import { amountOf, flags, handled, issueCards, pendingIds, setupRows, todayCopy, TONE_TEXT } from '../state/derive'
 import { sevClass } from '../ui/severity'
 import { fmtMoney } from '../lib/format'
 import { display } from '../state/display'
@@ -28,10 +28,9 @@ export function Today() {
   // Handled cards stay after the ones that need the person, in every sort.
   if (byAmount) cards.sort((a, b) => Number(a.handled) - Number(b.handled) || amountOf(b.problem) - amountOf(a.problem))
   const h = handled(ctx)
-  const setup = ctx.data.scenarios.firstDay.setup
-  const toolKey = (name: string) => name.toLowerCase().replace(/\s+/g, '-')
+  const setup = setupRows(ctx.data)
   // The first tool the agent doesn't have yet: the one Today waits for.
-  const next = setup.find(([name]) => !ctx.data.tools.connected.includes(toolKey(name)))?.[0]
+  const next = setup.find(s => !ctx.data.tools.connected.includes(s.key))
   // The header follows the state: what needs you, or how the day ended.
   const settled = ctx.S >= 1 && pendingIds(ctx).length === 0
   const allApproved = settled && cards.length > 0 && cards.length === ctx.data.problems.length && cards.every(c => ctx.agent.approved[c.problem.id])
@@ -53,29 +52,26 @@ export function Today() {
           <SectionHeader onDots title="Getting your Inhouse agent ready" count={`${ctx.data.tools.connected.length} of ${setup.length} tools connected`} className="mb-3"
             actions={<button type="button" className={cn('on-page text-sm font-strong whitespace-nowrap text-foreground transition-colors hover:text-foreground-3', tap)} onClick={() => openTeam('tool')}>Message the team →</button>} />
           <div className="rounded-2xl border border-border bg-card px-4.5 py-0.5">
-            {setup.map(([name, status], i) => {
-              const k = toolKey(name)
-              return (
-                <button key={name} type="button" data-setup-row={k} onClick={() => openTool(k)} className={`flex min-h-13.25 w-full items-center gap-3 border-t text-left text-base ${i === 0 ? 'border-transparent' : 'border-divider'}`}>
-                  <LogoTile k={k} size="md" />
-                  <span className="min-w-0 flex-1 font-medium">{name}</span>
-                  <span className="flex items-center gap-1.5 text-sm whitespace-nowrap text-foreground-3">
-                    <i className={`size-1.5 rounded-full ${name === next ? 'bg-warning' : 'bg-fill-strong'}`} />{status}
-                  </span>
-                  <Icon name="chevron_right" size={18} className="text-faint" />
-                </button>
-              )
-            })}
+            {setup.map((s, i) => (
+              <button key={s.key} type="button" data-setup-row={s.key} onClick={() => openTool(s.key)} className={`flex min-h-13.25 w-full items-center gap-3 border-t text-left text-base ${i === 0 ? 'border-transparent' : 'border-divider'}`}>
+                <LogoTile k={s.key} size="md" />
+                <span className="min-w-0 flex-1 font-medium">{s.name}</span>
+                <span className="flex items-center gap-1.5 text-sm whitespace-nowrap text-foreground-3">
+                  <i className={`size-1.5 rounded-full ${s.key === next?.key ? 'bg-warning' : 'bg-fill-strong'}`} />{s.when}
+                </span>
+                <Icon name="chevron_right" size={18} className="text-faint" />
+              </button>
+            ))}
           </div>
           <p className="on-page mx-1 mt-3 mb-0 text-sm text-pretty text-muted-foreground shadow-page-md">
-            Today fills in the day after {next ?? 'your first tool'} is connected. Until then your Inhouse agent has nothing to read, so it won't guess.
+            Today fills in the day after {next?.name ?? 'your first tool'} is connected. Until then your Inhouse agent has nothing to read, so it won't guess.
           </p>
         </div>
       )}
 
       {f.isLoading && (
         <div className="mt-7">
-          <SectionHeader onDots icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.scenarios.loading.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
+          <SectionHeader onDots icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.tools.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
           <CardGrid aria-hidden="true">
             {SKELETON_WIDTHS.map(w => (
               <div key={w} className="box-border flex min-h-47.5 flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">

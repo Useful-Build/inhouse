@@ -107,7 +107,14 @@ describe('amounts and durations', () => {
   test.prop([fc.integer({ min: 0, max: 600_000 })])('a duration is ms under 1 s, tenths of a second under a minute, then minutes and seconds', t => {
     const out = fmtDuration(t, d)
     if (t < 1000) expect(out).toBe(`${t}ms`)
-    else if (t < 60_000) expect(out).toMatch(/^\d{1,2}(\.\d)?s$/)
-    else expect(out).toMatch(/^\d+m \d{1,2}s$/)
+    // 59.95 s rounds to 60 s, a whole minute: from there it is minutes and seconds.
+    else if (t < 59_950) expect(out).toMatch(/^([1-9]|[1-5]\d)(\.\d)?s$/)
+    // Seconds 0 to 59: never "60s" or "1m 60s".
+    else expect(out).toMatch(/^[1-9]\d*m [1-5]?\ds$/)
+  })
+  test('a duration that rounds up to the next minute shows it (failure 6)', () => {
+    expect(fmtDuration(59_960, d)).toBe('1m 0s')
+    expect(fmtDuration(119_600, d)).toBe('2m 0s')
+    expect(fmtDuration(59_940, d)).toBe('59.9s')
   })
 })

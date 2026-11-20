@@ -14,4 +14,5 @@ export const demoControlsFor = (mock: MockAgent): DemoControls & { readonly mark
   reset: () => mock.reset(),
   scenarios: SCENARIOS,
   dataOverrideActive,
+  demoStartedAt: () => mock.demoStartedAt(),
 })

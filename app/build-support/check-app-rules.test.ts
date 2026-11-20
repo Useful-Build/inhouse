@@ -24,6 +24,12 @@ describe('check-app-rules rule 4 fails on each probe', () => {
     ['client-alias', '@client'],
     ['mock-module', 'agent/mock'],
     ['sample-reads', 'sample-reads'],
+    // How rule 4 reads a file: a name is caught without the slash or with the extension after it, inside a longer string
+    // (a `//` in a string opens no comment), and on the lines after a block comment (which keeps its line count).
+    ['sample-data-no-slash', "agent/sample-data'"],
+    ['mock-module-ext', 'agent/mock.ts'],
+    ['name-in-string', "e2e/probe.spec.ts:2  export const note = 'saved under // inhouse.demo.v2 in the browser'"],
+    ['after-block-comment', "e2e/probe.spec.ts:4  export const a = 'inhouse.demo.v2'"],
   ]
   for (const [probe, mentions] of FAILS) {
     it(probe, () => {
@@ -32,6 +38,9 @@ describe('check-app-rules rule 4 fails on each probe', () => {
       expect(r.stderr).toContain(mentions)
     })
   }
+  it('after-block-comment: the code after a block comment that ends on its line is read too', () => {
+    expect(run('after-block-comment').stderr).toContain("e2e/probe.spec.ts:5  export const b = 'inhouse.theme'")
+  })
 })
 
 describe('check-app-rules rule 4 passes a clean input', () => {

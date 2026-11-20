@@ -4,8 +4,8 @@
 //   `globalThis['Intl']`);
 // - `toLocale*` in any access form (`d.toLocaleString()`, `d['toLocaleString']()`, `const { toLocaleString } = d`);
 // - `getHours`, `getMinutes`, `getDate`, `getDay`, `getMonth`, `getFullYear` (the device's zone), except in the demo
-//   clock (src/agent/clock.ts and demo-clock.ts), which counts in the device's local time until P2 moves it onto the
-//   brand's zone.
+//   clock (src/agent/demo-clock.ts), which counts in the device's local time until P2 moves it onto the brand's zone,
+//   and the readers of times a demo saved before C1 (src/agent/upgrade-times.ts), which read them on that clock's day.
 // Times and amounts are shown through format.ts, which takes the zone and locale from one selector
 // (src/state/display.ts); a call anywhere else would show the device's zone or locale instead. The file is parsed (the
 // oxc parser rolldown ships), so comments, strings, line breaks and bracket access don't hide a call. Type positions
@@ -20,7 +20,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DIRS = ['src', 'shared']
 /** Paths relative to app/, with forward slashes. */
 const FORMAT = 'src/lib/format.ts'
-const DEMO_CLOCK = new Set(['src/agent/clock.ts', 'src/agent/demo-clock.ts'])
+const DEMO_CLOCK = new Set(['src/agent/demo-clock.ts', 'src/agent/upgrade-times.ts'])
 const LOCAL_GETTERS = new Set(['getHours', 'getMinutes', 'getDate', 'getDay', 'getMonth', 'getFullYear'])
 
 /** TypeScript-only nodes: a name in a type says nothing about what runs. Expression wrappers (`as`, `!`, `satisfies`) are walked. */

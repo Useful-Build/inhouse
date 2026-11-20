@@ -5,7 +5,7 @@ import { create } from 'zustand'
 import { agent, demo as demoControls, now } from '../agent'
 import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, Scenario, SetAsideReason, Stage } from '../agent/types'
 import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
-import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/clock'
+import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/upgrade-times'
 import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
 import { rememberTrigger } from '../ui/dialogs'
@@ -472,7 +472,10 @@ function loadSession(): SavedSession | null {
   const chats: Record<string, ChatAdds> = {}
   for (const [id, c] of Object.entries(isRec(raw.chats) ? raw.chats : {})) {
     if (!exists(id) || !isAdds(c)) continue
-    chats[id] = { extras: c.extras.map(upgradeMsg).filter(isMsg), hidden: Object.fromEntries(Object.entries(c.hidden).filter(([, v]) => v === true)) as Record<string, true> }
+    const extras = c.extras.map(upgradeMsg).filter(isMsg)
+    // A message it can't read (or convert from before C1) is dropped, and said so.
+    if (extras.length < c.extras.length) console.warn(`Inhouse: dropped ${c.extras.length - extras.length} saved message(s) it could not read in chat ${id}.`)
+    chats[id] = { extras, hidden: Object.fromEntries(Object.entries(c.hidden).filter(([, v]) => v === true)) as Record<string, true> }
   }
   const drafts: Record<string, ComposerDraft> = {}
   for (const [k, d] of Object.entries(isRec(raw.drafts) ? raw.drafts : {})) {
@@ -1186,13 +1189,15 @@ export const useAgentState = (): AgentState => useSyncExternalStore(agent.subscr
 /** Read-only domain data (problems, tools, usage, people, chat strings): everything that is not state. */
 export const useAgentData = (): AgentData => useSyncExternalStore(agent.subscribe, agent.read)
 
-/** Stage index, scenario, agent state and data: the input every selector in derive.ts takes. */
+/**
+ * Stage index, agent state and data: the input every selector in derive.ts takes. The demo's scenario switch isn't in it:
+ * a scenario shows through the data the client reads (the mock serves another snapshot per scenario).
+ */
 export function useCtx(): Ctx {
   const agentState = useAgentState()
   const data = useAgentData()
   const stage = useUi(s => s.stage)
-  const scenario = useUi(s => s.scenario)
-  return useMemo(() => ({ S: stageIndex(stage), scenario, agent: agentState, data }), [stage, scenario, agentState, data])
+  return useMemo(() => ({ S: stageIndex(stage), agent: agentState, data }), [stage, agentState, data])
 }
 
 // ---------- composer drafts (PR 4): swap drafts when the open composer changes ----------

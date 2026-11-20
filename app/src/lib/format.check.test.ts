@@ -42,12 +42,14 @@ describe('the allowances', () => {
   test('format.ts may use Intl, toLocale* and the getters', () => {
     expect(check('src/lib/format.ts', probe('relative-time.ts') + probe('hand-built.ts'))).toEqual([])
   })
-  test('the demo clock may use the getters, but not a locale formatter', () => {
-    expect(check('src/agent/clock.ts', probe('hand-built.ts'))).toEqual([])
-    expect(linesHit('src/agent/clock.ts', probe('comment-before-paren.ts'))).toEqual([2])
+  test('the demo clock and the pre-C1 readers may use the getters, but not a locale formatter', () => {
+    for (const rel of ['src/agent/demo-clock.ts', 'src/agent/upgrade-times.ts']) {
+      expect(check(rel, probe('hand-built.ts')), rel).toEqual([])
+      expect(linesHit(rel, probe('comment-before-paren.ts')), rel).toEqual([2])
+    }
   })
-  test('demo-clock.ts may use the getters; another file in src/agent/ may not', () => {
-    expect(check('src/agent/demo-clock.ts', probe('hand-built.ts'))).toEqual([])
+  test('another file in src/agent/ may not use the getters, clock.ts (text helpers only) included', () => {
     expect(linesHit('src/agent/other.ts', probe('hand-built.ts'))).toEqual([3, 4, 5, 6, 7, 8])
+    expect(linesHit('src/agent/clock.ts', probe('hand-built.ts'))).toEqual([3, 4, 5, 6, 7, 8])
   })
 })

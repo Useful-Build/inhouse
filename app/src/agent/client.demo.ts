@@ -5,9 +5,10 @@ import { demoClockFor } from './demo-clock'
 import { MockAgent } from './mock'
 
 const mock = new MockAgent()
+const demo = demoControlsFor(mock)
 
 export default {
   agent: mock,
-  demo: demoControlsFor(mock),
-  now: demoClockFor(mock),
+  demo,
+  now: demoClockFor(demo),
 } satisfies ClientEntry

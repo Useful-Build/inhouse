@@ -16,6 +16,8 @@ export interface DemoControls {
   readonly scenarios: readonly Scenario[]
   /** True when the brand or channels came from the test override (`inhouse.demo.data.v1`): only a reload drops them. */
   readonly dataOverrideActive: boolean
+  /** When this demo started (epoch ms): set at first load and by Reset demo. The demo clock counts from it (demo-clock.ts). */
+  demoStartedAt(): number
 }
 
 export interface ClientEntry {
