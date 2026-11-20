@@ -17,8 +17,13 @@ const b64 = (bytes: Uint8Array) => {
   return btoa(s)
 }
 
-/** Every user table's rows (D1's own and SQLite's aside), each table ordered by every column, and every R2 object. */
-export async function snapshotAll(db: D1Database, bucket: R2Bucket): Promise<Snapshot> {
+/**
+ * Every user table's rows (D1's own and SQLite's aside), each table ordered by every column, and every R2 object.
+ * `logBodies: false` records each deletion-log object by its etag (as `base64: 'etag:<etag>'`) instead of reading it:
+ * the log grows with every run, so a property that snapshots it whole each case costs time quadratic in its cases.
+ * An entry is written once (`onlyIf`), so its key and etag still show any entry added, removed or replaced.
+ */
+export async function snapshotAll(db: D1Database, bucket: R2Bucket, opts: { logBodies?: boolean } = {}): Promise<Snapshot> {
   const names = (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'd1_%' AND name NOT LIKE '_cf_%' ORDER BY name").all<{ name: string }>()).results
   const d1: Snapshot['d1'] = {}
   for (const { name } of names) {
@@ -30,6 +35,10 @@ export async function snapshotAll(db: D1Database, bucket: R2Bucket): Promise<Sna
   for (;;) {
     const page = await bucket.list({ cursor, include: ['httpMetadata'] })
     for (const o of page.objects) {
+      if (opts.logBodies === false && o.key.startsWith('deletion-log/')) {
+        r2[o.key] = { contentType: o.httpMetadata?.contentType ?? null, base64: `etag:${o.etag}` }
+        continue
+      }
       const body = await bucket.get(o.key)
       if (!body) throw new Error(`snapshot: ${o.key} vanished`)
       r2[o.key] = { contentType: body.httpMetadata?.contentType ?? null, base64: b64(new Uint8Array(await body.arrayBuffer())) }
