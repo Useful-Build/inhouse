@@ -18,9 +18,8 @@
 //   4. The server bundle scan (P2): the deployable Worker output (the product build's Worker folder, the one with a
 //      wrangler.json beside client/, which `wrangler deploy -c <it>/wrangler.json` uploads as built) holds no test-issuer
 //      canary (INHOUSE_TEST_ISSUER_CANARY_7f3c) and no `test-issuer` module in its graph (<build>/server-modules.json).
-//      Its proof is the test build (dist-product-test/), where the canary MUST be found once the test issuer exists in
-//      any form (server/auth/test-issuer.ts, the canary anywhere under server/, or a test-issuer module in the test
-//      build's graph; W1). Until then the proof is reported as not yet possible, never as passed.
+//      Its proof is the test build (dist-product-test/), where the canary MUST always be found: with no canary there
+//      the scan proves nothing, and the check fails.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'

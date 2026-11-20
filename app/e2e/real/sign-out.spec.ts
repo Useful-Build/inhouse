@@ -7,8 +7,8 @@ import { open, signInAs } from '../support/clients/real.js'
 test('Sign out goes to the Access logout path', async ({ page, context }) => {
   await signInAs(context, 'admin')
   await open(page, 'admin', '#/today')
-  const menu = page.getByRole('button', { name: 'Menu' })
-  if (await menu.isVisible()) await menu.click()
+  // On a phone the sidebar is a drawer behind the Menu button: wait for the button, then open it.
+  if ((page.viewportSize()?.width ?? 1440) < 600) await page.getByRole('button', { name: 'Menu' }).click()
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /account and settings/i }).click()
   const logout = page.waitForRequest(r => new URL(r.url()).pathname === '/cdn-cgi/access/logout' && r.isNavigationRequest())
   await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Sign out', exact: true }).click()
