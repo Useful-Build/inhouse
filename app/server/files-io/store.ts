@@ -1,7 +1,7 @@
 // P3's `files` store slot (p3-design 8.5, 11 and 12; W3). The chat files table (`0120_chat_files`): attachments
 // (`input`, saved at upload) and outputs (`output`, `pending` from the egress's PUT until `confirm`). Every method takes
 // data and returns data (the store contract in server/routes.ts). The bytes live in R2 under `files/<chatId>/<fileId>`
-// (r2-keys.ts), written with their SHA-256 (R2 checks it and keeps it as the object's checksum).
+// (r2-keys.ts), written with their SHA-256 (R2 docs: checked for integrity, kept in the object's `checksums`).
 import type { ChatFile } from '../do/brand-agent/ports.ts'
 import { chatFileKey } from '../db/r2-keys.ts'
 import type { KeyedBucket } from '../db/r2-keys.ts'
@@ -49,7 +49,7 @@ export interface OutputSlot {
 
 export function fileStore({ db, bucket }: { db: D1Database; bucket: Pick<KeyedBucket, 'put' | 'get'> }) {
   return {
-    /** Writes a file's bytes under its key with their SHA-256 (hex): R2 refuses bytes that don't match it. */
+    /** Writes a file's bytes under its key with their SHA-256 (hex), which R2 checks the bytes against and keeps. */
     async putBytes(key: string, bytes: Uint8Array<ArrayBuffer>, sha256: string, contentType: string): Promise<void> {
       await bucket.put(key, bytes, { sha256, httpMetadata: { contentType } })
     },
