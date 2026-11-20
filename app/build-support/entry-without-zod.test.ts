@@ -8,8 +8,15 @@ import { describe, expect, it } from 'vitest'
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 /** The modules a file imports at run time (`import type` is erased by the build). */
-const runtimeImports = (src: string) => [...src.matchAll(/^(?:import|export)\s+(?!type\b)(?:[^'\n]*from\s+)?'([^']+)'/gm)].map(m => m[1])
+const runtimeImports = (src: string) => [...src.matchAll(/^(?:import|export)\s+(?!type\b)(?:[^'";]*?\bfrom\s+)?'([^']+)'/gm)].map(m => m[1])
 const PLAIN = ['keys', 'settings-table', 'error-codes']
+
+describe('runtimeImports', () => {
+  it('reads multi-line imports and re-exports, and skips type-only ones', () => {
+    const src = ["import {", '  a,', '  b,', "} from '../x'", "export {", '  c', "} from '../y'", "import './side'", "import type {", ' T', "} from '../t'", "const s = 1"].join('\n')
+    expect(runtimeImports(src)).toEqual(['../x', '../y', './side'])
+  })
+})
 
 describe('the entry reaches no zod', () => {
   for (const file of ['src/agent/mock.ts', 'src/agent/http/client.ts', 'src/agent/types.ts', 'src/state/store.ts', 'src/state/derive.ts']) {
