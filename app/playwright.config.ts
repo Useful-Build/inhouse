@@ -116,6 +116,8 @@ const webServers = [
 
 export default defineConfig({
   testDir: './e2e',
+  // Playwright specs only: e2e/support/**/*.test.ts are Vitest unit tests (vitest.config.ts runs them).
+  testMatch: /\.spec\.ts$/,
   timeout: 60_000,
   fullyParallel: false,
   retries: 0,
