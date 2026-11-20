@@ -23,6 +23,8 @@ npm run test:unit  # Vitest and fast-check property tests (src/**/*.property.tes
 npm run test:e2e   # Playwright against the production build
 ```
 
+Two builds share one source tree. `npm run build` (and `npm run dev`) is the demo: the mock agent, the sample data and the demo switches. `npm run build:product` (`vite build --mode product`) is the product: its client is the HTTP stub in `src/agent/http/`, so every read stays `loading` and every write rejects with `unavailable`, and the shell shows one "Not connected yet" screen. The build picks the client through the `@client` alias: `src/agent/client.demo.ts` (mock plus `DemoControls`) or `src/agent/client.product.ts`, both a `ClientEntry` (`{ agent, demo, now() }`). `demo` is `null` in the product, so `?demo`, the switcher and Reset demo do nothing there, and `now()` is the real clock. The zod schemas in `shared/contract/` define every value the `AgentClient` returns, and the contract suite (`src/agent/contract/`) holds the mock to them. `scripts/check-product-build.mjs` fails the product build on sample data, mock code, demo controls or the demo clock.
+
 Open any build with `?demo` to show the demo switcher (stage, scenario, dot sweep, the agent's mark, Reset demo). State changes are kept in local storage until you press Reset demo.
 
 ## UI regression suite
@@ -95,7 +97,9 @@ Everything the screens know comes through one interface, `AgentClient` in `src/a
 ## Layout
 
 ```
-src/agent/       AgentClient interface, typed sample data, mock agent
+src/agent/       AgentClient interface, typed sample data, mock agent, the two client entries, http/ (the product's stub)
+shared/contract/ zod schemas for every value and event the AgentClient returns
+public-demo/     the demo's sample files (Library, avatars), copied only into the demo build
 src/state/       selectors (derive.ts) and the UI store
 src/ui-base.css  the base's tokens: every color, scale and both themes (from ui-base, never edited)
 src/index.css    the app's CSS: fonts, the override block and the --app-* tokens
@@ -106,7 +110,7 @@ src/shell/       sidebar, top bar, banner, the toast stack, demo switcher
 src/components/  the composer (Today and Chats)
 src/screens/     one file per page (library/ holds the Library's previews and viewer)
 src/overlays/    problem panel, trace window, pop-ups
-e2e/             Playwright specs (the acceptance checks)
+e2e/             Playwright specs (the acceptance checks); support/ is the fixtures layer, product/ the product build's specs
 public/logos/    tool logos (official marks, see public/logos/SOURCES.md)
 public/library/  the Library's sample images (SVG, drawn for this app)
 ```

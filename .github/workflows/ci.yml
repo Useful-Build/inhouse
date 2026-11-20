@@ -89,6 +89,17 @@ jobs:
       # the demo's deploy pointer back when it ends, so the uploaded demo build is untouched either way.
       - if: matrix.shard == 1
         run: npm run build:product && node scripts/check-product-build.mjs
+      # The product build's own specs (e2e/product/): no sample name, no demo switches, today's date, the "Not connected
+      # yet" screen. Right after the build it serves (dist-product/, via wrangler dev, so the demo's deploy pointer that
+      # `vite preview` follows stays on dist/). E2E_PREBUILT keeps the demo server Playwright also starts from building
+      # again, so nothing rebuilds beside the product. Its artifacts sit under e2e-artifacts/ so a failure uploads with
+      # the shard's.
+      - if: matrix.shard == 1
+        env:
+          E2E_PRODUCT: "1"
+          E2E_PREBUILT: "1"
+          VERIFY_DIR: e2e-artifacts/product
+        run: npx playwright test --project=product --forbid-only
       # Playwright balances shards by test count, not time, and the slow desktop specs come first. So the
       # suite is cut in four by test (--fully-parallel) and each job runs one slow and one fast quarter.
       # One worker: the tests run one at a time. Every quarter runs even if the one before failed.

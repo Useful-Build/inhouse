@@ -13,6 +13,7 @@ What counts as verified is the global `verification` skill. This is how to do it
 - `npm run dev` serves on 5173 and shows the demo switches without `?demo`.
 - The Playwright config starts its own preview. `E2E_PORT` moves it (default 5193). `E2E_PREBUILT=1` serves the existing `dist/` instead of building again.
 - Parallel worktrees: give each its own `E2E_PORT`.
+- The product build: `npm run build:product` (into `dist-product/`), then `E2E_PRODUCT=1 E2E_PREBUILT=1 npx playwright test --project=product` (it serves the build with `wrangler dev` on `E2E_PRODUCT_PORT`, default 5194; every URL shows "Not connected yet" and `?demo` does nothing). The product build puts the demo's deploy pointer back when it ends, so `vite preview` keeps serving `dist/`. `node scripts/check-product-build.mjs` checks both builds.
 
 ## Demo and seed switches
 
