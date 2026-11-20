@@ -204,7 +204,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
           </div>
           {/* The switch's visible label: whether the team can use this model. */}
           <span className="inline-flex h-9.5 items-center gap-2">
-            <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={switchOk ? () => tell(agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null), row) : undefined} />
+            <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={switchOk ? () => tell(agent.setSetting(row.switchKey!, row.switchOn ? 'off' : 'on'), row) : undefined} />
             <span aria-hidden="true" className="w-6 text-sm text-foreground-3">{row.switchOn ? 'On' : 'Off'}</span>
           </span>
         </div>

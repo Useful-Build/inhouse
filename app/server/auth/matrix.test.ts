@@ -1,7 +1,8 @@
 // checkAccess and canFor (p2-design section 3), failure modes as properties over every row and principal: Inhouse
 // never reads brand_data without a live grant (a grant ending exactly at nowMs included) and always with the audit
-// duty; nobody but the owner reaches `personal`; an Admin never writes technical except `tm:<id>:on` = 'off' through
-// requireObject; canFor agrees with checkAccess. Then the matrix invariants, on the design's rows now and on the
+// duty; nobody but the owner reaches `personal`; an Admin never writes technical except `tm:<id>:on` = 'on' or 'off'
+// through requireObject; canFor agrees with checkAccess. Then every row against every principal, from a table written
+// by hand from decisions 19 and 27a (never read from the rows). Then the matrix invariants, on the design's rows now and on the
 // committed rows (server/access-matrix.ts), which must equal the design's.
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
@@ -61,7 +62,7 @@ describe('checkAccess properties', () => {
     expect(o?.ownerId).toBe('memberId' in p ? p.memberId : Symbol('none'))
   })
 
-  test.prop([row, object])('an Admin never writes technical except tm:<id>:on = off, and only through requireObject', (r, o) => {
+  test.prop([row, object])('an Admin never writes technical except tm:<id>:on = on or off, and only through requireObject', (r, o) => {
     fc.pre(r.class === 'technical' && r.method !== 'GET')
     const admin = principals.admin()
     const before = checkAccess(admin, r, undefined, NOW)
@@ -72,20 +73,21 @@ describe('checkAccess properties', () => {
       expect(err).toBeInstanceOf(AccessRefusedError)
       passed = false
     }
-    const allowed = !!r.adminWrite && isSwitchKey(o?.settingKey) && o?.value === 'off'
+    const allowed = !!r.adminWrite && isSwitchKey(o?.settingKey) && (o?.value === 'off' || o?.value === 'on')
     expect(passed).toBe(allowed)
     expect(gate.passed).toBe(allowed)
   })
 
-  test.prop([fc.oneof(anchorBreaking, fc.string()), fc.constantFrom('off', 'on')])('row 12 lets an Admin write exactly the keys tm:<id>:on, anchored', (key, value) => {
+  test.prop([fc.oneof(anchorBreaking, fc.string()), fc.oneof(fc.constantFrom('off', 'on', 'OFF', 'On', ' on', null, true, false), fc.anything())])(
+    'row 12 lets an Admin write exactly the keys tm:<id>:on, anchored, to exactly on or off', (key, value) => {
     const row12 = rowFor(DESIGN_ROWS, 'PUT', '/api/settings/technical/:key')!
-    expect(ok(checkAccess(principals.admin(), row12, { settingKey: key, value }, NOW))).toBe(isSwitchKey(key) && value === 'off')
+    expect(ok(checkAccess(principals.admin(), row12, { settingKey: key, value }, NOW))).toBe(isSwitchKey(key) && (value === 'off' || value === 'on'))
   })
 
-  test.prop([principal, row, object])('Inhouse never writes brand_data, baseline or personal; monitor only reads open rows; smoke only reads', (p, r, o) => {
+  test.prop([principal, row, object])('Inhouse never writes brand_data or personal, and a baseline row only where it lists inhouse; monitor only reads open rows; smoke only reads', (p, r, o) => {
     const d = checkAccess(p, r, o, NOW)
     if (!('ok' in d)) return
-    if (p.kind === 'inhouse') expect(r.method === 'GET' || r.class === 'technical' || r.class === 'report').toBe(true)
+    if (p.kind === 'inhouse') expect(r.method === 'GET' || r.class === 'technical' || r.class === 'report' || (r.class === 'baseline' && r.allow.includes('inhouse'))).toBe(true)
     if (p.kind === 'service' && p.name === 'monitor') expect(r.class === 'open' && r.method === 'GET').toBe(true)
     if (p.kind === 'service') expect(r.method).toBe('GET')
     if (r.class === 'open') expect(p.kind).toBe('service')
@@ -104,8 +106,8 @@ describe('checkAccess properties', () => {
 describe('checkAccess cases', () => {
   const r = (method: string, pattern: string) => rowFor(DESIGN_ROWS, method, pattern)!
   it('a grant ending exactly at nowMs is not live', () => {
-    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW }), r('GET', '/api/members'), undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
-    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), r('GET', '/api/members'), undefined, NOW)).toEqual({ ok: true, audit: 'support.access' })
+    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW }), r('GET', '/api/audit'), undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
+    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), r('GET', '/api/audit'), undefined, NOW)).toEqual({ ok: true, audit: 'support.access' })
   })
   it('a personal row asks for the object, then only the owner passes', () => {
     const row7 = r('PUT', '/api/settings/personal/:key')
@@ -114,11 +116,13 @@ describe('checkAccess cases', () => {
     expect(checkAccess(principals.member('m_a'), row7, { ownerId: 'm_b' }, NOW)).toEqual({ refused: 'forbidden', reason: 'not_owner' })
     expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), row7, { ownerId: 'm_ih' }, NOW)).toEqual({ refused: 'forbidden' })
   })
-  it('an Admin on row 12 gets admin_read_only unless the object is tm:<id>:on = off', () => {
+  it('an Admin on row 12 gets admin_read_only unless the object is tm:<id>:on = on or off', () => {
     const row12 = r('PUT', '/api/settings/technical/:key')
     expect(checkAccess(principals.admin(), row12, undefined, NOW)).toEqual({ ok: true, objectCheck: 'required' })
     expect(checkAccess(principals.admin(), row12, { settingKey: 'tm:gpt:on', value: 'off' }, NOW)).toEqual({ ok: true })
-    expect(checkAccess(principals.admin(), row12, { settingKey: 'tm:gpt:on', value: 'on' }, NOW)).toEqual({ refused: 'forbidden', reason: 'admin_read_only' })
+    expect(checkAccess(principals.admin(), row12, { settingKey: 'tm:gpt:on', value: 'on' }, NOW)).toEqual({ ok: true })
+    expect(checkAccess(principals.admin(), row12, { settingKey: 'tm:gpt:on', value: null }, NOW)).toEqual({ refused: 'forbidden', reason: 'admin_read_only' })
+    expect(checkAccess(principals.admin(), row12, { settingKey: 'tm:gpt:effort', value: 'on' }, NOW)).toEqual({ refused: 'forbidden', reason: 'admin_read_only' })
     expect(checkAccess(principals.member(), row12, { settingKey: 'tm:gpt:on', value: 'off' }, NOW)).toEqual({ refused: 'forbidden' })
     expect(checkAccess(principals.inhouse(), row12, undefined, NOW)).toEqual({ ok: true })
   })
@@ -139,19 +143,85 @@ describe('checkAccess cases', () => {
     expect(checkAccess(principals.inhouse(), noInhouse, undefined, NOW)).toEqual({ refused: 'forbidden' })
     expect(checkAccess(principals.admin(), noInhouse, undefined, NOW)).toEqual({ refused: 'forbidden' })
   })
-  it('can: an Admin may switch a model off but not edit technical; Inhouse edits technical', () => {
+  it('can: an Admin may switch a model but not edit technical; Inhouse has every Admin control but granting, and the audit log only under a grant', () => {
     const admin = canFor(principals.admin(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
-    expect(admin).toMatchObject({ switchModelOff: true, editTechnical: false, invite: true, grantSupport: true })
+    expect(admin).toMatchObject({ switchModel: true, editTechnical: false, invite: true, grantSupport: true })
     const member = canFor(principals.member(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(Object.values(member).filter(Boolean)).toHaveLength(3) // viewMembers, viewAudit, exportAudit
     const inhouse = canFor(principals.inhouse(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
-    expect(inhouse).toMatchObject({ editTechnical: true, viewMembers: false, invite: false })
+    expect(inhouse).toEqual({
+      invite: true, changeRole: true, remove: true, editBrandSettings: true, editTechnical: true, switchModel: true, grantSupport: false,
+      viewMembers: true, viewAudit: false, exportAudit: false,
+    })
+    const granted = canFor(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
+    expect(granted).toMatchObject({ grantSupport: false, viewAudit: true, exportAudit: true })
   })
 })
 
-/** Rows outside technical and report that list Inhouse on a non-GET method. */
+/**
+ * Every row against every principal, written by hand from decisions 19 and 27a (the Inhouse team holds every Admin
+ * control but granting itself access; a brand's audit log needs a live grant; personal stays the owner's). Columns:
+ * Member, Admin, Inhouse without a grant, Inhouse with a live grant, smoke, monitor. `ok` passes; `obj` passes only
+ * through requireObject; `no` is a bare forbidden; `grant` is grant_required; `audit` passes with the support.access duty.
+ */
+type Want = 'ok' | 'obj' | 'no' | 'grant' | 'audit'
+const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want]> = {
+  'GET /api/health': ['no', 'no', 'no', 'no', 'no', 'ok'],
+  'GET /api/me': ['ok', 'ok', 'ok', 'ok', 'ok', 'no'],
+  'GET /api/members': ['ok', 'ok', 'ok', 'ok', 'no', 'no'],
+  'POST /api/members/invites': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
+  'PUT /api/members/:id/role': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
+  'DELETE /api/members/:id': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
+  'GET /api/settings/personal': ['obj', 'obj', 'no', 'no', 'obj', 'no'],
+  'PUT /api/settings/personal/:key': ['obj', 'obj', 'no', 'no', 'no', 'no'],
+  'GET /api/settings/brand': ['ok', 'ok', 'ok', 'ok', 'ok', 'no'],
+  'PUT /api/settings/brand/:key': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
+  'GET /api/settings/technical': ['ok', 'ok', 'ok', 'ok', 'no', 'no'],
+  'PUT /api/settings/technical/:key': ['no', 'obj', 'ok', 'ok', 'no', 'no'],
+  'PUT /api/photo': ['obj', 'obj', 'no', 'no', 'no', 'no'],
+  'DELETE /api/photo': ['obj', 'obj', 'no', 'no', 'no', 'no'],
+  'GET /api/members/:id/photo': ['ok', 'ok', 'ok', 'ok', 'no', 'no'],
+  'GET /api/grants': ['no', 'ok', 'ok', 'ok', 'no', 'no'],
+  'POST /api/grants': ['no', 'ok', 'no', 'no', 'no', 'no'],
+  'POST /api/grants/:id/end': ['no', 'ok', 'no', 'no', 'no', 'no'],
+  'GET /api/audit': ['ok', 'ok', 'grant', 'audit', 'no', 'no'],
+  'GET /api/audit/export.csv': ['ok', 'ok', 'grant', 'audit', 'no', 'no'],
+  'POST /api/client-error': ['ok', 'ok', 'ok', 'ok', 'no', 'no'],
+}
+const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
+  ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
+  grant: { refused: 'forbidden', reason: 'grant_required' }, audit: { ok: true, audit: 'support.access' },
+}
+const COLUMNS: readonly [string, () => Principal][] = [
+  ['member', () => principals.member()], ['admin', () => principals.admin()], ['inhouse', () => principals.inhouse()],
+  ['inhouse with a grant', () => principals.inhouse({ id: 'g', endsAtMs: NOW + 1 })], ['smoke', principals.smoke], ['monitor', principals.monitor],
+]
+
+describe('every row against every principal (the hand-written oracle)', () => {
+  for (const [name, rows] of [['the design rows', DESIGN_ROWS], ['server/access-matrix.ts', accessMatrix]] as const) {
+    it(`${name}: each row has an oracle line, and checkAccess answers it for each principal`, () => {
+      for (const x of rows) {
+        const key = `${x.method} ${x.pattern}`
+        const want = ORACLE[key]
+        expect(want, `${key} has no oracle line`).toBeDefined()
+        COLUMNS.forEach(([who, p], i) => expect(checkAccess(p(), x, undefined, NOW), `${key} as ${who}`).toEqual(DECISION[want[i]]))
+      }
+      expect(rows.map(x => `${x.method} ${x.pattern}`).sort()).toEqual(Object.keys(ORACLE).sort())
+    })
+  }
+})
+
+/** Rows outside technical, report and baseline that list Inhouse on a non-GET method (brand_data and personal). */
 const inhouseWriteProblems = (rows: readonly AccessRow[]) =>
-  rows.filter(x => x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report' && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
+  rows.filter(x => x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal') && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
+
+/** The Inhouse team never grants itself access (decision 19), and the audit log is never baseline (BD7). */
+const GRANT_WRITES = ['POST /api/grants', 'POST /api/grants/:id/end']
+const BRAND_DATA_READS = ['GET /api/audit', 'GET /api/audit/export.csv']
+const grantProblems = (rows: readonly AccessRow[]) => [
+  ...rows.filter(x => GRANT_WRITES.includes(`${x.method} ${x.pattern}`) && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern} lists inhouse`),
+  ...rows.filter(x => BRAND_DATA_READS.includes(`${x.method} ${x.pattern}`) && x.class !== 'brand_data').map(x => `${x.method} ${x.pattern} is ${x.class}`),
+]
 
 /**
  * Pairs of routes with the same method where one concrete path matches both (equal length, every segment literal-equal
@@ -208,11 +278,19 @@ describe('the invariant checks catch a bad row', () => {
     expect(shadowProblems([{ method: 'GET', pattern: '/api/members/invites' }, { method: 'GET', pattern: '/api/members/:id' }])).toEqual(['GET /api/members/invites / /api/members/:id'])
     expect(shadowProblems([{ method: 'POST', pattern: '/api/members/invites' }, { method: 'GET', pattern: '/api/members/:id' }])).toEqual([])
   })
-  it('a non-GET brand_data, baseline or personal row listing inhouse', () => {
+  it('a non-GET brand_data or personal row listing inhouse', () => {
     const invites = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
-    const bad = DESIGN_ROWS.map(r => (r === invites ? { ...r, allow: [...r.allow, 'inhouse' as const] } : r))
-    expect(inhouseWriteProblems(bad)).toEqual(['POST /api/members/invites'])
+    const photo = rowFor(DESIGN_ROWS, 'PUT', '/api/photo')!
+    const bad = DESIGN_ROWS.map(r => (r === invites ? { ...r, class: 'brand_data' as const } : r === photo ? { ...r, allow: [...r.allow, 'inhouse' as const] } : r))
+    expect(inhouseWriteProblems(bad)).toEqual(['POST /api/members/invites', 'PUT /api/photo'])
     expect(inhouseWriteProblems(DESIGN_ROWS)).toEqual([])
+  })
+  it('a grant row listing inhouse, or an audit row that is not brand_data', () => {
+    const create = rowFor(DESIGN_ROWS, 'POST', '/api/grants')!
+    const audit = rowFor(DESIGN_ROWS, 'GET', '/api/audit')!
+    const bad = DESIGN_ROWS.map(r => (r === create ? { ...r, allow: [...r.allow, 'inhouse' as const] } : r === audit ? { ...r, class: 'baseline' as const } : r))
+    expect(grantProblems(bad)).toEqual(['POST /api/grants lists inhouse', 'GET /api/audit is baseline'])
+    expect(grantProblems(DESIGN_ROWS)).toEqual([])
   })
 })
 
@@ -230,12 +308,15 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
     it('the open rows are exactly GET /api/health (a closed list)', () => {
       expect(openProblems(rows)).toEqual([])
     })
-    it('no row lets Inhouse write brand_data, baseline or personal, and no personal row allows Inhouse', () => {
+    it('no row lets Inhouse write brand_data or personal, and no personal row allows Inhouse', () => {
       const ih = principals.inhouse({ id: 'g', endsAtMs: Number.MAX_SAFE_INTEGER })
       for (const x of rows) {
-        if (x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report') expect(ok(checkAccess(ih, x, { ownerId: 'm_ih' }, NOW))).toBe(false)
+        if (x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal')) expect(ok(checkAccess(ih, x, { ownerId: 'm_ih' }, NOW))).toBe(false)
         if (x.class === 'personal') expect(x.allow).not.toContain('inhouse')
       }
+    })
+    it('Inhouse never creates or ends a grant, and the audit log stays brand_data', () => {
+      expect(grantProblems(rows)).toEqual([])
     })
     it('every technical row allows Inhouse; only adminWrite rows let an Admin write technical', () => {
       for (const x of rows.filter(y => y.class === 'technical')) {
@@ -244,7 +325,7 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
         if (x.adminWrite) expect(x.allow).toContain('admin')
       }
     })
-    it('no non-GET row outside technical and report lists inhouse', () => {
+    it('no non-GET brand_data or personal row lists inhouse', () => {
       expect(inhouseWriteProblems(rows)).toEqual([])
     })
     it('the report rows are exactly POST /api/client-error (a closed list), naming no service', () => {

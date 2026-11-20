@@ -108,11 +108,13 @@ describe('with the real object gate (failure 2)', () => {
     c.access = { requireObject: gate.requireObject }
     return { run: () => PUT[scope](c), gate }
   }
-  it('an Admin may only switch a model off; anything else is refused before it is written', async () => {
-    const off = gated(technicalRow, admin, 'tm:sonnet:on', 'off', 'technical')
-    expect((await off.run()).status).toBe(200)
-    expect(off.gate.passed).toBe(true)
-    for (const [key, value] of [['tm:haiku:on', 'on'], ['stage', 'Run']] as const) {
+  it('an Admin may only switch a model off or back on; anything else is refused before it is written', async () => {
+    for (const [key, value] of [['tm:sonnet:on', 'off'], ['tm:fable:on', 'on']] as const) {
+      const g = gated(technicalRow, admin, key, value, 'technical')
+      expect((await g.run()).status).toBe(200)
+      expect(g.gate.passed).toBe(true)
+    }
+    for (const [key, value] of [['tm:haiku:on', null], ['tm:haiku:effort', 'High'], ['stage', 'Run']] as const) {
       const before = await snapshot(db)
       const g = gated(technicalRow, admin, key, value, 'technical')
       await expect(g.run()).rejects.toThrow()
