@@ -90,7 +90,8 @@ skill before any UI change. Repo specifics:
   the branch up to date with `main`. No merge queue for now.
 - **Commit hook:** `.githooks/commit-msg` refuses a commit whose `Verified:` trailer `git interpret-trailers --parse`
   can't print (merge commits pass). `npm install` in `app/` runs `prepare`, which sets `core.hooksPath` to `.githooks`
-  (this replaces any global hooks path for the repo).
+  (the hooks run the global hook of the same name and the repo's own `.git/hooks` one after their own check, via
+  `.githooks/chain.sh`, so a global hooks path keeps working).
 - **Big projects:** one integration branch `fleet/<topic>` cut from `main`. Each piece is its own PR into it, merged
   with a merge commit. Bring `main` into it through a PR (direct pushes are blocked). The final PR into `main` gets
   full CI, reviews, a preview, the QA gate and a ship recording (`ship.yml`, run by hand with the PR number and its

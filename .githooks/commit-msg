@@ -1,9 +1,12 @@
 #!/bin/sh
 # Refuses a commit whose Verified: trailer `git interpret-trailers --parse` can't print (pr-gates checks every
-# commit). Merge commits are exempt. Installed by app's `prepare` script (core.hooksPath).
-git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && exit 0
-if git stripspace --strip-comments < "$1" | git interpret-trailers --parse | grep -q '^Verified: ..*'; then
-  exit 0
+# commit). Merge commits are exempt. Installed by app's `prepare` script (core.hooksPath). After its check passes
+# it chains to the global and the repo's own commit-msg hooks (chain.sh).
+. "$(dirname "$0")/chain.sh"
+if ! git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 &&
+  ! git stripspace --strip-comments < "$1" | git interpret-trailers --parse | grep -q '^Verified: ..*'; then
+  echo "commit-msg: no parseable 'Verified: <checks>' trailer. Put it in the last paragraph, one line, directly above Co-Authored-By (no blank line)." >&2
+  exit 1
 fi
-echo "commit-msg: no parseable 'Verified: <checks>' trailer. Put it in the last paragraph, one line, directly above Co-Authored-By (no blank line)." >&2
-exit 1
+chain_hooks commit-msg "$@"
+exit $?
