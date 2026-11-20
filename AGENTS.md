@@ -83,7 +83,7 @@ skill before any UI change. Repo specifics:
 - **Big projects:** one integration branch `fleet/<topic>` cut from `main`. Each piece is its own PR into it, merged
   with a merge commit. Bring `main` into it through a PR (direct pushes are blocked). The final PR into `main` gets
   full CI, reviews, a preview, the QA gate and a ship recording (`ship.yml`, run by hand with the PR number and its
-  ship spec). Wasim approves that head SHA, then it squash-merges with `--match-head-commit <sha>` and a squash
+  ship spec; `-f build=test` for a backend phase from P2 on, which records on the test build instead of a preview). Wasim approves that head SHA, then it squash-merges with `--match-head-commit <sha>` and a squash
   message ending in a `Verified:` trailer. A push after approval voids it. Plan:
   `docs/plans/2026-11-19-setup-gaps.md`.
 - **Escalation (Wasim, 2026-11-20), for every task in this repo:** no problem loops. A round is one fix and one
