@@ -13,7 +13,7 @@ import type { AccountStatus, CallerScope, HubResult, ReadGateway as ReadApi, Ser
 import { err } from './errors'
 import { log } from './log'
 import { AccountIdSchema, CallerScopeSchema, ToolNameSchema } from './schemas'
-import { callReadTool, listReadTools, type ConnectorModule, type GatewayDeps, type ShopifyReadClient } from '../registry/registry'
+import { callReadTool, listReadTools, toolNameForLog, type ConnectorModule, type GatewayDeps, type ShopifyReadClient } from '../registry/registry'
 import { isConfigured, loadRegistry } from '../signin/signin'
 
 export { SignIn } from '../signin/signin'
@@ -82,9 +82,11 @@ export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
       if (!parsedName.success) return err('invalid_args', 'name')
       return callReadTool(await gatewayDeps(this.env), parsedScope.data, parsedName.data, args)
     })
+    // A malformed registry already logged hub_config_invalid; this line then names no tool.
+    const registry = await loadRegistry(this.env).catch(() => null)
     log('hub_call', {
       ...(parsedScope.success ? scopeFields(parsedScope.data) : {}),
-      tool: parsedName.success ? parsedName.data : undefined,
+      tool: registry && parsedName.success ? toolNameForLog(registry, parsedName.data) : 'unknown',
       code: result.ok ? 'ok' : result.error.code,
       ms: Date.now() - started,
     })

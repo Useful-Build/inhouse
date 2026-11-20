@@ -36,9 +36,14 @@ export function parseShopifyConfig(env: {
 export type GrantOk = { ok: true; accessToken: string; scope: string | undefined; expiresAtMs: number; startMs: number }
 export type GrantFail = { ok: false; code: Extract<HubErrorCode, 'upstream_unavailable' | 'credentials_rejected'> }
 
-/** Reads at most `limit` bytes of a body. Null when it's larger (the rest is cancelled) or the stream fails. */
-async function readCapped(res: Response, limit: number): Promise<string | null> {
-  if (!res.body) return ''
+type Capped = { ok: true; text: string } | { ok: false; reason: 'too_large' | 'failed' }
+
+/**
+ * Reads at most `limit` bytes of a body as UTF-8. `too_large` when it's larger (the rest is cancelled); `failed` when
+ * the stream errors (the deadline included) or the bytes aren't valid UTF-8.
+ */
+async function readCapped(res: Response, limit: number): Promise<Capped> {
+  if (!res.body) return { ok: true, text: '' }
   const reader = res.body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
@@ -49,12 +54,12 @@ async function readCapped(res: Response, limit: number): Promise<string | null> 
       total += value.byteLength
       if (total > limit) {
         await reader.cancel().catch(() => {})
-        return null
+        return { ok: false, reason: 'too_large' }
       }
       chunks.push(value)
     }
   } catch {
-    return null
+    return { ok: false, reason: 'failed' }
   }
   const all = new Uint8Array(total)
   let at = 0
@@ -63,9 +68,9 @@ async function readCapped(res: Response, limit: number): Promise<string | null> 
     at += c.byteLength
   }
   try {
-    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(all)
+    return { ok: true, text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(all) }
   } catch {
-    return null
+    return { ok: false, reason: 'failed' }
   }
 }
 
@@ -110,7 +115,8 @@ async function grant(upstream: Upstream, config: ShopifyConfig, nowMs: () => num
   } catch {
     return { ok: false, code: 'upstream_unavailable' }
   }
-  const text = await readCapped(res, 64 * 1024)
+  const capped = await readCapped(res, 64 * 1024)
+  const text = capped.ok ? capped.text : null
   if (res.status === 400 || res.status === 401 || res.status === 403) return { ok: false, code: 'credentials_rejected' }
   if (text !== null && text.includes('shop_not_permitted')) return { ok: false, code: 'credentials_rejected' }
   if (res.status < 200 || res.status > 299 || text === null) return { ok: false, code: 'upstream_unavailable' }
@@ -199,8 +205,9 @@ async function read(
     await res.body?.cancel().catch(() => {})
     return { kind: 'result', result: err('result_too_large') }
   }
-  const text = await readCapped(res, MAX_BODY_BYTES)
-  if (text === null) return { kind: 'result', result: err('result_too_large') }
+  const capped = await readCapped(res, MAX_BODY_BYTES)
+  if (!capped.ok) return { kind: 'result', result: err(capped.reason === 'too_large' ? 'result_too_large' : 'upstream_unavailable') }
+  const text = capped.text
   let json: unknown
   try {
     json = JSON.parse(text)

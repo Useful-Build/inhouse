@@ -51,7 +51,9 @@ describe('ReadGateway through the Worker exports', () => {
     expect(shop.grants).toBe(1)
   })
 
-  it('refuses a write-mode name and a mutation document before any upstream call', async () => {
+  // A registered write-mode tool can't exist here (buildRegistry refuses it at startup); the gateway's own mode check is
+  // registry.test.ts property 9.
+  it('an unregistered write name is unknown_tool and a mutation document is write_refused, before any upstream call', async () => {
     expect(await exports.ReadGateway.callTool(run, 'orders_update', {})).toMatchObject({ ok: false, error: { code: 'unknown_tool' } })
     expect(await exports.ReadGateway.callTool(run, 'fixture_query', { document: 'mutation { orderCancel(orderId: "1") { job { id } } }' })).toMatchObject({
       ok: false,

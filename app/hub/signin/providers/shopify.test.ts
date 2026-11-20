@@ -151,6 +151,28 @@ describe('the read call', () => {
     expect((await codeOf(declared))?.code).toBe('result_too_large')
   })
 
+  it('tells a failed body from an oversize one: a stream error, the deadline or bad UTF-8 is upstream_unavailable', async () => {
+    const broken = () =>
+      new Response(
+        new ReadableStream({
+          start: c => {
+            c.enqueue(new TextEncoder().encode('{"data":'))
+            c.error(new TypeError('connection reset'))
+          },
+        }),
+        { status: 200 },
+      )
+    expect((await codeOf(broken))?.code).toBe('upstream_unavailable')
+    const timedOut = () =>
+      new Response(
+        new ReadableStream({ start: c => c.error(new DOMException('upstream deadline', 'TimeoutError')) }),
+        { status: 200 },
+      )
+    expect((await codeOf(timedOut))?.code).toBe('upstream_unavailable')
+    const badUtf8 = () => new Response(new Uint8Array([0x7b, 0xff, 0xfe, 0x7d]), { status: 200 })
+    expect((await codeOf(badUtf8))?.code).toBe('upstream_unavailable')
+  })
+
   it('maps a network error and a malformed 200 to upstream_unavailable', async () => {
     const r = await sendRead(
       async () => {

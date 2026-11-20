@@ -4,7 +4,7 @@
 import { z } from 'zod'
 import type { CallerScope, HubResult, ToolInfo } from '../index/contract'
 import { ACCOUNT_ID } from '../index/schemas'
-import { err, ok } from '../index/errors'
+import { err, isHubErrorCode, ok } from '../index/errors'
 
 export type ShopifyReadClient = {
   graphql(document: string, variables?: Record<string, unknown>, apiVersion?: string): Promise<HubResult<{ data: unknown }>>
@@ -121,6 +121,9 @@ export type GatewayDeps = {
   nowMs(): number
 }
 
+/** The tool name a log line may carry: a registered name, else a fixed `unknown` (never caller text). */
+export const toolNameForLog = (registry: Registry, name: string): string => (registry.tools.has(name) ? name : 'unknown')
+
 /** Read tools whose connector account is configured. */
 export function listReadTools(deps: GatewayDeps): ToolInfo[] {
   const out: ToolInfo[] = []
@@ -140,7 +143,12 @@ export async function callReadTool(deps: GatewayDeps, scope: CallerScope, name: 
   const parsed = t.input.safeParse(args)
   if (!parsed.success) return err('invalid_args', name)
   const result = await t.run({ shopify: deps.shopifyFor(t.connector), scope, nowMs: deps.nowMs() }, parsed.data)
-  if (!result.ok) return result
+  if (!result.ok) {
+    // Rebuilt here from the code alone: a tool's own message could carry upstream text, and it never reaches the runner.
+    const code = isHubErrorCode(result.error?.code) ? result.error.code : 'internal'
+    const retry = result.error?.retryAfterMs
+    return err(code, name, typeof retry === 'number' && Number.isFinite(retry) && retry >= 0 ? retry : undefined)
+  }
   let json: string | undefined
   try {
     json = JSON.stringify(result.value)

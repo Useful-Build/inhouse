@@ -18,6 +18,8 @@ const TEXT: Record<HubErrorCode, string> = {
   internal: 'internal error',
 }
 
+export const isHubErrorCode = (code: unknown): code is HubErrorCode => typeof code === 'string' && Object.hasOwn(TEXT, code)
+
 /** `detail` must be a safe name (tool name, scope handles, error codes); callers never pass upstream text. */
 export function hubError(code: HubErrorCode, detail?: string, retryAfterMs?: number): HubError {
   const error: HubError = { code, message: detail ? `${TEXT[code]}: ${detail}` : TEXT[code] }

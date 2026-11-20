@@ -40,7 +40,8 @@ export type SyncStore = {
   transactionSync<T>(fn: () => T): T
 }
 
-export type AlarmControl = { set(atMs: number): void; delete(): void }
+/** ctx.storage.setAlarm / deleteAlarm. The core awaits both, so a failure is seen, logged and recorded. */
+export type AlarmControl = { set(atMs: number): Promise<void>; delete(): Promise<void> }
 
 export type ConnectorScopes = { read: readonly string[]; required: readonly string[] }
 
@@ -69,6 +70,12 @@ const PENDING = 'pending:'
 export const EXPIRY_MARGIN_MS = 60_000
 export const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const
 export const MAX_PENDING_TTL_MS = 2 * 60 * 60_000
+/**
+ * After credentials_rejected, reads inside this window answer the stored error without a token call. One minute: the
+ * first alarm backoff step, so a fixed secret is picked up within a minute, and a run hammering a dead account costs
+ * the provider's token endpoint at most one call a minute instead of one per read.
+ */
+export const REJECTED_COOLDOWN_MS = 60_000
 
 const instant = (ms: number): Instant => ({ iso: new Date(ms).toISOString(), ms })
 
@@ -157,12 +164,13 @@ export class SignInCore {
     if (!r0) return { ok: false, code: 'internal' }
     if (r0.state === 'disconnected') return { ok: false, code: 'not_configured', detail: 'disconnected' }
     const g0 = r0.generation
+    // A misconfiguration is a failed grant like any other: `failures` grows (so the alarm backs off) and status names it.
     const config = this.#d.shopify()
-    if (!config) return { ok: false, code: 'not_configured' }
+    if (!config) return this.#grantFailed(accountId, g0, 'not_configured')
     const scopes = await this.#d.scopesFor(accountId)
-    if (!scopes) return { ok: false, code: 'not_configured' }
+    if (!scopes) return this.#grantFailed(accountId, g0, 'not_configured')
     const ring = await this.#d.keyring()
-    if (!ring.ok) return { ok: false, code: 'key_unavailable' }
+    if (!ring.ok) return this.#grantFailed(accountId, g0, 'key_unavailable')
     const upstream = await this.#d.upstream()
 
     const grant = await requestGrant(upstream, config, this.#d.now)
@@ -190,9 +198,18 @@ export class SignInCore {
       lastError: null,
     }
     this.#write(next)
-    const due = refreshDueAt(next)
-    if (due !== null) this.#d.alarm.set(due)
     log('signin_grant', { accountId, code: 'ok', generation: next.generation, kid: token.kid, state: 'active' })
+    const due = refreshDueAt(next)
+    if (due !== null) {
+      try {
+        await this.#d.alarm.set(due)
+      } catch {
+        // The token is good, but no refresh is scheduled: visible in the log and in status() until the next grant.
+        log('hub_internal', { accountId, code: 'alarm_op', generation: next.generation })
+        const r2 = this.#stillCurrent(accountId, next.generation)
+        if (r2) this.#write({ ...r2, lastError: { code: 'internal', atMs: this.#d.now() } })
+      }
+    }
     return { ok: true, generation: next.generation }
   }
 
@@ -238,6 +255,9 @@ export class SignInCore {
         }
       }
       if (!allowGrant) return { ok: false, code: 'credentials_rejected' }
+      if (r.state === 'failed' && r.lastError?.code === 'credentials_rejected' && this.#d.now() < r.lastError.atMs + REJECTED_COOLDOWN_MS) {
+        return { ok: false, code: 'credentials_rejected' }
+      }
       const g = await this.#grant(accountId)
       if (!g.ok) return g
     }
@@ -337,7 +357,7 @@ export class SignInCore {
   }
 
   /** P5's caller. Token and refresh deleted, generation + 1, alarm deleted; only P5's connect leaves this state. */
-  disconnect(accountId: string): HubResult<{ generation: number }> {
+  async disconnect(accountId: string): Promise<HubResult<{ generation: number }>> {
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')
     const next: SignInRecord = {
@@ -351,7 +371,12 @@ export class SignInCore {
       scopes: [],
     }
     this.#write(next)
-    this.#d.alarm.delete()
+    try {
+      await this.#d.alarm.delete()
+    } catch {
+      // Harmless: an alarm that still fires finds the record disconnected and does nothing.
+      log('hub_internal', { accountId, code: 'alarm_op', generation: next.generation })
+    }
     return ok({ generation: next.generation })
   }
 
@@ -399,24 +424,24 @@ export class SignInCore {
       const due = refreshDueAt(r)
       if (usable(r, nowMs) && due !== null && nowMs < due) {
         // A repeated alarm that isn't due: no grant, no record change; the refresh alarm stays where it was.
-        this.#d.alarm.set(due)
+        await this.#d.alarm.set(due)
         return
       }
       const outcome = await this.#grant(r.accountId)
-      if (!outcome.ok) this.#scheduleBackoff()
+      if (!outcome.ok) await this.#scheduleBackoff()
     } catch {
       log('hub_internal', { code: 'internal' })
       try {
-        this.#scheduleBackoff()
+        await this.#scheduleBackoff()
       } catch {
         log('hub_internal', { code: 'internal' })
       }
     }
   }
 
-  #scheduleBackoff(): void {
+  async #scheduleBackoff(): Promise<void> {
     const r = this.#read()
     if (!r || r.state === 'disconnected') return
-    this.#d.alarm.set(this.#d.now() + backoffFor(r.failures))
+    await this.#d.alarm.set(this.#d.now() + backoffFor(r.failures))
   }
 }

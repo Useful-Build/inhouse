@@ -37,11 +37,15 @@ export class MemStore implements SyncStore {
 export class FakeAlarm {
   at: number | null = null
   history: (number | null)[] = []
-  set(atMs: number) {
+  /** Makes set and delete reject, as a failed storage write would. */
+  fail = false
+  async set(atMs: number) {
+    if (this.fail) throw new Error('alarm write failed')
     this.at = atMs
     this.history.push(atMs)
   }
-  delete() {
+  async delete() {
+    if (this.fail) throw new Error('alarm write failed')
     this.at = null
     this.history.push(null)
   }

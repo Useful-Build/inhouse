@@ -61,13 +61,13 @@ export class SignIn extends DurableObject<Env> {
       list: prefix => storage.kv.list({ prefix }),
       transactionSync: fn => storage.transactionSync(fn),
     }
-    const alarmFailed = () => log('hub_internal', { code: 'alarm_op' })
     this.#core = new SignInCore({
       store,
       now: () => Date.now(),
+      // Awaited by the core, which logs a failure and records it for status().
       alarm: {
-        set: atMs => void storage.setAlarm(atMs).catch(alarmFailed),
-        delete: () => void storage.deleteAlarm().catch(alarmFailed),
+        set: atMs => storage.setAlarm(atMs),
+        delete: () => storage.deleteAlarm(),
       },
       upstream: () => upstreamFor(env),
       keyring: () => keyRingFor(env),

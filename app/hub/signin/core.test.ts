@@ -1,6 +1,6 @@
 import { fc, test } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BACKOFF_MS, EXPIRY_MARGIN_MS, MAX_PENDING_TTL_MS } from './core'
+import { BACKOFF_MS, EXPIRY_MARGIN_MS, MAX_PENDING_TTL_MS, REJECTED_COOLDOWN_MS } from './core'
 import { ACCOUNT, API, harness, LIFETIME_S, MemStore, readQuery, ringJson, START_MS, type Harness } from './testing/kit'
 
 // Quiet the JSON log lines; tests that inspect them install their own spy.
@@ -133,6 +133,43 @@ describe('grants and reads', () => {
     expect(h.store.record()).toMatchObject({ state: 'failed', token: null, lastError: { code: 'credentials_rejected' } })
     expect(h.shop.reads).toHaveLength(3)
   })
+
+  it('after credentials_rejected, reads inside the cooldown answer the stored error with no token call', async () => {
+    const h = harness()
+    h.shop.grantMode = { kind: 'status', status: 401 }
+    expect(codeOf(await readQuery(h))).toBe('credentials_rejected')
+    h.shop.grantMode = { kind: 'ok' }
+    h.clock.ms = START_MS + REJECTED_COOLDOWN_MS - 1
+    expect(codeOf(await readQuery(h))).toBe('credentials_rejected')
+    expect(codeOf(await readQuery(h))).toBe('credentials_rejected')
+    expect(h.shop.grants).toBe(1)
+    h.clock.ms = START_MS + REJECTED_COOLDOWN_MS
+    expect(await readQuery(h)).toEqual(ok)
+    expect(h.shop.grants).toBe(2)
+  })
+
+  it('a second 401 landing after another read stored a newer token leaves that token alone (generation check)', async () => {
+    const h = harness()
+    await readQuery(h) // generation 1
+    h.shop.revokeAll()
+    const real = h.shop.upstream
+    let reads = 0
+    h.shop.upstream = async req => {
+      if (!new URL(req.url).pathname.endsWith('/access_token') && ++reads === 2) {
+        // A's re-send (generation 2's token). Before it answers, C runs whole: its 401 grants generation 3, and its
+        // re-send succeeds. Then A's re-send answers 401 too. Only the generation moved; the state is still active.
+        h.shop.revokeAll()
+        expect(await readQuery(h)).toEqual(ok)
+      }
+      return real(req)
+    }
+    expect(codeOf(await readQuery(h))).toBe('credentials_rejected')
+    expect(h.store.record()).toMatchObject({ state: 'active', generation: 3, failures: 0, lastError: null })
+    expect(h.store.record()!.token).not.toBeNull()
+    const grants = h.shop.grants
+    expect(await readQuery(h)).toEqual(ok)
+    expect(h.shop.grants).toBe(grants)
+  })
 })
 
 describe('pending items', () => {
@@ -167,13 +204,36 @@ describe('disconnect and status', () => {
   it('disconnect deletes the token, bumps the generation, deletes the alarm; reads are not_configured', async () => {
     const h = harness()
     await readQuery(h)
-    expect(h.core.disconnect(ACCOUNT)).toEqual({ ok: true, value: { generation: 2 } })
+    expect(await h.core.disconnect(ACCOUNT)).toEqual({ ok: true, value: { generation: 2 } })
     expect(h.store.record()).toMatchObject({ state: 'disconnected', token: null, refresh: null, generation: 2 })
     expect(h.alarm.at).toBeNull()
     expect(codeOf(await readQuery(h))).toBe('not_configured')
     await h.core.alarm()
     expect(h.shop.grants).toBe(1)
     expect(h.alarm.at).toBeNull()
+  })
+
+  it('a failed alarm write is logged and shown in status, never silent; the read still succeeds', async () => {
+    const h = harness()
+    const lines: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')))
+    h.alarm.fail = true
+    expect(await readQuery(h)).toEqual(ok)
+    expect(lines.filter(l => l.includes('"alarm_op"'))).toHaveLength(1)
+    const s = h.core.status(ACCOUNT)
+    expect(s.ok && s.value).toMatchObject({ state: 'active', kid: 'k1', lastError: { code: 'internal', at: { ms: START_MS } } })
+    expect(await h.core.disconnect(ACCOUNT)).toEqual({ ok: true, value: { generation: 2 } })
+    expect(lines.filter(l => l.includes('"alarm_op"'))).toHaveLength(2)
+    // The next good grant with a working alarm clears it.
+    const h2 = harness()
+    h2.alarm.fail = true
+    await readQuery(h2)
+    h2.alarm.fail = false
+    h2.clock.ms = START_MS + LIFETIME_S * 1000
+    expect(await readQuery(h2)).toEqual(ok)
+    const s2 = h2.core.status(ACCOUNT)
+    expect(s2.ok && s2.value.lastError).toBeNull()
+    expect(h2.alarm.at).toBe(h2.clock.ms + (LIFETIME_S * 1000) / 2)
   })
 
   it('status reports state, kid, expiry and scopes, never the token', async () => {
@@ -280,6 +340,29 @@ describe('expiry and backoff (property 7)', () => {
     expect(h.alarm.at).toBe(h.clock.ms + (LIFETIME_S * 1000) / 2)
   })
 
+  const misconfigured: [string, (h: Harness) => void, string][] = [
+    ['no Shopify config', h => (h.config.value = null), 'not_configured'],
+    ['a bad key ring', h => (h.ring.json = undefined), 'key_unavailable'],
+  ]
+  for (const [name, arrange, code] of misconfigured) {
+    it(`a misconfigured alarm run (${name}) backs off 1, 5, 15, 60 minutes and status names ${code}`, async () => {
+      const h = harness()
+      await readQuery(h)
+      h.clock.ms = START_MS + (LIFETIME_S * 1000) / 2
+      arrange(h)
+      const seen: number[] = []
+      for (let i = 0; i < 4; i++) {
+        await h.core.alarm()
+        seen.push(h.alarm.at! - h.clock.ms)
+        h.clock.ms = h.alarm.at!
+      }
+      expect(seen).toEqual([...BACKOFF_MS])
+      const s = h.core.status(ACCOUNT)
+      expect(s.ok && s.value).toMatchObject({ state: 'active', lastError: { code } })
+      expect(h.shop.grants).toBe(1)
+    })
+  }
+
   it('a repeated alarm that is not due changes nothing', async () => {
     const h = harness()
     await readQuery(h)
@@ -302,7 +385,8 @@ describe('expiry and backoff (property 7)', () => {
     h.ring.json = undefined
     ;(h.store as MemStore).put('record', { ...h.store.record()!, failures: 2 })
     await expect(h.core.alarm()).resolves.toBeUndefined()
-    expect(h.alarm.at).toBe(h.clock.ms + BACKOFF_MS[1])
+    // The bad ring is a failed grant now (failures 2 -> 3), so the third step.
+    expect(h.alarm.at).toBe(h.clock.ms + BACKOFF_MS[2])
   })
 })
 
@@ -370,6 +454,32 @@ describe('rotation (property 2)', () => {
     expect(h.shop.grants).toBe(1)
     expect(await h.core.reencrypt(ACCOUNT)).toEqual({ ok: true, value: { kid: 'k2', changed: false } })
   })
+})
+
+describe('re-encryption racing a rejection (the sameEnvelope guard)', () => {
+  // Captured once: each run re-mocks encrypt with its own scheduler.
+  const realEncrypt = crypto.subtle.encrypt.bind(crypto.subtle)
+
+  test.prop([fc.scheduler(), fc.constantFrom('read' as const, 'reencrypt' as const), fc.constantFrom('403' as const, 'write scope' as const)])(
+    'a token deleted by a rejected refresh while a re-seal is in flight is never written back',
+    async (s, via, rejection) => {
+      const keys = new Map<string, string>()
+      const ring = { json: ringJson(['k1'], 'k1', keys) as string | undefined }
+      const h = harness({ ring })
+      await readQuery(h)
+      ring.json = ringJson(['k1', 'k2'], 'k2', keys) // the stored token now needs a re-seal
+      h.clock.ms = START_MS + (LIFETIME_S * 1000) / 2 // the refresh is due; the token is still usable
+      if (rejection === '403') h.shop.grantMode = { kind: 'status', status: 403 }
+      else h.shop.scope = 'read_orders,read_returns,write_orders'
+      vi.spyOn(crypto.subtle, 'encrypt').mockImplementation(((...a: Parameters<typeof realEncrypt>) =>
+        s.schedule(realEncrypt(...a), 'encrypt')) as typeof realEncrypt)
+      await interleave(s, h, [via === 'read' ? () => readQuery(h) : () => h.core.reencrypt(ACCOUNT), () => h.core.alarm()])
+      const r = h.store.record()!
+      expect(r.state).toBe('failed') // the refresh is rejected in every order
+      expect(r.token).toBeNull()
+      expect(r.generation).toBe(1)
+    },
+  )
 })
 
 describe('the canary token (property 8)', () => {
