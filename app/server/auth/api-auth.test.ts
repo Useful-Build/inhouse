@@ -331,12 +331,14 @@ describe('the committed route table (server/routes.ts)', () => {
     const call = committed()
     const member = await as('member')
     const admin = await as('admin')
-    for (const r of accessMatrix.filter(x => x.pattern !== '/api/me' && x.pattern !== '/api/client-error' && x.class !== 'open')) {
+    // Routes 3 to 12 have their handlers (W2 PR 2, tested through api() in server/api/routes-wired.test.ts on D1).
+    const wired = new Set(accessMatrix.slice(2, 12).map(x => `${x.method} ${x.pattern}`))
+    for (const r of accessMatrix.filter(x => x.pattern !== '/api/me' && x.pattern !== '/api/client-error' && x.class !== 'open' && !wired.has(`${x.method} ${x.pattern}`))) {
       const res = await call(BRAND.origin, concrete(r.pattern), { method: r.method, headers: { 'Cf-Access-Jwt-Assertion': r.allow.includes('admin') ? admin : member, Origin: BRAND.origin } })
       expect(res.status, `${r.method} ${r.pattern}`).toBe(503)
       expect(await res.json()).toEqual({ error: { code: 'unavailable' } })
     }
-    expect((await call(BRAND.origin, '/api/members/invites', { method: 'POST', headers: { 'Cf-Access-Jwt-Assertion': member, Origin: BRAND.origin } })).status).toBe(403)
+    expect((await call(BRAND.origin, '/api/grants', { method: 'POST', headers: { 'Cf-Access-Jwt-Assertion': member, Origin: BRAND.origin } })).status).toBe(403)
   })
   it('wires POST /api/client-error to the reporter (204, logged as client_error)', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})

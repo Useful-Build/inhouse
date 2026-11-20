@@ -47,10 +47,18 @@ describe('the audit log is append-only (failure 2)', () => {
     for (const verb of ['REPLACE INTO', 'INSERT OR REPLACE INTO']) {
       await expect(db.prepare(`${verb} audit_log (id, at_ms, actor_id, action, args_json, req_id) VALUES (?, 2, 'm_system', 'x', '{}', 'r2')`).bind(id).run()).rejects.toThrow(/append-only/)
     }
+    await expect(db.prepare("INSERT INTO audit_log (id, at_ms, actor_id, action, args_json, req_id) VALUES (?, 2, 'm_system', 'x', '{}', 'r2') ON CONFLICT(id) DO UPDATE SET action = excluded.action").bind(id).run()).rejects.toThrow(/append-only/)
     expect(await db.prepare('SELECT action FROM audit_log WHERE id = ?').bind(id).first('action')).toBe('grant.expired')
     const next = await line()
     expect(next.meta.last_row_id).toBeGreaterThan(id)
     expect((await db.prepare('INSERT INTO audit_log (id, at_ms, actor_id, action, req_id) VALUES (?, 1, ?, ?, ?)').bind(next.meta.last_row_id + 10, 'm_system', 'grant.expired', 'r').run()).meta.changes).toBe(1)
+  })
+
+  it('refuses an explicit id of 0 or below (edited in place: 0004 is not deployed anywhere); a normal insert still works', async () => {
+    for (const id of [0, -1]) {
+      await expect(db.prepare("INSERT INTO audit_log (id, at_ms, actor_id, action, req_id) VALUES (?, 1, 'm_system', 'grant.expired', 'r')").bind(id).run()).rejects.toThrow(/CHECK/)
+    }
+    expect((await line()).meta.changes).toBe(1)
   })
 
   it('names its actor by a member row (foreign key)', async () => {

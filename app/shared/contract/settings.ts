@@ -86,13 +86,16 @@ const EXACT: Record<string, SettingSpec> = {
 /** An id inside a key (a model, a run-limit job). */
 const ID = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}'
 /** Keys with an id in them, tried after the exact keys (so `l:daily` is never read as the job `daily`). */
-const PATTERNS: [RegExp, SettingSpec][] = [
-  [new RegExp(`^tm:${ID}:effort$`), safe('technical', z.enum(EFFORT_LABELS))],
-  [new RegExp(`^tm:${ID}:on$`), safe('technical', z.enum(['off', 'on']))],
-  [new RegExp(`^l:${ID}$`), safe('technical', bool)],
+const PATTERNS: [RegExp, SettingSpec, string][] = [
+  [new RegExp(`^tm:${ID}:effort$`), safe('technical', z.enum(EFFORT_LABELS)), 'tm:fable:effort'],
+  [new RegExp(`^tm:${ID}:on$`), safe('technical', z.enum(['off', 'on'])), 'tm:fable:on'],
+  [new RegExp(`^l:${ID}$`), safe('technical', bool), 'l:returns'],
   // An approval rule's approver: a member id or anyone (P6 builds the page).
-  [/^a:(0|[1-9]\d{0,3})$/, safe('brand', z.union([MemberIdSchema, z.literal('anyone')]))],
+  [/^a:(0|[1-9]\d{0,3})$/, safe('brand', z.union([MemberIdSchema, z.literal('anyone')])), 'a:0'],
 ]
+
+/** One key per registry entry: every exact key, and an example of each key pattern (the third field above). */
+export const SETTING_KEY_EXAMPLES: readonly string[] = [...Object.keys(EXACT), ...PATTERNS.map(([, , example]) => example)]
 
 /**
  * The spec of a settings key, or null when it isn't a setting. `p:<id>` (a role), `photo:<id>` and `d:support` (a grant)

@@ -4,6 +4,8 @@ import { accessMatrix, canRows } from './access-matrix.ts'
 import type { AuthStores, Principal } from './auth/index.ts'
 import type { RequireObject } from './auth/matrix.ts'
 import { meHandler } from './auth/me-handler.ts'
+import { changeMemberRole, inviteMember, listMembers, removeMember } from './api/members.ts'
+import { getBrandSettings, getPersonalSettings, getTechnicalSettings, putBrandSetting, putPersonalSetting, putTechnicalSetting } from './api/settings.ts'
 import { SECURITY_HEADERS, apiError } from './http.ts'
 import { clientError } from '../worker/client-error.ts'
 
@@ -83,16 +85,16 @@ export async function reportClientError(request: Request): Promise<Response> {
 export const routes: readonly Route[] = [
   /* 1 */ { method: 'GET', pattern: '/api/health', handler: notYet },
   /* 2 */ { method: 'GET', pattern: '/api/me', handler: meHandler({ rows: accessMatrix, canRows }) },
-  /* 3 */ { method: 'GET', pattern: '/api/members', handler: notYet },
-  /* 4 */ { method: 'POST', pattern: '/api/members/invites', handler: notYet },
-  /* 5 */ { method: 'PUT', pattern: '/api/members/:id/role', handler: notYet },
-  /* 6 */ { method: 'DELETE', pattern: '/api/members/:id', handler: notYet },
-  /* 7 */ { method: 'GET', pattern: '/api/settings/personal', handler: notYet },
-  /* 8 */ { method: 'PUT', pattern: '/api/settings/personal/:key', handler: notYet },
-  /* 9 */ { method: 'GET', pattern: '/api/settings/brand', handler: notYet },
-  /* 10 */ { method: 'PUT', pattern: '/api/settings/brand/:key', handler: notYet },
-  /* 11 */ { method: 'GET', pattern: '/api/settings/technical', handler: notYet },
-  /* 12 */ { method: 'PUT', pattern: '/api/settings/technical/:key', handler: notYet },
+  /* 3 */ { method: 'GET', pattern: '/api/members', handler: listMembers },
+  /* 4 */ { method: 'POST', pattern: '/api/members/invites', handler: inviteMember },
+  /* 5 */ { method: 'PUT', pattern: '/api/members/:id/role', handler: changeMemberRole },
+  /* 6 */ { method: 'DELETE', pattern: '/api/members/:id', handler: removeMember },
+  /* 7 */ { method: 'GET', pattern: '/api/settings/personal', handler: getPersonalSettings },
+  /* 8 */ { method: 'PUT', pattern: '/api/settings/personal/:key', handler: putPersonalSetting },
+  /* 9 */ { method: 'GET', pattern: '/api/settings/brand', handler: getBrandSettings },
+  /* 10 */ { method: 'PUT', pattern: '/api/settings/brand/:key', handler: putBrandSetting },
+  /* 11 */ { method: 'GET', pattern: '/api/settings/technical', handler: getTechnicalSettings },
+  /* 12 */ { method: 'PUT', pattern: '/api/settings/technical/:key', handler: putTechnicalSetting },
   /* 13 */ { method: 'PUT', pattern: '/api/photo', handler: notYet },
   /* 14 */ { method: 'DELETE', pattern: '/api/photo', handler: notYet },
   /* 15 */ { method: 'GET', pattern: '/api/members/:id/photo', handler: notYet },

@@ -2,7 +2,7 @@
 -- insert onto an existing id (REPLACE INTO, INSERT OR REPLACE: SQLite's REPLACE deletes the old row without firing
 -- the DELETE trigger), so no path (a handler, a later migration, a retention job) can shorten or edit it. Forward only.
 CREATE TABLE audit_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id > 0),
   at_ms INTEGER NOT NULL,
   actor_id TEXT NOT NULL REFERENCES members(id),
   action TEXT NOT NULL,
