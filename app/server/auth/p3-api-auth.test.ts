@@ -82,7 +82,9 @@ describe('the release token (failures 1 and 2)', () => {
     quiet()
     const { call } = setup()
     const h = { 'Cf-Access-Jwt-Assertion': await service(RELEASE_ID), Origin: BRAND.origin }
-    const allowed = ['POST /api/ops/drain', 'GET /api/ops/drain', 'POST /api/ops/warmup']
+    // DELETE drain is the test build's undrain: the matrix lets the release token through, and its handler answers 404
+    // outside the test build (this harness's handlers are all `ok`, so it reads 200 here like the others).
+    const allowed = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup']
     for (const r of DESIGN_ROWS) {
       const res = await call(BRAND.origin, r.pattern.replace(/:[A-Za-z]+/g, 'x1'), { method: r.method, headers: h })
       expect(res.status, `${r.method} ${r.pattern}`).toBe(allowed.includes(`${r.method} ${r.pattern}`) ? 200 : 403)

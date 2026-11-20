@@ -135,6 +135,7 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', class: 'brand_data', allow: ['admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
   { method: 'GET', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
+  { method: 'DELETE', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
   { method: 'POST', pattern: '/api/ops/warmup', class: 'open', allow: [], services: ['release'] },
   { method: 'POST', pattern: '/api/chats/:id/session/reset', class: 'personal', allow: ['member', 'admin'] },
 ]

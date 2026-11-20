@@ -869,6 +869,40 @@ describe('drain', () => {
   })
 })
 
+describe('undrain (test build only, behind the route\'s gate)', () => {
+  it('clears a drain at once: admissions open, the drain generations go, every live run and the queue advance now', async () => {
+    await inObject(async sql => {
+      const rig = drainRig(sql)
+      sql.exec("INSERT INTO seed_runs (run_id, state) VALUES ('r_1', 'live'), ('r_2', 'ended')")
+      sql.exec("UPDATE pool_runners SET state = 'up', container_gen = 3 WHERE runner = 'runner-0'")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_q', 'starting', 1)")
+      rig.admit = async () => ({ refused: 'chat_live', gen: 3 })
+      expect(await rig.pool.place(rs('t_q'), 1)).toEqual({ queued: true })
+      rig.pool.drain(rig.clock.now)
+      rig.clock.now = T0 + 10_000
+      expect(rig.pool.undrain()).toEqual({ live: 0, starting: 1, ending: 0, queued: 0, drainingUntilMs: null })
+      expect(sql.exec("SELECT COUNT(*) AS n FROM flags WHERE key LIKE 'draining%'").one().n).toBe(0)
+      expect(sql.exec('SELECT drain_gen FROM pool_runners WHERE drain_gen IS NOT NULL').toArray()).toEqual([])
+      expect(rig.sched.tasks.get('run-advance:r_1')).toEqual({ kind: 'run-advance', dueAtMs: T0 + 10_000, payload: { runId: 'r_1' } })
+      expect(rig.sched.tasks.has('run-advance:r_2')).toBe(false)
+      expect(rig.sched.tasks.get('pool-retry')?.dueAtMs).toBe(T0 + 10_000)
+      rig.admit = async () => ({ accepted: true, gen: 3, protocol: 2 })
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_new', 'starting', 1)")
+      sql.exec("DELETE FROM pool_queue")
+      expect(await rig.pool.place(rs('t_new'), 1)).toEqual({ admitted: 'runner-0' })
+    })
+  })
+
+  it('with no drain on, changes nothing and schedules nothing', async () => {
+    await inObject(async sql => {
+      const rig = drainRig(sql)
+      sql.exec("INSERT INTO seed_runs (run_id, state) VALUES ('r_1', 'live')")
+      expect(rig.pool.undrain()).toEqual({ live: 0, starting: 0, ending: 0, queued: 0, drainingUntilMs: null })
+      expect([...rig.sched.tasks.keys()]).toEqual([])
+    })
+  })
+})
+
 describe('warm-up', () => {
   it('a runner with an unfinished turn or an admission in flight is never offered a replacement (no newerThan)', async () => {
     await inObject(async sql => {

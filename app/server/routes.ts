@@ -21,7 +21,7 @@ import { listModels } from './api/models.ts'
 import { getFile, listChatFiles, uploadAttachment } from './api/attachments.ts'
 import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
-import { drainState, startDrain } from './ops/drain.ts'
+import { drainState, startDrain, undrain } from './ops/drain.ts'
 import { warmup } from './ops/warmup.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
@@ -143,6 +143,7 @@ export const routes: readonly Route[] = [
   /* 45 */ { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', handler: forgetBrandMemory },
   /* 46 */ { method: 'POST', pattern: '/api/ops/drain', handler: startDrain },
   /* 47 */ { method: 'GET', pattern: '/api/ops/drain', handler: drainState },
+  /* 47b */ { method: 'DELETE', pattern: '/api/ops/drain', handler: undrain }, // the test build's undrain (404 elsewhere)
   /* 48 */ { method: 'POST', pattern: '/api/ops/warmup', handler: warmup },
   /* 49 */ { method: 'POST', pattern: '/api/chats/:id/session/reset', handler: resetSession },
 ]
