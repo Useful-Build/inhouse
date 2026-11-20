@@ -2,18 +2,21 @@
 // agent client both implement AgentClient, so swapping touches one module.
 // Every value and event AgentClient returns is a zod schema in shared/contract; the types here are inferred from those
 // schemas, so each is defined once. What stays here: the client interface, its inputs, the error class and constants.
-import type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, Instant } from '../../shared/contract/common'
+import type { Stage, StageIndex, Scenario, AgentErrorCode, Instant } from '../../shared/contract/common'
 import type { RoutineRun } from '../../shared/contract/routine'
 import type { Trace } from '../../shared/contract/trace'
 import type { ModelMode } from '../../shared/contract/model'
-import type { Attachment } from '../../shared/contract/chat'
 import type { RunEvent } from '../../shared/contract/run-event'
 import type { LibraryFile } from '../../shared/contract/library'
 import type { ApproveResult, TeamRequest, SetAsideReason, AgentState } from '../../shared/contract/state'
 import type { AgentNotice, AgentNotification } from '../../shared/contract/notice'
 import type { AgentData } from '../../shared/contract/data'
+import type { ErrorReason, ResourceKey } from '../../shared/contract/common'
+import type { Me } from '../../shared/contract/me'
+import type { InviteInput, MemberRole } from '../../shared/contract/members'
+import type { AskOptions, CreateChatInput, SendOptions } from '../../shared/contract/requests'
 
-export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
+export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
 export type { ProblemSource, Draft, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
@@ -23,8 +26,13 @@ export type { TraceStepKind, TraceStep, Trace } from '../../shared/contract/trac
 export type { ModelMode } from '../../shared/contract/model'
 export type { MemoryLine, MemoryData } from '../../shared/contract/memory'
 export type { UsageRow, UsageData } from '../../shared/contract/usage'
-export type { PeopleData } from '../../shared/contract/people'
-export type { AuditEntry, ActivityLine } from '../../shared/contract/activity'
+export type { PeopleData, ApprovalRule, Approver } from '../../shared/contract/people'
+export type { MemberRecord, MemberRole, MemberId, InviteInput } from '../../shared/contract/members'
+export type { Me, Role, Can, CanKey } from '../../shared/contract/me'
+export type { SupportGrant, GrantHours } from '../../shared/contract/grants'
+export type { AskOptions, CreateChatInput, DemoContext, SendOptions, SendPriority } from '../../shared/contract/requests'
+export type { ActivityLine } from '../../shared/contract/activity'
+export type { AuditEntry, AuditLine } from '../../shared/contract/audit'
 export type { Attachment, TablePart, RoutineCard, SkillCard, MessagePart, ChatMessage, SeedTurn, ChatThread, ChatData } from '../../shared/contract/chat'
 export type { RunEvent } from '../../shared/contract/run-event'
 export type { LibraryKind, LibraryPlace, DocPreview, LibraryLink, LibraryFile } from '../../shared/contract/library'
@@ -34,8 +42,6 @@ export type { AgentData } from '../../shared/contract/data'
 
 export const STAGES: Stage[] = ['Watch', 'Act', 'Run']
 export const SCENARIOS: Scenario[] = ['Normal', 'First day', 'Loading', 'Tool disconnected', 'Cap reached']
-/** Where a person's photo is kept in `AgentState.settings`: a data URL, or '' once they removed it. */
-export const photoKey = (personId: string) => `photo:${personId}`
 export const stageIndex = (s: Stage): StageIndex => STAGES.indexOf(s) as StageIndex
 
 /** A model as the Composer gets it: the team's chosen effort, and whether the team can use it. */
@@ -44,32 +50,16 @@ export interface ThinkingMode extends ModelMode { on: boolean }
 /** What a write rejects with. The change was taken back, and a notice told the person, so a caller needn't await it. */
 export class AgentError extends Error {
   readonly code: AgentErrorCode
-  constructor(code: AgentErrorCode, message: string) { super(message); this.name = 'AgentError'; this.code = code }
+  /** Why, when the code alone doesn't say (not invited, the last Admin). */
+  readonly reason?: ErrorReason
+  /** On a `conflict` from a stale `ifRev`: the record as it is now. The snapshot already holds it. */
+  readonly current?: Record<string, unknown>
+  constructor(code: AgentErrorCode, message: string, extra: { reason?: ErrorReason; current?: Record<string, unknown> } = {}) {
+    super(message); this.name = 'AgentError'; this.code = code
+    if (extra.reason !== undefined) this.reason = extra.reason
+    if (extra.current !== undefined) this.current = extra.current
+  }
 }
-
-/** How soon a message sent into a running answer is taken: `now` steers at the next step, `next` (the default) when the
- *  current turn ends, `later` after everything else waiting. The engine's message priority. */
-export type SendPriority = 'now' | 'next' | 'later'
-
-export interface AskOptions {
-  /** The chat the question is asked in: a sample chat's id, or one made with `createChat`. Any other id throws. */
-  chatId: string
-  /** The part of an answer the person is replying to. */
-  quote?: string
-  /** The run whose answer this one replaces (Regenerate, Edit of its question, or Try again on a failed answer). The agent
-   *  updates in place what that run made (a routine, a skill), so nothing is made twice. A routine the new answer doesn't
-   *  make again is deleted (`routinesDeleted`, so `restoreRoutine` brings it back), unless the new answer failed: then
-   *  the routine stays, and the failed run carries it on, so the answer after it updates it rather than making a second.
-   *  A skill is never taken back. */
-  replacesRun?: string
-  attachments?: Attachment[]
-  /** Model id from models.json. */
-  mode?: string
-  /** How hard that mode thinks, as set in Settings. Phase 2 passes it to the engine. */
-  effort?: Effort
-}
-
-export interface DemoContext { stage: Stage; scenario: Scenario }
 
 /**
  * The agent, as the app talks to it. Reads used by React are synchronous snapshots (`getSnapshot`, `read`, `listFiles`,
@@ -103,11 +93,11 @@ export interface AgentClient {
 
   // chat
   /** The client makes the chat's id, so the chat shows at once, and tells the agent here. */
-  createChat(chat: { id: string; title: string }): Promise<void>
+  createChat(chat: CreateChatInput): Promise<void>
   ask(text: string, opts: AskOptions): AsyncIterable<RunEvent>
   /** A message into a running answer (the engine's streaming input). The run's stream carries on with `turn.started`.
    *  Rejects when the run has ended. */
-  send(runId: string, text: string, opts?: { priority?: SendPriority; attachments?: Attachment[] }): Promise<void>
+  send(runId: string, text: string, opts?: SendOptions): Promise<void>
   /** Ends the current turn and keeps the session, so messages waiting go next. */
   interrupt(runId: string): Promise<void>
   /** The hard stop: ends the run and everything waiting in it. */
@@ -126,10 +116,10 @@ export interface AgentClient {
   requestSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
   forgetMemory(key: string, forgotten: boolean): Promise<void>
-  /** A settings dropdown or text field. Null puts it back to the default. */
+  /** A settings dropdown or text field. Null puts it back to the default. Rejects with `invalid` for a key or value the settings registry (shared/contract/settings.ts) refuses. */
   setSetting(key: string, value: string | null): Promise<void>
-  /** A person's photo as a data URL. Null removes it, so initials show; Reset demo brings the sample photo back. */
-  setPhoto(personId: string, dataUrl: string | null): Promise<void>
+  /** A member's photo as a data URL. Null removes it, so initials show; Reset demo brings the sample photo back. */
+  setPhoto(memberId: string, dataUrl: string | null): Promise<void>
   sendTeamRequest(req: TeamRequest): Promise<void>
   /** The bell's notifications, newest first. Stable between changes. */
   listNotifications(): AgentNotification[]
@@ -161,6 +151,29 @@ export interface AgentClient {
   deleteChats(ids: string[]): Promise<void>
   /** Undo a delete. */
   restoreChats(ids: string[]): Promise<void>
+
+  // ---------- P2: who is signed in, the team, support access, paging and retry (p2-design.md section 11) ----------
+  // Every write to a record sends the record's last `rev` as `ifRev`. A stale one rejects with `conflict` and `current`; the
+  // snapshot already holds the current value, so the UI says "Someone changed this. It's now X."
+  /** Who is signed in and what they may do. Null while loading. A synchronous snapshot, stable between changes. */
+  me(): Me | null
+  /** Rejects with `conflict` (reason: already a member) for an email that is already on the team, `forbidden` for a person who can't invite. */
+  inviteMember(input: InviteInput): Promise<void>
+  /** Rejects with `conflict` (reason: the last Admin) when it would leave no Admin. */
+  setMemberRole(id: string, role: MemberRole): Promise<void>
+  /** Rejects with `conflict` (reason: the last Admin) for the last Admin. */
+  removeMember(id: string): Promise<void>
+  /** Gives the Inhouse team access for 1, 4, 24 or 72 hours. Rejects with `conflict` (reason: a grant is live) while a grant is live. The grant shows in `read().people.supportGrant`. */
+  grantSupport(hours: number): Promise<void>
+  endSupportGrant(id: string): Promise<void>
+  /** The next page of a list. Does nothing when `read().more` says there is none. */
+  loadMore(list: 'audit' | 'members'): Promise<void>
+  /** Reads a resource again after its read failed (`read().resources[resource].status` is `error`). */
+  retry(resource: ResourceKey): Promise<void>
+  /** Where the audit log downloads from, or null when the client builds the file itself (the demo, with shared/csv.ts). */
+  auditExportUrl(): string | null
+  /** Where signing out goes (`/cdn-cgi/access/logout` in the product), or null where there is no sign-in (the demo). */
+  signOutUrl(): string | null
 }
 
 /** The longest chat title a person can set. Longer titles are cut. */

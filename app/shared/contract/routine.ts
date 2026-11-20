@@ -20,6 +20,8 @@ export const RoutineDefSchema = z.object({
   last: z.object({ at: InstantSchema, result: z.string() }).optional(),
   /** Made in a sample chat (the stuck orders chat): listed only from the stage it needs, since below it the chat couldn't make it. */
   inChat: z.boolean().optional(),
+  /** Revision of this routine (a switch, a delete or a restore bumps it): a write sends it back as `ifRev`. */
+  rev: z.number().int().min(1),
 })
 export type RoutineDef = z.infer<typeof RoutineDefSchema>
 

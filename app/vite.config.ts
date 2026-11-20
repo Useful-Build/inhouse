@@ -14,13 +14,23 @@ const appRoot = fileURLToPath(new URL('.', import.meta.url))
 const sampleData = fileURLToPath(new URL('./src/agent/sample-data', import.meta.url))
 /** Sample files only the demo serves (the Library's files, the people's photos), at the same URLs as public/. */
 const publicDemo = fileURLToPath(new URL('./public-demo', import.meta.url))
-/** `vite build --mode product` (npm run build:product): the product build. Every other mode is the demo. */
+/** `vite build --mode product` (npm run build:product): the product build. Every other mode is the demo, but one: */
 const PRODUCT = 'product'
-/** The product build's own output folder, so `npm run build` keeps writing the demo to dist/. */
+/**
+ * `vite build --mode product-test` (npm run build:product-test): the TEST BUILD (P2, p2-design section 10). The product
+ * build with the test issuer compiled in (`__INHOUSE_TEST_BUILD__`) and wrangler.test.jsonc's local config, served by
+ * `wrangler dev` for the `api` and `real` Playwright projects. Never deployed.
+ */
+const PRODUCT_TEST = 'product-test'
+/** The product builds' own output folders, so `npm run build` keeps writing the demo to dist/. */
 const PRODUCT_OUT_DIR = 'dist-product'
+const PRODUCT_TEST_OUT_DIR = 'dist-product-test'
+/** The Worker config each product mode builds `server/index.ts` from; the demo builds worker/ from wrangler.jsonc. */
+const PRODUCT_CONFIG: Record<string, string> = { [PRODUCT]: 'wrangler.product.jsonc', [PRODUCT_TEST]: 'wrangler.test.jsonc' }
+const PRODUCT_OUT: Record<string, string> = { [PRODUCT]: PRODUCT_OUT_DIR, [PRODUCT_TEST]: PRODUCT_TEST_OUT_DIR }
 /** The client entry `src/agent/index.ts` imports as `@client`, picked by mode (tsconfig.app.json and vitest.config.ts name the demo one). */
-const clientEntry = (mode: string) =>
-  fileURLToPath(new URL(mode === PRODUCT ? './src/agent/client.product.ts' : './src/agent/client.demo.ts', import.meta.url))
+const clientEntry = (product: boolean) =>
+  fileURLToPath(new URL(product ? './src/agent/client.product.ts' : './src/agent/client.demo.ts', import.meta.url))
 
 const walkFiles = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap(d => (d.isDirectory() ? walkFiles(join(dir, d.name)) : [join(dir, d.name)]))
@@ -76,6 +86,26 @@ function writeModuleList(): Plugin {
   }
 }
 
+/**
+ * The same for the product Worker (server/), product modes only: dist-product/server-modules.json, beside the Worker's
+ * folder, never in it, so `wrangler deploy` doesn't upload it. check-product-build.mjs's server bundle scan reads it.
+ */
+function writeServerModuleList(): Plugin {
+  return {
+    name: 'inhouse:server-module-list',
+    apply: 'build',
+    applyToEnvironment: env => env.name !== 'client',
+    writeBundle(options) {
+      if (!options.dir) throw new Error('writeServerModuleList: the Worker build has no output folder.')
+      const ids = [...this.getModuleIds()].map(id => {
+        const file = id.startsWith('\0') ? id : relative(appRoot, id)
+        return file.split(sep).join('/')
+      }).sort()
+      writeFileSync(resolve(options.dir, '..', 'server-modules.json'), JSON.stringify(ids, null, 2) + '\n')
+    },
+  }
+}
+
 const CONTENT_TYPES: Record<string, string> = { '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }
 
 /**
@@ -120,16 +150,21 @@ function demoPublicFiles(): Plugin[] {
  * `wrangler deploy` at the last build's Worker config. A product build would point it at dist-product/, so this puts
  * back what was there (the demo build's, or nothing): after buildApp, on process exit (a failed or thrown build) and on
  * SIGINT, SIGTERM and SIGHUP. SIGKILL can't be caught: after one, the next product build removes the stale pointer and
- * the next demo build rewrites it. It restores only a pointer into dist-product/ (build-support/demo-deploy-redirect.ts).
+ * the next demo build rewrites it. It restores only a pointer into dist-product/ or dist-product-test/ (both product
+ * outputs, whichever mode runs; build-support/demo-deploy-redirect.ts).
  * Never run a demo and a product build at the same time, or preview or deploy while a product build runs: the pointer
  * points at the product for a moment before the restore, and a demo pointer written in between may be removed (preview
- * then fails loud; it never serves the product). The product build is served with
- * `wrangler dev -c dist-product/inhouse_app/wrangler.json` instead (playwright.config.ts, the product project).
+ * then fails loud; it never serves the product). The product builds are served with
+ * `wrangler dev -c dist-product/inhouse_product/wrangler.json` (the product project) and
+ * `-c dist-product-test/inhouse_product/wrangler.json` (the api and real projects) instead (playwright.config.ts).
  */
 function keepDemoDeployRedirect(): Plugin {
   const redirect = resolve(appRoot, '.wrangler/deploy/config.json')
   let snapshot: RedirectSnapshot | null = null
-  const restore = () => { if (snapshot) restoreRedirect(snapshot, PRODUCT_OUT_DIR) }
+  const restore = () => {
+    if (!snapshot) return
+    for (const outDir of [PRODUCT_OUT_DIR, PRODUCT_TEST_OUT_DIR]) restoreRedirect(snapshot, outDir)
+  }
   return {
     name: 'inhouse:keep-demo-deploy-redirect',
     apply: 'build',
@@ -164,19 +199,32 @@ function productHtmlTitle(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const product = mode === PRODUCT
+  const product = mode === PRODUCT || mode === PRODUCT_TEST
   return {
     plugins: [
-      react(), tailwindcss(), cloudflare(), keepSourceMapsOut(), writeModuleList(),
-      ...(product ? [keepDemoDeployRedirect(), productHtmlTitle()] : demoPublicFiles()),
+      // The demo keeps the default config (wrangler.jsonc, worker/); each product mode names its own (server/).
+      // https://developers.cloudflare.com/workers/vite-plugin/reference/api/ (configPath)
+      react(), tailwindcss(), cloudflare(product ? { configPath: PRODUCT_CONFIG[mode] } : undefined), keepSourceMapsOut(), writeModuleList(),
+      ...(product ? [keepDemoDeployRedirect(), productHtmlTitle(), writeServerModuleList()] : demoPublicFiles()),
     ],
     resolve: {
-      alias: { '@client': clientEntry(mode), '@sample': sampleData, '@': fileURLToPath(new URL('./src', import.meta.url)) },
+      alias: {
+        '@client': clientEntry(product), '@sample': sampleData,
+        // The test issuer (W1) only in the test build; every other build gets the switched-off stand-in, so the module
+        // never enters their graph (server/auth/issuer-off.ts; check-product-build.mjs proves it).
+        '@test-issuer': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/auth/test-issuer.ts' : './server/auth/issuer-off.ts', import.meta.url)),
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+      },
     },
-    // The Cloudflare plugin puts each environment under build.outDir: dist-product/client and dist-product/inhouse_app.
-    ...(product ? { build: { outDir: PRODUCT_OUT_DIR } } : {}),
-    // The commit the build came from, sent with every client error report (src/report-error.ts).
-    define: { __RELEASE_SHA__: JSON.stringify(process.env.RELEASE_SHA || 'dev') },
+    // The Cloudflare plugin puts each environment under build.outDir: dist-product/client and dist-product/inhouse_product
+    // (dist-product-test/ the same).
+    ...(product ? { build: { outDir: PRODUCT_OUT[mode] } } : {}),
+    define: {
+      // The commit the build came from, sent with every client error report (src/report-error.ts).
+      __RELEASE_SHA__: JSON.stringify(process.env.RELEASE_SHA || 'dev'),
+      // The test issuer's compile-time switch (server/build-flags.d.ts): true only in the test build.
+      __INHOUSE_TEST_BUILD__: JSON.stringify(mode === PRODUCT_TEST),
+    },
     environments: { client: { build: { sourcemap: 'hidden' } } },
   }
 })

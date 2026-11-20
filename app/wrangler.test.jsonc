@@ -1,0 +1,42 @@
+/**
+ * The TEST BUILD's config (P2, p2-design section 10): the product Worker with a local D1 and R2, the test issuer
+ * switched on (INHOUSE_TEST_BUILD) and made-up values only. Never deployed: scripts/check-product-config.mjs fails on
+ * it. `vite build --mode product-test` builds it into dist-product-test/; `wrangler dev` serves it (playwright.config.ts).
+ * The origins carry the test build's default port, 8787 (wrangler dev's own default, and what the `ship` workflow's
+ * test-build mode serves on). A local Playwright run may use another (E2E_TEST_BUILD_PORT) and then passes INHOUSE_ACCESS
+ * again with the port it runs on. TEST_ISSUER_JWKS comes only as a `--var` from the test runner.
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "inhouse-product",
+	"main": "server/index.ts",
+	"compatibility_date": "2026-11-13",
+	"assets": {
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": ["/api/*"]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "inhouse-test",
+			// A made-up local id: the local D1's file is keyed by it, so migrate, seed and `wrangler dev` share one database.
+			"database_id": "00000000-0000-4000-8000-000000000001",
+			"migrations_dir": "server/migrations"
+		}
+	],
+	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-test-files" }],
+	// As the product's. `wrangler dev` (miniflare) gives it a random id per start, so the test build reports a version too.
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"vars": {
+		"INHOUSE_TEST_BUILD": "1",
+		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://test-issuer.invalid\",\"apps\":[{\"name\":\"brand\",\"origin\":\"http://brand.localhost:8787\",\"aud\":\"b1a2c3d4e5f60718293a4b5c6d7e8f90b1a2c3d4e5f60718293a4b5c6d7e8f90\"},{\"name\":\"inhouse\",\"origin\":\"http://inhouse.localhost:8787\",\"aud\":\"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"}],\"serviceTokens\":{\"monitor-test-client.access\":\"monitor\",\"smoke-test-client.access\":\"smoke\"}}",
+		// Test-only: the deployed Worker gets AUDIT_HASH_KEY as a secret, never a var.
+		"AUDIT_HASH_KEY": "test-only-audit-hash-key-not-a-secret"
+	},
+	"workers_dev": false,
+	"preview_urls": false,
+	"observability": {
+		"enabled": true
+	}
+}

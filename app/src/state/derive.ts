@@ -1,6 +1,5 @@
 // Pure selectors: stage + agent state + agent data -> what the screens show. The demo's scenario switch isn't an input:
 // what a scenario changes on screen is in the agent's data.
-import { photoKey } from '../agent/types'
 import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Prose, StageIndex, TeamRequest, ThinkingMode, ToolDetail, ToolSetup } from '../agent/types'
 import { calendarOf, fmtAgo, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtProse, fmtTime, fmtWeekday, majorOf, moneyOf, type Display } from '../lib/format'
 import { display, nowOf } from './display'
@@ -163,6 +162,8 @@ export const listNames = (names: string[]) => names.length < 2 ? names.join('') 
 
 /** The signed-in person's name: the Name they set in Settings, else the agent's current user. */
 export const userName = (ctx: Pick<Ctx, 'agent' | 'data'>) => ctx.agent.settings['g:name']?.trim() || ctx.data.meta.currentUser.name
+/** The name of the member a record's `by` names (records carry member ids; the name comes from the members list). */
+export const byName = (data: AgentData, id: string) => data.people.members.find(m => m.id === id)?.name ?? 'A former member'
 /** The first word of a name: what the greeting uses. */
 export const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name
 
@@ -341,7 +342,7 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     const sens = !!(p.draft.money || p.draft.customer)
     const at = agent.approved[p.id]
     if (at) {
-      return { problem: p, status: `Approved by ${firstName(at.by)} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, handled: false, dimmed: true }
+      return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, handled: false, dimmed: true }
     }
     if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', handled: false, dimmed: false }
     if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', handled: true, dimmed: true }
@@ -420,9 +421,9 @@ export function draftView(ctx: Ctx, id: string): DraftView {
     sent,
     canUndo: !!dr.rev || !sent,
     doneText: rec ? (!dr.rev && !sent ? `Approved: ${lower1(title)}` : rec.doneText) : (part && p.runDoneText) || p.doneText,
-    approvedLine: `Approved by ${firstName(rec?.by ?? userName(ctx))} at ${at}${dr.rev ? '' : sent ? ' · sent' : ' · goes out in a few seconds'} · logged in Activity`,
-    meta: `${firstName(rec?.by ?? userName(ctx))} · ${at}${dr.rev ? '' : sent ? ' · sent' : ' · going out'}`,
-    metaBy: rec?.by ?? userName(ctx),
+    approvedLine: `Approved by ${firstName(rec ? byName(ctx.data, rec.by) : userName(ctx))} at ${at}${dr.rev ? '' : sent ? ' · sent' : ' · goes out in a few seconds'} · logged in Activity`,
+    meta: `${firstName(rec ? byName(ctx.data, rec.by) : userName(ctx))} · ${at}${dr.rev ? '' : sent ? ' · sent' : ' · going out'}`,
+    metaBy: rec ? byName(ctx.data, rec.by) : userName(ctx),
     suggestedNext: cap1(p.next),
   }
 }
@@ -482,7 +483,8 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
   const when = (at: Instant) => ({ t: fmtTime(at, d0), at })
   for (const p of ctx.data.problems.filter(x => agent.approved[x.id])) {
     const dv = draftView(ctx, p.id)
-    const { at, by, loggedAt } = agent.approved[p.id]
+    const { at, by: byId, loggedAt } = agent.approved[p.id]
+    const by = byName(ctx.data, byId)
     rows.push({ ...base, ...when(at), loggedAt, icon: 'check_circle', text: dv.doneText, who: `${firstName(by)} approved`, whoBy: by, kind: 'change', trace: p.trace, iconTone: 'bg-background text-foreground',
       undo: dv.canUndo ? { type: 'approval', id: p.id } : undefined,
       why: `${p.title}.`, result: dv.doneText + (dv.canUndo ? '. You can still undo it.' : '. It has gone out, so it can no longer be undone.'),
@@ -513,8 +515,8 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
       dismissed: { icon: 'do_not_disturb_on', text: `Dismissed: ${p.title}`, result: "Marked as not a problem, so it won't come back today. Nothing has gone out." },
       declined: { icon: 'cancel_schedule_send', text: `Not sent: ${lower1(dv.draftTitle)}`, result: 'The draft left Approvals and nothing went out.' },
     }[rec.reason]
-    rows.push({ ...base, ...when(rec.at), loggedAt: rec.loggedAt, icon: line.icon, text: line.text, who: firstName(rec.by), whoBy: rec.by, kind: 'change', trace: p.trace, iconTone: 'bg-background text-foreground-3',
-      undo: { type: 'setAside', id: p.id }, why: `${p.title}.`, result: line.result, by: `${rec.by}, at ${fmtTime(rec.at, d0)}. Drafted by Inhouse agent at ${fmtTime(p.draftedAt, d0)}.` })
+    rows.push({ ...base, ...when(rec.at), loggedAt: rec.loggedAt, icon: line.icon, text: line.text, who: firstName(byName(ctx.data, rec.by)), whoBy: byName(ctx.data, rec.by), kind: 'change', trace: p.trace, iconTone: 'bg-background text-foreground-3',
+      undo: { type: 'setAside', id: p.id }, why: `${p.title}.`, result: line.result, by: `${byName(ctx.data, rec.by)}, at ${fmtTime(rec.at, d0)}. Drafted by Inhouse agent at ${fmtTime(p.draftedAt, d0)}.` })
   }
   const { today, earlier } = ctx.data.activity
   const morning = today[0]
@@ -583,7 +585,7 @@ export function chatMessages(ctx: Ctx, chatId: string): ChatMessage[] {
       out.push({ id: `${chatId}-t${t}-p${k}`, role: 'agent', trace: turn.trace, model: turn.model, part })
       if (part.type !== 'approval') return
       const at = agent.approved[part.problemId]
-      if (at) note = { id: `${chatId}-t${t}-approved`, role: 'event', text: `${firstName(at.by)} approved: ${lower1(at.title)} · ${fmtTime(at.at, display())}` }
+      if (at) note = { id: `${chatId}-t${t}-approved`, role: 'event', text: `${firstName(byName(ctx.data, at.by))} approved: ${lower1(at.title)} · ${fmtTime(at.at, display())}` }
     })
     if (note) out.push(note)
   })
@@ -619,8 +621,8 @@ export const memberFor = (data: AgentData, who: string, me: string) => {
 }
 
 /** A member's photo: what they uploaded, else the sample photo. Null when they removed it or have none. */
-export const photoOf = (data: AgentData, st: AgentState, id: string): string | null =>
-  (st.settings[photoKey(id)] ?? data.people.members.find(m => m.id === id)?.photo) || null
+export const photoOf = (data: AgentData, id: string): string | null =>
+  data.people.members.find(m => m.id === id)?.photo || null
 
 /** The effort choices of a model, as the engine names them and as the Settings dropdown shows them. */
 export const EFFORTS: [Effort, string][] = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Highest']]
@@ -642,8 +644,8 @@ export const defaultModeId = (data: AgentData, saved: Record<string, string>): s
   return (on.find(m => m.label === saved['g:mode']) ?? on.find(m => m.id === data.defaultModel) ?? on[0])?.id ?? data.defaultModel
 }
 
-/** The mode a question uses: the one picked in the composer if the team can still use it, else the default. */
-export const activeMode = (data: AgentData, saved: Record<string, string>, picked: string | null): ThinkingMode => {
+/** The mode a question uses: the one picked in the composer if the team can still use it, else the default. Undefined when the agent has no models. */
+export const activeMode = (data: AgentData, saved: Record<string, string>, picked: string | null): ThinkingMode | undefined => {
   const modes = thinkingModes(data, saved)
   const id = modes.find(m => m.id === picked && m.on)?.id ?? defaultModeId(data, saved)
   return modes.find(m => m.id === id) ?? modes[0]

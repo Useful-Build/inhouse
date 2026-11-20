@@ -114,7 +114,9 @@ test('Settings: Who approves what and the spending cap dropdowns change their va
   await start(fx, 'Run', '#/settings/team-approvals')
   const rule = page.getByRole('combobox', { name: /^Orders over \$5,000: Dana Kim/ })
   await rule.click()
-  await expect(page.getByRole('option')).toHaveCount(4)
+  // Call 3 (P2): approving is a job per rule, not a role, so every member is offered (Sam, Dana, Leo, Priya) and Anyone who approves.
+  await expect(page.getByRole('option')).toHaveCount(5)
+  await expect(page.getByRole('option', { name: 'Priya Shah' })).toBeVisible()
   await page.getByRole('option', { name: 'Sam Mercer' }).click()
   await expect(page.getByRole('combobox', { name: 'Orders over $5,000: Sam Mercer' })).toBeVisible()
   await page.goto('/?demo#/settings/team-spend')
