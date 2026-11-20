@@ -8,6 +8,11 @@ import type { TableRule } from './tables.ts'
 
 export const PART_ROWS = 1_000
 export const PART_BYTES = 1_000_000
+/**
+ * Rows per query when an append-only table is paged (the backup, the snapshot, the proof): apart from the part size,
+ * so a restore's D1 queries per 100,000 audit lines stay near 140 against the 1,000 a Worker invocation may make.
+ */
+export const READ_PAGE_ROWS = 5_000
 /** A `snapshot` table is read whole inside one batch; past this the batch's result is too big to hold. */
 export const SNAPSHOT_MAX_ROWS = 10_000
 
@@ -107,15 +112,15 @@ export function appendKey(rule: TableRule): string {
 export const maxIdSelect = (db: D1Database, rule: TableRule): D1PreparedStatement =>
   db.prepare(`SELECT COALESCE(MAX(${ident(appendKey(rule))}), 0) AS max FROM ${ident(rule.name)}`)
 
-/** The rows of an `append_only` table with an id at or below `maxId`, a page of 1,000 at a time, in id order. */
+/** The rows of an `append_only` table with an id at or below `maxId`, a page of `READ_PAGE_ROWS` at a time, in id order. */
 export async function* appendRows(db: D1Database, rule: TableRule, columns: readonly string[], maxId: number): AsyncGenerator<Record<string, unknown>> {
   const key = ident(appendKey(rule))
-  const sql = `SELECT ${selectList(columns)} FROM ${ident(rule.name)} WHERE ${key} > ? AND ${key} <= ? ORDER BY ${key} LIMIT ${PART_ROWS}`
+  const sql = `SELECT ${selectList(columns)} FROM ${ident(rule.name)} WHERE ${key} > ? AND ${key} <= ? ORDER BY ${key} LIMIT ${READ_PAGE_ROWS}`
   let after = 0
   for (;;) {
     const page = (await db.prepare(sql).bind(after, maxId).all<Record<string, unknown>>()).results
     for (const row of page) yield row
-    if (page.length < PART_ROWS) return
+    if (page.length < READ_PAGE_ROWS) return
     after = page[page.length - 1][appendKey(rule)] as number
   }
 }
@@ -129,6 +134,18 @@ export const insertPartSql = (table: string, columns: readonly string[]): string
 
 /** A part's NDJSON lines (each with its newline). */
 export const partLines = (text: string): string[] => (text === '' ? [] : text.split(/(?<=\n)/))
+
+/**
+ * Whether a part's line is one row of `width` cells as the backup writes it: a JSON array ending in a newline, each
+ * cell a string, a finite number or null. The restore refuses a part with any other line before it writes.
+ */
+export function isRowLine(line: string, width: number): boolean {
+  if (!line.endsWith('\n')) return false
+  let cells: unknown
+  try { cells = JSON.parse(line) } catch { return false }
+  return Array.isArray(cells) && cells.length === width
+    && cells.every(v => v === null || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v)))
+}
 
 /** Lines as the JSON array the insert binds. */
 export const linesAsArray = (lines: readonly string[]): string => `[${lines.map(l => l.slice(0, -1)).join(',')}]`

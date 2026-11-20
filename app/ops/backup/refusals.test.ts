@@ -17,6 +17,7 @@ import { backup, timeId } from './backup.ts'
 import { RestoreRecordSchema } from './manifest.ts'
 import type { BackupManifest, RestoreRecord } from './manifest.ts'
 import { restore } from './restore.ts'
+import { partLines, sha256 } from './format.ts'
 import { dumpCanonical, failingDb } from './test-support.ts'
 
 const e = env as Env & { RESTORE_DB: D1Database; TEST_MIGRATIONS: D1Migration[] }
@@ -28,7 +29,7 @@ const targetAsMigrated = await dumpCanonical(e.RESTORE_DB)
 const at = { actorId: SYSTEM_MEMBER_ID, requestId: 'req-refusal', nowMs: T + 10 }
 
 /** A copy of the good backup under a new id, its manifest and part bytes changed by `change`. */
-async function copyBackup(change: { manifest?: (m: BackupManifest) => unknown; part?: (table: string, part: number, bytes: Uint8Array) => Uint8Array | null } = {}): Promise<string> {
+async function copyBackup(change: { manifest?: (m: BackupManifest) => unknown | Promise<unknown>; part?: (table: string, part: number, bytes: Uint8Array) => Uint8Array | null } = {}): Promise<string> {
   const id = timeId(T)
   const m: BackupManifest = structuredClone(good)
   m.backupId = id
@@ -40,7 +41,7 @@ async function copyBackup(change: { manifest?: (m: BackupManifest) => unknown; p
       if (out) await e.FILES.put(p.key, out)
     }
   }
-  const body = change.manifest ? change.manifest(m) : m
+  const body = change.manifest ? await change.manifest(m) : m
   if (body !== null) await e.FILES.put(backupManifestKey(id), typeof body === 'string' ? body : JSON.stringify(body))
   return id
 }
@@ -89,6 +90,29 @@ describe('a backup that is wrong (failures 1, 3)', () => {
   })
   it('refuses a backup whose derived tables differ from the target\'s', async () => {
     await expectRefused(await copyBackup({ manifest: m => ({ ...m, derived: [{ name: 'search_q', from: ['settings'] }] }) }), /^tables_mismatch: derived/)
+  })
+  it('refuses a backup that names a table the target has no entry for', async () => {
+    await expectRefused(await copyBackup({ manifest: m => ({ ...m, tables: [...m.tables, { ...m.tables[1], name: 'ghost_table' }] }) }), /^tables_mismatch: backup \[members, settings, support_grants, audit_log, ghost_table\]/)
+  })
+  it('refuses a part whose lines aren\'t rows of its table, even when its sha256 matches', async () => {
+    const settings = good.tables.find(t => t.name === 'settings')
+    expect(settings?.parts).toHaveLength(1)
+    for (const bad of ['["only one cell"]\n', '{"not":"an array"}\n', '[1,2,3,4,5,6,{"x":1}]\n', 'not json\n']) {
+      let changed = new Uint8Array()
+      const id = await copyBackup({
+        part: (table, _n, bytes) => {
+          if (table !== 'settings') return bytes
+          const lines = partLines(new TextDecoder().decode(bytes))
+          changed = new TextEncoder().encode([bad, ...lines.slice(1)].join(''))
+          return changed
+        },
+        manifest: async m => {
+          const digest = await sha256(changed)
+          return { ...m, tables: m.tables.map(t => (t.name === 'settings' ? { ...t, sha256: digest, parts: t.parts.map(p => ({ ...p, sha256: digest })) } : t)) }
+        },
+      })
+      await expectRefused(id, /^part_invalid: settings\/00000$/)
+    }
   })
   it('refuses a missing part', async () => {
     await expectRefused(await copyBackup({ part: (table, n, bytes) => (table === 'audit_log' && n === 0 ? null : bytes) }), /^part_missing: audit_log\/00000/)
@@ -147,5 +171,24 @@ describe('the snapshot first (failure 4)', () => {
     const record = await restore({ bucket: e.FILES, target: e.RESTORE_DB, live: 'unreadable', backupId: await copyBackup({ manifest: m => ({ ...m, format: 3 }) }), at })
     // It went past the snapshot to the backup's check.
     expect(record).toMatchObject({ status: 'refused', reason: 'format_unsupported: 3', snapshot: { gap: 'unreadable' } })
+  })
+})
+
+// Last in the file: an audit line can't be deleted, so the target stays used after this.
+describe('the live database, or a used one, as the target (failure 2)', () => {
+  it('refuses the live database as the target', async () => {
+    const before = await dumpCanonical(e.DB)
+    const record = await restore({ bucket: e.FILES, target: e.DB, live: e.DB, backupId: good.backupId, at })
+    expect(record).toMatchObject({ status: 'refused', reason: 'target_is_live', snapshot: null })
+    expect(await dumpCanonical(e.DB)).toEqual(before)
+  })
+  it('refuses a target with any audit line, even one the backup holds', async () => {
+    const line = (await e.DB.prepare('SELECT * FROM audit_log ORDER BY id LIMIT 1').first<Record<string, string | number | null>>())!
+    await e.RESTORE_DB.prepare('INSERT INTO audit_log (id, at_ms, actor_id, action, target_kind, target_id, args_json, req_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(line.id, line.at_ms, 'm_system', line.action, line.target_kind, line.target_id, line.args_json, line.req_id).run()
+    const used = await dumpCanonical(e.RESTORE_DB)
+    const record = await restore({ bucket: e.FILES, target: e.RESTORE_DB, live: e.DB, backupId: good.backupId, at })
+    expect(record).toMatchObject({ status: 'refused', reason: 'target_not_empty: audit_log: has rows' })
+    expect(await dumpCanonical(e.RESTORE_DB)).toEqual(used)
   })
 })

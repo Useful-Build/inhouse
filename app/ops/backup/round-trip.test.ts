@@ -52,7 +52,7 @@ it(`restores the seeded brand plus generated rows exactly, and the target works 
   expect(manifest.tables.map(t => t.name).sort()).toEqual(['audit_log', 'members', 'settings', 'support_grants'])
   expect((await listBackups(e.FILES)).map(b => b.backupId)).toEqual([manifest.backupId])
   const audit = manifest.tables.find(t => t.name === 'audit_log')
-  expect(audit?.parts.length).toBeGreaterThan(1)
+  expect(audit?.parts.length).toBeGreaterThan(5)
 
   const targetBefore = await dumpCanonical(e.RESTORE_DB)
   const order: string[] = []
@@ -119,4 +119,6 @@ it(`restores the seeded brand plus generated rows exactly, and the target works 
   expect(sql.filter(s => FORBIDDEN_SQL.test(s))).toEqual([])
   expect(FORBIDDEN_SQL.test('DELETE FROM "audit_log" WHERE id = 1')).toBe(true)
   expect(FORBIDDEN_SQL.test('INSERT OR REPLACE INTO members VALUES (1)')).toBe(true)
+  expect(FORBIDDEN_SQL.test('REPLACE INTO "audit_log" (id) VALUES (1)')).toBe(true)
+  expect(FORBIDDEN_SQL.test('INSERT INTO "audit_log" ("id") SELECT 1')).toBe(false)
 })

@@ -1,11 +1,18 @@
 // Helpers for the backup and restore tests (ops/backup/*.test.ts, in the Workers runtime). Never imported by a job.
 import fc from 'fast-check'
-import { TABLE_RULES } from './tables.ts'
+
+/**
+ * P2's four tables with their primary keys, written out here rather than read from tables.ts: the oracle the round
+ * trip compares with must not share the rules it checks.
+ */
+const ORACLE_TABLES: readonly [string, string][] = [
+  ['members', 'id'], ['settings', 'owner, key'], ['support_grants', 'id'], ['audit_log', 'id'],
+]
 
 /** Every canonical table, every column, in primary-key order: what a restore must reproduce. */
 export async function dumpCanonical(db: D1Database): Promise<Record<string, unknown[]>> {
   const out: Record<string, unknown[]> = {}
-  for (const r of TABLE_RULES) out[r.name] = (await db.prepare(`SELECT * FROM "${r.name}" ORDER BY ${r.orderBy.map(c => `"${c}"`).join(', ')}`).all()).results
+  for (const [name, orderBy] of ORACLE_TABLES) out[name] = (await db.prepare(`SELECT * FROM ${name} ORDER BY ${orderBy}`).all()).results
   return out
 }
 
@@ -26,7 +33,7 @@ export const failingDb = (): D1Database => ({
 }) as unknown as D1Database
 
 /** What the restore must never send to the audit table (its triggers would refuse it anyway). */
-export const FORBIDDEN_SQL = /UPDATE\s+"?audit_log\b|DELETE\s+FROM\s+"?audit_log\b|OR\s+REPLACE/i
+export const FORBIDDEN_SQL = /UPDATE\s+"?audit_log\b|DELETE\s+FROM\s+"?audit_log\b|OR\s+REPLACE|\bREPLACE\s+INTO\b/i
 
 /** Strings that break naive encoders: quotes, separators, escapes, JSON look-alikes, astral characters. */
 const tricky = fc.constantFrom('', "'", '"', '\n', '\r\n', '\\', '\\n', '\u2028', '\u2029', '\u{1F600}', '\u00e9', '$[0]', '{"a":1}', '[1,2]', '123', 'null', '\t', '\u00a0', '\ufeff', '\u0000')
@@ -71,8 +78,8 @@ export function generatedArb(existingMembers: readonly string[]): fc.Arbitrary<G
         id: `g_${g.id}`, created_by: g.by, created_at_ms: g.created, ends_at_ms: g.created + g.span,
         ended_at_ms: g.ended ? g.created + 1 : null, ended_by: g.ended ? g.by : null, expiry_logged: g.ended ? 1 : 0, rev: 1, req_id: g.req,
       })))
-    // More than one part's worth of lines (1,000 rows a part), each a line the audit reader can parse.
-    const audit = fc.array(fc.record({ actor: who, target: who, role: fc.constantFrom('member', 'admin'), at: fc.nat(), req: textArb }), { minLength: 1_001, maxLength: 1_300 })
+    // More than one read page's worth of lines (5,000 a page, so 6 parts of 1,000), each a line the audit reader parses.
+    const audit = fc.array(fc.record({ actor: who, target: who, role: fc.constantFrom('member', 'admin'), at: fc.nat(), req: textArb }), { minLength: 5_001, maxLength: 5_400 })
       .map(ls => ls.map(l => ({
         at_ms: l.at, actor_id: l.actor, action: 'member.invited', target_kind: 'member', target_id: l.target,
         args_json: JSON.stringify({ memberId: l.target, role: l.role }), req_id: l.req,

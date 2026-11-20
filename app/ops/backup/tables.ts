@@ -42,31 +42,36 @@ const D1_INTERNAL = /^(?:d1_migrations$|sqlite_|_cf_)/
 /** The tables FTS5 creates beside a virtual table `<name>` (which of them exist depends on its options). */
 export const FTS5_SHADOW_SUFFIXES = ['_data', '_idx', '_docsize', '_config', '_content'] as const
 const isVirtual = (sql: string) => /^\s*CREATE\s+VIRTUAL\s+TABLE/i.test(sql)
+/** An FTS5 virtual table: the only kind a `derived` entry may name (its shadow tables are skipped with it). */
+const isFts5 = (sql: string) => isVirtual(sql) && /\bUSING\s+fts5\b/i.test(sql)
 
 export interface DerivedTable { name: string; from: string[] }
 
 /**
  * The canonical tables' rules in restore order (each table after the tables in its `after`), and the derived tables
- * (registry entries with `derived`, rebuilt rather than backed up), checked against the registry and the database's
- * own schema. Throws by name on: a table in the database that's in no entry (and isn't D1's own or a derived table's
- * FTS5 shadow), a virtual table whose entry isn't `derived`, an entry with no table, a canonical entry with no rule,
- * a rule with no entry or for a derived table, a derived table built from a table that isn't canonical.
+ * (registry entries with `derived`, FTS5 indexes rebuilt rather than backed up, sorted by name), checked against the
+ * registry and the database's own schema. Throws by name on: a table in the database that's in no entry (and isn't
+ * D1's own or a registered virtual table's FTS5 shadow), a virtual table whose entry isn't `derived`, a `derived`
+ * entry that isn't an FTS5 virtual table, an entry with no table, a canonical entry with no rule, a rule with no entry
+ * or for a derived table, a derived table built from a table that isn't canonical.
  */
 export async function canonicalTables(db: D1Database, registry: readonly TableEntry[] = realRegistry, rules: readonly TableRule[] = TABLE_RULES): Promise<{ rules: TableRule[]; derived: DerivedTable[] }> {
   const entries = registry.filter(e => e.kind === 'd1')
   const canonical = entries.filter(e => !e.derived).map(e => e.name)
-  const derived = entries.filter(e => e.derived).map(e => ({ name: e.name, from: [...(e.derived?.from ?? [])] }))
+  const derived = entries.filter(e => e.derived).map(e => ({ name: e.name, from: [...(e.derived?.from ?? [])] })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const schema = new Map((await db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'").all<{ name: string; sql: string | null }>()).results.map(r => [r.name, r.sql ?? '']))
-  // Shadow tables of every registered derived or virtual table, so a virtual table whose entry isn't derived fails as
-  // itself below, not as its shadows.
-  const shadowOwners = entries.filter(e => e.derived || isVirtual(schema.get(e.name) ?? '')).map(e => e.name)
+  // Shadow tables only of registered entries that really are virtual tables in this database, so a virtual table
+  // whose entry isn't derived fails as itself below, and a plain table can't hide tables named like its shadows.
+  const shadowOwners = entries.filter(e => isVirtual(schema.get(e.name) ?? '')).map(e => e.name)
   const shadows = new Set(shadowOwners.flatMap(n => FTS5_SHADOW_SUFFIXES.map(s => `${n}${s}`)))
   for (const [name, sql] of schema) {
     if (D1_INTERNAL.test(name) || entries.some(e => e.name === name) || shadows.has(name)) continue
     throw new BackupError(isVirtual(sql) ? 'virtual_table' : 'unregistered_table', `${name}: in no registry entry`)
   }
   for (const d of derived) {
-    if (!schema.has(d.name)) throw new BackupError('missing_table', d.name)
+    const sql = schema.get(d.name)
+    if (sql === undefined) throw new BackupError('missing_table', d.name)
+    if (!isFts5(sql)) throw new BackupError('derived_not_virtual', `${d.name}: not an FTS5 virtual table`)
     if (rules.some(r => r.name === d.name)) throw new BackupError('rule_for_derived', d.name)
     if (d.from.length === 0 || d.from.some(f => !canonical.includes(f))) throw new BackupError('derived_from_unknown', `${d.name} from [${d.from.join(', ')}]`)
   }

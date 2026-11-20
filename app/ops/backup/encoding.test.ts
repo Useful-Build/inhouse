@@ -70,6 +70,29 @@ describe('parts (failure 3)', () => {
   })
 })
 
+describe('a part near the size cap (failure 3)', () => {
+  it('writes a ~1,000,000-byte part of multi-byte text as one bound string and reads it back identical', async () => {
+    // Note: the local D1 (miniflare) may not enforce D1's 2,000,000-byte string cap, so this proves the round trip at
+    // the size, not the cap itself; PART_BYTES leaves half of it free.
+    const unit = '\u{1F600}\u00e9\n"\\x'
+    const rows = Array.from({ length: 4 }, (_, i) => ({ id: i, body: `${i}:${unit.repeat(18_500)}` }))
+    await db.prepare('CREATE TABLE scratch_big (id INTEGER, body TEXT)').run()
+    const parts: Uint8Array[] = []
+    const writer = new TableWriter('scratch_big', async (_n, bytes) => { parts.push(bytes); return `k${parts.length}` })
+    for (const row of rows) await writer.add(encodeRow('scratch_big', ['id', 'body'], row))
+    const written = await writer.finish()
+    expect(parts).toHaveLength(1)
+    expect(parts[0].byteLength).toBeGreaterThan(950_000)
+    expect(parts[0].byteLength).toBeLessThanOrEqual(PART_BYTES)
+    await db.prepare(insertPartSql('scratch_big', ['id', 'body'])).bind(linesAsArray(partLines(new TextDecoder().decode(parts[0])))).run()
+    const back = (await db.prepare('SELECT id, body FROM scratch_big ORDER BY rowid').all<Record<string, unknown>>()).results
+    expect(back).toEqual(rows)
+    const reread = new TableWriter('scratch_big', async () => '')
+    for (const row of back) await reread.add(encodeRow('scratch_big', ['id', 'body'], row))
+    expect((await reread.finish()).sha256).toBe(written.sha256)
+  })
+})
+
 describe('values the format refuses (failure 4)', () => {
   it.each([
     ['a BLOB', [1, 2, 3]],

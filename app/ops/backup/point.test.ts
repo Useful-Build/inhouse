@@ -15,6 +15,7 @@ import { seedBrand } from '../../server/seed/seed.ts'
 import { tables as realRegistry } from '../tables/index.ts'
 import { backup, listBackups, timeId } from './backup.ts'
 import { BackupError } from './errors.ts'
+import { TABLE_RULES, canonicalTables } from './tables.ts'
 import { partLines } from './format.ts'
 import type { BackupManifest } from './manifest.ts'
 import { derivedEntry, insertRows } from './test-support.ts'
@@ -74,12 +75,14 @@ describe('the registry guard (failure 2)', () => {
   it('throws by name on a table in no entry', () => withTable('CREATE TABLE stray_table (id TEXT PRIMARY KEY)', 'stray_table', async () => {
     expect(await code(backup({ db: env.DB, bucket: env.FILES, nowMs: T }))).toEqual(['unregistered_table', 'backup: unregistered_table (stray_table: in no registry entry)'])
   }))
-  it('throws by name on a rule with no entry', async () => {
+  it('throws by name on a canonical table whose entry is gone', async () => {
     const registry = realRegistry.filter(r => r.name !== 'support_grants')
-    // support_grants is now a table in no entry, which is caught first; with it entered as derived, the rule is the miss.
-    expect((await code(backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry })))[0]).toBe('unregistered_table')
-    expect(await code(backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry: [...registry, { ...extra('support_grants'), derived: { from: ['members'] } }] }))).toEqual(['rule_for_derived', 'backup: rule_for_derived (support_grants)'])
+    expect(await code(backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry }))).toEqual(['unregistered_table', 'backup: unregistered_table (support_grants: in no registry entry)'])
   })
+  it('throws by name on a rule for a derived table', () => withTable('CREATE VIRTUAL TABLE search_r USING fts5(body)', 'search_r', async () => {
+    const rule = { name: 'search_r', orderBy: ['rowid'], mode: 'snapshot' as const }
+    expect(await code(canonicalTables(env.DB, [...realRegistry, derivedEntry('search_r')], [...TABLE_RULES, rule]))).toEqual(['rule_for_derived', 'backup: rule_for_derived (search_r)'])
+  }))
   it('throws by name on a virtual table in no entry', () => withTable('CREATE VIRTUAL TABLE search_x USING fts5(body)', 'search_x', async () => {
     expect(await code(backup({ db: env.DB, bucket: env.FILES, nowMs: T }))).toEqual(['virtual_table', 'backup: virtual_table (search_x: in no registry entry)'])
   }))
@@ -90,6 +93,20 @@ describe('the registry guard (failure 2)', () => {
     const registry = [...realRegistry, { ...derivedEntry('search_w'), derived: { from: ['nowhere'] } }]
     expect((await code(backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry })))[0]).toBe('derived_from_unknown')
   }))
+  it('throws by name on a derived entry that is not an FTS5 virtual table', () => withTable('CREATE TABLE plain_index (body TEXT)', 'plain_index', async () => {
+    // A plain table named like a shadow of it must not be skipped either: it's in no entry.
+    await env.DB.prepare('CREATE TABLE plain_index_data (x TEXT)').run()
+    try {
+      expect((await code(backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry: [...realRegistry, derivedEntry('plain_index')] })))).toEqual(['unregistered_table', 'backup: unregistered_table (plain_index_data: in no registry entry)'])
+    } finally { await env.DB.prepare('DROP TABLE plain_index_data').run() }
+    expect(await code(backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry: [...realRegistry, derivedEntry('plain_index')] }))).toEqual(['derived_not_virtual', 'backup: derived_not_virtual (plain_index: not an FTS5 virtual table)'])
+  }))
+  it('throws by name on a rule with no registry entry', async () => {
+    const extraRule = { name: 'ghost_table', orderBy: ['id'], mode: 'snapshot' as const }
+    const err = await canonicalTables(env.DB, realRegistry, [...TABLE_RULES, extraRule]).then(() => null, (x: unknown) => x)
+    expect(err).toBeInstanceOf(BackupError)
+    expect([(err as BackupError).code, (err as Error).message]).toEqual(['rule_without_entry', 'backup: rule_without_entry (ghost_table)'])
+  })
   it('skips a derived table and its FTS5 shadow tables, and lists it in the manifest', () => withTable('CREATE VIRTUAL TABLE search_z USING fts5(body)', 'search_z', async () => {
     await env.DB.prepare("INSERT INTO search_z (body) VALUES ('some text')").run()
     const shadows = (await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'search_z_%'").all<{ name: string }>()).results.map(r => r.name)

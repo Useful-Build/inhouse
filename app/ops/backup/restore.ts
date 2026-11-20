@@ -16,7 +16,7 @@ import { tables as realRegistry } from '../tables/index.ts'
 import type { TableEntry } from '../tables/types.ts'
 import { timeId } from './backup.ts'
 import { BackupError, RestoreRefusal } from './errors.ts'
-import { TableWriter, appendRows, encodeRow, insertPartSql, linesAsArray, newDigest, maxIdSelect, partLines, sha256, snapshotSelect, tableColumns, toHex } from './format.ts'
+import { TableWriter, appendRows, encodeRow, insertPartSql, isRowLine, linesAsArray, newDigest, maxIdSelect, partLines, sha256, snapshotSelect, tableColumns, toHex } from './format.ts'
 import { BackupManifestSchema, DeletionLogListSchema, RestoreRecordSchema, SnapshotManifestSchema } from './manifest.ts'
 import type { BackupManifest, RestoreRecord, TableManifest } from './manifest.ts'
 import { canonicalTables, ident } from './tables.ts'
@@ -135,6 +135,8 @@ async function targetRows(target: D1Database, manifest: BackupManifest): Promise
     const order = t.orderBy.map(ident).join(', ')
     const rows = (await target.prepare(`SELECT ${t.columns.map(ident).join(', ')} FROM ${ident(t.name)} ORDER BY ${order} LIMIT ${TARGET_ROWS_CHECKED + 1}`).all<Record<string, unknown>>()).results
     if (rows.length > TARGET_ROWS_CHECKED) throw new RestoreRefusal('target_not_empty', `${t.name}: over ${TARGET_ROWS_CHECKED} rows`)
+    // A freshly migrated database has no audit line: one there means a used database (perhaps the live one).
+    if (t.mode === 'append_only' && rows.length > 0) throw new RestoreRefusal('target_not_empty', `${t.name}: has rows`)
     const idx = pkIndexes(t)
     out.set(t.name, new Map(rows.map(r => {
       const line = encodeRow(t.name, t.columns, r)
@@ -162,6 +164,7 @@ async function checkParts(bucket: R2Bucket, manifest: BackupManifest, existing: 
       const bytes = new Uint8Array(await obj.arrayBuffer())
       if (await sha256(bytes) !== part.sha256) throw new RestoreRefusal('part_sha256', `${t.name}/${pad(i)}`)
       const lines = partLines(new TextDecoder().decode(bytes))
+      if (lines.some(l => !isRowLine(l, t.columns.length))) throw new RestoreRefusal('part_invalid', `${t.name}/${pad(i)}`)
       if (lines.length !== part.rows) throw new RestoreRefusal('part_rows', `${t.name}/${pad(i)}`)
       await hash.write(bytes)
       rows += lines.length
@@ -218,6 +221,9 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
   const resets: string[] = []
   let record!: RestoreRecord
   try {
+    // The target is never the live database (its audit log can't be cleared, and the write would land on top of it).
+    if (live !== 'unreadable' && target === live) throw new RestoreRefusal('target_is_live')
+
     // 1. The snapshot, before anything is written anywhere.
     try { snapshot = await takeSnapshot(bucket, live, restoreId, at.nowMs) } catch (err) { throw new RestoreFailure(`snapshot_failed: ${messageOf(err)}`) }
 
@@ -236,7 +242,8 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
     if (byName.size !== manifest.tables.length || byName.size !== rules.length || rules.some(r => !byName.has(r.name))) {
       throw new RestoreRefusal('tables_mismatch', `backup [${[...byName.keys()].join(', ')}], canonical [${rules.map(r => r.name).join(', ')}]`)
     }
-    if (JSON.stringify(manifest.derived) !== JSON.stringify(derived)) {
+    const byDerivedName = (a: { name: string }, b: { name: string }) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+    if (JSON.stringify([...manifest.derived].sort(byDerivedName)) !== JSON.stringify(derived)) {
       throw new RestoreRefusal('tables_mismatch', `derived: backup [${manifest.derived.map(d => d.name).join(', ')}], target [${derived.map(d => d.name).join(', ')}]`)
     }
     for (const r of rules) {
@@ -271,16 +278,22 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
     }
     await deps.testing?.afterTargetWrite?.()
 
-    // The R2 state the restored rows point into (photos aren't backed up: a missing one is reported, never nulled).
-    for (const e of registry.filter(e => e.kind === 'r2' && e.retention !== 'backup')) prefixes.push({ prefix: e.name, objects: (await listAll(bucket, e.name)).length })
-    for (const key of [...r2Keys].sort()) if (!(await bucket.head(key))) missingPhotoKeys.push(key)
-
     // 5. The proof.
     for (const r of rules) {
       const t = byName.get(r.name) as TableManifest
       const d = await digestTable(target, r, t.columns)
       verified.set(r.name, d.rows === t.rows && d.sha256 === t.sha256)
     }
+    // The R2 state the restored rows point into, after the proof (photos aren't backed up: a missing one is reported,
+    // never nulled). One listing per prefix; a key column's value is missing when no listed object has it.
+    const listed = new Set<string>()
+    for (const e of registry.filter(e => e.kind === 'r2' && e.retention !== 'backup')) {
+      const objects = await listAll(bucket, e.name)
+      for (const o of objects) listed.add(o.key)
+      prefixes.push({ prefix: e.name, objects: objects.length })
+    }
+    missingPhotoKeys = [...r2Keys].filter(k => !listed.has(k)).sort()
+
     const bad = [...verified].filter(([, ok]) => !ok).map(([name]) => name)
     if (bad.length > 0) {
       status = 'failed_verification'
