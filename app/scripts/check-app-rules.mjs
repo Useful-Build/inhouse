@@ -242,6 +242,13 @@ if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
   else if (found.length > allowed) problems.push(`check-app-rules.e2e-seam.json: ${rel} has ${found.length} hit(s), the list allows ${allowed}. Go through \`fx\`:\n${found.join('\n')}`)
   else if (found.length < allowed) problems.push(`check-app-rules.e2e-seam.json: ${rel} has ${found.length} hit(s), the list says ${allowed}. ${found.length ? `Set it to ${found.length}` : 'Remove the entry (delete the file when it is empty)'}`)
 }
+// The sample-data read helper is for the sample data's own spec only: any other spec must get names through `fx`, so
+// it still works against a real client (P2) that has no sample data.
+if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
+  const rel = `e2e/${relative(e2eDir, file)}`
+  if (rel === 'e2e/sample-data.spec.ts' || rel.startsWith('e2e/support/')) continue
+  if (/support\/sample-reads/.test(readFileSync(file, 'utf8'))) problems.push(`${rel}: imports e2e/support/sample-reads, which only e2e/sample-data.spec.ts may use; get names through \`fx\``)
+}
 for (const path of seamListed.keys()) if (!existsSync(new URL(`../${path}`, import.meta.url))) problems.push(`check-app-rules.e2e-seam.json: ${path} doesn't exist; remove it`)
 if (seamListed.size) console.log(`e2e seam: ${seamListed.size} spec file(s) still name storage keys, sample data or the mock module (scripts/check-app-rules.e2e-seam.json):\n${[...seamListed].map(([f, n]) => `${f} (${n})`).join('\n')}\n`)
 
