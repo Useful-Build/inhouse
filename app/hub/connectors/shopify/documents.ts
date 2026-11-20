@@ -18,7 +18,8 @@ export const SHOPIFY_READ_SCOPES = ['read_orders', 'read_products', 'read_invent
 export const LIMITS = {
   ordersSearch: { maxFirst: 20, defaultFirst: 10, lines: 5 },
   orderGet: { first: 2, lines: 20, refunds: 5, refundLines: 5, returns: 5, returnLines: 5 },
-  // scan: refunds read per order, before the window filter; refunds: the most returned per order.
+  // scan: refunds read per order, before the window filter (one more is asked for, to tell "more" from "exactly
+  // full"); refunds: the most returned per order.
   refundsSearch: { maxFirst: 10, defaultFirst: 10, scan: 5, refunds: 2, refundLines: 3, maxItems: 20 },
   returnsSearch: { maxFirst: 5, defaultFirst: 5, returns: 3, returnLines: 5, maxItems: 15 },
   productsSearch: { maxFirst: 20, defaultFirst: 10, variants: 3 },
@@ -104,7 +105,7 @@ export const REFUNDS_SEARCH = `query RefundsSearch($first: Int!, $after: String,
   orders(first: $first, after: $after, query: $query, sortKey: UPDATED_AT, reverse: true) {
     nodes {
       id name
-      refunds(first: ${L.refundsSearch.scan}) {
+      refunds(first: ${L.refundsSearch.scan + 1}) {
         createdAt note
         totalRefundedSet ${MONEY}
         refundLineItems(first: ${L.refundsSearch.refundLines}) { nodes { quantity restockType lineItem { sku } } pageInfo { hasNextPage } }

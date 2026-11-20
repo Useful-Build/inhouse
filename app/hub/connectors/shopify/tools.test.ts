@@ -167,17 +167,31 @@ describe('refunds_search: the window before the cap', () => {
 
   it('an order whose first 5 refunds are all outside the window is named in ordersWithUnreadRefunds', async () => {
     // Refunds 11-01 to 11-05 and 11-19: refunds(first: 5) returns the first five, the window holds none of them.
-    const named = data(...[1, 2, 3, 4, 5].map(d => `2026-11-0${d}T09:00:00Z`))
+    // refunds(first: 6) returns six: the five out of the window and 11-19, the sixth, which the tools don't show.
+    const named = data(...[1, 2, 3, 4, 5].map(d => `2026-11-0${d}T09:00:00Z`), '2026-11-19T09:00:00Z')
     named.orders.nodes[0]!.name = '#1001'
     const v = await value<Items & { ordersWithUnreadRefunds: string[] }>('refunds_search', { createdFrom: '2026-11-19T00:00:00Z' }, dataClient(named))
-    expect(v).toEqual({ items: [], ordersWithUnreadRefunds: ['#1001'], nextCursor: null })
+    expect(v).toEqual({ items: [], ordersWithUnreadRefunds: ['#1001'], truncated: false, nextCursor: null })
     const short = await value<{ ordersWithUnreadRefunds: string[] }>('refunds_search', { createdFrom: '2026-11-19T00:00:00Z' }, dataClient(data('2026-11-19T09:00:00Z')))
     expect(short.ordersWithUnreadRefunds).toEqual([])
   })
 
-  it('a list that came back full says moreRefunds', async () => {
-    const dates = ['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-19'].map(d => `${d}T09:00:00Z`)
-    expect(await notes(dates, { createdFrom: '2026-11-19T00:00:00Z' })).toEqual({ notes: ['refund 11-19'], more: [true] })
+  it('exactly 5 refunds: all read, the order is not named; 6: named (both tools agree on "more than 5")', async () => {
+    const five = data(...['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-19'].map(d => `${d}T09:00:00Z`))
+    const v5 = await value<Items<{ note: string; moreRefunds: boolean }> & { ordersWithUnreadRefunds: string[] }>('refunds_search', { createdFrom: '2026-11-19T00:00:00Z' }, dataClient(five))
+    expect(v5.items.map(i => [i.note, i.moreRefunds])).toEqual([['refund 11-19', false]])
+    expect(v5.ordersWithUnreadRefunds).toEqual([])
+    const six = data(...['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-19', '2026-11-20'].map(d => `${d}T09:00:00Z`))
+    const v6 = await value<Items<{ note: string }> & { ordersWithUnreadRefunds: string[] }>('refunds_search', { createdFrom: '2026-11-19T00:00:00Z' }, dataClient(six))
+    expect(v6.items.map(i => i.note)).toEqual(['refund 11-19'])
+    expect(v6.ordersWithUnreadRefunds).toEqual(['#1'])
+  })
+
+  it('a name too long to list is left out and truncated says so', async () => {
+    const six = data(...[1, 2, 3, 4, 5, 6].map(d => `2026-11-0${d}T09:00:00Z`))
+    six.orders.nodes[0]!.name = `#${'9'.repeat(60)}`
+    const v = await value<{ ordersWithUnreadRefunds: string[]; truncated: boolean }>('refunds_search', { createdFrom: '2026-11-19T00:00:00Z' }, dataClient(six))
+    expect(v).toMatchObject({ ordersWithUnreadRefunds: [], truncated: true })
   })
 })
 

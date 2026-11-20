@@ -18,7 +18,7 @@ type Input = z.infer<typeof input>
 
 const parser = z.object({
   orders: z.object({
-    nodes: z.array(z.object({ id: zId, name: z.string(), refunds: z.array(zRefund(L.refundLines)).max(L.scan) })),
+    nodes: z.array(z.object({ id: zId, name: z.string(), refunds: z.array(zRefund(L.refundLines)).max(L.scan + 1) })),
     pageInfo: zPage,
   }),
 })
@@ -49,21 +49,28 @@ function map(d: Data, i: Input, first: number) {
   const from = Date.parse(i.createdFrom)
   const to = i.createdTo === undefined ? Infinity : Date.parse(i.createdTo)
   const items = []
-  // Every scanned order whose refund list came back full: it may hold refunds past the first L.scan, which neither
-  // this tool nor order_get can read, whatever the window held (an order whose first refunds are all outside the
-  // window yields no item, so a per-item flag can't carry this). At most `first` names, each capped.
+  // Every scanned order with more than L.scan refunds (L.scan + 1 are asked for, as order_get does): refunds past the
+  // first L.scan, which neither this tool nor order_get can show, whatever the window held (an order whose first
+  // refunds are all outside the window yields no item, so a per-item flag can't carry this). At most `first` names. A
+  // name longer than its cap is left out, never cut, and `truncated` says one was.
   const ordersWithUnreadRefunds: string[] = []
+  let truncated = false
   for (const o of within(d.orders.nodes, first)) {
-    // The window first, then the cap: an in-window refund after out-of-window ones still shows. A list that came back
-    // full may hold more refunds than were sent, so it also says more.
-    const refunds = within(o.refunds, L.scan)
+    // The window first, then the cap: an in-window refund after out-of-window ones still shows.
+    const read = within(o.refunds, L.scan + 1)
+    if (read.length > L.scan) {
+      const cut: Cut = { truncated: false }
+      const name = cap(cut, o.name, CAPS.orderName)
+      if (cut.truncated) truncated = true
+      else ordersWithUnreadRefunds.push(name)
+    }
+    const refunds = read.slice(0, L.scan)
     const inWindow = refunds.flatMap(r => {
       if (r.createdAt === null) return []
       const createdAt = instant(r.createdAt)
       return createdAt.ms >= from && createdAt.ms < to ? [{ r, createdAt }] : []
     })
-    const more = inWindow.length > L.refunds || refunds.length === L.scan
-    if (refunds.length === L.scan) ordersWithUnreadRefunds.push(cap({ truncated: false }, o.name, CAPS.orderName))
+    const more = inWindow.length > L.refunds
     for (const { r, createdAt } of inWindow.slice(0, L.refunds)) {
       const cut: Cut = { truncated: false }
       items.push({
@@ -79,7 +86,7 @@ function map(d: Data, i: Input, first: number) {
       })
     }
   }
-  return { items, ordersWithUnreadRefunds, nextCursor: nextCursor(d.orders.pageInfo) }
+  return { items, ordersWithUnreadRefunds, truncated, nextCursor: nextCursor(d.orders.pageInfo) }
 }
 
 export const refundsSearch: ToolDef<Input> = {
@@ -89,9 +96,10 @@ export const refundsSearch: ToolDef<Input> = {
     `createdTo are ISO 8601 instants. Scans up to \`first\` refunded orders per call (1 to ${L.maxFirst}, default ${L.defaultFirst}), most ` +
     `recently updated first, and returns their refunds in the window, up to ${L.refunds} per order: order name, date, note (up to ` +
     `${CAPS.refundNoteSearch} characters), amount in minor units and up to ${L.refundLines} refunded lines (sku, quantity, restock type). ` +
-    `These tools read only an order's first ${L.scan} refunds: an order named in ordersWithUnreadRefunds, or an item with ` +
-    'moreRefunds, has refunds they can\'t show. Pass nextCursor as `after` with the same filters for more. Use it for refund ' +
-    'spikes by product and reason.',
+    `moreRefunds on an item: the order has more refunds in the window than shown; order_get shows up to ${L.scan} of an order's ` +
+    `refunds. These tools read only an order's first ${L.scan} refunds: an order named in ordersWithUnreadRefunds has refunds ` +
+    "they can't show (truncated: true means one such order's name was too long to list). Pass nextCursor as `after` with the " +
+    'same filters for more. Use it for refund spikes by product and reason.',
   mode: 'read',
   input,
   run: (ctx, i) => {

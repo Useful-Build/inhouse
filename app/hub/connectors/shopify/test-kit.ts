@@ -177,8 +177,9 @@ export const MAXIMAL: Record<string, { input: unknown; data: unknown }> = {
       orders: {
         nodes: rep(L.refundsSearch.maxFirst, () => ({
           id: W.id,
-          name: W.str(CAPS.orderName),
-          refunds: rep(L.refundsSearch.scan, () => refundNode(L.refundsSearch.refundLines)),
+          // Exactly at the cap, so the name is listed in ordersWithUnreadRefunds (a longer one is left out).
+          name: '🏕'.repeat(CAPS.orderName / 4),
+          refunds: rep(L.refundsSearch.scan + 1, () => refundNode(L.refundsSearch.refundLines)),
         })),
         pageInfo: page,
       },
