@@ -78,5 +78,6 @@ test('A demo stored by the build before the seam opens with its chat, draft, mod
   expect(Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).not.toContain(approvalId)
   await page.clock.runFor(12_000)
   await expect(approved).not.toContainText('going out')
+  await expect(approved).toContainText('Approved by')
   await expect.poll(async () => Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).toContain(approvalId)
 })

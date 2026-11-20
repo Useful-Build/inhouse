@@ -14,7 +14,7 @@ const toast = (page: Page, text: string) => page.getByRole('status').filter({ ha
 // The Kestrel reorder, as src/agent/sample-data/problems.json has it (problem `stock`): copied, since a spec reads sample
 // data only through `fx` and `fx` doesn't carry the problems.
 const KESTREL = 'Ridge 30L Pack runs out in 9 days'
-const KESTREL_APPROVER = 'Dana Kim usually signs off orders over $5,000'
+const KESTREL_APPROVER_SENTENCE = 'usually signs off orders over $5,000'
 const KESTREL_MEMORY = 'Remembered: Kestrel ships in 14 days'
 const KESTREL_CTA = 'Approve and send to Kestrel'
 const KESTREL_SENT = 'Reorder of 600 sent to Kestrel Supply'
@@ -72,25 +72,33 @@ test('S1: Today opens at the morning start with the same six things and the same
   await expect(h1(page)).toContainText('6 things need you. A fix is drafted for each.')
   await expect(page.getByRole('article')).toHaveCount(6)
   // Every card's amount goes through the money formatter: it reads as it did before P1.
-  for (const [title, cost] of Object.entries(GOLDEN_COST)) await expect(card(page, title), title).toContainText(cost)
+  // The amount element itself is checked: a title can carry the figure too ("Amazon paid out $1,240 less than expected").
+  for (const [title, cost] of Object.entries(GOLDEN_COST)) await expect(card(page, title).locator('span.text-xl'), title).toHaveText(cost)
   // The Kestrel reorder spends money: its panel carries the sign-off amount.
   await card(page, KESTREL).getByRole('button', { name: 'Review' }).click()
   const panel = page.getByRole('dialog')
   await expect(panel).toContainText('Spends money')
-  await expect(panel).toContainText(KESTREL_APPROVER)
+  // The approver is the sample's own person (`fx.names.people`), so a renamed sample person keeps this spec working.
+  const approver = fx.names.people.find(p => p.id === 'dana')
+  expect(approver, 'the sample has the approver for orders over $5,000').toBeDefined()
+  await expect(panel).toContainText(`${approver!.name} ${KESTREL_APPROVER_SENTENCE}`)
   await expect(panel).toContainText(KESTREL_MEMORY)
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  // The morning check, in Activity: its 6:00 AM time and its count, on the day the demo clock calls Today, and the day
-  // before it ("Fri, Nov 13" is the weekday before Mon, Nov 16).
+  // The morning check, in Activity: its 6:00 AM time and its count. The sample also has 'Morning check: read' rows on
+  // earlier days, so the row is looked up inside the first day group, Today (the groups run newest first).
   await goTo(page, 'Activity')
   await expect(h1(page)).toHaveText('Activity')
-  const morning = page.locator('button[data-activity-row]').filter({ hasText: 'Morning check: read' })
+  const today = main(page).locator('section').first()
+  await expect(today).toContainText('Today')
+  const morning = today.locator('button[data-activity-row]').filter({ hasText: 'Morning check: read' })
   await expect(morning).toContainText('found 6 things')
   await expect(morning).toContainText(/6:00\s*AM/)
   await expect(main(page).locator('section').filter({ hasText: 'Fri, Nov 13' }).first()).toBeVisible()
-  // The demo's day is Mon, Nov 16: a file made this morning shows it, with its time, from the demo clock.
+  // A file made this morning: its time reads from the demo clock in the Library list (desktop only: the list's time column
+  // is hidden on a phone). The viewer's date line is a fixed instant; S6's "Yesterday" group is the day proof.
   await goTo(page, 'Library')
+  if (!phone()) await expect(page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: 'stuck-orders-over-3-days.csv' }).first()).toContainText(/7:43\s*AM/)
   await page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: 'stuck-orders-over-3-days.csv' }).first().click()
   await expect(page.getByRole('dialog', { name: 'File: stuck-orders-over-3-days.csv' })).toContainText(/Mon, Nov 16, 7:43\s*AM/)
 })

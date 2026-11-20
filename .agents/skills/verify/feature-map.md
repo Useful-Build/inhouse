@@ -298,7 +298,7 @@ Settings: photos
 Product build: Not connected yet
   Path:     `npm run build:product`, any URL (`?demo` and `?demo=<anything>` included)
   Selector: heading "Not connected yet", the product project (`E2E_PRODUCT=1`)
-  Expected: one "Not connected yet" screen in place of every page; no sample name, no demo switches or Reset demo, `?demo` ignored, the real date (never Mon, Nov 16)
+  Expected: one "Not connected yet" screen in place of every page; no sample name, no demo switches or Reset demo, `?demo` ignored (the demo clock's absence is proved by `scripts/check-product-build.mjs`)
   Covered:  e2e/product/no-demo.spec.ts
 
 Demo upgrade: a stored demo
