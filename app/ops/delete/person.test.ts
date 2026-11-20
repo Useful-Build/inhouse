@@ -23,6 +23,7 @@ import { listDeletionLog, newRunId, writeLogEntry } from './log.ts'
 import { planPersonDeletion, runPersonDeletion } from './person.ts'
 import type { DeletionDeps, PersonDeletionPlan } from './person.ts'
 import { deletionRules } from './rules.ts'
+import { deleteKeys, listAll } from './r2.ts'
 import { addGrant, addLine, addPerson, addPhoto, addSetting, readLines, recordingDb, snapshotAll, token, withoutLog, writesAudit } from './test-support.ts'
 import type { Snapshot } from './test-support.ts'
 
@@ -30,7 +31,9 @@ const db = env.DB
 const bucket = env.FILES as R2Bucket
 const BASE = 1_800_000_000_000
 let clock = BASE
-const deps = (over: Partial<DeletionDeps> = {}): DeletionDeps => ({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs: (clock += 1000) }, ...over })
+// The wall clock the log stamps entries with: later than any `at.nowMs` here, and moving on every read.
+let wall = BASE + 1_000_000_000
+const deps = (over: Partial<DeletionDeps> = {}): DeletionDeps => ({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs: (clock += 1000) }, clock: () => ++wall, ...over })
 let seeded: Seeded
 
 beforeAll(async () => {
@@ -167,7 +170,10 @@ describe('one person, nothing else (failures 1, 2, 3, 7, 8)', () => {
     expect(log.map(e => [e.entry.step, e.entry.phase])).toEqual([[0, 'start'], [1, 'done']])
     expect(added.sort()).toEqual(log.map(e => e.key).sort())
     const done = log.find(e => e.entry.phase === 'done')!.entry
-    expect(done).toMatchObject({ kind: 'person', memberId: P, actorId: SYSTEM_MEMBER_ID, atMs: d.at.nowMs })
+    expect(done).toMatchObject({ kind: 'person', memberId: P, actorId: SYSTEM_MEMBER_ID })
+    // Each entry carries the clock at its write, never the job's pinned time.
+    expect(log[0].entry.atMs).toBeGreaterThan(d.at.nowMs)
+    expect(done.atMs).toBeGreaterThan(log[0].entry.atMs)
     expect(Object.fromEntries(done.removed!.map(r => [r.store, r.count]))).toEqual(plan.counts)
     expect(done.removed!.find(r => r.store === 'photos/')!.keys!.sort()).toEqual(Object.keys(before.r2).filter(k => k.startsWith(`photos/${P}/`)).sort())
 
@@ -276,5 +282,101 @@ describe('the deletion log (failure 8)', () => {
     } finally {
       await bucket.delete(key)
     }
+  })
+})
+
+describe('the log\'s time is when an entry is written (failure 8)', () => {
+  it('a run planned at T0 and run at T2 sorts after a backup watermark taken at T1', async () => {
+    const T0 = BASE + 2_000_000_000
+    const p = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
+    await addSetting(db, p.id, 'Dark', p.id, BASE)
+    // The plan and the run share one pinned `at` at T0, as a confirm flow that keeps the request's time would.
+    const at = { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs: T0 }
+    let now = T0
+    const d = deps({ at, clock: () => now })
+    const plan = await planOk(d, p.id)
+    // A backup at T1 takes the log's last key as its watermark.
+    now = T0 + 1000
+    const watermark = await writeLogEntry(bucket, { format: 1, runId: newRunId(), step: 0, phase: 'done', kind: 'retention', atMs: now, actorId: SYSTEM_MEMBER_ID, cutoffs: [], removed: [] })
+    now = T0 + 2000
+    const r = await runPersonDeletion(d, plan)
+    if (!('ok' in r)) throw new Error('run refused')
+    const after = (await listDeletionLog(bucket, { after: watermark })).filter(e => e.entry.runId === r.ok.runId)
+    expect(after.map(e => [e.entry.phase, e.entry.atMs])).toEqual([['start', T0 + 2000], ['done', T0 + 2000]])
+  })
+
+  it('never stamps an entry earlier than the run\'s previous one, even if the clock steps back', async () => {
+    const p = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
+    const times = [BASE + 3_000_000_000, BASE + 2_900_000_000]
+    const d = deps({ clock: () => times.shift() ?? 0 })
+    const r = await runPersonDeletion(d, await planOk(d, p.id))
+    if (!('ok' in r)) throw new Error('run refused')
+    const log = (await listDeletionLog(bucket)).filter(e => e.entry.runId === r.ok.runId)
+    expect(log.map(e => [e.entry.phase, e.entry.atMs])).toEqual([['start', BASE + 3_000_000_000], ['done', BASE + 3_000_000_000]])
+  })
+})
+
+describe('writing and reading the log (failure 8)', () => {
+  it('writes an entry once: a second put onto its key throws and leaves the first', async () => {
+    const e = { format: 1 as const, runId: newRunId(), step: 0, phase: 'done' as const, kind: 'person' as const, atMs: BASE + 7, actorId: SYSTEM_MEMBER_ID, memberId: 'm_once' }
+    const key = await writeLogEntry(bucket, e)
+    await expect(writeLogEntry(bucket, { ...e, memberId: 'm_twice' })).rejects.toThrow(/exists already/)
+    expect(JSON.parse(await (await bucket.get(key))!.text())).toMatchObject({ memberId: 'm_once' })
+  })
+
+  it('lists at most `limit` entries, from a watermark, and refuses a bad limit', async () => {
+    const all = await listDeletionLog(bucket)
+    expect(all.length).toBeGreaterThan(3)
+    expect((await listDeletionLog(bucket, { limit: 2 })).map(e => e.key)).toEqual(all.slice(0, 2).map(e => e.key))
+    expect((await listDeletionLog(bucket, { after: all[0].key, limit: 2 })).map(e => e.key)).toEqual(all.slice(1, 3).map(e => e.key))
+    expect((await listDeletionLog(bucket, { limit: all.length + 50 })).length).toBe(all.length)
+    for (const bad of [0, -1, 1.5]) await expect(listDeletionLog(bucket, { limit: bad })).rejects.toThrow(/limit/)
+  })
+})
+
+/** The real bucket, but every list returns at most 2 objects a page (`truncated` and a cursor for the rest). */
+const twoKeyPages = (): R2Bucket => Object.assign(Object.create(bucket) as R2Bucket, {
+  list: (o?: R2ListOptions) => bucket.list({ ...o, limit: 2 }),
+  get: bucket.get.bind(bucket),
+  put: bucket.put.bind(bucket),
+  delete: bucket.delete.bind(bucket),
+  head: bucket.head.bind(bucket),
+})
+
+describe('paging (failure 2)', () => {
+  it('listAll follows every 2-key page, from startAfter, up to max', async () => {
+    const prefix = `photos/m_page${token()}/`
+    const keys = Array.from({ length: 7 }, (_, i) => `${prefix}${i}`)
+    for (const k of keys) await bucket.put(k, 'x')
+    const paged = twoKeyPages()
+    expect((await listAll(paged, prefix)).map(o => o.key)).toEqual(keys)
+    expect((await listAll(paged, prefix, keys[2])).map(o => o.key)).toEqual(keys.slice(3))
+    expect((await listAll(paged, prefix, undefined, 3)).map(o => o.key)).toEqual(keys.slice(0, 3))
+    await bucket.delete(keys)
+  })
+
+  it('deleteKeys sends at most 1,000 keys a call, every key once', async () => {
+    const calls: string[][] = []
+    const recording = { delete: async (k: string | string[]) => { calls.push(Array.isArray(k) ? k : [k]) } } as unknown as R2Bucket
+    const keys = Array.from({ length: 2001 }, (_, i) => `photos/m_x/${i}`)
+    await deleteKeys(recording, keys)
+    expect(calls.map(c => c.length)).toEqual([1000, 1000, 1])
+    expect(calls.flat()).toEqual(keys)
+  })
+
+  it('deletes m_1\'s photos across pages and leaves m_10\'s, whose prefix starts the same', async () => {
+    const ids = ['m_1', 'm_10']
+    for (const id of ids) {
+      await db.prepare("INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'person', 'member', 'active', 'Paged', ?)").bind(id, BASE).run()
+      for (let i = 0; i < 5; i++) await addPhoto(db, bucket, id)
+    }
+    const [m1, m10] = ids
+    const d = deps({ bucket: twoKeyPages() })
+    const plan = await planOk(d, m1)
+    expect(plan.counts['photos/']).toBe(5)
+    const r = await runPersonDeletion(d, plan)
+    expect(r).toMatchObject({ ok: { removed: { 'photos/': 5 } } })
+    expect(await listAll(bucket, `photos/${m1}/`)).toEqual([])
+    expect((await listAll(bucket, `photos/${m10}/`)).length).toBe(5)
   })
 })

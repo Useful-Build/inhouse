@@ -26,7 +26,12 @@ export interface ExportPlan {
 export type ExportRefusal = 'bad_id' | 'not_found' | 'not_person'
 
 const issued = new WeakSet<ExportPlan>()
-const PAGE = 500
+/**
+ * Rows per D1 query. Keyset paging (`WHERE (pk) > (last) ORDER BY pk LIMIT`): each page is one indexed read, however
+ * deep. The ceiling is D1's queries per invocation (1,000 on Workers Paid): about 500 pages, so roughly 250,000 rows
+ * across every exported table, less the plan's counts and the PRAGMA reads, per invocation.
+ */
+export const PAGE = 500
 
 /** A D1 entry's filter for one person: each person key as a predicate, OR'ed. Null when nothing names them. */
 export function personFilter(entry: TableEntry, memberId: string): { where: string; params: SqlValue[] } | null {
@@ -53,12 +58,16 @@ export function personFilter(entry: TableEntry, memberId: string): { where: stri
 /** The plain-column person keys (members: id, invited_by). */
 const plainKeys = (entry: TableEntry) => entry.personKeys.filter(k => !k.includes(':') && !k.endsWith('_json'))
 
-async function primaryKey(db: D1Database, table: string): Promise<string[]> {
+/** The columns rows are paged by: the primary key in its declared order, or the rowid when a table has none. */
+async function primaryKey(db: D1Database, table: string): Promise<{ cols: string[]; rowid: boolean }> {
   const cols = await all<{ name: string; pk: number }>(db, stmt(`PRAGMA table_info(${ident(table)})`))
   if (cols.length === 0) throw new Error(`export: no table ${table}`)
   const pk = cols.filter(c => c.pk > 0).sort((a, b) => a.pk - b.pk).map(c => ident(c.name))
-  return pk.length > 0 ? pk : ['rowid']
+  return pk.length > 0 ? { cols: pk, rowid: false } : { cols: [ROWID], rowid: true }
 }
+
+/** The rowid's alias in a page's rows (dropped before a row is written). */
+const ROWID = '_export_rowid'
 
 function included(registry: readonly TableEntry[]): TableEntry[] {
   return registry.filter(e => {
@@ -107,7 +116,7 @@ function base64(bytes: Uint8Array): string {
   return btoa(s)
 }
 
-async function* lines(deps: JobDeps, plan: ExportPlan): AsyncGenerator<unknown> {
+async function* lines(deps: JobDeps, plan: ExportPlan, pageSize: number): AsyncGenerator<unknown> {
   const { db, bucket } = deps
   const { scope } = plan
   yield {
@@ -126,19 +135,28 @@ async function* lines(deps: JobDeps, plan: ExportPlan): AsyncGenerator<unknown> 
       const pk = await primaryKey(db, entry.name)
       // Another person's account row that only references this one: its key columns only.
       const cut = scope.kind === 'person' && entry.retention === 'account'
-        ? (row: Record<string, unknown>) => pk.some(c => row[c] !== scope.memberId)
-          ? Object.fromEntries([...new Set([...pk, ...plainKeys(entry)])].map(c => [c, row[c]]))
+        ? (row: Record<string, unknown>) => pk.cols.some(c => row[c] !== scope.memberId)
+          ? Object.fromEntries([...new Set([...pk.cols, ...plainKeys(entry)])].map(c => [c, row[c]]))
           : row
         : (row: Record<string, unknown>) => row
-      for (let offset = 0; ; offset += PAGE) {
-        const rows = await all<Record<string, unknown>>(db, stmt(
-          `SELECT * FROM ${ident(entry.name)} WHERE ${filter.where} ORDER BY ${pk.join(', ')} LIMIT ? OFFSET ?`, ...filter.params, PAGE, offset,
+      const select = pk.rowid ? `SELECT rowid AS ${ROWID}, *` : 'SELECT *'
+      const order = pk.cols.join(', ')
+      let last: SqlValue[] | null = null
+      for (;;) {
+        const after: { where: string; params: SqlValue[] } = last === null
+          ? { where: '', params: [] }
+          : { where: ` AND (${order}) > (${pk.cols.map(() => '?').join(', ')})`, params: last }
+        const rows: Record<string, unknown>[] = await all<Record<string, unknown>>(db, stmt(
+          `${select} FROM ${ident(entry.name)} WHERE (${filter.where})${after.where} ORDER BY ${order} LIMIT ?`, ...filter.params, ...after.params, pageSize,
         ))
         for (const row of rows) {
+          const { [ROWID]: _rowid, ...data } = row
           counts[entry.name]++
-          yield { store: entry.name, row: cut(row) }
+          yield { store: entry.name, row: cut(pk.rowid ? data : row) }
         }
-        if (rows.length < PAGE) break
+        if (rows.length < pageSize) break
+        const end = rows[rows.length - 1]
+        last = pk.cols.map(c => end[c] as SqlValue)
       }
     } else {
       for (const obj of await objectsOf(bucket, entry, scope)) {
@@ -152,9 +170,11 @@ async function* lines(deps: JobDeps, plan: ExportPlan): AsyncGenerator<unknown> 
 }
 
 /** The export as NDJSON. Reads as the stream is pulled; a storage failure errors the stream (no `end` line). */
-export function runExport(deps: JobDeps, plan: ExportPlan): ReadableStream<Uint8Array> {
+export function runExport(deps: JobDeps, plan: ExportPlan, opts: { pageSize?: number } = {}): ReadableStream<Uint8Array> {
   if (!issued.has(plan)) throw new Error('export: runs only from a plan made by planExport')
-  const it = lines(deps, plan)
+  const pageSize = opts.pageSize ?? PAGE
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1000) throw new Error('export: pageSize must be 1 to 1,000')
+  const it = lines(deps, plan, pageSize)
   const encoder = new TextEncoder()
   return new ReadableStream<Uint8Array>({
     async pull(controller) {

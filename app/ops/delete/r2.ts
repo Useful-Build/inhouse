@@ -1,5 +1,5 @@
-// What P8's jobs (retention, export, person deletion) share, and their only R2 calls: their deps, the member id rule, the registry's person
-// patterns and the R2 calls. The R2 calls never delete under the backup set or the deletion log (decision Q3: a
+// What P8's jobs (retention, export, person deletion) share: their deps, the member id rule, the registry's person
+// patterns and the jobs' only R2 calls. The R2 calls never delete under the backup set or the deletion log (decision Q3: a
 // deleted person leaves backups by the 30-day lifecycle rule; the deletion log is never shortened).
 // R2 Workers API (list with prefix, cursor, truncated, limit max 1,000; delete with up to 1,000 keys; uploaded is a Date):
 // https://developers.cloudflare.com/r2/api/workers/workers-api-reference/ (read 2026-11-20)
@@ -8,11 +8,16 @@ import { R2_PREFIXES } from '../../server/db/r2-keys.ts'
 import { tables } from '../tables/index.ts'
 import type { TableEntry } from '../tables/types.ts'
 
-/** One clock per job: `at.nowMs` (tests pin it). `registry` defaults to the real one; tests pass fixtures. */
+/**
+ * `at.nowMs` is the job's one clock for what it decides (a cutoff, a pseudonymised row's time); tests pin it. `clock`
+ * stamps each deletion-log entry when it's written (default `Date.now`), so an entry sorts by when it happened, never
+ * by when it was planned. `registry` defaults to the real one; tests pass fixtures.
+ */
 export interface JobDeps {
   db: D1Database
   bucket: R2Bucket
   at: At
+  clock?: () => number
   registry?: readonly TableEntry[]
 }
 
@@ -44,16 +49,18 @@ export function personPrefix(entry: TableEntry, memberId: string): string | null
   return prefix
 }
 
-/** Every object under `prefix`, in key order (all pages). */
-export async function listAll(bucket: R2Bucket, prefix: string, startAfter?: string): Promise<R2Object[]> {
+/** Every object under `prefix` after `startAfter`, in key order, following every page; at most `max` of them. */
+export async function listAll(bucket: R2Bucket, prefix: string, startAfter?: string, max = Infinity): Promise<R2Object[]> {
   const out: R2Object[] = []
   let cursor: string | undefined
-  for (;;) {
+  while (out.length < max) {
     const page = await bucket.list({ prefix, cursor, startAfter: cursor === undefined ? startAfter : undefined, limit: 1000, include: ['httpMetadata'] })
     out.push(...page.objects)
-    if (!page.truncated) return out
+    if (!page.truncated) break
+    if (page.cursor === undefined) throw new Error(`ops: R2 listed ${prefix} as truncated with no cursor`)
     cursor = page.cursor
   }
+  return out.slice(0, max)
 }
 
 /** One object's bytes and content type; throws by key when it's gone (it was listed a moment before). */

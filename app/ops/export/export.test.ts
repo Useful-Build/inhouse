@@ -92,6 +92,7 @@ const worldArb = fc.record({
   lines: fc.array(fc.tuple(fc.nat(), fc.nat(), fc.nat(), fc.nat()), { maxLength: 4 }),
   photos: fc.array(fc.nat(), { maxLength: 3 }),
   pick: fc.nat(),
+  pageSize: fc.integer({ min: 1, max: 4 }),
 })
 
 describe('export completeness (failures 1 to 4, property)', () => {
@@ -116,7 +117,8 @@ describe('export completeness (failures 1 to 4, property)', () => {
       expect(await snapshotAll(db, bucket), 'the dry run writes nothing').toEqual(before)
       const want = expected(before, scope)
       expect(plan.counts).toEqual(Object.fromEntries(Object.entries(want).map(([k, v]) => [k, v.length])))
-      const { lines } = await readLines(runExport(deps, plan))
+      // Small pages, so every store is read across several keyset pages.
+      const { lines } = await readLines(runExport(deps, plan, { pageSize: w.pageSize }))
       expect(rec.sql.filter(writesAudit)).toEqual([])
       expect(lines[0]).toEqual({ format: 1, kind: scope.kind, ...(scope.kind === 'person' ? { memberId: scope.memberId } : {}), atMs: BASE, stores: tables.map(e => ({ kind: e.kind, name: e.name, retention: e.retention, export: e.export })) })
       expect(lines.at(-1)).toEqual({ end: true, counts: plan.counts })
@@ -133,6 +135,38 @@ describe('export completeness (failures 1 to 4, property)', () => {
       }
       expect(await snapshotAll(db, bucket), 'the export writes nothing').toEqual(before)
     }
+  })
+})
+
+describe('keyset paging (failure 1)', () => {
+  // A composite primary key (with ties on its first column) and a table with none (paged by rowid), with fixture
+  // entries passed in as the registry.
+  const fixtures: TableEntry[] = [
+    { kind: 'd1', name: 'export_composite', retention: 'config', personKeys: [], export: true },
+    { kind: 'd1', name: 'export_nopk', retention: 'config', personKeys: [], export: true },
+  ]
+  test.prop([fc.array(fc.tuple(fc.constantFrom('a', 'b', 'c'), fc.integer({ min: -5, max: 5 })), { maxLength: 15 }), fc.array(fc.constantFrom('x', 'y'), { maxLength: 9 }), fc.integer({ min: 1, max: 4 })], { numRuns: 25 })(
+    'reads every row once, by primary key, whatever the page size', async (pairs, values, pageSize) => {
+      await db.prepare('CREATE TABLE IF NOT EXISTS export_composite (a TEXT NOT NULL, b INTEGER NOT NULL, v TEXT, PRIMARY KEY (a, b))').run()
+      await db.prepare('CREATE TABLE IF NOT EXISTS export_nopk (v TEXT)').run()
+      for (const [a, b] of pairs) await db.prepare('INSERT OR IGNORE INTO export_composite (a, b, v) VALUES (?, ?, ?)').bind(a, b, token()).run()
+      // Duplicate values: only the rowid tells these rows apart.
+      for (const v of values) await db.prepare('INSERT INTO export_nopk (v) VALUES (?)').bind(v).run()
+      const deps = { ...d(), registry: fixtures }
+      const plan = await planOk({ kind: 'brand' }, deps)
+      const { lines } = await readLines(runExport(deps, plan, { pageSize }))
+      const rows = (store: string) => lines.filter(l => l.store === store).map(l => l.row)
+      const composite = (await db.prepare('SELECT * FROM export_composite ORDER BY a, b').all()).results
+      const nopk = (await db.prepare('SELECT * FROM export_nopk ORDER BY rowid').all()).results
+      expect(rows('export_composite')).toEqual(composite)
+      expect(rows('export_nopk')).toEqual(nopk)
+      expect(lines.at(-1)).toEqual({ end: true, counts: { export_composite: composite.length, export_nopk: nopk.length } })
+    },
+  )
+
+  it('refuses a page size outside 1 to 1,000', async () => {
+    const plan = await planOk({ kind: 'brand' })
+    for (const bad of [0, 1001, 1.5]) expect(() => runExport(d(), plan, { pageSize: bad })).toThrow(/pageSize/)
   })
 })
 

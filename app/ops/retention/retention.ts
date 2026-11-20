@@ -2,12 +2,13 @@
 // writes nothing and counts) fixes each store's cutoff, `at.nowMs - days * 86_400_000`; the run takes only that plan
 // and uses its cutoffs, never a new clock. A D1 row goes when its age column is strictly before the cutoff, an R2
 // object when its `uploaded` time is. Every other class (the audit log included) is never touched: a period given for
-// one throws. The run logs its cutoffs first and what it removed last (the deletion log). It doesn't refuse on a
+// one throws. The run logs its cutoffs first, then deletes in bounded rounds (a D1 statement removes at most
+// `roundSize` rows by primary key, an R2 call 1,000 keys), each round's ids or keys in a `progress` entry, so no
+// statement nears D1's time limit and no entry grows with the table; `done` holds the totals. It doesn't refuse on a
 // changed count (the cutoff, not the count, defines what goes); its result reports the difference.
 // D1 batch and RETURNING: https://developers.cloudflare.com/d1/worker-api/d1-database/ (read 2026-11-20)
-import { all, runBatch, stmt } from '../../server/db/sql.ts'
-import { newRunId, writeLogEntry } from '../delete/log.ts'
-import type { DeletionLogEntry } from '../delete/log.ts'
+import { all, stmt } from '../../server/db/sql.ts'
+import { runLog } from '../delete/log.ts'
 import { deleteKeys, ident, listAll, registryOf } from '../delete/r2.ts'
 import type { JobDeps } from '../delete/r2.ts'
 import type { TableEntry } from '../tables/types.ts'
@@ -74,6 +75,11 @@ export async function planRetention(deps: RetentionDeps, input: { periods: Reado
   const targets = targetsFor(registryOf(deps), deps.rules ?? retentionRules, input.periods, deps.at.nowMs)
   const counts: Record<string, number> = {}
   for (const t of targets) {
+    if (t.rule.kind === 'd1') {
+      // The rounds delete by `idColumn`, so it must be the table's whole primary key.
+      const pk = (await all<{ name: string; pk: number }>(deps.db, stmt(`PRAGMA table_info(${ident(t.entry.name)})`))).filter(c => c.pk > 0).map(c => c.name)
+      if (pk.length !== 1 || pk[0] !== t.rule.idColumn) throw new Error(`retention: ${t.entry.name}'s idColumn ${t.rule.idColumn} is not its primary key (${pk.join(', ') || 'none'})`)
+    }
     if (t.rule.kind === 'd1') counts[t.entry.name] = (await all<{ n: number }>(deps.db, pastD1(t as Target & { rule: { kind: 'd1' } })))[0].n
     else counts[t.entry.name] = (await pastObjects(deps.bucket, t)).length
   }
@@ -94,37 +100,49 @@ export interface RetentionResult {
   differences: { store: string; planned: number; removed: number }[]
 }
 
-export async function runRetention(deps: RetentionDeps, plan: RetentionPlan): Promise<RetentionResult> {
+/** Rows one D1 statement removes at most (by primary key), and so the ids one `progress` entry holds. */
+export const ROUND_SIZE = 500
+
+export async function runRetention(deps: RetentionDeps, plan: RetentionPlan, opts: { roundSize?: number } = {}): Promise<RetentionResult> {
   if (!issued.has(plan)) throw new Error('retention: runs only from a plan made by planRetention')
+  const roundSize = opts.roundSize ?? ROUND_SIZE
+  if (!Number.isSafeInteger(roundSize) || roundSize < 1 || roundSize > 1000) throw new Error('retention: roundSize must be 1 to 1,000')
   const { db, bucket, at } = deps
-  const runId = newRunId()
-  // Each entry takes the run's next step (0, 1, 2...): its write order, which the key sorts by within the run.
-  let step = 0
-  const entry = (phase: DeletionLogEntry['phase'], extra: Partial<DeletionLogEntry> = {}): DeletionLogEntry =>
-    ({ format: 1, runId, step: step++, phase, kind: 'retention', atMs: at.nowMs, actorId: at.actorId, cutoffs: [...plan.cutoffs], ...extra })
-  await writeLogEntry(bucket, entry('start'))
+  const log = runLog(bucket, deps.clock ?? Date.now, { kind: 'retention', actorId: at.actorId, cutoffs: [...plan.cutoffs] })
+  await log.write('start')
 
-  const removed: NonNullable<DeletionLogEntry['removed']> = []
-  const d1 = plan.targets.filter((t): t is Target & { rule: { kind: 'd1'; ageColumn: string; idColumn: string } } => t.rule.kind === 'd1')
-  if (d1.length > 0) {
-    const results = await runBatch(db, d1.map(t =>
-      stmt(`DELETE FROM ${ident(t.entry.name)} WHERE ${ident(t.rule.ageColumn)} < ? RETURNING ${ident(t.rule.idColumn)} AS id`, t.cutoffMs)))
-    d1.forEach((t, i) => {
-      const ids = (results[i].results as { id: unknown }[]).map(r => String(r.id))
-      removed.push({ store: t.entry.name, ids, count: ids.length })
-    })
-  }
+  const removed: { store: string; count: number }[] = []
   for (const t of plan.targets) {
-    if (t.rule.kind !== 'r2') continue
-    const keys = await pastObjects(bucket, t)
-    await deleteKeys(bucket, keys)
-    removed.push({ store: t.entry.name, keys, count: keys.length })
+    let count = 0
+    if (t.rule.kind === 'd1') {
+      const [table, age, id] = [ident(t.entry.name), ident(t.rule.ageColumn), ident(t.rule.idColumn)]
+      for (;;) {
+        const rows = await all<{ id: unknown }>(db, stmt(
+          `DELETE FROM ${table} WHERE ${id} IN (SELECT ${id} FROM ${table} WHERE ${age} < ? ORDER BY ${id} LIMIT ?) RETURNING ${id} AS id`,
+          t.cutoffMs, roundSize,
+        ))
+        if (rows.length === 0) break
+        const ids = rows.map(r => String(r.id))
+        await log.write('progress', { removed: [{ store: t.entry.name, ids, count: ids.length }] })
+        count += ids.length
+        if (rows.length < roundSize) break
+      }
+    } else {
+      const keys = await pastObjects(bucket, t)
+      for (let i = 0; i < keys.length; i += 1000) {
+        const round = keys.slice(i, i + 1000)
+        await deleteKeys(bucket, round)
+        await log.write('progress', { removed: [{ store: t.entry.name, keys: round, count: round.length }] })
+        count += round.length
+      }
+    }
+    removed.push({ store: t.entry.name, count })
   }
 
-  await writeLogEntry(bucket, entry('done', { removed }))
+  await log.write('done', { removed })
   const counts = Object.fromEntries(removed.map(r => [r.store, r.count]))
   return {
-    runId,
+    runId: log.runId,
     removed: counts,
     differences: Object.keys(plan.counts).filter(s => plan.counts[s] !== counts[s]).map(s => ({ store: s, planned: plan.counts[s], removed: counts[s] })),
   }

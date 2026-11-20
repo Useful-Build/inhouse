@@ -42,8 +42,8 @@ beforeAll(async () => {
 describe('the D1 cutoff (failures 1 to 5, property)', () => {
   // Ages relative to the cutoff, biased to the edge: exactly at it, a millisecond either side, or anywhere.
   const offset = fc.oneof(fc.constant(0), fc.constant(-1), fc.constant(1), fc.integer({ min: -100 * DAY, max: 100 * DAY }))
-  test.prop([fc.array(offset, { maxLength: 12 }), fc.integer({ min: 1, max: 400 }), fc.integer({ min: 0, max: 10 * DAY })], { numRuns: 60 })(
-    'removes exactly the rows strictly older than the cutoff, logs them, and nothing else', async (offsets, days, shift) => {
+  test.prop([fc.array(offset, { maxLength: 12 }), fc.integer({ min: 1, max: 400 }), fc.integer({ min: 0, max: 10 * DAY }), fc.integer({ min: 1, max: 5 })], { numRuns: 60 })(
+    'removes exactly the rows strictly older than the cutoff, in bounded rounds, logs them, and nothing else', async (offsets, days, shift, roundSize) => {
       const nowMs = BASE + shift
       const cutoff = nowMs - days * DAY
       for (const o of offsets) await db.prepare('INSERT INTO retention_fixture (id, at_ms, note) VALUES (?, ?, ?)').bind(`r${token()}`, cutoff + o, 'x').run()
@@ -57,7 +57,7 @@ describe('the D1 cutoff (failures 1 to 5, property)', () => {
       expect(plan.counts.retention_fixture).toBe(old.length)
 
       // A later clock on the run's deps changes nothing: the plan's cutoff rules.
-      const result = await runRetention(deps(nowMs + 50 * DAY, { db: rec.db }), plan)
+      const result = await runRetention(deps(nowMs + 50 * DAY, { db: rec.db }), plan, { roundSize })
       expect(rec.sql.filter(writesAudit)).toEqual([])
       expect(result.removed.retention_fixture).toBe(old.length)
       expect(result.differences).toEqual([])
@@ -66,10 +66,17 @@ describe('the D1 cutoff (failures 1 to 5, property)', () => {
       for (const t of Object.keys(before.d1)) if (t !== 'retention_fixture') expect(after.d1[t], t).toEqual(before.d1[t])
       expect(withoutLog(after).r2).toEqual(withoutLog(before).r2)
       const log = (await listDeletionLog(bucket)).filter(e => e.entry.runId === result.runId)
-      expect(log.map(e => [e.entry.step, e.entry.phase])).toEqual([[0, 'start'], [1, 'done']])
-      const done = log.find(e => e.entry.phase === 'done')!.entry
+      // start, one progress entry per non-empty round of at most roundSize ids, then done with the totals.
+      const rounds = Math.ceil(old.length / roundSize)
+      expect(log.map(e => e.entry.phase)).toEqual(['start', ...Array<string>(rounds).fill('progress'), 'done'])
+      expect(log.map(e => e.entry.step)).toEqual(log.map((_, i) => i))
+      const progress = log.filter(e => e.entry.phase === 'progress').map(e => e.entry.removed!)
+      for (const r of progress) expect(r).toEqual([expect.objectContaining({ store: 'retention_fixture', count: r[0].ids!.length })])
+      for (const r of progress) expect(r[0].ids!.length).toBeLessThanOrEqual(roundSize)
+      expect(progress.flatMap(r => r[0].ids!).sort()).toEqual(old.map(r => r.id as string).sort())
+      const done = log.at(-1)!.entry
       expect(done.cutoffs).toContainEqual({ store: 'retention_fixture', cutoffMs: cutoff })
-      expect(done.removed!.find(r => r.store === 'retention_fixture')!.ids!.sort()).toEqual(old.map(r => r.id as string).sort())
+      expect(done.removed).toContainEqual({ store: 'retention_fixture', count: old.length })
     },
   )
 
@@ -97,8 +104,10 @@ describe('the R2 cutoff (failure 1)', () => {
     expect(r.removed[FIXTURE_PREFIX]).toBe(old.length)
     const after = withoutLog(await snapshotAll(db, bucket))
     expect(after.r2).toEqual(Object.fromEntries(Object.entries(withoutLog(before).r2).filter(([k]) => !old.includes(k))))
-    const done = (await listDeletionLog(bucket)).find(e => e.entry.runId === r.runId && e.entry.phase === 'done')!.entry
-    expect(done.removed!.find(x => x.store === FIXTURE_PREFIX)!.keys!.sort()).toEqual(old)
+    const log = (await listDeletionLog(bucket)).filter(e => e.entry.runId === r.runId)
+    const logged = log.filter(e => e.entry.phase === 'progress').flatMap(e => e.entry.removed!.flatMap(x => (x.store === FIXTURE_PREFIX ? x.keys! : [])))
+    expect(logged.sort()).toEqual(old)
+    expect(log.at(-1)!.entry.removed).toContainEqual({ store: FIXTURE_PREFIX, count: old.length })
   })
 })
 
@@ -111,6 +120,8 @@ describe('what retention refuses (failures 2, 4, 6)', () => {
     await expect(planRetention(deps(BASE), { periods: { ...both, nowhere: 30 } })).rejects.toThrow(/nowhere/)
     await expect(planRetention(deps(BASE), { periods: { retention_fixture: 30 } })).rejects.toThrow(FIXTURE_PREFIX)
     await expect(planRetention(deps(BASE), { periods: { ...both, retention_fixture: 0 } })).rejects.toThrow(/retention_fixture/)
+    // The rounds delete by idColumn, so a rule whose idColumn isn't the primary key is refused at plan.
+    await expect(planRetention(deps(BASE, { rules: { ...rules, retention_fixture: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'note' } } }), { periods: both })).rejects.toThrow(/not its primary key/)
     await expect(planRetention(deps(BASE, { rules: { [FIXTURE_PREFIX]: { kind: 'r2' } } }), { periods: both })).rejects.toThrow(/no rule for d1 store retention_fixture/)
     expect(await snapshotAll(db, bucket)).toEqual(before)
   })

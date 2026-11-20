@@ -10,7 +10,7 @@ import { memberStore } from '../../server/db/members.ts'
 import type { MemberRow } from '../../server/db/members.ts'
 import { first, runBatch, stmt } from '../../server/db/sql.ts'
 import type { TableEntry } from '../tables/types.ts'
-import { newRunId, writeLogEntry } from './log.ts'
+import { runLog } from './log.ts'
 import type { DeletionLogEntry } from './log.ts'
 import { deleteKeys, ident, isMemberId, listAll, personPrefix, registryOf } from './r2.ts'
 import type { JobDeps } from './r2.ts'
@@ -136,12 +136,8 @@ export async function runPersonDeletion(deps: DeletionDeps, plan: PersonDeletion
   const now = await countSteps(deps, steps, memberId, checked.row)
   if (!sameCounts(plan.counts, now) || plan.alreadyPseudonymised !== (checked.row.pseudonymised_at_ms !== null)) return { refused: 'plan_stale', planned: plan.counts, now }
 
-  const runId = newRunId()
-  // Each entry takes the run's next step (0, 1, 2...): its write order, which the key sorts by within the run.
-  let step = 0
-  const entry = (phase: DeletionLogEntry['phase'], extra: Partial<DeletionLogEntry> = {}): DeletionLogEntry =>
-    ({ format: 1, runId, step: step++, phase, kind: 'person', atMs: at.nowMs, actorId: at.actorId, memberId, ...extra })
-  await writeLogEntry(bucket, entry('start'))
+  const log = runLog(bucket, deps.clock ?? Date.now, { kind: 'person', actorId: at.actorId, memberId })
+  await log.write('start')
   await testing.afterStep?.('start')
 
   const removed: NonNullable<DeletionLogEntry['removed']> = []
@@ -153,7 +149,7 @@ export async function runPersonDeletion(deps: DeletionDeps, plan: PersonDeletion
     }
     const done = await memberStore({ db }).pseudonymise(memberId, at)
     if ('refused' in done) {
-      await writeLogEntry(bucket, entry('refused', { reason: done.refused }))
+      await log.write('refused', { reason: done.refused })
       return { refused: done.refused }
     }
     removed.push({ store: e.name, count: 1 })
@@ -178,6 +174,6 @@ export async function runPersonDeletion(deps: DeletionDeps, plan: PersonDeletion
   }
   await testing.afterStep?.('objects')
 
-  await writeLogEntry(bucket, entry('done', { removed }))
-  return { ok: { runId, removed: Object.fromEntries(removed.map(r => [r.store, r.count])) } }
+  await log.write('done', { removed })
+  return { ok: { runId: log.runId, removed: Object.fromEntries(removed.map(r => [r.store, r.count])) } }
 }
