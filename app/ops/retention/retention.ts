@@ -98,8 +98,10 @@ export async function runRetention(deps: RetentionDeps, plan: RetentionPlan): Pr
   if (!issued.has(plan)) throw new Error('retention: runs only from a plan made by planRetention')
   const { db, bucket, at } = deps
   const runId = newRunId()
+  // Each entry takes the run's next step (0, 1, 2...): its write order, which the key sorts by within the run.
+  let step = 0
   const entry = (phase: DeletionLogEntry['phase'], extra: Partial<DeletionLogEntry> = {}): DeletionLogEntry =>
-    ({ format: 1, runId, phase, kind: 'retention', atMs: at.nowMs, actorId: at.actorId, cutoffs: [...plan.cutoffs], ...extra })
+    ({ format: 1, runId, step: step++, phase, kind: 'retention', atMs: at.nowMs, actorId: at.actorId, cutoffs: [...plan.cutoffs], ...extra })
   await writeLogEntry(bucket, entry('start'))
 
   const removed: NonNullable<DeletionLogEntry['removed']> = []

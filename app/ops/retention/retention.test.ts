@@ -66,7 +66,7 @@ describe('the D1 cutoff (failures 1 to 5, property)', () => {
       for (const t of Object.keys(before.d1)) if (t !== 'retention_fixture') expect(after.d1[t], t).toEqual(before.d1[t])
       expect(withoutLog(after).r2).toEqual(withoutLog(before).r2)
       const log = (await listDeletionLog(bucket)).filter(e => e.entry.runId === result.runId)
-      expect(log.map(e => e.entry.phase).sort()).toEqual(['done', 'start'])
+      expect(log.map(e => [e.entry.step, e.entry.phase])).toEqual([[0, 'start'], [1, 'done']])
       const done = log.find(e => e.entry.phase === 'done')!.entry
       expect(done.cutoffs).toContainEqual({ store: 'retention_fixture', cutoffMs: cutoff })
       expect(done.removed!.find(r => r.store === 'retention_fixture')!.ids!.sort()).toEqual(old.map(r => r.id as string).sort())

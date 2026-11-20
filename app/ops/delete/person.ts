@@ -137,8 +137,10 @@ export async function runPersonDeletion(deps: DeletionDeps, plan: PersonDeletion
   if (!sameCounts(plan.counts, now) || plan.alreadyPseudonymised !== (checked.row.pseudonymised_at_ms !== null)) return { refused: 'plan_stale', planned: plan.counts, now }
 
   const runId = newRunId()
+  // Each entry takes the run's next step (0, 1, 2...): its write order, which the key sorts by within the run.
+  let step = 0
   const entry = (phase: DeletionLogEntry['phase'], extra: Partial<DeletionLogEntry> = {}): DeletionLogEntry =>
-    ({ format: 1, runId, phase, kind: 'person', atMs: at.nowMs, actorId: at.actorId, memberId, ...extra })
+    ({ format: 1, runId, step: step++, phase, kind: 'person', atMs: at.nowMs, actorId: at.actorId, memberId, ...extra })
   await writeLogEntry(bucket, entry('start'))
   await testing.afterStep?.('start')
 

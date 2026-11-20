@@ -38,7 +38,7 @@ beforeAll(async () => {
   // Something in the backup set and an earlier deletion-log entry, both of which must never change.
   await bucket.put('backups/d1/b1/manifest.json', '{"tables":[]}')
   await bucket.put('restore/r1/record.json', '{}')
-  await writeLogEntry(bucket, { format: 1, runId: newRunId(), phase: 'done', kind: 'retention', atMs: BASE - 1, actorId: SYSTEM_MEMBER_ID, cutoffs: [], removed: [] })
+  await writeLogEntry(bucket, { format: 1, runId: newRunId(), step: 0, phase: 'done', kind: 'retention', atMs: BASE - 1, actorId: SYSTEM_MEMBER_ID, cutoffs: [], removed: [] })
 })
 
 const planOk = async (d: DeletionDeps, memberId: string): Promise<PersonDeletionPlan> => {
@@ -83,8 +83,8 @@ describe('refusals (failure 6)', () => {
       expect(await runPersonDeletion(d, plan)).toEqual({ refused: 'last_admin' })
       const after = await snapshotAll(db, bucket)
       expect(withoutLog(after)).toEqual(withoutLog(before))
-      const mine = (await listDeletionLog(bucket)).filter(e => e.entry.memberId === other.id).map(e => e.entry.phase)
-      expect(mine.sort()).toEqual(['refused', 'start'])
+      const mine = (await listDeletionLog(bucket)).filter(e => e.entry.memberId === other.id).map(e => [e.entry.step, e.entry.phase])
+      expect(mine).toEqual([[0, 'start'], [1, 'refused']])
     } finally {
       await db.prepare("UPDATE members SET status = 'active' WHERE id = ?").bind(seeded.members.admin).run()
     }
@@ -164,7 +164,7 @@ describe('one person, nothing else (failures 1, 2, 3, 7, 8)', () => {
     expect(Object.fromEntries(Object.entries(after.r2).filter(([k]) => !added.includes(k)))).toEqual(expectR2)
     expect(added.every(k => k.startsWith('deletion-log/'))).toBe(true)
     const log = (await listDeletionLog(bucket)).filter(e => e.entry.runId === result.ok.runId)
-    expect(log.map(e => e.entry.phase).sort()).toEqual(['done', 'start'])
+    expect(log.map(e => [e.entry.step, e.entry.phase])).toEqual([[0, 'start'], [1, 'done']])
     expect(added.sort()).toEqual(log.map(e => e.key).sort())
     const done = log.find(e => e.entry.phase === 'done')!.entry
     expect(done).toMatchObject({ kind: 'person', memberId: P, actorId: SYSTEM_MEMBER_ID, atMs: d.at.nowMs })
@@ -248,16 +248,29 @@ describe('the registry guard (failure 9)', () => {
 })
 
 describe('the deletion log (failure 8)', () => {
-  it('lists in key order, after a watermark, and refuses an object that is not an entry', async () => {
+  it('lists by time across runs and by write order within a run, after a watermark, and refuses an object that is not an entry', async () => {
+    // A run whose phases sort the other way round by name: start, refused, done at steps 0, 1, 2, all at one atMs.
+    const runId = newRunId()
+    for (const [step, phase] of (['start', 'refused', 'done'] as const).entries()) await writeLogEntry(bucket, { format: 1, runId, step, phase, kind: 'person', atMs: BASE + 5, actorId: SYSTEM_MEMBER_ID, memberId: 'm_x' })
     const all = await listDeletionLog(bucket)
-    expect(all.length).toBeGreaterThan(2)
-    expect(all.map(e => e.key)).toEqual([...all.map(e => e.key)].sort())
+    expect(all.length).toBeGreaterThan(5)
+    // The independent oracle: the entries' own fields, never the key text.
+    const byFields = [...all].sort((a, b) => a.entry.atMs - b.entry.atMs || (a.entry.runId < b.entry.runId ? -1 : a.entry.runId > b.entry.runId ? 1 : 0) || a.entry.step - b.entry.step)
+    expect(all.map(e => e.key)).toEqual(byFields.map(e => e.key))
+    expect(all.filter(e => e.entry.runId === runId).map(e => e.entry.phase)).toEqual(['start', 'refused', 'done'])
+    // Every run the jobs wrote numbers its entries 0, 1, 2... with start first.
+    const runs = new Map<string, typeof all>()
+    for (const e of all) runs.set(e.entry.runId, [...(runs.get(e.entry.runId) ?? []), e])
+    for (const [, es] of runs) {
+      expect(es.map(e => e.entry.step)).toEqual(es.map((_, i) => i))
+      if (es.length > 1) expect(es[0].entry.phase).toBe('start')
+    }
     const mark = all[1].key
     expect((await listDeletionLog(bucket, { after: mark })).map(e => e.key)).toEqual(all.slice(2).map(e => e.key))
     // A malformed entry is refused by the schema, never written.
-    await expect(writeLogEntry(bucket, { format: 1, runId: 'nothex', phase: 'done', kind: 'person', atMs: 1, actorId: SYSTEM_MEMBER_ID })).rejects.toThrow()
-    const key = `deletion-log/9999999999999-${'f'.repeat(16)}-done.json`
-    await bucket.put(key, JSON.stringify({ format: 1, runId: 'f'.repeat(16), phase: 'done', kind: 'person', atMs: 9_999_999_999_999, actorId: 'm_x', name: 'Someone' }))
+    await expect(writeLogEntry(bucket, { format: 1, runId: 'nothex', step: 0, phase: 'done', kind: 'person', atMs: 1, actorId: SYSTEM_MEMBER_ID })).rejects.toThrow()
+    const key = `deletion-log/9999999999999-${'f'.repeat(16)}-0000-done.json`
+    await bucket.put(key, JSON.stringify({ format: 1, runId: 'f'.repeat(16), step: 0, phase: 'done', kind: 'person', atMs: 9_999_999_999_999, actorId: 'm_x', name: 'Someone' }))
     try {
       await expect(listDeletionLog(bucket)).rejects.toThrow(key)
     } finally {

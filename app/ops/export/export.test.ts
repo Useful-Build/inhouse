@@ -29,7 +29,7 @@ let seeded: Seeded
 beforeAll(async () => {
   seeded = await seedBrand(db, openStores(env), BASE)
   await bucket.put('backups/d1/b1/manifest.json', '{"tables":[]}')
-  await writeLogEntry(bucket, { format: 1, runId: newRunId(), phase: 'done', kind: 'person', atMs: BASE, actorId: SYSTEM_MEMBER_ID, memberId: seeded.members.leo, removed: [] })
+  await writeLogEntry(bucket, { format: 1, runId: newRunId(), step: 0, phase: 'done', kind: 'person', atMs: BASE, actorId: SYSTEM_MEMBER_ID, memberId: seeded.members.leo, removed: [] })
 })
 
 const planOk = async (scope: ExportScope, deps = d()): Promise<ExportPlan> => {
