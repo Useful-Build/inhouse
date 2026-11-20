@@ -4,6 +4,8 @@
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'
+import type { SettingRow, ValueRule } from './settings-table.ts'
+import { EXACT_ROWS, PATTERN_ROWS, capOk, settingRow } from './settings-table.ts'
 
 export const SettingScopeSchema = z.enum(['personal', 'brand', 'technical'])
 export type SettingScope = z.infer<typeof SettingScopeSchema>
@@ -22,90 +24,39 @@ export interface SettingSpec {
   auditSafe: boolean
 }
 
-// ---------- the option lists, copied exactly from src/screens/settings/content.ts and src/state/derive.ts ----------
-const THEMES = ['System', 'Light', 'Dark'] as const
-const LANGUAGES = ['English (US)', 'English (UK)', 'Español', 'Français', 'Deutsch'] as const
-const TEXT_SIZES = ['90%', '100%', '110%', '125%'] as const
-const TIME_ZONE_IDS = [
-  'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Denver',
-  'America/Los_Angeles', 'Australia/Sydney',
-] as const
-const WAIT_ALERTS = ['Right away', 'Once an hour', 'Once a day'] as const
-const ALERT_AT = ['50%', '70%', '80%', '90%', '100%'] as const
-const CURRENCIES = ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)'] as const
-const STAGES = ['Watch', 'Act', 'Run'] as const
-const TONES = ['Friendly and short', 'Warm and detailed', 'Formal and brief', 'Plain and direct'] as const
-const EFFORT_LABELS = ['Low', 'Medium', 'High', 'Extra high', 'Highest'] as const
-const DAILY_LIMITS = ['10 actions', '25 actions', '50 actions', '100 actions', '200 actions'] as const
-const RESTOCK_LIMITS = ['25 units', '50 units', '100 units', '250 units', '500 units'] as const
-/** The retention classes the Data and access page offers (and the P8 table registry's terms). */
-const RETENTION = ['3 months', '6 months', '12 months', '24 months', 'Until deleted'] as const
-
-const bool = z.boolean()
-const text = (min: number, max: number) => z.string().trim().min(min).max(max)
-/** The money field's saved text: whole US dollars or two-digit cents, no grouping, above $0 and up to $100,000 ("$320", "$300.50"). */
-const capText = z.string().regex(/^\$\d{1,6}(\.\d{2})?$/).refine(v => { const n = Number(v.slice(1)); return n > 0 && n <= 100_000 }, 'Out of range')
-
-/** A setting logged redacted (`{ len, hash }`): the default, so a new key is never logged verbatim by accident. */
-const spec = (scope: SettingScope, value: z.ZodType<SettingValue>): SettingSpec => ({ scope, value, auditSafe: false })
-/** A setting logged verbatim: only for a closed enum or a switch, which can never hold a name or an email. */
-const safe = (scope: SettingScope, value: z.ZodType<SettingValue>): SettingSpec => ({ scope, value, auditSafe: true })
-
-/** Keys matched exactly. */
-const EXACT: Record<string, SettingSpec> = {
-  // personal
-  'g:name': spec('personal', text(1, 80)),
-  'g:theme': safe('personal', z.enum(THEMES)),
-  'g:lang': safe('personal', z.enum(LANGUAGES)),
-  'g:size': safe('personal', z.enum(TEXT_SIZES)),
-  'n:wait': safe('personal', z.enum(WAIT_ALERTS)),
-  // Free text until the server holds a closed list of channel names (a later phase makes it an enum): redacted in the log.
-  'n:channel': spec('personal', text(1, 80)),
-  'n:slack': safe('personal', bool),
-  'n:weekly': safe('personal', bool),
-  'm:learn': safe('personal', bool),
-  // brand
-  'g:tz': safe('brand', z.enum(TIME_ZONE_IDS)),
-  'm:ask': safe('brand', bool),
-  's:cap': safe('brand', capText),
-  's:alert': safe('brand', z.enum(ALERT_AT)),
-  's:currency': safe('brand', z.enum(CURRENCIES)),
-  // technical
-  'stage': safe('technical', z.enum(STAGES)),
-  't:tone': safe('technical', z.enum(TONES)),
-  't:signs': spec('technical', text(1, 80)),
-  // Free text until the server holds a closed list of model mode labels (a later phase makes it an enum): redacted in the log.
-  'g:mode': spec('technical', text(1, 80)),
-  'l:daily': safe('technical', z.enum(DAILY_LIMITS)),
-  'l:restock': safe('technical', z.enum(RESTOCK_LIMITS)),
-  'd:chats': safe('technical', z.enum(RETENTION)),
-  'd:steps': safe('technical', z.enum(RETENTION)),
-  'd:2fa': safe('technical', bool),
+/** The zod schema of a rule (settings-table.ts holds the rules as plain data). */
+const zodOf = (rule: ValueRule): z.ZodType<SettingValue> => {
+  switch (rule.t) {
+    case 'bool': return z.boolean()
+    case 'enum': return z.enum(rule.values as [string, ...string[]])
+    case 'text': return z.string().trim().min(rule.min).max(rule.max)
+    case 'cap': return z.string().regex(/^\$\d{1,6}(\.\d{2})?$/).refine(capOk, 'Out of range')
+    case 'member': return z.union([MemberIdSchema, z.literal('anyone')])
+  }
 }
+const specOf = (row: SettingRow): SettingSpec => ({ scope: row.scope, value: zodOf(row.rule), auditSafe: row.auditSafe })
 
-/** An id inside a key (a model, a run-limit job). */
-const ID = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}'
-/** Keys with an id in them, tried after the exact keys (so `l:daily` is never read as the job `daily`). */
-const PATTERNS: [RegExp, SettingSpec, string][] = [
-  [new RegExp(`^tm:${ID}:effort$`), safe('technical', z.enum(EFFORT_LABELS)), 'tm:fable:effort'],
-  [new RegExp(`^tm:${ID}:on$`), safe('technical', z.enum(['off', 'on'])), 'tm:fable:on'],
-  [new RegExp(`^l:${ID}$`), safe('technical', bool), 'l:returns'],
-  // An approval rule's approver: a member id or anyone (P6 builds the page).
-  [/^a:(0|[1-9]\d{0,3})$/, safe('brand', z.union([MemberIdSchema, z.literal('anyone')])), 'a:0'],
-]
-
-/** One key per registry entry: every exact key, and an example of each key pattern (the third field above). */
-export const SETTING_KEY_EXAMPLES: readonly string[] = [...Object.keys(EXACT), ...PATTERNS.map(([, , example]) => example)]
+/** Built once per row, so `settingSpec` returns the same object for the same key. */
+const SPECS = new Map<SettingRow, SettingSpec>()
+const specFor = (row: SettingRow): SettingSpec => { let s = SPECS.get(row); if (!s) { s = specOf(row); SPECS.set(row, s) } return s }
 
 /**
  * The spec of a settings key, or null when it isn't a setting. `p:<id>` (a role), `photo:<id>` and `d:support` (a grant)
  * are never settings, so no role, photo or grant can be written through the settings routes; `r:<name>` waits for P4.
  */
 export function settingSpec(key: string): SettingSpec | null {
-  if (Object.hasOwn(EXACT, key)) return EXACT[key]
-  for (const [re, s] of PATTERNS) if (re.test(key)) return s
-  return null
+  const row = settingRow(key)
+  return row ? specFor(row) : null
 }
+
+/** One example key per key pattern of settings-table.ts (`PATTERN_ROWS`), in its order. */
+const PATTERN_EXAMPLES = ['tm:fable:effort', 'tm:fable:on', 'l:returns', 'a:0'] as const
+if (PATTERN_EXAMPLES.length !== PATTERN_ROWS.length || PATTERN_ROWS.some(([re], i) => !re.test(PATTERN_EXAMPLES[i]))) {
+  throw new Error('settings.ts: PATTERN_EXAMPLES must name one key per PATTERN_ROWS entry, in order')
+}
+
+/** One key per registry entry: every exact key, and an example of each key pattern. */
+export const SETTING_KEY_EXAMPLES: readonly string[] = [...Object.keys(EXACT_ROWS), ...PATTERN_EXAMPLES]
 
 /** A setting as the API serves it. Never set: `value` null, `rev` 0, no time or author. Reset to null: `rev` still counts up. */
 export const SettingRecordSchema = z.object({

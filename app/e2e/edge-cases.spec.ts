@@ -1,5 +1,5 @@
 // Modals sit above the Sidebar, a chat's additions survive a stale link, a failed save and a failed
-// photo are told, a demoted approver is flagged on the rules that still name them. Screenshots go to VERIFY_DIR (or e2e-artifacts/).
+// photo are told, a removed approver is flagged on the rules that still name them. Screenshots go to VERIFY_DIR (or e2e-artifacts/).
 import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import path from 'node:path'
@@ -98,17 +98,15 @@ test('A photo that cannot be saved is told and reverted, and a failure that is n
   await keep(page, 'photo-generic-failure-1440')
 })
 
-test('A demoted approver stays on the rules that name them, with a tag and a toast', async ({ page }) => {
-  await start(page, '#/settings/team-members')
-  await page.getByRole('combobox', { name: 'Dana Kim: Approver' }).click()
-  await page.getByRole('option', { name: 'Member' }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Dana is still named on 1 approval rule.' })).toBeVisible()
-  await page.goto('/?demo#/settings/team-approvals')
+test('A removed approver stays on the rules that name them, with a tag', async ({ page, fx }) => {
+  // Call 3 (P2): Approver isn't a role, so the page can't demote Dana; a removed member is the one who stops being an approver.
+  await fx.seedSaved({ stage: 'Act', scenario: 'Normal', demo: { ambient: 'Always' } }, { server: { removed: { m_dana: true } } })
+  await fx.open('#/settings/team-approvals')
   const rule = page.getByRole('combobox', { name: 'Orders over $5,000: Dana Kim' })
   await expect(rule).toBeVisible()
   await expect(page.getByText('Not an approver')).toHaveCount(1)
   await expect(page.getByText('Not an approver').locator('xpath=following-sibling::*').first()).toBeVisible()
-  await keep(page, 'settings-demoted-approver-1440')
+  await keep(page, 'settings-removed-approver-1440')
   // Naming someone who still approves clears the tag.
   await rule.click()
   await page.getByRole('option', { name: 'Sam Mercer' }).click()

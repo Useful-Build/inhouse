@@ -151,10 +151,7 @@ test('Settings reach other screens: model, spending cap, alert level and member 
   // November is the first month with spend (the first tool was connected on Nov 2), the only one: no month picker.
   await expect(page.getByRole('combobox', { name: /^Month/ })).toHaveCount(0)
 
-  // A member made an approver shows up in the approver lists.
-  await page.goto('/?demo#/settings/team-members')
-  await page.getByRole('combobox', { name: 'Priya Shah: Member' }).click()
-  await page.getByRole('option', { name: 'Approver' }).click()
+  // The approver list holds every member and Anyone, a plain Member included (call 3: approving is a job per rule, not a role).
   await page.goto('/?demo#/settings/team-approvals')
   await page.getByRole('combobox', { name: 'Orders over $5,000: Dana Kim' }).click()
   await expect(page.getByRole('option')).toHaveCount(5)

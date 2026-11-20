@@ -9,11 +9,12 @@ import { UsageDataSchema } from './usage.ts'
 import { PeopleDataSchema } from './people.ts'
 import { MemoryDataSchema } from './memory.ts'
 import { ActivityLineSchema } from './activity.ts'
-import { AuditEntrySchema } from './audit.ts'
+import { AuditLineSchema } from './audit.ts'
 import { ModelModeSchema } from './model.ts'
 import { ChatDataSchema } from './chat.ts'
 import { LibraryPlaceSchema } from './library.ts'
 import { TeamRequestSchema } from './state.ts'
+import { ResourceKeySchema, ResourceStatusSchema } from './common.ts'
 
 /**
  * Read-only snapshot of everything the UI reads besides AgentState: sample data in the mock,
@@ -35,7 +36,8 @@ export const AgentDataSchema = z.object({
   usageMonths: z.array(UsageDataSchema),
   people: PeopleDataSchema,
   memory: MemoryDataSchema,
-  auditLog: z.array(AuditEntrySchema),
+  /** The audit log pages loaded so far, newest first. `more.audit` says whether `loadMore('audit')` has another page. */
+  auditLog: z.array(AuditLineSchema),
   /** The fixed lines of Activity. Today's approvals and handled jobs come from state. */
   activity: z.object({ today: z.array(ActivityLineSchema), earlier: z.array(ActivityLineSchema) }),
   notifications: z.object({
@@ -45,6 +47,10 @@ export const AgentDataSchema = z.object({
   defaultModel: z.string(),
   chat: ChatDataSchema,
   library: z.object({ places: z.array(LibraryPlaceSchema) }),
+  /** Whether `loadMore` has another page of a list. */
+  more: z.object({ audit: z.boolean(), members: z.boolean() }),
+  /** Where each resource stands (C3). `status` above stays for the Loading scenario. */
+  resources: z.record(ResourceKeySchema, ResourceStatusSchema),
   /** Help and guides, from the account menu. */
   help: z.array(z.object({ icon: z.string(), title: z.string(), text: z.string() })),
 })
