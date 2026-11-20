@@ -17,7 +17,7 @@
 import type { ActiveRun } from '../../../shared/contract/runs.ts'
 import type { Trace, TraceStep } from '../../../shared/contract/trace.ts'
 import type { RunScope, RunsHealth } from './ports.ts'
-import { turnCalls } from './turn-calls.ts'
+import { callsMicro } from './turn-calls.ts'
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
@@ -68,7 +68,7 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
   let tokens = 0
   const steps: TraceStep[] = []
   for (const t of turns) {
-    micro += turnCalls(sql, t.turn_id)?.micro ?? 0
+    micro += callsMicro(sql, t.turn_id)
     for (const r of sql.exec<{ at_ms: number; json: string }>('SELECT at_ms, json FROM turn_trace WHERE turn_id = ? ORDER BY n', t.turn_id).toArray()) {
       const rec = JSON.parse(r.json) as Record<string, string>
       if (rec.step !== undefined) {

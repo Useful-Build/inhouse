@@ -18,6 +18,7 @@ import { fc, test } from '@fast-check/vitest'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { AdmitAnswer, ModelCallUsage, ModelCallWorst, Refusal, UsageLedgerPort } from './ports.ts'
 import { turnCalls } from './turn-calls.ts'
+import { StoreUnavailableError } from '../../db/sql.ts'
 import { MEMBER, SEC, deferred, ev, fullAnswer, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
 import type { Harness } from '../../testing/brand-agent/core-harness.ts'
 
@@ -278,7 +279,7 @@ describe('interrupt, fence and settle (8.2, 4.6, 9)', () => {
     // The reply is lost after the ledger committed the close.
     let lose = true
     const real = h.usage.close.bind(h.usage)
-    h.usage.close = async (...a) => { const r = await real(...a); if (lose) { lose = false; throw new Error('reply lost') } return r }
+    h.usage.close = async (...a) => { const r = await real(...a); if (lose) { lose = false; throw new StoreUnavailableError('usage ledger', new Error('reply lost')) } return r }
     await h.core.releaseModelCall(t, 'c1', { usage: U(40_000), cut: false })
     await settle()
     expect(ledger(h)).toEqual([['close', 'c1', 40_000, 250_000]])
@@ -293,6 +294,34 @@ describe('interrupt, fence and settle (8.2, 4.6, 9)', () => {
     await h.tick(60 * SEC)
     expect(ledger(h)).toHaveLength(3)
     expect([h.usage.spent, h.usage.booked.get(t)]).toEqual([40_000, 40_000])
+  }))
+
+  it('a ledger answer that is a plain Error (the ledger has no row for the turn) is permanent: logged, dropped, no spin', () => inAgent(async h => {
+    const t = (await liveTurn(h)).turnId
+    ask(h, t, 'c1', 100_000)
+    await settle()
+    await h.core.renewModelCall(t, 'c1', U(0))
+    const real = h.usage.close.bind(h.usage)
+    h.usage.close = async (...a) => { h.usage.calls.push({ method: 'close', args: a }); throw new Error('usage: close for a turn that holds nothing') }
+    await h.core.releaseModelCall(t, 'c1', { usage: U(40_000), cut: false })
+    await settle()
+    h.usage.close = real
+    h.push(t, ...fullAnswer('done', 2))
+    await settle()
+    await h.tick(10 * 60 * SEC)
+    // One close (never sent again), then settle from the tally: the queue went on.
+    expect(ledger(h)).toEqual([['close', 'c1', 40_000, 250_000], ['settle', 40_000]])
+    // An extend refused that way answers that call 503 and the next call is decided.
+    const t2 = (await liveTurn(h, 'c2', 'key-gate8')).turnId
+    const realExtend = h.usage.extend.bind(h.usage)
+    h.usage.extend = async (...a) => { if (a[1] === 'd1') { h.usage.calls.push({ method: 'extend', args: a }); throw new Error('usage: extend for a turn that holds nothing') } return realExtend(...a) }
+    const d1 = ask(h, t2, 'd1', 300_000)
+    await settle()
+    expect(d1.v).toEqual(BUSY)
+    const d2 = ask(h, t2, 'd2', 300_000)
+    await settle()
+    expect(d2.v).toEqual(GRANTED)
+    expect(h.turn(t2)).toMatchObject({ state: 'live', fenced: 0 })
   }))
 
   it('a reset with a close awaited on a live turn: the new instance sends it again; settle at the end', () => inAgent(async h => {
@@ -624,8 +653,18 @@ describe("the usage sweep's reader (8.3, 9; W4's `TurnCallsReader`)", () => {
     await h.core.releaseModelCall(t, 'c1', { usage: U(12_000), cut: false })
     await h.core.releaseModelCall(t, 'c2', { usage: U(5_000), cut: true })
     await settle()
-    // c1 12k (done) + c2 100k (cut: its worst) + c3 70k (inflight) + c4 20k (granted) + c5 waiting (none).
+    // Not terminal yet: the sweep must not settle a turn that may still run (#154's review).
+    expect(turnCalls(h.sql, t)).toBeNull()
+    h.push(t, ...fullAnswer('done', 2))
+    await settle()
+    // Ended: c1 12k (done) + c2 100k (cut: its worst) + c3 70k (inflight) + c4 20k (granted) + c5 (freed at the end: 0).
     expect(turnCalls(h.sql, t)).toEqual({ micro: 202_000 })
+    // A queued turn (and a live one) answers null.
+    const q = ok(await h.submit('c9', 'key-gateq'))
+    await settle()
+    const q2 = ok(await h.submit('c9', 'key-gateq2'))
+    expect(h.turn(q2.turnId).state).toBe('queued')
+    expect([turnCalls(h.sql, q.turnId), turnCalls(h.sql, q2.turnId)]).toEqual([null, null])
     expect(turnCalls(h.sql, 't_AAAAAAAAAAAAAAAAAAAAAA')).toBeNull()
   }))
 })

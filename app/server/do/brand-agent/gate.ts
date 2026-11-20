@@ -9,7 +9,8 @@
 //   sibling closes.
 // - Every ledger write of a turn (`extend`, `close`, `settle`) goes through one queue (`ledger_queue`): one at a time,
 //   each computed when it's sent from the state the previous answer left (`turns.ledger_hold_micro`), awaited, and
-//   sent again (same arguments, every one idempotent) until it's answered. A decision is made only when nothing is in
+//   sent again (same arguments, every one idempotent) until it's answered while storage is down
+//   (`StoreUnavailableError`); any other error is the ledger refusing for good: logged and dropped, never resent. A decision is made only when nothing is in
 //   the queue, so a close never lowers the hold under a sibling being admitted, and after every ledger answer
 //   `tally + Σ worst of deciding, granted and inflight ≤ the ledger's hold` (server-tool input aside, 8.2).
 // - `need = tally + Σ worst of deciding, granted and inflight − ledgerHold`; `need ≤ 0` grants without a ledger call.
@@ -27,6 +28,7 @@
 // die with the instance (their RPCs fail with it), so `seeds()` frees what still waits and re-arms `call-lease`.
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst, UsageLedgerPort } from './ports.ts'
 import type { Scheduler, TaskResult } from './scheduler.ts'
+import { StoreUnavailableError } from '../../db/sql.ts'
 
 /** Calls of one turn in flight at once (Wasim, item 21(c)). */
 export const MAX_CALLS = 4
@@ -347,6 +349,13 @@ export class ModelGate {
     try {
       answer = await this.send(q, args)
     } catch (err) {
+      if (!(err instanceof StoreUnavailableError)) {
+        // Not storage being down: the ledger refused the call for good (no row for the turn, e.g. after a D1 restore).
+        // Sending it again would only spin, so it's dropped, loudly, and the queue goes on (#154's review).
+        console.error({ event: 'ledger_call_dropped', op: q.op, turnId, callId: q.call_id, error: errorText(err) })
+        this.drop(q)
+        return true
+      }
       const fails = t.ledger_fails + 1
       const wait = Math.min(LEDGER_RETRY_MS * 2 ** (fails - 1), LEDGER_RETRY_MAX_MS)
       console.error({ event: 'ledger_call_failed', op: q.op, fails, error: errorText(err) })
@@ -398,6 +407,33 @@ export class ModelGate {
         else await u.settle(q.turn_id, s.micro, s.atMs, s.runnerCostMicro)
         return null
       }
+    }
+  }
+
+  /**
+   * A queue row the ledger refused for good: answered as dropped. An extend's call is answered 503 (no money was added);
+   * a close leaves the hold as the ledger last said; a settle marks the turn settled (nothing more can be booked).
+   */
+  private drop(q: QueueRow) {
+    const turnId = q.turn_id
+    this.sql.exec("UPDATE ledger_queue SET state = 'answered', answer_json = ? WHERE turn_id = ? AND n = ?", JSON.stringify({ dropped: true }), turnId, q.n)
+    this.sql.exec('UPDATE turns SET ledger_fails = 0, ledger_retry_at_ms = NULL WHERE turn_id = ?', turnId)
+    switch (q.op) {
+      case 'extend': {
+        const c = this.call(turnId, q.call_id!)
+        if (!c || c.state !== 'deciding') return
+        this.sql.exec("UPDATE model_calls SET state = 'freed', micro = 0, closed_at_ms = ? WHERE turn_id = ? AND call_id = ?", this.d.now(), turnId, c.call_id)
+        this.answer(turnId, c.call_id, { busy: true })
+        this.arm(turnId)
+        return
+      }
+      case 'close':
+        this.sql.exec('UPDATE model_calls SET close_answered = 1 WHERE turn_id = ? AND call_id = ?', turnId, q.call_id)
+        this.maybeSettle(turnId)
+        return
+      case 'settle':
+        this.sql.exec('UPDATE turns SET settled = 1 WHERE turn_id = ?', turnId)
+        return
     }
   }
 

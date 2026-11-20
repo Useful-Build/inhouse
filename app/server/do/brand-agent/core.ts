@@ -28,7 +28,7 @@ import { buildStart, newId, payloadHash } from './run-start.ts'
 import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
 import { ModelGate } from './gate.ts'
-import { turnCalls } from './turn-calls.ts'
+import { callsMicro } from './turn-calls.ts'
 import { activeRuns, runsHealth, traceOf } from './runs-read.ts'
 import type { RunScope, RunsHealth } from './ports.ts'
 import type { ActiveRun } from '../../../shared/contract/runs.ts'
@@ -314,7 +314,7 @@ export class AgentCore {
     const turns = this.count("run_id = ? AND state = 'ended'", runId)
     // The run's cost from the tally (8.3): closed calls at their price, any still open at their worst case; in cents.
     let micro = 0
-    for (const r of this.sql.exec<{ turn_id: string }>('SELECT turn_id FROM turns WHERE run_id = ?', runId).toArray()) micro += turnCalls(this.sql, r.turn_id)?.micro ?? 0
+    for (const r of this.sql.exec<{ turn_id: string }>('SELECT turn_id FROM turns WHERE run_id = ?', runId).toArray()) micro += callsMicro(this.sql, r.turn_id)
     this.emit(runId, null, { type: 'run.finished', runId, turns, durationMs: Math.max(0, now - run.started_at_ms), cost: { minor: Math.round(micro / 10_000), currency: 'USD' } })
     this.sql.exec("UPDATE runs SET state = 'ended', ended_at_ms = ? WHERE run_id = ?", now, runId)
     this.sql.exec('UPDATE chat_state SET live_run_id = NULL WHERE chat_id = ? AND live_run_id = ?', run.chat_id, runId)
