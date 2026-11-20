@@ -450,8 +450,15 @@ export class ModelGate {
         if (!c || c.state !== 'deciding') return
         const a = answer as ExtendAnswer
         if ('ok' in a) return this.grant(c)
-        if (this.count(`turn_id = ? AND state IN ('granted', 'inflight')`, turnId) > 0) {
-          this.sql.exec("UPDATE model_calls SET state = 'waiting', money_wait = 1 WHERE turn_id = ? AND call_id = ?", turnId, c.call_id)
+        // Something of the turn still holds money: a sibling running, or one closed whose close isn't answered yet (its
+        // money comes back with that answer, #159 round 1). Wait: after a sibling's close (`money_wait`), or right after
+        // the pending close lands (it's ahead in the queue, so the call is decided again from its answer).
+        const running = this.count(`turn_id = ? AND state IN ('granted', 'inflight')`, turnId) > 0
+        const closing = this.sql.exec(
+          "SELECT 1 FROM ledger_queue WHERE turn_id = ? AND op = 'close' AND state != 'answered' AND call_id != ? LIMIT 1", turnId, c.call_id,
+        ).toArray().length > 0
+        if (running || closing) {
+          this.sql.exec("UPDATE model_calls SET state = 'waiting', money_wait = ? WHERE turn_id = ? AND call_id = ?", closing ? 0 : 1, turnId, c.call_id)
           return
         }
         // Nothing of the turn runs: the call is refused (400) and the turn ends with the reason.

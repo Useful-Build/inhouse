@@ -573,6 +573,32 @@ describe('waits: money, order, bounds (8.2 rules 1 and 3)', () => {
 })
 
 describe('refusals and waiters at the turn\'s end (8.2)', () => {
+  // #159 round 1, high 1 (Opus F1 probe E, Sonnet L1): a sibling released while the extend was out still has its close
+  // pending: the turn isn't out of money yet, so the call waits for that close instead of fencing the turn.
+  it('an extend refused while a sibling\'s close is pending: the call waits, then is granted without a new extend', () => inAgent(async h => {
+    const a = await liveTurn(h)
+    const t = a.turnId
+    ask(h, t, 'c1', 200_000)
+    await settle()
+    await h.core.renewModelCall(t, 'c1', U(0))
+    const out = deferred()
+    const real = h.usage.extend.bind(h.usage)
+    h.usage.extend = async (...x) => { const r = await real(...x); await out.promise; return r }
+    h.usage.extendRefusal = 'held'
+    const c2 = ask(h, t, 'c2', 150_000)
+    await settle()
+    expect(ledger(h)).toEqual([['extend', 'c2', 100_000]])
+    await h.core.releaseModelCall(t, 'c1', { usage: U(50_000), cut: false })
+    h.usage.extendRefusal = null
+    out.resolve()
+    await settle()
+    // close c1: max(50k + 0, 250k) = 250k; c2 again: 50k + 150k − 250k ≤ 0, granted with no extend.
+    expect(c2.v).toEqual(GRANTED)
+    expect(ledger(h)).toEqual([['extend', 'c2', 100_000], ['close', 'c1', 50_000, 250_000]])
+    expect(h.turn(t)).toMatchObject({ state: 'live', fenced: 0 })
+    expect(h.events(a.runId).filter(e => e.type === 'turn.finished')).toEqual([])
+  }))
+
   for (const [refusal, answer, reason] of [['cap_reached', 'cap_reached', 'cap_reached'], ['turn_budget', 'turn_budget', 'turn_budget'], ['held', 'budget_busy', 'budget_busy']] as const) {
     it(`an extend refused ${refusal} with nothing in flight refuses the call and fences the turn ${reason}`, () => inAgent(async h => {
       const a = await liveTurn(h)
