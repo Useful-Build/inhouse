@@ -630,6 +630,33 @@ jobs:
           }
           EOF
 
+      # The live hostname's edge can lag the promote: the page may name the new entry script while a node still
+      # answers that script's path with the SPA page (issue #90). Waits by condition, bounded: the live page names
+      # this build's entry script and that script is served as JavaScript, three polls in a row (a flapping edge
+      # doesn't count). A rollback has no build to wait for.
+      - name: Wait for the live hostname to serve the new build
+        if: steps.go.outputs.deploy == 'true'
+        env:
+          HOST: ${{ vars.PRODUCTION_HOSTNAME }}
+          ENTRY: ${{ steps.smoke_version.outputs.entry }}
+        run: |
+          get() { curl -sS --proto '=https' --max-time 20 -o "$1" -w '%{http_code} %{content_type}' "https://$HOST$2" || echo '000 -'; }
+          page=$(mktemp)
+          trap 'rm -f "$page"' EXIT
+          ok=0
+          for i in $(seq 1 60); do
+            get "$page" / > /dev/null
+            if grep -qF "src=\"$ENTRY\"" "$page" && [[ "$(get /dev/null "$ENTRY")" == '200 '*javascript* ]]; then
+              ok=$((ok + 1))
+            else
+              ok=0
+            fi
+            if [ "$ok" -ge 3 ]; then echo "Live serves $ENTRY (poll $i)"; exit 0; fi
+            sleep 5
+          done
+          echo "::error::https://$HOST did not serve $ENTRY as JavaScript three times in a row within 60 polls"
+          exit 1
+
       # The live hostname: polled until it serves this build (by its entry script), then checked like the
       # Version URL, plus no X-Robots-Tag (production is indexable). A rollback has no build here, so any app
       # passes the wait and only the checks run, minus the /api ones: a version from before run_worker_first
