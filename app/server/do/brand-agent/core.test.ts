@@ -664,6 +664,59 @@ describe('budget_busy (4.4 step 2)', () => {
   }))
 })
 
+describe('the start hold goes back (H2 of #153: call-lease)', () => {
+  const releases = (h: Parameters<Parameters<typeof inAgent>[0]>[0]) => h.usage.calls.filter(c => c.method === 'release').map(c => c.args[0])
+
+  it('after a full answer: one release at the next tick, none before', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-h2a01'))
+    await settle()
+    h.push(a.turnId, ...fullAnswer('a', 2))
+    expect(releases(h)).toEqual([])
+    await h.tick(0)
+    expect(releases(h)).toEqual([a.turnId])
+  }))
+
+  it('after a reserve and a pool_full expiry', () => inAgent(async h => {
+    h.pool.placeAnswer = { queued: true }
+    const a = ok(await h.submit('c1', 'key-h2a02'))
+    await settle()
+    h.core.placementExpired(a.turnId)
+    await h.tick(0)
+    expect(releases(h)).toEqual([a.turnId])
+  }))
+
+  it('after a pause of a turn in the placement queue', () => inAgent(async h => {
+    h.pool.placeAnswer = { queued: true }
+    const a = ok(await h.submit('c1', 'key-h2a03'))
+    await settle()
+    h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    await h.tick(0)
+    expect(releases(h)).toEqual([a.turnId])
+  }))
+
+  it('a second settle of the same turn sends nothing', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-h2a04'))
+    await settle()
+    h.push(a.turnId, ...fullAnswer('a', 2))
+    await h.tick(0)
+    expect(await h.core.leaseTask(a.turnId)).toEqual({ done: true })
+    expect(releases(h)).toEqual([a.turnId])
+  }))
+
+  it('a release that fails is retried until answered', () => inAgent(async h => {
+    let fail = true
+    const real = h.usage.release.bind(h.usage)
+    h.usage.release = async (t, n) => { if (fail) { fail = false; h.usage.calls.push({ method: 'release', args: [t, n] }); throw new Error('D1 down') } return real(t, n) }
+    const a = ok(await h.submit('c1', 'key-h2a05'))
+    await settle()
+    h.push(a.turnId, ...fullAnswer('a', 2))
+    await h.tick(0)
+    await h.tick(30 * SEC)
+    expect(releases(h)).toEqual([a.turnId, a.turnId])
+    expect(h.turn(a.turnId).settled).toBe(1)
+  }))
+})
+
 describe('tokens, count_tokens and the audit row', () => {
   it('a live turn has an open token; at ended every route is closed; long-expired rows are pruned (obligation 4)', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-tok01'))
