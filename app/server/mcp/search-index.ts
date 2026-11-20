@@ -17,7 +17,13 @@ export interface DerivedSearchTable {
 
 const shadow = (name: string) => ['data', 'idx', 'docsize', 'config'].map(s => `${name}_${s}`)
 
-/** Every derived search table, with its source and its shadow tables. */
+/**
+ * Every derived search table, with its source and its shadow tables.
+ *
+ * For writers of `memories` and `chat_messages`: never `INSERT OR REPLACE` (or `REPLACE INTO`) on them. SQLite's REPLACE
+ * deletes the old row without firing the DELETE trigger, and `n` is an INTEGER PRIMARY KEY without AUTOINCREMENT, so the
+ * index keeps the old row's words under a rowid the next row reuses: a search finds the new row by the old text.
+ */
 export const DERIVED_SEARCH_TABLES: readonly DerivedSearchTable[] = [
   { name: 'memories_fts', from: 'memories', shadow: shadow('memories_fts') },
   { name: 'chat_messages_fts', from: 'chat_messages', shadow: shadow('chat_messages_fts') },

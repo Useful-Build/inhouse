@@ -41,6 +41,11 @@ const owned = (allow: Role[], services: Design['services'] = []): Design => d('b
 /** P3 PR0: every P3 route is a stub answering 503 `not_built` until its owner builds it (then its case moves to the real status). */
 const STUB = 503
 const NO_CHAT = 'c_e2e_nobody'
+/**
+ * A memory id of the right shape (`mem_` + 22) that names nothing. Sent with a valid body, routes 44 and 45 get past the
+ * id and body checks to the store's lookup, which finds no fact: 404, and nothing changes.
+ */
+const NO_MEMORY = 'mem_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -92,8 +97,8 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/files/:fileId': { design: d('brand_data', ALL), path: '/api/files/f_e2e_nobody', passes: 404 },
   'GET /api/usage': { design: d('baseline', ALL), path: '/api/usage', passes: STUB },
   'GET /api/memory': { design: d('brand_data', ALL), path: '/api/memory', passes: 200 },
-  'PUT /api/memory/personal/:id/forgotten': { design: d('personal', PEOPLE), path: '/api/memory/personal/mem_e2e_nobody/forgotten', json: {}, passes: 404 },
-  'PUT /api/memory/brand/:id/forgotten': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/memory/brand/mem_e2e_nobody/forgotten', json: {}, passes: 404 },
+  'PUT /api/memory/personal/:id/forgotten': { design: d('personal', PEOPLE), path: `/api/memory/personal/${NO_MEMORY}/forgotten`, json: { forgotten: true, ifRev: 1 }, passes: 404 },
+  'PUT /api/memory/brand/:id/forgotten': { design: d('brand_data', ['admin', 'inhouse']), path: `/api/memory/brand/${NO_MEMORY}/forgotten`, json: { forgotten: true, ifRev: 1 }, passes: 404 },
   'POST /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', json: {}, passes: STUB },
   'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: STUB },
   'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: STUB },

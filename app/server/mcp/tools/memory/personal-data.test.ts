@@ -23,6 +23,8 @@ const REFUSED: [string, 'email' | 'phone' | 'card' | 'address'][] = [
   ['Customer lives at 42 Wallaby Way', 'address'],
   ['Return label for 10 Downing St', 'address'],
   ['Collect from the depot, SW1A 1AA', 'address'],
+  ['Send it to 10 Downing Street, London SW1A 2AA', 'address'],
+  ['Her flat is 7 Park Lane', 'address'],
 ]
 const ACCEPTED = [
   'We restock on Fridays',
@@ -35,6 +37,12 @@ const ACCEPTED = [
   'Our busiest month is December, with 3 times the orders',
   'Sam prefers short supplier emails',
   'Use 2 decimal places in reports',
+  // Opus L6: ordinary facts the earlier street and postcode patterns refused.
+  'Pack 2 items the same way',
+  'Size M2 3XL runs small',
+  'Orders over 100 units take first place',
+  'Ship 3 pallets to the close',
+  'Restock 4 units every week, the same way',
 ]
 
 describe('personalDataIn', () => {

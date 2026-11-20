@@ -9,8 +9,13 @@ const EMAIL = /[^\s@<>()]+@[^\s@<>()]+\.[A-Za-z]{2,}/
 // A run of digits with only phone separators between them; dates written YYYY-MM-DD are blanked out first.
 const DIGIT_RUN = /\+?\d(?:[ .()-]{0,3}\d)+/g
 const ISO_DATE = /\b\d{4}-\d{2}-\d{2}\b/g
-const STREET = /\b\d{1,6}[A-Za-z]?\s+(?:[A-Za-z][A-Za-z.'-]*\s+){1,4}(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|court|ct|way|place|pl|terrace|close|crescent|square|sq|highway|hwy|parkway|pkwy)\b/i
-const POSTCODE_UK = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/
+// A street address is a house number, then capitalised words, then a capitalised street word ("221B Baker Street"):
+// case-sensitive, so ordinary facts that end in a lower-case "way", "place" or "close" ("Pack 2 items the same way")
+// stay facts. A lower-case address gets through; brand facts still wait for an admin.
+const STREET = /\b\d{1,6}[A-Za-z]?\s+(?:[A-Z][A-Za-z.'-]*\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl|Terrace|Close|Crescent|Square|Sq|Highway|Hwy|Parkway|Pkwy)\b/
+// A UK postcode counts only where an address puts it, after a comma ("…, SW1A 1AA"): alone it reads like a size or a
+// SKU ("Size M2 3XL runs small").
+const POSTCODE_UK = /,\s*(?:[A-Z][a-z]+\s+)?[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/
 
 /** The first kind of personal data `text` holds, or null. */
 export function personalDataIn(text: string): PersonalDataKind | null {

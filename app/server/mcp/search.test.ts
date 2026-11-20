@@ -89,6 +89,42 @@ describe('the index follows its table (failure 4)', () => {
   })
 })
 
+describe('the delete triggers, on the index itself (failure 4, review L1)', () => {
+  // Read the FTS table directly (no join to its source: a join hides a stale entry whose row is gone). Then reuse the
+  // deleted rowid, as SQLite does without AUTOINCREMENT: a stale entry would now match the new row by the old words.
+  const rowids = async (table: 'memories_fts' | 'chat_messages_fts', word: string) =>
+    (await db.prepare(`SELECT rowid FROM ${table} WHERE ${table} MATCH ?`).bind(word).all<{ rowid: number }>()).results.map(r => r.rowid)
+  it('a deleted fact leaves no words in memories_fts, even when its rowid comes back', async () => {
+    await fact('Zebra crossings need two signs')
+    const [n] = await rowids('memories_fts', 'zebra')
+    expect(n).toBeGreaterThan(0)
+    await db.prepare('DELETE FROM memories WHERE n = ?').bind(n).run()
+    expect(await rowids('memories_fts', 'zebra')).toEqual([])
+    await db.prepare("INSERT INTO memories (n, id, scope, owner_id, text, status, created_by, created_at_ms, updated_at_ms) VALUES (?, 'mem_reuse0000000000000000', 'brand', NULL, 'Lions eat late', 'active', ?, 1, 1)").bind(n, ME).run()
+    expect(await rowids('memories_fts', 'zebra')).toEqual([])
+    expect(await rowids('memories_fts', 'lions')).toEqual([n])
+  })
+  it('a deleted message leaves no words in chat_messages_fts, even when its rowid comes back', async () => {
+    await db.prepare("INSERT INTO chat_messages (id, chat_id, run_id, turn_id, pos, role, text, at_ms) VALUES ('t_del.u', 'c_search', 'r_1', 't_del', 10, 'user', 'Walrus pricing for the spring sale', 5)").run()
+    const [n] = await rowids('chat_messages_fts', 'walrus')
+    expect(n).toBeGreaterThan(0)
+    await db.prepare("DELETE FROM chat_messages WHERE id = 't_del.u'").run()
+    expect(await rowids('chat_messages_fts', 'walrus')).toEqual([])
+    await db.prepare("INSERT INTO chat_messages (n, id, chat_id, run_id, turn_id, pos, role, text, at_ms) VALUES (?, 't_del2.u', 'c_search', 'r_1', 't_del2', 11, 'user', 'Otter colours for autumn', 6)").bind(n).run()
+    expect(await rowids('chat_messages_fts', 'walrus')).toEqual([])
+    expect(await rowids('chat_messages_fts', 'otter')).toEqual([n])
+  })
+})
+
+describe('history_read leaves event rows out (review L4)', () => {
+  it('reads user and agent messages only', async () => {
+    const chat = await history.read(ME, 'c_search', { fromPos: 0, limit: 50 })
+    // c_search's first three rows: a user message, an agent message and an event row at position 2 (later tests add more).
+    expect(chat?.messages.filter(m => m.pos < 10).map(m => [m.pos, m.role])).toEqual([[0, 'user'], [1, 'agent']])
+    expect(chat?.messages.some(m => (m.role as string) === 'event')).toBe(false)
+  })
+})
+
 describe('derived tables and the rebuild (failure 5)', () => {
   it('names every table the two indexes keep in D1, shadow tables included', async () => {
     const inDb = (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND (name LIKE 'memories_fts%' OR name LIKE 'chat_messages_fts%') ORDER BY name").all<{ name: string }>()).results.map(r => r.name)

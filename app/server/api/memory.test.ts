@@ -156,6 +156,16 @@ describe('route 45, PUT /api/memory/brand/:id/forgotten (failures 3 to 5)', () =
     expect(await forget(person(ADMIN, 'admin'), 'brand', F.forgotten, { forgotten: true, ifRev: 1 })).toMatchObject({ status: 409, body: { error: { current: { key: F.forgotten, forgotten: true } } } })
     expect(await linesSince(db, before)).toEqual([])
   })
+  it('a stale ifRev on a fact in a status it takes is 409, and logs nothing (review L2)', async () => {
+    expect((await forget(person(ADMIN, 'admin'), 'brand', F.team, { forgotten: true, ifRev: 1 })).status).toBe(200)
+    expect((await forget(person(ADMIN, 'admin'), 'brand', F.team, { forgotten: false, ifRev: 2 })).status).toBe(200)
+    expect(await row(F.team)).toEqual({ status: 'waiting', rev: 3 })
+    const before = await lastLineId(db)
+    // Waiting is a status a forget takes; only the rev is wrong.
+    expect(await forget(person(ADMIN, 'admin'), 'brand', F.team, { forgotten: true, ifRev: 1 })).toMatchObject({ status: 409, body: { error: { code: 'conflict', current: { key: F.team, rev: 3 } } } })
+    expect(await row(F.team)).toEqual({ status: 'waiting', rev: 3 })
+    expect(await linesSince(db, before)).toEqual([])
+  })
   it("a Member is refused; a person's own fact is 404 here", async () => {
     expect(await forget(person(A, 'member'), 'brand', F.team, { forgotten: true, ifRev: 1 })).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })
     expect(await forget(person(ADMIN, 'admin'), 'brand', F.aOwn, { forgotten: true, ifRev: 1 })).toEqual({ status: 404, body: { error: { code: 'not_found' } } })
