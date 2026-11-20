@@ -39,7 +39,10 @@ export type StoreAdapter = {
   checkpoint(): Promise<CheckpointResult>
   /** Where a resume's check stands (`ok` for a run that isn't a resume). */
   resumeCheck(): ResumeCheck
-  /** The SDK has called the store (any append, load or listing): from then on the run may change the transcript. */
+  /**
+   * The SDK may have changed the transcript: it attempted an append, or a load or listing succeeded (the SDK goes on to
+   * write after those). A load or listing that failed doesn't count.
+   */
   touched(): boolean
 }
 
@@ -79,7 +82,10 @@ export function createStoreAdapter(deps: {
   expect?: ResumeExpect | null
   /** Called once when a resume's check fails (the session aborts its query). */
   onResumeRefused?: (error: string) => void
-  /** Called once, on the SDK's first store call (before it runs): the session tells the root (`released.queryRan`). */
+  /**
+   * Called once, when the run is first touched: before an append's POST, or after a load or listing succeeded. The
+   * session tells the root (`released.queryRan`).
+   */
   onFirstCall?: () => void
 }): StoreAdapter {
   const base = `${deps.proxyUrl.replace(/\/$/, '')}/store`
@@ -163,8 +169,9 @@ export function createStoreAdapter(deps: {
       )
     },
     async load(key) {
-      touch()
+      // Touched only once the load succeeded: a failed read can't change the transcript.
       const r = StoreLoadResult.parse(await post('load', { key: wireKey(key) }))
+      touch()
       const entries = r.entries as SessionStoreEntry[] | null
       if (key.subpath === undefined) {
         mainKey ??= key
@@ -178,8 +185,9 @@ export function createStoreAdapter(deps: {
       return entries
     },
     async listSubkeys(key) {
+      const subkeys = StoreSubkeys.parse(await post('list-subkeys', { key: { projectKey: key.projectKey, sessionId: key.sessionId } })).subkeys
       touch()
-      return StoreSubkeys.parse(await post('list-subkeys', { key: { projectKey: key.projectKey, sessionId: key.sessionId } })).subkeys
+      return subkeys
     },
   }
 

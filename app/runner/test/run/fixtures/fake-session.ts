@@ -166,7 +166,7 @@ channel.onMessage((line) => {
   }
   switch (mode) {
     case 'late-query-started':
-      // A query_started after the run's terminal event: the root reads it no more (released.queryRan stays false).
+      // A query_started after the run's terminal event: the root still counts it (released.queryRan true).
       finished()
       send({ type: 'query_started' })
       end()

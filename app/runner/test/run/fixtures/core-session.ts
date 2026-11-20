@@ -6,6 +6,7 @@
 //   error-before-load      a resume whose query throws before the SDK's first store call
 //   load-then-stop         a resume whose query loads the main transcript (it matches expect), then waits for a stop
 //   restore-stop           the chat has a file whose download never answers: the restore runs until stopped
+//   load-fails             a resume whose first load of the main transcript answers 503 (the query fails with it)
 import { writeFileSync } from 'node:fs'
 import { register } from 'node:module'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
@@ -27,7 +28,9 @@ const egress = fakeEgress()
 egress.parts.set(JSON.stringify(['k', SID, null]), new Map([['000000000000001-000001', [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'u2' }, { type: 'user', uuid: 'u3' }]]]))
 egress.files.set('inputs/a.txt', { body: new TextEncoder().encode('a') })
 const real = egress.fetch
+let loads = 0
 egress.fetch = (url, init) => {
+  if (mode === 'load-fails' && url.endsWith('/store/load') && loads++ === 0) return Promise.resolve(new Response('{"error":"down"}', { status: 503 }))
   if (!url.endsWith('/files/inputs/a.txt') || mode !== 'restore-stop') return real(url, init)
   // The download never answers: the restore waits until the stop cuts it.
   writeFileSync('waiting', '')
@@ -42,7 +45,7 @@ const query: QueryFn = (params): ReturnType<QueryFn> => {
   signal.addEventListener('abort', () => wake(), { once: true })
   async function* gen(): AsyncGenerator<SDKMessage, void> {
     if (mode === 'error-before-load') throw new Error('the CLI exited before it read the store')
-    if (mode === 'load-then-stop') await params.options.sessionStore!.load({ projectKey: 'k', sessionId: SID })
+    if (mode === 'load-then-stop' || mode === 'load-fails') await params.options.sessionStore!.load({ projectKey: 'k', sessionId: SID })
     // The test waits for this before it stops or interrupts the run.
     writeFileSync('waiting', '')
     await woken

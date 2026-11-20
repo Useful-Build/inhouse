@@ -156,12 +156,14 @@ export function hostSession(opts: {
     if (stream.ended) {
       // The run is over, but the session may still be running: an audit entry gets its nack at once, so the hook
       // refuses its call now rather than wait out its timeout (and the session can end in time). Its store result is
-      // kept for `released`; nothing else is read.
+      // kept for `released`, and so is a query_started; nothing else is read.
       if (!line.ok) return
       const late = parseSessionMessage(line.value)
       if (!late.ok) return
       if (late.message.type === 'audit') nack(late.message.id, 'the run has ended')
       else if (late.message.type === 'event') storeResult(late.message.event)
+      // A root timeout can race the first append: the transcript may change, so released must say the query ran.
+      else if (late.message.type === 'query_started') opts.onQueryStarted()
       return
     }
     if (!line.ok) return failProtocol(line.error)

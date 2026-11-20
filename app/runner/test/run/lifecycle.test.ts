@@ -480,6 +480,8 @@ describe('released from the real core: a resume that ends before the SDK touched
     ['interrupted before the first load', 'interrupt-before-load', 'interrupt', { type: 'failed', reason: 'interrupted' }, { checkpoint: null, queryRan: false }],
     ['an SDK error before the first load', 'error-before-load', null, { type: 'failed', reason: 'sdk_error' }, { checkpoint: null, queryRan: false }],
     ['stopped during the file restore', 'restore-stop', 'stop', { type: 'failed', reason: 'stopped' }, { checkpoint: null, queryRan: false }],
+    // Round 2: a first load that fails can't have changed the transcript (failed at b3f5503: queryRan true, damaged).
+    ['a first load that fails (503)', 'load-fails', null, { type: 'failed', reason: 'sdk_error' }, { checkpoint: null, queryRan: false }],
     // The control: once the SDK has loaded the transcript, the run did touch the store, and its checkpoint is the store's.
     ['stopped after the first load', 'load-then-stop', 'stop', { type: 'failed', reason: 'stopped' }, { checkpoint: { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }, queryRan: true }],
   ]
@@ -520,11 +522,13 @@ describe('#137 review round 1 (lows): status and late messages', () => {
     })
   })
 
-  it('a query_started after the terminal event is ignored: released says queryRan false', async () => {
+  // Round 2: a root timeout can race the session's first append, so a late query_started counts (as a late checkpoint
+  // does): released must not say the query never ran when the transcript may have changed.
+  it('a query_started after the terminal event still counts: released says queryRan true', async () => {
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
       const run = openRun(root, runStart({ prompt: 'late-query-started' }))
       expect((await run.done).at(-1)?.type).toBe('finished')
-      expect(await run.released).toMatchObject({ checkpoint: null, queryRan: false })
+      expect(await run.released).toMatchObject({ checkpoint: null, queryRan: true })
     })
   })
 })

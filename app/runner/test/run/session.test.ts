@@ -820,6 +820,24 @@ describe('the run lifecycle', () => {
       expect(h.events().filter((e: { type: string }) => e.type === 'checkpoint')).toEqual([{ type: 'checkpoint', mainEntries: 4, lastUuid: 'w1', lastUuidIndex: 3, runEntries: 1 }])
     })
 
+    // Round 2: a failed read can't change the transcript. Opus's probe: the store holds u1..u3, the first load answers
+    // 503 and the query (awaiting the load) fails with it. Failed at b3f5503 (touched before the POST).
+    it('a first load that fails (503): sdk_error, no query_started, no checkpoint or mirror error', async () => {
+      const egress = fakeEgress()
+      egress.parts.set(JSON.stringify(['k', '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11', null]), new Map([['000000000000001-000001', [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'u2' }, { type: 'user', uuid: 'u3' }]]]))
+      let loads = 0
+      egress.fail = (_m, p) => (p === '/store/load' && loads++ === 0 ? 503 : null)
+      const q = scriptedQuery(async function* ({ options }) {
+        await options.sessionStore!.load({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' })
+        yield result
+      })
+      const h = harness(q.query, testQueryGuards, { egress })
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'sdk_error', message: 'store load: 503' })
+      noStoreTrace(h)
+    })
+
     it('an SDK error: failed sdk_error', async () => {
       const h = harness(fakeQuery([result], { throwAt: 0 }).query)
       h.deliver({ type: 'run', config: resumeConfig() })
