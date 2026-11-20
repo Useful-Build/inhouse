@@ -2,7 +2,7 @@
 // with the store's secret, never in ci.yml:
 //   SHOPIFY_SHOP=… SHOPIFY_CLIENT_ID=… SHOPIFY_CLIENT_SECRET=… npm --prefix app/hub run test:live -- live
 // A missing variable fails the run. Prints case names and outcomes only.
-import { expect, test } from 'vitest'
+// `test` and `expect` are the live project's globals (no `vitest` import: CI can't resolve it from app/test/).
 import { loadCommittedFixture, runLive } from './live-run'
 
 test('shopify live', { timeout: 300_000 }, async () => {

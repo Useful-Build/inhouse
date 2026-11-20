@@ -3,8 +3,9 @@
   "compilerOptions": {
     "target": "es2024",
     "lib": ["ES2024"],
-    // Env and the Workers runtime from `npm run types`; cloudflare:test for the workerd test project.
-    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types"],
+    // Env and the Workers runtime from `npm run types`; cloudflare:test for the workerd test project; vitest/globals for
+    // the live project's files in app/test/, which can't resolve `vitest` themselves in CI.
+    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types", "vitest/globals"],
     "module": "preserve",
     "moduleResolution": "bundler",
     "verbatimModuleSyntax": true,
@@ -19,7 +20,8 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  // The recorded Shopify upstream (W1) is bundled into the test build through testing/index.ts.
-  "include": ["**/*.ts", "../test/upstreams/shopify/**/*.ts"],
+  // The recorded Shopify upstream (W1) is bundled into the test build through testing/index.ts; the live cases and
+  // scripts run in the `live` project.
+  "include": ["**/*.ts", "../test/upstreams/shopify/**/*.ts", "../test/connectors/shopify/**/*.ts"],
   "exclude": ["node_modules"]
 }
