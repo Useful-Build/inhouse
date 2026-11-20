@@ -2,16 +2,11 @@
 // sends a question that lands among the open requests and stays after a reload. Send feedback opens the team window on
 // Feedback; Your settings and Team settings open their pages. (Help's keyboard path is in overlays-keyboard.spec.ts,
 // its focus return in cross-screen.spec.ts, Report a bug in report-bug.spec.ts, Sign out in sample-data.spec.ts.)
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Act' })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }

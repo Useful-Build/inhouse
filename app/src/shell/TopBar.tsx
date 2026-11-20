@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { capStatus, flags, toolDetail } from '../state/derive'
+import { capStatus, flags, lostTool, toolDetail } from '../state/derive'
+import { fmtTime } from '../lib/format'
+import { display } from '../state/display'
 import { chatEntries, openChatKey, useAgentState, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AgentMark, Button, Icon, IconButton } from '../ui'
@@ -102,10 +104,10 @@ export function Banner() {
   const f = flags(ctx)
   if (page === 'settings') return null
   // The disconnected tool, its time and the cap's amounts come from the agent's data and Settings.
-  const lost = ctx.data.scenarios.toolDisconnected
-  const lostName = f.disc ? toolDetail(ctx.data, lost.tool).name : ''
-  const b = f.disc
-    ? { cls: 'bg-warning-tint text-warning-on-tint', icon: 'link_off', title: `${lostName} is disconnected.`, text: `The login expired at ${lost.at}, so your Inhouse agent couldn't read ${lostName} this morning. Customer issues may be missing from today's list.`, cta: 'Reconnect', go: () => openTool(lost.tool) }
+  const lost = lostTool(ctx)
+  const lostName = lost ? toolDetail(ctx.data, lost.key).name : ''
+  const b = lost
+    ? { cls: 'bg-warning-tint text-warning-on-tint', icon: 'link_off', title: `${lostName} is disconnected.`, text: `The login expired at ${fmtTime(lost.since, display())}, so your Inhouse agent couldn't read ${lostName} this morning. Customer issues may be missing from today's list.`, cta: 'Reconnect', go: () => openTool(lost.key) }
     : f.cap
       ? { cls: 'bg-destructive-tint text-destructive-text', icon: 'savings', title: 'Spending cap reached.', text: capStatus(ctx).bannerText, cta: 'Raise the cap', go: () => openSettings('team-spend') }
       : null

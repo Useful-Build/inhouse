@@ -97,6 +97,23 @@ jobs:
             VERIFY_DIR="e2e-artifacts/quarter-${part%/*}" npx playwright test --forbid-only --fully-parallel --shard="$part" || rc=1
           done
           exit $rc
+      # The product build (P1, C8) must ship no sample data, mock code, demo controls, demo clock or demo files, and the
+      # check must catch each of those in the demo build. Runs after the demo quarters and whether or not they passed, and
+      # a failure here doesn't skip them (they come first): the job still fails. The product build puts the demo's deploy
+      # pointer back when it ends, so the uploaded demo build is untouched either way.
+      - if: matrix.shard == 1 && !cancelled()
+        run: npm run build:product && node scripts/check-product-build.mjs
+      # The product build's own specs (e2e/product/): no sample name, no demo switches, the "Not connected
+      # yet" screen. Right after the build it serves (dist-product/, via wrangler dev, so the demo's deploy pointer that
+      # `vite preview` follows stays on dist/). E2E_PREBUILT keeps the demo server Playwright also starts from building
+      # again, so nothing rebuilds beside the product. Its artifacts sit under e2e-artifacts/ so a failure uploads with
+      # the shard's. It runs even when the check above failed, so one log shows both.
+      - if: matrix.shard == 1 && !cancelled()
+        env:
+          E2E_PRODUCT: "1"
+          E2E_PREBUILT: "1"
+          VERIFY_DIR: e2e-artifacts/product
+        run: npx playwright test --project=product --forbid-only
       - if: ${{ !success() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

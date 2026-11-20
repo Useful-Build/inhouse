@@ -1,12 +1,12 @@
 // UI state and the actions screens call. Domain state lives in the agent
-// (see agent/mock.ts); this store holds navigation, overlays, composer and chat UI.
+// (the client behind src/agent/index.ts); this store holds navigation, overlays, composer and chat UI.
 import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
-import { agent } from '../agent'
-import { dataOverrideActive } from '../agent/mock'
-import type { AgentData, AgentState, Attachment, ChatMessage, LibraryFile, MessagePart, Scenario, SetAsideReason, Stage } from '../agent/types'
+import { agent, demo as demoControls, now } from '../agent'
+import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, Scenario, SetAsideReason, Stage } from '../agent/types'
 import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
-import { demoNow, fmtTime } from '../agent/clock'
+import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/upgrade-times'
+import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
 import { rememberTrigger } from '../ui/dialogs'
 import { activeMode, problemById } from './derive'
@@ -22,13 +22,14 @@ export type SkillTab = 'all' | 'team' | 'mine'
 export type TodaySort = 'default' | 'amount'
 export type ApprovalSort = 'oldest' | 'newest' | 'stake'
 
-/** A chat the person started in this session: listed in Recent chats and See all until Reset demo. */
-export interface ChatEntry { id: string; title: string; day: string; at: string; pinned?: boolean }
+/** A chat in the lists: one the person started in this session (listed in Recent chats and See all until Reset demo) or
+ *  the agent's. `at` is when it was last active: the lists show it and group by its day. */
+export interface ChatEntry { id: string; title: string; at: Instant; pinned?: boolean }
 
 /** Every chat that wasn't deleted, newest first (the ones started here, then the agent's), with the person's titles. */
 const liveChats = (data: AgentData, started: ChatEntry[], st: AgentState): ChatEntry[] =>
   [...started, ...data.chat.chats].filter(c => !st.chatDeleted[c.id])
-    .map(c => ({ id: c.id, title: st.chatTitles[c.id] ?? c.title, day: c.day, at: c.at, pinned: !!st.chatPinned[c.id] }))
+    .map(c => ({ id: c.id, title: st.chatTitles[c.id] ?? c.title, at: c.at, pinned: !!st.chatPinned[c.id] }))
 
 /** The chat list the sidebar, See all and the top bar read: deleted chats hidden, pinned ones first, then newest first. */
 export const chatEntries = (data: AgentData, started: ChatEntry[], st: AgentState): ChatEntry[] => {
@@ -292,8 +293,8 @@ const RUN_FAILED = "Your Inhouse agent couldn't finish this answer. Nothing was 
 /** A run id the agent made (its messages carry it as their trace), as opposed to a recorded trace key on a seeded answer. */
 const RUN_ID = /^run-/
 let chatSeq = 0
-/** Now on the demo clock (agent/clock.ts). */
-const demoTime = () => demoNow(agent.getSnapshot().demoStartedAt)
+/** Now on the client entry's clock: the demo clock in the demo, the real clock in the product (agent/index.ts). */
+const demoTime = () => new Date(now())
 /** A write the agent took back: it already told the person with a notice, so the console gets the detail. */
 const logFailure = (what: string) => (e: unknown) => { console.warn(`Inhouse: ${what}.`, e) }
 /** A started chat's title: the question when it's short, else its first words cut at a word break (L8). */
@@ -310,7 +311,7 @@ const shortTitle = (text: string): string => {
 }
 /** A chat started now, titled from its first words. */
 const startedChat = (text: string): ChatEntry =>
-  ({ id: `${STARTED_CHAT_PREFIX}${chatSession}-${++chatSeq}`, title: shortTitle(text), day: 'Today', at: fmtTime(demoTime()) })
+  ({ id: `${STARTED_CHAT_PREFIX}${chatSession}-${++chatSeq}`, title: shortTitle(text), at: instantOf(demoTime().getTime()) })
 /** The notes a stopped answer leaves: Retry asks its question again. */
 export const isStoppedNote = (m: ChatMessage): boolean => m.role === 'event' && (m.text === STOPPED_NOTE || m.text === RELOAD_NOTE)
 
@@ -407,9 +408,9 @@ const PART_OK: Record<MessagePart['type'], (p: Rec) => boolean> = {
   text: p => isStr(p.text),
   table: p => isTable(p.table),
   approval: p => isStr(p.problemId),
-  routine: p => isRec(p.routine) && ['id', 'name', 'freq', 'day', 'time', 'next', 'note'].every(k => isStr((p.routine as Rec)[k])),
+  routine: p => isRec(p.routine) && ['id', 'name', 'freq', 'day', 'note'].every(k => isStr((p.routine as Rec)[k])) && isClock((p.routine as Rec).time) && isInstant((p.routine as Rec).next),
   skill: p => isRec(p.skill) && ['name', 'desc', 'tools', 'mode'].every(k => isStr((p.skill as Rec)[k])),
-  workRow: p => isStr(p.text) && isStr(p.time),
+  workRow: p => isStr(p.text) && isInstant(p.at),
   notInThisStage: p => isStr(p.text),
   error: p => isStr(p.text) && isStr(p.retryQuestion),
   suggestions: p => Array.isArray(p.questions) && p.questions.every(isStr),
@@ -419,8 +420,31 @@ const isMsg = (m: unknown): m is ChatMessage => {
   if (!isRec(m) || !isStr(m.id)) return false
   if (m.role === 'user') return isStr(m.text) && (m.quote === undefined || isStr(m.quote)) && (m.atts === undefined || isAtts(m.atts))
   if (m.role === 'event') return isStr(m.text)
-  if (m.role === 'agent') return isStr(m.trace) && isPart(m.part) && (m.model === undefined || isStr(m.model)) && (m.at === undefined || typeof m.at === 'number')
+  if (m.role === 'agent') return isStr(m.trace) && isPart(m.part) && (m.model === undefined || isStr(m.model)) && (m.at === undefined || isInstant(m.at))
   return false
+}
+const isInstant = (v: unknown): v is Instant => isRec(v) && isStr(v.iso) && typeof v.ms === 'number' && Date.parse(v.iso) === v.ms
+const isClock = (v: unknown) => isRec(v) && Number.isInteger(v.hour) && Number.isInteger(v.minute)
+/**
+ * A message saved before C1 (P1), in today's shape: an answer's `at` was epoch ms, a routine card's time and next run and
+ * a work row's time were saved as they showed ("7:00 AM", "Next run Tue, Nov 17 at 7:00 AM"), on the demo clock's day.
+ * Anything else is returned as it is, for `isMsg` to judge.
+ */
+const upgradeMsg = (m: unknown): unknown => {
+  if (!isRec(m) || m.role !== 'agent') return m
+  const base = demoTime()
+  let out: Rec = typeof m.at === 'number' && Number.isFinite(m.at) ? { ...m, at: instantOf(m.at) } : m
+  const p = out.part
+  if (isRec(p) && p.type === 'workRow' && isStr(p.time)) {
+    const { time, ...rest } = p
+    const at = shownTimeOn(time, base)
+    if (at) out = { ...out, part: { ...rest, at } }
+  }
+  if (isRec(p) && p.type === 'routine' && isRec(p.routine) && isStr(p.routine.time) && isStr(p.routine.next)) {
+    const time = shownClock(p.routine.time), next = shownDateTimeIn(p.routine.next, base)
+    if (time && next) out = { ...out, part: { ...p, routine: { ...p.routine, time, next } } }
+  }
+  return out
 }
 const isQueued = (v: unknown): v is QueuedMsg => isRec(v) && isStr(v.id) && isStr(v.text) && (v.quote === undefined || isStr(v.quote))
   && (v.atts === undefined || isAtts(v.atts)) && (v.model === null || isStr(v.model))
@@ -434,8 +458,12 @@ function loadSession(): SavedSession | null {
   catch (e) { console.warn('Inhouse: could not read the saved session, starting fresh.', e); return null }
   if (!isRec(raw)) return null
   const started = (Array.isArray(raw.started) ? raw.started : [])
-    .filter((c): c is ChatEntry => isRec(c) && ['id', 'title', 'day', 'at'].every(k => isStr(c[k])) && (c.id as string).startsWith(STARTED_CHAT_PREFIX))
-    .map(c => ({ id: c.id, title: c.title, day: c.day, at: c.at }))
+    .flatMap((c): ChatEntry[] => {
+      if (!isRec(c) || !isStr(c.id) || !isStr(c.title) || !c.id.startsWith(STARTED_CHAT_PREFIX)) return []
+      // Saved before C1 (P1): the time it showed ("8:00 AM"), started on the demo clock's day.
+      const at = isInstant(c.at) ? c.at : isStr(c.at) ? shownTimeOn(c.at, demoTime()) : null
+      return at ? [{ id: c.id, title: c.title, at }] : []
+    })
   const data = agent.read()
   // Every chat the agent has in any scenario, not only the one showing: a reload on First day or Loading (no chats)
   // keeps what the person added to the sample chats for when they switch back.
@@ -444,7 +472,10 @@ function loadSession(): SavedSession | null {
   const chats: Record<string, ChatAdds> = {}
   for (const [id, c] of Object.entries(isRec(raw.chats) ? raw.chats : {})) {
     if (!exists(id) || !isAdds(c)) continue
-    chats[id] = { extras: c.extras.filter(isMsg), hidden: Object.fromEntries(Object.entries(c.hidden).filter(([, v]) => v === true)) as Record<string, true> }
+    const extras = c.extras.map(upgradeMsg).filter(isMsg)
+    // A message it can't read (or convert from before C1) is dropped, and said so.
+    if (extras.length < c.extras.length) console.warn(`Inhouse: dropped ${c.extras.length - extras.length} saved message(s) it could not read in chat ${id}.`)
+    chats[id] = { extras, hidden: Object.fromEntries(Object.entries(c.hidden).filter(([, v]) => v === true)) as Record<string, true> }
   }
   const drafts: Record<string, ComposerDraft> = {}
   for (const [k, d] of Object.entries(isRec(raw.drafts) ? raw.drafts : {})) {
@@ -547,8 +578,10 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
 })
 
 export const useUi = create<UiState & UiActions>()((set, get) => {
-  const demo = loadDemo()
-  agent.setDemo({ stage: demo.stage, scenario: demo.scenario })
+  // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: its stage comes
+  // from the client in P2, so `stage` and `scenario` here are placeholders there.
+  const demo = demoControls ? loadDemo() : DEFAULT_DEMO
+  demoControls?.setDemo({ stage: demo.stage, scenario: demo.scenario })
   const session = restoreSession(loadSession())
   // The reload note goes into the saved session once, not again on every reload until something else saves.
   saveAfterSetup = !!session.noted
@@ -696,7 +729,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set(s => ({ runs: without(s.runs, cid), ...(left.length ? { queued: { ...s.queued, [cid]: [...left, ...(own(s.queued, cid) ?? [])] } } : {}) }))
       ended = true
     }
-    const at = () => demoTime().getTime()
+    const at = () => instantOf(demoTime().getTime())
     // The failing turn's trace; a run that failed before starting has none.
     const showError = (text: string) => addTo(cid, { id: msgId(), role: 'agent', trace: turn === 1 || !runId ? runId : `${runId}-t${turn}`, at: at(), part: { type: 'error', text, retryQuestion: q } })
     try {
@@ -985,8 +1018,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const was = openChatKey(get(), agent.read())
       set(p)
       const { stage, scenario, ambient, animateMark } = get()
-      agent.setDemo({ stage, scenario })
-      saveDemo({ stage, scenario, ambient, animateMark })
+      demoControls?.setDemo({ stage, scenario })
+      if (demoControls) saveDemo({ stage, scenario, ambient, animateMark })
       const now = openChatKey(get(), agent.read())
       if (now !== was) {
         set(s => {
@@ -999,16 +1032,16 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     resetDemo: () => {
       // Every answer stops: the runs go with the state, so their late events find no token.
       for (const r of Object.values(get().runs)) if (r.runId) agent.stop(r.runId)
-      agent.reset()
+      demoControls?.reset()
       clearSession()
       // The stage and scenario go back to their defaults with everything else; the dot sweep and mark animation stay.
       const { ambient, animateMark } = get()
       const d = { ...DEFAULT_DEMO, ambient, animateMark }
-      agent.setDemo({ stage: d.stage, scenario: d.scenario })
-      saveDemo(d)
+      demoControls?.setDemo({ stage: d.stage, scenario: d.scenario })
+      if (demoControls) saveDemo(d)
       set({ ...initialUi(), ...d, phone: get().phone, demoOpen: get().demoOpen })
       // The brand and channels came from the override at load, so a reload is what drops them.
-      if (dataOverrideActive) location.reload()
+      if (demoControls?.dataOverrideActive) location.reload()
     },
 
     approveMany: ids => {
@@ -1156,13 +1189,15 @@ export const useAgentState = (): AgentState => useSyncExternalStore(agent.subscr
 /** Read-only domain data (problems, tools, usage, people, chat strings): everything that is not state. */
 export const useAgentData = (): AgentData => useSyncExternalStore(agent.subscribe, agent.read)
 
-/** Stage index, scenario, agent state and data: the input every selector in derive.ts takes. */
+/**
+ * Stage index, agent state and data: the input every selector in derive.ts takes. The demo's scenario switch isn't in it:
+ * a scenario shows through the data the client reads (the mock serves another snapshot per scenario).
+ */
 export function useCtx(): Ctx {
   const agentState = useAgentState()
   const data = useAgentData()
   const stage = useUi(s => s.stage)
-  const scenario = useUi(s => s.scenario)
-  return useMemo(() => ({ S: stageIndex(stage), scenario, agent: agentState, data }), [stage, scenario, agentState, data])
+  return useMemo(() => ({ S: stageIndex(stage), agent: agentState, data }), [stage, agentState, data])
 }
 
 // ---------- composer drafts (PR 4): swap drafts when the open composer changes ----------

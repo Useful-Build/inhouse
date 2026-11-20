@@ -1,16 +1,11 @@
 // The problem panel's two ways out that aren't approvals, at 1440: "Ask about this…" (in the panel and in the card's
 // menu) starts a chat holding the question, which a reload keeps; the memory note's Manage opens Team memory. Approve,
 // Edit, Don't send and Undo are in app.spec.ts, today-approvals.spec.ts and page-actions.spec.ts.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx) {
+  await fx.seed({ stage: 'Act' })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('things need you')
 }
@@ -23,8 +18,8 @@ const sent = (page: Page, text: string) =>
 const STUCK = 'Order #4821 is stuck for 4 days'
 const JACKET = 'Trail Shell Jacket (M, Olive) is oversold by 5'
 
-test('Problem panel: Ask about this… starts a chat with the question, the panel closes, and a reload keeps the chat', async ({ page }) => {
-  await start(page)
+test('Problem panel: Ask about this… starts a chat with the question, the panel closes, and a reload keeps the chat', async ({ fx, page }) => {
+  await start(page, fx)
   await card(page, STUCK).click({ position: { x: 12, y: 12 } })
   await expect(panel(page)).toBeVisible()
   await panel(page).getByRole('button', { name: 'Ask about this…' }).click()
@@ -45,8 +40,8 @@ test('Problem panel: Ask about this… starts a chat with the question, the pane
   await expect(card(page, STUCK)).toBeVisible()
 })
 
-test("Card menu: Ask about this starts the same chat without opening the panel; the panel's Manage opens Team memory", async ({ page }) => {
-  await start(page)
+test("Card menu: Ask about this starts the same chat without opening the panel; the panel's Manage opens Team memory", async ({ fx, page }) => {
+  await start(page, fx)
   await card(page, STUCK).getByRole('button', { name: 'More' }).click()
   const menu = page.getByRole('menu', { name: 'Card actions' })
   await expect(menu).toBeVisible()

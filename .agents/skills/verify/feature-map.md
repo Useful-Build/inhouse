@@ -9,7 +9,7 @@ Format and workflow: global `verification` skill, `references/feature-map.md`. E
 No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
-- Ship specs: `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts` and `e2e/ship/hardening.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview, never in CI's normal run.
+- Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts` and `e2e/ship/hardening.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview, never in CI's normal run.
 - Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Audit log: the download is checked on desktop only (its content in `sample-data.spec.ts`); the phone check sees the button.
@@ -294,6 +294,18 @@ Settings: photos
   Covered:  e2e/photo.spec.ts
 
 ## Shell and states
+
+Product build: Not connected yet
+  Path:     `npm run build:product`, any URL (`?demo` and `?demo=<anything>` included)
+  Selector: heading "Not connected yet", the product project (`E2E_PRODUCT=1`)
+  Expected: one "Not connected yet" screen in place of every page; no sample name, no demo switches or Reset demo, `?demo` ignored (the demo clock's absence is proved by `scripts/check-product-build.mjs`)
+  Covered:  e2e/product/no-demo.spec.ts
+
+Demo upgrade: a stored demo
+  Path:     a browser holding the demo as the build before the agent seam saved it -> open Today
+  Selector: sidebar chat, model button, chat composer, Today card "going out"
+  Expected: the started chat with its answer, the draft, the model pick and the approval mid-hold are all intact, and the hold still ends on the clock
+  Covered:  e2e/demo-upgrade.spec.ts
 
 Navigation: palette and shortcuts
   Path:     Cmd+K or Search -> type

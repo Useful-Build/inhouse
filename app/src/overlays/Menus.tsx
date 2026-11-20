@@ -4,6 +4,8 @@ import { agent } from '../agent'
 import type { AgentNotification } from '../agent'
 import { useAgentData, useAgentState, useUi } from '../state/store'
 import { userName } from '../state/derive'
+import { fmtWhen } from '../lib/format'
+import { display, nowOf } from '../state/display'
 import { Avatar, EmptyState, Icon, IconTile, MenuItem } from '../ui'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -49,7 +51,7 @@ export function Notifications({ children }: { children: ReactNode }) {
               : <IconTile icon={n.icon} />}
             <span className="min-w-0 flex-1">
               <span className="block text-base leading-menu">{n.text}</span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">{n.who} · {n.at}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{n.who} · {fmtWhen(n.at, nowOf(), display())}</span>
             </span>
             {n.unread && <><span className="sr-only">Unread</span><i aria-hidden="true" className="mt-1.75 size-1.75 flex-none rounded-full bg-foreground" /></>}
           </button>

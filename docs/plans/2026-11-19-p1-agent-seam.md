@@ -1,6 +1,6 @@
 # P1: the agent seam (`fleet/agent-seam`)
 
-Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend plan
+Status: locked and approved by Wasim, 2026-11-19. Built; every piece merged, the final PR into `main` next. Phase plan under the backend plan
 (`docs/plans/2026-11-19-backend.md`, "Phases" and "Phase schedule (waves)"). Common rules for every phase (landing,
 reviews, seats, scrub) are in that schedule section and aren't repeated here.
 
@@ -90,8 +90,10 @@ Out: any backend, route or Worker change (P2); C2 to C7 and C9 (P2, P3, P6); dep
   A string scan alone can't prove a tree-shaken or renamed import is gone. (3) Copied files: no `library/` or
   `avatars/` file in the output. It runs the same checks on the demo build and fails if they pass there, so it can't go
   green by scanning the wrong folder.
-- **One formatting place, enforced.** `scripts/check-format.mjs` fails on `toLocale*`, `Intl.DateTimeFormat` or
-  `Intl.NumberFormat` outside `src/lib/format.ts`; `lint:tokens` runs it. The formatters in `clock.ts` today move to
+- **One formatting place, enforced.** `scripts/check-format.mjs` parses each file in `src/` and `shared/` (rolldown's
+  parser, a direct dev dependency) and fails on any `toLocale*` call, any `Intl.*` formatter in any access form, and
+  hand-built dates (`getHours` and the like) outside `src/lib/format.ts` and the demo clock; `lint:tokens` runs it, and
+  `scripts/check-format-probes/` holds one probe file per dodge, run by a unit test. The formatters in `clock.ts` today move to
   `format.ts`.
 - **A returning visitor keeps their demo.** C1 changes the shape of values the mock and the store keep in the browser
   under keys that don't change. Before any change, PR0 saves what today's `main` writes there (a started chat, a

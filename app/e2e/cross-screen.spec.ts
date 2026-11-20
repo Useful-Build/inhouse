@@ -1,16 +1,11 @@
 // Chats keep what was added and new chats stay listed, saved settings reach
 // other screens, focus returns, chat URLs, and the Library's selection, Undo, Escape, counts and data check.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
 async function start(page: Page, stage: 'Watch' | 'Act' | 'Run' = 'Act', hash = '#/today') {
-  await page.addInitScript(([s]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage])
+  await fxFor(page, undefined).seed({ stage, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -327,11 +322,12 @@ test('Library: sample data with an unknown place stops the app with a message', 
 })
 
 test('Demo switcher: no page puts a control under it at 1440', async ({ page }) => {
+  await start(page, 'Act', '#/library')
   for (const hash of ['#/library', '#/settings/you-general', '#/today', '#/chats/refunds', '#/usage', '#/approvals']) {
-    await start(page, 'Act', hash)
+    await page.goto('/?demo' + hash)
     await expect(page.getByRole('button', { name: /^Demo switches/ })).toBeVisible()
     await nothingUnderSwitcher(page)
   }
-  await start(page, 'Act', '#/library')
+  await page.goto('/?demo#/library')
   await keep(page, 'library-1440')
 })

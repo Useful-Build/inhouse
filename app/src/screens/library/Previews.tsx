@@ -4,6 +4,8 @@
 import type { DocPreview, LibraryFile } from '../../agent'
 import { cn } from '@/lib/utils'
 import { useAgentData } from '../../state/store'
+import { fmtMediaLength } from '../../lib/format'
+import { display } from '../../state/display'
 import { Icon } from '../../ui'
 
 const GREY = 'bg-fill text-foreground-2'
@@ -94,7 +96,7 @@ export function MediaFace({ file, ratio = '16 / 9', big }: { file: LibraryFile; 
         <span aria-hidden="true" className="absolute top-1/2 left-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-overlay text-overlay-foreground" style={{ width: play, height: play }}>
           <Icon name="play_arrow" size={play * 0.55} fill />
         </span>
-        <span className={DURATION}>{file.duration}</span>
+        <span className={DURATION}>{file.durationMs === undefined ? undefined : fmtMediaLength(file.durationMs, display())}</span>
       </div>
     )
   }
@@ -103,7 +105,7 @@ export function MediaFace({ file, ratio = '16 / 9', big }: { file: LibraryFile; 
     // content art: a violet waveform
     <div className={`relative box-border flex w-full items-center justify-center bg-[#f1edf9] px-[14%] ${big ? 'gap-1' : 'gap-[3px]'}`} style={{ aspectRatio: ratio }}>
       {bars(file.id, n).map((h, i) => <i key={i} className={`max-w-[6px] flex-1 rounded-xs ${i < n * 0.34 ? 'bg-[#5b3aa8]' : 'bg-[#c9b9ec]'}`} style={{ height: `${h * (big ? 62 : 56)}%` }} />)}
-      <span className={DURATION}>{file.duration}</span>
+      <span className={DURATION}>{file.durationMs === undefined ? undefined : fmtMediaLength(file.durationMs, display())}</span>
     </div>
   )
 }

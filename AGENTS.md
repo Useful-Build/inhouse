@@ -5,9 +5,17 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
 ## Layout
 
 - `app/` is the whole app: a React single-page app served by a Cloudflare Worker.
-- `app/src/agent/` holds the `AgentClient` interface, the mock agent and its sample data (`sample-data/`, invented).
+- `app/src/agent/` holds the `AgentClient` interface, the mock agent and its sample data (`sample-data/`, invented). The
+  two client entries (`client.demo.ts`, `client.product.ts`) pick the client at build time; `src/agent/http/` is the
+  product's client stub.
+- `app/shared/` holds the zod schemas for everything the `AgentClient` returns (`shared/contract/`); `src/agent/types.ts`
+  re-exports their types.
+- `app/build-support/` holds the build helpers and their tests (the demo deploy redirect).
+- `app/public-demo/` holds the demo-only public files (the Library's sample files, avatars); the product build ships none.
 - `app/src/ui/` holds the app's own components, `app/src/components/ui/` the base's shadcn components.
-- `app/e2e/` holds the Playwright specs and the visual baselines; `app/e2e/ship/` the ship recording specs.
+- `app/e2e/` holds the Playwright specs and the visual baselines; `app/e2e/ship/` the ship recording specs;
+  `app/e2e/support/` the fixtures layer (`fx`: sample names and seeding, the only place that knows the mock's storage
+  keys); `app/e2e/product/` the product build's specs.
 - `docs/plans/` holds the approved plans. `.github/rulesets/` holds the branch rulesets as applied.
 
 ## Stack
@@ -25,11 +33,13 @@ Run them in `app/`.
 | `npm run dev` | Dev server on port 5173 |
 | `npm run typecheck` | `tsc -b` |
 | `npm run lint` | oxlint, then `lint:tokens` (the token, app and no-fixed-wait checks) |
-| `npm run test:unit` | Vitest: the property tests in `src/**/*.property.test.ts` |
-| `npm run build` | Type check and production build |
+| `npm run test:unit` | Vitest: `src/**/*.test.ts` (property tests included) and `build-support/` |
+| `npm run build` | Type check and production build (the demo build) |
+| `npm run build:product` | The product build into `dist-product/`: no mock, sample data, demo controls or demo clock. `node scripts/check-product-build.mjs` checks it (CI runs both) |
 | `npm run preview` | Build, then serve the build |
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
 | `npm run test:visual:linux` | The visual suite in the Playwright Docker image (`:update` regenerates baselines) |
+| `E2E_PRODUCT=1 E2E_PREBUILT=1 npx playwright test --project=product` | The product build's specs (`e2e/product/`), after `npm run build:product`. No other run includes them |
 | `npm run test:a11y` | axe, WCAG 2.1 A and AA |
 | `npm run deploy` | Build and deploy to the Cloudflare account wrangler is signed in to (a fork's own). Don't use it for this repo's production: that's `deploy.yml` |
 
@@ -112,5 +122,5 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`.
-- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`). Give each parallel worktree its own `E2E_PORT`.
+- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`). Give each parallel worktree its own `E2E_PORT` and `E2E_PRODUCT_PORT`.
 - **Fleet repo:** no. `fleet/<topic>` is only the integration branch name here.

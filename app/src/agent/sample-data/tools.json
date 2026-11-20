@@ -14,7 +14,7 @@
       "site": "slack.com",
       "desc": "Alerts and approvals reach your team in #ops, and anyone can ask your Inhouse agent there.",
       "need": 1,
-      "since": "Nov 2",
+      "since": "-14d 09:00",
       "channel": "#ops",
       "sends": [
         "Approvals waiting for you",
@@ -40,8 +40,8 @@
     "klaviyo"
   ],
   "lastRead": {
-    "default": "6:00 AM",
-    "meta-ads": "5:58 AM"
+    "default": "0d 06:00",
+    "meta-ads": "0d 05:58"
   },
   "catalog": [
     {
@@ -79,7 +79,7 @@
       "run": "Restock returns and pause oversold variants, within your limits",
       "conn": "Custom app on your Shopify store, built by the Inhouse team",
       "site": "shopify.com",
-      "since": "Nov 2"
+      "since": "-14d 09:00"
     },
     "amazon": {
       "name": "Amazon",
@@ -94,7 +94,7 @@
       "run": "Daily payout check. Cases still wait for you",
       "conn": "Amazon Selling Partner, connected with your seller login",
       "site": "sellercentral.amazon.com",
-      "since": "Nov 9"
+      "since": "-7d 09:00"
     },
     "shipbob": {
       "name": "ShipBob",
@@ -109,7 +109,7 @@
       "run": "Nudge ShipBob on stuck orders",
       "conn": "ShipBob official connection",
       "site": "shipbob.com",
-      "since": "Nov 2"
+      "since": "-14d 09:00"
     },
     "xero": {
       "name": "Xero",
@@ -124,7 +124,7 @@
       "run": "Match payouts to orders",
       "conn": "Xero official connection, read only by default",
       "site": "xero.com",
-      "since": "Nov 11"
+      "since": "-5d 09:00"
     },
     "gorgias": {
       "name": "Gorgias",
@@ -139,7 +139,7 @@
       "run": "Tag and sort new tickets. Replies always wait for you",
       "conn": "Gorgias official connection",
       "site": "gorgias.com",
-      "since": "Nov 12"
+      "since": "-4d 09:00"
     },
     "meta-ads": {
       "name": "Meta Ads",
@@ -154,7 +154,7 @@
       "run": "Pause ads for out-of-stock products. Budget changes wait for you",
       "conn": "Meta Marketing connection, read only",
       "site": "facebook.com/business",
-      "since": "Nov 13"
+      "since": "-3d 09:00"
     },
     "klaviyo": {
       "name": "Klaviyo",
@@ -170,7 +170,7 @@
       "run": "Pull low-stock products out of scheduled emails",
       "conn": "Klaviyo official connection, being set up by the Inhouse team",
       "site": "klaviyo.com",
-      "since": "Live by Fri, Nov 20"
+      "liveBy": "+4d 09:00"
     }
   },
   "fieldGuide": {

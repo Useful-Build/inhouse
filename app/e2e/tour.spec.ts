@@ -1,25 +1,21 @@
 // Visual tour: every page, stage, scenario and pop-up, one screenshot each.
 // Assertions are light; the screenshots are the artifact reviewed by eye.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx, type Stage, type Theme } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
 // TOUR_THEME=dark captures the same tour in dark mode.
 const THEME = process.env.TOUR_THEME ?? ''
 
-async function open(page: Page, stage: string, scenario: string, hash: string) {
-  await page.addInitScript(([s, sc, theme]) => {
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Always', animateMark: false }))
-    if (theme) localStorage.setItem('inhouse.theme', theme)
-  }, [stage, scenario, THEME])
+async function open(page: Page, fx: Fx, stage: Stage, scenario: string, hash: string) {
+  await fx.seed({ stage, scenario, ...(THEME ? { theme: THEME as Theme } : {}), demo: { ambient: 'Always' }, once: false })
   await page.goto('/?demo' + hash)
   await expect(page.locator('main')).toBeVisible() // the page drew (some tour pages are chats, with no h1)
   await atRest(page)
 }
 const shot = (page: Page, name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true })
 
-const PAGES: [string, string, string, string][] = [
+const PAGES: [Stage, string, string, string][] = [
   ['Watch', 'Normal', '#/today', '6 things need you today.'],
   ['Watch', 'Normal', '#/approvals', "In Act, today's 6 fixes would be waiting here"],
   ['Watch', 'Normal', '#/chats', 'Approvals and routines start in Act'],
@@ -44,15 +40,15 @@ const PAGES: [string, string, string, string][] = [
 ]
 
 for (const [stage, scenario, hash, text] of PAGES) {
-  test(`${stage} · ${scenario} · ${hash}`, async ({ page }) => {
-    await open(page, stage, scenario, hash)
+  test(`${stage} · ${scenario} · ${hash}`, async ({ fx, page }) => {
+    await open(page, fx, stage, scenario, hash)
     await expect(page.getByText(text, { exact: false }).first()).toBeVisible()
     await shot(page, `${stage}-${scenario}-${hash.replace(/[#/]+/g, '-')}`.replace(/\s+/g, '_'))
   })
 }
 
-test('Pop-ups: notifications, account menu, team window, empty chat', async ({ page }) => {
-  await open(page, 'Act', 'Normal', '#/today')
+test('Pop-ups: notifications, account menu, team window, empty chat', async ({ fx, page }) => {
+  await open(page, fx, 'Act', 'Normal', '#/today')
   await page.getByRole('button', { name: 'Notifications' }).click()
   await expect(page.getByText('Mark all as read')).toBeVisible()
   await shot(page, 'pop-notifications')

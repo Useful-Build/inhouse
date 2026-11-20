@@ -1,23 +1,18 @@
 // Page actions at 390 px: Settings shows its menu, then a page with Back (the app's and the browser's); the Library's filter sheet
 // holds the sort and the type.
-import { expect, test } from './csp.js'
+import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
-async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+async function start(page: Page, fx: Fx, hash: string) {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const noSideways = (page: Page) => page.evaluate(() => [document.documentElement, document.querySelector('main')!].every(e => e.scrollWidth - e.clientWidth <= 1))
 
-test('Phone: Settings opens on its menu, a page replaces it, and Back returns to the menu', async ({ page }) => {
-  await start(page, '#/today')
+test('Phone: Settings opens on its menu, a page replaces it, and Back returns to the menu', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
   await page.getByRole('button', { name: 'Menu' }).click()
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /account and settings/i }).click()
   await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Team settings' }).click()
@@ -78,8 +73,8 @@ test('Phone: Settings opens on its menu, a page replaces it, and Back returns to
   await expect(page.getByRole('button', { name: 'Back to settings' })).toBeVisible()
 })
 
-test('Phone: the Library filter sheet sorts and picks a type, and any type can be picked', async ({ page }) => {
-  await start(page, '#/library')
+test('Phone: the Library filter sheet sorts and picks a type, and any type can be picked', async ({ fx, page }) => {
+  await start(page, fx, '#/library')
   await expect(page.getByRole('heading', { level: 1, name: 'All files' })).toBeVisible()
   const rows = page.getByRole('list', { name: 'Files' }).getByRole('listitem')
   const total = await rows.count()

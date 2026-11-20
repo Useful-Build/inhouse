@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
 import type { Trace, TraceStep, TraceStepKind } from '../agent/types'
-import { fmtSeconds } from '../state/derive'
+import { fmtDuration, fmtMoney, traceTicks } from '../lib/format'
+import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Button, Icon, IconButton, Segmented, Window } from '../ui'
 import { Badge } from '@/components/ui/badge'
@@ -38,7 +39,6 @@ const KIND_LABEL: Record<TraceStepKind, string> = {
   answer: 'Answer', fail: 'Failed', approval: 'Waits for approval',
 }
 const COL = 'grid-cols-trace'
-const TICK_CANDIDATES = [0.5, 1, 2, 5, 10, 15, 20, 30, 50, 60, 100, 120]
 const NEXT_SPEED: Record<number, number> = { 1: 2, 2: 5, 5: 1 }
 const cap1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
@@ -80,13 +80,14 @@ function TraceSteps({ trace }: { trace: Trace }) {
   const put = (v: number | null) => { tRef.current = v; setT(v) }
 
   const { steps } = trace
-  const D = trace.duration
+  // Times here are ms from the start of the run: the run's length, each step's start and end, and the replay's `t`.
+  const D = trace.durationMs
   const M = D * 1.22
 
   useEffect(() => {
     if (!playing) return
     const timer = setInterval(() => {
-      const next = (tRef.current ?? 0) + 0.05 * speed * (D > 60 ? 6 : 1)
+      const next = (tRef.current ?? 0) + 50 * speed * (D > 60_000 ? 6 : 1)
       if (next >= D) { put(D); setPlaying(false) } else put(next)
     }, 50)
     return () => clearInterval(timer)
@@ -99,25 +100,25 @@ function TraceSteps({ trace }: { trace: Trace }) {
   }
   const onStop = () => { setPlaying(false); put(null) }
 
-  const started = (s: { start: number }) => t == null || s.start <= t
-  const stepT = TICK_CANDIDATES.find(c => D / c <= 3.2) ?? 120
-  const ticks: { label: string; left: string }[] = []
-  for (let v = 0; v <= D; v += stepT) ticks.push({ label: v === 0 ? '0s' : fmtSeconds(v), left: `${(v / M) * 100}%` })
+  const started = (s: { startMs: number }) => t == null || s.startMs <= t
+  const d0 = display()
+  const fmtDur = (ms: number) => fmtDuration(ms, d0)
+  const ticks = traceTicks(D, d0).map(k => ({ label: k.label, left: `${(k.ms / M) * 100}%` }))
   // The slowest model, tool or agent step. A run that failed before any (a tool that couldn't sign in) has none.
   const slow = steps.filter(s => s.kind === 'model' || s.kind === 'tool' || s.kind === 'agent')
-    .reduce<TraceStep | null>((a, s) => (!a || s.end - s.start > a.end - a.start ? s : a), null)
+    .reduce<TraceStep | null>((a, s) => (!a || s.endMs - s.startMs > a.endMs - a.startMs ? s : a), null)
   const cnt = (k: TraceStepKind) => steps.filter(s => s.kind === k && started(s)).length
   const toolsUsed = new Set(steps.filter(s => s.kind === 'tool' && s.label.includes(' · ')).map(s => s.label.split(' · ')[0])).size
-  const shown = fmtSeconds(t == null ? D : t)
+  const shown = fmtDur(t == null ? D : t)
   const stats: [string, string | number][] = tech
-    ? [['Duration', shown], ['Cost', trace.cost], ['Tokens', trace.tokens], ['Model calls', cnt('model')], ['Tool calls', cnt('tool')], ['Errors', cnt('fail')]]
-    : [['Time taken', shown], ['Cost', trace.cost], ['Tools used', toolsUsed], ['Steps', steps.length - 1], ['Waits', cnt('wait') + cnt('approval')], ['Problems', cnt('fail')]]
+    ? [['Duration', shown], ['Cost', fmtMoney(trace.cost, d0, { cents: 'always' })], ['Tokens', trace.tokens], ['Model calls', cnt('model')], ['Tool calls', cnt('tool')], ['Errors', cnt('fail')]]
+    : [['Time taken', shown], ['Cost', fmtMoney(trace.cost, d0, { cents: 'always' })], ['Tools used', toolsUsed], ['Steps', steps.length - 1], ['Waits', cnt('wait') + cnt('approval')], ['Problems', cnt('fail')]]
 
   const plainIo = (s: (typeof steps)[number]) => s.kind === 'model'
     ? cap1(s.detail.split(' · ').slice(1).join(' · ') || 'It worked this out itself, without reading a tool')
     : s.detail.replace('Input: ', 'Asked for: ').replace('Output: ', 'Got back: ')
   const picked = sel != null ? steps[sel] : null
-  const pickedDur = picked ? fmtSeconds(picked.end - picked.start) : ''
+  const pickedDur = picked ? fmtDur(picked.endMs - picked.startMs) : ''
 
   return (
     <Window onClose={close} label="What your Inhouse agent did" size="xl" layer="trace">
@@ -148,10 +149,10 @@ function TraceSteps({ trace }: { trace: Trace }) {
         <ol role="list" aria-label="Steps" className="min-h-0 flex-1 overflow-auto">
           {steps.map((s, i) => {
             const vis = started(s)
-            const endT = t == null ? s.end : Math.min(s.end, t)
-            const running = t != null && s.start <= t && t < s.end
+            const endT = t == null ? s.endMs : Math.min(s.endMs, t)
+            const running = t != null && s.startMs <= t && t < s.endMs
             const ifg = !vis ? 'text-muted-foreground' : s.kind === 'agent' ? 'text-brand' : s.kind === 'fail' ? 'text-destructive' : s.kind === 'approval' ? 'text-warning-text' : 'text-foreground-2'
-            const dur = s.kind === 'approval' ? 'Waits for a person' : s.kind === 'fail' ? 'Failed after ' + fmtSeconds(Math.max(0, endT - s.start)) : fmtSeconds(Math.max(0, endT - s.start))
+            const dur = s.kind === 'approval' ? 'Waits for a person' : s.kind === 'fail' ? 'Failed after ' + fmtDur(Math.max(0, endT - s.startMs)) : fmtDur(Math.max(0, endT - s.startMs))
             return (
               <li key={i} aria-level={s.depth + 1} className="border-b border-divider">
                 <button type="button" data-testid="trace-row" aria-pressed={sel === i} onClick={() => setSel(sel === i ? null : i)}
@@ -186,13 +187,13 @@ function TraceSteps({ trace }: { trace: Trace }) {
           </div>
           {steps.map((s, i) => {
             const k = KINDS[s.kind]
-            const endT = t == null ? s.end : Math.min(s.end, t)
-            const running = t != null && s.start <= t && t < s.end
+            const endT = t == null ? s.endMs : Math.min(s.endMs, t)
+            const running = t != null && s.startMs <= t && t < s.endMs
             const vis = started(s)
             const dur = s.kind === 'approval' ? 'waits for a person'
-              : s.kind === 'fail' ? 'failed after ' + fmtSeconds(Math.max(0, endT - s.start))
-                : s.kind === 'root' && t == null ? fmtSeconds(s.end - s.start) + ' · ' + trace.cost
-                  : fmtSeconds(Math.max(0, endT - s.start))
+              : s.kind === 'fail' ? 'failed after ' + fmtDur(Math.max(0, endT - s.startMs))
+                : s.kind === 'root' && t == null ? fmtDur(s.endMs - s.startMs) + ' · ' + fmtMoney(trace.cost, d0, { cents: 'always' })
+                  : fmtDur(Math.max(0, endT - s.startMs))
             // A step the replay hasn't reached yet is muted text, its tile too (never dimmed).
             const ifg = !vis ? 'text-muted-foreground' : s.kind === 'agent' ? 'text-brand' : s.kind === 'fail' ? 'text-destructive' : s.kind === 'approval' ? 'text-warning-text' : 'text-foreground-2'
             return (
@@ -206,7 +207,7 @@ function TraceSteps({ trace }: { trace: Trace }) {
                 <span className="relative">
                   {vis && (
                     <>
-                      <i className={cn('absolute top-1/2 box-border min-w-0.75 -translate-y-1/2 rounded-sm', k[1])} style={{ left: `${(s.start / M) * 100}%`, width: `${Math.max(0, (endT - s.start) / M) * 100}%` }} />
+                      <i className={cn('absolute top-1/2 box-border min-w-0.75 -translate-y-1/2 rounded-sm', k[1])} style={{ left: `${(s.startMs / M) * 100}%`, width: `${Math.max(0, (endT - s.startMs) / M) * 100}%` }} />
                       <span className="absolute top-1/2 ml-2 flex -translate-y-1/2 items-center gap-2 text-sm whitespace-nowrap text-muted-foreground tabular-nums" style={{ left: `${(endT / M) * 100}%` }}>
                         {dur}
                         {s === slow && t == null && <Badge variant="warning" size="lg">Slowest</Badge>}
