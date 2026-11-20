@@ -69,6 +69,12 @@ export interface RunnerPoolPort {
   warmup(): Promise<{ ok: true } | Refusal>
   /** A container exited: the turn ids the BrandAgent fences, or null when this generation was already reported. */
   containerExited(runner: string, gen: number): string[] | null
+  /** The `pool-retry` task's work (its handler only gets `ctx.ports.pool`): try the placement queue again. */
+  retryQueue(): Promise<void>
+  /** Takes a turn out of the placement queue (the BrandAgent cancelled it); nothing when it isn't queued. */
+  dequeue(turnId: string): void
+  /** Empties the placement queue and returns the turn ids it held, in queue order (pause fails them `paused`, 4.11). */
+  clearQueue(): string[]
 }
 
 // ---------- the usage ledger (W4, p3-design section 9) ----------
@@ -195,6 +201,11 @@ export interface BrandAgentRpc {
   ingest(turnId: string, events: RunEvent[]): Promise<PushAck | { gone: true }>
   /** The egress's token check (8.1): the hash, never the token. */
   checkRunToken(tokenHash: string, route: EgressRoute): Promise<RunGrant | { refused: TokenRefusal }>
+  /**
+   * Counts one of the CLI's own `count_tokens` calls (they pass unpriced, 8.2): true while the turn had made fewer than
+   * 50 before it, false from then on. A conditional, atomic counter on the turn's row (count-tokens.ts).
+   */
+  noteCountTokens(turnId: string): Promise<boolean>
   admitModelCall(turnId: string, callId: string, worst: ModelCallWorst): Promise<AdmitAnswer>
   /** Confirms a grant (the first renew) and extends its 60 s lease with the running usage. */
   renewModelCall(turnId: string, callId: string, usage: ModelCallUsage): Promise<LeaseAnswer>

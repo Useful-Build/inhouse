@@ -16,6 +16,8 @@ const green = { ok: true }
 export class FakeBrandAgentRpc implements BrandAgentRpc {
   calls: { method: keyof BrandAgentRpc; args: unknown[] }[] = []
   grants = new Map<string, RunGrant>()
+  /** Each turn's count_tokens calls so far. */
+  countTokens = new Map<string, number>()
   ingestAnswer: PushAck | { gone: true } | ((turnId: string, events: RunEvent[]) => Promise<PushAck | { gone: true }>) =
     async (_t, events) => ({ ackSeq: events.length === 0 ? 0 : events[events.length - 1].seq, stop: false })
   admitAnswer: AdmitAnswer | ((turnId: string, callId: string, worst: ModelCallWorst) => Promise<AdmitAnswer>) = { granted: true }
@@ -44,6 +46,13 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
     this.log('checkRunToken', tokenHash, route)
     if (this.tokens) return this.tokens.check(tokenHash, route, this.now())
     return this.grants.get(tokenHash) ?? { refused: 'unknown' }
+  }
+  async noteCountTokens(turnId: string) {
+    this.log('noteCountTokens', turnId)
+    const n = this.countTokens.get(turnId) ?? 0
+    if (n >= 50) return false
+    this.countTokens.set(turnId, n + 1)
+    return true
   }
   async admitModelCall(turnId: string, callId: string, worst: ModelCallWorst) {
     this.log('admitModelCall', turnId, callId, worst)

@@ -81,25 +81,26 @@ export const principals = {
 
 /**
  * The 21 rows of p2-design section 3 as written there (row 12 with `admin` in `allow` and row 21 a `report` row, per
- * the review round 1 calls), then P3's rows 22 to 49 as p3-design section 3's table writes them: the properties' rows,
- * and the independent copy server/access-matrix.ts must equal (matrix.test.ts).
+ * the review round 1 calls), as decision 19 amends them (rows 3 to 6 and 15 `baseline`; 4, 5, 6 and 10 list
+ * `inhouse`), then P3's rows 22 to 49 as p3-design section 3's table writes them: the properties' rows, and the
+ * independent copy server/access-matrix.ts must equal (matrix.test.ts).
  */
 export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/health', class: 'open', allow: [], services: ['monitor'] },
   { method: 'GET', pattern: '/api/me', class: 'baseline', allow: ['member', 'admin', 'inhouse'], services: ['smoke'] },
-  { method: 'GET', pattern: '/api/members', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
-  { method: 'POST', pattern: '/api/members/invites', class: 'brand_data', allow: ['admin'] },
-  { method: 'PUT', pattern: '/api/members/:id/role', class: 'brand_data', allow: ['admin'] },
-  { method: 'DELETE', pattern: '/api/members/:id', class: 'brand_data', allow: ['admin'] },
+  { method: 'GET', pattern: '/api/members', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/members/invites', class: 'baseline', allow: ['admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/members/:id/role', class: 'baseline', allow: ['admin', 'inhouse'] },
+  { method: 'DELETE', pattern: '/api/members/:id', class: 'baseline', allow: ['admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/settings/personal', class: 'personal', allow: ['member', 'admin'], services: ['smoke'] },
   { method: 'PUT', pattern: '/api/settings/personal/:key', class: 'personal', allow: ['member', 'admin'] },
   { method: 'GET', pattern: '/api/settings/brand', class: 'baseline', allow: ['member', 'admin', 'inhouse'], services: ['smoke'] },
-  { method: 'PUT', pattern: '/api/settings/brand/:key', class: 'baseline', allow: ['admin'] },
+  { method: 'PUT', pattern: '/api/settings/brand/:key', class: 'baseline', allow: ['admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/settings/technical', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
   { method: 'PUT', pattern: '/api/settings/technical/:key', class: 'technical', allow: ['inhouse', 'admin'], adminWrite: true },
   { method: 'PUT', pattern: '/api/photo', class: 'personal', allow: ['member', 'admin'] },
   { method: 'DELETE', pattern: '/api/photo', class: 'personal', allow: ['member', 'admin'] },
-  { method: 'GET', pattern: '/api/members/:id/photo', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/members/:id/photo', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/grants', class: 'baseline', allow: ['admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/grants', class: 'baseline', allow: ['admin'] },
   { method: 'POST', pattern: '/api/grants/:id/end', class: 'baseline', allow: ['admin'] },
@@ -145,7 +146,7 @@ export const DESIGN_CAN_ROWS: CanRows = {
   remove: { method: 'DELETE', pattern: '/api/members/:id' },
   editBrandSettings: { method: 'PUT', pattern: '/api/settings/brand/:key' },
   editTechnical: { method: 'PUT', pattern: '/api/settings/technical/:key' },
-  switchModelOff: { method: 'PUT', pattern: '/api/settings/technical/:key', as: 'adminWrite' },
+  switchModel: { method: 'PUT', pattern: '/api/settings/technical/:key', as: 'adminWrite' },
   grantSupport: { method: 'POST', pattern: '/api/grants' },
   viewMembers: { method: 'GET', pattern: '/api/members' },
   viewAudit: { method: 'GET', pattern: '/api/audit' },
