@@ -85,7 +85,8 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/turns/:turnId/stop': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/stop', json: {}, passes: 404 },
   'GET /api/runs/active': { design: owned(ALL, ['smoke']), path: '/api/runs/active', passes: 200 },
   'GET /api/traces/:id': { design: owned(ALL), path: '/api/traces/r_e2e_nobody', passes: 404 },
-  'GET /api/socket': { design: owned(ALL, ['smoke']), path: '/api/socket?v=1', passes: STUB },
+  // Route 34 is built (W1 PR 4): the sweep sends a plain GET, which this route answers 400 (it only upgrades).
+  'GET /api/socket': { design: owned(ALL, ['smoke']), path: '/api/socket?v=1', passes: 400 },
   'GET /api/pause': { design: d('baseline', ALL), path: '/api/pause', passes: 200 },
   // Item 19 (2026-11-20): the Inhouse team pauses and resumes too (an audited emergency pause), with no grant.
   'POST /api/pause': { design: d('baseline', ['admin', 'inhouse']), path: '/api/pause', json: {}, passes: 200 },

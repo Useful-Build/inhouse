@@ -240,6 +240,8 @@ export interface BrandAgentRpc {
   getTrace(id: string, scope: RunScope): Promise<Trace | null>
   onMemberRemoved(memberId: string): Promise<void>
   onGrantEnded(grantId: string): Promise<void>
+  /** Route 17 made a grant: the object schedules its `grant-expiry` at `endsAtMs` (4.10). */
+  onGrantCreated(grantId: string, endsAtMs: number): Promise<void>
   /** A Runner's container exited: the pool names that runner's turns once per generation, and the BrandAgent fences them. */
   containerExited(runner: string, gen: number): Promise<void>
   poolHealth(): Promise<PoolHealth>
