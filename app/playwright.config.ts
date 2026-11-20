@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test'
 import type { PlaywrightTestProject } from '@playwright/test'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { TEST_BUILD_WORKER_CONFIG, testAccessConfig, testBuildPort, testIssuerJwks } from './e2e/support/test-build/issuer.ts'
 
 // Artifacts go to VERIFY_DIR when it's set, else to e2e-artifacts/. Runs against the
@@ -79,16 +79,6 @@ const productWorkerConfig = 'dist-product/inhouse_product/wrangler.json'
 if (process.env.E2E_PRODUCT && !existsSync(new URL(productWorkerConfig, import.meta.url))) {
   throw new Error(`E2E_PRODUCT=1 serves the prebuilt product build, and ${productWorkerConfig} is missing. Run \`npm run build:product\` first.`)
 }
-// The product build's config binds Workers AI (`ai`, the egress's AI Gateway, p3-design 8.2). `wrangler dev` serves that
-// binding only remotely, which needs a Cloudflare login CI doesn't have, and the product specs make no model call. So the
-// product server runs on a copy without it, beside the original (its relative paths still resolve); the deployable
-// wrangler.json keeps it, and scripts/check-product-build.mjs fails a product build without it.
-const productServeConfig = 'dist-product/inhouse_product/wrangler.e2e.json'
-if (process.env.E2E_PRODUCT) {
-  const built = JSON.parse(readFileSync(new URL(productWorkerConfig, import.meta.url), 'utf8')) as Record<string, unknown>
-  delete built.ai
-  writeFileSync(new URL(productServeConfig, import.meta.url), JSON.stringify(built))
-}
 if (testBuildOn && !testBuildRemote && !existsSync(new URL(TEST_BUILD_WORKER_CONFIG, import.meta.url))) {
   throw new Error(`E2E_TEST_BUILD=1 serves the prebuilt test build, and ${TEST_BUILD_WORKER_CONFIG} is missing. Run \`npm run build:product-test\` first.`)
 }
@@ -114,7 +104,9 @@ const demoServer = {
   timeout: 180_000,
 }
 const productServer = {
-  command: `npx wrangler dev --config ${productServeConfig} --port ${productPort}`,
+  // `--local`: remote bindings off. The product config binds Workers AI (the egress's gateway, p3-design 8.2), which
+  // `wrangler dev` otherwise serves through a remote proxy session that needs a Cloudflare login; the specs make no model call.
+  command: `npx wrangler dev --local --config ${productWorkerConfig} --port ${productPort}`,
   url: productURL,
   reuseExistingServer: false,
   timeout: 180_000,

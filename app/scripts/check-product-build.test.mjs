@@ -13,10 +13,10 @@ const CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
 const put = (file, text) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text) }
 
 /** A build folder as the Vite plugin writes it: client/, client-modules.json, one Worker folder, server-modules.json. */
-function build(dir, { html = '<p>ok</p>', clientModules = ['src/main.tsx'], workerJs = 'export default {}', serverModules = ['server/index.ts'], extra = {}, wranglerJson = '{"ai":{"binding":"AI"}}' } = {}) {
+function build(dir, { html = '<p>ok</p>', clientModules = ['src/main.tsx'], workerJs = 'export default {}', serverModules = ['server/index.ts'], extra = {} } = {}) {
   put(join(dir, 'client/index.html'), html)
   put(join(dir, 'client-modules.json'), JSON.stringify(clientModules))
-  put(join(dir, 'inhouse_product/wrangler.json'), wranglerJson)
+  put(join(dir, 'inhouse_product/wrangler.json'), '{}')
   put(join(dir, 'inhouse_product/index.js'), workerJs)
   put(join(dir, 'server-modules.json'), JSON.stringify(serverModules))
   for (const [rel, text] of Object.entries(extra)) put(join(dir, rel), text)
@@ -91,15 +91,4 @@ test('nothing imports @scripted-model yet: a note, and a test build without its 
   // A test file importing it doesn't count: only what the Worker can bundle.
   const testOnly = run({ ...ISSUER_OK, server: { ...ISSUER_OK.server, 'egress/model.test.ts': "import { x } from '@scripted-model'" } })
   expect(testOnly.status).toBe(0)
-})
-
-// P3 W3: the deployable Worker must bind Workers AI (the product e2e server drops it from its own copy).
-test('a product build whose wrangler.json has no AI binding fails; with it, the line is ok', () => {
-  for (const wranglerJson of ['{}', '{"ai":{"binding":"OTHER"}}']) {
-    const r = run({ product: { wranglerJson } })
-    expect(r.status, wranglerJson).toBe(1)
-    expect(r.stderr).toContain('FAIL  AI binding')
-  }
-  const ok = run()
-  expect(ok.stdout).toContain('ok    AI binding: the deployable Worker binds Workers AI as AI.')
 })

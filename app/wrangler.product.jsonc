@@ -29,9 +29,8 @@
 	],
 	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-files" }],
 	// Workers AI, for the AI Gateway binding the egress calls the model through (`env.AI.gateway(AI_GATEWAY_ID)`,
-	// p3-design 8.2). Remote-only under wrangler dev, so the test build never has it (it uses the scripted model;
-	// check-product-config.mjs refuses it there), and the product e2e server runs on a copy of the built config without it
-	// (playwright.config.ts); check-product-build.mjs fails a product build that lacks it.
+	// p3-design 8.2). Remote-only under wrangler dev: the test build never has it (it uses the scripted model;
+	// check-product-config.mjs refuses it there), and the product e2e server runs `wrangler dev --local` (playwright.config.ts).
 	// https://developers.cloudflare.com/ai-gateway/integrations/worker-binding-methods/ (read 2026-11-20)
 	"ai": { "binding": "AI" },
 	// The deployed version's id for the health route's `version` signal, which fails without it.
