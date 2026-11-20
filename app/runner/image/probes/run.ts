@@ -18,7 +18,7 @@
 // outside the container that the sandbox's allowlist can name.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { appendFileSync, chownSync, existsSync, lstatSync, mkdirSync, renameSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, chownSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { PROTOCOL_HEADER, PROTOCOL_VERSION, type RunEvent } from '../../../shared/protocol/index.ts'
@@ -820,37 +820,27 @@ async function probeZombieLeader() {
   record('zombie-leader.killed', status.threads > 1 && killed === 'passed' && left.length === 0, `threads ${status.threads}, killAll ${killed}, left ${left.length}`)
 }
 
-const HELPER = '/usr/local/lib/node_modules/@anthropic-ai/sandbox-runtime'
-/** Test-only: hides the image's seccomp helper (the CLI then runs the sandbox without it), or puts it back. */
-function seccompHelper(on: boolean) {
-  const off = `${HELPER}.probe-off`
-  if (on && existsSync(off)) renameSync(off, HELPER)
-  if (!on && existsSync(HELPER)) renameSync(HELPER, off)
-}
-
-/** Which sandbox setups run a Bash command at all here: the seccomp helper on or off, HOME inside or outside the folder. */
+/** Which sandbox setups run a Bash command at all here: HOME inside or outside the session folder. */
 async function probeSandboxMatrix() {
   const u = userNamed('s36')
   const nested = await runCommand('bash', ['-c', 'unshare -Ur sh -c "unshare -Ur true && echo nested-ok"; cat /proc/sys/user/max_user_namespaces; for f in /proc/sys/kernel/apparmor_restrict_unprivileged_*; do echo "$f=$(cat $f)"; done; cat /proc/self/attr/current 2>&1'], { uid: u.uid, gid: u.gid, cwd: '/tmp' })
   fact('userns.as-session-user', nested.out.replace(/\n/g, ' '))
   const cmd = { steps: [bash(`echo bash-ran; python3 -c 'import socket; socket.socket(socket.AF_UNIX); print("unix-socket-made")'`), bash('echo second-call')] }
-  for (const helper of [true, false]) {
-    seccompHelper(helper)
+  {
     for (const variant of ['plain', 'home-outside'] as const) {
       let home: string | undefined
       if (variant === 'home-outside') {
         // Outside every shared folder, so the wipe before the run leaves it alone.
         const owner = userNamed(directUsers[variant])
-        home = `/var/lib/probe-home-${helper ? 'h' : 'n'}`
+        home = '/var/lib/probe-home'
         mkdirSync(home, { mode: 0o700 })
         chownSync(home, owner.uid, owner.gid)
       }
       const d = await direct(variant, { prompt: 'Run the probe.', webFetchDomains: [], home }, cmd)
       const out = [0, 1].map((i) => d.state.results.get(d.state.ids[i]!)?.text.replace(/\s+/g, ' ').slice(0, 300) ?? 'no result')
-      fact(`sandbox-matrix.helper-${helper ? 'on' : 'off'}.${variant}`, `first: ${out[0]} | second: ${out[1]}`)
+      fact(`sandbox-matrix.${variant}`, `first: ${out[0]} | second: ${out[1]}`)
     }
   }
-  seccompHelper(true)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

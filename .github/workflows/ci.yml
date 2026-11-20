@@ -149,12 +149,14 @@ jobs:
       # model behind a fake egress, the agent's Bash and file tools under the real sandbox, and the host's wipes. Each
       # probe prints PROBE PASS|FAIL and each kernel fact FACT; any FAIL fails the step. Not part of the image: the
       # bundle is mounted read-only. The flags let bubblewrap make its user, PID and network namespaces and mount a fresh
-      # /proc inside Docker (Ubuntu's AppArmor userns restriction off, no seccomp or AppArmor profile, no masked /proc
+      # /proc inside Docker (Ubuntu's AppArmor userns restrictions off, which also take a nested namespace's capabilities, no seccomp or AppArmor profile, no masked /proc
       # paths); they loosen Docker's own wrapping only, never what a session user may do. The host serves probe.txt on
       # the bridge gateway: a private address outside the container for the egress probes.
       - name: Probe setup
         run: |
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+          for k in apparmor_restrict_unprivileged_userns apparmor_restrict_unprivileged_unconfined; do
+            if [ -e "/proc/sys/kernel/$k" ]; then sudo sysctl -w "kernel.$k=0"; fi
+          done
           sh image/probes/build.sh "$RUNNER_TEMP/probes"
           mkdir -p "$RUNNER_TEMP/gw" && echo GW_OK > "$RUNNER_TEMP/gw/probe.txt"
           nohup python3 -m http.server 18080 --bind 0.0.0.0 --directory "$RUNNER_TEMP/gw" > /dev/null 2>&1 &
