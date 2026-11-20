@@ -244,7 +244,7 @@ export class AgentCore {
     const member = t.by.memberId
     if (this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", member).toArray().length > 0) return refuse('forbidden', 'removed')
     // A deleted chat is not found, as route 29 answers it from D1 (that read may predate the delete).
-    if (this.sql.exec('SELECT 1 FROM deleted_chats WHERE chat_id = ?', t.chatId).toArray().length > 0) return refuse('not_found')
+    if (this.sql.exec('SELECT 1 FROM chat_deletion WHERE chat_id = ? AND deleted = 1', t.chatId).toArray().length > 0) return refuse('not_found')
     if (this.paused()) return refuse('forbidden', 'paused')
     if (this.draining_()) return refuse('unavailable', 'draining')
     const cs = this.chatState(t.chatId)
@@ -633,10 +633,12 @@ export class AgentCore {
    * failure stays for the `flush-turn` task, which retries with the scheduler's backoff.
    */
   async flushTurn(turnId: string): Promise<boolean> {
-    const p = storedProjection(this.sql, turnId)
-    if (!p) return true
-    if (this.turn(turnId)?.d1_flushed === 1) return true
+    // The whole flush under one error path: a stored row that won't read fails like a batch that won't land (the task
+    // retries it, then quarantines it), never an unhandled rejection of the immediate flush.
     try {
+      const p = storedProjection(this.sql, turnId)
+      if (!p) return true
+      if (this.turn(turnId)?.d1_flushed === 1) return true
       await writeProjection(this.d.db, p)
     } catch (err) {
       console.error({ event: 'flush_turn_failed', turnId, error: errorText(err) })
@@ -1156,16 +1158,34 @@ export class AgentCore {
   chatRuns(chatIds: string[]): ActiveRun[] { return activeRuns(this.sql, { all: true }, chatIds) }
 
   /**
-   * Route 27 (4.6): the chats were deleted. They join `deleted_chats` (sends refused until a restore), their queued
-   * turns are cancelled and their running ones fenced, each through the fence's own paths, so every one ends in
-   * `storeFinal`. One synchronous step: the runs' `advance` is held until every turn is ended or fenced, so no queued
-   * turn is claimed on the way.
+   * Applies route 27's or 28's change for each chat only when it is at least as new as the last one applied: `rev` is
+   * the chat's D1 rev after that change (every delete and restore that changes the chat moves it), so a delete whose
+   * call arrives after a later restore changes nothing (#163 review). The same rev again re-applies (a retry). The
+   * chats it applied.
    */
-  endChats(chatIds: string[]) {
+  private markChats(chats: { id: string; rev: number }[], deleted: boolean): string[] {
+    const now = this.d.now()
+    const applied: string[] = []
+    for (const c of chats) {
+      const last = this.sql.exec<{ rev: number }>('SELECT rev FROM chat_deletion WHERE chat_id = ?', c.id).toArray()[0]
+      if (last && last.rev > c.rev) continue
+      this.sql.exec(`INSERT INTO chat_deletion (chat_id, deleted, rev, at_ms) VALUES (?, ?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET deleted = excluded.deleted, rev = excluded.rev, at_ms = excluded.at_ms`, c.id, deleted ? 1 : 0, c.rev, now)
+      applied.push(c.id)
+    }
+    return applied
+  }
+
+  /**
+   * Route 27 (4.6): the chats were deleted (each with its D1 rev after the delete). Those not overtaken by a restore are
+   * marked deleted in `chat_deletion` (sends refused until a restore), their queued turns are cancelled and their
+   * running ones fenced, each through the fence's own paths, so every one ends in `storeFinal`. One synchronous step:
+   * the runs' `advance` is held until every turn is ended or fenced, so no queued turn is claimed on the way.
+   */
+  endChats(chats: { id: string; rev: number }[]) {
+    const chatIds = this.markChats(chats, true)
     if (chatIds.length === 0) return
     const marks = chatIds.map(() => '?').join(', ')
-    const now = this.d.now()
-    for (const id of chatIds) this.sql.exec('INSERT INTO deleted_chats (chat_id, at_ms) VALUES (?, ?) ON CONFLICT DO NOTHING', id, now)
     const runs = this.sql.exec<{ run_id: string }>(`SELECT run_id FROM runs WHERE state = 'live' AND chat_id IN (${marks})`, ...chatIds).toArray().map(r => r.run_id)
     for (const r of runs) this.holding.add(r)
     try {
@@ -1181,10 +1201,9 @@ export class AgentCore {
     for (const r of runs) this.advance(r)
   }
 
-  /** Route 28: the chats were restored; sends into them are admitted again. */
-  restoreChats(chatIds: string[]) {
-    if (chatIds.length === 0) return
-    this.sql.exec(`DELETE FROM deleted_chats WHERE chat_id IN (${chatIds.map(() => '?').join(', ')})`, ...chatIds)
+  /** Route 28: the chats are being restored (each with its D1 rev once restored); sends into them are admitted again. */
+  restoreChats(chats: { id: string; rev: number }[]) {
+    this.markChats(chats, false)
   }
 
   // ---------- pause, drain (4.11, 7) ----------

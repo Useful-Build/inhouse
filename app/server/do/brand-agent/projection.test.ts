@@ -164,6 +164,63 @@ describe('a failed flush replays the same rows (failures 2 and 3)', () => {
   })
 })
 
+describe('the chat moves to its newest turn, and rows are fixed once (failures 1 and 2)', () => {
+  it("an older turn's retry landing after a newer turn's flush leaves last_at_ms at the newer", async () => {
+    const c = await chat()
+    const { db, mode } = flakyDb()
+    await inAgent(async h => {
+      mode.now = 'fail'
+      const a = await send(h, c, 'key-proj15'); await settle()
+      h.clock.now = T0 + 5 * SEC
+      answer(h, a.turnId, 'older'); await settle()
+      mode.now = 'ok'
+      const b = await send(h, c, 'key-proj16'); await settle()
+      h.clock.now = T0 + 9 * SEC
+      answer(h, b.turnId, 'newer'); await settle()
+      expect(await lastAt(c)).toBe(T0 + 9 * SEC)
+      // a's retry is due at T0 + 35 s.
+      await h.tick(26 * SEC)
+      expect(h.turn(a.turnId).d1_flushed).toBe(1)
+      expect(await lastAt(c)).toBe(T0 + 9 * SEC)
+    }, { db })
+  })
+
+  it("a stored row that won't read fails the flush like a batch that won't land: retried by the task, never thrown", async () => {
+    const c = await chat()
+    const { db, mode } = flakyDb()
+    await inAgent(async h => {
+      mode.now = 'fail'
+      const a = await send(h, c, 'key-proj21'); await settle()
+      h.clock.now = T0 + 5 * SEC
+      answer(h, a.turnId, 'kept'); await settle()
+      mode.now = 'ok'
+      h.sql.exec("UPDATE turn_rows SET json = 'not json' WHERE turn_id = ?", a.turnId)
+      await expect(h.core.flushTurn(a.turnId)).resolves.toBe(false)
+      await h.tick(30 * SEC)
+      expect(h.sql.exec('SELECT attempts, state FROM due_tasks WHERE id = ?', `flush-turn:${a.turnId}`).one()).toEqual({ attempts: 1, state: 'ready' })
+      expect(h.turn(a.turnId).d1_flushed).toBe(0)
+    }, { db })
+  })
+
+  it('a second final-state step for a turn keeps its positions and rows (never new ones)', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      const a = await send(h, c, 'key-proj17'); await settle()
+      h.clock.now = T0 + 5 * SEC
+      answer(h, a.turnId, 'once'); await settle()
+      const rows = h.sql.exec('SELECT json FROM turn_rows WHERE turn_id = ?', a.turnId).one().json
+      // The private step, called again as a path that ended the turn twice would.
+      ;(h.core as unknown as { storeFinal(id: string, s: string, o: object, now: number): void })
+        .storeFinal(a.turnId, 'ended', { outcome: null, failure: null, why: null }, T0 + 6 * SEC)
+      await settle()
+      expect(h.turn(a.turnId)).toMatchObject({ pos_from: 0, pos_to: 1 })
+      expect(h.sql.exec('SELECT next_pos FROM chat_state WHERE chat_id = ?', c).one()).toEqual({ next_pos: 2 })
+      expect(h.sql.exec('SELECT json FROM turn_rows WHERE turn_id = ?', a.turnId).one().json).toBe(rows)
+      expect((await d1Rows(c)).map(r => `${r.id} ${r.pos}`)).toEqual([`${a.turnId}.u 0`, `${a.turnId}.0 1`])
+    })
+  })
+})
+
 describe('a chat delete ends its turns through storeFinal (failure 4)', () => {
   it('cancels the queued turns at once without starting any, fences the live one; another chat runs on', async () => {
     const c = await chat()
@@ -179,7 +236,7 @@ describe('a chat delete ends its turns through storeFinal (failure 4)', () => {
       h.push(elsewhere.turnId, ev.started())
       const placedBefore = h.placed()
       const reservesBefore = h.usage.calls.filter(x => x.method === 'reserve').length
-      h.core.endChats([c])
+      h.core.endChats([{ id: c, rev: 2 }])
       await settle()
       expect(seen).toEqual([`${q1.turnId} cancelled - deleted`, `${q2.turnId} cancelled - deleted`])
       expect(h.placed()).toEqual(placedBefore)
@@ -198,6 +255,24 @@ describe('a chat delete ends its turns through storeFinal (failure 4)', () => {
     })
   })
 
+  it("a delete's late call after a restore changes nothing; a newer delete applies (the D1 rev orders them)", async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      h.core.endChats([{ id: c, rev: 2 }])
+      expect(await h.submit(c, 'key-proj18', { member: owner })).toEqual({ refused: { code: 'not_found' } })
+      h.core.restoreChats([{ id: c, rev: 3 }])
+      // Delete rev 2's call arriving again, late: overtaken by restore rev 3.
+      h.core.endChats([{ id: c, rev: 2 }])
+      const ok = await send(h, c, 'key-proj19')
+      expect(ok.turnId).toMatch(/^t_/)
+      // The same restore again (a retry) is applied again; a newer delete wins over it.
+      h.core.restoreChats([{ id: c, rev: 3 }])
+      h.core.endChats([{ id: c, rev: 4 }])
+      expect(await h.submit(c, 'key-proj20', { member: owner })).toEqual({ refused: { code: 'not_found' } })
+      expect(h.sql.exec('SELECT deleted, rev FROM chat_deletion WHERE chat_id = ?', c).one()).toEqual({ deleted: 1, rev: 4 })
+    })
+  })
+
   it('a chat whose queued turns wait with nothing live (a budget wait): every one cancelled, none claimed', async () => {
     const c = await chat()
     await inAgent(async h => {
@@ -213,7 +288,7 @@ describe('a chat delete ends its turns through storeFinal (failure 4)', () => {
       expect(h.turn(b.turnId).state).toBe('queued')
       h.usage.reserveAnswer = { reservedMicro: 250_000 }
       const reserves = h.usage.calls.filter(x => x.method === 'reserve').length
-      h.core.endChats([c])
+      h.core.endChats([{ id: c, rev: 2 }])
       await settle()
       expect(seen).toEqual([`${a.turnId} cancelled deleted`, `${b.turnId} cancelled deleted`])
       // Never claimed: no claim time on the second turn (a claim half-way would set it before its cancel).

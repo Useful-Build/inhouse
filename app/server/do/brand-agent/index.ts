@@ -115,13 +115,13 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async chatRuns(chatIds: string[]): Promise<ActiveRun[]> {
     return this.core.chatRuns(chatIds)
   }
-  /** Route 27: the chats were deleted; their queued turns are cancelled and their running ones fenced. */
-  async endChats(chatIds: string[]): Promise<void> {
-    this.core.endChats(chatIds)
+  /** Route 27: the chats were deleted (each with its D1 rev); their queued turns are cancelled, their running ones fenced. */
+  async endChats(chats: { id: string; rev: number }[]): Promise<void> {
+    this.core.endChats(chats)
   }
-  /** Route 28: the chats were restored; the BrandAgent admits sends into them again. */
-  async restoreChats(chatIds: string[]): Promise<void> {
-    this.core.restoreChats(chatIds)
+  /** Route 28: the chats are being restored (each with its D1 rev once restored); sends into them are admitted again. */
+  async restoreChats(chats: { id: string; rev: number }[]): Promise<void> {
+    this.core.restoreChats(chats)
   }
   /** Route 32: live runs and ended ones with a turn not yet in D1, in the scope. */
   async activeRuns(scope: RunScope): Promise<ActiveRun[]> {

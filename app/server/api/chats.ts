@@ -35,7 +35,10 @@ function reader(c: HandlerContext): { ownerId: string } | { inhouse: true } | nu
   return by ? { ownerId: by.memberId } : null
 }
 
-/** The chats among `ids` with a live run in the BrandAgent. */
+/**
+ * The chats among `ids` with a live run in the BrandAgent. A deleted chat whose running turn is in its stop grace still
+ * reads `running: true`: it means a turn is still ending.
+ */
 async function runningOf(c: HandlerContext, ids: string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set()
   const runs = await brandAgent(c.env).chatRuns(ids)
@@ -107,9 +110,11 @@ export const getChat: Handler = async c => {
   const chat = await stores.chats.get(chatId.data)
   if (!chat || ('ownerId' in who && chat.ownerId !== who.ownerId)) return apiError('not_found')
   if ('ownerId' in who) c.access.requireObject({ ownerId: chat.ownerId })
+  // The runs before the history (#163 review): a turn whose flush lands between the two reads is then in one or both
+  // (the client keys messages by id, so both is fine); read the other way round, it could be in neither.
+  const runs = await brandAgent(c.env).chatRuns([chatId.data])
   const rows: StoredMessage[] = await stores.chats.messages(chatId.data, before, HISTORY_PAGE + 1)
   const messages = rows.slice(0, HISTORY_PAGE)
-  const runs = await brandAgent(c.env).chatRuns([chatId.data])
   const last = messages.at(-1)
   return apiJson({
     chat: summary(chat, new Set(runs.filter(r => r.live).map(r => r.chatId))),
@@ -156,7 +161,16 @@ export const pinChat: Handler = async c => {
   return revAnswer(c, await storesOf(c).chats.setPinned(own.chatId, own.ownerId, body.ok.pinned, body.ok.ifRev, writer(c)))
 }
 
-/** Routes 27 and 28: 1 to 50 of the caller's chats, all or nothing (any id not theirs: 404, nothing changes). */
+/**
+ * Routes 27 and 28: 1 to 50 of the caller's chats, all or nothing (any id not theirs: 404, nothing changes). The
+ * BrandAgent applies each chat's delete or restore only if it is at least as new (by the chat's D1 rev) as the last it
+ * applied, so a delete's late call can't undo a later restore.
+ * - Delete: D1 first, then the BrandAgent cancels the chats' queued turns and stops their running one (each through
+ *   its own paths, ending in its final-state step) and refuses sends into them. A failed call answers an error; the
+ *   retry finds the chats already deleted and calls again with the same revs.
+ * - Restore: the BrandAgent first (with each chat's rev once restored), then D1. A failed call leaves the chats deleted
+ *   in D1, so the restore can be retried; a failed D1 write after it leaves them hidden but sendable until a retry.
+ */
 function deleteOrRestore(deleted: boolean): Handler {
   return async c => {
     const by = actorOf(c.principal)
@@ -165,16 +179,15 @@ function deleteOrRestore(deleted: boolean): Handler {
     if ('error' in body) return body.error
     const ids = [...new Set(body.ok.ids)]
     const stores = storesOf(c)
-    const owners = await stores.chats.ownersOf(ids)
-    if (ids.some(id => owners.get(id) !== by.memberId)) return apiError('not_found')
+    const states = await stores.chats.statesOf(ids)
+    if (ids.some(id => states.get(id)?.ownerId !== by.memberId)) return apiError('not_found')
     c.access.requireObject({ ownerId: by.memberId })
+    if (!deleted) {
+      // Each chat's rev once restored: one more for a chat the write changes, the same for one already restored.
+      await brandAgent(c.env).restoreChats(ids.map(id => { const s = states.get(id)!; return { id, rev: s.deleted ? s.rev + 1 : s.rev } }))
+    }
     const after = await stores.chats.setDeleted(ids, by.memberId, deleted, writer(c))
-    // A deleted chat's queued turns are cancelled and its running one stopped, each through the BrandAgent's own
-    // paths (every one ends in its final-state step), and the BrandAgent refuses sends into it until a restore tells it
-    // otherwise (route 29's D1 read may predate the delete). A retry after a failure here repeats it (the write is
-    // idempotent).
-    if (deleted) await brandAgent(c.env).endChats(ids)
-    else await brandAgent(c.env).restoreChats(ids)
+    if (deleted) await brandAgent(c.env).endChats(after.map(r => ({ id: r.id, rev: r.rev })))
     return apiJson({ items: await summaries(c, after) })
   }
 }

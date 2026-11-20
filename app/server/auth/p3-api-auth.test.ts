@@ -171,6 +171,20 @@ describe('ownerObject rows (failures 4 and 5)', () => {
   })
 })
 
+describe('the built chat reads refuse Inhouse without a grant (failure 5)', () => {
+  it('routes 22 and 24, as routed, answer 403 grant_required before their handlers', async () => {
+    quiet()
+    const { call } = setup({ table: routes, rows: accessMatrix, grant: false })
+    const h = { 'Cf-Access-Jwt-Assertion': await person('inhouse') }
+    for (const path of ['/api/chats', '/api/chats/c_member']) {
+      const res = await call(INHOUSE.origin, path, { headers: h })
+      expect(res.status, path).toBe(403)
+      expect(await bodyOf(res), path).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
+    }
+    vi.restoreAllMocks()
+  })
+})
+
 describe('the committed P3 routes are PR0 stubs (failure 6)', () => {
   it('every route 22 to 49 not yet built answers 503 not_built to a caller the matrix lets through (W1 PR 2 built 29-33, 35-37, 49; W1 PR 3 built 22-28; W3 built 38-41)', async () => {
     quiet()

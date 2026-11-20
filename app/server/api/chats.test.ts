@@ -58,10 +58,17 @@ const inhouse = (grant = true): Principal => ({ kind: 'inhouse', memberId: admin
 const smoke: Principal = { kind: 'service', name: 'smoke', memberId: 'm_smoke', requestId: 'r-smoke' }
 const me = (who: string, role: 'member' | 'admin' = 'member') => personPrincipal(who, role)
 
-const call = async (h: (c: HandlerContext) => Promise<Response>, principal: Principal, init: { method?: string; path: string; body?: unknown; params?: Record<string, string> }, s: Stores = stores) => {
+const call = async (h: (c: HandlerContext) => Promise<Response>, principal: Principal, init: { method?: string; path: string; body?: unknown; params?: Record<string, string> }, s: Stores = stores, e: Env = env) => {
   const { c, objects } = ctx(s, principal, init)
-  const res = await h({ ...c, env, ctx: {} as ExecutionContext } as HandlerContext)
+  const res = await h({ ...c, env: e, ctx: {} as ExecutionContext } as HandlerContext)
   return { status: res.status, body: await res.json() as Record<string, unknown>, objects }
+}
+type ChatMark = { id: string; rev: number }[]
+/** The env with some of the BrandAgent's calls replaced (a barrier, a failure); the rest go to the real object. */
+function agentEnv(o: { chatRuns?: (ids: string[]) => Promise<unknown>; endChats?: (c: ChatMark) => Promise<void>; restoreChats?: (c: ChatMark) => Promise<void> }): Env {
+  const real = brandAgent(env)
+  const stub = { chatRuns: (ids: string[]) => real.chatRuns(ids), endChats: (c: ChatMark) => real.endChats(c), restoreChats: (c: ChatMark) => real.restoreChats(c), ...o }
+  return { ...env, BRAND_AGENT: { getByName: () => stub } } as unknown as Env
 }
 const list = (p: Principal, query = '') => call(listChats, p, { path: `/api/chats${query}` })
 const get = (p: Principal, id: string, query = '') => call(getChat, p, { path: `/api/chats/${id}${query}`, params: { id } })
@@ -160,6 +167,46 @@ describe('route 24: one chat and its history (failures 1, 2, 7)', () => {
     expect(ih).toMatchObject({ status: 200, objects: [] })
     expect(ih.body.chat).toEqual(summary(id, { deleted: true }))
     expect((await get(me(alice), id, '?cursor=AAAA')).status).toBe(400)
+  })
+
+  it('smoke reads its own chat; another member\'s is 404 before the object check', async () => {
+    const id = `c-${uniq()}`
+    await chat(id, 'm_smoke')
+    await chat(`${id}-a`, alice)
+    expect(await get(smoke, id)).toMatchObject({ status: 200, objects: [{ ownerId: 'm_smoke' }] })
+    expect(await get(smoke, `${id}-a`)).toMatchObject({ status: 404, objects: [] })
+  })
+
+  it("a turn whose flush lands between getChat's two reads is still in the page (runs, then history)", async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const tag = uniq().replace(/[^A-Za-z0-9]/g, '').padEnd(22, 'q').slice(0, 22)
+    const runId = `r_${tag}`
+    const turnId = `t_${tag}`
+    // An ended run whose one turn's rows aren't in D1 yet (the BrandAgent's state after a failed flush).
+    await runInDurableObject(brandAgent(env), (_i, s) => {
+      s.storage.sql.exec("INSERT INTO runs (run_id, chat_id, owner_id, state, last_seq, started_at_ms, ended_at_ms) VALUES (?, ?, ?, 'ended', 2, 1000, 2000)", runId, id, alice)
+      s.storage.sql.exec(`INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, state, priority, text,
+        attachments_json, model, picker_id, side_model, effort, max_turns, answer_position, created_at_ms, d1_flushed)
+        VALUES (?, ?, ?, ?, 0, ?, 'h', 'cancelled', 'next', 'q', '[]', 'm', 'sonnet', 'm', 'medium', 25, 'queued', 1000, 0)`, turnId, runId, id, alice, `k${tag}`)
+    })
+    // The flush lands once, when the second of the two reads starts.
+    let asked = false
+    const land = async () => {
+      await db.prepare("INSERT INTO chat_messages (id, chat_id, run_id, turn_id, pos, role, author_id, text, at_ms) VALUES (?, ?, ?, ?, 0, 'user', ?, 'q', 1000)")
+        .bind(`${turnId}.u`, id, runId, turnId, alice).run()
+      await runInDurableObject(brandAgent(env), (_i, s) => { s.storage.sql.exec('UPDATE turns SET d1_flushed = 1 WHERE turn_id = ?', turnId) })
+    }
+    const e = agentEnv({ chatRuns: async ids => { asked = true; return brandAgent(env).chatRuns(ids) } })
+    const s: Stores = { ...stores, chats: { ...stores.chats, messages: async (chatId, before, limit) => {
+      if (asked) { await land(); return stores.chats.messages(chatId, before, limit) }
+      const rows = await stores.chats.messages(chatId, before, limit)
+      await land()
+      return rows
+    } } }
+    const page = await call(getChat, me(alice), { path: `/api/chats/${id}`, params: { id } }, s, e)
+    expect(page.body.runs).toEqual([{ runId, chatId: id, lastSeq: 2, live: false }])
+    expect((page.body.messages as { id: string }[]).map(m => m.id)).toEqual([`${turnId}.u`])
   })
 })
 
@@ -296,5 +343,47 @@ describe('routes 27 and 28: delete and restore, all or nothing (failures 4 and 6
     const again = await call(sendPriced, me(alice), { method: 'POST', path: `/api/chats/${id}/turns`, params: { id }, body })
     expect(again).toMatchObject({ status: 200, body: { position: 'starting' } })
     expect(await turns()).toBe(1)
+  })
+
+  it("a delete whose BrandAgent call stalls past a restore doesn't undo the restore: sends are admitted", async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    let stalled!: () => void
+    const reached = new Promise<void>(r => { stalled = r })
+    let go!: () => void
+    const gate = new Promise<void>(r => { go = r })
+    const slow = agentEnv({ endChats: async c => { stalled(); await gate; await brandAgent(env).endChats(c) } })
+    const deleting = call(deleteChats, me(alice), { method: 'POST', path: '/api/chats/delete', body: { ids: [id] } }, stores, slow)
+    await reached
+    expect((await restore(me(alice), { ids: [id] })).status).toBe(200)
+    go()
+    expect((await deleting).status).toBe(200)
+    const sent = await call(sendPriced, me(alice), { method: 'POST', path: `/api/chats/${id}/turns`, params: { id }, body: { clientTurnKey: `key${uniq()}`, text: 'hi', model: 'sonnet' } })
+    expect(sent.status).toBe(200)
+  })
+
+  it('a restore whose BrandAgent call fails leaves the chat deleted in D1 (the restore can be retried)', async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    const failing = agentEnv({ restoreChats: async () => { throw new Error('BrandAgent unreachable') } })
+    await expect(call(restoreChats, me(alice), { method: 'POST', path: '/api/chats/restore', body: { ids: [id] } }, stores, failing)).rejects.toThrow('BrandAgent unreachable')
+    expect(await deletedCount([id])).toBe(1)
+    expect((await restore(me(alice), { ids: [id] })).body.items).toEqual([summary(id, { rev: 3 })])
+  })
+
+  it('a delete whose BrandAgent call fails answers an error; its retry ends with sends refused', async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const failing = agentEnv({ endChats: async () => { throw new Error('BrandAgent unreachable') } })
+    await expect(call(deleteChats, me(alice), { method: 'POST', path: '/api/chats/delete', body: { ids: [id] } }, stores, failing)).rejects.toThrow('BrandAgent unreachable')
+    expect(await deletedCount([id])).toBe(1)
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    // Straight to the BrandAgent (route 29 would refuse from D1 first): the chat is refused there too.
+    const answer = await brandAgent(env).submitTurn({
+      chatId: id, by: { kind: 'person', memberId: alice }, model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium', sideModel: 'claude-haiku-5-5',
+      maxTurns: 25, webFetchDomains: null, input: { clientTurnKey: `key${uniq()}`, text: 'hi', priority: 'next', model: 'sonnet', attachments: [] },
+    })
+    expect(answer).toEqual({ refused: { code: 'not_found' } })
   })
 })

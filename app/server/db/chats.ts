@@ -39,8 +39,8 @@ export interface ChatStore {
   /** The custom title (null: back to the first question's), while the rev is `ifRev`; null when the chat isn't the owner's. */
   setTitle(chatId: string, ownerId: string, title: string | null, ifRev: number, at: At): Promise<RevWrite>
   setPinned(chatId: string, ownerId: string, pinned: boolean, ifRev: number, at: At): Promise<RevWrite>
-  /** Each id's owner (ids not found are absent). */
-  ownersOf(chatIds: string[]): Promise<Map<string, string>>
+  /** Each id's owner, rev and whether it's deleted (ids not found are absent). */
+  statesOf(chatIds: string[]): Promise<Map<string, { ownerId: string; rev: number; deleted: boolean }>>
   /** Marks the owner's chats deleted or not, in one statement; a chat already so keeps its rev. The chats after, in order. */
   setDeleted(chatIds: string[], ownerId: string, deleted: boolean, at: At): Promise<ChatRecord[]>
   /** Up to `limit` messages, `pos DESC`, below `beforePos` when given. */
@@ -129,9 +129,10 @@ export function chatStore(deps: { db: D1Database }): ChatStore {
     },
     setTitle: (chatId, ownerId, title, ifRev, at) => revWrite(chatId, ownerId, 'custom_title', title, ifRev, at),
     setPinned: (chatId, ownerId, pinned, ifRev, at) => revWrite(chatId, ownerId, 'pinned', pinned ? 1 : 0, ifRev, at),
-    async ownersOf(chatIds) {
-      const rows = await all<{ id: string; owner_id: string }>(db, stmt(`SELECT id, owner_id FROM chats WHERE id IN (${marks(chatIds.length)})`, ...chatIds))
-      return new Map(rows.map(r => [r.id, r.owner_id]))
+    async statesOf(chatIds) {
+      const rows = await all<{ id: string; owner_id: string; rev: number; deleted_at_ms: number | null }>(db,
+        stmt(`SELECT id, owner_id, rev, deleted_at_ms FROM chats WHERE id IN (${marks(chatIds.length)})`, ...chatIds))
+      return new Map(rows.map(r => [r.id, { ownerId: r.owner_id, rev: r.rev, deleted: r.deleted_at_ms !== null }]))
     },
     async setDeleted(chatIds, ownerId, deleted, at) {
       const change = deleted ? 'deleted_at_ms = ?' : 'deleted_at_ms = NULL'
