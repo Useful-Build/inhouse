@@ -257,11 +257,31 @@ describe('placement answers (obligations 6, 7, 9)', () => {
     expect(h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })).toEqual({ ok: true })
     answer.resolve({ admitted: 'runner-0' })
     await settle()
-    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-0', a.turnId]])
+    // The fence's stop, then the stop sent again once the admission is known (the first may have landed before it).
+    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-0', a.turnId], ['runner-0', a.turnId]])
     expect(h.core.checkRunToken(tokenOf(h, a.turnId), 'store')).toMatchObject({ turnId: a.turnId })
     h.push(a.turnId, ev.checkpoint(2, 'u2', 1), ev.failed('stopped'), ev.released(cp2))
     expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped' })
     expect(h.sql.exec('SELECT session FROM chat_state').one().session).toBe('resumable')
+  }))
+
+  it('a stop that lands before the admission is sent again once the admitted answer comes (round 2 low)', () => inAgent(async h => {
+    const answer = deferred<{ admitted: string }>()
+    h.pool.placeAnswer = () => answer.promise
+    // A runner that hasn't admitted the run yet answers a stop with 404 (taken as done): it stops nothing.
+    let admitted = false
+    const stopped: string[] = []
+    h.pool.stop = async (runner, turnId) => { h.pool.calls.push({ method: 'stop', args: [runner, turnId] }); if (admitted) stopped.push(`${runner} ${turnId}`) }
+    const a = ok(await h.submit('c1', 'key-r2stp'))
+    await settle()
+    expect(h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })).toEqual({ ok: true })
+    await settle()
+    expect(stopped).toEqual([])
+    admitted = true
+    answer.resolve({ admitted: 'runner-0' })
+    await settle()
+    expect(stopped).toEqual([`runner-0 ${a.turnId}`])
+    expect(h.core.checkRunToken(tokenOf(h, a.turnId), 'events')).toMatchObject({ turnId: a.turnId })
   }))
 
   it("a requeued attempt's late ambiguous answer: that runner is stopped, the new attempt is left alone", () => inAgent(async h => {
