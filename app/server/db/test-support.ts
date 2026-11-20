@@ -58,7 +58,7 @@ export async function person(stores: Stores, opts: { email: string; subject: str
   return signed.ok.memberId
 }
 
-export const personPrincipal = (memberId: string, role: 'member' | 'admin'): Principal => ({ kind: 'person', memberId, role, subject: `sub-${memberId}`, requestId: reqId() })
+export const personPrincipal = (memberId: string, role: 'member' | 'admin'): Principal => ({ kind: 'person', memberId, role, subject: `sub-${memberId}`, requestId: reqId(), expMs: 4_102_444_800_000 })
 
 /**
  * A handler's context. `requireObject` records each object and applies the owner rule (a `personal` row): enough to
@@ -68,7 +68,7 @@ export function ctx(stores: Stores, principal: Principal, init: { method?: strin
   const objects: Parameters<RequireObject>[0][] = []
   const requireObject: RequireObject = object => {
     objects.push(object)
-    const self = principal.kind === 'service' && principal.name === 'monitor' ? null : principal.memberId
+    const self = 'memberId' in principal ? principal.memberId : null
     if (object.ownerId !== undefined && object.ownerId !== self) throw new Error('refused: not_owner')
   }
   const c: ApiCtx = {

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { stripJsonc } from './check-product-config.mjs'
+import { checkPool, stripJsonc } from './check-product-config.mjs'
 
 const script = fileURLToPath(new URL('./check-product-config.mjs', import.meta.url))
 const fixtures = fileURLToPath(new URL('./check-product-config-fixtures/', import.meta.url))
@@ -37,6 +37,10 @@ const RULE_TEXT = {
   'version-metadata-missing': 'version_metadata needs a binding name',
   'secret-var-named': 'vars.AUDIT_HASH_KEY looks like a secret',
   'secret-var-pattern': 'vars.SESSION_TOKEN looks like a secret',
+  // P3 (p3-design section 7).
+  'pool-mismatch': "the Runner container's max_instances (4) must be 3 x RUNNER_POOL (6)",
+  'pool-not-number': 'vars.RUNNER_POOL must be a whole number of 2 or more',
+  'pool-no-container': 'containers must be exactly one, for the Runner class',
 }
 
 describe('check-product-config', () => {
@@ -99,6 +103,31 @@ describe('check-product-config', () => {
     expect(r.stderr).toContain('vars.INHOUSE_TEST_BUILD is set')
     expect(r.stderr).toContain('teamDomain must be')
     expect(r.stderr).toContain('must be a bare https:// origin')
+  })
+
+  // P3 (p3-design section 13): no gateway in the test config, whatever else refuses it.
+  const testConfig = () => JSON.parse(stripJsonc(readFileSync(fileURLToPath(new URL('../wrangler.test.jsonc', import.meta.url)), 'utf8')))
+  const GATEWAY = 'a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway'
+  test('wrangler.test.jsonc has the runner pool and no gateway; adding an AI binding, a gateway var or secret is named', () => {
+    expect(checkPool(testConfig())).toEqual([])
+    expect(checkPool({ ...testConfig(), ai: { binding: 'AI' } })).toEqual([GATEWAY])
+    const c = testConfig()
+    expect(checkPool({ ...c, vars: { ...c.vars, AI_GATEWAY_ID: 'gw' } })).toEqual([GATEWAY])
+    expect(checkPool({ ...c, secrets: { required: ['AI_GATEWAY_TOKEN'] } })).toEqual([GATEWAY])
+    // The product config may name the gateway: the rule is about the test build only.
+    const product = JSON.parse(stripJsonc(readFileSync(template, 'utf8')))
+    expect(checkPool(product)).toEqual([])
+    expect(product.vars.AI_GATEWAY_ID).toBe('')
+    expect(product.secrets.required).toEqual(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN'])
+  })
+  test('the two Worker configs carry the same pool: RUNNER_POOL 2, one Runner container of standard-4 with 6 instances from ./runner/Dockerfile', () => {
+    for (const c of [testConfig(), JSON.parse(stripJsonc(readFileSync(template, 'utf8')))]) {
+      expect(c.vars.RUNNER_POOL).toBe('2')
+      expect(c.containers).toEqual([{ class_name: 'Runner', image: './runner/Dockerfile', image_build_context: '.', instance_type: 'standard-4', max_instances: 6 }])
+      expect(c.durable_objects.bindings).toEqual([{ name: 'BRAND_AGENT', class_name: 'BrandAgent' }, { name: 'RUNNER', class_name: 'Runner' }])
+      expect(c.migrations).toEqual([{ tag: 'p3-v1', new_sqlite_classes: ['BrandAgent', 'Runner'] }])
+      expect(c.dev).toEqual({ enable_containers: false })
+    }
   })
 
   test('usage and an unreadable file exit 2', () => {

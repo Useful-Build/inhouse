@@ -2,14 +2,14 @@
 //  1. it answers 200 while a signal fails, or 503 while all pass;
 //  2. a signal that throws takes the route down (500) instead of failing its own entry;
 //  3. a detail carries brand data (an error message, a name, an email);
-//  4. the migration signal passes when the last applied migration isn't the newest one this build knows;
+//  4. the migration signal passes when a migration this build ships isn't applied (P3: every shipped one, in any order,
+//     not just the newest: latest.ts is retired), or fails when every shipped one is applied beside others;
 //  5. a release without the version metadata binding answers 200 healthy instead of failing the version signal (503).
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { HandlerEnv } from '../routes.ts'
 import { openStores } from '../db/stores.ts'
-import { LATEST_MIGRATION } from '../migrations/latest.ts'
-import { coreSignals, versionSignal } from './signals/core.ts'
+import { SHIPPED_MIGRATIONS, coreSignals, migrationsSignal, versionSignal } from './signals/core.ts'
 import { signals } from './signals/index.ts'
 import { health, healthHandler } from './health.ts'
 
@@ -27,7 +27,7 @@ describe('the health route', () => {
     expect(await call(health)).toEqual({
       status: 200,
       body: { version: 'v-123', ok: true, signals: [
-        { name: 'version', ok: true, detail: 'v-123' }, { name: 'd1', ok: true }, { name: 'migrations', ok: true, detail: LATEST_MIGRATION },
+        { name: 'version', ok: true, detail: 'v-123' }, { name: 'd1', ok: true }, { name: 'migrations', ok: true, detail: `${SHIPPED_MIGRATIONS.length} applied` },
       ] },
     })
   })
@@ -60,10 +60,20 @@ describe('the health route', () => {
     expect(out.body.signals.slice(3)).toEqual([{ name: 'boom', ok: false, detail: 'TypeError' }, { name: 'down', ok: false, detail: 'down' }])
     expect(JSON.stringify(out.body)).not.toContain('@')
   })
-  it('fails the migration signal when the last applied migration is not the newest (failure 4)', async () => {
-    const behind = { ...stores, health: { ...stores.health, lastMigration: async () => '0004_audit_log.sql' } }
+  it('fails the migration signal when a shipped migration is not applied (failure 4)', async () => {
+    const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => ['0001_members', '0002_settings', '0003_support_grants', '0005_service_rows'] } }
     const out = await call(health, { ...c, stores: behind })
     expect(out.status).toBe(503)
-    expect(out.body.signals.find(s => s.name === 'migrations')).toEqual({ name: 'migrations', ok: false, detail: `applied 0004_audit_log, expected ${LATEST_MIGRATION}` })
+    expect(out.body.signals.find(s => s.name === 'migrations')).toEqual({ name: 'migrations', ok: false, detail: 'not applied: 0004_audit_log' })
+  })
+  it('compares sets, not the newest name (failure 4, P3 blocks)', async () => {
+    // Literal sets: P3's workers add blocks (0100, 0120, ...), so a lower number can land and be applied after a higher one.
+    const shipped = ['0005_service_rows', '0100_chats', '0120_chat_files']
+    const run = (applied: string[]) => migrationsSignal(shipped).check({ env: VERSIONED, stores: { ...stores, health: { ...stores.health, appliedMigrations: async () => applied } } })
+    expect(await run(['0120_chat_files', '0005_service_rows', '0100_chats'])).toEqual({ ok: true, detail: '3 applied' })
+    expect(await run(['0005_service_rows', '0120_chat_files'])).toEqual({ ok: false, detail: 'not applied: 0100_chats' })
+    expect(await run(['0005_service_rows', '0100_chats', '0120_chat_files', '0130_usage'])).toEqual({ ok: true, detail: '3 applied' })
+    expect(await run([])).toEqual({ ok: false, detail: 'not applied: 0005_service_rows, 0100_chats, 0120_chat_files' })
+    expect(await migrationsSignal([]).check({ env: VERSIONED, stores })).toEqual({ ok: false, detail: 'this build ships no migrations' })
   })
 })
