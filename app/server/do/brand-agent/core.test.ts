@@ -58,9 +58,10 @@ describe('admission (4.3)', () => {
   }))
 
   it('an expired drain admits (the flag outlives it: obligation 1)', () => inAgent(async h => {
-    h.sql.exec("INSERT INTO flags (key, value) VALUES ('draining_since_ms', ?), ('draining_until_ms', ?)", h.clock.now - 31 * MIN, h.clock.now - MIN)
+    // The pool still reports a drain whose expiry has passed (as the flags can): it no longer holds.
+    h.pool.drainAnswer = { ...h.pool.drainAnswer, drainingUntilMs: h.clock.now - MIN }
     expect(ok(await h.submit('c1', 'key-exp01')).position).toBe('starting')
-    h.sql.exec("UPDATE flags SET value = ? WHERE key = 'draining_until_ms'", h.clock.now + 1)
+    h.pool.drainAnswer = { ...h.pool.drainAnswer, drainingUntilMs: h.clock.now + 1 }
     expect(refusal(await h.submit('c2', 'key-exp02'))).toEqual({ code: 'unavailable', reason: 'draining' })
   }))
 

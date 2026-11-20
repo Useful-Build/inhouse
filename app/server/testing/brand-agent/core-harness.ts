@@ -69,19 +69,6 @@ export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> 
     const sql = state.storage.sql
     const clock = { now: T0 }
     const pool = new FakeRunnerPool()
-    // Like W2's pool (its drain and warm-up write W1's `flags` in the same step), so admission sees them.
-    const fakeDrain = pool.drain.bind(pool)
-    pool.drain = nowMs => {
-      const d = fakeDrain(nowMs)
-      sql.exec("INSERT INTO flags (key, value) VALUES ('draining_since_ms', ?), ('draining_until_ms', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", nowMs, d.drainingUntilMs)
-      return d
-    }
-    const fakeWarmup = pool.warmup.bind(pool)
-    pool.warmup = async () => {
-      const r = await fakeWarmup()
-      if ('ok' in r) sql.exec("DELETE FROM flags WHERE key IN ('draining_since_ms', 'draining_until_ms')")
-      return r
-    }
     const usage = new FakeUsageLedger()
     const files = new FakeFileLedger()
     const alarm: AlarmPort = { get: async () => null, set: async () => {}, delete: async () => {} }

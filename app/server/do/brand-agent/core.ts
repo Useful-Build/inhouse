@@ -137,10 +137,13 @@ export class AgentCore {
     return row ? row.value : null
   }
   private paused(): boolean { return this.flag('paused_at_ms') !== null }
-  /** A drain holds only while `draining_until_ms > now` (the flag can outlive it: obligation 1). */
+  /**
+   * A drain holds only while its expiry is ahead (obligation 1), read through the pool (`drainState`, synchronous, the
+   * owner of the drain's flags: obligation 11), never from the flag's presence.
+   */
   private draining_(): boolean {
-    const until = this.flag('draining_until_ms')
-    return typeof until === 'number' && until > this.d.now()
+    const until = this.d.ports.pool.drainState().drainingUntilMs
+    return until !== null && until > this.d.now()
   }
   private count(where: string, ...args: SqlStorageValue[]): number {
     return this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM turns WHERE ${where}`, ...args).one().n
