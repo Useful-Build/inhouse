@@ -13,7 +13,7 @@
 // - An unregistered host answers 599 with a clear message. Never a real fetch.
 
 import { createShopifyUpstream } from '../../test/upstreams/shopify/server'
-import { dataset as shopifyHandDataset } from '../../test/upstreams/shopify/recordings/hand/dataset'
+import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
 export const HUB_TEST_CANARY = 'INHOUSE_HUB_TEST_CANARY_4b9e'
@@ -23,8 +23,9 @@ export type TestUpstream = (req: Request) => Promise<Response>
 /** Recorded upstreams by host (for example `example-fixture.myshopify.com`). Registered by orchestrator lines below. */
 export const testUpstreams = new Map<string, TestUpstream>()
 
-// The recorded Shopify store (P4 W1), for the test config's SHOPIFY_SHOP. The hand dataset until the fixture is recorded.
-testUpstreams.set('example-fixture.myshopify.com', createShopifyUpstream(shopifyHandDataset))
+// The recorded Shopify store (P4 W1): the read fixture as recorded (recordings/fixture/), for the test config's
+// SHOPIFY_SHOP. Unit tests that need the planted edge cases use the hand dataset directly.
+testUpstreams.set('example-fixture.myshopify.com', createShopifyUpstream(shopifyFixtureDataset))
 
 export async function testUpstreamFetch(req: Request): Promise<Response> {
   const host = new URL(req.url).host
