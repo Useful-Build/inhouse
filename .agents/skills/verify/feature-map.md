@@ -15,6 +15,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Audit log: the download is checked on desktop only (its content in `sample-data.spec.ts`); the phone check sees the button.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
+- Connector hub (`app/hub/`, P4): no screen yet. Its default export answers 404 to every request (`hub/index/index.workers.test.ts`); the `hub` CI job runs its checks.
 - Export everything and Sign out are stubs: specs check they say so and change nothing.
 
 ## Today

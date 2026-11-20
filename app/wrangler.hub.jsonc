@@ -1,0 +1,37 @@
+/**
+ * The connector hub (P4): our own gateway Worker in the brand's account. It holds connector tokens in its SignIn
+ * Durable Objects and answers only service bindings: no route, no workers.dev URL, no preview URLs.
+ * This is the template. No account id, host, shop handle or client id here: the private ops repo fills `vars` per
+ * deployment, and the secrets are set through secret cards. scripts/check-hub-config.mjs checks this file in CI.
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "./hub/node_modules/wrangler/config-schema.json",
+	"name": "inhouse-hub",
+	"main": "hub/index/index.ts",
+	"compatibility_date": "2026-11-13",
+	// workers_dev defaults to true when there's no route, and an omitted preview_urls leaves an existing setting alone:
+	// both are explicitly false.
+	"workers_dev": false,
+	"preview_urls": false,
+	"observability": {
+		"enabled": true
+	},
+	"durable_objects": {
+		"bindings": [{ "name": "SIGNIN", "class_name": "SignIn" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignIn"] }],
+	// The test upstream seam (hub/testing/) is only in a bundle built with this "true" (wrangler.hub.test.jsonc).
+	"define": {
+		"__INHOUSE_HUB_TEST__": "false"
+	},
+	// Empty means not configured. The ops repo fills them per deployment.
+	"vars": {
+		"SHOPIFY_SHOP": "",
+		"SHOPIFY_CLIENT_ID": ""
+	},
+	// Set with `wrangler secret put` through a secret card, never in a file.
+	"secrets": {
+		"required": ["HUB_TOKEN_KEYS", "SHOPIFY_CLIENT_SECRET"]
+	}
+}

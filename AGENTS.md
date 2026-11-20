@@ -104,6 +104,17 @@ skill before any UI change. Repo specifics:
   config) is never a worker's fix: the worker proposes it in its report, the orchestrator decides with the PR's
   review, and one that costs money goes to Wasim. The orchestrator may give a spike brief a larger budget (for
   example 4 rounds); once it's spent the worker reports back and the escalation above runs from there.
+- **The connector hub (P4):** `app/hub/` is its own package (own `package.json`, lockfile, `tsconfig.json` and
+  `vitest.config.ts`; `tsc -b` in `app/` doesn't check it). Config template `app/wrangler.hub.jsonc` (no account ids,
+  hosts or shop handles), test config `app/wrangler.hub.test.jsonc`. Connectors live in
+  `app/hub/connectors/<tool>/route.ts`, each listed in `app/hub/connectors/index.ts` (one orchestrator line per
+  connector). Checks, in `app/hub/`: `npm ci`, `npm run typecheck`, `npm run test:node` (a worker's seat);
+  `npm run test:workers`, `npm run bundle` and `npm run bundle:test` start workerd or bundle, so they run in CI or
+  under the heavy lock. Two scans, in `app/`: `node scripts/check-hub-build.mjs` (the deployable bundle carries no test
+  seam and the test bundle is caught) and `node scripts/check-hub-config.mjs <config>` (no public route, no test build,
+  no secret in `vars`; the template passes, the test config must fail). The `hub` job in `ci.yml` runs all of it, and
+  `ci` needs it. **Outside-`app/hub/` rule:** code bundled into the hub from outside `app/hub/` (the recorded upstreams
+  in `app/test/upstreams/`) imports no npm package: the `hub` job installs only `app/hub/node_modules`.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.
