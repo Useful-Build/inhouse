@@ -14,7 +14,7 @@ const HOUR = 3_600_000
 const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url')
 
 /** A request's sign-in problem: the token to send (or none) and where to send it. */
-interface Bad { name: string; app: AppName; token: () => Promise<string | null>; to?: string }
+interface Bad { name: string; app: AppName; token: () => Promise<string | null>; to?: string; remoteSkip?: string }
 
 const bads: Bad[] = [
   { name: 'no header', app: 'brand', token: async () => null },
@@ -25,7 +25,13 @@ const bads: Bad[] = [
   { name: 'not yet valid', app: 'brand', token: async () => mint(admin, { nbfMs: Date.now() + HOUR }) },
   { name: "the Inhouse app's aud on the brand hostname", app: 'brand', token: async () => mint(admin, { aud: audOf('inhouse') }) },
   { name: "the brand app's aud on the Inhouse hostname", app: 'inhouse', token: async () => mint(actor('inhouse'), { aud: audOf('brand') }) },
-  { name: 'the right aud on the wrong hostname', app: 'brand', token: async () => mint(admin), to: `http://127.0.0.1:${new URL(appOrigin('brand')).port}` },
+  {
+    name: 'the right aud on the wrong hostname',
+    app: 'brand',
+    token: async () => mint(admin),
+    to: `http://127.0.0.1:${new URL(appOrigin('brand')).port}`,
+    remoteSkip: 'a deployed test build has no second hostname reaching the same Worker (workers_dev off); proven by the local test-build suite',
+  },
   { name: 'another issuer', app: 'brand', token: async () => mint(admin, { iss: 'https://not-the-issuer.invalid' }) },
   {
     name: 'alg none',
@@ -48,6 +54,7 @@ for (const row of matrixRows()) {
   const c = caseFor(row)
   for (const bad of bads) {
     test(`${rowKey(row)} with ${bad.name} is 401`, async ({ request }) => {
+      test.skip(!!process.env.E2E_TEST_BUILD_REMOTE && bad.remoteSkip !== undefined, bad.remoteSkip)
       const token = await bad.token()
       // The caller only supplies the app (its origin); the token is the one under test.
       const who: Actor = { app: bad.app, sub: 'unused', email: 'unused@example.test' }
