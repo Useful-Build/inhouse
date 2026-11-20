@@ -10,6 +10,7 @@ import type { ActiveRun, PauseState, SendTurnInput, SendTurnResult } from '../..
 import type { Effort } from '../../../shared/contract/common.ts'
 import type { SignalResult } from '../../ops/signals/types.ts'
 import type { EgressRoute, RunGrant, TokenRefusal } from './tokens.ts'
+import type { Scheduler } from './scheduler.ts'
 
 /** A refusal the API answers with its code and reason (P2's error body). */
 export type Refusal = { refused: { code: AgentErrorCode; reason?: ErrorReason } }
@@ -18,6 +19,25 @@ export type Refusal = { refused: { code: AgentErrorCode; reason?: ErrorReason } 
 
 /** The answer of one runner's `GET /runs/:id`, or `unreachable` when the runner didn't answer. */
 export type RunnerTurnStatus = 'live' | 'ended' | 'unknown' | 'unreachable'
+
+/**
+ * What the pool calls back on the BrandAgent (W2 fit point 3). The pool's queue rows never hold a run token.
+ * - `retryPlacement(turnId)`: a queued turn may try again: the BrandAgent revokes that attempt's token, mints a new one
+ *   and calls `place` again.
+ * - `placementExpired(turnId)`: the turn waited 60 s in the placement queue: the BrandAgent fails it `pool_full`.
+ */
+export interface PlacementHooks {
+  retryPlacement(turnId: string): void | Promise<void>
+  placementExpired(turnId: string): void | Promise<void>
+}
+
+/** The BrandAgent's parts the pool runs on (W2 fit point 1): its SQLite (`pool_*`, live counts from `turns`), scheduler and clock. */
+export interface BrandAgentParts {
+  sql: SqlStorage
+  scheduler: Scheduler
+  now: () => number
+  hooks: PlacementHooks
+}
 
 /** The pool's health signals (section 7): `pool_protocol`, `pool_restarts`, `pool_shortfall`. Counts only. */
 export interface PoolHealth {
@@ -29,16 +49,26 @@ export interface PoolHealth {
 export interface RunnerPoolPort {
   /**
    * Place a turn (`rs.runId` is the turn id) on a runner. `admitted`: the runner's name; `queued`: in the placement
-   * queue; a definite refusal; `ambiguous`: the request may have reached the runner named (never try another).
+   * queue (the turn stays `starting`, inside its 3-minute deadline, until a hook calls back); a definite refusal;
+   * `ambiguous`: the request may have reached the runner named (never try another).
    * `gen` is the turn's generation at the claim, so an answer for an older attempt can be told apart.
    */
   place(rs: RunStart, gen: number): Promise<{ admitted: string } | { queued: true } | { refused: 'pool_full' | 'files' | 'draining' } | { ambiguous: string }>
   interrupt(runner: string, turnId: string): Promise<void>
   stop(runner: string, turnId: string): Promise<void>
-  status(runner: string, turnId: string): Promise<RunnerTurnStatus>
+  /** `containerGone`: the runner's container generation is gone or not running (design 1.3's second condition). */
+  status(runner: string, turnId: string): Promise<{ state: RunnerTurnStatus; containerGone: boolean }>
   /** The turn released its runner (the next placement may use the slot). */
   turnEnded(runner: string, turnId: string): void
   health(): PoolHealth
+  /** Route 46 (W2 fit point 4): writes `draining_since_ms` and `draining_until_ms` in `flags` synchronously. */
+  drain(nowMs: number): DrainState
+  /** Route 47. */
+  drainState(): DrainState
+  /** Route 48: start runners, check them, clear the drain. */
+  warmup(): Promise<{ ok: true } | Refusal>
+  /** A container exited: the turn ids the BrandAgent fences, or null when this generation was already reported. */
+  containerExited(runner: string, gen: number): string[] | null
 }
 
 // ---------- the usage ledger (W4, p3-design section 9) ----------
@@ -183,10 +213,11 @@ export interface BrandAgentRpc {
   trace(id: string, ownerId: string | null): Promise<Trace | null>
   onMemberRemoved(memberId: string): Promise<void>
   onGrantEnded(grantId: string): Promise<void>
-  /** A Runner's container exited: fence that runner's turns, once per generation. */
+  /** A Runner's container exited: the pool names that runner's turns once per generation, and the BrandAgent fences them. */
   containerExited(runner: string, gen: number): Promise<void>
   poolHealth(): Promise<PoolHealth>
   runsHealth(): Promise<RunsHealth>
+  /** `drain`, `drainState` and `warmup` delegate to the pool (`RunnerPoolPort`). */
   drain(): Promise<DrainState>
   drainState(): Promise<DrainState>
   warmup(): Promise<{ ok: true } | Refusal>
