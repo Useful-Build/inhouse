@@ -101,3 +101,103 @@ export function canRowsProblems(rows: readonly AccessRow[], canRows: CanRows): s
   }
   return problems
 }
+
+const OK: AccessDecision = { ok: true }
+const NO: AccessDecision = { refused: 'forbidden' }
+const OBJECT_REQUIRED: AccessDecision = { ok: true, objectCheck: 'required' }
+
+/** The only technical write an Admin may make (decision log: admins may switch a model off). Call 4 may add `'on'`. */
+const ADMIN_WRITE_KEY = /^tm:[^:]+:on$/
+
+/** The object an Admin's allowed `adminWrite` write has, for `canFor` (`as: 'adminWrite'`). */
+export const ADMIN_WRITE_OBJECT: AccessObject = { settingKey: 'tm:any:on', value: 'off' }
+
+const owner = (object: AccessObject | undefined, memberId: string): AccessDecision =>
+  object === undefined ? OBJECT_REQUIRED : object.ownerId === memberId ? OK : { refused: 'forbidden', reason: 'not_owner' }
+
+export const checkAccess: CheckAccess = (principal, row, object, nowMs) => {
+  const read = row.method === 'GET'
+  if (principal.kind === 'service') {
+    if (!row.services?.includes(principal.name)) return NO
+    if (principal.name === 'monitor') return row.class === 'open' && read ? OK : NO
+    if (!read || row.class === 'open') return NO
+    return row.class === 'personal' ? owner(object, principal.memberId) : OK
+  }
+  if (row.class === 'open') return NO
+
+  if (principal.kind === 'inhouse') {
+    if (!row.allow.includes('inhouse')) return NO
+    switch (row.class) {
+      case 'brand_data': {
+        if (!read) return NO
+        const g = principal.grant
+        return g && g.endsAtMs > nowMs ? { ok: true, audit: 'support.access' } : { refused: 'forbidden', reason: 'grant_required' }
+      }
+      case 'baseline': return read ? OK : NO
+      case 'technical': return OK
+      case 'personal': return NO
+    }
+  }
+
+  const role = principal.role
+  if (!row.allow.includes(role)) return row.class === 'technical' && !read && role === 'admin' ? { refused: 'forbidden', reason: 'admin_read_only' } : NO
+  if (row.class === 'technical' && !read) {
+    // A Member never writes technical; an Admin only on an `adminWrite` row, and only through the object rule.
+    if (role !== 'admin') return NO
+    if (!row.adminWrite) return { refused: 'forbidden', reason: 'admin_read_only' }
+    if (object === undefined) return OBJECT_REQUIRED
+    return typeof object.settingKey === 'string' && ADMIN_WRITE_KEY.test(object.settingKey) && object.value === 'off'
+      ? OK
+      : { refused: 'forbidden', reason: 'admin_read_only' }
+  }
+  return row.class === 'personal' ? owner(object, principal.memberId) : OK
+}
+
+/** What `requireObject` throws: api.ts answers 403 `forbidden` with its reason. */
+export class AccessRefusedError extends Error implements AccessRefused {
+  readonly code = 'forbidden' as const
+  readonly reason?: ForbiddenReason
+  constructor(reason?: ForbiddenReason) {
+    super('forbidden')
+    this.name = 'AccessRefused'
+    this.reason = reason
+  }
+}
+
+/**
+ * `requireObject` for one request on one row, with every call's outcome recorded: `refusal` is the first refusal
+ * (api.ts answers 403 with it whatever the handler returned, so a swallowed `AccessRefused` can't write), `passed`
+ * whether at least one call passed.
+ */
+export function objectGate(principal: Principal, row: AccessRow, nowMs: number): { requireObject: RequireObject; readonly passed: boolean; readonly refusal: AccessRefusedError | null } {
+  let passed = false
+  let refusal: AccessRefusedError | null = null
+  return {
+    requireObject(object) {
+      const d = checkAccess(principal, row, object, nowMs)
+      const refused = 'refused' in d ? new AccessRefusedError(d.reason) : d.objectCheck ? new AccessRefusedError() : null
+      if (refused) {
+        refusal ??= refused
+        throw refused
+      }
+      passed = true
+    },
+    get passed() { return passed },
+    get refusal() { return refusal },
+  }
+}
+
+/** The row for a method and pattern, or undefined. */
+export const rowFor = (rows: readonly AccessRow[], method: string, pattern: string) =>
+  rows.find(r => r.method === method && r.pattern === pattern)
+
+export const canFor: CanFor = (principal, rows, canRows, nowMs) => {
+  const out = {} as Record<CanKey, boolean>
+  for (const key of Object.keys(canRows) as CanKey[]) {
+    const want = canRows[key]
+    const row = rowFor(rows, want.method, want.pattern)
+    const d = row && checkAccess(principal, row, want.as === 'adminWrite' ? ADMIN_WRITE_OBJECT : undefined, nowMs)
+    out[key] = !!d && 'ok' in d && !d.objectCheck
+  }
+  return out
+}
