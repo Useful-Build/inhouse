@@ -6,6 +6,7 @@
   "engines": { "node": ">=24" },
   "type": "module",
   "scripts": {
+    "prepare": "git rev-parse --git-dir > /dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:product": "vite build --mode product",

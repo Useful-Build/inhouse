@@ -88,6 +88,10 @@ skill before any UI change. Repo specifics:
   `fleet/**`, with no bypass. `ci` (typecheck, lint, unit, build, every Playwright project) runs on every PR into
   either. `pr-gates` fails a commit without a `Verified:` trailer and flags changed existing checks. `main` also needs
   the branch up to date with `main`. No merge queue for now.
+- **Commit hook:** `.githooks/commit-msg` refuses a commit whose `Verified:` trailer `git interpret-trailers --parse`
+  can't print (merge commits pass). `npm install` in `app/` runs `prepare`, which sets `core.hooksPath` to `.githooks`
+  (the hooks run the global hook of the same name and the repo's own `.git/hooks` one after their own check, via
+  `.githooks/chain.sh`, so a global hooks path keeps working).
 - **Big projects:** one integration branch `fleet/<topic>` cut from `main`. Each piece is its own PR into it, merged
   with a merge commit. Bring `main` into it through a PR (direct pushes are blocked). The final PR into `main` gets
   full CI, reviews, a preview, the QA gate and a ship recording (`ship.yml`, run by hand with the PR number and its
@@ -130,7 +134,9 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`, `app/server/auth/**` (auth), `app/server/migrations/` (the D1
-  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops).
+  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops), `app/hub/{signin,crypto,scope,testing}/` (the hub's sign-in, key handling, scopes and
+  test seam), `app/wrangler.hub.jsonc` and `app/wrangler.hub.test.jsonc` (hub Worker config) and the `check-hub-*`
+  scripts in `app/scripts/` (`check-hub-build.mjs`, `check-hub-config.mjs` and their fixtures).
 - **The product Worker (P2).** `app/server/` is the product Worker (entry `server/index.ts`): every `/api/*` request is
   authenticated (Access JWT), then the `Origin` check, the route (`server/routes.ts`), its row in
   `server/access-matrix.ts` and `checkAccess`, then the handler; every answer carries the security headers
