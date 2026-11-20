@@ -28,6 +28,7 @@ describe('outcomeOf (failures 1, 2)', () => {
     ['timeout', false, { outcome: 'failed', reason: 'timeout' }],
     ['store', false, { outcome: 'failed', reason: 'store' }],
     ['session_crashed', false, { outcome: 'failed', reason: 'session_crashed' }],
+    ['structured_output', false, { outcome: 'failed', reason: 'sdk_error' }],
   ] as const)('failed %s (asked %s)', (reason, asked, want) => {
     expect(outcomeOf({ type: 'failed', reason, message: 'm' }, asked)).toEqual(want)
   })

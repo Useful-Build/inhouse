@@ -149,7 +149,7 @@ export class RunnerHarness extends DurableObject<Env> {
     return new Response('not found', { status: 404 })
   }
 
-  async #startRun(body: { scenario?: string; chatId?: string; prompt?: string; resume?: boolean; expect?: unknown; sessionId?: string; runId?: string; fileCaps?: FileCaps }) {
+  async #startRun(body: { scenario?: string; chatId?: string; prompt?: string; resume?: boolean; expect?: unknown; sessionId?: string; runId?: string; fileCaps?: FileCaps; outputFormat?: unknown }) {
     if (!body.scenario || !(body.scenario in SCENARIOS)) return Response.json({ error: `unknown scenario; known: ${Object.keys(SCENARIOS).join(', ')}` }, { status: 400 })
     const chatId = body.chatId ?? 'chat-1'
     const runToken = `harness_${crypto.randomUUID().replaceAll('-', '')}`
@@ -171,6 +171,8 @@ export class RunnerHarness extends DurableObject<Env> {
       runToken,
       webFetchDomains: [],
       fileCaps: body.fileCaps ?? DEFAULT_CAPS,
+      // Structured output, passed through (the `structured` scenarios answer STRUCTURED_SCHEMA).
+      ...(body.outputFormat === undefined ? {} : { outputFormat: body.outputFormat }),
     })
     // One answer per run id: a second POST for a run still streaming would steal its sink.
     if (this.#sinks.has(start.runId)) return Response.json({ error: 'run_live' }, { status: 409 })

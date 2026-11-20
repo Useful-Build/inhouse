@@ -104,7 +104,9 @@ const demoServer = {
   timeout: 180_000,
 }
 const productServer = {
-  command: `npx wrangler dev --config ${productWorkerConfig} --port ${productPort}`,
+  // `--local`: remote bindings off. The product config binds Workers AI (the egress's gateway, p3-design 8.2), which
+  // `wrangler dev` otherwise serves through a remote proxy session that needs a Cloudflare login; the specs make no model call.
+  command: `npx wrangler dev --local --config ${productWorkerConfig} --port ${productPort}`,
   url: productURL,
   reuseExistingServer: false,
   timeout: 180_000,

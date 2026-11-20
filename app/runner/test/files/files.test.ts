@@ -91,8 +91,13 @@ const out = (name: string, body: Uint8Array | string) => {
 }
 
 describe('names through /files/', () => {
-  // Segments the proxy can carry: no '#', no '\', not '.' or '..', not empty, no unpaired surrogate.
-  const segment = fc.string({ unit: 'binary', minLength: 1, maxLength: 12 }).filter((s) => !s.includes('/') && !s.includes('#') && !s.includes('\\') && s !== '.' && s !== '..' && s.isWellFormed())
+  // Segments the proxy can carry: no '#', no '\', not '.' or '..', not empty, no unpaired surrogate, and no control
+  // character: NUL to U+001F, DEL (U+007F) and U+0080 to U+009F (the shared name rule, app/shared/files/names.ts).
+  // At most 12 characters, so far under the 255-byte segment limit.
+  const CONTROLS = /[\u0000-\u001f\u007f\u0080-\u009f]/
+  const segment = fc
+    .string({ unit: 'binary', minLength: 1, maxLength: 12 })
+    .filter((s) => !s.includes('/') && !s.includes('#') && !s.includes('\\') && s !== '.' && s !== '..' && s.isWellFormed() && !CONTROLS.test(s))
 
   it.prop([fc.array(segment, { minLength: 1, maxLength: 4 })])('a carriable name encodes to a path the proxy takes, which decodes back to the name', (segs) => {
     const p = filesPath(segs.join('/'))
@@ -101,7 +106,7 @@ describe('names through /files/', () => {
     expect(p!.slice('/files/'.length).split('/').map(decodeURIComponent)).toEqual(segs)
   })
 
-  it.prop([fc.array(segment, { minLength: 1, maxLength: 3 }), fc.constantFrom('#', 'a#b', '\\', '..', '.', '', '\ud800')])(
+  it.prop([fc.array(segment, { minLength: 1, maxLength: 3 }), fc.constantFrom('#', 'a#b', '\\', '..', '.', '', '\ud800', '\u0000', 'a\u001fb', '\u007f', 'c\u0085', 'x'.repeat(256))])(
     'a name with a segment the proxy cannot carry gets no path',
     (segs, bad) => {
       expect(filesPath([...segs, bad].join('/'))).toBeNull()

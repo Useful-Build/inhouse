@@ -41,6 +41,8 @@ const RULE_TEXT = {
   'pool-mismatch': "the Runner container's max_instances (4) must be 3 x RUNNER_POOL (6)",
   'pool-not-number': 'vars.RUNNER_POOL must be a whole number of 2 or more',
   'pool-no-container': 'containers must be exactly one, for the Runner class',
+  // P3 (p3-design 8.2): the gateway the egress calls must be named.
+  'gateway-id-empty': 'vars.AI_GATEWAY_ID must name the AI Gateway',
 }
 
 describe('check-product-config', () => {
@@ -82,11 +84,28 @@ describe('check-product-config', () => {
     config.vars.INHOUSE_ACCESS = accessOf(`${fixtures}pass.jsonc`)
     // The template gets this binding in #125; the test passes on a base with or without it.
     config.version_metadata ??= { binding: 'CF_VERSION_METADATA' }
+    // P3 W3: the template binds AI and ships AI_GATEWAY_ID empty; the release fills it like INHOUSE_ACCESS.
+    config.vars.AI_GATEWAY_ID = 'house-gateway'
     const file = join(mkdtempSync(join(tmpdir(), 'product-config-')), 'filled.json')
     writeFileSync(file, JSON.stringify(config))
     const r = run(file)
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
+  })
+
+  test('refuses wrangler.product.jsonc with INHOUSE_ACCESS filled but AI_GATEWAY_ID left empty, naming that rule only', () => {
+    const config = JSON.parse(stripJsonc(readFileSync(template, 'utf8')))
+    config.vars.INHOUSE_ACCESS = accessOf(`${fixtures}pass.jsonc`)
+    config.version_metadata ??= { binding: 'CF_VERSION_METADATA' }
+    expect(config.ai).toEqual({ binding: 'AI' })
+    expect(config.vars.AI_GATEWAY_ID).toBe('')
+    const file = join(mkdtempSync(join(tmpdir(), 'product-config-')), 'unfilled-gateway.json')
+    writeFileSync(file, JSON.stringify(config))
+    const r = run(file)
+    expect(r.status).toBe(1)
+    expect(r.stderr.split('\n').filter(l => l.startsWith('  - '))).toEqual([
+      '  - vars.AI_GATEWAY_ID must name the AI Gateway (lowercase letters, digits and dashes): the egress calls the model through it',
+    ])
   })
 
   test('refuses the unfilled wrangler.product.jsonc on INHOUSE_ACCESS only', () => {

@@ -277,7 +277,8 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
     stop: async () => {},
     warm: async newerThan => {
       const r = L.runners[i]
-      const want = L.draining() ? r.drainGen : null
+      // Offered a replacement only when idle (no unfinished turn; no admission is in flight between ops).
+      const want = L.draining() && r.unfinished.size === 0 ? r.drainGen : null
       if (newerThan !== want) L.violate(`warm runner-${i}: asked for newer than ${newerThan}, the ledger has ${want}`)
       if (newerThan !== null && r.gen <= newerThan) {
         if (r.unfinished.size > 0) return { ok: false, why: 'busy', detail: 'runs on the old container' }
@@ -332,14 +333,13 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
       const res = await s.waitFor(pool.warmup())
       const want = busy ? { refused: { code: 'unavailable', reason: 'draining' } } : { ok: true }
       if (JSON.stringify(res) !== JSON.stringify(want)) L.violate(`warm-up answered ${JSON.stringify(res)}, the ledger says ${JSON.stringify(want)}`)
+      // Every warmed runner answered ok (a busy one on its old container, asked for nothing): all up. warm() above
+      // already moved a replaced container's gen on.
       for (const r of warmed) {
-        if (!(L.draining() && r.drainGen !== null && r.gen <= r.drainGen && r.unfinished.size > 0)) {
-          // warm() above already moved a replaced container's gen on.
-          r.awake = true
-          r.coolUntil = 0
-          r.protocolBad = false
-          r.seenGen = r.gen
-        }
+        r.awake = true
+        r.coolUntil = 0
+        r.protocolBad = false
+        r.seenGen = r.gen
       }
       if (!busy) {
         L.drainUntil = null
@@ -492,6 +492,34 @@ describe('routing', () => {
       })
       expect(await pool.place(rs('t_a'), 1)).toEqual({ queued: true })
       expect(admits).toEqual(['t_a@runner-0', 't_a@runner-1'])
+    })
+  })
+
+  it('a cold start is not a slow admission: turns during a wake join it instead of waking the next runner', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
+      const clock = { now: T0 }
+      let open!: () => void
+      const booting = new Promise<void>(r => (open = r))
+      const admits: string[] = []
+      const pool = poolWith(sql, name => async start => {
+        admits.push(`${start.runId}@${name}`)
+        // runner-0's container is starting (a cold boot) until `open`.
+        if (name === 'runner-0') await booting
+        return { accepted: true, gen: 1, protocol: 2 }
+      }, clock)
+      // t_a wakes runner-0; t_b joins the boot 3 s in; t_c 3 s after that (t_b's wait is boot time too).
+      const a = pool.place(rs('t_a'), 1)
+      clock.now = T0 + 3_001
+      const b = pool.place(rs('t_b'), 1)
+      clock.now = T0 + 6_002
+      const c = pool.place(rs('t_c'), 1)
+      open()
+      expect(await a).toEqual({ admitted: 'runner-0' })
+      expect(await b).toEqual({ admitted: 'runner-0' })
+      expect(await c).toEqual({ admitted: 'runner-0' })
+      expect(admits).toEqual(['t_a@runner-0', 't_b@runner-0', 't_c@runner-0'])
     })
   })
 
@@ -826,6 +854,37 @@ describe('drain', () => {
 })
 
 describe('warm-up', () => {
+  it('a runner with an unfinished turn or an admission in flight is never offered a replacement (no newerThan)', async () => {
+    await inObject(async sql => {
+      const rig = drainRig(sql)
+      sql.exec("UPDATE pool_runners SET state = 'up', container_gen = 4 WHERE runner IN ('runner-0', 'runner-1')")
+      // runner-0: a placement from before the drain whose admission is still in flight; runner-1: idle.
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      let open!: () => void
+      const barrier = new Promise<void>(r => (open = r))
+      rig.admit = async () => {
+        await barrier
+        return { accepted: true, gen: 4, protocol: 2 }
+      }
+      const placing = rig.pool.place(rs('t_a'), 1)
+      rig.pool.drain(rig.clock.now)
+      const asked = new Map<string, number | null>()
+      rig.warm = async (name, newerThan) => {
+        asked.set(name, newerThan)
+        return { ok: true, gen: newerThan === null ? 4 : 5, protocol: 2 }
+      }
+      expect(await rig.pool.warmup()).toEqual({ refused: { code: 'unavailable', reason: 'draining' } })
+      expect(Object.fromEntries(asked)).toEqual({ 'runner-0': null, 'runner-1': 4 })
+      open()
+      expect(await placing).toEqual({ admitted: 'runner-0' })
+      // Admitted and live there: still no replacement while it runs.
+      sql.exec("UPDATE turns SET state = 'live' WHERE turn_id = 't_a'")
+      asked.clear()
+      expect(await rig.pool.warmup()).toEqual({ refused: { code: 'unavailable', reason: 'draining' } })
+      expect(asked.get('runner-0')).toBeNull()
+    })
+  })
+
   it('refuses while a runner still has the container it had when the drain began; a newer one passes', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)

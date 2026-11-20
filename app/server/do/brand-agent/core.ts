@@ -24,7 +24,7 @@ import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from './tokens.ts
 import { hashRunToken } from './tokens.ts'
 import { mapSdkMessage, outcomeOf } from './map-events.ts'
 import type { TurnOutcome } from './map-events.ts'
-import { buildStart, newId, payloadHash } from './run-start.ts'
+import { buildStart, newId, submitPayloadHash } from './run-start.ts'
 import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
 import { ModelGate } from './gate.ts'
@@ -82,7 +82,7 @@ export interface TurnRow {
   mirror_error: number; deferred_json: string | null; start_json: string | null; settled: number; ledger_hold_micro: number
   start_hold_micro: number; ledger_fails: number; ledger_retry_at_ms: number | null; runner_cost_micro: number | null; parts_n: number
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
-  created_at_ms: number; started_at_ms: number | null; ended_at_ms: number | null
+  created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
 interface ChatStateRow {
@@ -204,10 +204,8 @@ export class AgentCore {
   // ---------- submit (4.3) ----------
 
   async submitTurn(t: SubmitTurn): Promise<SendTurnResult | Refusal> {
-    const hash = payloadHash({
-      text: t.input.text, quote: t.input.quote ?? null, priority: t.input.priority, model: t.input.model,
-      replacesRun: t.input.replacesRun ?? null, attachments: t.input.attachments.map(a => [a.fileId, a.name]),
-    })
+    // Computed before the key check: it writes nothing, so the claim is still before any write's await (4.2.1).
+    const hash = await submitPayloadHash(t.input)
     // A retried POST answers what the first one did, before any other rule (4.3).
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
@@ -304,7 +302,14 @@ export class AgentCore {
     if (this.count(`run_id = ? AND state IN ${ACTIVE}`, runId) > 0) return null
     const next = this.sql.exec<TurnRow>(`SELECT * FROM turns WHERE run_id = ? AND state = 'queued' ORDER BY ${PRIORITY_ORDER}, ord LIMIT 1`, runId).toArray()[0]
     if (next) {
-      if (this.paused() || this.draining_()) return null
+      if (this.paused()) return null
+      if (this.draining_()) {
+        // Comes back at the drain's expiry, whatever re-armed this run's advance earlier (a budget retry, a file
+        // confirm's retry), so the expiry's advance is never overwritten into nothing (L5).
+        const until = this.d.ports.pool.drainState().drainingUntilMs!
+        this.d.scheduler.schedule({ id: `run-advance:${runId}`, kind: 'run-advance', dueAtMs: until })
+        return null
+      }
       this.claim(next)
       return next.turn_id
     }
@@ -326,8 +331,8 @@ export class AgentCore {
     const now = this.d.now()
     const gen = t.gen + 1
     this.sql.exec(
-      `UPDATE turns SET state = 'starting', gen = ?, starting_deadline_ms = ?, placed = 0, pool_queued = 0, runner = NULL,
-        runner_last_seq = -1, watch_json = NULL WHERE turn_id = ?`, gen, now + STARTING_DEADLINE_MS, t.turn_id)
+      `UPDATE turns SET state = 'starting', gen = ?, starting_deadline_ms = ?, claimed_at_ms = ?, placed = 0, pool_queued = 0,
+        runner = NULL, runner_last_seq = -1, watch_json = NULL WHERE turn_id = ?`, gen, now + STARTING_DEADLINE_MS, now, t.turn_id)
     this.watchTask(t.turn_id, now + WATCH_EVERY_MS)
     void this.start(t.turn_id, gen).catch(err => console.error({ event: 'turn_start_failed', error: errorText(err) }))
   }
@@ -454,28 +459,34 @@ export class AgentCore {
   private placed(turnId: string, gen: number, answer: Awaited<ReturnType<BrandAgentPorts['pool']['place']>>, tokenHash: string) {
     const t = this.turn(turnId)
     if (!t) return
-    if ('admitted' in answer) {
-      if (t.gen === gen && t.state === 'starting') return this.goLive(t, answer.admitted)
-      if (t.gen === gen && t.state === 'live') {
-        // A push made it live first (the runner admitted and pushed before this answer): nothing starts twice.
-        this.sql.exec('UPDATE turns SET runner = ? WHERE turn_id = ? AND runner IS NULL', answer.admitted, turnId)
+    const named = 'admitted' in answer ? answer.admitted : 'ambiguous' in answer ? answer.ambiguous : null
+    if (t.gen === gen && t.state === 'starting') {
+      if ('admitted' in answer) return this.goLive(t, answer.admitted)
+    } else {
+      // A late answer (obligation 6, H1 of #153's review). This attempt is still the turn's own while its token stands
+      // (a requeue or a cancel before admission revokes it; a terminal event or a fence only closes routes): then it
+      // is the attempt a push made live, or that ended or was fenced since, so keep its token (the grace still needs
+      // `store` and `events`), name the runner if none is, and never stop it.
+      if (this.tokenStands(tokenHash)) {
+        if (named !== null && (t.state === 'live' || t.state === 'ending')) {
+          this.sql.exec('UPDATE turns SET runner = ? WHERE turn_id = ? AND runner IS NULL', named, turnId)
+        }
         return
       }
-      // The turn no longer wants this admission (fenced, cancelled or ended meanwhile): undo it. A newer attempt of
-      // the turn on a runner is left alone (it shares the turn id).
-      if (t.gen !== gen && (t.state === 'starting' || t.state === 'live')) return
+      // An attempt requeued or cancelled before admission: its token goes, and a runner it reached is stopped (best
+      // effort), unless a newer attempt of the turn (same turn id) is on that runner now.
       this.d.tokens.revokeToken(tokenHash, 'fenced')
-      void this.d.ports.pool.stop(answer.admitted, turnId).catch(err => console.error({ event: 'turn_undo_stop_failed', error: errorText(err) }))
-      return
-    }
-    if (t.gen !== gen || t.state !== 'starting') {
-      // A late answer for an attempt that's gone: only its token needs undoing (a live turn keeps its own).
-      if (t.state !== 'live') this.d.tokens.revokeToken(tokenHash, 'fenced')
+      const newerThere = t.runner === named && (t.state === 'starting' || t.state === 'live' || t.state === 'ending')
+      if (named !== null && !newerThere) {
+        void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_undo_stop_failed', error: errorText(err) }))
+      }
       return
     }
     if ('queued' in answer) {
       this.d.tokens.revokeToken(tokenHash, 'queued')
-      if (t.pool_queued === 0) this.emit(t.run_id, null, { type: 'notice', code: 'pool_busy' })
+      // Once per turn, whatever its later attempts do (L6).
+      const told = this.sql.exec("SELECT 1 FROM events WHERE turn_id = ? AND json = ? LIMIT 1", turnId, JSON.stringify({ type: 'notice', code: 'pool_busy' })).toArray().length > 0
+      if (!told) this.emit(t.run_id, turnId, { type: 'notice', code: 'pool_busy' })
       this.sql.exec('UPDATE turns SET pool_queued = 1 WHERE turn_id = ?', turnId)
       return
     }
@@ -490,8 +501,15 @@ export class AgentCore {
       case 'pool_full': return this.cancelUnstarted(this.turn(turnId)!, 'pool_full')
       case 'files': return this.failUnstarted(this.turn(turnId)!, { outcome: 'failed', reason: 'files' })
       case 'rejected': return this.failUnstarted(this.turn(turnId)!, { outcome: 'failed', reason: 'protocol' })
-      case 'draining': return this.requeue(this.turn(turnId)!, false)
+      // Back to the run's queue, tried again by `run-advance` (not at once: a pool that answers `draining` while
+      // `drainState` says none would otherwise loop the claim).
+      case 'draining': return this.requeue(this.turn(turnId)!, false, false)
     }
+  }
+
+  /** Whether this token was never revoked (its routes may be closed). */
+  private tokenStands(tokenHash: string): boolean {
+    return this.sql.exec('SELECT 1 FROM run_tokens WHERE token_hash = ? AND revoked_at_ms IS NULL', tokenHash).toArray().length > 0
   }
 
   private goLive(t: TurnRow, runner: string | null) {
@@ -521,7 +539,7 @@ export class AgentCore {
    * Back to `queued` for another attempt (1.3): the attempt's tokens are revoked first; past 2 requeues (counted when
    * `counts`) the turn fails `session_crashed`.
    */
-  private requeue(t: TurnRow, counts: boolean) {
+  private requeue(t: TurnRow, counts: boolean, advanceNow = true) {
     this.d.tokens.revokeTurn(t.turn_id, 'requeued')
     this.gate.stopWaiters(t.turn_id)
     if (counts && t.requeues >= MAX_REQUEUES) return this.failUnstarted(t, { outcome: 'failed', reason: 'session_crashed' })
@@ -530,7 +548,8 @@ export class AgentCore {
       `UPDATE turns SET state = 'queued', gen = gen + 1, placed = 0, pool_queued = 0, runner = NULL, runner_last_seq = -1,
         watch_json = NULL, starting_deadline_ms = NULL, requeues = requeues + ? WHERE turn_id = ?`, counts ? 1 : 0, t.turn_id)
     this.d.scheduler.cancel(`turn-watch:${t.turn_id}`)
-    this.advance(t.run_id)
+    if (advanceNow) this.advance(t.run_id)
+    else this.d.scheduler.schedule({ id: `run-advance:${t.run_id}`, kind: 'run-advance', dueAtMs: this.d.now() + BUDGET_RETRY_MS })
   }
 
   // ---------- the placement hooks (W2 fit point 3; obligation 9) ----------
@@ -567,14 +586,29 @@ export class AgentCore {
     const now = this.d.now()
     this.d.tokens.revokeTurn(t.turn_id, state)
     if (t.pool_queued === 1) this.d.ports.pool.dequeue(t.turn_id)
-    this.sql.exec(
-      `UPDATE turns SET state = ?, gen = gen + 1, outcome = ?, failure = ?, cancel_why = ?, pool_queued = 0, ended_at_ms = ?
-        WHERE turn_id = ?`, state, outcome, failure, why, now, t.turn_id)
+    this.storeFinal(t.turn_id, state, { outcome, failure, why }, now)
     this.d.scheduler.cancel(`turn-watch:${t.turn_id}`)
     this.gate.stopWaiters(t.turn_id)
     if (t.reserved > 0) this.queueSettle(t.turn_id, false)
     this.advance(t.run_id)
   }
+
+  /**
+   * THE one synchronous step that stores a turn as final (`ended` or `cancelled`), on every path: finished, failed,
+   * stopped, interrupted, cancelled while queued or starting (pause, stop, removal, delete), fence and watchdog
+   * deadlines. An outcome already fixed (by the terminal event or the fence) is kept. PR 5's `onEnd` task is ensured
+   * here, in the same step; `onFinal` is that seam (tests count it).
+   */
+  private storeFinal(turnId: string, state: 'ended' | 'cancelled', o: { outcome: string | null; failure: string | null; why: string | null }, now: number) {
+    this.sql.exec(
+      `UPDATE turns SET state = ?, gen = gen + 1, outcome = COALESCE(outcome, ?), failure = COALESCE(failure, ?),
+        cancel_why = COALESCE(cancel_why, ?), pool_queued = 0, ended_at_ms = ? WHERE turn_id = ?`,
+      state, o.outcome, o.failure, o.why, now, turnId)
+    this.onFinal?.(this.turn(turnId)!)
+  }
+
+  /** Testing seam (and PR 5's join point): called once per turn, inside `storeFinal`'s synchronous step. */
+  onFinal?: (t: TurnRow) => void
 
   /**
    * The fence (4.6): `gen++`, the outcome fixed now (terminal once), `model|mcp|files|audit` closed, the runner asked to
@@ -619,7 +653,7 @@ export class AgentCore {
       this.emit(t.run_id, t.turn_id, { type: 'turn.finished', turnId: t.turn_id, outcome: 'failed', reason: 'protocol' })
       this.sql.exec("UPDATE turns SET outcome = 'failed', failure = 'protocol' WHERE turn_id = ?", t.turn_id)
     }
-    this.sql.exec("UPDATE turns SET state = 'ended', gen = gen + 1, ended_at_ms = ? WHERE turn_id = ?", now, t.turn_id)
+    this.storeFinal(t.turn_id, 'ended', { outcome: null, failure: null, why: null }, now)
     this.d.tokens.closeRoutes(t.turn_id, [...FIRST_ROUTES, ...LAST_ROUTES], 'ended')
     this.d.tokens.prune(now)
     if (t.runner !== null) this.d.ports.pool.turnEnded(t.runner, t.turn_id)
@@ -880,13 +914,29 @@ export class AgentCore {
     if (!w.ambiguous && now < deadline) return this.again(t.turn_id, Math.min(deadline, now + WATCH_EVERY_MS))
     // The ambiguous path: stop it there, then `status` until certain.
     const runner = t.runner!
+    // Bounded like any turn (H3 of #153's review): a runner that never answers can't hold the chat past the token's life.
+    if (now - (t.claimed_at_ms ?? t.created_at_ms) >= TURN_MAX_MS) {
+      this.failUnstarted(t, { outcome: 'failed', reason: 'session_crashed' })
+      return { done: true }
+    }
     if (!w.stopped) {
-      await this.d.ports.pool.stop(runner, t.turn_id)
+      // A stop that fails (a dead container) is no answer at all: go on to `status`, never throw out of the watchdog.
+      try {
+        await this.d.ports.pool.stop(runner, t.turn_id)
+      } catch (err) {
+        console.error({ event: 'turn_ambiguous_stop_failed', error: errorText(err) })
+      }
       if (!this.current(t.turn_id, t.gen, 'starting')) return { done: true }
       w.stopped = true
       this.setWatch(t.turn_id, t.gen, { ...w, ambiguous: true })
     }
-    const st = await this.d.ports.pool.status(runner, t.turn_id)
+    let st: Awaited<ReturnType<BrandAgentPorts['pool']['status']>>
+    try {
+      st = await this.d.ports.pool.status(runner, t.turn_id)
+    } catch (err) {
+      console.error({ event: 'turn_status_failed', error: errorText(err) })
+      st = { state: 'unreachable', containerGone: false }
+    }
     const fresh = this.current(t.turn_id, t.gen, 'starting')
     if (!fresh) return { done: true }
     const at = this.d.now()
@@ -1002,22 +1052,29 @@ export class AgentCore {
     return this.turn(turnId)?.owner_id ?? null
   }
 
+  /**
+   * Marks the interrupt asked and sends it. A failed send clears the mark, so the next click asks again (L4). A live turn
+   * always has its runner named (the pool writes it before it awaits the admission); with none, nothing is sent and
+   * the mark stays: the outcome reads `interrupted` when the runner's answer comes.
+   */
   private askInterrupt(t: TurnRow) {
     this.sql.exec('UPDATE turns SET interrupt_asked = 1 WHERE turn_id = ?', t.turn_id)
     this.gate.stopWaiters(t.turn_id)
     const runner = t.runner
-    if (runner !== null) void this.d.ports.pool.interrupt(runner, t.turn_id).catch(err => console.error({ event: 'turn_interrupt_failed', error: errorText(err) }))
+    if (runner === null) return
+    const gen = t.gen
+    void this.d.ports.pool.interrupt(runner, t.turn_id).catch(err => {
+      console.error({ event: 'turn_interrupt_failed', error: errorText(err) })
+      this.sql.exec("UPDATE turns SET interrupt_asked = 0 WHERE turn_id = ? AND gen = ? AND state = 'live' AND outcome IS NULL", t.turn_id, gen)
+    })
   }
 
   /** The SDK interrupt of a live turn; a queued (or not yet placed) one is cancelled instead. */
   interrupt(turnId: string, by: Actor): { ok: true } | Refusal {
     const t = this.turn(turnId)
     if (!t || t.owner_id !== by.memberId) return refuse('not_found')
-    if (t.state === 'queued' || (t.state === 'starting' && (t.placed === 0 || t.pool_queued === 1))) {
-      this.fence(t, { outcome: 'interrupted' })
-      return { ok: true }
-    }
-    if (t.state === 'starting') {
+    // A turn not yet running (queued, or starting anywhere short of live) is ended `interrupted` instead.
+    if (t.state === 'queued' || t.state === 'starting') {
       this.fence(t, { outcome: 'interrupted' })
       return { ok: true }
     }

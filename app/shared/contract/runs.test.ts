@@ -69,9 +69,10 @@ describe('a send (failure 4)', () => {
     expect(SendTurnInputSchema.parse({ ...base, text: 'x' })).toEqual({ ...base, text: 'x', priority: 'next', attachments: [] })
     expect(SendTurnInputSchema.safeParse({ ...base, clientTurnKey: 'short', text: 'x' }).success).toBe(false)
     expect(SendTurnInputSchema.safeParse({ ...base, text: '' }).success).toBe(false)
-    const att = { fileId: 'f_0123456789abcdefABCDEF', name: 'a.pdf' }
-    expect(SendTurnInputSchema.safeParse({ ...base, text: 'x', attachments: Array(10).fill(att) }).success).toBe(true)
-    expect(SendTurnInputSchema.safeParse({ ...base, text: 'x', attachments: Array(11).fill(att) }).success).toBe(false)
+    // Distinct ids (the same id twice is refused on its own, below).
+    const att = (i: number) => ({ fileId: `f_0123456789abcdefABCD${String(i).padStart(2, '0')}`, name: 'a.pdf' })
+    expect(SendTurnInputSchema.safeParse({ ...base, text: 'x', attachments: Array.from({ length: 10 }, (_, i) => att(i)) }).success).toBe(true)
+    expect(SendTurnInputSchema.safeParse({ ...base, text: 'x', attachments: Array.from({ length: 11 }, (_, i) => att(i)) }).success).toBe(false)
   })
   it('takes an attachment ref only with an f_ id of 22 characters and a 1-200 character name without control characters', () => {
     expect(AttachmentRefSchema.safeParse({ fileId: 'f_0123456789abcdefABCDE', name: 'a' }).success).toBe(false)
@@ -107,5 +108,15 @@ describe('route 23 and the rest (failure 6)', () => {
   it('stores a message with its turn, run, position and time', () => {
     expect(StoredMessageSchema.safeParse({ id: `${turnId}.u`, role: 'user', text: 'hi', turnId, runId, pos: 0, at }).success).toBe(true)
     expect(StoredMessageSchema.safeParse({ id: `${turnId}.1`, role: 'agent', part: { type: 'text', text: 'ok' }, trace: runId, turnId, runId, pos: 1 }).success).toBe(false)
+  })
+})
+
+describe('a send names each attachment once (route 29, the runner refuses an attachment named twice)', () => {
+  const send = { clientTurnKey: 'key-dup0001', text: 'hi', model: 'sonnet' }
+  const a = { fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'a.pdf' }
+  const b = { fileId: 'f_BBBBBBBBBBBBBBBBBBBBBB', name: 'a.pdf' }
+  it('refuses the same id twice, whatever the names; takes two ids with one name', () => {
+    expect(SendTurnInputSchema.safeParse({ ...send, attachments: [a, { ...a, name: 'b.pdf' }] }).success).toBe(false)
+    expect(SendTurnInputSchema.safeParse({ ...send, attachments: [a, b] }).success).toBe(true)
   })
 })

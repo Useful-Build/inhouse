@@ -116,6 +116,8 @@ export const SendTurnInputSchema = z.object({
   replacesRun: RunIdSchema.optional(),
   attachments: AttachmentRefSchema.array().max(10).default([]),
 }).refine(v => composeTurnPrompt(v).length <= SEND_PROMPT_MAX_CHARS, { path: ['text'], message: 'Too long' })
+  // The runner refuses a RunStart that names an attachment twice: refused here, at the send, instead.
+  .refine(v => new Set(v.attachments.map(a => a.fileId)).size === v.attachments.length, { path: ['attachments'], message: 'An attachment is named twice' })
 export type SendTurnInput = z.infer<typeof SendTurnInputSchema>
 
 export const SendTurnResultSchema = z.object({

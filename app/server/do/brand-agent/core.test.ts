@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest'
 import { GRACE_MS, INACTIVITY_MS, PUSH_SILENT_MS } from './core.ts'
 import type { Refusal } from './ports.ts'
 import { hashRunToken } from './tokens.ts'
+import { StoreUnavailableError } from '../../db/sql.ts'
 import { MEMBER, MIN, OTHER, SEC, deferred, ev, fullAnswer, inAgent, settle, typesOf } from '../../testing/brand-agent/core-harness.ts'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 
@@ -140,9 +141,10 @@ describe('claim before await (4.2.1, 4.4)', () => {
     const a = ok(await h.submit('c1', 'key-bar03'))
     await settle()
     h.core.onMemberRemoved(MEMBER)
-    answer.resolve({ admitted: 'runner-1' })
+    answer.resolve({ admitted: 'runner-0' })
     await settle()
-    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-1', a.turnId]])
+    // The pool named runner-0 on the turn before it awaited the admission, so the fence stopped it there, once.
+    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-0', a.turnId]])
     expect(typesOf(h.events(a.runId)).filter(t => t === 'turn.started')).toEqual([])
   }))
 
@@ -202,9 +204,10 @@ describe('placement answers (obligations 6, 7, 9)', () => {
     const a = ok(await h.submit('c1', 'key-amb03'))
     await settle()
     h.push(a.turnId, ev.started())
-    answer.resolve({ admitted: 'runner-2' })
+    answer.resolve({ admitted: 'runner-0' })
     await settle()
-    expect(h.turn(a.turnId)).toMatchObject({ state: 'live', runner: 'runner-2' })
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'live', runner: 'runner-0' })
+    expect(h.pool.calls.filter(c => c.method === 'stop')).toEqual([])
     expect(typesOf(h.events(a.runId)).filter(t => t === 'turn.started')).toHaveLength(1)
   }))
 
@@ -220,6 +223,65 @@ describe('placement answers (obligations 6, 7, 9)', () => {
     expect(h.core.checkRunToken(hash, 'model')).toMatchObject({ turnId: a.turnId })
     expect(h.turn(a.turnId)).toMatchObject({ state: 'live', pool_queued: 0 })
     expect(h.events(a.runId).filter(e => e.type === 'notice')).toEqual([])
+  }))
+
+  // H1 of #153's review: a late answer must never take the token (or the runner) from the attempt that ran.
+  const tokenOf = (h: Parameters<Parameters<typeof inAgent>[0]>[0], turnId: string) =>
+    h.sql.exec<{ token_hash: string }>('SELECT token_hash FROM run_tokens WHERE turn_id = ? ORDER BY issued_at_ms DESC LIMIT 1', turnId).one().token_hash
+  const cp2 = { mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1 }
+  for (const late of [{ admitted: 'runner-0' }, { ambiguous: 'runner-0' }] as const) {
+    it(`the terminal event before a late ${Object.keys(late)[0]} answer: the grace keeps its token, nothing is stopped`, () => inAgent(async h => {
+      const answer = deferred<typeof late>()
+      h.pool.placeAnswer = () => answer.promise
+      const a = ok(await h.submit('c1', `key-h1${Object.keys(late)[0].slice(0, 3)}`))
+      await settle()
+      h.push(a.turnId, ev.started(), ev.text('a'), ev.checkpoint(2, 'u2', 1), ev.success())
+      expect(h.turn(a.turnId).state).toBe('ending')
+      answer.resolve(late)
+      await settle()
+      await h.tick(0)
+      expect(h.core.checkRunToken(tokenOf(h, a.turnId), 'events')).toMatchObject({ turnId: a.turnId })
+      expect(h.pool.calls.filter(c => c.method === 'stop')).toEqual([])
+      h.push(a.turnId, ev.released(cp2))
+      expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'done' })
+      expect(h.sql.exec('SELECT session FROM chat_state').one().session).toBe('resumable')
+    }))
+  }
+
+  it('a stop after a push and before the answer: stopped once by the fence, the grace keeps store and events', () => inAgent(async h => {
+    const answer = deferred<{ admitted: string }>()
+    h.pool.placeAnswer = () => answer.promise
+    const a = ok(await h.submit('c1', 'key-h1stp'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.text('a'))
+    expect(h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })).toEqual({ ok: true })
+    answer.resolve({ admitted: 'runner-0' })
+    await settle()
+    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-0', a.turnId]])
+    expect(h.core.checkRunToken(tokenOf(h, a.turnId), 'store')).toMatchObject({ turnId: a.turnId })
+    h.push(a.turnId, ev.checkpoint(2, 'u2', 1), ev.failed('stopped'), ev.released(cp2))
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped' })
+    expect(h.sql.exec('SELECT session FROM chat_state').one().session).toBe('resumable')
+  }))
+
+  it("a requeued attempt's late ambiguous answer: that runner is stopped, the new attempt is left alone", () => inAgent(async h => {
+    const first = deferred<{ ambiguous: string }>()
+    h.pool.placeAnswer = () => first.promise
+    const a = ok(await h.submit('c1', 'key-h1req'))
+    await settle()
+    const oldHash = tokenOf(h, a.turnId)
+    h.pool.runnerTurns.set('runner-0', [a.turnId])
+    h.pool.placeAnswer = () => new Promise(() => {})
+    h.nextRunner.name = 'runner-1'
+    h.core.containerExited('runner-0', 1)
+    await settle()
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'starting', runner: 'runner-1', requeues: 1 })
+    // L1: the old attempt's token is revoked by the requeue.
+    expect(h.core.checkRunToken(oldHash, 'model')).toEqual({ refused: 'revoked' })
+    first.resolve({ ambiguous: 'runner-0' })
+    await settle()
+    expect(h.pool.calls.filter(c => c.method === 'stop').map(c => c.args)).toEqual([['runner-0', a.turnId]])
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'starting', runner: 'runner-1' })
   }))
 
   it('ambiguous, then unknown twice 30 s apart: stopped there and requeued, then placed again', () => inAgent(async h => {
@@ -470,6 +532,32 @@ describe('the watchdog (1.3)', () => {
     expect(ok(await h.submit('c1', 'key-wd002')).position).toBe('starting')
   }))
 
+  it('the ambiguous path: a stop that rejects goes on to status; two unreachable with the container gone fail it (H3)', () => inAgent(async h => {
+    h.pool.placeAnswer = { ambiguous: 'runner-0' }
+    h.pool.stop = async (runner, turnId) => { h.pool.calls.push({ method: 'stop', args: [runner, turnId] }); throw new Error('container gone') }
+    h.pool.statusAnswer = { state: 'unreachable', containerGone: true }
+    const a = ok(await h.submit('c1', 'key-h3st1'))
+    await settle()
+    await h.tick(0)
+    expect(h.turn(a.turnId).state).toBe('starting')
+    await h.tick(30 * SEC)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'session_crashed' })
+    expect(h.pool.calls.filter(c => c.method === 'status')).toHaveLength(2)
+    expect(h.sched.quarantinedCount()).toBe(0)
+  }))
+
+  it('the ambiguous path: unreachable forever without containerGone fails it at claim + 45 minutes (H3)', () => inAgent(async h => {
+    h.pool.placeAnswer = { ambiguous: 'runner-0' }
+    h.pool.statusAnswer = { state: 'unreachable', containerGone: false }
+    const a = ok(await h.submit('c1', 'key-h3st2'))
+    await settle()
+    for (let i = 0; i < 89; i++) await h.tick(30 * SEC)
+    expect(h.turn(a.turnId).state).toBe('starting')
+    await h.tick(30 * SEC)
+    await h.tick(30 * SEC)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'session_crashed' })
+  }))
+
   it('a single unreachable fails nothing; two with the container gone fail it', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-wd003'))
     await settle()
@@ -578,6 +666,207 @@ describe('budget_busy (4.4 step 2)', () => {
     const a = ok(await h.submit('c1', 'key-bud02'))
     await settle()
     expect(typesOf(h.events(a.runId))).toEqual(['run.started', 'turn.queued', 'notice', 'turn.cancelled', 'run.finished'])
+  }))
+})
+
+describe('the start hold goes back (H2 of #153: call-lease)', () => {
+  const releases = (h: Parameters<Parameters<typeof inAgent>[0]>[0]) => h.usage.calls.filter(c => c.method === 'release').map(c => c.args[0])
+
+  // PR 2b: the hold goes back through the turn's ledger queue at the end itself (no task wait), once.
+  it('after a full answer: one release at the end, none after', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-h2a01'))
+    await settle()
+    expect(releases(h)).toEqual([])
+    h.push(a.turnId, ...fullAnswer('a', 2))
+    await settle()
+    expect(releases(h)).toEqual([a.turnId])
+    await h.tick(0)
+    expect(releases(h)).toEqual([a.turnId])
+  }))
+
+  it('after a reserve and a pool_full expiry', () => inAgent(async h => {
+    h.pool.placeAnswer = { queued: true }
+    const a = ok(await h.submit('c1', 'key-h2a02'))
+    await settle()
+    h.core.placementExpired(a.turnId)
+    await h.tick(0)
+    expect(releases(h)).toEqual([a.turnId])
+  }))
+
+  it('after a pause of a turn in the placement queue', () => inAgent(async h => {
+    h.pool.placeAnswer = { queued: true }
+    const a = ok(await h.submit('c1', 'key-h2a03'))
+    await settle()
+    h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    await h.tick(0)
+    expect(releases(h)).toEqual([a.turnId])
+  }))
+
+  it('a second settle of the same turn sends nothing', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-h2a04'))
+    await settle()
+    h.push(a.turnId, ...fullAnswer('a', 2))
+    await h.tick(0)
+    expect(await h.core.leaseTask(a.turnId)).toEqual({ done: true })
+    expect(releases(h)).toEqual([a.turnId])
+  }))
+
+  // PR 2b: only storage being down is retried (`StoreUnavailableError`, what W4's ledger throws for a D1 failure); any
+  // other error is the ledger refusing for good and is dropped (gate.test.ts, #154's review).
+  it('a release that fails is retried until answered', () => inAgent(async h => {
+    let fail = true
+    const real = h.usage.release.bind(h.usage)
+    h.usage.release = async (t, n) => { if (fail) { fail = false; h.usage.calls.push({ method: 'release', args: [t, n] }); throw new StoreUnavailableError('usage ledger', new Error('D1 down')) } return real(t, n) }
+    const a = ok(await h.submit('c1', 'key-h2a05'))
+    await settle()
+    h.push(a.turnId, ...fullAnswer('a', 2))
+    // The failed release is answered (with its retry time) before the clock moves.
+    await settle()
+    await h.tick(0)
+    expect(releases(h)).toEqual([a.turnId])
+    await h.tick(30 * SEC)
+    expect(releases(h)).toEqual([a.turnId, a.turnId])
+    expect(h.turn(a.turnId).settled).toBe(1)
+  }))
+})
+
+describe('round 1 lows (#153: L2, L4, L5)', () => {
+  const me = { kind: 'person' as const, memberId: MEMBER }
+
+  it('L4: a failed interrupt send is asked again on the next click', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-l4i01'))
+    await settle()
+    let fail = true
+    h.pool.interrupt = async (r, t) => { h.pool.calls.push({ method: 'interrupt', args: [r, t] }); if (fail) { fail = false; throw new Error('down') } }
+    h.core.interrupt(a.turnId, me)
+    await settle()
+    expect(h.turn(a.turnId).interrupt_asked).toBe(0)
+    h.core.interrupt(a.turnId, me)
+    await settle()
+    expect(h.pool.calls.filter(c => c.method === 'interrupt')).toHaveLength(2)
+    expect(h.turn(a.turnId).interrupt_asked).toBe(1)
+  }))
+
+  it("L5: a file confirm's retry during a drain re-arms the run's advance at the drain's expiry", () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-l5d01'))
+    await settle()
+    const b = ok(await h.submit('c1', 'key-l5d02'))
+    h.core.drain()
+    const until = h.pool.drainAnswer.drainingUntilMs!
+    let fail = true
+    h.files.confirm = async () => { if (fail) { fail = false; throw new Error('D1 down') } return null }
+    h.push(a.turnId, ev.started(), ev.fileSaved('outputs/x.csv', 'c'.repeat(64)), ev.checkpoint(2, null, null), ev.success(), ev.released({ mainEntries: 2, lastUuid: null, lastUuidIndex: null }))
+    await settle()
+    await h.tick(30 * SEC)
+    expect(h.turn(b.turnId).state).toBe('queued')
+    expect(h.dueTasks().find(t => t.id === `run-advance:${a.runId}`)?.due_at_ms).toBe(until)
+  }))
+
+  it('M01: a retried key from another member is not found, never the original answer', () => inAgent(async h => {
+    ok(await h.submit('c1', 'key-m0101'))
+    expect(await h.submit('c1', 'key-m0101', { member: OTHER })).toEqual({ refused: { code: 'not_found' } })
+  }))
+
+  it('M03: 20 queued per member, 200 per brand', () => inAgent(async h => {
+    h.pool.placeAnswer = () => new Promise(() => {})
+    for (let c = 0; c < 3; c++) ok(await h.submit(`m3-${c}`, `key-m03s${c}`))
+    for (let i = 0; i < 20; i++) ok(await h.submit(`m3-${i % 3}`, `key-m03q${String(i).padStart(3, '0')}`))
+    expect(await h.submit('m3-0', 'key-m03over')).toEqual({ refused: { code: 'rate_limited', reason: 'queue_full' } })
+    // The brand bound, with queued rows written for 200 other members' turns.
+    for (let i = 0; i < 200; i++) {
+      h.sql.exec(`INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, state, priority, text,
+        attachments_json, model, picker_id, side_model, effort, max_turns, answer_position, created_at_ms)
+        VALUES (?, 'r_x', ?, ?, 0, 'k', 'h', 'queued', 'next', 'q', '[]', 'm', 'p', 's', 'low', 25, 'queued', 0)`, `t_b${i}`, `cb${i}`, `m_b${i}`)
+    }
+    expect(await h.submit('fresh', 'key-m03brand', { member: 'm_fresh' })).toEqual({ refused: { code: 'rate_limited', reason: 'queue_full' } })
+  }))
+
+  it('M09: no checkpoint but the query never ran: a fenced turn ends at the grace with the session not damaged', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-m0901'))
+    await settle()
+    h.push(a.turnId, ev.started())
+    h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    await h.tick(GRACE_MS)
+    expect(h.turn(a.turnId).state).toBe('ended')
+    expect(h.sql.exec('SELECT session FROM chat_state').one().session).toBe('none')
+  }))
+
+  it('M15: a mirror_error wins over a later checkpoint', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-m1501'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.text('x'), ev.mirrorError(), ev.checkpoint(3, 'u', 2), ev.success(), ev.released({ mainEntries: 3, lastUuid: 'u', lastUuidIndex: 2 }))
+    expect(h.sql.exec('SELECT session FROM chat_state').one().session).toBe('damaged')
+  }))
+
+  it('M20: route 49 refuses a chat with a live or queued turn and changes nothing', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-m2001'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.text('x'), ev.mirrorError())
+    expect(h.core.resetSession('c1', me)).toEqual({ refused: { code: 'conflict' } })
+    expect(h.sql.exec('SELECT session FROM chat_state').one().session).toBe('damaged')
+    expect(h.core.resetSession('c1', { kind: 'person', memberId: OTHER })).toEqual({ refused: { code: 'not_found' } })
+  }))
+
+  it('M27: an ending turn with two unreachable answers ends only once the container is gone', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-m2701'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.text('x'), ev.checkpoint(2, null, null), ev.success())
+    h.pool.statusAnswer = { state: 'unreachable', containerGone: false }
+    await h.tick(90 * SEC); await h.tick(30 * SEC); await h.tick(30 * SEC)
+    expect(h.turn(a.turnId).state).toBe('ending')
+    h.pool.statusAnswer = { state: 'unreachable', containerGone: true }
+    await h.tick(30 * SEC); await h.tick(30 * SEC)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'done' })
+  }))
+
+  it('M29: interrupting a queued turn records interrupted, not stopped', () => inAgent(async h => {
+    ok(await h.submit('c1', 'key-m2901'))
+    await settle()
+    const q = ok(await h.submit('c1', 'key-m2902'))
+    h.core.interrupt(q.turnId, me)
+    expect(h.turn(q.turnId)).toMatchObject({ state: 'ended', outcome: 'interrupted' })
+  }))
+
+  it('M30: a chat on another provider refuses provider_changed', () => inAgent(async h => {
+    ok(await h.submit('c1', 'key-m3001'))
+    h.sql.exec("UPDATE chat_state SET provider = 'other' WHERE chat_id = 'c1'")
+    expect(await h.submit('c1', 'key-m3002')).toEqual({ refused: { code: 'conflict', reason: 'provider_changed' } })
+  }))
+
+  it('MAX_REQUEUES: a third requeue fails the turn session_crashed', () => inAgent(async h => {
+    h.pool.placeAnswer = { ambiguous: 'runner-0' }
+    h.pool.statusAnswer = { state: 'unknown', containerGone: false }
+    const a = ok(await h.submit('c1', 'key-mrq01'))
+    await settle()
+    for (let i = 0; i < 12; i++) { await h.tick(30 * SEC); await settle() }
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'session_crashed', requeues: 2 })
+  }))
+
+  it('released while live with no terminal event fails protocol', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rel01'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.released(null, false))
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'protocol' })
+  }))
+
+  it('onMemberRemoved fences a live turn and revokes its token', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rem02'))
+    await settle()
+    const hash = h.sql.exec<{ token_hash: string }>('SELECT token_hash FROM run_tokens WHERE turn_id = ?', a.turnId).one().token_hash
+    h.core.onMemberRemoved(MEMBER)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ending', fenced: 1, cancel_why: 'removed' })
+    expect(h.core.checkRunToken(hash, 'events')).toEqual({ refused: 'revoked' })
+  }))
+
+  it('placement answers files and draining: failed files; back to the queue', () => inAgent(async h => {
+    h.pool.placeAnswer = { refused: 'files' }
+    const a = ok(await h.submit('c1', 'key-pla01'))
+    await settle()
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', failure: 'files' })
+    h.pool.placeAnswer = { refused: 'draining' }
+    const b = ok(await h.submit('c2', 'key-pla02'))
+    await settle()
+    expect(h.turn(b.turnId)).toMatchObject({ state: 'queued', requeues: 0 })
   }))
 })
 
