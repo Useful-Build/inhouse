@@ -184,12 +184,13 @@ describe('the committed P3 routes are PR0 stubs (failure 6)', () => {
       ['POST', '/api/chats/c1/turns', member], ['POST', '/api/turns/t1/interrupt', member], ['POST', '/api/turns/t1/stop', member],
       ['GET', '/api/runs/active', member], ['GET', '/api/traces/r1', member], ['GET', '/api/socket', member], ['GET', '/api/pause', member],
       ['POST', '/api/pause', admin], ['POST', '/api/resume', admin],
-      ['GET', '/api/usage', member], ['GET', '/api/memory', member],
+      ['GET', '/api/memory', member],
       ['PUT', '/api/memory/personal/x1/forgotten', member], ['PUT', '/api/memory/brand/x1/forgotten', admin], ['POST', '/api/ops/drain', release],
       ['GET', '/api/ops/drain', release], ['POST', '/api/ops/warmup', release], ['POST', '/api/chats/c1/session/reset', member],
     ] as const
     // Routes 38 to 41 are built (W3: server/api/models.test.ts, attachments.test.ts), so they left this list.
-    expect(P3).toHaveLength(24)
+    // Route 42 (GET /api/usage) is built (W4 PR 1, server/usage/api.test.ts), so it left this list.
+    expect(P3).toHaveLength(23)
     for (const [method, path, headers] of P3) {
       const res = await call(BRAND.origin, path, { method, headers })
       expect(res.status, `${method} ${path}`).toBe(503)
