@@ -34,7 +34,7 @@ const seeAll = async (page: Page) => {
 const OLD = 'Why did refunds jump?'
 const NEW = 'Refund spike, week 46'
 
-test('Chats: rename, pin, copy link, delete with Undo and bulk delete, kept across a reload until Reset demo', async ({ page, context }) => {
+test('Chats: rename, pin, copy link, delete with Undo and bulk delete, kept across a reload until Reset demo', async ({ page, context, fx }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await start(page)
 
@@ -157,7 +157,7 @@ test('Chats: rename, pin, copy link, delete with Undo and bulk delete, kept acro
   await expect(main(page).locator('section').first()).toHaveAttribute('aria-label', 'Today')
   await expect(main(page).getByRole('button', { name: /Amazon payout gap/ })).toBeVisible()
   await expect(main(page).getByRole('button', { name: new RegExp(NEW) })).toHaveCount(0)
-  const { demo: saved } = await fxFor(page, undefined).saved()
+  const { demo: saved } = await fx.saved()
   expect([saved.chatTitles, saved.chatPinned, saved.chatDeleted]).toEqual([{}, {}, {}])
   await shot(page, 'chats-manage-after-reset')
 })

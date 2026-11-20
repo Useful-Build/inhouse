@@ -322,11 +322,12 @@ test('Library: sample data with an unknown place stops the app with a message', 
 })
 
 test('Demo switcher: no page puts a control under it at 1440', async ({ page }) => {
+  await start(page, 'Act', '#/library')
   for (const hash of ['#/library', '#/settings/you-general', '#/today', '#/chats/refunds', '#/usage', '#/approvals']) {
-    await start(page, 'Act', hash)
+    await page.goto('/?demo' + hash)
     await expect(page.getByRole('button', { name: /^Demo switches/ })).toBeVisible()
     await nothingUnderSwitcher(page)
   }
-  await start(page, 'Act', '#/library')
+  await page.goto('/?demo#/library')
   await keep(page, 'library-1440')
 })

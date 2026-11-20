@@ -103,7 +103,7 @@ test.describe('desktop', () => {
     expect(await text.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true)
   })
 
-  test('Conversation polish: queue two messages mid-answer, send one now, the other follows, and Retry the stopped answer', async ({ page }) => {
+  test('Conversation polish: queue two messages mid-answer, send one now, the other follows, and Retry the stopped answer', async ({ page, fx }) => {
     test.setTimeout(120_000)
     await start(page, '#/chats/new')
     await field(page).fill(REFUNDS_Q)
@@ -154,7 +154,7 @@ test.describe('desktop', () => {
 
     // The sent-now answer has steps of its own: the run's second turn (`<run id>-t2`) holds the query's steps, and its
     // steps line and window show them (3 steps, "Last week by SKU"), not the refunds steps the run started with.
-    const turns = (await fxFor(page, undefined).saved()).runs
+    const turns = (await fx.saved()).runs
     expect(turns.filter(([id, info]) => /-t2$/.test(id) && info.trace === 'query')).toHaveLength(1)
     const mdAnswer = log(page).locator('[data-answer]').filter({ has: page.locator('[data-md-code]') })
     await expect(mdAnswer).toHaveCount(1)
@@ -527,7 +527,7 @@ test.describe('desktop', () => {
     await expect(field(page)).toHaveValue(MD_Q)
   })
 
-  test('Conversation polish: a chat left mid-answer asks its queued message in the background (D9)', async ({ page }) => {
+  test('Conversation polish: a chat left mid-answer asks its queued message in the background (D9)', async ({ page, fx }) => {
     test.setTimeout(90_000)
     await start(page, '#/chats/new')
     await field(page).fill(REFUNDS_Q)
@@ -550,7 +550,7 @@ test.describe('desktop', () => {
 
     // Meanwhile the first chat's answer ends and its queued message is asked and answered there.
     await expect.poll(async () => {
-      const s = (await fxFor(page, undefined).saved()).session
+      const s = (await fx.saved()).session
       const chats = Object.values(s.chats ?? {})
       const asked = chats.some(c => c.extras.some(m => m.role === 'user' && m.text === MD_Q))
       return asked && !(s.answering ?? []).length && !Object.keys(s.queued ?? {}).length

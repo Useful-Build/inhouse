@@ -105,6 +105,7 @@ export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt()
     seed: s => seedOnce(s),
     seedSaved: (s, savedDemo) => seedOnce(s, savedDemo),
     restage: s => install(switches(s), false, false),
+    setTheme: theme => install({ [KEYS.theme]: theme }, false, false),
     saved,
     async reset() {
       const st = stateOf(page)

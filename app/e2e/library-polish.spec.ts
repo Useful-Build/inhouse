@@ -305,14 +305,14 @@ test('Phone: a long file name shows whole in the viewer, and a code file scrolls
   await shot(page, 'library-viewer-code-390')
 })
 
-test('Dark: previews are dimmed, and light keeps them as they are', async ({ page }) => {
+test('Dark: previews are dimmed, and light keeps them as they are', async ({ page, fx }) => {
   await start(page, '#/library', 1440, 'Normal', 'dark')
   const filter = () => items(page).filter({ hasText: 'weekly-ops-report-week-46.pdf' }).first().locator('.preview-dim').first().evaluate(e => getComputedStyle(e).filter)
   expect(await filter()).toMatch(/brightness\(0\.8/)
   await shot(page, 'library-masonry-dark')
   await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'Grid' }).click()
   await shot(page, 'library-grid-dark')
-  await page.evaluate(() => { localStorage.setItem('inhouse.theme', 'light') })
+  await fx.setTheme('light')
   await page.reload()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
   expect(await filter()).toMatch(/brightness\(1\)|none/)

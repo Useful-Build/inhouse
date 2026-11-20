@@ -80,6 +80,8 @@ export interface Fx {
   seedSaved(s: Seed, saved: SavedDemo): Promise<void>
   /** Changes the stage on later loads of this page, keeping saved state (a mid-test move to another stage). */
   restage(s: Restage): Promise<void>
+  /** Changes the app's theme on later loads of this page (a mid-test switch), keeping saved state. */
+  setTheme(theme: Theme): Promise<void>
   /** What the app has saved, parsed. Call it on a loaded page. */
   saved(): Promise<Saved>
   /**

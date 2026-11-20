@@ -5,14 +5,14 @@
     "e2e/navigation.spec.ts": 1,
     "e2e/no-persona.spec.ts": 1,
     "e2e/not-connected-stubs.spec.ts": 1,
-    "e2e/overlays-keyboard.spec.ts": 1,
+    "e2e/overlays-keyboard.spec.ts": 2,
     "e2e/page-actions-phone.spec.ts": 1,
     "e2e/page-actions.spec.ts": 1,
     "e2e/page-details-phone.spec.ts": 1,
     "e2e/page-details.spec.ts": 1,
     "e2e/pages-polish-phone.spec.ts": 1,
     "e2e/pages-polish.spec.ts": 1,
-    "e2e/palette-theme.spec.ts": 1,
+    "e2e/palette-theme.spec.ts": 2,
     "e2e/phone.spec.ts": 1,
     "e2e/photo.spec.ts": 1,
     "e2e/problem-panel.spec.ts": 1,
@@ -34,6 +34,6 @@
     "e2e/state.spec.ts": 4,
     "e2e/text-fit-phone.spec.ts": 2,
     "e2e/toasts.spec.ts": 1,
-    "e2e/tour.spec.ts": 1
+    "e2e/tour.spec.ts": 2
   }
 }
