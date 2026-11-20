@@ -11,7 +11,7 @@ import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
 import { ctx, personPrincipal } from '../db/test-support.ts'
 import { newFileId } from '../files-io/bytes.ts'
-import { downloadName } from '../files-io/caps.ts'
+import { TYPE_EXTENSIONS, downloadName } from '../files-io/caps.ts'
 import { fileStore } from '../files-io/store.ts'
 import { getFile, listChatFiles, uploadAttachment } from './attachments.ts'
 
@@ -156,6 +156,24 @@ describe('route 41: the download name (round 1, the high)', () => {
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['docx'],
     'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['pptx'],
   }
+  it("caps.ts's extension table is exactly this one", () => {
+    expect(TYPE_EXTENSIONS).toEqual(EXT)
+  })
+  it('a name in capitals keeps its extension when it is the type\'s (REPORT.PDF), and is never lower-cased', () => {
+    expect(downloadName('REPORT.PDF', 'application/pdf')).toBe('REPORT.PDF')
+    expect(downloadName('Photo.JPEG', 'image/jpeg')).toBe('Photo.JPEG')
+    expect(downloadName('NOTES.HTML', 'text/plain')).toBe('NOTES.HTML.txt')
+  })
+  const RISKY = ['html', 'svg', 'js', 'hta', 'bat', 'cmd', 'ps1', 'vbs', 'lnk', 'exe', 'msi', 'jar', 'scr']
+  test.prop([fc.constantFrom(...Object.keys(EXT)), fc.string({ minLength: 1, maxLength: 20 }), fc.constantFrom(...RISKY), fc.boolean()])(
+    'every allowed type: a name ending in a risky extension (any case) never downloads with it last',
+    (type, stem, risky, upper) => {
+      const out = downloadName(`${stem}.${upper ? risky.toUpperCase() : risky}`, type)
+      const ext = out.slice(out.lastIndexOf('.') + 1).toLowerCase()
+      expect(RISKY).not.toContain(ext)
+      expect(EXT[type]).toContain(ext)
+    },
+  )
   test.prop([fc.constantFrom(...Object.keys(EXT)), fc.string({ minLength: 1, maxLength: 40 })])('every allowed type: the download name ends in one of its own extensions', (type, name) => {
     const out = downloadName(name, type)
     const ext = out.slice(out.lastIndexOf('.') + 1).toLowerCase()
@@ -175,6 +193,28 @@ describe('route 41: refusals (round 1)', () => {
     expect((await get({ kind: 'service', name: 'smoke', memberId: 'm_smoke', requestId: 'r-s' }, ok)).status).toBe(404)
     await db.prepare('UPDATE chats SET deleted_at_ms = 5 WHERE id = ?').bind(chatId).run()
     expect((await get(personPrincipal(OWNER, 'member'), ok)).status).toBe(404)
+  })
+})
+
+describe('route 39: the name as stored, and the declared length (round 2)', () => {
+  it('a 230-byte name is kept; 231 is refused (inputs/<fileId>-<name> is one 255-byte segment)', async () => {
+    const chatId = await newChat()
+    // f_ + 22 + '-' = 25 bytes of the segment, so 230 are left for the name. '€' is 3 bytes, so these stay under the
+    // 200-character cap: 75 × 3 + 'a.csv' = 230 bytes in 80 characters; 'ab.csv' makes 231.
+    expect(new TextEncoder().encode(`${'€'.repeat(75)}a.csv`).length).toBe(230)
+    expect((await upload(chatId, 'a,1\n', encodeURIComponent(`${'€'.repeat(75)}a.csv`))).status).toBe(201)
+    expect((await upload(chatId, 'a,1\n', encodeURIComponent(`${'€'.repeat(75)}ab.csv`))).status).toBe(400)
+  })
+  it('a body with no Content-Length is refused length_required, and nothing is kept', async () => {
+    const chatId = await newChat()
+    const { c } = ctx(stores, personPrincipal(OWNER, 'member'), { method: 'POST', path: `/api/chats/${chatId}/attachments`, params: { id: chatId } })
+    const body = new ReadableStream({ start: ctl => { ctl.enqueue(enc.encode('a,1\n')); ctl.close() } })
+    const request = new Request(`https://brand.example.test/api/chats/${chatId}/attachments`, { method: 'POST', headers: { 'X-File-Name': 'a.csv' }, body, duplex: 'half' } as RequestInit)
+    expect(request.headers.get('content-length')).toBeNull()
+    const res = await uploadAttachment({ ...c, request } as never)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: { code: 'invalid', reason: 'length_required' } })
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM chat_files WHERE chat_id = ?').bind(chatId).first<number>('n')).toBe(0)
   })
 })
 
