@@ -20,9 +20,31 @@ export interface ToolResult {
   isError?: true
 }
 
-export interface ToolImpl<S extends z.ZodType = z.ZodType> {
+/** The 20 tool names of the registry (agent-tools); `tools/index.ts` checks at load that they equal the registry's. */
+export const INHOUSE_TOOL_NAMES = [
+  'memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list',
+  'approval_request', 'approval_get', 'approval_list', 'approval_withdraw',
+  'question_ask',
+  'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
+  'history_search', 'history_read',
+  'notification_send',
+  'team_request_create', 'team_request_list',
+] as const
+export type InhouseToolName = (typeof INHOUSE_TOOL_NAMES)[number]
+
+/** What a handler gets besides its arguments: the Worker's bindings it reads through (each area opens its own store). */
+export interface ToolDeps {
+  db: D1Database
+}
+
+/**
+ * One tool's handler: its input schema (zod; `tools/list` shows it as JSON Schema, `tools/call` parses the arguments
+ * with it) and its call. Each area folder exports `handlers: Partial<Record<InhouseToolName, ToolHandler>>` from its
+ * `index.ts`; `tools/index.ts` composes them.
+ */
+export interface ToolHandler<S extends z.ZodType = z.ZodType> {
   input: S
-  call(args: z.output<S>, scope: ToolScope): Promise<ToolResult>
+  call(args: z.output<S>, scope: ToolScope, deps: ToolDeps): Promise<ToolResult>
 }
 
 /** A tool's answer: readable text first, the data after it as JSON (MCP: structured content also goes in a text block). */
@@ -35,4 +57,5 @@ export function refusal(error: string, text: string): ToolResult {
   return { content: [{ type: 'text', text }], structuredContent: { error }, isError: true }
 }
 
-export const tool = <S extends z.ZodType>(t: ToolImpl<S>): ToolImpl => t as unknown as ToolImpl
+/** Types a handler's call from its own schema, then widens it for the area's map. */
+export const tool = <S extends z.ZodType>(t: ToolHandler<S>): ToolHandler => t as unknown as ToolHandler

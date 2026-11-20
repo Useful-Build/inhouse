@@ -8,13 +8,9 @@ import { z } from 'zod'
 import { readCapped } from '../../db/handler-kit.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
 import { ALWAYS_LOAD_META_KEY, INHOUSE_TOOLS } from '../registry.ts'
-import { historyStore } from '../tools/history/store.ts'
-import { historyTools } from '../tools/history/tools.ts'
-import { memoryStore } from '../tools/memory/store.ts'
-import { memoryTools } from '../tools/memory/tools.ts'
-import { notAvailableYet } from '../tools/stubs/index.ts'
+import { TOOL_HANDLERS } from '../tools/index.ts'
 import { refusal } from './tool.ts'
-import type { ToolImpl, ToolScope } from './tool.ts'
+import type { ToolScope } from './tool.ts'
 
 /** The protocol versions this server speaks, newest first; an `initialize` asking for another gets the newest. */
 export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const
@@ -49,20 +45,12 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
 const rpcError = (id: Id | null, code: number, message: string, status = 200) => json({ jsonrpc: '2.0', id, error: { code, message } }, status)
 const rpcResult = (id: Id, result: unknown) => json({ jsonrpc: '2.0', id, result })
 
-/** Each registered tool's handler: memory and history are built; every other tool is a `not_available_yet` stub. */
-function toolImpls(deps: McpDeps): Map<string, ToolImpl> {
-  const built: Record<string, ToolImpl> = { ...memoryTools(memoryStore({ db: deps.db })), ...historyTools(historyStore({ db: deps.db })) }
-  const names = new Set(INHOUSE_TOOLS.map(t => t.name))
-  for (const name of Object.keys(built)) if (!names.has(name)) throw new Error(`inhouse MCP: ${name} is built but not registered`)
-  return new Map(INHOUSE_TOOLS.map(t => [t.name, built[t.name] ?? notAvailableYet(t.name)]))
-}
-
 /** `tools/list`: the 20 in the registry's order, each with its input schema, annotations and the always-load mark. */
-function toolList(impls: Map<string, ToolImpl>) {
+function toolList() {
   return INHOUSE_TOOLS.map(t => ({
     name: t.name,
     description: t.description,
-    inputSchema: z.toJSONSchema(impls.get(t.name)!.input, { io: 'input' }),
+    inputSchema: z.toJSONSchema(TOOL_HANDLERS.get(t.name)!.input, { io: 'input' }),
     annotations: t.annotations,
     ...(t.alwaysLoad ? { _meta: { [ALWAYS_LOAD_META_KEY]: true } } : {}),
   }))
@@ -116,11 +104,11 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
     case 'ping':
       return rpcResult(id, {})
     case 'tools/list':
-      return rpcResult(id, { tools: toolList(toolImpls(deps)) })
+      return rpcResult(id, { tools: toolList() })
     case 'tools/call': {
       const name = params?.name
       const args = params?.arguments ?? {}
-      const impl = typeof name === 'string' ? toolImpls(deps).get(name) : undefined
+      const impl = typeof name === 'string' ? TOOL_HANDLERS.get(name) : undefined
       if (!impl) return rpcError(id, INVALID_PARAMS, `Unknown tool: ${typeof name === 'string' ? name : '(no name)'}`)
       const parsed = impl.input.safeParse(args)
       // Input errors are tool execution errors (2025-11-25), so the model can read them and correct its call.
@@ -128,7 +116,7 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
       const now = deps.now ?? Date.now
       const call: ToolScope = { ...scope, nowMs: now(), requestId: `mcp-${crypto.randomUUID()}` }
       try {
-        return rpcResult(id, await impl.call(parsed.data, call))
+        return rpcResult(id, await impl.call(parsed.data, call, { db: deps.db }))
       } catch (err) {
         if (err instanceof StoreUnavailableError) {
           console.error({ event: 'mcp_store_unavailable', tool: name, error: err.name })
