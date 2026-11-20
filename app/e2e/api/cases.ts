@@ -100,11 +100,12 @@ export const CASES: Record<string, RouteCase> = {
   'PUT /api/memory/personal/:id/forgotten': { design: d('personal', PEOPLE), path: `/api/memory/personal/${NO_MEMORY}/forgotten`, json: { forgotten: true, ifRev: 1 }, passes: 404 },
   'PUT /api/memory/brand/:id/forgotten': { design: d('brand_data', ['admin', 'inhouse']), path: `/api/memory/brand/${NO_MEMORY}/forgotten`, json: { forgotten: true, ifRev: 1 }, passes: 404 },
   // Routes 46-48 are built (W2 #162). The drain POST really drains the test build's brand for 30 minutes; the test
-  // build's undrain (DELETE, the row after it in the sweep, and matrix.spec's and origin.spec's afterAll) clears it, so
-  // later specs and the next run see an undrained pool. Warm-up can't prove a runner with no containers: 503 `unavailable`.
+  // build's undrain (route 50, DELETE: swept right after the GET that follows the POST, and matrix.spec's and
+  // origin.spec's afterAll) clears it, so later specs and the next run see an undrained pool. Warm-up can't prove a
+  // runner with no containers: 503 `unavailable`.
   'POST /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', json: {}, passes: 200 },
   'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: 200 },
-  // The test build's undrain (W2): 200 here (the test build); the product build answers 404 (server/ops/drain.test.ts).
+  // Route 50, the test build's undrain (W2): 200 here (the test build); the product build answers 404 (server/ops/drain.test.ts).
   'DELETE /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: 200 },
   'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: 503 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },

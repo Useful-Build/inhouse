@@ -419,7 +419,8 @@ export class RunnerPool implements RunnerPoolPort {
   /**
    * The test build's undrain (behind its route's `INHOUSE_TEST_BUILD` gate, ops/drain.ts): clears a drain at once, as a
    * warm-up that passed would, without proving runners (the test build has no containers). Every live run and the
-   * placement queue advance now. No drain on: nothing changes.
+   * placement queue advance now. No drain on: nothing changes. An undrain during a warm-up's await makes that warm-up
+   * answer 503 `draining` (its drain changed under it): test build only, and harmless.
    */
   undrain(): DrainState {
     if (this.#flag('draining_until_ms') !== null || this.#flag('draining_since_ms') !== null) {

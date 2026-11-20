@@ -143,7 +143,7 @@ export const routes: readonly Route[] = [
   /* 45 */ { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', handler: forgetBrandMemory },
   /* 46 */ { method: 'POST', pattern: '/api/ops/drain', handler: startDrain },
   /* 47 */ { method: 'GET', pattern: '/api/ops/drain', handler: drainState },
-  /* 47b */ { method: 'DELETE', pattern: '/api/ops/drain', handler: undrain }, // the test build's undrain (404 elsewhere)
+  /* 50 */ { method: 'DELETE', pattern: '/api/ops/drain', handler: undrain }, // the test build's undrain (404 elsewhere), after 47 so the sweep's DELETE follows its POST
   /* 48 */ { method: 'POST', pattern: '/api/ops/warmup', handler: warmup },
   /* 49 */ { method: 'POST', pattern: '/api/chats/:id/session/reset', handler: resetSession },
 ]

@@ -13,11 +13,13 @@ export const drainState: Handler = async c => apiJson(await brandAgent(c.env).dr
 declare const __INHOUSE_TEST_BUILD__: boolean
 
 /**
- * `DELETE /api/ops/drain`, the TEST BUILD's undrain: the e2e drain case would otherwise leave the shared test-build brand
- * drained for 30 minutes (the test build has no containers, so warm-up can't clear it). Only when the test build is
- * compiled in (`__INHOUSE_TEST_BUILD__`, a build-time constant: the product bundle has this branch dead) AND switched on
- * (`INHOUSE_TEST_BUILD === '1'`), the pattern of the test issuer (auth/authenticate.ts). Anywhere else: 404, as if the
- * route weren't there (the access matrix still answers 403 to anyone but the release token).
+ * Route 50, `DELETE /api/ops/drain`, the TEST BUILD's undrain: the e2e drain case would otherwise leave the shared
+ * test-build brand drained for 30 minutes (the test build has no containers, so warm-up can't clear it). Only when the
+ * test build is compiled in (`__INHOUSE_TEST_BUILD__`, a build-time constant: `false` in the product build, so the
+ * branch is never reachable there) AND switched on (`INHOUSE_TEST_BUILD === '1'`), the pattern of the test issuer
+ * (auth/authenticate.ts). Anywhere else: 404, as if the route weren't there (the access matrix still answers 403 to
+ * anyone but the release token). The flag is a parameter so the unit tests can stand in for each build mode (vitest
+ * compiles it `false`).
  */
 export function undrainHandler(compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__): Handler {
   return async c => {

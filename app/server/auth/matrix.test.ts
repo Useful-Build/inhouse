@@ -261,7 +261,7 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'PUT /api/memory/brand/:id/forgotten': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'GET /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
-  // The test build's undrain (W2): release only, like drain; its handler answers 404 outside the test build.
+  // Route 50, the test build's undrain (W2): release only, like drain; its handler answers 404 outside the test build.
   'DELETE /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'POST /api/ops/warmup': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'POST /api/chats/:id/session/reset': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
