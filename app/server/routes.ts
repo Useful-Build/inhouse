@@ -1,7 +1,11 @@
 // The route table (p2-design section 3). Orchestrator only: a worker's module exports its handlers and its PR body
 // lists the routes; the orchestrator adds them here. Every route also has a row in access-matrix.ts.
+import { accessMatrix, canRows } from './access-matrix.ts'
 import type { AuthStores, Principal } from './auth/index.ts'
 import type { RequireObject } from './auth/matrix.ts'
+import { meHandler } from './auth/me-handler.ts'
+import { SECURITY_HEADERS, apiError } from './http.ts'
+import { clientError } from '../worker/client-error.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -53,7 +57,34 @@ export type Handler = (c: HandlerContext) => Promise<Response>
 /** `pattern` is a path such as `/api/members/:id/role`; a `:name` segment matches one non-empty path segment. */
 export interface Route { readonly method: Method; readonly pattern: string; readonly handler: Handler }
 
-export const routes: readonly Route[] = []
+/** Every route whose handler hasn't landed yet: 503 `unavailable`. W2 and W3 replace them one by one. */
+const notYet: Handler = async () => apiError('unavailable')
+
+/** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
+export const routes: readonly Route[] = [
+  /* 1 */ { method: 'GET', pattern: '/api/health', handler: notYet },
+  /* 2 */ { method: 'GET', pattern: '/api/me', handler: meHandler({ rows: accessMatrix, canRows }) },
+  /* 3 */ { method: 'GET', pattern: '/api/members', handler: notYet },
+  /* 4 */ { method: 'POST', pattern: '/api/members/invites', handler: notYet },
+  /* 5 */ { method: 'PUT', pattern: '/api/members/:id/role', handler: notYet },
+  /* 6 */ { method: 'DELETE', pattern: '/api/members/:id', handler: notYet },
+  /* 7 */ { method: 'GET', pattern: '/api/settings/personal', handler: notYet },
+  /* 8 */ { method: 'PUT', pattern: '/api/settings/personal/:key', handler: notYet },
+  /* 9 */ { method: 'GET', pattern: '/api/settings/brand', handler: notYet },
+  /* 10 */ { method: 'PUT', pattern: '/api/settings/brand/:key', handler: notYet },
+  /* 11 */ { method: 'GET', pattern: '/api/settings/technical', handler: notYet },
+  /* 12 */ { method: 'PUT', pattern: '/api/settings/technical/:key', handler: notYet },
+  /* 13 */ { method: 'PUT', pattern: '/api/photo', handler: notYet },
+  /* 14 */ { method: 'DELETE', pattern: '/api/photo', handler: notYet },
+  /* 15 */ { method: 'GET', pattern: '/api/members/:id/photo', handler: notYet },
+  /* 16 */ { method: 'GET', pattern: '/api/grants', handler: notYet },
+  /* 17 */ { method: 'POST', pattern: '/api/grants', handler: notYet },
+  /* 18 */ { method: 'POST', pattern: '/api/grants/:id/end', handler: notYet },
+  /* 19 */ { method: 'GET', pattern: '/api/audit', handler: notYet },
+  /* 20 */ { method: 'GET', pattern: '/api/audit/export.csv', handler: notYet },
+  // Hardening's reporter (worker/client-error.ts, shared with the demo Worker): a report row, so no stores.
+  /* 21 */ { method: 'POST', pattern: '/api/client-error', handler: async ({ request }) => clientError(request, SECURITY_HEADERS) },
+]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */
 export function matchRoute(table: readonly Route[], method: string, pathname: string): { route: Route; params: Record<string, string> } | null {

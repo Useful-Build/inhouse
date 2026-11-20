@@ -12,6 +12,8 @@ import type { AuthStores } from './index.ts'
 import { mintPerson, mintService } from './test-issuer-mint.ts'
 import { buildMe, meHandler } from './me-handler.ts'
 import { MeSchema } from '../../shared/contract/me.ts'
+import { accessMatrix } from '../access-matrix.ts'
+import { routes } from '../routes.ts'
 import { BRAND, DESIGN_CAN_ROWS, DESIGN_ROWS, INHOUSE, MONITOR_ID, SMOKE_ID, TEAM, authEnv, fakeStores, issuer } from '../testing/auth-fixtures.ts'
 import type { Issuer } from '../testing/auth-fixtures.ts'
 
@@ -310,5 +312,37 @@ describe('a WebSocket upgrade', () => {
     expect(res.webSocket).toBeTruthy()
     expect(res.headers.get('Content-Security-Policy')).toContain("default-src 'self'")
     expect(res.headers.get('Cache-Control')).toBe('no-store')
+  })
+})
+
+describe('the committed route table (server/routes.ts)', () => {
+  const committed = () => {
+    const { parts, env } = setup()
+    const committedParts: ApiParts = { ...parts, routes, accessMatrix }
+    return (origin: string, path: string, init: RequestInit = {}) => api(committedParts, new Request(`${origin}${path}`, init), env, ctx, 'req-1')
+  }
+  it('answers GET /api/me with a schema-valid Me whose can comes from the committed rows', async () => {
+    const res = await committed()(BRAND.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': await as('admin') } })
+    expect(res.status).toBe(200)
+    const me = MeSchema.parse(await res.json())
+    expect(me).toMatchObject({ memberId: 'm_admin', role: 'admin', can: { invite: true, switchModelOff: true, editTechnical: false } })
+  })
+  it('answers every route without a handler yet with 503 unavailable, after access (a Member still gets 403 on an admin row)', async () => {
+    const call = committed()
+    const member = await as('member')
+    const admin = await as('admin')
+    for (const r of accessMatrix.filter(x => x.pattern !== '/api/me' && x.pattern !== '/api/client-error' && x.class !== 'open')) {
+      const res = await call(BRAND.origin, concrete(r.pattern), { method: r.method, headers: { 'Cf-Access-Jwt-Assertion': r.allow.includes('admin') ? admin : member, Origin: BRAND.origin } })
+      expect(res.status, `${r.method} ${r.pattern}`).toBe(503)
+      expect(await res.json()).toEqual({ error: { code: 'unavailable' } })
+    }
+    expect((await call(BRAND.origin, '/api/members/invites', { method: 'POST', headers: { 'Cf-Access-Jwt-Assertion': member, Origin: BRAND.origin } })).status).toBe(403)
+  })
+  it('wires POST /api/client-error to the reporter (204, logged as client_error)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await committed()(BRAND.origin, '/api/client-error', { method: 'POST', body: '{"kind":"error"}', headers: { 'Cf-Access-Jwt-Assertion': await as('member'), Origin: BRAND.origin, 'Sec-Fetch-Site': 'same-origin' } })
+    expect(res.status).toBe(204)
+    expect(error.mock.calls.some(([line]) => (line as { event?: string }).event === 'client_error')).toBe(true)
+    vi.restoreAllMocks()
   })
 })
