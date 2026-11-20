@@ -39,8 +39,6 @@ export const ident = (name: string): string => {
 
 /** D1's own tables: never backed up (the target is migrated to the same level instead). */
 const D1_INTERNAL = /^(?:d1_migrations$|sqlite_|_cf_)/
-/** The tables FTS5 creates beside a virtual table `<name>` (which of them exist depends on its options). */
-export const FTS5_SHADOW_SUFFIXES = ['_data', '_idx', '_docsize', '_config', '_content'] as const
 const isVirtual = (sql: string) => /^\s*CREATE\s+VIRTUAL\s+TABLE/i.test(sql)
 /** An FTS5 virtual table: the only kind a `derived` entry may name (its shadow tables are skipped with it). */
 const isFts5 = (sql: string) => isVirtual(sql) && /\bUSING\s+fts5\b/i.test(sql)
@@ -51,7 +49,7 @@ export interface DerivedTable { name: string; from: string[] }
  * The canonical tables' rules in restore order (each table after the tables in its `after`), and the derived tables
  * (registry entries with `derived`, FTS5 indexes rebuilt rather than backed up, sorted by name), checked against the
  * registry and the database's own schema. Throws by name on: a table in the database that's in no entry (and isn't
- * D1's own or a registered virtual table's FTS5 shadow), a virtual table whose entry isn't `derived`, a `derived`
+ * D1's own or, per SQLite, a shadow of a registered virtual table), a virtual table whose entry isn't `derived`, a `derived`
  * entry that isn't an FTS5 virtual table, an entry with no table, a canonical entry with no rule, a rule with no entry
  * or for a derived table, a derived table built from a table that isn't canonical.
  */
@@ -60,10 +58,7 @@ export async function canonicalTables(db: D1Database, registry: readonly TableEn
   const canonical = entries.filter(e => !e.derived).map(e => e.name)
   const derived = entries.filter(e => e.derived).map(e => ({ name: e.name, from: [...(e.derived?.from ?? [])] })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const schema = new Map((await db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'").all<{ name: string; sql: string | null }>()).results.map(r => [r.name, r.sql ?? '']))
-  // Shadow tables only of registered entries that really are virtual tables in this database, so a virtual table
-  // whose entry isn't derived fails as itself below, and a plain table can't hide tables named like its shadows.
-  const shadowOwners = entries.filter(e => isVirtual(schema.get(e.name) ?? '')).map(e => e.name)
-  const shadows = new Set(shadowOwners.flatMap(n => FTS5_SHADOW_SUFFIXES.map(s => `${n}${s}`)))
+  const shadows = await shadowTables(db, entries.filter(e => isVirtual(schema.get(e.name) ?? '')).map(e => e.name))
   for (const [name, sql] of schema) {
     if (D1_INTERNAL.test(name) || entries.some(e => e.name === name) || shadows.has(name)) continue
     throw new BackupError(isVirtual(sql) ? 'virtual_table' : 'unregistered_table', `${name}: in no registry entry`)
@@ -83,6 +78,17 @@ export async function canonicalTables(db: D1Database, registry: readonly TableEn
   }
   for (const r of rules) if (!canonical.includes(r.name)) throw new BackupError('rule_without_entry', r.name)
   return { rules: restoreOrder(rules), derived }
+}
+
+/**
+ * The shadow tables SQLite itself keeps for the given virtual tables: `PRAGMA table_list` rows of type `shadow`
+ * (https://sqlite.org/pragma.html#pragma_table_list) named `<owner>_...`. Taken from SQLite rather than from a list of
+ * FTS5 suffixes, so only a table that really is a shadow (a contentless FTS5 table has no `_content`) is skipped, and
+ * a virtual table whose entry isn't derived fails as itself, not as its shadows.
+ */
+export async function shadowTables(db: D1Database, owners: readonly string[]): Promise<Set<string>> {
+  const rows = (await db.prepare('PRAGMA table_list').all<{ name: string; type: string }>()).results
+  return new Set(rows.filter(r => r.type === 'shadow' && owners.some(o => r.name.startsWith(`${o}_`))).map(r => r.name))
 }
 
 /** The rules ordered so every table comes after the tables in its `after`; a cycle or an unknown name throws. */

@@ -15,7 +15,7 @@ import { seedBrand } from '../../server/seed/seed.ts'
 import { tables as realRegistry } from '../tables/index.ts'
 import { backup, listBackups, timeId } from './backup.ts'
 import { BackupError } from './errors.ts'
-import { TABLE_RULES, canonicalTables } from './tables.ts'
+import { TABLE_RULES, canonicalTables, shadowTables } from './tables.ts'
 import { partLines } from './format.ts'
 import type { BackupManifest } from './manifest.ts'
 import { derivedEntry, insertRows } from './test-support.ts'
@@ -107,6 +107,15 @@ describe('the registry guard (failure 2)', () => {
     expect(err).toBeInstanceOf(BackupError)
     expect([(err as BackupError).code, (err as Error).message]).toEqual(['rule_without_entry', 'backup: rule_without_entry (ghost_table)'])
   })
+  it('skips only the shadow tables SQLite reports for a registered virtual table', () => withTable("CREATE VIRTUAL TABLE search_c USING fts5(body, content='')", 'search_c', async () => {
+    // A contentless FTS5 table has no `_content` shadow: the skip set comes from SQLite, not from a suffix list.
+    expect([...await shadowTables(env.DB, ['search_c'])].sort()).toEqual(['search_c_config', 'search_c_data', 'search_c_docsize', 'search_c_idx'])
+    expect(await shadowTables(env.DB, [])).toEqual(new Set())
+    // A plain `search_c_content` can't sit beside it to be skipped: SQLite reserves the name.
+    await expect(env.DB.prepare('CREATE TABLE search_c_content (x TEXT)').run()).rejects.toThrow(/reserved for internal use/)
+    const m = await backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry: [...realRegistry, derivedEntry('search_c')] })
+    expect(m.derived).toEqual([{ name: 'search_c', from: ['settings'] }])
+  }))
   it('skips a derived table and its FTS5 shadow tables, and lists it in the manifest', () => withTable('CREATE VIRTUAL TABLE search_z USING fts5(body)', 'search_z', async () => {
     await env.DB.prepare("INSERT INTO search_z (body) VALUES ('some text')").run()
     const shadows = (await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'search_z_%'").all<{ name: string }>()).results.map(r => r.name)

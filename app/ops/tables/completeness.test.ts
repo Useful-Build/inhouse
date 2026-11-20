@@ -5,7 +5,8 @@
 //     (a module using the bucket without r2-keys.ts, a key builder whose key is under no listed prefix);
 //  4. an entry names nothing (a dropped table, a renamed class, a typo), or two entries name one store;
 //  5. a migration creates a virtual table (FTS5) that isn't registered, or whose entry isn't `derived` (P8: the backup
-//     skips a derived table and a restore rebuilds it; anything else must be backed up, which a virtual table can't be).
+//     skips a derived table and a restore rebuilds it; anything else must be backed up, which a virtual table can't be);
+//     or a `derived` entry names a table the migrations create as a plain table (it would never be backed up).
 import { describe, expect, it } from 'vitest'
 import productConfig from '../../wrangler.product.jsonc?raw'
 import * as r2Keys from '../../server/db/r2-keys.ts'
@@ -35,6 +36,10 @@ function d1TableDefs(files: Record<string, string> = migrations): { name: string
   return defs.filter(d => !/^(d1|sqlite)_/i.test(d.name))
 }
 const d1Tables = (files?: Record<string, string>): string[] => d1TableDefs(files).map(d => d.name)
+
+/** The `derived` entries whose table the migrations create as a plain table, not a virtual one (failure 5). */
+const derivedNotVirtual = (files: Record<string, string>, reg: readonly TableEntry[]): string[] =>
+  reg.filter(e => e.kind === 'd1' && e.derived && d1TableDefs(files).some(d => d.name === e.name && !d.virtual)).map(e => e.name)
 
 /** The migrations' virtual tables whose registry entry is missing or isn't `derived` (failure 5). */
 const virtualNotDerived = (files: Record<string, string>, reg: readonly TableEntry[]): string[] =>
@@ -116,6 +121,12 @@ describe('the table registry', () => {
     const plain: TableEntry = { kind: 'd1', name: 'planted_search', retention: 'config', personKeys: [], export: false }
     expect(virtualNotDerived(planted, [...registry, plain])).toEqual(['planted_search'])
     expect(virtualNotDerived(planted, [...registry, { ...plain, derived: { from: ['settings'] } }])).toEqual([])
+    // Derived means virtual: a derived entry over a plain table fails, red on a planted plain-table migration.
+    expect(derivedNotVirtual(migrations, registry)).toEqual([])
+    const plantedPlain = { ...migrations, '../../server/migrations/0699_planted.sql': 'CREATE TABLE planted_index (body TEXT);' }
+    const derivedPlain: TableEntry = { kind: 'd1', name: 'planted_index', retention: 'config', personKeys: [], export: false, derived: { from: ['settings'] } }
+    expect(derivedNotVirtual(plantedPlain, [...registry, derivedPlain])).toEqual(['planted_index'])
+    expect(derivedNotVirtual(planted, [...registry, { ...derivedPlain, name: 'planted_search' }])).toEqual([])
     // A plain CREATE TABLE is never taken for a virtual one.
     expect(d1TableDefs({ x: 'CREATE TABLE IF NOT EXISTS plain_t (id TEXT);' })).toEqual([{ name: 'plain_t', virtual: false }])
   })
