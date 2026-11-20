@@ -20,6 +20,7 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
   `app/e2e/support/` the fixtures layer (`fx`: sample names and seeding, the only place that knows the mock's storage
   keys); `app/e2e/product/` the product build's specs.
 - `docs/plans/` holds the approved plans. `.github/rulesets/` holds the branch rulesets as applied.
+- `docs/adopted-libraries.md` is the register of adopted base libraries and the procedure for updating them.
 
 ## Stack
 
