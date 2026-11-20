@@ -116,6 +116,11 @@ test('An open file has its own link: Back closes it, stepping adds no entries, a
   await expect(page.getByRole('dialog')).toHaveCount(0)
   expect(hash(page)).toBe('#/library')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
+  // A move from the rail after that Close is written to the address bar, as a new entry (the Library's replace went through the one hash writer).
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^Today/ }).click()
+  await expect.poll(() => hash(page)).toBe('#/today')
+  await page.goBack()
+  await expect.poll(() => hash(page)).toBe('#/library')
 
   // A link to a file that isn't there says so and lands on the list.
   await page.evaluate(() => { location.hash = '#/library/no-such-file' })
