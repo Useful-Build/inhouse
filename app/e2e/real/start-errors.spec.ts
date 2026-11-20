@@ -22,10 +22,20 @@ test('a 503 on the first read shows the load error, and Retry lands in the app',
   const alert = page.getByRole('alert').filter({ hasText: "Couldn't load Inhouse." })
   await expect(alert).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Not connected yet' })).toHaveCount(0)
+  // The read Retry makes is held until the checks below have run: while it is under way the load error stays, with
+  // Retry disabled, and "Not connected yet" never shows.
   await page.unroute('**/api/me')
+  let release!: () => void
+  const held = new Promise<void>(r => { release = r })
+  await page.route('**/api/me', async route => { await held; await route.continue() })
   const loads: string[] = []
   page.on('load', () => loads.push(page.url()))
-  await alert.getByRole('button', { name: 'Retry', exact: true }).click()
+  const retry = alert.getByRole('button', { name: 'Retry', exact: true })
+  await Promise.all([page.waitForRequest(r => new URL(r.url()).pathname === '/api/me'), retry.click()])
+  await expect(retry).toBeDisabled()
+  await expect(alert).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Not connected yet' })).toHaveCount(0)
+  release()
   await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan', exact: true })).toBeVisible()
   expect(loads).toEqual([])
 })

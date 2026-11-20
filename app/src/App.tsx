@@ -1,7 +1,7 @@
 import { Component, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
-import type { ToolsData } from './agent/types'
+import type { AgentErrorCode, ToolsData } from './agent/types'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
 import { Sidebar } from './shell/Sidebar'
@@ -378,13 +378,16 @@ function Shell() {
 export default function App() {
   const data = useAgentData()
   const screen = demo === null ? startScreen(data) : 'app'
-  // Retry sets `meta` loading again: the load error stays up while it reads, not "Not connected yet".
-  const [last, setLast] = useState<StartScreen>(screen)
-  const shown = screen === 'not-connected' && last === 'load-error' ? 'load-error' : screen
-  if (shown !== last) setLast(shown)
+  // Retry sets `meta` loading again: the load error stays up while it reads, with the last error's words and Retry
+  // disabled, not "Not connected yet".
+  const [last, setLast] = useState<{ screen: StartScreen; error?: AgentErrorCode }>({ screen })
+  const retrying = screen === 'not-connected' && last.screen === 'load-error'
+  const shown = retrying ? 'load-error' : screen
+  const error = retrying ? last.error : data.resources.meta.error
+  if (shown !== last.screen || error !== last.error) setLast({ screen: shown, error })
   if (shown === 'not-on-team') return <Suspense fallback={null}><NotOnTeam /></Suspense>
   if (shown === 'signed-out') return <SignedOut />
-  if (shown === 'load-error') return <StartError error={data.resources.meta.error} />
+  if (shown === 'load-error') return <StartError error={error} retrying={retrying} />
   if (shown === 'not-connected') return <NotConnected />
   return <Shell />
 }

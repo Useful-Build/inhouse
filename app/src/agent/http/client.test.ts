@@ -1152,6 +1152,33 @@ describe('the first read failing: the screen the shell shows (start-screen.ts)',
     expect(agent.read().resources.members.status).toBe('ready')
   })
 
+  test('two retries while meta reads again make one read, and the app stays up', async () => {
+    let failing = true
+    let release!: () => void
+    const held = new Promise<void>(r => { release = r })
+    const s = server(reads())
+    let meCalls = 0
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      if (String(input).endsWith('/api/me')) {
+        meCalls++
+        if (failing) return new Response('{}', { status: 503 })
+        await held
+      }
+      return s.fetch(input, init)
+    }
+    const agent = new HttpAgent({ fetch, now: () => 5000 })
+    await agent.whenLoaded()
+    expect(startScreen(agent.read())).toBe('load-error')
+    failing = false
+    const first = agent.retry('meta')
+    const second = agent.retry('meta')
+    expect(second).toBe(first)
+    release()
+    await Promise.all([first, second])
+    expect(meCalls).toBe(2)
+    expect(startScreen(agent.read())).toBe('app')
+  })
+
   test('a 401 on me() is the signed-out screen, not "Not connected yet"', async () => {
     const { agent } = await loaded({ 'GET /api/me': refusal(401, 'unauthorized') })
     expect(startScreen(agent.read())).toBe('signed-out')
