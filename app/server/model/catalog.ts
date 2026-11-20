@@ -1,8 +1,16 @@
 // The model catalogue (p3-design 4.9 and 8.2): the models a turn may run on, their API ids, default efforts and prices,
 // and `resolveModel`, the one function route 29 (send a turn) and route 38 (the model list) decide a model with.
-// W1's first PR writes the ids, labels, efforts and `resolveModel`; W3 fills the prices (from Anthropic's pricing page,
-// cited) and owns this file afterwards. A model without a price is refused (`model_off`): fail closed, so a model never
-// runs before the spend gate can price its calls.
+// W1's first PR writes the ids, labels, efforts and `resolveModel`; W3 fills the prices and owns this file afterwards. A
+// model without a price is refused (`model_off`): fail closed, so a model never runs before the spend gate can price
+// its calls.
+//
+// Prices: https://platform.claude.com/docs/en/about-claude/pricing (read 2026-11-20). Fable 5.2, Opus 5.5 and Sonnet 5.5
+// have no long-context premium ("include the full 1M token context window at standard pricing"). Haiku 5.5 "is priced
+// by prompt length: a request whose prompt is over 100,000 tokens pays higher prices. A request's prompt length counts
+// all of its input tokens, including cache reads and cache writes", and the higher card covers output too. Web search
+// "$10 USD per 1,000 searches". Fast mode (2x on Fable 5.2 and Opus 5.5) and `inference_geo: "us"` (1.1x) are priced
+// on that page but not offered here (p3-design 9, CHOICE: refused, so no multiplier enters a worst case); `global` is
+// the standard price ("`inference_geo: \"global\"` (default) uses standard pricing").
 import type { Effort } from '../../shared/contract/common.ts'
 import type { ErrorReason } from '../../shared/contract/common.ts'
 import { EFFORT_LABELS } from '../../shared/contract/settings-table.ts'
@@ -34,6 +42,9 @@ export interface CatalogModel {
   id: string
   /** The picker's label. */
   label: string
+  /** The model's name and the picker's line under it (route 38; the client's models.json). */
+  name: string
+  sub: string
   /** The Messages API model id. */
   apiId: string
   /** The effort used when the brand set none (`tm:<id>:effort`). */
@@ -42,13 +53,47 @@ export interface CatalogModel {
   price: Price | null
 }
 
+/** Micro-USD per million tokens from US dollars per million tokens. */
+function usd(perMTok: number): number {
+  return Math.round(perMTok * 1_000_000)
+}
+
+/** No fast mode, standard geo only, $10 per 1,000 searches. */
+const NO_MODIFIERS = { fastModeMultiplier: null, geoMultipliers: { global: 1 }, webSearchPerUse: 10_000 } as const
+
+/** A one-tier card (no long-context premium). */
+function card(input: number, output: number, cacheWrite5m: number, cacheWrite1h: number, cacheRead: number): Price {
+  return { tiers: [{ uptoInputTokens: null, input, output, cacheWrite5m, cacheWrite1h, cacheRead }], ...NO_MODIFIERS }
+}
+
 /** Strongest first. The picker ids and labels are the ones the client's models.json names. */
 export const CATALOG: readonly CatalogModel[] = [
-  { id: 'fable', label: 'Max', apiId: 'claude-fable-5-2', defaultEffort: 'high', price: null },
-  { id: 'opus', label: 'Smart', apiId: 'claude-opus-5-5', defaultEffort: 'medium', price: null },
-  { id: 'sonnet', label: 'Fast', apiId: 'claude-sonnet-5-5', defaultEffort: 'medium', price: null },
-  { id: 'haiku', label: 'Instant', apiId: 'claude-haiku-5-5', defaultEffort: 'low', price: null },
+  { id: 'fable', label: 'Max', name: 'Fable 5.2', sub: 'Hardest problems and long jobs · costs most', apiId: 'claude-fable-5-2', defaultEffort: 'high', price: card(usd(8), usd(40), usd(10), usd(16), usd(0.2)) },
+  { id: 'opus', label: 'Smart', name: 'Opus 5.5', sub: 'Best for most work', apiId: 'claude-opus-5-5', defaultEffort: 'medium', price: card(usd(4), usd(20), usd(5), usd(8), usd(0.2)) },
+  { id: 'sonnet', label: 'Fast', name: 'Sonnet 5.5', sub: 'Quick answers, still thinks well · half the cost', apiId: 'claude-sonnet-5-5', defaultEffort: 'medium', price: card(usd(2), usd(10), usd(2.5), usd(4), usd(0.1)) },
+  {
+    id: 'haiku', label: 'Instant', name: 'Haiku 5.5', sub: 'Simple lookups and sorting · costs least', apiId: 'claude-haiku-5-5', defaultEffort: 'low',
+    price: {
+      tiers: [
+        { uptoInputTokens: 100_000, input: usd(0.1), output: usd(0.5), cacheWrite5m: usd(0.125), cacheWrite1h: usd(0.2), cacheRead: usd(0.01) },
+        { uptoInputTokens: null, input: usd(0.5), output: usd(2.5), cacheWrite5m: usd(0.625), cacheWrite1h: usd(1), cacheRead: usd(0.05) },
+      ],
+      ...NO_MODIFIERS,
+    },
+  },
 ]
+
+/**
+ * The per-turn ceilings (`:turnCeiling`, p3-design 9; Wasim, item 22 E2, 2026-11-20), in micro-USD, by API id: 4 x the
+ * model's single-call worst case at the input bound (700,000 tokens at the 1-hour cache-write rate, 32,000 output
+ * tokens, 5 searches) + $2.00. One constant table; ceilings.test.ts recomputes each from literal rates.
+ */
+export const TURN_CEILING_MICRO: Readonly<Record<string, number>> = {
+  'claude-fable-5-2': 52_120_000,
+  'claude-opus-5-5': 27_160_000,
+  'claude-sonnet-5-5': 14_680_000,
+  'claude-haiku-5-5': 5_320_000,
+}
 
 /** The model the engine's background calls use when it's on and priced; otherwise they use the turn's model. */
 const SIDE_MODEL_ID = 'haiku'

@@ -11,6 +11,9 @@
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"compatibility_date": "2026-11-13",
+	// `request.signal` fires when the caller disconnects (the egress closes a model call on it, p3-design 8.2); the default
+	// only from 2026-11-17. https://developers.cloudflare.com/workers/configuration/compatibility-flags/ (read 2026-11-20)
+	"compatibility_flags": ["enable_request_signal"],
 	"assets": {
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application",
