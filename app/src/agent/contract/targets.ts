@@ -5,7 +5,7 @@
 import { inject, vi } from 'vitest'
 import type { AgentClient, AgentErrorCode, AgentNotice, AgentState, DemoContext, InviteInput, ResourceKey, TeamRequest } from '../types'
 import { AgentError } from '../types'
-import type { MockAgent } from '../mock'
+import type { MockAgent, ScriptedTurn } from '../mock'
 import { ME_ID, memberIdOf } from '../mock'
 import { realTargets } from './targets/real/index'
 
@@ -22,7 +22,7 @@ export type RecordRef =
   | { kind: 'setting'; key: string }
   | { kind: 'member'; id: string }
   | { kind: 'grant'; id: string }
-  | { kind: 'routine' | 'memory' | 'file'; id: string }
+  | { kind: 'routine' | 'memory' | 'file' | 'chat'; id: string }
 
 /** What the suite uses from the world it runs in. A target supplies values that exist there; the tests name none themselves. */
 export interface Fixtures {
@@ -71,6 +71,8 @@ export interface Fixtures {
   photoAfterSet: string | RegExp
   teamRequest: TeamRequest
   newChat: { id: string; title: string }
+  /** The picker's model id a send names (`sonnet`). A target that names none uses `sonnet`. */
+  model?: string
   /** A title with spaces round it: `renameChat` trims it to `paddedTitleTrimmed`. */
   paddedTitle: string
   paddedTitleTrimmed: string
@@ -131,6 +133,8 @@ export interface ContractTarget {
   serves(method: keyof AgentClient): boolean
   /** Change a record behind the client, as another session would, so the client's next write to it is stale and rejects with `conflict` carrying the current record. `value` is the new value (a role, a setting's value; a grant is ended). */
   writeElsewhere(record: RecordRef, value?: string | boolean): Promise<void>
+  /** Make the next turn of any chat end as `kind` says (a spending cap, a busy budget, a damaged session, a crash). A target that can't script it leaves this out and the suite skips those cases. */
+  scriptNextTurn?(kind: ScriptedTurn | null): Promise<void>
   /** Make the next read of a resource fail (`read().resources[resource].status` is `error` until `client.retry(resource)`). */
   failRead(resource: ResourceKey): Promise<void>
 }
@@ -155,6 +159,8 @@ Object.defineProperty(globalThis, 'localStorage', { value: shim, configurable: t
 const { agent: entryAgent, demo } = await import('../index')
 if (!demo) throw new Error('The contract suite needs the demo entry (its mock and demo.reset()); is @client the product entry?')
 const mockAgent = entryAgent as MockAgent
+// The chat engine loads in the background in the app; the suite's fake clock mustn't wait on it.
+await mockAgent.preload()
 
 /** Where the mock saves its state (its own constant isn't exported): the proxy keeps this in step when it takes a change back. */
 const MOCK_STORAGE_KEY = 'inhouse.demo.v2'
@@ -275,6 +281,7 @@ function mockTarget(): ContractTarget {
       photoAfterSet: 'data:image/png;base64,AAAA',
       teamRequest: { icon: 'build', title: 'Connect Klaviyo', sub: 'From Settings', at: { iso: '2026-11-19T14:04:00.000Z', ms: Date.UTC(2026, 10, 19, 14, 4) }, status: 'Requested' },
       newChat: { id: 'contract-chat-1', title: 'A new chat' },
+      model: 'sonnet',
       paddedTitle: '  Padded   title  ',
       paddedTitleTrimmed: 'Padded title',
       unknownChatId: 'no-such-chat',
@@ -298,6 +305,7 @@ function mockTarget(): ContractTarget {
     serves: () => true,
     async writeElsewhere(record, value) { mockAgent.changeElsewhere(record, value) },
     async failRead(resource) { mockAgent.failRead(resource) },
+    async scriptNextTurn(kind) { mockAgent.scriptNextTurn(kind) },
   }
 }
 

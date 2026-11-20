@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 /** The modules a file imports at run time (`import type` is erased by the build). */
 const runtimeImports = (src: string) => [...src.matchAll(/^(?:import|export)\s+(?!type\b)(?:[^'";]*?\bfrom\s+)?'([^']+)'/gm)].map(m => m[1])
-const PLAIN = ['keys', 'settings-table', 'error-codes']
+const PLAIN = ['keys', 'settings-table', 'error-codes', 'chat-codes']
 
 describe('runtimeImports', () => {
   it('reads multi-line imports and re-exports, and skips type-only ones', () => {
