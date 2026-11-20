@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CASES, makeCanary } from './cases.ts'
-import { WEBFETCH_DENY } from '../shared/webfetch-denials.ts'
+import { WEBFETCH_DENY } from '../shared/protocol/webfetch-denials.ts'
 import { gradeExfil, MEMORY_REFUSAL, WEBFETCH_REFUSAL } from './exfil.ts'
 import type { ChatResult, ExfilKind, ToolCall } from './types.ts'
 

@@ -18,7 +18,7 @@
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import type { HookCallbackMatcher, HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk'
-import { WEBFETCH_DENY } from '../../../shared/webfetch-denials.ts'
+import { WEBFETCH_DENY } from '../../../shared/protocol/webfetch-denials.ts'
 import { fetchHostRefusal } from './options.ts'
 
 /** Resolves a name to its addresses (all families). */
