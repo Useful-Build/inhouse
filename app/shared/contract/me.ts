@@ -1,0 +1,45 @@
+// Who is signed in, and what they may do (p2-design sections 3 and 11). W1 owns this file in P2. The server builds it
+// in `GET /api/me` (server/auth/me-handler.ts) from the verified principal; `can` comes from the same access-matrix rows
+// that `checkAccess` reads, so the UI never offers an action the server refuses.
+import { z } from 'zod'
+import { InstantSchema } from './common.ts'
+
+/** The three roles (decision log, "Roles"). Approver is not a role: approving is a job per rule, by member id. */
+export const RoleSchema = z.enum(['member', 'admin', 'inhouse'])
+export type Role = z.infer<typeof RoleSchema>
+
+/**
+ * The closed list of actions the UI asks about, each tied to one access-matrix row (p2-design section 3):
+ * `invite` (row 4), `changeRole` (5), `remove` (6), `editBrandSettings` (10), `editTechnical` (12, for Inhouse),
+ * `switchModelOff` (12 via its `adminWrite` flag), `grantSupport` (17), `viewMembers` (3), `viewAudit` (19),
+ * `exportAudit` (20).
+ */
+export const CanKeySchema = z.enum([
+  'invite', 'changeRole', 'remove', 'editBrandSettings', 'editTechnical', 'switchModelOff', 'grantSupport',
+  'viewMembers', 'viewAudit', 'exportAudit',
+])
+export type CanKey = z.infer<typeof CanKeySchema>
+
+/** Every `CanKey`, each exactly once: a missing or unknown key fails the parse. */
+export const CanSchema = z.strictObject(
+  Object.fromEntries(CanKeySchema.options.map(k => [k, z.boolean()])) as Record<CanKey, z.ZodBoolean>,
+)
+export type Can = z.infer<typeof CanSchema>
+
+/** A live support grant (BD7), shown to the Inhouse team only. */
+export const MeGrantSchema = z.object({ id: z.string().min(1), endsAt: InstantSchema })
+export type MeGrant = z.infer<typeof MeGrantSchema>
+
+export const MeSchema = z.object({
+  memberId: z.string().min(1),
+  name: z.string(),
+  /** Null for a service member (`smoke`), which has no email. */
+  email: z.string().nullable(),
+  role: RoleSchema,
+  can: CanSchema,
+  /** `/api/members/<id>/photo` when the member has a photo, else null. */
+  photoUrl: z.string().nullable(),
+  /** The live support grant for an Inhouse principal; always null for anyone else. */
+  grant: MeGrantSchema.nullable(),
+})
+export type Me = z.infer<typeof MeSchema>
