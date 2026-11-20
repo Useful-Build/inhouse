@@ -203,6 +203,45 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         expect(t.client.read().status, scenario).toBe(scenario === 'Loading' ? 'loading' : 'ready')
       }
     })
+
+    // A product screen reads a tool's connection, the setup list and the morning check's progress from the agent's data,
+    // never from a scenario name: these hold for whatever a client serves.
+    test('tool connection, setup and read progress name known tools and agree with what is connected, in every scenario', async () => {
+      for (const scenario of SCENARIOS) {
+        await t.seed({ stage: 'Act', scenario })
+        const data = parse(AgentDataSchema, t.client.read(), 'read()')
+        const { tools } = data
+        for (const key of Object.keys(tools.connection)) {
+          expect(tools.connected, `${scenario}: tools.connection names "${key}", which isn't connected`).toContain(key)
+          expect(Object.hasOwn(tools.details, key), `${scenario}: tools.connection names an unknown tool "${key}"`).toBe(true)
+        }
+        const names = Object.values(tools.details).map(d => d.name)
+        for (const [name] of tools.setup) expect(names, `${scenario}: tools.setup names an unknown tool`).toContain(name)
+        expect(tools.readDone, `${scenario}: read more tools than are connected`).toBeLessThanOrEqual(tools.connected.length)
+        if (data.status === 'ready') expect(tools.readDone, `${scenario}: a ready agent has read every connected tool`).toBe(tools.connected.length)
+      }
+    })
+
+    test('a tool whose login failed reads as disconnected since an instant; with every login working, none does', async () => {
+      await fresh('Act', 'Normal')
+      expect(t.client.read().tools.connection).toEqual({})
+      await fresh('Act', 'Tool disconnected')
+      const lost = Object.values(t.client.read().tools.connection)
+      expect(lost).toHaveLength(1)
+      expect(lost[0].status).toBe('disconnected')
+      parse(InstantSchema, lost[0].since, 'tools.connection[].since')
+    })
+
+    test('before the first tool is live the setup list names tools being connected; once tools read, it is empty', async () => {
+      await fresh('Act', 'First day')
+      const first = t.client.read().tools
+      expect(first.connected).toEqual([])
+      expect(first.setup.length).toBeGreaterThan(0)
+      const being = first.beingConnected.map(k => first.details[k].name)
+      for (const [name] of first.setup) expect(being, `setup lists "${name}", which isn't being connected`).toContain(name)
+      await fresh('Act', 'Normal')
+      expect(t.client.read().tools.setup).toEqual([])
+    })
   })
 
   // ---------- run events ----------
@@ -235,13 +274,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       for (const e of parts) parse(TraceSchema, t.client.getTrace(e.trace), `getTrace("${e.trace}")`)
     })
 
-    test('a part may carry the model that answered and when; if it does they are a string and a number', async () => {
+    test('a part may carry the model that answered and when; if it does they are a string and an instant', async () => {
       const events = await drain(fx.questions.table)
       const parts = events.flatMap(e => (e.type === 'part' ? [e] : []))
       expect(parts.length).toBeGreaterThan(0)
       for (const e of parts) {
         if (e.model !== undefined) expect(typeof e.model).toBe('string')
-        if (e.at !== undefined) expect(Number.isFinite(e.at)).toBe(true)
+        if (e.at !== undefined) parse(InstantSchema, e.at, 'part.at')
       }
     })
 

@@ -28,7 +28,7 @@ export function Today() {
   // Handled cards stay after the ones that need the person, in every sort.
   if (byAmount) cards.sort((a, b) => Number(a.handled) - Number(b.handled) || amountOf(b.problem) - amountOf(a.problem))
   const h = handled(ctx)
-  const setup = ctx.data.scenarios.firstDay.setup
+  const setup = ctx.data.tools.setup
   const toolKey = (name: string) => name.toLowerCase().replace(/\s+/g, '-')
   // The first tool the agent doesn't have yet: the one Today waits for.
   const next = setup.find(([name]) => !ctx.data.tools.connected.includes(toolKey(name)))?.[0]
@@ -75,7 +75,7 @@ export function Today() {
 
       {f.isLoading && (
         <div className="mt-7">
-          <SectionHeader onDots icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.scenarios.loading.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
+          <SectionHeader onDots icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.tools.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
           <CardGrid aria-hidden="true">
             {SKELETON_WIDTHS.map(w => (
               <div key={w} className="box-border flex min-h-47.5 flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">

@@ -114,8 +114,7 @@ Object.defineProperty(globalThis, 'localStorage', { value: shim, configurable: t
 
 // Imported after the shim: the entry builds the mock, which reads storage when it loads. The target runs on the demo entry
 // itself (the client the app gets from `src/agent/index.ts`) and resets it with `demo.reset()`, as the demo's Reset does.
-// The entry first: display.ts reads the clock from it, and the entry builds the mock, which imports display (a cycle that
-// only works when the entry starts it).
+// The entry, not the mock on its own: it is what sets display.ts's clock (`setNow`), which every relative label reads.
 const { agent: entryAgent, demo } = await import('../index')
 if (!demo) throw new Error('The contract suite needs the demo entry (its mock and demo.reset()); is @client the product entry?')
 const mockAgent = entryAgent as MockAgent
@@ -132,6 +131,8 @@ const WRITE_METHODS: ReadonlySet<string> = new Set<WriteMethod>([
 /** The parts of the mock an injected failure has to undo. Test-only access: the mock has no hook for a server's refusal. */
 interface MockInternals {
   state: AgentState
+  /** What the mock saves under its storage key: the state with the demo's start. */
+  saved(): string
   listeners: Set<() => void>
   created: Set<string>
   holdTimers: Record<string, ReturnType<typeof setTimeout>>
@@ -180,7 +181,7 @@ function injecting(mock: MockAgent, armed: Map<string, AgentErrorCode>): AgentCl
           }
           // Nothing else changed meanwhile: the old state object itself comes back, so its identity does too.
           inner.state = now === optimistic ? before : (kept as unknown as AgentState)
-          storage.set(MOCK_STORAGE_KEY, JSON.stringify(inner.state))
+          storage.set(MOCK_STORAGE_KEY, inner.saved())
           for (const id of addedCreated) inner.created.delete(id)
           for (const id of addedTimers) if (id in inner.holdTimers) { clearTimeout(inner.holdTimers[id]); delete inner.holdTimers[id] }
           inner.listeners.forEach(l => l())

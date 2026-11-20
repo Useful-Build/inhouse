@@ -180,8 +180,11 @@ export const fmtDuration = (ms: number, d: Display): string => {
   const s = ms / 1000
   // Never grouped: 999.6 ms is "1000ms", not "1,000ms".
   if (s < 1) return nf(d.locale, { useGrouping: false, maximumFractionDigits: 0 }).format(Math.round(ms)) + 'ms'
-  if (s < 60) return nf(d.locale, { maximumFractionDigits: 1 }).format(Math.round(s * 10) / 10) + 's'
-  return Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's'
+  // Rounded before the unit is picked, so 59.96 s is "1m 0s", never "60s", and 119.6 s is "2m 0s", never "1m 60s".
+  const tenths = Math.round(s * 10) / 10
+  if (tenths < 60) return nf(d.locale, { maximumFractionDigits: 1 }).format(tenths) + 's'
+  const whole = Math.round(s)
+  return Math.floor(whole / 60) + 'm ' + (whole % 60) + 's'
 }
 /** A step on the trace window's time axis: its offset in ms from the start of the run, and its label ("0s", "5s", "1m 0s"). */
 export interface TraceTick { ms: number; label: string }

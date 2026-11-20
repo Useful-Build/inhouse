@@ -102,7 +102,5 @@ export const AgentStateSchema = z.object({
   chatPinned: flags,
   /** Chats a person deleted. Soft, so Undo can bring them back; Reset demo clears it. */
   chatDeleted: flags,
-  /** When this demo started (epoch ms): set at first load and by Reset demo. The demo clock counts from it (agent/clock.ts). */
-  demoStartedAt: z.number(),
 })
 export type AgentState = z.infer<typeof AgentStateSchema>

@@ -21,7 +21,7 @@ vi.stubGlobal('localStorage', {
 const { MockAgent } = await import('../agent/mock')
 const { instantOf } = await import('./format')
 const { DEMO_LATEST, DEMO_START, demoClockFor, demoNow } = await import('../agent/demo-clock')
-const { capStatus, defaultModeId, lastRunLine, sinceLine, toolView, usageSummary, whenOf } = await import('../state/derive')
+const { capStatus, defaultModeId, lastRunLine, lostTool, sinceLine, toolView, usageSummary, whenOf } = await import('../state/derive')
 const { checkField } = await import('../screens/settings/content')
 const F = await import('./format')
 const { display, nowOf, setNow } = await import('../state/display')
@@ -187,10 +187,11 @@ async function capture(): Promise<Record<string, string>> {
 
   // ---------- Tools: the disconnected scenario
   const disc = at('Act', 'Tool disconnected')
-  const lost = disc.data.scenarios.toolDisconnected
-  put('scenarios.toolDisconnected.at', F.fmtTime(lost.at, d))
-  put(`scenarios.toolDisconnected.${lost.tool}.statusText`, toolView(disc.ctx, lost.tool).statusText)
-  put(`scenarios.toolDisconnected.${lost.tool}.lastRead`, toolView(disc.ctx, lost.tool).lastRead)
+  // The keys keep their names from before the scenario data left the contract, so the golden file doesn't change.
+  const lost = lostTool(disc.ctx)!
+  put('scenarios.toolDisconnected.at', F.fmtTime(lost.since, d))
+  put(`scenarios.toolDisconnected.${lost.key}.statusText`, toolView(disc.ctx, lost.key).statusText)
+  put(`scenarios.toolDisconnected.${lost.key}.lastRead`, toolView(disc.ctx, lost.key).lastRead)
 
   // ---------- traces: cost, how long the run and each step took
   const traceLines = (prefix: string, t: Trace) => {
