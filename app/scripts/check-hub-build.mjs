@@ -4,8 +4,9 @@
 // The deployable hub carries no test seam: app/hub/testing/ (and the recorded upstreams it bundles from
 // app/test/upstreams/) is reached only inside `if (__INHOUSE_HUB_TEST__ && ...)`, which wrangler.hub.jsonc defines as
 // "false" so esbuild drops it. Two parts, each run on both bundles:
-//   1. The canary: HUB_TEST_CANARY's value (read from app/hub/testing/index.ts, so the two can't drift) in any output
-//      file but the metafile.
+//   1. The canaries: HUB_TEST_CANARY's value (read from app/hub/testing/index.ts) and the recorded Shopify upstream's
+//      SHOPIFY_UPSTREAM_CANARY (read from app/test/upstreams/shopify/server.ts), each in any output file but the
+//      metafile. Both are read from their source, so the scan and the code can't drift.
 //   2. The module graph: the esbuild metafile `wrangler deploy --dry-run --metafile` writes (<dir>/bundle-meta.json).
 //      Fails when any input sits in a `testing/` folder anywhere under app/hub/ (app/hub/testing/, and later ones such
 //      as app/hub/registry/testing/), under app/test/upstreams/, or is a test module (`*.test.ts`). A string scan alone
@@ -51,6 +52,11 @@ if (!existsSync(seam)) fail(`${relative(root, seam)} is missing: there's no cana
 const canaryMatch = read(seam).match(/export const HUB_TEST_CANARY = '([^']+)'/)
 if (!canaryMatch) fail(`no \`export const HUB_TEST_CANARY = '...'\` in ${relative(root, seam)}; the seam's shape changed.`)
 const CANARY = canaryMatch[1]
+const shopifyUpstream = join(root, 'test/upstreams/shopify/server.ts')
+if (!existsSync(shopifyUpstream)) fail(`${relative(root, shopifyUpstream)} is missing: there's no Shopify upstream canary to look for.`)
+const shopifyMatch = read(shopifyUpstream).match(/export const SHOPIFY_UPSTREAM_CANARY = '([^']+)'/)
+if (!shopifyMatch) fail(`no \`export const SHOPIFY_UPSTREAM_CANARY = '...'\` in ${relative(root, shopifyUpstream)}; the upstream's shape changed.`)
+const SHOPIFY_CANARY = shopifyMatch[1]
 
 // ---------- a bundle's files ----------
 const METAFILE = 'bundle-meta.json'
@@ -100,10 +106,8 @@ function open(dir, label) {
 }
 
 // ---------- the two parts: each returns what it found ----------
-/** 1. The canary in any output file (the script, its source map, anything else wrangler wrote). */
-function canary({ files }) {
-  return files.filter(f => read(f).includes(CANARY)).map(f => `"${CANARY}" in ${relative(root, f)}`)
-}
+/** 1. A canary in any output file (the script, its source map, anything else wrangler wrote). */
+const canary = value => ({ files }) => files.filter(f => read(f).includes(value)).map(f => `"${value}" in ${relative(root, f)}`)
 
 /**
  * 2. Forbidden modules in the metafile's inputs: an input counts when it resolves, from app/ or app/hub/, into a
@@ -121,7 +125,8 @@ function moduleGraph({ inputs }) {
 }
 
 const PARTS = [
-  ['canary string', canary],
+  ['canary string', canary(CANARY)],
+  ['shopify upstream canary', canary(SHOPIFY_CANARY)],
   ['module graph', moduleGraph],
 ]
 

@@ -19,7 +19,8 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  // The recorded Shopify upstream (W1) is bundled into the test build through testing/index.ts.
-  "include": ["**/*.ts", "../test/upstreams/shopify/**/*.ts"],
+  // The recorded Shopify upstream (W1) is bundled into the test build through testing/index.ts; the live cases and
+  // scripts run in the `live` project.
+  "include": ["**/*.ts", "../test/upstreams/shopify/**/*.ts", "../test/connectors/shopify/**/*.ts"],
   "exclude": ["node_modules"]
 }

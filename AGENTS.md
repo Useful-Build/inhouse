@@ -115,6 +115,17 @@ skill before any UI change. Repo specifics:
   no secret in `vars`; the template passes, the test config must fail). The `hub` job in `ci.yml` runs all of it, and
   `ci` needs it. **Outside-`app/hub/` rule:** code bundled into the hub from outside `app/hub/` (the recorded upstreams
   in `app/test/upstreams/`) imports no npm package: the `hub` job installs only `app/hub/node_modules`.
+- **Hub key rotation** (`HUB_TOKEN_KEYS`, from #95):
+  1. Add the new key to `keys` in `HUB_TOKEN_KEYS`, `current` unchanged. `wrangler secret put HUB_TOKEN_KEYS` through
+     a secret card (this deploys a version).
+  2. Set `current` to the new kid; put again. New seals use it; old envelopes still open.
+  3. Wait for the refreshes (every Shopify refresh, about every 12 h, seals under `current`; reads also re-seal
+     lazily), or call `ServerGateway.reencrypt(scope, accountId)` for each account (P5 and later; the product Worker
+     knows its accounts).
+  4. When `ServerGateway.status` shows the new `kid` for every account, remove the old key; put again.
+
+  Removing a key still in use makes that record `key_unavailable`: a client credentials account discards it and grants
+  again (log `signin_key_missing`); an OAuth account (P5) needs a reconnect.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.
