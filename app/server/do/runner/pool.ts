@@ -47,9 +47,9 @@ export const RETRY_PASS_MAX = 3
 /**
  * A runner with an admission in flight longer than this isn't offered new turns until it answers: a healthy runner
  * admits in milliseconds, and without this every turn placed in the 15 s before a hung admission times out (and makes
- * the runner suspect) would pile onto it. An admission that woke a sleeping runner doesn't count: a cold start takes
- * longer, and turns placed during it join that start rather than waking the next runner (the boot's own 60 s deadline
- * and the 15 s admit abort still bound it).
+ * the runner suspect) would pile onto it. An admission to a runner that was sleeping or starting doesn't count: it
+ * waits on a cold start, and turns placed during the start join it rather than waking the next runner (the boot's own
+ * 60 s deadline and the 15 s admit abort still bound it).
  */
 export const SLOW_ADMIT_MS = 3_000
 /** `pool_shortfall`: a turn queued longer than this, or a `pool_full`, within the window. */
@@ -109,7 +109,7 @@ export class RunnerPool implements RunnerPoolPort {
   /**
    * Admissions in flight (turn id → runner and start time): their own answer decides them, never a container exit
    * meanwhile; a second `place` of the same turn answers ambiguous (that admission decides it); a runner with one in
-   * flight past `SLOW_ADMIT_MS` isn't picked, unless that admission woke it (`waking`: a cold start, not a hang).
+   * flight past `SLOW_ADMIT_MS` isn't picked, unless that admission went to a sleeping or starting runner (`waking`: a cold start, not a hang).
    */
   readonly #placing = new Map<string, { runner: string; atMs: number; waking: boolean }>()
 
@@ -153,7 +153,7 @@ export class RunnerPool implements RunnerPoolPort {
       this.#d.sql.exec('UPDATE turns SET runner = ? WHERE turn_id = ? AND gen = ?', r.runner, turnId, gen)
       if (r.state === 'sleeping') this.#setState(r.runner, 'starting')
       let a: AdmitResult
-      this.#placing.set(turnId, { runner: r.runner, atMs: this.#d.now(), waking: r.state === 'sleeping' })
+      this.#placing.set(turnId, { runner: r.runner, atMs: this.#d.now(), waking: r.state === 'sleeping' || r.state === 'starting' })
       try {
         a = await this.#d.runner(r.runner).admit(rs)
       } catch {

@@ -494,7 +494,7 @@ describe('routing', () => {
   it('a cold start is not a slow admission: turns during a wake join it instead of waking the next runner', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1)")
+      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
       const clock = { now: T0 }
       let open!: () => void
       const booting = new Promise<void>(r => (open = r))
@@ -505,13 +505,17 @@ describe('routing', () => {
         if (name === 'runner-0') await booting
         return { accepted: true, gen: 1, protocol: 2 }
       }, clock)
+      // t_a wakes runner-0; t_b joins the boot 3 s in; t_c 3 s after that (t_b's wait is boot time too).
       const a = pool.place(rs('t_a'), 1)
       clock.now = T0 + 3_001
       const b = pool.place(rs('t_b'), 1)
+      clock.now = T0 + 6_002
+      const c = pool.place(rs('t_c'), 1)
       open()
       expect(await a).toEqual({ admitted: 'runner-0' })
       expect(await b).toEqual({ admitted: 'runner-0' })
-      expect(admits).toEqual(['t_a@runner-0', 't_b@runner-0'])
+      expect(await c).toEqual({ admitted: 'runner-0' })
+      expect(admits).toEqual(['t_a@runner-0', 't_b@runner-0', 't_c@runner-0'])
     })
   })
 
