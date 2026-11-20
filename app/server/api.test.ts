@@ -6,15 +6,17 @@ import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { api } from './api.ts'
 import type { ApiParts } from './api.ts'
+import { unwiredStores } from './auth/index.ts'
 
 const handler = vi.fn(async () => new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' } }))
 const checkOrigin = vi.fn<ApiParts['checkOrigin']>()
 const parts: ApiParts = {
-  authenticate: async (_r, _e, requestId) => ({ kind: 'member', requestId }),
+  authenticate: async (_r, _e, _s, _n, requestId) => ({ principal: { kind: 'person', memberId: 'm_probe', role: 'member', subject: 's', requestId } }),
   checkOrigin,
-  checkAccess: () => null,
+  authorize: async () => null,
+  stores: () => unwiredStores,
   routes: (['GET', 'POST'] as const).map(method => ({ method, pattern: '/api/probe', handler })),
-  accessMatrix: (['GET', 'POST'] as const).map(method => ({ method, pattern: '/api/probe' })),
+  accessMatrix: (['GET', 'POST'] as const).map(method => ({ method, pattern: '/api/probe', class: 'baseline', allow: ['member'] })),
 }
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
 const call = (init: RequestInit = {}) => api(parts, new Request('http://brand.localhost:8787/api/probe', init), env, ctx, 'req-1')

@@ -4,26 +4,33 @@
 // and no-store: the errors through server/http.ts, and a handler's own Response is wrapped here, so no handler can opt
 // out. Its parts come in as `ApiParts` (server/index.ts passes the real ones), so tests can drive the path itself.
 import type { AccessRow } from './access-matrix.ts'
-import type { authenticate, checkAccess, checkOrigin } from './auth/index.ts'
+import type { AuthStores, authenticate, authorize, checkOrigin } from './auth/index.ts'
 import { SECURITY_HEADERS, apiError } from './http.ts'
-import { withSecurityHeaders } from '../shared/security-headers.ts'
+import { respond, withSecurityHeaders } from '../shared/security-headers.ts'
 import { matchRoute } from './routes.ts'
 import type { Route } from './routes.ts'
 
 export interface ApiParts {
   authenticate: typeof authenticate
   checkOrigin: typeof checkOrigin
-  checkAccess: typeof checkAccess
+  authorize: typeof authorize
+  /** The D1-backed stores sign-in and access read (W2's data layer). */
+  stores: (env: Env) => AuthStores
   routes: readonly Route[]
   accessMatrix: readonly AccessRow[]
 }
 
 export async function api(parts: ApiParts, request: Request, env: Env, ctx: ExecutionContext, requestId: string): Promise<Response> {
-  const principal = await parts.authenticate(request, env, requestId)
-  if (!principal) return apiError('unauthorized')
+  const nowMs = Date.now()
+  const stores = parts.stores(env)
+  const auth = await parts.authenticate(request, env, stores, nowMs, requestId)
+  if ('refused' in auth) return apiError(auth.refused, 'reason' in auth ? { reason: auth.reason } : {})
+  const { principal } = auth
+  // The API serves no CORS: a preflight gets 405, never a route.
+  if (request.method === 'OPTIONS') return respond(SECURITY_HEADERS, 405, { headers: { Allow: 'GET, HEAD, POST, PUT, DELETE' } })
   const upgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
   if (upgrade || (request.method !== 'GET' && request.method !== 'HEAD')) {
-    const reason = parts.checkOrigin(request, env, principal)
+    const reason = parts.checkOrigin(request, env)
     if (reason) return apiError('forbidden', { reason })
   }
   const { pathname } = new URL(request.url)
@@ -34,7 +41,7 @@ export async function api(parts: ApiParts, request: Request, env: Env, ctx: Exec
     console.error({ event: 'route_without_matrix_row', requestId, method: found.route.method, pattern: found.route.pattern })
     return apiError('unknown')
   }
-  const denied = parts.checkAccess(row, principal, request)
-  if (denied) return apiError(denied.code, denied.reason ? { reason: denied.reason } : {})
+  const denied = await parts.authorize(row, principal, request, found.params, stores, nowMs)
+  if (denied) return apiError(denied.code, 'reason' in denied && denied.reason ? { reason: denied.reason } : {})
   return withSecurityHeaders(SECURITY_HEADERS, await found.route.handler({ request, env, ctx, principal, params: found.params, requestId }))
 }
