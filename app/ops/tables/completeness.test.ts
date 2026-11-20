@@ -3,7 +3,10 @@
 //  2. wrangler.product.jsonc binds a Durable Object class that has no entry;
 //  3. server/db/r2-keys.ts names an R2 prefix that has no entry, or the code writes R2 keys that don't go through it
 //     (a module using the bucket without r2-keys.ts, a key builder whose key is under no listed prefix);
-//  4. an entry names nothing (a dropped table, a renamed class, a typo), or two entries name one store.
+//  4. an entry names nothing (a dropped table, a renamed class, a typo), or two entries name one store;
+//  5. a migration creates a virtual table (FTS5) that isn't registered, or whose entry isn't `derived` (P8: the backup
+//     skips a derived table and a restore rebuilds it; anything else must be backed up, which a virtual table can't be);
+//     or a `derived` entry names a table the migrations create as a plain table (it would never be backed up).
 import { describe, expect, it } from 'vitest'
 import productConfig from '../../wrangler.product.jsonc?raw'
 import * as r2Keys from '../../server/db/r2-keys.ts'
@@ -18,15 +21,29 @@ const serverSources = import.meta.glob<string>(['../../server/**/*.ts', '!../../
 // P8's jobs (ops/backup, retention, export, delete) write R2 too: the same rule covers every non-test module under ops/.
 const opsSources = import.meta.glob<string>(['../../ops/**/*.ts', '!../../ops/**/*.test.ts'], { query: '?raw', import: 'default', eager: true })
 
-/** Every `CREATE TABLE` across the migrations (comments stripped), D1's own `d1_*` and `sqlite_*` tables aside. */
-function d1Tables(): string[] {
-  const names: string[] = []
-  for (const file of Object.keys(migrations).sort()) {
-    const sql = migrations[file].replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
-    for (const m of sql.matchAll(/CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`[]?(\w+)/gi)) names.push(m[1])
+/**
+ * Every `CREATE [VIRTUAL] TABLE` across the migrations (comments stripped), D1's own `d1_*` and `sqlite_*` tables
+ * aside, with whether it's virtual. `files` defaults to the real migrations; the test plants fixtures through it.
+ */
+function d1TableDefs(files: Record<string, string> = migrations): { name: string; virtual: boolean }[] {
+  const defs: { name: string; virtual: boolean }[] = []
+  for (const file of Object.keys(files).sort()) {
+    const sql = files[file].replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const m of sql.matchAll(/CREATE\s+(VIRTUAL\s+|TEMP\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`[]?(\w+)/gi)) {
+      defs.push({ name: m[2], virtual: /^VIRTUAL/i.test(m[1] ?? '') })
+    }
   }
-  return names.filter(n => !/^(d1|sqlite)_/i.test(n))
+  return defs.filter(d => !/^(d1|sqlite)_/i.test(d.name))
 }
+const d1Tables = (files?: Record<string, string>): string[] => d1TableDefs(files).map(d => d.name)
+
+/** The `derived` entries whose table the migrations create as a plain table, not a virtual one (failure 5). */
+const derivedNotVirtual = (files: Record<string, string>, reg: readonly TableEntry[]): string[] =>
+  reg.filter(e => e.kind === 'd1' && e.derived && d1TableDefs(files).some(d => d.name === e.name && !d.virtual)).map(e => e.name)
+
+/** The migrations' virtual tables whose registry entry is missing or isn't `derived` (failure 5). */
+const virtualNotDerived = (files: Record<string, string>, reg: readonly TableEntry[]): string[] =>
+  d1TableDefs(files).filter(d => d.virtual && !reg.some(e => e.kind === 'd1' && e.name === d.name && e.derived)).map(d => d.name)
 
 /** Every Durable Object class a wrangler config binds or migrates (comments stripped). */
 function doClasses(config: string = productConfig): string[] {
@@ -93,6 +110,27 @@ describe('the table registry', () => {
       expect(missing, `not in ops/tables (add an entry with its retention class, person key and export flag)`).toEqual([])
     })
   }
+
+  it('registers every virtual table as derived (failure 5, P8)', () => {
+    expect(virtualNotDerived(migrations, registry)).toEqual([])
+    // Red on a planted migration (test input only, never a real migration file): an FTS5 table with no entry fails
+    // both the d1 check and this one; with a plain entry it still fails here; with a derived entry it passes.
+    const planted = { ...migrations, '../../server/migrations/0699_planted.sql': 'CREATE VIRTUAL TABLE planted_search USING fts5(body);' }
+    expect(d1Tables(planted)).toContain('planted_search')
+    expect(d1Tables(planted).filter(n => !registry.some(e => e.kind === 'd1' && e.name === n))).toEqual(['planted_search'])
+    expect(virtualNotDerived(planted, registry)).toEqual(['planted_search'])
+    const plain: TableEntry = { kind: 'd1', name: 'planted_search', retention: 'config', personKeys: [], export: false }
+    expect(virtualNotDerived(planted, [...registry, plain])).toEqual(['planted_search'])
+    expect(virtualNotDerived(planted, [...registry, { ...plain, derived: { from: ['settings'] } }])).toEqual([])
+    // Derived means virtual: a derived entry over a plain table fails, red on a planted plain-table migration.
+    expect(derivedNotVirtual(migrations, registry)).toEqual([])
+    const plantedPlain = { ...migrations, '../../server/migrations/0699_planted.sql': 'CREATE TABLE planted_index (body TEXT);' }
+    const derivedPlain: TableEntry = { kind: 'd1', name: 'planted_index', retention: 'config', personKeys: [], export: false, derived: { from: ['settings'] } }
+    expect(derivedNotVirtual(plantedPlain, [...registry, derivedPlain])).toEqual(['planted_index'])
+    expect(derivedNotVirtual(planted, [...registry, { ...derivedPlain, name: 'planted_search' }])).toEqual([])
+    // A plain CREATE TABLE is never taken for a virtual one.
+    expect(d1TableDefs({ x: 'CREATE TABLE IF NOT EXISTS plain_t (id TEXT);' })).toEqual([{ name: 'plain_t', virtual: false }])
+  })
 
   it('has no entry that names nothing, and none twice (failure 4)', () => {
     const src = sources()
