@@ -93,6 +93,8 @@ export interface SseTally {
   readonly complete: boolean
   /** True once any event carried a usage object (a stream that never did is priced as cut). */
   readonly sawUsage: boolean
+  /** True once a `message_delta` carried usage: the final output count (a stream without one is priced as cut). */
+  readonly sawFinalUsage: boolean
 }
 
 /** A tally over a Messages API event stream (`text/event-stream`). */
@@ -102,6 +104,7 @@ export function createSseTally(): SseTally {
   let buffer = ''
   let complete = false
   let sawUsage = false
+  let sawFinalUsage = false
 
   const onEvent = (block: string) => {
     const data = block.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n')
@@ -115,6 +118,7 @@ export function createSseTally(): SseTally {
     const usage = event.type === 'message_start' ? event.message?.usage : event.type === 'message_delta' ? event.usage : undefined
     if (isUsage(usage)) {
       sawUsage = true
+      if (event.type === 'message_delta') sawFinalUsage = true
       take(fields, usage)
     }
     if (event.type === 'message_start' || event.type === 'message_delta') return
@@ -138,6 +142,9 @@ export function createSseTally(): SseTally {
     },
     get sawUsage() {
       return sawUsage
+    },
+    get sawFinalUsage() {
+      return sawFinalUsage
     },
   }
 }

@@ -9,6 +9,7 @@
 //  6. server-side compaction, an unknown beta or a compaction iteration's tokens get past the gate or the tally;
 //  7. an upstream message that names the account's state reaches the member.
 import { describe, expect, it } from 'vitest'
+import { gatewayUpstream } from './gateway.ts'
 import { FIRST_BYTE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_MS } from './model.ts'
 import { handleEgress } from './index.ts'
 import { egressRequest, harness, sseFeed, until } from './testing/harness.ts'
@@ -26,13 +27,24 @@ const drain = async (r: ReadableStreamDefaultReader<Uint8Array>) => {
   while (!(await r.read()).done) { /* read to the end */ }
 }
 
-describe('nothing went upstream: zero, not cut (failure 1)', () => {
-  it('a connect failure', async () => {
+describe('nothing went upstream: zero, not cut; a fetch that rejects: cut (failure 1)', () => {
+  it('a fetch that rejects after it was called may have reached the model: booked at its worst case', async () => {
     const h = await harness()
-    h.answer = async () => { throw new TypeError('connect failed') }
+    h.answer = async () => { throw new TypeError('connection reset') }
     expect((await call(h)).status).toBe(502)
     await settle(h)
-    expect(releases(h)).toEqual([{ usage: { ...ZERO, micro: 0 }, cut: false }])
+    expect(releases(h)).toEqual([{ usage: { ...ZERO, micro: WORST }, cut: true }])
+  })
+  it('failures known to come before the send (the gateway not configured, its URL lookup) are zero', async () => {
+    const ai = (fail: boolean) => ({ gateway: () => ({ getUrl: async () => { if (fail) throw new Error('lookup'); return 'https://gateway.example.test/anthropic' } }) })
+    const fetcher = (async () => { throw new Error('never called') }) as unknown as typeof fetch
+    for (const env of [{ AI_GATEWAY_ID: 'gw', AI_GATEWAY_TOKEN: 't' }, { AI: ai(true), AI_GATEWAY_ID: 'gw', AI_GATEWAY_TOKEN: 't' }, { AI: ai(false), AI_GATEWAY_ID: 'gw' }]) {
+      const h = await harness()
+      h.deps.upstream = gatewayUpstream(env, fetcher)
+      expect((await call(h)).status).toBe(502)
+      await settle(h)
+      expect(releases(h)).toEqual([{ usage: { ...ZERO, micro: 0 }, cut: false }])
+    }
   })
   it('the caller gone during the confirm: no upstream request, zero', async () => {
     const h = await harness()
@@ -105,6 +117,30 @@ describe('no usage, or no message_stop: cut at the worst case (failure 3)', () =
     await settle(h)
     expect(releases(h)).toEqual([{ usage: { ...ZERO, micro: WORST }, cut: true }])
     expect(h.logs).toContainEqual({ event: 'egress_model_no_usage', route: 'model', shape: 'stream' })
+  })
+  it('a stream with message_start and message_stop but no message_delta usage is cut', async () => {
+    const h = await harness()
+    const feed = sseFeed()
+    h.answer = async () => new Response(feed.stream, sse)
+    const res = await call(h, { ...small, stream: true })
+    feed.send({ type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 1 } } })
+    feed.send({ type: 'message_stop' })
+    feed.end()
+    await drain(res.body!.getReader())
+    await settle(h)
+    expect(releases(h)).toEqual([{ usage: { ...ZERO, inputTokens: 10, outputTokens: 1, micro: WORST }, cut: true }])
+  })
+  it("an error that isn't the API's own (a gateway 524 after forwarding) is cut; the API's own is zero", async () => {
+    const h = await harness()
+    h.answer = async () => new Response('<html>timeout</html>', { status: 524, headers: { 'content-type': 'text/html' } })
+    expect((await call(h)).status).toBe(524)
+    await settle(h)
+    expect(releases(h)).toEqual([{ usage: { ...ZERO, micro: WORST }, cut: true }])
+    const own = await harness()
+    own.answer = async () => Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 })
+    expect((await call(own)).status).toBe(529)
+    await settle(own)
+    expect(releases(own)).toEqual([{ usage: { ...ZERO, micro: 0 }, cut: false }])
   })
   it('a stream that ends without message_stop is cut, not priced at its partial tally', async () => {
     const h = await harness()

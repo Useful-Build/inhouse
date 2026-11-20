@@ -51,26 +51,35 @@ const ACCOUNT_STATE = /\b(credits?|balance|billing|payments?|invoices?|plans?|qu
 /**
  * An upstream error answer mapped to the Messages API's error shape (8.1): its status, a documented type (its own when
  * it's one, else the status's), and a message: the upstream's own only for `invalid_request_error`, else a fixed one.
+ * `anthropic`: the body was the API's own `{ type: 'error', error: { type } }` (the model refused it, nothing billed);
+ * anything else (a gateway 5xx or 524 after forwarding) may have reached the model.
  */
-export async function mapUpstreamError(res: Response, headers: Headers): Promise<Response> {
+export async function mapUpstreamError(res: Response, headers: Headers): Promise<{ response: Response; anthropic: boolean }> {
   let type = typeForStatus(res.status)
   let message = FIXED_MESSAGE[type]
+  let anthropic = false
   try {
     const body = (await res.json()) as { type?: unknown; error?: { type?: unknown; message?: unknown } }
     const t = body?.error?.type
-    if (body?.type === 'error' && typeof t === 'string' && (ERROR_TYPES as readonly string[]).includes(t)) type = t as MessagesErrorType
+    if (body?.type === 'error' && typeof t === 'string' && (ERROR_TYPES as readonly string[]).includes(t)) {
+      type = t as MessagesErrorType
+      anthropic = true
+    }
     const m = body?.error?.message
     message = type === 'invalid_request_error' && typeof m === 'string' && !ACCOUNT_STATE.test(m) ? m.replace(/\s+/g, ' ').slice(0, PASSED_MESSAGE_MAX) : FIXED_MESSAGE[type]
   } catch {
     message = FIXED_MESSAGE[type]
   }
-  return messagesError(res.status, type, message, headers)
+  return { response: messagesError(res.status, type, message, headers), anthropic }
 }
 
 /** Request headers the model route forwards upstream (the Messages API's own, 8.1); `anthropic-beta` by value below. */
 const MODEL_REQUEST_HEADERS = new Set(['anthropic-version', 'accept'])
 
 /**
+ * PROVISIONAL (orchestrator, round 2 of #145): this list is read from the CLI's binary, not from traffic. Gate before
+ * any product deploy: the Q2 live run narrows it to the betas seen on the wire, each confirmed against Anthropic's docs.
+ *
  * The `anthropic-beta` values the gate lets through: a beta can turn on billed behaviour the gate doesn't inspect, so an
  * unknown one is refused (400). Source of every value: the beta table in the pinned CLI (claude-agent-sdk 0.3.328, its
  * native binary's `D("<name>", "<value>")` entries, read 2026-11-20). None has been seen on the wire yet: the Q2 live run

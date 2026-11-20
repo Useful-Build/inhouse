@@ -71,6 +71,17 @@ describe('the store (failures 2, 3)', () => {
     expect((await post(ok, '/store/load', { key: KEY })).status).toBe(200)
   })
 
+  it('a stored part that is not a JSON array errors the streamed load, never splices it in', async () => {
+    const g = uniqGrant()
+    const fake = {
+      list: async ({ prefix }: { prefix: string }) => ({ objects: [{ key: `${prefix}a.json`, size: 7 }], truncated: false, delimitedPrefixes: [] }),
+      get: async () => ({ text: async () => '{"x":1}' }),
+    }
+    const h = await harness({ bucket: fake as never }, g)
+    const res = await post(h, '/store/load', { key: KEY })
+    await expect(res.text()).rejects.toThrow()
+  })
+
   it("another session's key is 403 scope", async () => {
     const h = await harness({ bucket }, uniqGrant())
     const other = { ...KEY, sessionId: '00000000-0000-4000-8000-0000000000bb' }
