@@ -21,5 +21,7 @@
     // app/shared/protocol/ has no node_modules of its own and the app has no zod: resolve it from the runner's.
     "paths": { "zod": ["./node_modules/zod/index.d.ts"] }
   },
-  "include": ["src", "test", "scripts", "image/probes", "vitest.config.ts", "../shared/protocol", "../shared/files", "../test/scripted-model"]
+  "include": ["src", "test", "scripts", "image/probes", "vitest.config.ts", "../shared/protocol", "../shared/files", "../test/scripted-model"],
+  // The app's own tests beside the shared files (names.test.ts) run in the app's project, with the app's install.
+  "exclude": ["../shared/files/*.test.ts"]
 }

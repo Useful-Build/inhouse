@@ -106,7 +106,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     // P3's slots, one per owner.
     chats: chatStore({ db }),
 
-    files: fileStore({ db }),
+    files: fileStore({ db, bucket: env.FILES }),
 
     usage: usageStore({ db }),
 
