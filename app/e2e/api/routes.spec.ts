@@ -38,7 +38,10 @@ test('the matrix keeps the design\'s invariants over every row', () => {
     const where = rowKey(row)
     if (row.class === 'technical') expect(row.allow, `${where}: Inhouse writes and reads technical`).toContain('inhouse')
     if (row.class === 'personal') expect(row.allow, `${where}: personal is never Inhouse`).not.toContain('inhouse')
-    if (row.method !== 'GET' && ['brand_data', 'baseline', 'personal'].includes(row.class)) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
+    // Decision 19: Inhouse may write baseline rows that list it; never brand data or personal, and never a grant.
+    if (row.method !== 'GET' && ['brand_data', 'personal'].includes(row.class)) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
+    if (row.method !== 'GET' && row.pattern.startsWith('/api/grants')) expect(row.allow, `${where}: Inhouse never grants itself access`).not.toContain('inhouse')
+    if (row.pattern.startsWith('/api/audit')) expect(row.class, `${where}: the audit log is brand data`).toBe('brand_data')
     if (row.services.includes('monitor')) expect(row.class, `${where}: monitor is for open rows`).toBe('open')
     if (row.services.includes('smoke')) expect(row.method, `${where}: smoke only reads`).toBe('GET')
     if (row.adminWrite) expect(row.class).toBe('technical')
