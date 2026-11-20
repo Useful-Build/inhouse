@@ -14,6 +14,8 @@ import type {
   Actor, AdmitAnswer, BrandAgentPorts, BrandAgentRpc, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PoolHealth, Refusal, RunScope, RunsHealth, SubmitTurn,
 } from './ports.ts'
 import { createAgentTables } from './schema.ts'
+import { modelUsable } from './model-check.ts'
+import { openStores } from '../../db/stores.ts'
 import { alarmPort, createScheduler } from './scheduler.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
@@ -41,7 +43,10 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         sql, scheduler: sched, now,
         hooks: { retryPlacement: id => this.core.retryPlacement(id), placementExpired: id => this.core.placementExpired(id) },
       })
-      this.core = new AgentCore({ sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V1, db: env.DB })
+      this.core = new AgentCore({
+        sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V1, db: env.DB,
+        modelUsable: modelUsable(openStores(env)),
+      })
       this.core.ensureSeeds()
       await sched.syncAlarm()
     })

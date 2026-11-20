@@ -57,6 +57,8 @@ export interface Harness {
   /** The `place` calls, as turn ids, in order. */
   placed(): string[]
   dueTasks(): { id: string; due_at_ms: number }[]
+  /** Picker ids the start's model check finds switched off (shared across a restart). */
+  modelsOff: Set<string>
 }
 
 let objects = 0
@@ -73,6 +75,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> 
     const files = new FakeFileLedger()
     const alarm: AlarmPort = { get: async () => null, set: async () => {}, delete: async () => {} }
     let sessions = 0
+    const modelsOff = new Set<string>()
     const build = (): Harness => {
       createAgentTables(sql)
       const now = () => clock.now
@@ -85,9 +88,10 @@ export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> 
       core = new AgentCore({
         sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: env.DB,
         newSessionId: () => `00000000-0000-4000-8000-${String(++sessions).padStart(12, '0')}`,
+        modelUsable: async id => !modelsOff.has(id),
       })
       const h: Harness = {
-        core, sql, clock, pool, usage, files, tokens, sched,
+        core, sql, clock, pool, usage, files, tokens, sched, modelsOff,
         restart: () => { const n = build(); n.core.ensureSeeds(); return n },
         async tick(ms) {
           clock.now += ms

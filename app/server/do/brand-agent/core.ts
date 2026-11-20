@@ -107,6 +107,11 @@ export interface CoreDeps {
   db: D1Database
   /** A new session id (a UUID); tests pass literal ones. */
   newSessionId?: () => string
+  /**
+   * Whether the turn's model (its picker id) is still on and priced in the brand's settings, read when the turn starts
+   * (it may have waited in the queue since route 29 resolved it). Throws when the settings can't be read.
+   */
+  modelUsable: (pickerId: string) => Promise<boolean>
   /** Every stored chat event, for the sockets (PR 4). */
   onEvent?: (e: { runId: string; seq: number; atMs: number; chatId: string; event: ChatEvent }) => void
 }
@@ -330,7 +335,7 @@ export class AgentCore {
   // ---------- start (4.4) ----------
 
   /** Testing seam: runs before each awaited step of a start (a barrier, or a reset injected there). */
-  beforeStep?: (step: 'files' | 'reserve' | 'mint' | 'place', turnId: string) => Promise<void>
+  beforeStep?: (step: 'files' | 'model' | 'reserve' | 'mint' | 'place', turnId: string) => Promise<void>
 
   private async start(turnId: string, gen: number): Promise<void> {
     let t = this.current(turnId, gen, 'starting')
@@ -344,6 +349,21 @@ export class AgentCore {
       if (!t) return
       if ('missing' in found) return this.failUnstarted(t, { outcome: 'failed', reason: 'files' })
     }
+
+    // The model again (A3, from #153's review): switched off or unpriced while the turn waited → `model_off`, before
+    // any hold or runner is spent (the egress would refuse its every call anyway). A settings read that fails leaves the
+    // turn `starting`: the watchdog requeues it at the deadline (counted, so it can't loop).
+    await this.beforeStep?.('model', turnId)
+    let usable: boolean
+    try {
+      usable = await this.d.modelUsable(t.picker_id)
+    } catch (err) {
+      console.error({ event: 'turn_model_check_failed', error: errorText(err) })
+      return
+    }
+    t = this.current(turnId, gen, 'starting')
+    if (!t) return
+    if (!usable) return this.failUnstarted(t, { outcome: 'failed', reason: 'model_off' })
 
     // The start hold (section 9). `reserved = 1` before the await: a cancel during it gives the hold back.
     this.sql.exec('UPDATE turns SET reserved = MAX(reserved, 1) WHERE turn_id = ?', turnId)

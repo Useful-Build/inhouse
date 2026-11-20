@@ -358,6 +358,36 @@ describe('interrupt, fence and settle (8.2, 4.6, 9)', () => {
   }))
 })
 
+describe('the model is checked again at start (A3, #153 review)', () => {
+  it('a model switched off while the turn was queued: failed model_off, no reserve, no placement', () => inAgent(async h => {
+    const a = await liveTurn(h)
+    const b = ok(await h.submit('c1', 'key-off02'))
+    await settle()
+    expect(h.turn(b.turnId).state).toBe('queued')
+    h.modelsOff.add('sonnet')
+    h.push(a.turnId, ...fullAnswer('done', 2))
+    await settle()
+    expect(h.turn(b.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'model_off' })
+    expect(h.events(b.runId).filter(e => e.type === 'turn.finished' && e.turnId === b.turnId))
+      .toEqual([expect.objectContaining({ outcome: 'failed', reason: 'model_off' })])
+    expect(h.usage.calls.filter(c => c.method === 'reserve').map(c => (c.args[0] as { turnId: string }).turnId)).toEqual([a.turnId])
+    expect(h.placed()).toEqual([a.turnId])
+  }))
+
+  it('a stop while the check is awaited: the late answer changes nothing', () => inAgent(async h => {
+    const gate = deferred()
+    h.core.beforeStep = async step => { if (step === 'model') await gate.promise }
+    const a = ok(await h.submit('c1', 'key-off03'))
+    await settle()
+    h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })
+    gate.resolve()
+    await settle()
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped', failure: null })
+    expect(h.usage.calls.filter(c => c.method === 'reserve')).toEqual([])
+    expect(h.placed()).toEqual([])
+  }))
+})
+
 describe('waits: money, order, bounds (8.2 rules 1 and 3)', () => {
   it('a money wait with a sibling that runs 3 minutes: admitted when it closes, the turn lives', () => inAgent(async h => {
     const t = (await liveTurn(h)).turnId

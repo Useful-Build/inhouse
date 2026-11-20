@@ -19,12 +19,14 @@ const turnId = 't_0123456789abcdefABCDEF'
 const at = { iso: '2026-11-20T10:00:00.000Z', ms: Date.parse('2026-11-20T10:00:00.000Z') }
 
 describe('turn failures (failure 1)', () => {
-  it('are exactly the twelve the design lists', () => {
+  // `model_off` (A3, 2026-11-20, from #153's review): the turn's model was switched off (or lost its price) while it
+  // waited; W1 PR 2b rechecks at start.
+  it('are exactly the twelve the design lists, plus model_off', () => {
     expect([...TurnFailureSchema.options].sort()).toEqual([
-      'budget_busy', 'cap_reached', 'files', 'max_turns', 'pool_full', 'protocol', 'sdk_error', 'session_crashed', 'store',
-      'timeout', 'turn_budget', 'unknown',
+      'budget_busy', 'cap_reached', 'files', 'max_turns', 'model_off', 'pool_full', 'protocol', 'sdk_error', 'session_crashed',
+      'store', 'timeout', 'turn_budget', 'unknown',
     ])
-    for (const r of ['budget_busy', 'max_turns', 'turn_budget']) {
+    for (const r of ['budget_busy', 'max_turns', 'turn_budget', 'model_off']) {
       expect(ChatEventSchema.safeParse({ type: 'turn.finished', turnId, outcome: 'failed', reason: r }).success, r).toBe(true)
     }
   })
