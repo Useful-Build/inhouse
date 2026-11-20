@@ -61,13 +61,17 @@ export function cliEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 /** The `inhouse` MCP server's name (R2's guard allows only it). */
 export const INHOUSE_SERVER = 'inhouse'
 
+/** Compaction (Wasim, item 22 E2): the 1M window, compacted at 600,000 tokens, below the gate's 650,000 refusal. */
+export const AUTO_COMPACT_WINDOW = 600_000
+
 /**
  * The engine's model settings for a run (Claude Code's env-vars page, read 2026-11-20). Every alias resolves to a model
  * the egress allows (the run's `model` or `sideModel`): `ANTHROPIC_DEFAULT_HAIKU_MODEL` is the `haiku` alias and the
  * background model; subagents run on the turn's model (`CLAUDE_CODE_SUBAGENT_MODEL`, forced so a model Claude names
  * when it spawns one doesn't win); the `sonnet`, `opus` and `fable` aliases resolve to the turn's model too.
- * `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` holds every model to a 200K window, the window the Worker's per-model ceiling
- * assumes.
+ * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sets how full the context gets before compaction; subagents inherit it (the SDK's
+ * per-agent `autoCompactWindow` only lowers it, and the runner defines no agents). The CLI's own concurrency
+ * (parallel subagents) isn't limited here: the Worker's gate holds a turn to 4 model calls in flight.
  */
 export function modelEnv(config: Pick<RunConfig, 'model' | 'sideModel'>): Record<string, string> {
   return {
@@ -77,7 +81,7 @@ export function modelEnv(config: Pick<RunConfig, 'model' | 'sideModel'>): Record
     ANTHROPIC_DEFAULT_FABLE_MODEL: config.model,
     CLAUDE_CODE_SUBAGENT_MODEL: config.model,
     CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
-    CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(AUTO_COMPACT_WINDOW),
   }
 }
 

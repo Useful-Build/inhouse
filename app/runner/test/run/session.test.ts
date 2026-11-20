@@ -150,7 +150,7 @@ describe('runSession', () => {
     })
     expect(options.resume).toBeUndefined()
     // The model settings (Claude Code's env-vars page): every alias on a model the egress allows, subagents forced onto
-    // the turn's model, a 200K window.
+    // the turn's model, compaction at 600,000 (the 1M window kept). The session env comes first, merged, not replaced.
     expect(options.env).toEqual({
       PATH: '/bin',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-5-5',
@@ -159,8 +159,9 @@ describe('runSession', () => {
       ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-sonnet-5-5',
       CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5',
       CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
-      CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '600000',
     })
+    expect(options.env).not.toHaveProperty('CLAUDE_CODE_DISABLE_1M_CONTEXT')
     expect(options.systemPrompt).toBe(c.systemPrompt)
     // No proxy in this env: no inhouse server (production's sessionEnv always sets it; the next test).
     expect(options.mcpServers).toBeUndefined()

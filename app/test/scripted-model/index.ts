@@ -26,10 +26,18 @@ export type ScriptedTurn = {
 }
 
 /**
- * `turns[n]` answers the request with n assistant messages before it; `null` marks a turn that must not be asked for.
- * `countTokens`: what `POST /v1/messages/count_tokens` answers (default: the body's UTF-8 bytes / 4, rounded up).
+ * A named conversation inside a scenario (a subagent's, say): its own turns, picked for a request by `match`. Parallel
+ * subagents each start their own conversation at turn 0, so position alone can't tell them from the main thread.
  */
-export type Scenario = { turns: (ScriptedTurn | null)[]; countTokens?: number }
+export type ScriptedBranch = { match: (request: MessagesRequest) => boolean; turns: (ScriptedTurn | null)[] }
+
+/**
+ * `turns[n]` answers the request with n assistant messages before it; `null` marks a turn that must not be asked for.
+ * `branches`: other conversations, each chosen by its `match`; a request no branch matches is the main thread's
+ * (`turns`), and one that two branches match is a miss. `countTokens`: what `POST /v1/messages/count_tokens` answers
+ * (default: the body's UTF-8 bytes / 4, rounded up).
+ */
+export type Scenario = { turns: (ScriptedTurn | null)[]; branches?: Record<string, ScriptedBranch>; countTokens?: number }
 
 export type MessagesRequest = {
   model: string
@@ -48,7 +56,7 @@ export type ScriptedModel = {
    */
   handle(request: Request, scenario: string): Promise<Response>
   /** Every request answered or missed, in order. */
-  readonly log: { scenario: string; turn: number | null; path: string; missed: boolean }[]
+  readonly log: { scenario: string; turn: number | null; path: string; missed: boolean; branch?: string }[]
   readonly misses: Miss[]
 }
 
@@ -106,10 +114,21 @@ export function createScriptedModel(scenarios: Record<string, Scenario>): Script
       const script = scenarios[scenario]
       if (!script) return miss(scenario, null, path, 'no such scenario')
       if (!Array.isArray(body.messages)) return miss(scenario, null, path, 'no messages')
+      // The conversation first (a branch, or the main thread), then the turn within it.
+      let branch: string | undefined
+      try {
+        const matched = Object.entries(script.branches ?? {}).filter(([, b]) => b.match(body))
+        if (matched.length > 1) return miss(scenario, null, path, `the request matches ${matched.length} branches: ${matched.map(([n]) => n).join(', ')}`)
+        branch = matched[0]?.[0]
+      } catch (e) {
+        return miss(scenario, null, path, `a branch's match threw: ${errorText(e)}`)
+      }
+      const turns = branch === undefined ? script.turns : script.branches![branch]!.turns
+      const where = branch === undefined ? '' : `branch "${branch}", `
       const turn = turnOf(body)
-      const t = script.turns[turn]
-      if (t === undefined) return miss(scenario, turn, path, `the script has ${script.turns.length} turns`)
-      if (t === null) return miss(scenario, turn, path, 'this turn is not scripted')
+      const t = turns[turn]
+      if (t === undefined) return miss(scenario, turn, path, `${where}the script has ${turns.length} turns`)
+      if (t === null) return miss(scenario, turn, path, `${where}this turn is not scripted`)
       // A script's own check or hold that throws is a miss too (a 400 that names it), never a 500 the CLI retries.
       try {
         if (t.expect && !t.expect(body)) return miss(scenario, turn, path, 'the request does not match the turn')
@@ -117,14 +136,14 @@ export function createScriptedModel(scenarios: Record<string, Scenario>): Script
         return miss(scenario, turn, path, `the turn's expect threw: ${errorText(e)}`)
       }
       // Logged before the hold, so a test can see the turn was asked for while it's held.
-      const entry = { scenario, turn, path, missed: false }
+      const entry = { scenario, turn, path, missed: false, ...(branch === undefined ? {} : { branch }) }
       log.push(entry)
       try {
         await t.hold?.()
       } catch (e) {
         return miss(scenario, turn, path, `the turn's hold threw: ${errorText(e)}`, entry)
       }
-      const message = messageFor(t, body.model, `${scenario}-${turn}`)
+      const message = messageFor(t, body.model, `${scenario}-${branch ?? 'main'}-${turn}`)
       return body.stream ? new Response(sse(message), { headers: { 'content-type': 'text/event-stream' } }) : Response.json(message)
     },
   }
