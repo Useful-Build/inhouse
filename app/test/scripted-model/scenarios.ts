@@ -1,7 +1,7 @@
 // The scripted scenarios the harness serves (app/runner/harness/). A run names its scenario; each turn answers the
 // request with that many assistant messages before it. Tests that need their own script build one with
 // `createScriptedModel` directly.
-import type { MessagesRequest, Scenario } from './index.ts'
+import type { MessagesRequest, Scenario, ScriptedBranch } from './index.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
 export const HARNESS_MODEL = 'claude-sonnet-5-5'
@@ -26,7 +26,65 @@ const both =
   (r: MessagesRequest) =>
     checks.every((c) => c(r))
 
+/** The marker the parallel scenario puts in each subagent's prompt, so its branch can find the subagent's requests. */
+export const subagentMarker = (i: number) => `[inhouse-subagent-${i}]`
+/** The text of a request's first user message (string content or its text blocks). */
+const firstUserText = (r: MessagesRequest): string => {
+  const c = r.messages.find((m) => m.role === 'user')?.content
+  if (typeof c === 'string') return c
+  return Array.isArray(c) ? c.map((b) => (typeof b === 'object' && b !== null && 'text' in b ? String((b as { text: unknown }).text) : '')).join('\n') : ''
+}
+export const PARALLEL_SUBAGENTS = 4
+
+/**
+ * Four subagents at once (Wasim, item 21(c): up to 4 model calls in flight per turn). The main thread's turn 0 calls
+ * the Agent tool four times in one message; each subagent's own conversation is a branch, found by the marker in its
+ * prompt (its first user message), and its one answer waits for `hold` (so a test can interrupt with 4 calls in
+ * flight). The main thread's turn 1 needs all four results. W1's and W3's interrupt-with-4-in-flight cases replay it.
+ */
+export function parallelSubagents(hold?: () => Promise<void>): Scenario {
+  const ids = Array.from({ length: PARALLEL_SUBAGENTS }, (_, i) => `toolu_scripted_sub_${i}`)
+  const branches: Record<string, ScriptedBranch> = {}
+  for (let i = 0; i < PARALLEL_SUBAGENTS; i++) {
+    branches[`subagent-${i}`] = {
+      match: (r) => firstUserText(r).includes(subagentMarker(i)),
+      turns: [{ content: [{ type: 'text', text: `Subagent ${i} found nothing to add.` }], ...(hold ? { hold } : {}) }],
+    }
+  }
+  return {
+    turns: [
+      {
+        content: ids.map((id, i) => ({
+          type: 'tool_use' as const,
+          id,
+          name: 'Agent',
+          input: { description: `Check part ${i}`, prompt: `${subagentMarker(i)} Check part ${i} and report.`, subagent_type: 'general-purpose' },
+        })),
+        expect: mainLoop(),
+      },
+      { content: [{ type: 'text', text: 'All four parts checked.' }], expect: both(mainLoop(), ...ids.map(resultOf)) },
+    ],
+    branches,
+  }
+}
+
+/** The harness's copy holds every subagent's answer until `openParallelHold()`. */
+let parallelGate: { promise: Promise<void>; open: () => void } = newGate()
+function newGate() {
+  let open!: () => void
+  const promise = new Promise<void>((r) => (open = r))
+  return { promise, open }
+}
+/** Lets the held subagent answers of the `parallel-4` scenario go, and arms a fresh hold for the next run. */
+export function openParallelHold() {
+  parallelGate.open()
+  parallelGate = newGate()
+}
+
 export const SCENARIOS: Record<string, Scenario> = {
+  /** Four subagents in flight at once, each answer held until `openParallelHold()`. */
+  'parallel-4': parallelSubagents(() => parallelGate.promise),
+
   /** One answer, no tools. */
   hello: { turns: [{ content: [{ type: 'text', text: 'Hello from the scripted model.' }], expect: mainLoop() }] },
 

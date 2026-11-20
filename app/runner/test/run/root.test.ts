@@ -15,7 +15,7 @@
 // - a root write that fails once the session has gone (an ack or nack, an interrupt, a stop) takes the session's unread
 //   last events and its finished with it (one socket both ways: Node destroys it, read side included, on a write error);
 // - a root write that really fails on a still-open fd 4 (EPIPE) breaks fd 3 too, or is logged more than once;
-// - a session that has sent everything and exited, behind a slow Worker, is cut off after the grace (`session_crashed`
+// - a session that has sent everything and exited, behind a slow egress, is cut off after the grace (`session_crashed`
 //   with its events unread);
 // - a channel that breaks (an error, no clean end) leaves the session running until the run's timeout; a pipe error is
 //   logged twice;
@@ -23,14 +23,13 @@
 // - the crash log carries what the session printed on stdout (chat text), or a stdout flood blocks the session.
 import type { ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import http from 'node:http'
 import type { Readable, Writable } from 'node:stream'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
-import { ACCEPTED_VERSIONS, Health, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
+import { ACCEPTED_VERSIONS, Health, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, PUSH_BUFFER_MAX_BYTES, ProtocolInfo, type RunEvent } from '../../../shared/protocol/index.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
-import { cleanup, spawnFixture, testSessionUsers } from './support/test-seams.ts'
+import { cleanup, gate, spawnFixture, testSessionUsers } from './support/test-seams.ts'
 import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
 import { API_MAX_CONNECTIONS } from '../../src/server/app.ts'
 import { RunStream } from '../../src/server/run-stream.ts'
@@ -379,7 +378,7 @@ describe('a Worker that reads slowly', () => {
         if (slow) handle?.pause()
       })
       stream.emit({ type: 'started', sessionId: config.sessionId, resume: config.resume })
-      handle = hostSession({ child, stream, config, stopGraceMs: 200, log: (l) => logs.push(l), canWrite: () => true })
+      handle = hostSession({ child, stream, config, stopGraceMs: 200, log: (l) => logs.push(l), recordAudit: async () => true, onQueryStarted: () => {}, onStoreResult: () => {} })
       await waitFor(() => existsSync(join(user.workDir, 'got-run')), 'the session has its run')
       slow = true
       handle.pause()
@@ -496,54 +495,58 @@ describe('streams', () => {
     }
   }
 
-  it("a slow Worker pauses reading the session's channel (fd 3): memory stays bounded, nothing is lost or reordered", async () => {
+  /** A slow egress: every push of `runId` waits until `open()`. */
+  function holdPushes(root: TestRoot, runId: string) {
+    const held = gate()
+    root.egress.onPush = async (b) => {
+      if (b.turnId === runId) await held.promise
+      return null
+    }
+    return held
+  }
+  /** Bytes the root may hold past the push buffer's cap: what one read of the channel brings in (lines up to the cap). */
+  const PUSH_SLACK = 2 * LOCAL_LINE_MAX_BYTES + 64 * 1024
+
+  it("a slow egress pauses reading the session's channel (fd 3): memory stays bounded, nothing is lost or reordered", async () => {
     const spawned: ChildProcess[] = []
     const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }))
     try {
-      // About 32 MB of events: far more than the pipes, the sockets and the kernel's buffers on the way can hold.
+      // About 32 MB of events: far more than the push buffer (2 MB), the pipes and the kernel's buffers can hold.
       const n = 160
       const start = runStart({ prompt: `flood:${n}:${200 * 1024}` })
-      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
-        const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders }, resolve)
-        req.on('error', reject)
-        req.end(JSON.stringify(start))
-      })
-      expect(res.statusCode).toBe(200)
-      // The response isn't read yet: its socket fills, the root's write returns false and it stops reading the session.
+      const held = holdPushes(slow, start.runId)
+      const run = openRun(slow, start)
+      await run.admitted
       await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
+      // The full buffer stops reading before 20 events: the first batch goes when the linger runs out.
+      await waitFor(() => slow.egress.pushes.some((p) => p.runId === start.runId), 'the first batch sent')
       const out = channelOf(spawned[0]!)
-      // Then it stays stalled: paused, and holding no more than its buffers' worth, whatever the kernel takes first.
+      // Then it stays stalled: paused, and holding no more than the buffer's cap and one read's worth.
       let quiet = 0
       let last = -1
       await waitFor(() => {
         const buffered = slow.bufferedBytes(start.runId)
         expect(buffered).not.toBeNull()
-        expect(buffered!).toBeLessThanOrEqual(LOCAL_LINE_MAX_BYTES)
+        expect(buffered!).toBeLessThanOrEqual(PUSH_BUFFER_MAX_BYTES + PUSH_SLACK)
         expect(out.readableLength).toBeLessThanOrEqual(out.readableHighWaterMark + LOCAL_LINE_MAX_BYTES)
         quiet = out.isPaused() && buffered === last ? quiet + 1 : 0
         last = buffered!
         return quiet >= 100
-      }, 'the run stalled behind the slow Worker')
-      // The session is held up writing, not done.
+      }, 'the run stalled behind the slow egress')
+      // The session is held up writing, not done; one batch went, and no other while it waits for its ack.
       expect(spawned[0]!.exitCode).toBeNull()
+      expect(slow.egress.pushes.filter((p) => p.runId === start.runId)).toHaveLength(1)
 
-      // Now the Worker reads: every event arrives, once, in order.
-      const events: RunEvent[] = []
-      let buf = ''
-      res.setEncoding('utf8')
-      for await (const chunk of res as AsyncIterable<string>) {
-        buf += chunk
-        for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
-          events.push(parseRunEventLine(buf.slice(0, i)))
-          buf = buf.slice(i + 1)
-        }
-      }
-      expect(buf).toBe('')
+      // Now the egress answers: every event arrives, once, in order, one batch at a time.
+      held.open()
+      const events = await run.done
       expectOneEnd(events)
       expect(events.at(-1)?.type).toBe('finished')
       const sdk = events.filter((e) => e.type === 'sdk')
       expect(sdk.map((e) => (e.type === 'sdk' ? e.message.i : null))).toEqual([...Array(n).keys()])
       expect(sdk.every((e) => e.type === 'sdk' && !e.truncated)).toBe(true)
+      expect(slow.egress.pushes.some((p) => p.overlapped)).toBe(false)
+      expect(slow.egress.violations).toEqual([])
     } finally {
       await slow.close()
     }
@@ -551,8 +554,8 @@ describe('streams', () => {
 
   it("the session's channel says when it is full, and the session waits for it to drain", async () => {
     // When a write says "full" depends on the kernel's buffers (a socketpair holds far more on Linux than on macOS), so
-    // the test makes the channel full by condition: the Worker doesn't read, the root pauses the session, and then the
-    // session's channel can't take what it still has to send (about 32 MB, as in the slow-Worker test above).
+    // the test makes the channel full by condition: the egress doesn't answer, the root pauses the session, and then
+    // the session's channel can't take what it still has to send (about 32 MB, as in the slow-egress test above).
     const spawned: ChildProcess[] = []
     let stderr = ''
     const onSpawn = (c: ChildProcess) => {
@@ -563,12 +566,9 @@ describe('streams', () => {
     try {
       const n = 160
       const start = runStart({ prompt: `drain:${n}:${200 * 1024}` })
-      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
-        const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders }, resolve)
-        req.on('error', reject)
-        req.end(JSON.stringify(start))
-      })
-      expect(res.statusCode).toBe(200)
+      const held = holdPushes(slow, start.runId)
+      const run = openRun(slow, start)
+      await run.admitted
       await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
       // Stalled: the root holds the same bytes, poll after poll. A session that didn't wait would have run its loop to
       // the end by now (its sends only queue in its own memory); one that waits is held at a full channel.
@@ -579,19 +579,10 @@ describe('streams', () => {
         quiet = channelOf(spawned[0]!).isPaused() && buffered === last ? quiet + 1 : 0
         last = buffered
         return quiet >= 100
-      }, 'the run stalled behind the slow Worker')
+      }, 'the run stalled behind the slow egress')
       expect(stderr).not.toContain('drain: sent all')
-      const events: RunEvent[] = []
-      let buf = ''
-      res.setEncoding('utf8')
-      for await (const chunk of res as AsyncIterable<string>) {
-        buf += chunk
-        for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
-          events.push(parseRunEventLine(buf.slice(0, i)))
-          buf = buf.slice(i + 1)
-        }
-      }
-      expect(buf).toBe('')
+      held.open()
+      const events = await run.done
       expectOneEnd(events)
       expect(events.at(-1)?.type).toBe('finished')
       const sdk = events.filter((e) => e.type === 'sdk')
@@ -608,25 +599,26 @@ describe('streams', () => {
     }
   })
 
-  // Paused behind a slow Worker, then the Worker hangs up or the run times out: no drain will come, so the root must
-  // read on (and drop) what the session still sends, letting it flush and exit by itself rather than be killed.
-  it.each(['hang-up', 'timeout'])("paused for backpressure, then %s: the session is read to its end and exits cleanly", async (how) => {
+  // Paused behind a slow egress, then the egress answers 410 or the run times out: the root must read on what the
+  // session still sends, letting it flush and exit by itself rather than be killed.
+  it.each(['a 410', 'timeout'])("paused for backpressure, then %s: the session is read to its end and exits cleanly", async (how) => {
     const spawned: ChildProcess[] = []
     const runTimeoutMs = how === 'timeout' ? 4000 : 60_000
     const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 5000, runTimeoutMs })
     try {
       const t0 = Date.now()
       const start = runStart({ prompt: `flood:160:${200 * 1024}` })
-      const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders })
-      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
-        req.on('response', resolve).on('error', reject)
-        req.end(JSON.stringify(start))
-      })
+      const held = gate()
+      slow.egress.onPush = async (b) => {
+        if (b.turnId !== start.runId) return null
+        await held.promise
+        return how === 'a 410' ? new Response('ended', { status: 410 }) : null
+      }
+      const run = openRun(slow, start)
+      await run.admitted
       // Paused before the timeout fires: once the run has ended, the root never pauses again, so this would fail.
       await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
       const child = spawned[0]!
-      // And stalled for good: every buffer on the way to the test is full (32 MB is far more than they hold), so no
-      // drain can come from the Worker's side any more. Only the timer's own resume can let the session go on.
       let quiet = 0
       let last = -1
       await waitFor(() => {
@@ -634,23 +626,18 @@ describe('streams', () => {
         quiet = channelOf(child).isPaused() && buffered === last ? quiet + 1 : 0
         last = buffered
         return quiet >= 100
-      }, 'the run stalled behind the slow Worker')
+      }, 'the run stalled behind the slow egress')
       // The stall came before the timer: otherwise this case proves nothing.
       if (how === 'timeout') expect(Date.now() - t0).toBeLessThan(runTimeoutMs)
       const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once('exit', (code, signal) => r([code, signal])))
-      if (how === 'hang-up') {
-        res.destroy()
-        req.destroy()
-      } else await waitFor(() => !channelOf(child).isPaused(), 'the timeout resumed the session')
+      if (how === 'a 410') held.open()
+      else await waitFor(() => !channelOf(child).isPaused(), 'the timeout resumed the session')
       // The flood ignores stop: it ends by itself once every line is read. Killed after the grace, it'd be SIGKILL.
       expect(await exited).toEqual([0, null])
       await waitFor(() => slow.liveCount() === 0)
       if (how === 'timeout') {
-        const events: RunEvent[] = []
-        let buf = ''
-        res.setEncoding('utf8')
-        for await (const chunk of res as AsyncIterable<string>) buf += chunk
-        for (const l of buf.split('\n').filter(Boolean)) events.push(parseRunEventLine(l))
+        held.open()
+        const events = await run.done
         expectOneEnd(events)
         expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'timeout' })
       }
@@ -659,7 +646,7 @@ describe('streams', () => {
     }
   }, 30_000)
 
-  // Paused behind a slow Worker, then stopped: the session's answer to the stop (its finished, with cost and usage)
+  // Paused behind a slow egress, then stopped: the session's answer to the stop (its finished, with cost and usage)
   // must get out within the grace, so the root reads it on rather than leaving it stuck behind the pause until killed.
   it.each(['stop', 'stopAll'])('paused for backpressure, then %s: the session flushes its finished and exits cleanly', async (how) => {
     const spawned: ChildProcess[] = []
@@ -667,22 +654,18 @@ describe('streams', () => {
     try {
       const n = 40
       const start = runStart({ prompt: `flood-on-stop:${n}:${200 * 1024}` })
-      const req = http.request(`${slow.url}/runs`, { method: 'POST', headers: protocolHeaders })
-      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
-        req.on('response', resolve).on('error', reject)
-        req.end(JSON.stringify(start))
-      })
+      const held = holdPushes(slow, start.runId)
+      const run = openRun(slow, start)
+      await run.admitted
       await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
       const child = spawned[0]!
       const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once('exit', (code, signal) => r([code, signal])))
       const stopped = how === 'stop' ? post(slow, `/runs/${start.runId}/stop`) : slow.stopAll()
-      // Killed after the grace, it'd be SIGKILL; the Worker still isn't reading.
+      // Killed after the grace, it'd be SIGKILL; the egress still isn't answering.
       expect(await exited).toEqual([0, null])
-      let buf = ''
-      res.setEncoding('utf8')
-      for await (const chunk of res as AsyncIterable<string>) buf += chunk
+      held.open()
+      const events = await run.done
       await stopped
-      const events = buf.split('\n').filter(Boolean).map(parseRunEventLine)
       expectOneEnd(events)
       expect(events.filter((e) => e.type === 'sdk')).toHaveLength(n)
       expect(events.at(-1)).toMatchObject({ type: 'finished', costUsd: 0.25, usage: { output_tokens: 7 } })

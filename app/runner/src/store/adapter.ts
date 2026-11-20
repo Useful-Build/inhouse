@@ -11,7 +11,7 @@
 // flush before it ends the stream), and the session checkpoints only after that. An SDK retry that still comes after a
 // repair reuses the batch's part (by its uuids), so it overwrites the copy rather than doubling it.
 import type { SessionKey, SessionStore, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
-import { StoreLoadResult, StoreSubkeys, type StoreKey } from '../../../shared/protocol/index.ts'
+import { StoreLoadResult, StoreSubkeys, type ResumeExpect, type StoreKey } from '../../../shared/protocol/index.ts'
 
 export type Fetch = (url: string, init: { method: string; headers?: Record<string, string>; body?: string | Uint8Array; signal?: AbortSignal }) => Promise<Response>
 
@@ -27,10 +27,32 @@ export type MainState = { mainEntries: number; lastUuid: string | null; lastUuid
 /** `entries`: the uuids this run sent, all found in the store. `main`: null when this run wrote no main-transcript batch. */
 export type CheckpointResult = { ok: true; entries: number; repaired: number; main: MainState | null } | { ok: false; error: string; repaired: number }
 
+/**
+ * A resume's check of the store against the Worker's `expect` (protocol v2), made on the SDK's first load of the main
+ * transcript, before the query's first model call: `pending` until that load, then `ok` or `failed`.
+ */
+export type ResumeCheck = { state: 'pending' } | { state: 'ok' } | { state: 'failed'; error: string }
+
 export type StoreAdapter = {
   store: SessionStore
   /** Repair, then check every uuid this run sent is in the store. Never throws. */
   checkpoint(): Promise<CheckpointResult>
+  /** Where a resume's check stands (`ok` for a run that isn't a resume). */
+  resumeCheck(): ResumeCheck
+  /**
+   * The SDK may have changed the transcript: it attempted an append, or a load or listing succeeded (the SDK goes on to
+   * write after those). A load or listing that failed doesn't count.
+   */
+  touched(): boolean
+}
+
+/** Why `entries` (the main transcript, as loaded) doesn't hold what `expect` says it must; null when it does. */
+export function resumeMismatch(entries: readonly { uuid?: unknown }[], expect: ResumeExpect): string | null {
+  if (entries.length < expect.mainEntries) return `the store holds ${entries.length} main-transcript entries, the Worker expects at least ${expect.mainEntries}`
+  if (expect.lastUuid !== null && expect.lastUuidIndex !== null && entries[expect.lastUuidIndex]?.uuid !== expect.lastUuid) {
+    return `the main-transcript entry at ${expect.lastUuidIndex} isn't the one the Worker expects`
+  }
+  return null
 }
 
 /** Part ids sort in append order: the time, then a counter within this process (one writer per chat at a time). */
@@ -49,7 +71,23 @@ function mainState(entries: SessionStoreEntry[]): MainState {
 const keyId = (k: SessionKey) => JSON.stringify([k.projectKey, k.sessionId, k.subpath ?? null])
 const errorText = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 500)
 
-export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?: () => number }): StoreAdapter {
+/** Thrown out of the SDK's load when a resume's check fails, so the query ends before any model call. */
+export class ResumeCheckError extends Error {}
+
+export function createStoreAdapter(deps: {
+  fetch: Fetch
+  proxyUrl: string
+  now?: () => number
+  /** A resume's `expect` (null or absent: not a resume, nothing to check). */
+  expect?: ResumeExpect | null
+  /** Called once when a resume's check fails (the session aborts its query). */
+  onResumeRefused?: (error: string) => void
+  /**
+   * Called once, when the run is first touched: before an append's POST, or after a load or listing succeeded. The
+   * session tells the root (`released.queryRan`).
+   */
+  onFirstCall?: () => void
+}): StoreAdapter {
   const base = `${deps.proxyUrl.replace(/\/$/, '')}/store`
   const now = deps.now ?? Date.now
   /** Every batch of the run, in append order. */
@@ -66,6 +104,15 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
   const awaitingRetry = new Map<string, Batch>()
   const inFlight = new Set<Promise<unknown>>()
   let counter = 0
+  let check: ResumeCheck = deps.expect ? { state: 'pending' } : { state: 'ok' }
+  /** The main transcript's key, from the SDK's own load or append (the SDK derives its project key). */
+  let mainKey: SessionKey | null = null
+  let touched = false
+  const touch = () => {
+    if (touched) return
+    touched = true
+    deps.onFirstCall?.()
+  }
 
   const post = async (op: string, body: unknown): Promise<unknown> => {
     const res = await deps.fetch(`${base}/${op}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -90,6 +137,7 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
 
   const store: SessionStore = {
     append(key, entries) {
+      touch()
       // The SDK re-sends a batch only after a rejection, so the same content while unconfirmed is that retry, and the
       // same uuids after it was confirmed (by a repair) is that retry too. Without uuids, the same content after a repair
       // confirmed it is that retry only while the SDK's last append of it was rejected; otherwise (two identical lines
@@ -121,11 +169,25 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
       )
     },
     async load(key) {
+      // Touched only once the load succeeded: a failed read can't change the transcript.
       const r = StoreLoadResult.parse(await post('load', { key: wireKey(key) }))
-      return r.entries as SessionStoreEntry[] | null
+      touch()
+      const entries = r.entries as SessionStoreEntry[] | null
+      if (key.subpath === undefined) {
+        mainKey ??= key
+        if (check.state === 'pending' && deps.expect) {
+          const why = resumeMismatch(entries ?? [], deps.expect)
+          check = why === null ? { state: 'ok' } : { state: 'failed', error: why }
+          if (why !== null) deps.onResumeRefused?.(why)
+        }
+        if (check.state === 'failed') throw new ResumeCheckError(`resume refused: ${check.error}`)
+      }
+      return entries
     },
     async listSubkeys(key) {
-      return StoreSubkeys.parse(await post('list-subkeys', { key: { projectKey: key.projectKey, sessionId: key.sessionId } })).subkeys
+      const subkeys = StoreSubkeys.parse(await post('list-subkeys', { key: { projectKey: key.projectKey, sessionId: key.sessionId } })).subkeys
+      touch()
+      return subkeys
     },
   }
 
@@ -166,10 +228,19 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
         main = mainState(stored ?? [])
       }
     }
+    // A run that wrote nothing to the main transcript (a resume whose turn wrote nothing, say): its state is what the
+    // store holds for the key the SDK loaded.
+    if (main === null && mainKey !== null) {
+      try {
+        main = mainState((await store.load(mainKey)) ?? [])
+      } catch (e) {
+        return { ok: false, error: `load for the check failed: ${errorText(e)}`, repaired }
+      }
+    }
     return { ok: true, entries: checked, repaired, main }
   }
 
-  return { store, checkpoint }
+  return { store, checkpoint, resumeCheck: () => check, touched: () => touched }
 }
 
 function wireKey(k: SessionKey): StoreKey {

@@ -11,7 +11,7 @@ import { meetsRule, settingRow } from './settings-table.ts'
 import { settingSpec } from './settings.ts'
 
 const saves = (v: unknown) => settingSpec('t:webfetch')!.value.safeParse(v).success
-const protocolHost = RunStartFields.shape.webFetchDomains.element
+const protocolHost = RunStartFields.shape.webFetchDomains.unwrap().element
 /** An IPv4 literal: four dotted numbers (the test's own pattern, not the code's). */
 const ipv4 = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h)
 
