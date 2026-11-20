@@ -1,7 +1,9 @@
 // scripts/check-product-config.mjs: one failing fixture per rule (each must exit 1 and name its rule), one passing
 // fixture per JSONC shape the parser must take (exit 0), the test build's own config refused (exit 1, as CI requires), and usage or an unreadable file exit 2.
 import { spawnSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import { stripJsonc } from './check-product-config.mjs'
@@ -32,6 +34,8 @@ const RULE_TEXT = {
   'workers-dev-true': 'workers_dev must be false',
   'preview-urls-true': 'preview_urls must be false',
   'workers-dev-missing': 'workers_dev must be false',
+  'secret-var-named': 'vars.AUDIT_HASH_KEY looks like a secret',
+  'secret-var-pattern': 'vars.SESSION_TOKEN looks like a secret',
 }
 
 describe('check-product-config', () => {
@@ -63,6 +67,26 @@ describe('check-product-config', () => {
     expect(JSON.parse(stripJsonc('{"a": 1, // c\n /* d */ }'))).toEqual({ a: 1 })
     expect(JSON.parse(stripJsonc('[1, /* x */\n]'))).toEqual([1])
     expect(JSON.parse(stripJsonc('{"a": ",}", "b": [1, 2], /* , */ "c": 3}'))).toEqual({ a: ',}', b: [1, 2], c: 3 })
+  })
+
+  // The real deployable template: INHOUSE_ACCESS is filled the way the ops repo fills it, from the pass fixture's value.
+  const template = fileURLToPath(new URL('../wrangler.product.jsonc', import.meta.url))
+  const accessOf = file => JSON.parse(stripJsonc(readFileSync(file, 'utf8'))).vars.INHOUSE_ACCESS
+  test('passes wrangler.product.jsonc with INHOUSE_ACCESS filled in', () => {
+    const config = JSON.parse(stripJsonc(readFileSync(template, 'utf8')))
+    config.vars.INHOUSE_ACCESS = accessOf(`${fixtures}pass.jsonc`)
+    const file = join(mkdtempSync(join(tmpdir(), 'product-config-')), 'filled.json')
+    writeFileSync(file, JSON.stringify(config))
+    const r = run(file)
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
+
+  test('refuses the unfilled wrangler.product.jsonc on INHOUSE_ACCESS only', () => {
+    const r = run(template)
+    expect(r.status).toBe(1)
+    const lines = r.stderr.split('\n').filter(l => l.startsWith('  - '))
+    expect(lines).toEqual(['  - vars.INHOUSE_ACCESS is missing or not JSON'])
   })
 
   test('refuses wrangler.test.jsonc with exit 1, listing every reason', () => {

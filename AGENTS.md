@@ -36,12 +36,12 @@ Run them in `app/`.
 | `npm run dev` | Dev server on port 5173 |
 | `npm run typecheck` | `tsc -b` |
 | `npm run lint` | oxlint, then `lint:tokens` (the token, app and no-fixed-wait checks) |
-| `npm run test:unit` | Vitest: `src/**/*.test.ts` (property tests included), `build-support/` and the rest in node; `server/**/*.test.ts` in the Workers runtime with a migrated local D1 (`@cloudflare/vitest-plugin`) |
+| `npm run test:unit` | Light job (no server: `server/` tests run workerd in-process). Vitest: `src/**/*.test.ts` (property tests included), `build-support/` and the rest in node; `server/**/*.test.ts` in the Workers runtime with a migrated local D1 (`@cloudflare/vitest-plugin`) |
 | `npm run build` | Type check and production build (the demo build) |
 | `npm run build:product` | The product build into `dist-product/`: no mock, sample data, demo controls or demo clock. `node scripts/check-product-build.mjs` checks it (CI runs both) |
 | `npm run build:product-test` | The test build into `dist-product-test/`: the product Worker with the test issuer compiled in and `wrangler.test.jsonc`. Never deployed |
 | `npm run test-build:migrate` | Apply `server/migrations/` to the test build's local D1 (`.wrangler/test-build`, or `-- --persist-to <dir>`) |
-| `npm run test-build:seed` | Seed that D1 with the invented brand (W2's `server/seed/run.ts`; refuses an unmigrated D1 and fails until the seed exists; same `-- --persist-to <dir>`) |
+| `npm run test-build:seed` | Seed that D1 with the invented brand (`server/seed/run.ts`; refuses an unmigrated D1 and fails loud if the seed is missing; same `-- --persist-to <dir>`) |
 | `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone` | The test build's specs (`e2e/api/`, `e2e/real/`), after `npm run build:product-test`. No other run includes them |
 | `E2E_TEST_BUILD=1 npx playwright test --project=smoke` | The release smoke (`e2e/smoke/`, read only) on the test build. On a release: `SMOKE_BASE_URL=<url> npx playwright test --project=smoke`, with the service-token env vars in the `verify` skill |
 | `npm run preview` | Build, then serve the build |
@@ -129,7 +129,8 @@ skill before any UI change. Repo specifics:
 - **Sensitive paths (need Wasim's OK):** `.github/workflows/` (deploy, monitor and the preview workflows included),
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
-  scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`.
+  scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`, `app/server/auth/**` (auth), `app/server/migrations/` (the D1
+  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops).
 - **The product Worker (P2).** `app/server/` is the product Worker (entry `server/index.ts`): every `/api/*` request is
   authenticated (Access JWT), then the `Origin` check, the route (`server/routes.ts`), its row in
   `server/access-matrix.ts` and `checkAccess`, then the handler; every answer carries the security headers

@@ -5,6 +5,8 @@
 //   - it has an `env` block at all (each `env.<name>` can override vars, workers_dev and preview_urls, so none may
 //     deploy unchecked: the product config is one environment);
 //   - the test issuer is switched on: `INHOUSE_TEST_BUILD` or `TEST_ISSUER_JWKS` in `vars`;
+//   - a var is a Worker secret (`AUDIT_HASH_KEY`, the only one the server reads) or has a secret-like name (ends in
+//     SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with `wrangler secret put`, never in the config;
 //   - INHOUSE_ACCESS is missing or not JSON, or its `teamDomain` isn't `https://<name>.cloudflareaccess.com`;
 //   - INHOUSE_ACCESS.apps isn't exactly one `brand` app and one `inhouse` app;
 //   - an app lacks `origin` or `aud`, an origin isn't a bare `https://` origin, two apps share a hostname (an origin,
@@ -58,6 +60,9 @@ export function stripJsonc(text) {
 
 const TEAM_DOMAIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$/
 const AUD = /^[0-9a-f]{64}$/i
+/** The Worker's secrets (server/db/stores.ts's StoresEnv), and the names that look like one. */
+const SECRET_VARS = new Set(['AUDIT_HASH_KEY'])
+const SECRET_LIKE = /(SECRET|TOKEN|PASSWORD|PRIVATE|_KEY)$/i
 
 /** Every reason this config may not deploy (empty: it may). */
 export function checkConfig(config) {
@@ -66,6 +71,9 @@ export function checkConfig(config) {
   const vars = config.vars ?? {}
   for (const name of ['INHOUSE_TEST_BUILD', 'TEST_ISSUER_JWKS']) {
     if (Object.hasOwn(vars, name)) failures.push(`vars.${name} is set: the test issuer must never be on in a deployable config`)
+  }
+  for (const name of Object.keys(vars)) {
+    if (SECRET_VARS.has(name) || SECRET_LIKE.test(name)) failures.push(`vars.${name} looks like a secret: set secrets with wrangler secret put, never in the config`)
   }
   if (config.workers_dev !== false) failures.push('workers_dev must be false (left out, wrangler turns it on)')
   if (config.preview_urls !== false) failures.push('preview_urls must be false (left out, wrangler turns it on)')

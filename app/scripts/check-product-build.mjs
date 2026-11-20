@@ -170,17 +170,10 @@ if (inServer.length) {
 } else console.log(`ok    server bundle: no test issuer in the deployable Worker (${relative(root, productWorker)}).`)
 const testWorker = workerDir(productTestDir, 'product-test')
 const inTest = serverScan(testWorker)
-// The proof is required once the test issuer exists in any form: its file, the canary anywhere under server/, or a
-// test-issuer module in the test build's graph. Before that (PR0, until W1) it can't be made yet, and says so.
-const canaryInSource = walk(serverDir).some(f => /\.(ts|mts|js|mjs)$/.test(f) && readFileSync(f, 'utf8').includes(SERVER_CANARY))
-const issuerExists = existsSync(join(serverDir, 'auth/test-issuer.ts')) || canaryInSource || inTest.some(h => h.startsWith('module '))
-if (issuerExists) {
-  if (!inTest.some(h => h.includes(SERVER_CANARY))) {
-    bad = true
-    console.error(`FAIL  server bundle: no "${SERVER_CANARY}" in the test build (${relative(root, testWorker)}), so the scan proves nothing.`)
-  } else console.log(`ok    server bundle: caught the test build (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
-} else {
-  console.log(`note  server bundle: no test issuer yet (no server/auth/test-issuer.ts, no canary under server/, no test-issuer module in the test build; W1 adds it), so the scan can't be proven on the test build yet.`)
-}
+// The proof is always required: the test build must carry the canary, or the scan proves nothing.
+if (!inTest.some(h => h.includes(SERVER_CANARY))) {
+  bad = true
+  console.error(`FAIL  server bundle: no "${SERVER_CANARY}" in the test build (${relative(root, testWorker)}), so the scan proves nothing.`)
+} else console.log(`ok    server bundle: caught the test build (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
 
 process.exit(bad ? 1 : 0)
