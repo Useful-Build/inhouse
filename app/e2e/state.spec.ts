@@ -191,7 +191,7 @@ test('Saved storage holding old values (persona name, morning email settings, re
     settings: { 'n:email': 'Email and Slack', 'n:at': '07:00', 'n:weekend': 'Off', 't:name': 'Ava', 't:signs': 'The Northline team' },
     routinesExtra: [], skillsExtra: [], teamRequests: [], readNotices: {},
     libraryDeleted: { 'm-10': true, 'm-11': true, 'm-12': true, 'm-13': true, 'm-14': true, 'm-17': true },
-    setAside: {}, routinesDeleted: {}, routineRuns: [], chatTitles: {}, chatPinned: {}, chatDeleted: {}, demoStartedAt: Date.now(),
+    setAside: {}, routinesDeleted: {}, routineRuns: [], chatTitles: {}, chatPinned: {}, chatDeleted: {},
   })
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('handled before you woke up')

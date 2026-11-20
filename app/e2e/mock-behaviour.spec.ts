@@ -2,16 +2,11 @@
 // time makes exactly one (Regenerate updates it instead of adding a second), an off-script question gets the D8 answer,
 // Regenerate on a seeded chat gives that chat's own answer, the weekly report notification opens the chat that holds
 // the report, and an unknown link says so. Screenshots of each answer go to the report.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Act' })
   await page.goto('/?demo' + hash)
 }
 

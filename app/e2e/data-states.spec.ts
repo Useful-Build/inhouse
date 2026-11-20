@@ -2,16 +2,11 @@
 // Act and Run without a crash, a console error or another state's data; pausing and disconnecting a tool change the
 // Tools count, the tool page and the composer alike; a $50 cap shows the banner without changing what was spent; Slack
 // is a connected channel from Act. Screenshots of each state go to the report.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test, type Stage } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
-async function start(page: Page, stage: string, scenario: string, hash: string) {
-  await page.addInitScript(([s, sc]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: s, scenario: sc, ambient: 'Off', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [stage, scenario])
+async function start(page: Page, stage: Stage, scenario: string, hash: string) {
+  await fxFor(page, undefined).seed({ stage, scenario })
   await page.goto('/?demo' + hash)
 }
 
@@ -32,7 +27,7 @@ const PAGES = ['#/today', '#/library', '#/chats', '#/chats/all', '#/approvals', 
   '#/settings/you-general', '#/settings/team-spend', '#/settings/team-audit', '#/settings/team-memory']
 
 for (const scenario of ['First day', 'Loading']) {
-  for (const stage of ['Watch', 'Act', 'Run']) {
+  for (const stage of ['Watch', 'Act', 'Run'] as const) {
     test(`${scenario} at ${stage}: every page opens without a crash, a console error or another state's data`, async ({ page }) => {
       const errors = errorsOf(page)
       await start(page, stage, scenario, '#/today')

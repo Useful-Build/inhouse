@@ -54,6 +54,8 @@ export type Saved = {
   } & Record<string, unknown>
   /** The demo's run turns: [turn id, info]. */
   runs: [string, { trace: string }][]
+  /** The app's saved theme preference. Missing when none is saved (System). */
+  theme?: Theme
   /** The app's UI session (open chats, queued messages). */
   session: {
     chats?: Record<string, { extras: { role: string; text?: string; part?: { type: string } }[] }>
@@ -80,6 +82,8 @@ export interface Fx {
   seedSaved(s: Seed, saved: SavedDemo): Promise<void>
   /** Changes the stage on later loads of this page, keeping saved state (a mid-test move to another stage). */
   restage(s: Restage): Promise<void>
+  /** Changes the app's theme on later loads of this page (a mid-test switch), keeping saved state. */
+  setTheme(theme: Theme): Promise<void>
   /** What the app has saved, parsed. Call it on a loaded page. */
   saved(): Promise<Saved>
   /**

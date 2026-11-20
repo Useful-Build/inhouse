@@ -1,16 +1,11 @@
 // PR 4, the conversation: auto-scroll only near the bottom with Jump to latest, Copy and Edit on your own messages,
 // Regenerate and thumbs on answers, the mode and time in the steps button, the steps link on an error turn, and
 // markdown answers (a code block with Copy, a wide table that scrolls inside its wrapper).
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
 async function start(page: Page, scenario: string, hash: string) {
-  await page.addInitScript(sc => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: sc, ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, scenario)
+  await fxFor(page, undefined).seed({ stage: 'Act', scenario, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 

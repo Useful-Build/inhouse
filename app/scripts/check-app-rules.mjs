@@ -10,7 +10,7 @@
 //      holding one, an alias, `promisify`), the `timers` module in any form, `scheduler.wait(`, `Atomics.wait`. Wait
 //      for a condition (an `expect` or `expect.poll`), or move time with the Clock API (`page.clock.install()`,
 //      `page.clock.runFor(ms)`). `test.setTimeout(` and `page.clock.*` are fine. No allow list.
-//   4. the mock's storage keys, sample data and module in the E2E specs: any `inhouse.demo.` key or the UI session key, any
+//   4. the mock's storage keys, sample data and module in the E2E specs: any `inhouse.demo.` key, the UI session key or the theme key (`inhouse.theme`), any
 //      `sample-data` or `@sample` reference, and the mock module (`agent/mock`), in e2e/ outside e2e/support/. Specs read
 //      names and seed or read back state through `fx` (e2e/support/fx.ts). Files still to migrate are in
 //      scripts/check-app-rules.e2e-seam.json with a hit count each: a count that goes up or an unlisted file fails, a
@@ -220,18 +220,18 @@ for (let i = 0; i < waits.length; i++) waits[i] = waits[i][2]
 // ---------- mock storage keys, sample data and the mock module in e2e ----------
 // Only e2e/support/ (the fixtures layer) may name the mock's storage keys or import its sample data or its module.
 // A literal guard, not a wall: a key built from pieces ('inhouse.' + 'demo.') or a path assembled at run time gets past it,
-// and review covers that. `inhouse.theme` is not in the rule: it's the app's own theme preference (product too), not demo
-// state; seed it through `fx.seed({ theme })`.
+// and review covers that. Every app key in a spec goes through `fx`, the theme preference (`inhouse.theme`) too: seed it
+// with `fx.seed({ theme })`, change it mid-test with `fx.setTheme(theme)`.
 // Files still to migrate are in scripts/check-app-rules.e2e-seam.json, with their hit counts (lines that match). A count
 // that goes up, or a file that isn't listed, fails; so does an entry that's stale or whose count is no longer exact. Batches
 // lower the counts, and the last one deletes the JSON.
 const SEAM_LIST = new URL('./check-app-rules.e2e-seam.json', import.meta.url)
 const seamListed = new Map(existsSync(SEAM_LIST) ? Object.entries(JSON.parse(readFileSync(SEAM_LIST, 'utf8')).files) : [])
 const seam = []
-// An app-owned storage key (`inhouse.demo.`, `inhouse.ui.`, `inhouse.crash.`, `inhouse.preload-reload`; not the theme), the
+// An app-owned storage key (`inhouse.demo.`, `inhouse.ui.`, `inhouse.crash.`, `inhouse.preload-reload`, `inhouse.theme`), the
 // sample data in any form (`sample-data` with or without a slash, the `@sample` alias) or the mock module (`agent/mock`,
 // any extension, or the `@client` alias, its entry point).
-const SEAM_HIT = /inhouse\.(?:demo|ui|crash)\.|inhouse\.preload-reload|sample-data|@sample|@client|agent\/mock\b/
+const SEAM_HIT = /inhouse\.(?:demo|ui|crash)\.|inhouse\.theme\b|inhouse\.preload-reload|sample-data|@sample|@client|agent\/mock\b/
 if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
   const rel = `e2e/${relative(e2eDir, file)}`
   if (rel.startsWith('e2e/support/')) continue
@@ -241,6 +241,13 @@ if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
   if (allowed === undefined) seam.push(...found)
   else if (found.length > allowed) problems.push(`check-app-rules.e2e-seam.json: ${rel} has ${found.length} hit(s), the list allows ${allowed}. Go through \`fx\`:\n${found.join('\n')}`)
   else if (found.length < allowed) problems.push(`check-app-rules.e2e-seam.json: ${rel} has ${found.length} hit(s), the list says ${allowed}. ${found.length ? `Set it to ${found.length}` : 'Remove the entry (delete the file when it is empty)'}`)
+}
+// The sample-data read helper is for the sample data's own spec only: any other spec must get names through `fx`, so
+// it still works against a real client (P2) that has no sample data.
+if (existsSync(e2eDir)) for (const file of walk(e2eDir)) {
+  const rel = `e2e/${relative(e2eDir, file)}`
+  if (rel === 'e2e/sample-data.spec.ts' || rel.startsWith('e2e/support/')) continue
+  if (/support\/sample-reads/.test(readFileSync(file, 'utf8'))) problems.push(`${rel}: imports e2e/support/sample-reads, which only e2e/sample-data.spec.ts may use; get names through \`fx\``)
 }
 for (const path of seamListed.keys()) if (!existsSync(new URL(`../${path}`, import.meta.url))) problems.push(`check-app-rules.e2e-seam.json: ${path} doesn't exist; remove it`)
 if (seamListed.size) console.log(`e2e seam: ${seamListed.size} spec file(s) still name storage keys, sample data or the mock module (scripts/check-app-rules.e2e-seam.json):\n${[...seamListed].map(([f, n]) => `${f} (${n})`).join('\n')}\n`)

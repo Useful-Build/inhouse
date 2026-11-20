@@ -1,19 +1,13 @@
 // PR 6, the Library: search with no results and Clear, counts that follow the search, place and type together, a
 // file's own link (Back closes it, a link opens it), names that show whole at 390, 768 and 1440, and the first-day and
 // loading states. Screenshots go to the report.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test, type Theme } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
-async function start(page: Page, hash = '#/library', width = 1440, scenario = 'Normal', theme = 'light') {
+async function start(page: Page, hash = '#/library', width = 1440, scenario = 'Normal', theme: Theme = 'light') {
   await page.setViewportSize({ width, height: width < 800 ? 844 : 900 })
-  await page.addInitScript(([sc, th]) => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: sc, ambient: 'Off', animateMark: false }))
-    localStorage.setItem('inhouse.theme', th)
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, [scenario, theme])
+  await fxFor(page, undefined).seed({ stage: 'Act', scenario, theme })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
 }
@@ -311,14 +305,14 @@ test('Phone: a long file name shows whole in the viewer, and a code file scrolls
   await shot(page, 'library-viewer-code-390')
 })
 
-test('Dark: previews are dimmed, and light keeps them as they are', async ({ page }) => {
+test('Dark: previews are dimmed, and light keeps them as they are', async ({ page, fx }) => {
   await start(page, '#/library', 1440, 'Normal', 'dark')
   const filter = () => items(page).filter({ hasText: 'weekly-ops-report-week-46.pdf' }).first().locator('.preview-dim').first().evaluate(e => getComputedStyle(e).filter)
   expect(await filter()).toMatch(/brightness\(0\.8/)
   await shot(page, 'library-masonry-dark')
   await page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'Grid' }).click()
   await shot(page, 'library-grid-dark')
-  await page.evaluate(() => { localStorage.setItem('inhouse.theme', 'light') })
+  await fx.setTheme('light')
   await page.reload()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')
   expect(await filter()).toMatch(/brightness\(1\)|none/)

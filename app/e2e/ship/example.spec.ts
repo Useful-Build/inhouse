@@ -1,5 +1,5 @@
 // Example ship spec: two short scenarios, recorded on video by the `ship` workflow (SHIP=1, see playwright.config.ts).
-// Runs at 1440x900 and 390x844. State is seeded through localStorage and `?demo`, like the other specs.
+// Runs at 1440x900 and 390x844. State is seeded through the `fx` fixture, like the other specs.
 import { expect, test, type Fx } from '../support/fx.js'
 import type { Page } from '@playwright/test'
 
