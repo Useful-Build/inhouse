@@ -85,7 +85,7 @@ export const CASES: Record<string, RouteCase> = {
   // Item 19 (2026-11-20): the Inhouse team pauses and resumes too (an audited emergency pause), with no grant.
   'POST /api/pause': { design: d('baseline', ['admin', 'inhouse']), path: '/api/pause', json: {}, passes: STUB },
   'POST /api/resume': { design: d('baseline', ['admin', 'inhouse']), path: '/api/resume', json: {}, passes: STUB },
-  'GET /api/models': { design: d('baseline', ALL, ['smoke']), path: '/api/models', passes: STUB },
+  'GET /api/models': { design: d('baseline', ALL, ['smoke']), path: '/api/models', passes: 200 },
   'POST /api/chats/:id/attachments': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/attachments`, bytes: { content: Buffer.from('x'), contentType: 'application/octet-stream' }, passes: STUB },
   'GET /api/chats/:id/files': { design: owned(ALL), path: `/api/chats/${NO_CHAT}/files`, passes: STUB },
   'GET /api/files/:fileId': { design: d('brand_data', ALL), path: '/api/files/f_e2e_nobody', passes: STUB },
