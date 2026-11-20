@@ -23,6 +23,13 @@ export const restoreKey = (restoreId: string, name: string): string => {
   return `restore/${segment('restoreId', restoreId)}/${name}`
 }
 
-/** One deletion-log entry (P8 G2): `deletion-log/<atMs, 13 digits>-<runId>-<phase>.json`, so a listing sorts by time. */
-export const deletionLogKey = (atMs: number, runId: string, phase: string): string =>
-  `deletion-log/${String(atMs).padStart(13, '0')}-${segment('runId', runId)}-${segment('phase', phase)}.json`
+/**
+ * One deletion-log entry (P8 G2): `deletion-log/<atMs, 13 digits>-<runId>-<step, 4 digits>-<phase>.json`. A listing
+ * sorts by time across runs and, within one run (one clock, so one `atMs`), by `step`: the run numbers its entries
+ * 0, 1, 2... in write order.
+ */
+export const deletionLogKey = (atMs: number, runId: string, step: number, phase: string): string => {
+  if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > 9_999_999_999_999) throw new Error(`r2-keys: atMs ${JSON.stringify(atMs)} can't go into a key`)
+  if (!Number.isSafeInteger(step) || step < 0 || step > 9999) throw new Error(`r2-keys: step ${JSON.stringify(step)} can't go into a key`)
+  return `deletion-log/${String(atMs).padStart(13, '0')}-${segment('runId', runId)}-${String(step).padStart(4, '0')}-${segment('phase', phase)}.json`
+}
