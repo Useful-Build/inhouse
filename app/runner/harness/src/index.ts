@@ -69,6 +69,8 @@ export class RunnerHarness extends DurableObject<Env> {
   /** Run tokens of the runs this object started (memory only, like the real token table's role). */
   #tokens = new Map<string, RunInfo>()
   #sinks = new Map<string, RunSink>()
+  /** Tokens of runs that have ended here (released, refused or restarted away): their calls get 410, not 403. */
+  #ended = new Set<string>()
   #booting: Promise<void> | undefined
 
   get #c() {
@@ -125,6 +127,11 @@ export class RunnerHarness extends DurableObject<Env> {
         for (let i = 0; i < 300 && this.#c.running; i++) await scheduler.wait(100)
       }
       if (this.#c.running) await this.#c.destroy()
+      // The container's runs are gone with it: their answers end and their tokens go.
+      for (const sink of this.#sinks.values()) void sink.writer.close().catch(() => undefined)
+      this.#sinks.clear()
+      for (const token of this.#tokens.keys()) this.#ended.add(token)
+      this.#tokens.clear()
       return Response.json({ mode, running: this.#c.running })
     }
 
@@ -165,16 +172,30 @@ export class RunnerHarness extends DurableObject<Env> {
       webFetchDomains: [],
       fileCaps: body.fileCaps ?? DEFAULT_CAPS,
     })
+    // One answer per run id: a second POST for a run still streaming would steal its sink.
+    if (this.#sinks.has(start.runId)) return Response.json({ error: 'run_live' }, { status: 409 })
     this.#tokens.set(runToken, { runId: start.runId, chatId, scenario: body.scenario })
     // The sink is ready before the runner can push (it may push before its 202 reaches us).
     const pipe = new TransformStream<Uint8Array, Uint8Array>()
-    this.#sinks.set(start.runId, { writer: pipe.writable.getWriter(), next: 0 })
-    const res = await this.#runner('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(start) })
+    const sink: RunSink = { writer: pipe.writable.getWriter(), next: 0 }
+    this.#sinks.set(start.runId, sink)
+    const drop = () => {
+      this.#tokens.delete(runToken)
+      this.#ended.add(runToken)
+      void sink.writer.close().catch(() => undefined)
+      if (this.#sinks.get(start.runId) === sink) this.#sinks.delete(start.runId)
+    }
+    let res: Response
+    try {
+      res = await this.#runner('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(start) })
+    } catch (e) {
+      // The runner couldn't be reached: nothing was admitted.
+      drop()
+      throw e
+    }
     if (res.status !== 202) {
       // Refused (409, 503, 400 ...): nothing was admitted, so no push will come. The runner's answer as it was.
-      this.#tokens.delete(runToken)
-      void this.#sinks.get(start.runId)?.writer.close().catch(() => undefined)
-      this.#sinks.delete(start.runId)
+      drop()
       return res
     }
     await res.body?.cancel()
@@ -204,6 +225,7 @@ export class RunnerHarness extends DurableObject<Env> {
       void sink.writer?.close().catch(() => undefined)
       this.#sinks.delete(run.runId)
       this.#tokens.delete(token)
+      this.#ended.add(token)
     }
     return Response.json({ ackSeq: sink.next - 1, stop: false })
   }
@@ -213,6 +235,8 @@ export class RunnerHarness extends DurableObject<Env> {
     const token = request.headers.get(RUN_TOKEN_HEADER)
     const run = token === null ? undefined : this.#tokens.get(token)
     if (!run) {
+      // A run that has ended here: the protocol's run-ended answer, so the runner's pusher drops what it still holds.
+      if (token !== null && this.#ended.has(token)) return new Response('{"error":"run ended"}', { status: 410 })
       console.log(JSON.stringify({ egress: 'refused', reason: 'unknown run token', url: request.url }))
       return new Response('{"error":"unknown run token"}', { status: 403 })
     }
