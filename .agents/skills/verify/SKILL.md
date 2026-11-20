@@ -18,9 +18,9 @@ What counts as verified is the global `verification` skill. This is how to do it
 ## Demo and seed switches
 
 - Open any build with `?demo` (for example `http://localhost:5193/?demo#/today`) to show the demo switcher: Stage (Watch, Act, Run), Scenario (Normal, First day, Loading, Tool disconnected, Cap reached), dot sweep, the agent's mark and Reset demo. Code: `app/src/shell/demo.ts`, `app/src/shell/DevSwitcher.tsx`.
-- Specs seed the switches in `localStorage` before the page loads: `inhouse.demo.switches.v1` = `{"stage":"Act","scenario":"Normal","ambient":"Always","animateMark":false}`.
+- Specs seed the switches through `fx.seed({ stage, scenario, theme, demo: { ... } })` (`app/e2e/support/fx.ts`), never raw `localStorage`; `lint:tokens` fails on a spec that names an app key. The stored form is `inhouse.demo.switches.v1` = `{"stage":"Act","scenario":"Normal","ambient":"Always","animateMark":false}`.
 - Other keys: agent state `inhouse.demo.v2`, run-to-trace map `inhouse.demo.runs.v1`, UI session `inhouse.ui.session.v1`, sidebar `inhouse.ui.sidebar.v1`, theme `inhouse.theme` (`light` or `dark`; absent means system), per-model `tm:<id>:effort` and `tm:<id>:on` (`app/README.md`, "The mock agent, and how phase 2 swaps it": the Phase 1 memory and Models bullets). Reset demo clears them and returns to Act and Normal.
-- Theme in a seeded run: set `inhouse.theme` in the same init script (`page.addInitScript`) and call `page.emulateMedia({ colorScheme })` with the same value, as `e2e/states.ts` (`openState`) does. The key is `THEME_KEY` in `app/src/lib/theme.ts`.
+- Theme in a seeded run: pass `theme` to `fx.seed`, or change it mid-test with `fx.setTheme(theme)`, and call `page.emulateMedia({ colorScheme })` with the same value, as `e2e/states.ts` (`openState`) does. The key is `THEME_KEY` in `app/src/lib/theme.ts`.
 - Routes are hashes: `#/today`, `#/library`, `#/approvals`, `#/routines`, `#/activity`, `#/tools`, `#/skills`, `#/usage`, `#/settings/<tab>`, `#/chats/all`, `#/chats/<id>`.
 
 ## Drive
@@ -34,7 +34,7 @@ Projects are in `app/playwright.config.ts`.
 
 | Suite | Command | Notes |
 |---|---|---|
-| unit and property | `npm run test:unit` | Vitest with fast-check, `src/**/*.property.test.ts`. Light job. |
+| unit and property | `npm run test:unit` | Vitest with fast-check: `src/**/*.test.ts` (property tests included) and `build-support/`. Light job. |
 | desktop and phone E2E | `npm run test:e2e` | Every project. On macOS the visual projects match nothing and warn. On Windows they run against Linux baselines and fail: run `npx playwright test --project=desktop --project=phone --project=a11y` there. Specs with `phone` in the file name run in the `phone` project. |
 | one spec | `npx playwright test e2e/<name>.spec.ts --project=desktop` | |
 | visual | `npm run test:visual:linux` | Docker only on the Mac (and Windows). Baselines are `-linux.png`; never write a `-darwin.png`. |

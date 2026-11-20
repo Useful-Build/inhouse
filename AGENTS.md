@@ -10,6 +10,7 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
   product's client stub.
 - `app/shared/` holds the zod schemas for everything the `AgentClient` returns (`shared/contract/`); `src/agent/types.ts`
   re-exports their types.
+- `app/build-support/` holds the build helpers and their tests (the demo deploy redirect).
 - `app/public-demo/` holds the demo-only public files (the Library's sample files, avatars); the product build ships none.
 - `app/src/ui/` holds the app's own components, `app/src/components/ui/` the base's shadcn components.
 - `app/e2e/` holds the Playwright specs and the visual baselines; `app/e2e/ship/` the ship recording specs;
@@ -32,7 +33,7 @@ Run them in `app/`.
 | `npm run dev` | Dev server on port 5173 |
 | `npm run typecheck` | `tsc -b` |
 | `npm run lint` | oxlint, then `lint:tokens` (the token, app and no-fixed-wait checks) |
-| `npm run test:unit` | Vitest: the property tests in `src/**/*.property.test.ts` |
+| `npm run test:unit` | Vitest: `src/**/*.test.ts` (property tests included) and `build-support/` |
 | `npm run build` | Type check and production build (the demo build) |
 | `npm run build:product` | The product build into `dist-product/`: no mock, sample data, demo controls or demo clock. `node scripts/check-product-build.mjs` checks it (CI runs both) |
 | `npm run preview` | Build, then serve the build |
@@ -114,5 +115,5 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`.
-- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`). Give each parallel worktree its own `E2E_PORT`.
+- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`). Give each parallel worktree its own `E2E_PORT` and `E2E_PRODUCT_PORT`.
 - **Fleet repo:** no. `fleet/<topic>` is only the integration branch name here.
