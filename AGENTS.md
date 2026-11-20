@@ -10,6 +10,7 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
   product's client stub.
 - `app/shared/` holds the zod schemas for everything the `AgentClient` returns (`shared/contract/`); `src/agent/types.ts`
   re-exports their types.
+- `app/build-support/` holds the build helpers and their tests (the demo deploy redirect).
 - `app/public-demo/` holds the demo-only public files (the Library's sample files, avatars); the product build ships none.
 - `app/src/ui/` holds the app's own components, `app/src/components/ui/` the base's shadcn components.
 - `app/e2e/` holds the Playwright specs and the visual baselines; `app/e2e/ship/` the ship recording specs;
@@ -32,7 +33,7 @@ Run them in `app/`.
 | `npm run dev` | Dev server on port 5173 |
 | `npm run typecheck` | `tsc -b` |
 | `npm run lint` | oxlint, then `lint:tokens` (the token, app and no-fixed-wait checks) |
-| `npm run test:unit` | Vitest: the property tests in `src/**/*.property.test.ts` |
+| `npm run test:unit` | Vitest: `src/**/*.test.ts` (property tests included) and `build-support/` |
 | `npm run build` | Type check and production build (the demo build) |
 | `npm run build:product` | The product build into `dist-product/`: no mock, sample data, demo controls or demo clock. `node scripts/check-product-build.mjs` checks it (CI runs both) |
 | `npm run preview` | Build, then serve the build |
@@ -85,6 +86,17 @@ skill before any UI change. Repo specifics:
   ship spec). Wasim approves that head SHA, then it squash-merges with `--match-head-commit <sha>` and a squash
   message ending in a `Verified:` trailer. A push after approval voids it. Plan:
   `docs/plans/2026-11-19-setup-gaps.md`.
+- **Escalation (Wasim, 2026-11-20), for every task in this repo:** no problem loops. A round is one fix and one
+  re-check, whether the problem came from a review, the QA gate, a live check or CI. Any problem, failing check or bug
+  still open after two rounds goes to Claude Fable 5.2 at xhigh (the `fable-solver` role, its brief naming the files
+  and every attempt so far with its result) for one round. If that fails, it goes to GPT 6.2 Sol at xhigh, headless
+  through T3's Pi instance (never Codex), for one round, with Fable's attempt added. The orchestrator runs the
+  escalation; a reviewer or delegate reports back instead. An escalated fix gets the normal review for its piece and
+  the round count doesn't restart. If GPT's round fails too, stop on that item and keep working on everything that
+  doesn't depend on it. Send Wasim a report, headed "Stuck after escalation", that says in plain language: what the
+  problem is; what was tried (each round and model, and its result); why it still isn't fixed; whether it's a
+  must-have or a nice-to-have for the task or the app; whether it's an edge case or the main case. Wasim decides. This
+  replaces the change loop's three-round limit in this repo.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.
@@ -103,5 +115,5 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`.
-- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`). Give each parallel worktree its own `E2E_PORT`.
+- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`). Give each parallel worktree its own `E2E_PORT` and `E2E_PRODUCT_PORT`.
 - **Fleet repo:** no. `fleet/<topic>` is only the integration branch name here.
