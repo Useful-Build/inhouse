@@ -29,8 +29,8 @@ const GRANT = 'g_memtest'
 const person = (memberId: string, role: 'member' | 'admin'): Principal => ({ kind: 'person', memberId, role, subject: `s-${memberId}`, requestId: `req-${Math.random()}`, expMs: NOW + 600_000 })
 const inhouse = (live: boolean): Principal => ({ kind: 'inhouse', memberId: IH, subject: 's-ih', grant: live ? { id: GRANT, endsAtMs: NOW + 60_000 } : null, requestId: `req-${Math.random()}`, expMs: NOW + 600_000 })
 
-/** Item 19's row 45 (the orchestrator lists inhouse on it): a literal, so these cases run whatever the committed row holds. */
-const ROW_45_WITH_INHOUSE = accessMatrix.map(r => (r.method === 'PUT' && r.pattern === '/api/memory/brand/:id/forgotten' ? { ...r, allow: ['admin', 'inhouse'] as const } : r))
+/** Row 45 as it was before item 19 (Admins only): a literal, to show `allow` still decides under a live grant. */
+const ROW_45_ADMIN_ONLY = accessMatrix.map(r => (r.method === 'PUT' && r.pattern === '/api/memory/brand/:id/forgotten' ? { ...r, allow: ['admin'] as const } : r))
 
 function parts(principal: Principal, matrix = accessMatrix): ApiParts {
   return {
@@ -164,13 +164,13 @@ describe('route 45, PUT /api/memory/brand/:id/forgotten (failures 3 to 5)', () =
   })
   it('item 19: Inhouse forgets only under a live grant, on a row that lists it: support.access (PUT), then its own line', async () => {
     const before = await lastLineId(db)
-    // The committed row 45 (Admins only): refused even with a grant.
-    expect(await forget(inhouse(true), 'brand', F.team, { forgotten: true, ifRev: 1 })).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })
-    // Row 45 listing inhouse: no grant, refused; a live grant, done and audited twice.
-    expect(await forget(inhouse(false), 'brand', F.team, { forgotten: true, ifRev: 1 }, ROW_45_WITH_INHOUSE)).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'grant_required' } } })
+    // A row 45 that doesn't list inhouse: refused even with a grant.
+    expect(await forget(inhouse(true), 'brand', F.team, { forgotten: true, ifRev: 1 }, ROW_45_ADMIN_ONLY)).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })
+    // The committed row 45 (it lists inhouse): no grant, refused; a live grant, done and audited twice.
+    expect(await forget(inhouse(false), 'brand', F.team, { forgotten: true, ifRev: 1 })).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'grant_required' } } })
     expect(await linesSince(db, before)).toEqual([])
     expect(await row(F.team)).toEqual({ status: 'active', rev: 1 })
-    expect(await forget(inhouse(true), 'brand', F.team, { forgotten: true, ifRev: 1 }, ROW_45_WITH_INHOUSE)).toMatchObject({ status: 200, body: { forgotten: true } })
+    expect(await forget(inhouse(true), 'brand', F.team, { forgotten: true, ifRev: 1 })).toMatchObject({ status: 200, body: { forgotten: true } })
     expect((await linesSince(db, before)).map(l => [l.action, l.actor_id, JSON.parse(l.args_json)])).toEqual([
       ['support.access', IH, { grantId: GRANT, method: 'PUT', route: '/api/memory/brand/:id/forgotten' }],
       ['memory.forgotten', IH, { memoryId: F.team }],

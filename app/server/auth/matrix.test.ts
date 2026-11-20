@@ -256,7 +256,8 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/usage': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'GET /api/memory': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'PUT /api/memory/personal/:id/forgotten': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
-  'PUT /api/memory/brand/:id/forgotten': ['no', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  // Item 19 (2026-11-20): the Inhouse team forgets a team fact only under a live grant, audited.
+  'PUT /api/memory/brand/:id/forgotten': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'GET /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'POST /api/ops/warmup': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
@@ -396,10 +397,14 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
     it('the open rows are exactly health, drain and warm-up (a closed list)', () => {
       expect(openProblems(rows)).toEqual([])
     })
-    it('no row lets Inhouse write brand_data or personal, and no personal row allows Inhouse', () => {
+    // Changed for item 19: the brand_data writes on INHOUSE_BRAND_WRITES (row 45) take Inhouse under a live grant, with
+    // the audit duty; every other brand_data or personal write still refuses it.
+    it('no row lets Inhouse write brand_data (off the closed list) or personal, and no personal row allows Inhouse', () => {
       const ih = principals.inhouse({ id: 'g', endsAtMs: Number.MAX_SAFE_INTEGER })
       for (const x of rows) {
-        if (x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal')) expect(ok(checkAccess(ih, x, { ownerId: 'm_ih' }, NOW))).toBe(false)
+        const listed = x.class === 'brand_data' && INHOUSE_BRAND_WRITES.includes(`${x.method} ${x.pattern}`)
+        if (x.method !== 'GET' && listed) expect(checkAccess(ih, x, undefined, NOW)).toEqual({ ok: true, audit: 'support.access' })
+        else if (x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal')) expect(ok(checkAccess(ih, x, { ownerId: 'm_ih' }, NOW))).toBe(false)
         if (x.class === 'personal') expect(x.allow).not.toContain('inhouse')
       }
     })

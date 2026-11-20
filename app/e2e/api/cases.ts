@@ -93,7 +93,7 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/usage': { design: d('baseline', ALL), path: '/api/usage', passes: STUB },
   'GET /api/memory': { design: d('brand_data', ALL), path: '/api/memory', passes: 200 },
   'PUT /api/memory/personal/:id/forgotten': { design: d('personal', PEOPLE), path: '/api/memory/personal/mem_e2e_nobody/forgotten', json: {}, passes: 404 },
-  'PUT /api/memory/brand/:id/forgotten': { design: d('brand_data', ['admin']), path: '/api/memory/brand/mem_e2e_nobody/forgotten', json: {}, passes: 404 },
+  'PUT /api/memory/brand/:id/forgotten': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/memory/brand/mem_e2e_nobody/forgotten', json: {}, passes: 404 },
   'POST /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', json: {}, passes: STUB },
   'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: STUB },
   'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: STUB },
