@@ -14,7 +14,10 @@
 // - an audit entry carries no expiry, so the root writes one the hook already refused on its timeout;
 // - the note on left-out files grows with the number of files, or counts the event's "and N more" as a name;
 // - a stop's deadline doesn't cut a hanging checkpoint, or a query that ends after it still waits on the checkpoint;
-// - a stop during the restore waits for it (past the stop's deadline).
+// - a stop during the restore waits for it (past the stop's deadline);
+// - a first run that wrote no main transcript sends no checkpoint (the Worker could never mark it waiting) or a
+//   non-empty one; a resume that wrote none sends a checkpoint it can't back (protocol v2's checkpoint is the store's
+//   total, which only a load can tell: R3's second PR).
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -468,6 +471,24 @@ describe('the run lifecycle', () => {
     expect(h.events()[2]).toEqual({ type: 'checkpoint', mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1, runEntries: 2 })
     expect(egress.entries({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' }).map((e: any) => e.uuid)).toEqual(['u1', 'u2'])
     expect(h.logs).toContainEqual({ type: 'store_repaired', batches: 1 })
+  })
+
+  it('the store: a first run that wrote no main transcript checkpoints an empty store', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config({ resume: false }) })
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'checkpoint', 'finished'])
+    expect(h.events()[1]).toEqual({ type: 'checkpoint', mainEntries: 0, lastUuid: null, lastUuidIndex: null, runEntries: 0 })
+  })
+
+  it('the store: a resume that wrote no main transcript is a mirror_error, not a checkpoint', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config({ resume: true, expect: { mainEntries: 4, lastUuid: 'u', lastUuidIndex: 3 } }) })
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'mirror_error', 'finished'])
+    expect(h.events()[1]).toEqual({ type: 'mirror_error', message: 'a resume that wrote no main transcript' })
   })
 
   it('the store: when the repair fails too, mirror_error and no checkpoint; the run still finishes with its cost', async () => {

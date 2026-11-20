@@ -17,6 +17,7 @@ import { FileListing, type FileCaps, type RunEventBody } from '../../../shared/p
 import { badProxyPath } from '../proxy/server.ts'
 import type { Fetch } from '../store/adapter.ts'
 import { NotFollowed, closeDir, inDir, list, lstatIn, openBelow, openChild, openDir, readFileIn, type Dir } from './safe-dir.ts'
+import { badFileName } from '../../../shared/files/names.ts'
 import { sniffType } from '../../../shared/files/sniff.ts'
 
 export const INPUTS = 'inputs'
@@ -36,14 +37,8 @@ type Refusal = Extract<FileEvent, { type: 'file_refused' }>
  * name the proxy can't carry (`#` or `\` anywhere, a `.` or `..` segment, an empty segment, an unpaired surrogate).
  */
 export function filesPath(path: string): string | null {
-  const segments = path.split('/')
-  if (segments.some((s) => s === '' || s === '.' || s === '..' || s.includes('#') || s.includes('\\'))) return null
-  let encoded: string
-  try {
-    encoded = `/files/${segments.map(encodeURIComponent).join('/')}`
-  } catch {
-    return null // URIError: an unpaired surrogate
-  }
+  if (badFileName(path)) return null
+  const encoded = `/files/${path.split('/').map(encodeURIComponent).join('/')}`
   return badProxyPath(encoded) ? null : encoded
 }
 

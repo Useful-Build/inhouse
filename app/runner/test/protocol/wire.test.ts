@@ -8,9 +8,14 @@
 // - /health from a runner that doesn't count quarantined users yet fails the parse, or a bad count passes.
 // v2 (P3 R3), also written first:
 // - a v2 message written by hand (bytes in fixtures/v2, not made by these encoders) fails to parse, or parses to
-//   something other than what it says; a v1 message (fixtures/v1) still parses;
+//   something other than what it says; a v1 message (fixtures/v1) parses, or is refused for some other reason than the
+//   field v2 changed (v1 is refused: ACCEPTED_VERSIONS is [2]);
 // - a resume without `expect`, or a first run with one, passes; `lastUuid` without its index (or past `mainEntries`)
-//   passes; a system prompt over 64 KB of UTF-8, an 11th attachment or one outside `inputs/` passes;
+//   passes; a system prompt over 64 KB of UTF-8, an 11th attachment, one outside `inputs/`, one the files route can't
+//   carry (a `.`, `..` or empty segment, `#`, `\`) or one named twice passes;
+// - an empty store (`mainEntries: 0`) is refused in a checkpoint or `released`, or passes with a uuid or an index;
+// - an sdk message over SDK_MESSAGE_MAX_BYTES passes; a batch at PUSH_BATCH_MAX_BYTES (events at the buffer's cap, the
+//   most events, the longest turn id) is refused, or the body cap is smaller than such a batch;
 // - a push batch mixes runs, skips or repeats a seq, is empty or over its cap; a status says unknown with seqs, or acked
 //   past its last seq; a refusal code outside the four, or with a status other than its own.
 import { readFileSync, readdirSync } from 'node:fs'
@@ -21,7 +26,10 @@ import {
   ACCEPTED_VERSIONS,
   ATTACHMENTS_MAX,
   AuditPost,
+  PUSH_BATCH_MAX_BYTES,
   PUSH_BATCH_MAX_EVENTS,
+  PUSH_BUFFER_MAX_BYTES,
+  SDK_MESSAGE_MAX_BYTES,
   PushAck,
   PushBatch,
   RUN_REFUSAL_STATUS,
@@ -55,7 +63,7 @@ const runStartFields = fc.record({
   model: fc.constantFrom('claude-sonnet-5-5', 'claude-opus-5-5'),
   sideModel: fc.constant('claude-haiku-5-5'),
   systemPrompt: fc.string({ maxLength: 200 }),
-  attachments: fc.array(fc.stringMatching(/^[a-z0-9-]{1,20}\.pdf$/).map((n) => `inputs/${n}`), { maxLength: ATTACHMENTS_MAX }),
+  attachments: fc.uniqueArray(fc.stringMatching(/^[a-z0-9-]{1,20}\.pdf$/).map((n) => `inputs/${n}`), { maxLength: ATTACHMENTS_MAX }),
   effort: fc.constantFrom('low', 'medium', 'high', 'xhigh', 'max'),
   maxTurns: fc.integer({ min: 1, max: 500 }),
   maxBudgetUsd: fc.double({ min: 0.01, max: 1000, noNaN: true }),
@@ -155,7 +163,8 @@ describe('RunStart', () => {
       sideModel: 'h'.repeat(128),
       // One byte of UTF-8 each, six in JSON.
       systemPrompt: '\u0001'.repeat(SYSTEM_PROMPT_MAX_BYTES),
-      attachments: Array.from({ length: ATTACHMENTS_MAX }, () => `inputs/${'\u0001'.repeat(1024 - 7)}`),
+      // Each unique (a digit first), the rest six bytes each in JSON.
+      attachments: Array.from({ length: ATTACHMENTS_MAX }, (_, i) => `inputs/${i}${'\u0001'.repeat(1024 - 8)}`),
       expect: { mainEntries: Number.MAX_SAFE_INTEGER, lastUuid: '\u0001'.repeat(256), lastUuidIndex: Number.MAX_SAFE_INTEGER - 1 },
       effort: 'medium',
       maxTurns: 500,
@@ -258,6 +267,17 @@ describe('caps on the open shapes', () => {
     expect(finished(sized(USAGE_MAX_BYTES))).toBe(true)
     expect(finished(sized(USAGE_MAX_BYTES + 1))).toBe(false)
   })
+
+  it('an sdk message over its cap fails the parse; at the cap it passes', () => {
+    const sized = (bytes: number) => ({ a: 'x'.repeat(bytes - 8) })
+    const sdk = (message: Record<string, unknown>) => RunEventBody.safeParse({ type: 'sdk', message, truncated: false }).success
+    expect(SDK_MESSAGE_MAX_BYTES).toBe(262_144)
+    expect(sdk(sized(SDK_MESSAGE_MAX_BYTES))).toBe(true)
+    expect(sdk(sized(SDK_MESSAGE_MAX_BYTES + 1))).toBe(false)
+    // Bytes, not characters: 'é' is two.
+    expect(sdk({ a: 'é'.repeat((SDK_MESSAGE_MAX_BYTES - 8) / 2) })).toBe(true)
+    expect(sdk({ a: 'é'.repeat((SDK_MESSAGE_MAX_BYTES - 8) / 2) + 'x' })).toBe(false)
+  })
 })
 
 // ---- v2 (P3 R3)
@@ -289,14 +309,28 @@ const parserFor = (name: string): ((raw: unknown) => unknown) => {
 describe('v2 wire fixtures (written by hand)', () => {
   const v2 = fixtures('v2')
   it('every v2 fixture parses to exactly what its bytes say', () => {
-    expect(v2.length).toBeGreaterThanOrEqual(19)
+    expect(v2.length).toBeGreaterThanOrEqual(21)
     for (const f of v2) expect(parserFor(f.name)(JSON.parse(f.text)), f.name).toEqual(JSON.parse(f.text))
   })
 
-  it('every v1 fixture is refused', () => {
+  it('every v1 fixture is refused, on the field v2 changed', () => {
     const v1 = fixtures('v1')
     expect(v1.map((f) => f.name).sort()).toEqual(['event.checkpoint.json', 'event.file_saved.json', 'run-start.json'])
-    for (const f of v1) expect(() => parserFor(f.name)(JSON.parse(f.text)), f.name).toThrow()
+    /** The issues a parse threw: each issue's path, and the keys of an unrecognized-keys issue as `+key`. */
+    const refusal = (name: string): string[] => {
+      const f = v1.find((x) => x.name === name)!
+      try {
+        parserFor(name)(JSON.parse(f.text))
+      } catch (e) {
+        const issues = (e as { issues?: { path: PropertyKey[]; keys?: string[] }[] }).issues
+        if (!issues) throw e
+        return issues.flatMap((i) => [i.path.join('.'), ...(i.keys ?? []).map((k) => `+${k}`)])
+      }
+      throw new Error(`${name} parsed`)
+    }
+    expect(refusal('run-start.json')).toEqual(expect.arrayContaining(['sideModel', 'systemPrompt', 'attachments', 'expect']))
+    expect(refusal('event.checkpoint.json')).toEqual(expect.arrayContaining(['+entries', 'mainEntries', 'lastUuid', 'lastUuidIndex', 'runEntries']))
+    expect(refusal('event.file_saved.json')).toEqual(['sha256'])
   })
 })
 
@@ -339,6 +373,15 @@ describe('RunStart v2 limits', () => {
     expect(ok({ ...first, systemPrompt: 'é'.repeat(32_768) + 'a' })).toBe(false)
   })
 
+  it('attachments: none the files route cannot carry, none twice', () => {
+    expect(ok({ ...first, attachments: ['inputs/a.pdf', 'inputs/sub/b.pdf'] })).toBe(true)
+    for (const bad of ['inputs/', 'inputs//a.pdf', 'inputs/./a.pdf', 'inputs/../a.pdf', 'inputs/..', 'inputs/.', 'inputs/a.pdf/', 'inputs/a#b.pdf', 'inputs/a\\b.pdf', 'inputs/\ud800.pdf']) {
+      expect(ok({ ...first, attachments: [bad] }), bad).toBe(false)
+    }
+    expect(ok({ ...first, attachments: ['inputs/a.pdf', 'inputs/a.pdf'] })).toBe(false)
+    expect(ok({ ...first, attachments: ['inputs/a.pdf', 'inputs/b.pdf', 'inputs/a.pdf'] })).toBe(false)
+  })
+
   it('attachments: at most 10, each under inputs/', () => {
     const paths = (n: number) => Array.from({ length: n }, (_, i) => `inputs/f_${i}-a.pdf`)
     expect(ok({ ...first, attachments: paths(10) })).toBe(true)
@@ -375,10 +418,18 @@ describe('v2 events', () => {
     expect(cp({ lastUuid: null })).toBe(false)
     expect(cp({ runEntries: -1 })).toBe(false)
     expect(cp({ mainEntries: 0, lastUuid: null, lastUuidIndex: null })).toBe(true)
+    // An empty store has no last uuid and no index.
+    expect(cp({ mainEntries: 0, lastUuid: 'u', lastUuidIndex: null })).toBe(false)
+    expect(cp({ mainEntries: 0, lastUuid: null, lastUuidIndex: 0 })).toBe(false)
+    expect(cp({ mainEntries: 0, lastUuid: 'u', lastUuidIndex: 0 })).toBe(false)
     const rel = (checkpoint: unknown) => body({ type: 'released', checkpoint, queryRan: true })
     expect(rel(null)).toBe(true)
     expect(rel({ mainEntries: 3, lastUuid: 'u', lastUuidIndex: 2 })).toBe(true)
     expect(rel({ mainEntries: 3, lastUuid: 'u', lastUuidIndex: 3 })).toBe(false)
+    expect(rel({ mainEntries: 0, lastUuid: null, lastUuidIndex: null })).toBe(true)
+    expect(rel({ mainEntries: 0, lastUuid: 'u', lastUuidIndex: null })).toBe(false)
+    expect(rel({ mainEntries: 0, lastUuid: null, lastUuidIndex: 0 })).toBe(false)
+    expect(rel({ mainEntries: 0, lastUuid: 'u', lastUuidIndex: 0 })).toBe(false)
     expect(rel({ mainEntries: 3, lastUuid: 'u', lastUuidIndex: 2, runEntries: 1 })).toBe(false)
     expect(body({ type: 'released', checkpoint: null })).toBe(false)
     expect(body({ type: 'heartbeat', at: 1 })).toBe(false)
@@ -402,6 +453,25 @@ describe('push, audit, status and admission', () => {
     expect(batch([ev(1), ev(0)])).toBe(false)
     expect(batch([{ ...ev(0), extra: 1 }])).toBe(false)
     expect(PushBatch.safeParse({ turnId: 't_a', events: [ev(0)], extra: 1 }).success).toBe(false)
+  })
+
+  it('a batch at the body cap (the most events, the longest turn id, events summing to the buffer cap) parses', () => {
+    // 2 MiB of events plus 288 bytes of batch JSON around them, worked out by hand.
+    expect(PUSH_BATCH_MAX_BYTES).toBe(2 * 1024 * 1024 + 288)
+    const turnId = 't'.repeat(64)
+    const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length
+    const event = (seq: number, pad: string) => ({ runId: turnId, seq, type: 'sdk', message: { p: pad }, truncated: false })
+    const n = PUSH_BATCH_MAX_EVENTS
+    let left = PUSH_BUFFER_MAX_BYTES - Array.from({ length: n }, (_, i) => bytes(event(i, ''))).reduce((a, b) => a + b, 0)
+    const events = Array.from({ length: n }, (_, i) => {
+      const pad = i === n - 1 ? left : Math.floor(left / (n - i))
+      left -= pad
+      return event(i, 'x'.repeat(pad))
+    })
+    expect(events.reduce((a, e) => a + bytes(e), 0)).toBe(PUSH_BUFFER_MAX_BYTES)
+    const body = { turnId, events }
+    expect(bytes(body)).toBe(PUSH_BATCH_MAX_BYTES)
+    expect(PushBatch.safeParse(body).success).toBe(true)
   })
 
   it('an ack needs a whole ackSeq from 0 and stop', () => {

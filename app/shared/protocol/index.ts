@@ -5,6 +5,7 @@
 // to a schema bumps PROTOCOL_VERSION; a side that still accepts the previous version keeps that version's schemas.
 // The one open shape is the SDK message inside an `sdk` event, passed through as data.
 import { z } from 'zod'
+import { badFileName } from '../files/names.ts'
 
 export const PROTOCOL_VERSION = 2
 /**
@@ -104,8 +105,15 @@ export const RunStartFields = z.strictObject({
   sideModel: Model,
   /** Set by the Worker (the brand's agent instructions and the house prompt). */
   systemPrompt: z.string().refine((p) => utf8.encode(p).length <= SYSTEM_PROMPT_MAX_BYTES, { message: `system prompt over ${SYSTEM_PROMPT_MAX_BYTES} bytes` }),
-  /** This turn's attachments, paths under `inputs/`: restored first; the Worker names them in the prompt. */
-  attachments: z.array(FilePath.startsWith('inputs/')).max(ATTACHMENTS_MAX),
+  /**
+   * This turn's attachments, paths under `inputs/`: restored first; the Worker names them in the prompt. Each is a name
+   * the files route can carry (`badFileName`: no empty, `.` or `..` segment, `#`, `\` or unpaired surrogate, so not
+   * `inputs/` alone), and none twice.
+   */
+  attachments: z
+    .array(FilePath.startsWith('inputs/').refine((p) => !badFileName(p), { message: 'a name the files route cannot carry' }))
+    .max(ATTACHMENTS_MAX)
+    .refine((a) => new Set(a).size === a.length, { message: 'an attachment named twice' }),
   /** Required (non-null) when `resume`, null on a session's first run. */
   expect: ResumeExpect.nullable(),
   effort: Effort,
@@ -197,17 +205,28 @@ const Usage = z.record(z.string(), z.unknown()).refine((u) => jsonBytes(u) <= US
 
 const Sha256 = z.string().regex(/^[0-9a-f]{64}$/)
 
-/** The store's state after a run: what the next resume's `expect` is built from. */
+/**
+ * The store's state after a run: what the next resume's `expect` is built from. `mainEntries: 0` (with `lastUuid` and
+ * `lastUuidIndex` both null) means the store holds no main transcript for the session: the Worker keeps the session
+ * `none` (a fresh sessionId on the next turn), never `resumable`. A resume's `expect` starts at 1 for that reason.
+ */
 const CheckpointState = z.strictObject({ mainEntries: z.int().nonnegative(), lastUuid: z.string().min(1).max(256).nullable(), lastUuidIndex: z.int().nonnegative().nullable() })
+
+/**
+ * An `sdk` event before the root runner caps its message: what a session sends the root on the local channel. The root
+ * caps it (`capSdkMessage`) before it goes on the wire as a `RunEventBody`.
+ */
+export const SdkEventUncapped = z.strictObject({ type: z.literal('sdk'), message: z.record(z.string(), z.unknown()), truncated: z.boolean() })
 
 /** A run event without its envelope. The root runner stamps `runId` and `seq`. */
 export const RunEventBody = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('started'), sessionId: SessionId, resume: z.boolean() }),
-  z.strictObject({
-    type: z.literal('sdk'),
-    /** The SDK message as data. When `truncated`, only `type`, `subtype` and `bytes` are kept. */
-    message: z.record(z.string(), z.unknown()),
-    truncated: z.boolean(),
+  SdkEventUncapped.extend({
+    /**
+     * The SDK message as data, at most `SDK_MESSAGE_MAX_BYTES` as JSON (the runner's cap, measured the same way). When
+     * `truncated`, only `type`, `subtype` and `bytes` are kept.
+     */
+    message: SdkEventUncapped.shape.message.refine((m) => jsonBytes(m) <= SDK_MESSAGE_MAX_BYTES, { message: `message over ${SDK_MESSAGE_MAX_BYTES} bytes` }),
   }),
   /** `sha256`: the saved bytes' SHA-256, lower-case hex (the PUT's `x-inhouse-sha256`); the Worker confirms by it. */
   z.strictObject({ type: z.literal('file_saved'), path: FilePath, bytes: z.int().nonnegative(), contentType: z.string().max(128), sha256: Sha256 }),
@@ -243,7 +262,8 @@ export const RunEventBody = z.discriminatedUnion('type', [
    * this run (subagent transcripts don't count), `lastUuid` the uuid of the last of them that has one and
    * `lastUuidIndex` its index (both null when none has one): the next resume's `expect`. `runEntries` is this run's own
    * count, for the log. The only event the Worker marks a chat waiting on (with an earlier `deferred`): never
-   * `deferred` by itself.
+   * `deferred` by itself. `mainEntries: 0` (a first run that wrote no main transcript) leaves the session `none`, never
+   * `resumable`: the next turn starts a fresh session.
    */
   z.strictObject({ type: z.literal('checkpoint'), ...CheckpointState.shape, runEntries: z.int().nonnegative() }).superRefine(checkLastUuid),
   /** Sent when nothing else happened for 30 s, so the Worker sees the run alive through a silent tool call. */
@@ -251,7 +271,8 @@ export const RunEventBody = z.discriminatedUnion('type', [
   /**
    * The last event of every run, on every exit path: the session process exited, its store flush finished and the
    * runner freed the chat. `checkpoint` is the run's checkpoint result (as in `checkpoint`), or null when there's none
-   * (no checkpoint was taken, or it failed); `queryRan` is false when the run ended before its query started (a stop
+   * (no checkpoint was taken, or it failed), with `mainEntries: 0` meaning as there that the session stays `none`, never
+   * `resumable`; `queryRan` is false when the run ended before its query started (a stop
    * during the file restore or before the query), so there's no transcript to keep.
    */
   z.strictObject({ type: z.literal('released'), checkpoint: CheckpointState.superRefine(checkLastUuid).nullable(), queryRan: z.boolean() }),
@@ -293,8 +314,17 @@ export function encodeRunEvent(event: RunEvent): string {
 
 /** The most events in one push. */
 export const PUSH_BATCH_MAX_EVENTS = 200
-/** The root's buffer of unacked events per run, in JSON bytes; a full buffer pauses reading the session. */
+/**
+ * The root's buffer of unacked events per run, as the sum of each event's JSON bytes (with its `runId` and `seq`); a
+ * full buffer pauses reading the session. A batch is taken from the buffer, so its events never sum past this.
+ */
 export const PUSH_BUFFER_MAX_BYTES = 2 * 1024 * 1024
+/**
+ * The cap on a `POST /events/` body (W3's byte check before the parse): the events at `PUSH_BUFFER_MAX_BYTES` plus the
+ * batch's own JSON around them, at most 288 bytes: `{"turnId":"` (11), a 64-byte id, `","events":[` (12), `]}` (2) and
+ * a comma between each of `PUSH_BATCH_MAX_EVENTS` events (199). Checked in wire.test.ts.
+ */
+export const PUSH_BATCH_MAX_BYTES = PUSH_BUFFER_MAX_BYTES + 11 + 64 + 12 + 2 + (PUSH_BATCH_MAX_EVENTS - 1)
 
 /**
  * `POST /events/` body (the root runner, with the run's token): a run's next events, `seq` consecutive, every one of
