@@ -1,8 +1,7 @@
 // The BrandAgent Durable Object (P3, p3-design section 4): one per brand, `env.BRAND_AGENT.getByName('brand')`. Owner:
 // W1 (p3-w1.md). The class wires the object's SQLite, its scheduler (the one owner of the alarm), the run tokens and
 // the ports (compose.ts) to the turn engine (core.ts), and answers the RPC surface (`BrandAgentRpc`, ports.ts). The
-// socket (`fetch`, route 34) is PR 4's; the model gate's three calls answer "not admitted" until PR 2b builds it (no
-// model is priced before W3's catalogue, so route 29 refuses every model until then anyway).
+// socket (`fetch`, route 34) is PR 4's.
 import { DurableObject } from 'cloudflare:workers'
 import { apiError } from '../../http.ts'
 import { SYSTEM_PROMPT_V1 } from '../../prompt/system.ts'
@@ -67,15 +66,15 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async noteCountTokens(turnId: string): Promise<boolean> {
     return this.core.noteCountTokens(turnId)
   }
-  /** PR 2b builds the gate; until then no call is admitted (503 for that call). */
-  async admitModelCall(_turnId: string, _callId: string, _worst: ModelCallWorst): Promise<AdmitAnswer> {
-    return { busy: true }
+  /** The model gate (8.2, gate.ts): answered once the call is granted, refused, or 503 (`busy`). */
+  async admitModelCall(turnId: string, callId: string, worst: ModelCallWorst): Promise<AdmitAnswer> {
+    return this.core.admitModelCall(turnId, callId, worst)
   }
-  async renewModelCall(_turnId: string, _callId: string, _usage: ModelCallUsage): Promise<LeaseAnswer> {
-    return { gone: true }
+  async renewModelCall(turnId: string, callId: string, usage: ModelCallUsage): Promise<LeaseAnswer> {
+    return this.core.renewModelCall(turnId, callId, usage)
   }
-  async releaseModelCall(_turnId: string, _callId: string, _end: { usage: ModelCallUsage; cut: boolean }): Promise<LeaseAnswer> {
-    return { gone: true }
+  async releaseModelCall(turnId: string, callId: string, end: { usage: ModelCallUsage; cut: boolean }): Promise<LeaseAnswer> {
+    return this.core.releaseModelCall(turnId, callId, end)
   }
   async writeToolCall(turnId: string, n: number, entry: AuditEntry): Promise<void> {
     await this.core.writeToolCall(turnId, n, entry)

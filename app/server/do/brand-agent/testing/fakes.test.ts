@@ -1,6 +1,7 @@
 // The fakes behave like their ports' contracts (W2, W3 and W1's next PR test against them). Expected values are
 // literals. Ways it can fail, written down first:
-//  1. the fake ledger adds an extend twice on a retry, or moves a final turn's hold on a close;
+//  1. the fake ledger adds an extend twice on a retry, raises a hold on a close, closes a call twice, moves a final
+//     turn's hold on a close, or books a settle twice;
 //  2. the fake pool's drain doesn't hold 30 minutes from its time, or a warm-up doesn't clear it;
 //  3. the fake RPC's pause and resume don't change what getPause answers;
 //  4. the fake file ledger answers ids, not the stored rows, or takes an output for an input.
@@ -28,15 +29,26 @@ describe('FakeUsageLedger (failure 1)', () => {
     expect(await usage.extend('t', 'call-1', 100)).toEqual({ ok: true, ledgerHold: 100 })
     expect(await usage.extend('t', 'call-1', 100)).toEqual({ ok: true, ledgerHold: 100 })
   })
-  it('a close after settle or release changes nothing', async () => {
+  // PR 2b: the fake now keeps W4's rules (a close only lowers the hold, once per call; a final turn answers 0).
+  it('a close only lowers the hold, once per call; after settle or release it changes nothing', async () => {
     const usage = new FakeUsageLedger()
     await usage.reserve({ turnId: 't', runId: 'r', chatId: 'c', memberId: 'm_a', model: 'x', nowMs: 0 })
-    expect(await usage.close('t', 'call-1', 10, 300_000)).toEqual({ ledgerHold: 300_000 })
+    expect(await usage.extend('t', 'call-1', 100_000)).toEqual({ ok: true, ledgerHold: 350_000 })
+    expect(await usage.close('t', 'call-1', 10, 400_000)).toEqual({ ledgerHold: 350_000 })
+    expect(await usage.close('t', 'call-2', 10, 300_000)).toEqual({ ledgerHold: 300_000 })
+    expect(await usage.close('t', 'call-2', 10, 260_000)).toEqual({ ledgerHold: 300_000 })
+    expect(usage.monthReserved).toBe(300_000)
     await usage.settle('t', 20, 1)
-    expect(await usage.close('t', 'call-2', 10, 5)).toEqual({ ledgerHold: 300_000 })
+    expect([usage.monthReserved, usage.spent]).toEqual([0, 20])
+    expect(await usage.close('t', 'call-3', 10, 5)).toEqual({ ledgerHold: 0 })
+    expect(await usage.extend('t', 'call-4', 5)).toEqual({ refused: 'turn_budget', ledgerHold: 0 })
+    await usage.settle('t', 99, 2)
+    expect([usage.monthReserved, usage.spent]).toEqual([0, 20])
     await usage.reserve({ turnId: 'u', runId: 'r', chatId: 'c', memberId: 'm_a', model: 'x', nowMs: 0 })
+    await usage.close('u', 'call-1', 7, 250_000)
     await usage.release('u', 1)
-    expect(await usage.close('u', 'call-1', 0, 7)).toEqual({ ledgerHold: 250_000 })
+    expect(await usage.close('u', 'call-2', 0, 7)).toEqual({ ledgerHold: 0 })
+    expect([usage.monthReserved, usage.spent, usage.booked.get('u')]).toEqual([0, 27, 7])
   })
 })
 

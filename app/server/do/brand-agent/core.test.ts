@@ -113,7 +113,11 @@ describe('claim before await (4.2.1, 4.4)', () => {
     await h.tick(0)
     expect(h.placed()).toEqual([])
     expect(h.turn(a.turnId).state).toBe('cancelled')
-    expect(h.usage.calls.map(c => c.method)).toEqual(['reserve', 'release'])
+    // PR 2b: the ledger queue gives the hold back at once (no task wait), so a release goes out while the reserve is
+    // still in flight, and once more after it lands (both idempotent; W4's release of a turn it doesn't know is a
+    // no-op). What matters: the last word is a release, after the reserve, and the fake holds nothing for the turn.
+    expect(h.usage.calls.map(c => c.method)).toEqual(['release', 'reserve', 'release'])
+    expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
   }))
 
   it('a stop while the token is minted: the new token is revoked and nothing is placed (obligation 2)', () => inAgent(async h => {
