@@ -323,6 +323,7 @@ describe('the gate (failure 6)', () => {
     const resB = await call(h, { ...small, stream: true })
     const readerB = resB.body!.getReader()
     feedB.send({ type: 'message_start', message: { usage: { input_tokens: 5, output_tokens: 1 } } })
+    feedB.send({ type: 'message_delta', usage: { output_tokens: 2 } })
     feedB.send({ type: 'message_stop' })
     feedB.end()
     ac.abort()

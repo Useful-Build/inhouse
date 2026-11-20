@@ -38,11 +38,24 @@ export function gatewayRequest(baseUrl: string, path: ModelPath, init: { body: s
   return new Request(`${baseUrl.replace(/\/+$/, '')}${path}`, { method: 'POST', headers, body: init.body, signal: init.signal, redirect: 'manual' })
 }
 
+/**
+ * A failure known to come before the request was sent (the gateway not configured, its URL not found). The model route
+ * books such a call at zero; any other rejection may have reached the model, so it's booked at its worst case.
+ */
+export class PreSendError extends Error {
+  override name = 'PreSendError'
+}
+
 /** The house gateway. Fails loudly when the deployment lacks its id or token. */
 export function gatewayUpstream(env: { AI?: AiGatewayBinding; AI_GATEWAY_ID?: string; AI_GATEWAY_TOKEN?: string }, fetcher: typeof fetch = fetch): ModelUpstream {
   return async (path, init) => {
-    if (!env.AI || !env.AI_GATEWAY_ID || !env.AI_GATEWAY_TOKEN) throw new Error('the AI Gateway is not configured (AI binding, AI_GATEWAY_ID, AI_GATEWAY_TOKEN)')
-    const base = await env.AI.gateway(env.AI_GATEWAY_ID).getUrl('anthropic')
+    if (!env.AI || !env.AI_GATEWAY_ID || !env.AI_GATEWAY_TOKEN) throw new PreSendError('the AI Gateway is not configured (AI binding, AI_GATEWAY_ID, AI_GATEWAY_TOKEN)')
+    let base: string
+    try {
+      base = await env.AI.gateway(env.AI_GATEWAY_ID).getUrl('anthropic')
+    } catch (e) {
+      throw new PreSendError(`the AI Gateway URL lookup failed: ${e instanceof Error ? e.name : 'unknown'}`)
+    }
     return fetcher(gatewayRequest(base, path, init, env.AI_GATEWAY_TOKEN))
   }
 }

@@ -12,6 +12,7 @@ import { createSseTally, usageOfMessage } from '../model/tally.ts'
 import type { ModelCallUsage, ModelCallWorst } from '../do/brand-agent/ports.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import type { EgressDeps } from './deps.ts'
+import { PreSendError } from './gateway.ts'
 import { mapUpstreamError, messagesError, modelRequestHeaders, parseJson, readCapped, responseHeaders } from './http.ts'
 
 /** The largest request body the model route takes (8.2). */
@@ -80,7 +81,7 @@ async function cliCount(body: object, headers: Headers, grant: RunGrant, d: Egre
 async function passBack(res: Response): Promise<Response> {
   const h = responseHeaders(res.headers)
   if (res.status >= 300 && res.status < 400) return messagesError(502, 'api_error', 'The model service redirected.')
-  if (!res.ok) return mapUpstreamError(res, h)
+  if (!res.ok) return (await mapUpstreamError(res, h)).response
   return new Response(await res.arrayBuffer(), { status: res.status, headers: h })
 }
 
@@ -233,11 +234,12 @@ class CallLease {
     let res: Response
     try {
       res = await this.d.upstream('/v1/messages', { body: JSON.stringify(body), headers, signal: this.upstreamAbort.signal })
-    } catch {
+    } catch (e) {
       this.d.clearTimeout(firstByte)
       if (this.closed) return this.closedAnswer()
-      // A connect failure: the request never reached the model.
-      await this.close('unsent')
+      // Only a failure known to come before the send is free. A fetch that rejects can't tell "never sent" from "reset
+      // after the model ran" (a whole answer's headers come only after the generation), so it's booked at the worst case.
+      await this.close(e instanceof PreSendError ? 'unsent' : 'cut')
       return messagesError(502, 'api_error', 'The model service failed.')
     }
     this.d.clearTimeout(firstByte)
@@ -252,10 +254,11 @@ class CallLease {
       return messagesError(502, 'api_error', 'The model service redirected.')
     }
     if (!res.ok) {
-      // An error answer bills nothing: closed at zero (an empty tally).
+      // The API's own error answer bills nothing: closed at zero (an empty tally). Any other error body (a gateway 5xx or
+      // 524 after forwarding) may follow a generation the model billed: cut.
       const mapped = await mapUpstreamError(res, h)
-      await this.close('tally')
-      return mapped
+      await this.close(mapped.anthropic ? 'tally' : 'cut')
+      return mapped.response
     }
     const streamed = (res.headers.get('content-type') ?? '').includes('text/event-stream')
     if (!streamed) {
@@ -292,7 +295,7 @@ class CallLease {
   private stream(res: Response, h: Headers): Response {
     const tally = createSseTally()
     this.usage = () => tally.usage()
-    this.whole = () => tally.complete && tally.sawUsage
+    this.whole = () => tally.complete && tally.sawFinalUsage
     const reader = res.body!.getReader()
     const end = async () => {
       if (tally.complete && !tally.sawUsage) this.d.log({ event: 'egress_model_no_usage', route: 'model', shape: 'stream' })
