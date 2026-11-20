@@ -306,6 +306,8 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
       const r = await person(input.id)
       if (change.meta.changes > 0 && r) return { ok: memberRecord(r) }
       if (!r || r.status === 'removed') return { refused: 'not_found' }
+      // A stale ifRev on an Admin target answers 409 before the 403: nothing was written either way, and the 409's
+      // record is one the Inhouse team may already read (the member list is baseline), so the order leaks nothing.
       if (r.rev !== input.ifRev) return { conflict: memberRecord(r) }
       if (input.notAdmin && r.role === 'admin') return { refused: 'admin_target' }
       return { refused: 'last_admin' }

@@ -10,7 +10,6 @@
 //  6. the photo route's stricter CSP and caching are lost in api.ts's wrap, or another handler can loosen the site's.
 import { env as baseEnv } from 'cloudflare:workers'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fc, test } from '@fast-check/vitest'
 import { api } from '../api.ts'
 import type { ApiParts } from '../api.ts'
 import { accessMatrix } from '../access-matrix.ts'
@@ -257,14 +256,18 @@ describe('the Inhouse team holds every Admin control but the Admin role, each wr
     // No grant was live, and none of these is brand data: no support.access line.
   })
 
-  // Decision 19b: the Inhouse team can't create, promote, demote or remove an Admin. Each run makes fresh targets: a
-  // Member and an Admin (an invited one, or the brand's active Admin), so every action meets a row it could change.
+  // Decision 19b: the Inhouse team can't create, promote, demote or remove an Admin. Every one of the 12 pairs (action,
+  // and whether the Admin target is the brand's active Admin or a fresh invited one) runs every time, each with fresh
+  // targets, so a rule that covers only one kind of Admin fails on every run, not on some random draws.
   type Action = 'invite admin' | 'invite member' | 'promote to admin' | 'demote an admin' | 'remove an admin' | 'remove a member'
   const ACTIONS: Action[] = ['invite admin', 'invite member', 'promote to admin', 'demote an admin', 'remove an admin', 'remove a member']
   const TOUCHES_ADMIN: Action[] = ['invite admin', 'promote to admin', 'demote an admin', 'remove an admin']
+  /** Who each action is aimed at: promoting targets the Member (the real attack); demoting and removing an Admin target the Admin. */
+  const AIMS_AT_ADMIN: Action[] = ['demote an admin', 'remove an admin']
   let n = 0
-  test.prop([fc.constantFrom(...ACTIONS), fc.boolean()], { numRuns: 24 })(
-    'exactly the four Admin-touching actions are refused (403 forbidden, nothing written, no line); the two Member ones pass', async (action, activeAdmin) => {
+  const PAIRS = ACTIONS.flatMap(action => [true, false].map(activeAdmin => [action, activeAdmin] as const))
+  it.each(PAIRS)(
+    'exactly the four Admin-touching actions are refused (403 forbidden, nothing written, no line); the two Member ones pass: %s (active Admin: %s)', async (action, activeAdmin) => {
       const stores = openStores(env)
       const tag = `${k}-${++n}`
       const made = async (role: 'member' | 'admin') => {
@@ -274,7 +277,7 @@ describe('the Inhouse team holds every Admin control but the Admin role, each wr
       }
       const member = await made('member')
       const admin = activeAdmin ? (await stores.members.get(who.admin))! : await made('admin')
-      const target = action.endsWith('admin') && !action.startsWith('invite') ? admin : member
+      const target = AIMS_AT_ADMIN.includes(action) ? admin : member
       const revBefore = await memberRev(target.id)
       const before = await mark()
       const res = action.startsWith('invite')
