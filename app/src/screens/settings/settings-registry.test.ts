@@ -25,6 +25,7 @@ function allRows(): Row[] {
     S: 2, stage: 'Run', agent: agent.getSnapshot(), data, spent: data.usage.total, phone: false,
     openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
+    me: agent.me(), invite: noop, removeMember: noop, grantUi: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null,
   }
   return MENU.flatMap(g => g.items).flatMap(([tab]) => settingsPage(tab, env).sections.flatMap(s => s.rows))
 }
@@ -65,11 +66,11 @@ describe('the page and the registry (failures 1 to 3)', () => {
     for (const k of [...Object.keys(saved.settings), ...Object.keys(saved.toggles)]) expect(refused(k), `${k} was saved`).toBe(false)
   })
 
-  it('offers a non-Admin only their own label and Admin', () => {
-    expect(rows.find(r => r.key === 'p:m_priya')?.options, 'a Member').toEqual(['Admin', 'Member'])
-    const approver = rows.find(r => r.key?.startsWith('p:') && r.value === 'Approver')
+  it('offers every member Admin or Member, and shows Approver as a label, never a choice', () => {
+    for (const r of rows.filter(r => r.key?.startsWith('p:'))) expect(r.options, r.key).toEqual(['Admin', 'Member'])
+    const approver = rows.find(r => r.key?.startsWith('p:') && r.display === 'Approver')
     expect(approver, 'a sample Approver row exists').toBeDefined()
-    expect(approver!.options).toEqual(['Admin', 'Approver'])
+    expect(approver!.value).toBe('Member')
   })
 
   it('puts each key in the scope section 6 names', () => {

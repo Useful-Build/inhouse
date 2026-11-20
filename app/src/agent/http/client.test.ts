@@ -109,10 +109,11 @@ describe('reads', () => {
 
   test('a Member is not asked for the grants, or for what they may not view; the Inhouse team has no personal settings', async () => {
     const member1 = await loaded(reads({ me: me({ role: 'member', can: { ...can(false), viewMembers: true, viewAudit: true } }) }))
-    expect(member1.calls.map(c => c.path)).not.toContain('/api/grants')
+    expect(member1.calls.map(c => c.path), 'route 16 is not asked for a viewer who can\'t grant and isn\'t the Inhouse team').not.toContain('/api/grants')
     expect(member1.agent.read().resources.grants.status).toBe('ready')
     const staff = await loaded(reads({ me: me({ role: 'inhouse', can: can(false) }) }))
-    expect(staff.calls.map(c => c.path)).toEqual(['/api/me', '/api/settings/brand', '/api/settings/technical'])
+    // The Inhouse team reads the grants (route 16) though it can't grant; members and audit are skipped by its `can`.
+    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/settings/brand', '/api/settings/technical'])
   })
 
   test('a 403 on the grants reads as "not for you", not an error', async () => {

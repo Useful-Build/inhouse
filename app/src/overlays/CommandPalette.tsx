@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Icon, StageTag } from '../ui'
 import { keepForToast } from '../ui/dialogs'
 import { NO_MOTION } from '../ui/motion'
-import { MENU } from '../screens/settings/content'
+import { MENU } from '../screens/settings/menu'
 import { mac, PRIMARY, SECONDARY, SHORTCUTS } from '../shell/nav'
 import { demoEnabled } from '../shell/demo'
 

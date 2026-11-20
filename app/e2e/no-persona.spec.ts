@@ -111,17 +111,18 @@ for (const size of SIZES) {
           }
         }
 
-        // Every button in Settings that opens the team window (each pre-fills different text).
-        for (const [id, title, button] of [
-          ['team-plan', 'Stage and plan', 'Book a check-in'], ['team-members', 'Members', 'Invite'], ['team-data', 'Data and access', 'Ask the team'],
+        // Every button in Settings that opens a window: the team window (each pre-fills different text) and, since P2, the
+        // Members page's own Invite window.
+        for (const [id, title, button, window] of [
+          ['team-plan', 'Stage and plan', 'Book a check-in', 'Your Inhouse team'], ['team-members', 'Members', 'Invite', 'Invite someone'], ['team-data', 'Data and access', 'Ask the team', 'Your Inhouse team'],
         ]) {
           await go(page, `#/settings/${id}`)
           await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
           await page.getByRole('main').getByRole('button', { name: button, exact: true }).first().click()
-          await expect(page.getByRole('dialog', { name: 'Your Inhouse team' })).toBeVisible()
-          await check(page, `${label} settings ${id} team window`)
+          await expect(page.getByRole('dialog', { name: window })).toBeVisible()
+          await check(page, `${label} settings ${id} window`)
           await page.keyboard.press('Escape')
-          await expect(page.getByRole('dialog', { name: 'Your Inhouse team' })).toHaveCount(0)
+          await expect(page.getByRole('dialog', { name: window })).toHaveCount(0)
         }
       })
 

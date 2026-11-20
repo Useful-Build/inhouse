@@ -8,6 +8,8 @@ import { Sidebar } from './shell/Sidebar'
 import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
 import { NotConnected } from './shell/NotConnected'
+import { notOnTeam } from './shell/not-on-team'
+import { mayWriteHash } from './shell/route-sync'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -21,7 +23,7 @@ import { Routines } from './screens/Routines'
 import { Activity } from './screens/Activity'
 import { Tools, ToolPage } from './screens/Tools'
 import { Skills } from './screens/Skills'
-import { MENU } from './screens/settings/content'
+import { MENU } from './screens/settings/menu'
 import { ProblemPanel } from './overlays/ProblemPanel'
 import { TeamWindow } from './overlays/TeamWindow'
 import { HelpWindow } from './overlays/HelpWindow'
@@ -45,6 +47,7 @@ function lazyRoute<M, C extends ComponentType>(load: () => Promise<M>, pick: (m:
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
+const NotOnTeam = lazyRoute(() => import('./shell/NotOnTeam'), m => m.NotOnTeam)
 const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.TraceWindow)
 
 /** A trace window whose chunk can't load closes and says so, instead of taking the app down. */
@@ -183,6 +186,8 @@ function applyRoute(r: Route, first: boolean) {
 const initialRoute = fromHash(location.hash)
 if (initialRoute) applyRoute(initialRoute, true)
 /** The first link named a page that doesn't exist: App says so once it has mounted. */
+/** Where the app was when its hash was last written (see shell/route-sync.ts). */
+let lastNav = ''
 const bootUnknownPage = !initialRoute && hasSlug(location.hash)
 
 function useHashRoute() {
@@ -247,7 +252,12 @@ function useHashRoute() {
     if (chatUnknown) return // replaced above
     const h = toHash(page, appKey, setTab, chatKey, menu)
     // An open Library file keeps its own link (#/library/<id>, see screens/library/route.ts).
-    if (location.hash === h || (page === 'library' && location.hash.startsWith(`${h}/`))) return
+    if (location.hash === h || (page === 'library' && location.hash.startsWith(`${h}/`))) { lastNav = `${page}|${appKey}|${setTab}|${chatKey}|${menu}`; return }
+    // A hash someone else just set is read by the hashchange listener; writing now (a phone-width resize re-runs this effect) would put the old page back over it.
+    const nav = `${page}|${appKey}|${setTab}|${chatKey}|${menu}`
+    const navChanged = nav !== lastNav
+    lastNav = nav
+    if (!mayWriteHash(navChanged, location.hash, h, !!fromHash(location.hash))) return
     // A hash that only needs tidying (none, unknown, no tab) replaces the entry. A real move adds one.
     // So does a new chat getting its id when the first question is asked: Back skips the empty chat.
     const cur = fromHash(location.hash)
@@ -374,7 +384,9 @@ function Shell() {
  * screen in place of the pages. The demo has `demo` set and never shows it.
  */
 export default function App() {
-  const status = useAgentData().status
-  if (demo === null && status === 'loading') return <NotConnected />
+  const data = useAgentData()
+  // The Worker refused the person as not invited, or removed: they aren't on this team (the product only).
+  if (demo === null && notOnTeam(data)) return <Suspense fallback={null}><NotOnTeam /></Suspense>
+  if (demo === null && data.status === 'loading') return <NotConnected />
   return <Shell />
 }

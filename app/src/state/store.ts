@@ -649,7 +649,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   agent.onNotice(n => {
     // A sent notice removes only the toasts whose holds all went out, then shows itself: it never replaces another toast.
     if (n.type === 'approval.sent') { settleHolds(); showToast(n.text, { ms: 4000 }) }
-    else if (n.type === 'error') showToast(n.text, { icon: 'error' })
+    // A stale save: the Settings screen follows with what the record is now, in this same toast (key `conflict`).
+    else if (n.type === 'error') showToast(n.text, { icon: 'error', ...(n.code === 'conflict' ? { key: 'conflict' } : {}) })
     else showToast(n.text, { icon: 'info' })
   })
 

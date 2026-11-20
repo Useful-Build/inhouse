@@ -6,7 +6,7 @@
 // It imports nothing from the mock or the sample data.
 import { instantOf } from '../../lib/format'
 import { RESOURCE_KEYS } from '../../../shared/contract/keys'
-import { NOT_FOUND, REASON, REASON_NOT_INVITED } from '../../../shared/contract/error-codes'
+import { NOT_FOUND, REASON } from '../../../shared/contract/error-codes'
 import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError } from '../types'
 import type {
@@ -204,7 +204,7 @@ export class HttpAgent implements AgentClient {
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
   /** A 401, or a 403 that says the person isn't on the team (never invited, or removed): the signed-out state, whichever request met it. */
   private static gone(err: AgentError): boolean {
-    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON_NOT_INVITED || err.reason === 'removed'))
+    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON.notInvited || err.reason === REASON.removed))
   }
   private failStatus(k: ResourceKey, e: unknown) {
     const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
@@ -250,7 +250,8 @@ export class HttpAgent implements AgentClient {
 
   /** Route 16 is for Admins and the Inhouse team: a person who can't grant isn't asked, and a 403 there reads as "not for you", not an error. */
   private async loadGrants() {
-    if (this.s.me && !this.s.me.can.grantSupport) return this.setStatus('grants', { status: 'ready' })
+    // Admins can grant and the Inhouse team can read the grants (route 16); anyone else isn't asked.
+    if (this.s.me && !this.s.me.can.grantSupport && this.s.me.role !== 'inhouse') return this.setStatus('grants', { status: 'ready' })
     try {
       const { items } = await this.http.call({ method: 'GET', path: '/api/grants', schema: 'grants' })
       this.patch({ grant: items[0] ?? null, res: { ...this.s.res, grants: { status: 'ready' } } })
