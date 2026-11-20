@@ -6,7 +6,7 @@ import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { api } from './api.ts'
 import type { ApiParts } from './api.ts'
-import { unwiredStores } from './auth/index.ts'
+import { unwiredStores } from './testing/auth-fixtures.ts'
 
 const handler = vi.fn(async () => new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' } }))
 const checkOrigin = vi.fn<ApiParts['checkOrigin']>()
