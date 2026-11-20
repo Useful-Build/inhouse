@@ -173,7 +173,7 @@ function realTarget(origin: string): ContractTarget {
       await endLiveGrant(s)
       await resetSettings(s)
       this.fixtures.personId = seeded.admin
-      this.fixtures.photoAfterSet = `/api/members/${encodeURIComponent(seeded.admin)}/photo`
+      this.fixtures.photoAfterSet = new RegExp(`^/api/members/${seeded.admin}/photo\\?v=[0-9a-f]{32}$`) // a member id is base64url: nothing to escape
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }
       this.fixtures.otherMemberId = seeded.leo
       hung = false

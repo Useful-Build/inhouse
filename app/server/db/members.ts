@@ -7,6 +7,7 @@ import type { SignIn, SignInRefusal } from '../auth/stores.ts'
 import { auditInsert } from './audit.ts'
 import type { AuditHook, Guard } from './audit.ts'
 import { newMemberId, writeStamp } from './ids.ts'
+import { photoUrl } from './photos.ts'
 import { all, first, runBatch, stmt } from './sql.ts'
 import type { Stmt } from './sql.ts'
 
@@ -49,7 +50,7 @@ export function memberRecord(row: MemberRow): MemberRecord {
     title: row.title,
     role: row.role,
     status: row.status,
-    photo: row.photo_key ? `/api/members/${encodeURIComponent(row.id)}/photo` : null,
+    photo: row.photo_key ? photoUrl(row.id, row.photo_key) : null,
     rev: row.rev,
   }
 }

@@ -27,7 +27,8 @@ for (const type of TYPES) {
     const bytes = imageBytes(type, 200)
     const put = await call(request, dana, 'PUT', '/api/photo', { bytes, contentType: type })
     expect(put.status, put.text).toBe(200)
-    expect(put.json).toEqual({ photoUrl: `/api/members/${id}/photo`, rev: await revOf(request, id) })
+    // The URL is versioned by the photo itself (`?v=`), so a replaced photo is never shown from a browser's cache.
+    expect(put.json).toEqual({ photoUrl: expect.stringMatching(new RegExp(`^/api/members/${id}/photo\\?v=[0-9a-f]{32}$`)), rev: await revOf(request, id) })
     expect((await me(request, dana)).photoUrl).toBe(put.json.photoUrl)
     // Any member, and the Admin, reads it.
     for (const who of [dana, leo, actor('admin')]) {
@@ -42,14 +43,24 @@ for (const type of TYPES) {
   })
 }
 
-test('a replaced photo is the new one', async ({ request }) => {
+test('a replaced photo is the new one, under a new URL', async ({ request }) => {
   const url = `/api/members/${(await me(request, dana)).memberId}/photo`
-  await call(request, dana, 'PUT', '/api/photo', { bytes: imageBytes('image/png', 100), contentType: 'image/png' })
+  const first = await call(request, dana, 'PUT', '/api/photo', { bytes: imageBytes('image/png', 100), contentType: 'image/png' })
   const next = imageBytes('image/jpeg', 150)
-  expect((await call(request, dana, 'PUT', '/api/photo', { bytes: next, contentType: 'image/jpeg' })).status).toBe(200)
-  const got = await call(request, leo, 'GET', url)
-  expect(got.headers['content-type']).toBe('image/jpeg')
-  expect(got.bytes.equals(next)).toBe(true)
+  const second = await call(request, dana, 'PUT', '/api/photo', { bytes: next, contentType: 'image/jpeg' })
+  expect(second.status).toBe(200)
+  expect(second.json.photoUrl, 'a replaced photo gets a new URL').not.toBe(first.json.photoUrl)
+  expect((await me(request, dana)).photoUrl).toBe(second.json.photoUrl)
+  // The route reads only the path: the new URL, the old one and the bare path all serve the photo as it is now.
+  for (const u of [second.json.photoUrl, first.json.photoUrl, url]) {
+    const got = await call(request, leo, 'GET', u)
+    expect(got.status, got.text).toBe(200)
+    expect(got.headers['content-type']).toBe('image/jpeg')
+    expect(got.headers['x-content-type-options']).toBe('nosniff')
+    expect(got.headers['content-security-policy']).toBe("default-src 'none'; sandbox")
+    expect(got.headers['cache-control']).toBe('private, no-cache')
+    expect(got.bytes.equals(next)).toBe(true)
+  }
 })
 
 test.describe('refused uploads leave the photo as it was', () => {
@@ -118,8 +129,8 @@ test('removing a photo clears it, for everyone', async ({ request }) => {
 
 test('the download is refused to a principal the row doesn\'t allow, and to the Inhouse team without a grant', async ({ request }) => {
   const id = (await me(request, dana)).memberId
-  await call(request, dana, 'PUT', '/api/photo', { bytes: imageBytes('image/png'), contentType: 'image/png' })
-  const url = `/api/members/${id}/photo`
+  const url = (await call(request, dana, 'PUT', '/api/photo', { bytes: imageBytes('image/png'), contentType: 'image/png' })).json.photoUrl as string
+  expect(url.startsWith(`/api/members/${id}/photo?v=`), 'the versioned URL is gated as the path is').toBe(true)
   for (const who of ['smoke', 'monitor'] as const) expectError(await call(request, actor(who), 'GET', url), 403, 'forbidden')
   expectError(await call(request, actor('inhouse'), 'GET', url), 403, 'forbidden', 'grant_required')
   // The upload and removal are the owner's only: the Inhouse team, `smoke` and `monitor` can't.

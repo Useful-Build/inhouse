@@ -584,7 +584,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(c.getSnapshot().settings[fx.settingKey]).toBeUndefined()
       const photoOf = () => c.read().people.members.find(m => m.id === fx.personId)?.photo
       await c.setPhoto(fx.personId, fx.photoDataUrl)
-      expect(photoOf(), 'the photo reads as the target says it does once set').toBe(fx.photoAfterSet)
+      expect(photoOf(), 'the photo reads as the target says it does once set').toEqual(fx.photoAfterSet instanceof RegExp ? expect.stringMatching(fx.photoAfterSet) : fx.photoAfterSet)
       await c.setPhoto(fx.personId, null)
       expect(photoOf(), 'a removed photo no longer reads as the photo').toBeNull()
       expect(Object.keys(c.getSnapshot().settings).filter(k => k.startsWith('photo:')), 'a photo is not a setting').toEqual([])

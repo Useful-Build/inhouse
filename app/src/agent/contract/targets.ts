@@ -67,8 +67,8 @@ export interface Fixtures {
   /** One setting key with three valid values, for the stale-write property. */
   choices: { key: string; values: [string, string, string] }
   photoDataUrl: string
-  /** What a member's `photo` reads as after `setPhoto(personId, photoDataUrl)`: the demo keeps the picture as sent, the product serves it from `/api/members/<id>/photo`. */
-  photoAfterSet: string
+  /** What a member's `photo` reads as after `setPhoto(personId, photoDataUrl)`: the demo keeps the picture as sent, the product serves it from `/api/members/<id>/photo?v=<the photo's version>` (a pattern: the version is the server's). */
+  photoAfterSet: string | RegExp
   teamRequest: TeamRequest
   newChat: { id: string; title: string }
   /** A title with spaces round it: `renameChat` trims it to `paddedTitleTrimmed`. */

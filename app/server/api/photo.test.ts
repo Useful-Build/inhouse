@@ -37,6 +37,12 @@ const bytesOf = (head: number[], size = 64) => { const b = new Uint8Array(size);
 /** This test's member's objects (R2 isn't reset between tests; every member has its own prefix). */
 /** The member row's rev, read back: what a photo answer must carry. */
 const revOf = async () => (await db.prepare('SELECT rev FROM members WHERE id = ?').bind(me).first<number>('rev'))!
+/** The photo URL the row's key makes now: the path, versioned by the key's last part (null: no photo). */
+const keyNow = async () => db.prepare('SELECT photo_key FROM members WHERE id = ?').bind(me).first<string | null>('photo_key')
+const urlNow = async () => {
+  const key = await keyNow()
+  return key === null ? null : `/api/members/${me}/photo?v=${key.slice(key.lastIndexOf('/') + 1)}`
+}
 const objects = async () => (await files.list({ prefix: `photos/${me}/` })).objects.map(o => o.key).sort()
 
 function photoCtx(body: BodyInit | null, headers: Record<string, string>, s: Stores = stores, objectsSeen: unknown[] = []): ApiCtx {
@@ -68,7 +74,8 @@ describe('the type comes from the bytes (failure 1)', () => {
   })
   it('takes PNG, JPEG and WebP under their own type', async () => {
     for (const [head, type] of [[PNG, 'image/png'], [JPEG, 'image/jpeg'], [webp(), 'image/webp']] as const) {
-      expect(await put(bytesOf(head), `${type}; charset=binary`)).toEqual({ status: 200, body: { photoUrl: `/api/members/${me}/photo`, rev: await revOf() } })
+      const answer = await put(bytesOf(head), `${type}; charset=binary`)
+      expect(answer).toEqual({ status: 200, body: { photoUrl: await urlNow(), rev: await revOf() } })
     }
   })
 })
@@ -153,7 +160,7 @@ describe('after the commit, and races (fix round 1)', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       const s = store({ files: { delete: async (k: string | string[]) => { if (k === old) throw new Error('R2 down'); await files.delete(k) } } })
-      expect(await s.set({ memberId: me, bytes: bytesOf(JPEG), type: 'image/jpeg' }, at(me))).toEqual({ ok: true, rev: await revOf() })
+      expect(await s.set({ memberId: me, bytes: bytesOf(JPEG), type: 'image/jpeg' }, at(me))).toEqual({ ok: true, rev: await revOf(), key: await keyNow() })
       expect(error.mock.calls).toEqual([[{ event: 'photo_old_delete_failed', key: old, error: 'StoreUnavailableError' }]])
       const row = await db.prepare('SELECT photo_key FROM members WHERE id = ?').bind(me).first<string>('photo_key')
       expect(row).not.toBe(old)
@@ -171,7 +178,7 @@ describe('after the commit, and races (fix round 1)', () => {
         return typeof v === 'function' ? v.bind(t) : v
       },
     })
-    expect(await store({ db: lostReply }).set({ memberId: me, bytes: bytesOf(PNG), type: 'image/png' }, at(me))).toEqual({ ok: true, rev: await revOf() })
+    expect(await store({ db: lostReply }).set({ memberId: me, bytes: bytesOf(PNG), type: 'image/png' }, at(me))).toEqual({ ok: true, rev: await revOf(), key: await keyNow() })
     const row = await db.prepare('SELECT photo_key FROM members WHERE id = ?').bind(me).first<string>('photo_key')
     expect(await objects()).toEqual([row])
   })
@@ -182,15 +189,37 @@ describe('after the commit, and races (fix round 1)', () => {
     const racing = openStores(env, undefined, { beforePhotoBatch: async () => { await db.prepare("UPDATE members SET photo_key = 'photos/' || id || '/other' WHERE id = ?").bind(me).run() } })
     const res = await deletePhoto(photoCtx(null, {}, racing))
     expect(res.status).toBe(409)
-    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo`, rev: await revOf() } } })
+    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo?v=other`, rev: await revOf() } } })
     expect(await linesSince(db, before)).toEqual([])
   })
   it('an upload that loses a race is 409 conflict with the photo as it is now', async () => {
     const racing = openStores(env, undefined, { beforePhotoBatch: async () => { await db.prepare("UPDATE members SET photo_key = 'photos/' || id || '/other' WHERE id = ?").bind(me).run() } })
     const res = await putPhoto(photoCtx(bytesOf(PNG) as Uint8Array<ArrayBuffer>, { 'Content-Type': 'image/png' }, racing))
     expect(res.status).toBe(409)
-    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo`, rev: await revOf() } } })
+    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo?v=other`, rev: await revOf() } } })
     expect(await objects()).toEqual([])
+  })
+})
+
+describe('the photo URL changes with the photo (a browser never shows a replaced one from its cache)', () => {
+  test.prop([fc.integer({ min: 2, max: 5 })], { numRuns: 5 })('every upload answers a URL no earlier upload had, and me and the row say the same', async n => {
+    const seen = new Set<string>()
+    for (let i = 0; i < n; i++) {
+      const { body } = await put(bytesOf(PNG), 'image/png')
+      const url = body.photoUrl as string
+      expect(url).toMatch(new RegExp(`^/api/members/${me}/photo\\?v=[0-9a-f]{32}$`))
+      expect(seen.has(url), 'a new upload, a new URL').toBe(false)
+      seen.add(url)
+      expect((await stores.members.get(me))?.photo).toBe(url)
+    }
+  })
+  it('the download route reads only the path: any version serves the photo the row holds', async () => {
+    const { body } = await put(bytesOf(PNG), 'image/png')
+    for (const v of [body.photoUrl as string, `/api/members/${me}/photo?v=stale`]) {
+      const res = await getMemberPhoto({ ...photoCtx(null, {}), request: new Request(`http://brand.localhost:8787${v}`), params: { id: me } })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('Content-Type')).toBe('image/png')
+    }
   })
 })
 
@@ -202,7 +231,7 @@ describe("the answer's rev is the photo write's own (fix round 4)", () => {
     const racing = openStores(env, undefined, { afterPhotoBatch: otherWrite })
     const res = await putPhoto(photoCtx(bytesOf(PNG) as Uint8Array<ArrayBuffer>, { 'Content-Type': 'image/png' }, racing))
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ photoUrl: `/api/members/${me}/photo`, rev: before + 1 })
+    expect(await res.json()).toEqual({ photoUrl: await urlNow(), rev: before + 1 })
     expect(await revOf(), 'the other write did land').toBe(before + 2)
   })
   it('a removal answers with the rev its own write left, not a later write\'s', async () => {

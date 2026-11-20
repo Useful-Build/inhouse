@@ -232,7 +232,7 @@ describe('me', () => {
     for (const p of withRows) {
       const me = buildMe(p, profile, DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
       expect(MeSchema.safeParse(me).success, p.kind).toBe(true)
-      expect(me.photoUrl).toBe(`/api/members/${p.memberId}/photo`)
+      expect(me.photoUrl).toBe(`/api/members/${p.memberId}/photo?v=1`)
       expect(me.grant !== null).toBe(p.kind === 'inhouse' && p.grant !== null)
     }
     expect(buildMe(withRows[0], { ...profile, photoKey: null }, DESIGN_ROWS, DESIGN_CAN_ROWS, NOW).photoUrl).toBeNull()
