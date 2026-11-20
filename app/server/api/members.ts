@@ -1,5 +1,7 @@
-// Routes 3 to 6 (p2-design section 3): the team list, invite, role change and removal. Access (Admin and the Inhouse
-// team for the writes, decision 19; every signed-in person reads the list) is the matrix's, before these run; the rules on the object (already a
+// Routes 3 to 6 (p2-design section 3): the team list, invite, role change and removal. Access (Admin for every write,
+// the Inhouse team for invite and removal, decision 19; every signed-in person reads the list) is the matrix's, before
+// these run. Decision 19b is these handlers' own rule: the Inhouse team never invites or removes an Admin (403
+// `forbidden`, nothing written, no audit line); the role change is Admin-only in the matrix (row 5); the rules on the object (already a
 // member, the last Admin, a stale ifRev) are the data layer's, inside its statements.
 import { InviteInputSchema, MemberIdSchema, MemberRemoveQuerySchema, RoleChangeInputSchema } from '../../shared/contract/members.ts'
 import { apiError, apiJson } from '../http.ts'
@@ -18,6 +20,8 @@ export async function listMembers(c: ApiCtx): Promise<Response> {
 export async function inviteMember(c: ApiCtx): Promise<Response> {
   const body = await readBody(c.request, InviteInputSchema)
   if ('error' in body) return body.error
+  // Decision 19b: the Inhouse team invites Members only, never an Admin.
+  if (c.principal.kind === 'inhouse' && body.ok.role === 'admin') return apiError('forbidden')
   const done = await storesOf(c).members.invite(body.ok, writer(c))
   if ('refused' in done) return apiError('conflict', { reason: done.refused })
   return apiJson(done.ok, 201)
@@ -54,8 +58,13 @@ export async function removeMember(c: ApiCtx): Promise<Response> {
   if (id === null) return apiError('not_found')
   const query = readQuery(c.request, MemberRemoveQuerySchema)
   if ('error' in query) return query.error
-  const done = await storesOf(c).members.remove({ id, ifRev: query.ok.ifRev }, writer(c))
+  // Decision 19b: the Inhouse team never removes an Admin (checked in the statement, see members.remove).
+  const done = await storesOf(c).members.remove({ id, ifRev: query.ok.ifRev, notAdmin: c.principal.kind === 'inhouse' }, writer(c))
   if ('ok' in done) return apiJson(done.ok)
   if ('conflict' in done) return apiError('conflict', { current: done.conflict })
-  return done.refused === 'last_admin' ? apiError('conflict', { reason: 'last_admin' }) : apiError('not_found')
+  switch (done.refused) {
+    case 'admin_target': return apiError('forbidden')
+    case 'last_admin': return apiError('conflict', { reason: 'last_admin' })
+    case 'not_found': return apiError('not_found')
+  }
 }

@@ -71,11 +71,13 @@ describe('a send (failure 4)', () => {
     expect(SendTurnInputSchema.safeParse({ ...base, text: 'x', attachments: Array(10).fill(att) }).success).toBe(true)
     expect(SendTurnInputSchema.safeParse({ ...base, text: 'x', attachments: Array(11).fill(att) }).success).toBe(false)
   })
-  it('takes an attachment ref only with an f_ id of 22 characters and a 1-200 character name', () => {
+  it('takes an attachment ref only with an f_ id of 22 characters and a 1-200 character name without control characters', () => {
     expect(AttachmentRefSchema.safeParse({ fileId: 'f_0123456789abcdefABCDE', name: 'a' }).success).toBe(false)
     expect(AttachmentRefSchema.safeParse({ fileId: 'f_0123456789abcdefABCDEF', name: '' }).success).toBe(false)
     expect(AttachmentRefSchema.safeParse({ fileId: 'f_0123456789abcdefABCDEF', name: 'n'.repeat(200) }).success).toBe(true)
     expect(AttachmentRefSchema.safeParse({ fileId: 'f_0123456789abcdefABCDEF', name: 'n'.repeat(201) }).success).toBe(false)
+    for (const bad of ['a\nb', 'a\u0000', '\t', 'x\u007f', 'x\u0085']) expect(AttachmentRefSchema.safeParse({ fileId: 'f_0123456789abcdefABCDEF', name: bad }).success, JSON.stringify(bad)).toBe(false)
+    for (const ok of ['report final.pdf', 'café.csv', 'ü—x.txt']) expect(AttachmentRefSchema.safeParse({ fileId: 'f_0123456789abcdefABCDEF', name: ok }).success, ok).toBe(true)
   })
 })
 

@@ -36,11 +36,13 @@ describe('noteCountTokens (failures 1-3)', () => {
 })
 
 describe('the fake (failure 4)', () => {
-  it('answers the same at 49, 50 and 51', async () => {
+  it('answers the same at 49, 50 and 51, and false for an unknown turn', async () => {
     const fake = new FakeBrandAgentRpc()
+    fake.turns.add('t_a').add('t_b')
     const a = await answers(() => fake.noteCountTokens('t_a'), 51)
     expect(a.slice(48)).toEqual([true, true, false])
     expect(a).toEqual(expected(51))
     expect(await fake.noteCountTokens('t_b')).toBe(true)
+    expect(await fake.noteCountTokens('t_none')).toBe(false)
   })
 })

@@ -287,22 +287,29 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
       return { refused: 'last_admin' }
     },
 
-    /** Removal: never the last active Admin, checked in the statement. */
-    async remove(input: { id: string; ifRev: number }, at: At): Promise<Outcome<MemberRecord, 'not_found' | 'last_admin'>> {
+    /**
+     * Removal: never the last active Admin, checked in the statement. `notAdmin` (the Inhouse team, decision 19b): never
+     * an Admin at all, also in the statement, so a role change racing the removal can't slip an Admin through.
+     */
+    async remove(input: { id: string; ifRev: number; notAdmin?: boolean }, at: At): Promise<Outcome<MemberRecord, 'not_found' | 'last_admin' | 'admin_target'>> {
       const stamp = writeStamp(at.requestId)
       const [change] = await write([
         stmt(
           `UPDATE members SET status = 'removed', removed_at_ms = ?, rev = rev + 1, req_id = ?
            WHERE id = ? AND rev = ? AND kind = 'person' AND ${OPEN}
-             AND (role <> 'admin' OR status <> 'active' OR ${ANOTHER_ADMIN})`,
-          at.nowMs, stamp, input.id, input.ifRev, input.id,
+             AND (role <> 'admin' OR status <> 'active' OR ${ANOTHER_ADMIN})
+             AND (? = 0 OR role <> 'admin')`,
+          at.nowMs, stamp, input.id, input.ifRev, input.id, input.notAdmin ? 1 : 0,
         ),
         auditInsert({ atMs: at.nowMs, actorId: at.actorId, args: { action: 'member.removed', memberId: input.id }, target: { kind: 'member', id: input.id }, requestId: at.requestId }, memberGuard(input.id, stamp)),
       ])
       const r = await person(input.id)
       if (change.meta.changes > 0 && r) return { ok: memberRecord(r) }
       if (!r || r.status === 'removed') return { refused: 'not_found' }
+      // A stale ifRev on an Admin target answers 409 before the 403: nothing was written either way, and the 409's
+      // record is one the Inhouse team may already read (the member list is baseline), so the order leaks nothing.
       if (r.rev !== input.ifRev) return { conflict: memberRecord(r) }
+      if (input.notAdmin && r.role === 'admin') return { refused: 'admin_target' }
       return { refused: 'last_admin' }
     },
 
