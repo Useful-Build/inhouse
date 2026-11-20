@@ -3,6 +3,7 @@
 // that `checkAccess` reads, so the UI never offers an action the server refuses.
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
+import { CAN_KEYS } from './keys.ts'
 
 /** The three roles (decision log, "Roles"). Approver is not a role: approving is a job per rule, by member id. */
 export const RoleSchema = z.enum(['member', 'admin', 'inhouse'])
@@ -14,10 +15,7 @@ export type Role = z.infer<typeof RoleSchema>
  * `switchModelOff` (12 via its `adminWrite` flag), `grantSupport` (17), `viewMembers` (3), `viewAudit` (19),
  * `exportAudit` (20).
  */
-export const CanKeySchema = z.enum([
-  'invite', 'changeRole', 'remove', 'editBrandSettings', 'editTechnical', 'switchModelOff', 'grantSupport',
-  'viewMembers', 'viewAudit', 'exportAudit',
-])
+export const CanKeySchema = z.enum(CAN_KEYS)
 export type CanKey = z.infer<typeof CanKeySchema>
 
 /** Every `CanKey`, each exactly once: a missing or unknown key fails the parse. */

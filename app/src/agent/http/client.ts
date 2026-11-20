@@ -3,7 +3,7 @@
 // the `error` notice every failed write sends, and a run never starts. The product shell reads that as "not connected yet" and shows one screen in place of the pages
 // (src/shell/NotConnected.tsx). P2 fills this file in. It imports nothing from the mock or the sample data.
 import { instantOf } from '../../lib/format'
-import { ResourceKeySchema } from '../../../shared/contract/common'
+import { RESOURCE_KEYS } from '../../../shared/contract/keys'
 import { AgentError } from '../types'
 import type {
   AgentClient, AgentData, AgentNotice, AgentNotification, AgentState, AskOptions, Instant, LibraryFile, ResourceKey, ResourceStatus, RoutineRun, RunEvent, Trace,
@@ -36,7 +36,7 @@ const LOADING: AgentData = {
   chat: { chats: [], recentCount: 0, suggestions: [] },
   library: { places: [] },
   more: { audit: false, members: false },
-  resources: Object.fromEntries(ResourceKeySchema.options.map(k => [k, { status: 'loading' }])) as Record<ResourceKey, ResourceStatus>,
+  resources: Object.fromEntries(RESOURCE_KEYS.map(k => [k, { status: 'loading' }])) as Record<ResourceKey, ResourceStatus>,
   help: [],
 }
 

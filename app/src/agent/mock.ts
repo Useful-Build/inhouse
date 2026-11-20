@@ -21,13 +21,10 @@ import { instantOf } from '../lib/format'
 import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ErrorReason } from '../../shared/contract/common'
 import type { SupportGrant } from '../../shared/contract/grants'
-import { ResourceKeySchema } from '../../shared/contract/common'
-import { CanKeySchema } from '../../shared/contract/me'
+import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS } from '../../shared/contract/keys'
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
-import { InviteInputSchema, MemberRecordSchema } from '../../shared/contract/members'
-import { GRANT_HOURS } from '../../shared/contract/grants'
-import { settingSpec } from '../../shared/contract/settings'
+import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
 import { listNames, pendingIds, visibleProblems } from '../state/derive'
 
 /**
@@ -228,7 +225,7 @@ const DATA: AgentData = {
   help: helpGuides,
   chat: { chats, recentCount: chatList.recent, suggestions: chatScript.suggestions },
   more: { audit: false, members: false },
-  resources: Object.fromEntries(ResourceKeySchema.options.map(k => [k, { status: 'ready' }])) as Record<ResourceKey, ResourceStatus>,
+  resources: Object.fromEntries(RESOURCE_KEYS.map(k => [k, { status: 'ready' }])) as Record<ResourceKey, ResourceStatus>,
 }
 
 /** A month with nothing spent: what a brand has before its agent has run. */
@@ -273,7 +270,7 @@ const FIRST_DAY: AgentData = {
  * Still loading: a real client starts here, with empty lists, until the agent's data arrives. The tools are known (the
  * morning check is reading them, scenarios.json `readDone` of them so far); everything they hold isn't yet.
  */
-const LOADING: AgentData = { ...DATA, ...NOTHING_YET, status: 'loading', resources: Object.fromEntries(ResourceKeySchema.options.map(k => [k, { status: 'loading' }])) as Record<ResourceKey, ResourceStatus>, routines: [], skills: [], skillSuggestions: [], tools: { ...DATA.tools, readDone: scenarios.Loading.today.readDone } }
+const LOADING: AgentData = { ...DATA, ...NOTHING_YET, status: 'loading', resources: Object.fromEntries(RESOURCE_KEYS.map(k => [k, { status: 'loading' }])) as Record<ResourceKey, ResourceStatus>, routines: [], skills: [], skillSuggestions: [], tools: { ...DATA.tools, readDone: scenarios.Loading.today.readDone } }
 /** One tool's login expired this morning (scenarios.json): it stays connected but can't be read. */
 const LOST_TOOL = scenarios['Tool disconnected'].tool
 if (!Object.hasOwn(tools.details, LOST_TOOL)) throw new Error('Sample data: the Tool disconnected scenario names an unknown tool.')
@@ -397,6 +394,21 @@ const defaultServer = (startedAt: number): Server => {
   }
 }
 const isRole = (x: unknown): x is MemberRole => x === 'member' || x === 'admin'
+/** A saved invited member: the shape of a `MemberRecord` (hand-checked, so the mock doesn't carry zod's runtime; members.ts holds the schema). */
+const isMemberRecord = (m: unknown): m is MemberRecord =>
+  isRec(m) && str(m.id) && MEMBER_ID_PATTERN.test(m.id) && str(m.name) && m.name.trim().length >= 1 && m.name.length <= 80
+  && (m.email === null || str(m.email)) && (m.title === null || str(m.title)) && isRole(m.role)
+  && (m.status === 'invited' || m.status === 'active' || m.status === 'removed') && (m.photo === null || str(m.photo))
+  && typeof m.rev === 'number' && Number.isInteger(m.rev) && m.rev >= 1
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+/** An invitation as the server would take it: a name and a job title of 1 to 80 characters trimmed, an email, a role, and nothing else. */
+const readInvite = (v: unknown): { name: string; email: string; title?: string; role: MemberRole } | null => {
+  if (!isRec(v) || Object.keys(v).some(k => !['name', 'email', 'title', 'role'].includes(k))) return null
+  if (!str(v.name) || !str(v.email) || !isRole(v.role)) return null
+  const name = v.name.trim(), title = v.title === undefined ? undefined : str(v.title) ? v.title.trim() : null
+  if (name.length < 1 || name.length > 80 || !EMAIL.test(v.email) || v.email.length > 254 || title === null || (title !== undefined && (title.length < 1 || title.length > 80))) return null
+  return { name, email: v.email, ...(title !== undefined ? { title } : {}), role: v.role }
+}
 const sampleIdOf = (key: string, prefix: string) => (key.startsWith(prefix) ? memberIdOf(key.slice(prefix.length)) : null)
 /** A saved server, or null for one that isn't (a demo saved before C2 has none: the legacy keys convert in `sanitize`). */
 const savedServer = (v: unknown, startedAt: number): Server => {
@@ -410,7 +422,7 @@ const savedServer = (v: unknown, startedAt: number): Server => {
     roles: recOf(v.roles, isRole),
     photos: recOf(v.photos, (x): x is string | null => str(x) || x === null),
     removed: flagsOf(v.removed),
-    invited: (isArr(v.invited) ? v.invited : []).flatMap(m => { const r = MemberRecordSchema.safeParse(m); return r.success ? [r.data] : [] }),
+    invited: (isArr(v.invited) ? v.invited : []).filter(isMemberRecord),
     // A saved `grant: null` is "there never was one"; a missing or unreadable one is the first-run grant.
     grant: v.grant === null ? null : g ?? out.grant,
     grantSeq: typeof v.grantSeq === 'number' && Number.isInteger(v.grantSeq) && v.grantSeq >= 1 ? v.grantSeq : 1,
@@ -945,7 +957,7 @@ export class MockAgent implements AgentClient {
         personal: base.memory.personal.map(l => ({ ...l, rev: revs[`memory:${l.key}`] ?? l.rev })),
       },
       auditLog: failed.audit ? [] : base.auditLog,
-      resources: Object.fromEntries(ResourceKeySchema.options.map(k => [k, status(k)])) as Record<ResourceKey, ResourceStatus>,
+      resources: Object.fromEntries(RESOURCE_KEYS.map(k => [k, status(k)])) as Record<ResourceKey, ResourceStatus>,
     }
   }
   private approverOf(i: number, sample: ApprovalRule['approver']): ApprovalRule['approver'] {
@@ -961,7 +973,7 @@ export class MockAgent implements AgentClient {
     if (this.meSnap && key.every((k, i) => k === this.meSnap!.key[i])) return this.meSnap.me
     const m = this.members().find(x => x.id === ME_ID)!
     const admin = m.role === 'admin'
-    const can = Object.fromEntries(CanKeySchema.options.map(k => [k, k === 'viewMembers' || k === 'viewAudit' || k === 'exportAudit' ? true : admin])) as Can
+    const can = Object.fromEntries(CAN_KEYS.map(k => [k, k === 'viewMembers' || k === 'viewAudit' || k === 'exportAudit' ? true : admin])) as Can
     const me: Me = { memberId: ME_ID, name: m.name, email: m.email, role: m.role, can, photoUrl: m.photo, grant: null }
     this.meSnap = { key, me }
     return me
@@ -1067,9 +1079,9 @@ export class MockAgent implements AgentClient {
   // ----- plain reads and writes -----
 
   setToggle(key: string, on: boolean) {
-    const spec = settingSpec(key)
+    const row = settingRow(key)
     // `r:<routine>` and `s:<skill>` are the routine and skill switches (P4 and P5 own them); every other key must be a switch in the registry.
-    if (spec ? !spec.value.safeParse(on).success : !/^[rs]:./.test(key)) return this.rejected('invalid', `"${key}" isn't a switch.`, true, { reason: spec ? REASON.badType : REASON.wrongScope })
+    if (row ? !meetsRule(row.rule, on) : !/^[rs]:./.test(key)) return this.rejected('invalid', `"${key}" isn't a switch.`, true, { reason: row ? REASON.badType : REASON.wrongScope })
     const rec = `setting:${key}`
     const stale = this.conflict(rec, 0, () => this.settingRecord(key))
     if (stale) return stale
@@ -1095,9 +1107,9 @@ export class MockAgent implements AgentClient {
     return this.writeRecs([[rec, 1]], { forgot })
   }
   setSetting(key: string, value: string | null) {
-    const spec = settingSpec(key)
-    if (!spec) return this.rejected('invalid', `"${key}" isn't a setting.`, true, { reason: REASON.wrongScope })
-    if (value !== null && !spec.value.safeParse(value).success) return this.rejected('invalid', `That isn't a value for "${key}".`, true, { reason: REASON.badType })
+    const row = settingRow(key)
+    if (!row) return this.rejected('invalid', `"${key}" isn't a setting.`, true, { reason: REASON.wrongScope })
+    if (value !== null && !meetsRule(row.rule, value)) return this.rejected('invalid', `That isn't a value for "${key}".`, true, { reason: REASON.badType })
     const rec = `setting:${key}`
     const stale = this.conflict(rec, 0, () => this.settingRecord(key))
     if (stale) return stale
@@ -1306,9 +1318,9 @@ export class MockAgent implements AgentClient {
   }
 
   inviteMember(input: InviteInput): Promise<void> {
-    const parsed = InviteInputSchema.safeParse(input)
-    if (!parsed.success) return this.rejected('invalid', 'Check the name and the email.', true)
-    const { name, email, title, role } = parsed.data
+    const parsed = readInvite(input)
+    if (!parsed) return this.rejected('invalid', 'Check the name and the email.', true)
+    const { name, email, title, role } = parsed
     const norm = email.trim().toLowerCase()
     const same = this.members().filter(m => m.email?.toLowerCase() === norm)
     if (same.some(m => m.status !== 'removed')) return this.rejected('conflict', 'That email is already on the team.', true, { reason: REASON.alreadyMember })

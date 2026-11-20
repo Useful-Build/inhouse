@@ -1,5 +1,6 @@
 // Values every resource shares: the stages, the demo scenarios, a model's effort and the error codes.
 import { z } from 'zod'
+import { RESOURCE_KEYS } from './keys.ts'
 
 export const StageSchema = z.enum(['Watch', 'Act', 'Run'])
 export type Stage = z.infer<typeof StageSchema>
@@ -40,10 +41,7 @@ export const ErrorBodySchema = z.object({
 export type ErrorBody = z.infer<typeof ErrorBodySchema>
 
 /** One entry per list in `AgentData`, so a failed read names what failed (C3). `members` and `audit` also page. */
-export const ResourceKeySchema = z.enum([
-  'meta', 'problems', 'tools', 'routines', 'skills', 'usage', 'members', 'rules', 'grants', 'memory', 'audit', 'activity', 'notifications',
-  'models', 'chat', 'library',
-])
+export const ResourceKeySchema = z.enum(RESOURCE_KEYS)
 export type ResourceKey = z.infer<typeof ResourceKeySchema>
 
 /** Where one resource stands: loading, ready, or failed with the error's code. */
