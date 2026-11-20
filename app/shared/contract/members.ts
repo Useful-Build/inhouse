@@ -6,7 +6,11 @@ export type Member = z.infer<typeof MemberSchema>
 
 // ---------- P2: the member record the product serves (p2-design.md sections 1 and 7). `MemberSchema` stays until W3 moves off it. ----------
 
-/** A member id: 'm_' and a random or fixed suffix. No spaces or '@', so it can never carry a name or an email. */
+/**
+ * A member id: 'm_' and a random or fixed suffix. No spaces or '@', so it can't carry an email or a name as typed, but
+ * the pattern alone can't stop one spelled into the suffix (`m_Dana_Kim`): the server mints ids from random bytes and
+ * checks an id it is given names a known member before it writes.
+ */
 export const MemberIdSchema = z.string().regex(/^m_[A-Za-z0-9_-]{1,64}$/)
 export type MemberId = z.infer<typeof MemberIdSchema>
 
@@ -19,7 +23,8 @@ export type MemberStatus = z.infer<typeof MemberStatusSchema>
 
 /** A display name: 1 to 80 characters after trimming. */
 export const MemberNameSchema = z.string().trim().min(1).max(80)
-export const MemberTitleSchema = z.string().trim().max(80)
+/** A job title: 1 to 80 characters after trimming. One form for "no title": null (or left out of an invite), never ''. */
+export const MemberTitleSchema = z.string().trim().min(1).max(80)
 
 /**
  * A person on the team as the API serves them. `email` and `title` are null once the member is pseudonymised (the name

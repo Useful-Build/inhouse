@@ -30,8 +30,9 @@ const member = { memberId: MemberIdSchema }
 
 /**
  * A line's arguments, one shape per action. People are named by member id only; no field holds a name, an email, a
- * token, a secret or photo bytes. A setting's value is kept as it is only for a key the registry marks audit-safe;
- * any other key's value is kept as its length and hash. A setting reset to its default records `value: null`.
+ * token, a secret or photo bytes. A setting reset to its default records `value: null` for any key (a reset holds
+ * nothing personal). Any other value is kept as it is only for a key the registry marks audit-safe; a key that isn't
+ * keeps the value's length and hash in `redacted` instead.
  */
 export const AuditArgsSchema = z.discriminatedUnion('action', [
   line('member.invited', { ...member, role: MemberRoleSchema }),
@@ -51,9 +52,11 @@ export const AuditArgsSchema = z.discriminatedUnion('action', [
     const spec = settingSpec(a.key)
     if (!spec) return void ctx.addIssue({ code: 'custom', path: ['key'], message: 'Not a setting' })
     if (spec.scope !== a.scope) ctx.addIssue({ code: 'custom', path: ['scope'], message: "Not this key's scope" })
-    if (spec.auditSafe) {
+    if (a.value === null) {
+      if (a.redacted !== undefined) ctx.addIssue({ code: 'custom', path: ['redacted'], message: 'A reset keeps no length or hash' })
+    } else if (spec.auditSafe) {
       if (a.redacted !== undefined || a.value === undefined) ctx.addIssue({ code: 'custom', path: ['value'], message: 'An audit-safe key keeps its value' })
-      else if (a.value !== null && !spec.value.safeParse(a.value).success) ctx.addIssue({ code: 'custom', path: ['value'], message: "Not this key's value" })
+      else if (!spec.value.safeParse(a.value).success) ctx.addIssue({ code: 'custom', path: ['value'], message: "Not this key's value" })
     } else if (a.value !== undefined || a.redacted === undefined) {
       ctx.addIssue({ code: 'custom', path: ['redacted'], message: 'This key keeps only its length and hash' })
     }

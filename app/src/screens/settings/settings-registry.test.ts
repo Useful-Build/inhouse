@@ -48,6 +48,7 @@ describe('the page and the registry (failures 1 to 3)', () => {
     for (const r of rows) {
       if (r.switchKey) for (const v of ['off', 'on']) expect(parses(r.switchKey, v), `${r.switchKey} ${v}`).toBe(true)
       // `a:` holds a member id or `anyone` (p2-design.md section 6); the page offers names until P6 rebuilds it.
+      // W3 moves the approver options to member ids in P2; remove this skip there.
       if (!r.key || refused(r.key) || r.key.startsWith('a:')) continue
       if (r.kind === 'toggle') for (const v of [true, false]) expect(parses(r.key, v), `${r.key} ${v}`).toBe(true)
       if (r.kind === 'select' || r.kind === 'mode') for (const o of r.options ?? []) expect(parses(r.key, o), `${r.key} ${o}`).toBe(true)
@@ -61,6 +62,18 @@ describe('the page and the registry (failures 1 to 3)', () => {
     expect(['g:tz', 'm:ask', 's:cap', 'a:3'].map(scope)).toEqual(['brand', 'brand', 'brand', 'brand'])
     expect(['stage', 't:signs', 'g:mode', 'tm:x:on', 'l:x', 'd:chats'].map(scope)).toEqual(['technical', 'technical', 'technical', 'technical', 'technical', 'technical'])
     expect(['g:name', 't:signs'].map(k => settingSpec(k)!.auditSafe)).toEqual([false, false])
+  })
+
+  it('redacts the free-text choices, and still takes every option the page offers for them', () => {
+    // `n:channel` (alert channels) and `g:mode` (model modes) are free text until the server holds closed lists.
+    for (const key of ['n:channel', 'g:mode']) {
+      expect(settingSpec(key)!.auditSafe, key).toBe(false)
+      const row = rows.find(r => r.key === key)
+      expect(row?.options?.length, key).toBeGreaterThan(0)
+      for (const o of [...row!.options!, row!.value]) expect(parses(key, o), `${key} ${o}`).toBe(true)
+      expect(parses(key, ''), `${key} empty`).toBe(false)
+      expect(parses(key, 'x'.repeat(81)), `${key} too long`).toBe(false)
+    }
   })
 })
 

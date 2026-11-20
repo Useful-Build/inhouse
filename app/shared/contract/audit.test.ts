@@ -8,6 +8,7 @@ import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { AuditActionSchema, AuditArgsSchema } from './audit.ts'
 import type { AuditAction, AuditArgs } from './audit.ts'
+import { settingSpec } from './settings.ts'
 
 const m = 'm_0123456789abcdef0123456789abcdef'
 const g = 'g_0123456789abcdef'
@@ -52,10 +53,34 @@ describe('every action', () => {
 
 describe('setting.changed (failure 3)', () => {
   const redacted = { len: 9, hash }
+  /**
+   * Every key whose value isn't a closed list of options or a switch: free text, the money field, an approver. The
+   * free-text ones must be redacted; the others must refuse a name or an email by their value schema. `n:channel` and
+   * `g:mode` stay redacted until the server holds closed lists for them (p2-design.md section 6, departure in #94).
+   */
+  const NON_ENUM = ['g:name', 'n:channel', 't:signs', 'g:mode', 's:cap', 'a:0'] as const
+  it('covers the four free-text keys, all redacted', () => {
+    for (const k of ['g:name', 'n:channel', 't:signs', 'g:mode'] as const) {
+      expect(NON_ENUM, k).toContain(k)
+      expect(settingSpec(k)!.auditSafe, k).toBe(false)
+    }
+  })
+  test.prop([fc.constantFrom(...NON_ENUM), personal])('no key keeps a name or an email as its value', (key, v) => {
+    const scope = settingSpec(key)!.scope
+    expect(ok({ action: 'setting.changed', scope, key, value: v }), `${key} ${v}`).toBe(false)
+    expect(ok({ action: 'setting.changed', scope, key, value: v, redacted }), `${key} ${v}`).toBe(false)
+  })
   test.prop([fc.oneof(personal, fc.string({ minLength: 1, maxLength: 80 }))])('a key that is not audit-safe keeps no value, only its length and hash', v => {
     expect(ok({ action: 'setting.changed', scope: 'personal', key: 'g:name', value: v })).toBe(false)
     expect(ok({ action: 'setting.changed', scope: 'technical', key: 't:signs', value: v })).toBe(false)
     expect(ok({ action: 'setting.changed', scope: 'personal', key: 'g:name', value: v, redacted })).toBe(false)
+  })
+  it('records a reset of any key as null, with no length or hash', () => {
+    expect(ok({ action: 'setting.changed', scope: 'technical', key: 't:signs', value: null })).toBe(true)
+    expect(ok({ action: 'setting.changed', scope: 'personal', key: 'g:name', value: null })).toBe(true)
+    expect(ok({ action: 'setting.changed', scope: 'technical', key: 't:signs', value: null, redacted })).toBe(false)
+    expect(ok({ action: 'setting.changed', scope: 'technical', key: 't:signs', value: 'Sam' })).toBe(false)
+    expect(ok({ action: 'setting.changed', scope: 'technical', key: 't:signs' })).toBe(false)
   })
   it('takes the length and hash for a key that is not audit-safe, and not for one that is', () => {
     expect(ok({ action: 'setting.changed', scope: 'personal', key: 'g:name', redacted })).toBe(true)

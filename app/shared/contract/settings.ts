@@ -56,7 +56,8 @@ const EXACT: Record<string, SettingSpec> = {
   'g:lang': spec('personal', z.enum(LANGUAGES)),
   'g:size': spec('personal', z.enum(TEXT_SIZES)),
   'n:wait': spec('personal', z.enum(WAIT_ALERTS)),
-  'n:channel': spec('personal', text(1, 80)),
+  // Free text until the server holds a closed list of channel names (a later phase makes it an enum): redacted in the log.
+  'n:channel': spec('personal', text(1, 80), false),
   'n:slack': spec('personal', bool),
   'n:weekly': spec('personal', bool),
   'm:learn': spec('personal', bool),
@@ -70,7 +71,8 @@ const EXACT: Record<string, SettingSpec> = {
   'stage': spec('technical', z.enum(STAGES)),
   't:tone': spec('technical', z.enum(TONES)),
   't:signs': spec('technical', text(1, 80), false),
-  'g:mode': spec('technical', text(1, 80)),
+  // Free text until the server holds a closed list of model mode labels (a later phase makes it an enum): redacted in the log.
+  'g:mode': spec('technical', text(1, 80), false),
   'l:daily': spec('technical', z.enum(DAILY_LIMITS)),
   'l:restock': spec('technical', z.enum(RESTOCK_LIMITS)),
   'd:chats': spec('technical', z.enum(RETENTION)),
