@@ -139,7 +139,7 @@ describe('runSession', () => {
     expect(await promptText(prompt)).toEqual({ streamed: true, text: 'hello' })
     expect(options).toMatchObject({
       cwd: h.cwd,
-      sessionStoreFlush: 'batched',
+      sessionStoreFlush: 'eager',
       model: c.model,
       effort: c.effort,
       maxTurns: c.maxTurns,

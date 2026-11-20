@@ -38,10 +38,11 @@ export type SessionChannel = {
 export type SessionIo = { fetch: Fetch; proxyUrl: string }
 
 /**
- * How the SDK flushes the transcript to the store. `'eager'` (alpha) is meant to keep the live turn through a hard kill;
- * until the test against a hard kill passes it stays `'batched'`, and the checkpoint and repair cover the run's end.
+ * How the SDK flushes the transcript to the store. `'eager'` (alpha): in test/store/eager.test.ts (the real CLI, a hard
+ * kill while the next model call is held), the live turn reached the store shortly after the CLI wrote it, where
+ * `'batched'` didn't. That's what was shown, not a guarantee: the checkpoint and repair stay as the backstop.
  */
-export const STORE_FLUSH: NonNullable<Options['sessionStoreFlush']> = 'batched'
+export const STORE_FLUSH: NonNullable<Options['sessionStoreFlush']> = 'eager'
 
 /** How long an audit entry may wait for the root's ack before the hook's call is refused. */
 export const AUDIT_TIMEOUT_MS = 10_000

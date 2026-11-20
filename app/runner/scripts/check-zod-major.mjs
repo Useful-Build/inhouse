@@ -62,7 +62,9 @@ export function zodMajorProblem(appPkg, runnerPkg) {
 if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const read = (/** @type {string} */ rel) => JSON.parse(readFileSync(new URL(rel, import.meta.url), 'utf8'))
   const appPkg = read('../../package.json')
-  const problem = zodMajorProblem(appPkg, read('../package.json'))
+  const runnerPkg = read('../package.json')
+  // The harness (app/runner/harness/) parses the same protocol with its own zod, so it must pin the runner's major too.
+  const problem = zodMajorProblem(appPkg, runnerPkg) ?? zodMajorProblem(runnerPkg, read('../harness/package.json'))?.replaceAll('runner', 'harness').replaceAll('app', 'runner')
   if (problem) {
     console.error(`check-zod-major: ${problem}`)
     process.exit(1)
