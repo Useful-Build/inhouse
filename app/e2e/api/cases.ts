@@ -49,7 +49,7 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/me': { design: d('baseline', ALL, ['smoke']), path: '/api/me', passes: 200 },
   'GET /api/members': { design: d('baseline', ALL), path: '/api/members', passes: 200 },
   'POST /api/members/invites': { design: d('baseline', ['admin', 'inhouse']), path: '/api/members/invites', json: {}, passes: 400 },
-  'PUT /api/members/:id/role': { design: d('baseline', ['admin', 'inhouse']), path: `/api/members/${NO_MEMBER}/role`, json: {}, passes: 400 },
+  'PUT /api/members/:id/role': { design: d('baseline', ['admin']), path: `/api/members/${NO_MEMBER}/role`, json: {}, passes: 400 },
   'DELETE /api/members/:id': { design: d('baseline', ['admin', 'inhouse']), path: `/api/members/${NO_MEMBER}`, passes: 400 },
   'GET /api/settings/personal': { design: d('personal', PEOPLE, ['smoke']), path: '/api/settings/personal', passes: 200 },
   'PUT /api/settings/personal/:key': { design: d('personal', PEOPLE), path: '/api/settings/personal/g:theme', json: {}, passes: 400 },
