@@ -35,6 +35,20 @@ describe('nothing went upstream: zero, not cut; a fetch that rejects: cut (failu
     await settle(h)
     expect(releases(h)).toEqual([{ usage: { ...ZERO, micro: WORST }, cut: true }])
   })
+  it('through the configured gateway, a fetcher that rejects after it was called is booked at its worst case', async () => {
+    const ai = { gateway: () => ({ getUrl: async () => 'https://gateway.example.test/anthropic' }) }
+    let called = 0
+    const fetcher = (async () => {
+      called++
+      throw new TypeError('connection reset')
+    }) as unknown as typeof fetch
+    const h = await harness()
+    h.deps.upstream = gatewayUpstream({ AI: ai, AI_GATEWAY_ID: 'gw', AI_GATEWAY_TOKEN: 't' }, fetcher)
+    expect((await call(h)).status).toBe(502)
+    await settle(h)
+    expect(called).toBe(1)
+    expect(releases(h)).toEqual([{ usage: { ...ZERO, micro: WORST }, cut: true }])
+  })
   it('failures known to come before the send (the gateway not configured, its URL lookup) are zero', async () => {
     const ai = (fail: boolean) => ({ gateway: () => ({ getUrl: async () => { if (fail) throw new Error('lookup'); return 'https://gateway.example.test/anthropic' } }) })
     const fetcher = (async () => { throw new Error('never called') }) as unknown as typeof fetch
