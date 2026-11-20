@@ -9,18 +9,33 @@
 // - a run raced by a stop or a crash ends twice, or with a seq gap;
 // - /health doesn't show how many session users the guards took out of the pool (a draining pool goes unseen).
 // - after a timeout ends the stream, the session's files pass still uploads files the stream never names.
+// - a session that touches process.stdin (as the SDK does on import) can't reach the root (the old channel on fds 0
+//   and 1 died with `open EEXIST`); a write to stdout is read as the channel; a session that closes its channel (fd 3)
+//   and keeps running holds its run open; a crash's log loses the stack trace past the first 200 chars.
+// - a root write that fails once the session has gone (an ack or nack, an interrupt, a stop) takes the session's unread
+//   last events and its finished with it (one socket both ways: Node destroys it, read side included, on a write error);
+// - a root write that really fails on a still-open fd 4 (EPIPE) breaks fd 3 too, or is logged more than once;
+// - a session that has sent everything and exited, behind a slow Worker, is cut off after the grace (`session_crashed`
+//   with its events unread);
+// - a channel that breaks (an error, no clean end) leaves the session running until the run's timeout; a pipe error is
+//   logged twice;
+// - a session that never reads what the root sends makes the root buffer without bound;
+// - the crash log carries what the session printed on stdout (chat text), or a stdout flood blocks the session.
 import type { ChildProcess } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import http from 'node:http'
+import type { Readable, Writable } from 'node:stream'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
 import { ACCEPTED_VERSIONS, Health, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
-import { spawnFixture, testSessionUsers } from './support/test-seams.ts'
+import { cleanup, spawnFixture, testSessionUsers } from './support/test-seams.ts'
 import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
 import { API_MAX_CONNECTIONS } from '../../src/server/app.ts'
-import { stopEndWithinMs } from '../../src/server/session-host.ts'
+import { RunStream } from '../../src/server/run-stream.ts'
+import { STDERR_LOG_CHARS, hostSession, stopEndWithinMs, type SessionHandle } from '../../src/server/session-host.ts'
+import { sessionEnv } from '../../src/session/env.ts'
 
 let root: TestRoot
 beforeEach(async () => {
@@ -29,6 +44,20 @@ beforeEach(async () => {
 afterEach(async () => {
   await root.close()
 })
+
+/** The root's end of a session's channel to the root (fd 3). */
+const channelOf = (child: ChildProcess) => child.stdio[3] as Readable
+
+/** Whether any process of the group led by `pid` is left. */
+const groupAlive = (pid: number) => {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw e
+  }
+}
 
 function expectOneEnd(events: RunEvent[]) {
   expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i))
@@ -65,7 +94,6 @@ describe('a session that misbehaves', () => {
     ['garbage', 'protocol'],
     ['bad-event', 'protocol'],
     ['raw-garbage', 'protocol'],
-    ['stray-stdout', 'protocol'],
     ['oversized', 'protocol'],
     ['deep', 'protocol'],
   ])('%s: one failed event (%s) and the root stays up', async (prompt, reason) => {
@@ -76,13 +104,135 @@ describe('a session that misbehaves', () => {
     expect(root.liveCount()).toBe(0)
   })
 
-  it('a stray write to stdout ends only that session (protocol); a concurrent session finishes', async () => {
+  it('a session that closes the channel (fd 3) early and keeps running: one failed event (session_crashed), its group killed', async () => {
+    const spawned: ChildProcess[] = []
+    const own = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }))
+    try {
+      const events = await postRun(own, runStart({ prompt: 'close-channel' }))
+      expectOneEnd(events)
+      expect(events.find((e) => e.type === 'sdk')).toMatchObject({ message: { marker: 'before-close' } })
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'session_crashed' })
+      // The run ends only after the process has exited (killed: it never ends on its own) and its group is gone.
+      const child = spawned[0]!
+      expect([child.exitCode, child.signalCode]).toEqual([null, 'SIGKILL'])
+      expect(groupAlive(child.pid!)).toBe(false)
+      expect(own.liveCount()).toBe(0)
+    } finally {
+      await own.close()
+    }
+  })
+
+  it('a channel that breaks with an error (no clean end) kills the session at once: one session_crashed, one pipe error logged', async () => {
+    const spawned: ChildProcess[] = []
+    // A run timeout far past the test's own: only the kill on the channel's close can end this run in time.
+    const own = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { runTimeoutMs: 120_000 })
+    try {
+      const start = runStart({ prompt: 'hang' })
+      const run = openRun(own, start)
+      await waitFor(() => spawned.length === 1 && run.events.length >= 1)
+      // What ECONNRESET does on Linux (the peer closed with data unread): an error on the channel, never an end.
+      channelOf(spawned[0]!).destroy(new Error('read ECONNRESET'))
+      const events = await run.done
+      expectOneEnd(events)
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'session_crashed' })
+      expect(spawned[0]!.signalCode).toBe('SIGKILL')
+      expect(own.logs.filter((l) => l.type === 'session_pipe_error' && l.runId === start.runId)).toHaveLength(1)
+    } finally {
+      await own.close()
+    }
+  }, 30_000)
+
+  // What this proves: after a stop, a channel close with no terminal event kills the session well before the grace,
+  // and the run ends `stopped`. It passes whether the kill comes on fd 3's `end` or its `close`; the channel-error test
+  // above is the guard for `close` (an error, no end).
+  it('a stop, then the session closes its channel with no terminal event: killed well before the grace, the run ends as stopped', async () => {
+    const spawned: ChildProcess[] = []
+    // A grace far past the test's own: only the kill on the channel's close can end this run in time.
+    const own = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 120_000 })
+    try {
+      const start = runStart({ prompt: 'close-on-stop' })
+      const run = openRun(own, start)
+      await waitFor(() => spawned.length === 1 && existsSync(join(own.users.dirs.get(start.chatId)!, 'got-run')), 'the session has its run')
+      expect(await post(own, `/runs/${start.runId}/stop`)).toBe(202)
+      const events = await run.done
+      expectOneEnd(events)
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'stopped' })
+      expect(spawned[0]!.signalCode).toBe('SIGKILL')
+    } finally {
+      await own.close()
+    }
+  }, 30_000)
+
+  it('a session that never reads what the root sends: past the cap, the root ends it as protocol and kills it', async () => {
+    const spawned: ChildProcess[] = []
+    const own = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { runTimeoutMs: 120_000 })
+    try {
+      const start = runStart({ prompt: 'audit-flood' })
+      const events = await postRun(own, start)
+      expectOneEnd(events)
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'protocol' })
+      expect(spawned[0]!.signalCode).toBe('SIGKILL')
+      expect(own.logs).toContainEqual(expect.objectContaining({ type: 'session_protocol_error', runId: start.runId, error: expect.stringMatching(/not reading/) }))
+      await waitFor(() => own.liveCount() === 0)
+    } finally {
+      await own.close()
+    }
+  }, 30_000)
+
+  it('a stray write to stdout never reaches the channel: the run finishes; a concurrent session finishes', async () => {
     const [stray, other] = await Promise.all([postRun(root, runStart({ prompt: 'stray-stdout' })), postRun(root, runStart({ prompt: 'echo:m:3' }))])
     expectOneEnd(stray!)
-    expect(stray!.at(-1)).toMatchObject({ type: 'failed', reason: 'protocol' })
+    expect(stray!.at(-1)?.type).toBe('finished')
     expectOneEnd(other!)
     expect(other!.at(-1)?.type).toBe('finished')
     await stillServes()
+  })
+
+  it('a well-formed event written to stdout is never read as the channel: only the fd 3 events count', async () => {
+    const events = await postRun(root, runStart({ prompt: 'stdout-forgery' }))
+    expectOneEnd(events)
+    expect(events.find((e) => e.type === 'sdk')).toMatchObject({ message: { marker: 'after-forgery' } })
+    expect(events.at(-1)).toMatchObject({ type: 'finished', costUsd: 0 })
+  })
+
+  it('a session that touches process.stdin, stdout and stderr (as the SDK does on import) still talks to the root', async () => {
+    const events = await postRun(root, runStart({ prompt: 'process-stdio' }))
+    expectOneEnd(events)
+    // stdin is /dev/null: it ends at once, with nothing in it.
+    expect(events.find((e) => e.type === 'sdk')).toMatchObject({ message: { type: 'stdio', stdinBytes: 0 } })
+    expect(events.at(-1)?.type).toBe('finished')
+  })
+
+  it("a crash logs the tail of the session's stderr, up to the cap: past 200 chars, never more than the cap", async () => {
+    for (const bytes of [1500, STDERR_LOG_CHARS * 3]) {
+      root.logs.length = 0
+      // What the fixture writes: `<`, x's with a newline every 100 bytes, `>`.
+      const written = `<${Array.from({ length: bytes - 2 }, (_, i) => (i % 100 === 99 ? '\n' : 'x')).join('')}>`
+      const events = await postRun(root, runStart({ prompt: `crash-loud:${bytes}` }))
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'session_crashed' })
+      const exit = root.logs.find((l) => l.type === 'session_exit') as { stderrBytes: number; stderrTail: string; stdoutBytes: number }
+      // At least what it wrote: Node may add a runtime warning of its own.
+      expect(exit.stderrBytes).toBeGreaterThanOrEqual(bytes)
+      expect(exit.stderrTail.length).toBeLessThanOrEqual(STDERR_LOG_CHARS)
+      // Its last words are the tail's: all of it under the cap, the cap's worth over it.
+      expect(exit.stderrTail.endsWith(written.slice(-STDERR_LOG_CHARS))).toBe(true)
+      if (bytes > STDERR_LOG_CHARS) expect(exit.stderrTail.length).toBe(STDERR_LOG_CHARS)
+      expect(exit.stdoutBytes).toBe(0)
+    }
+  })
+
+  it('a crash after printing only on stdout: the log counts the stdout bytes and carries none of its text', async () => {
+    const events = await postRun(root, runStart({ prompt: 'crash-stdout:5000' }))
+    expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'session_crashed' })
+    const exit = root.logs.find((l) => l.type === 'session_exit') as { stderrTail: string; stdoutBytes: number }
+    expect(exit.stdoutBytes).toBe(5000)
+    expect(JSON.stringify(root.logs)).not.toContain('STDOUT-TEXT')
+  })
+
+  it('a session flooding stdout (past 64 KB) is never blocked by it: the run finishes', async () => {
+    const events = await postRun(root, runStart({ prompt: `stdout-flood:${1024 * 1024}` }))
+    expectOneEnd(events)
+    expect(events.at(-1)?.type).toBe('finished')
   })
 
   it('console output in the session goes to stderr, never the channel', async () => {
@@ -135,6 +285,116 @@ describe('a session that misbehaves', () => {
       await short.close()
     }
   })
+})
+
+describe('a root write that fails once the session has gone', () => {
+  // The session writes its last events and finished and closes its channel while the root isn't reading fd 3: fd 4 at
+  // once, fd 3 once its tail is flushed. With fd 4 closed and the tail unread on fd 3, the root writes (an ack or nack
+  // for an audit entry at the head of that tail, an interrupt, a stop). Either the root has already seen fd 4's end and
+  // skips the write (`fd 4 ended`), or it hasn't (the test stops its reads on fd 4) and the write really fails on a
+  // still-open fd 4, EPIPE (`fd 4 open`). Either way the tail must still be read, whole.
+  // What it needs: unread data on fd 3 when the root writes, nothing more. The session never needs buffer room: what
+  // the kernel won't take waits in the session's own buffer, and it exits only once all of it has been flushed, after
+  // the root reads again. So no buffer size (the root's, the kernel's) can turn this into a timeout. 30 events of about
+  // 4 KB are past the root's own buffer while paused (64 KB), so the tail sits in the root, the kernel and the session.
+  // The session exits only after the root reads again: at its exit Node resumes every stdio stream of the child
+  // (flushStdio), which would undo the test's pause.
+  it.each([
+    ['interrupt', 'fd 4 ended'],
+    ['stop', 'fd 4 ended'],
+    ['ack', 'fd 4 ended'],
+    ['nack', 'fd 4 ended'],
+    ['interrupt', 'fd 4 open'],
+    ['stop', 'fd 4 open'],
+    ['ack', 'fd 4 open'],
+    ['nack', 'fd 4 open'],
+  ] as const)('%s, %s: the run still ends finished, with every event', async (how, fd4) => {
+    const spawned: ChildProcess[] = []
+    // A grace past the test's own: the pipes the session left aren't destroyed under the test.
+    const own = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 60_000 })
+    try {
+      const n = 30
+      const first = how === 'ack' ? 'audit' : how === 'nack' ? 'audit-expired' : 'none'
+      const start = runStart({ prompt: `last-words:${n}:4000:${first}` })
+      const run = openRun(own, start)
+      const dir = () => own.users.dirs.get(start.chatId)!
+      await waitFor(() => spawned.length === 1 && existsSync(join(dir(), 'got-run')), 'the session has its run')
+      const child = spawned[0]!
+      const channel = channelOf(child)
+      const toSession = child.stdio[4] as Writable
+      channel.pause()
+      // Below the stream: libuv stops reading fd 4, so the root never sees its end and the socket stays open to write.
+      if (fd4 === 'fd 4 open') (toSession as unknown as { _handle: { readStop(): number } })._handle.readStop()
+      child.kill('SIGUSR2')
+      await waitFor(() => existsSync(join(dir(), 'fd4-closed')), 'the session closed fd 4')
+      await waitFor(() => channel.readableLength > 0, 'unread data on fd 3')
+      if (fd4 === 'fd 4 ended') await waitFor(() => toSession.writableEnded || toSession.destroyed, "the root has seen fd 4's end")
+      else expect(toSession.writableEnded || toSession.destroyed).toBe(false)
+      if (how === 'interrupt') expect(await post(own, `/runs/${start.runId}/interrupt`)).toBe(202)
+      if (how === 'stop') expect(await post(own, `/runs/${start.runId}/stop`)).toBe(202)
+      channel.resume()
+      await waitFor(() => existsSync(join(dir(), 'closed')), 'the session flushed and closed fd 3')
+      const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once('exit', (code, signal) => r([code, signal])))
+      child.kill('SIGUSR2')
+      expect(await exited).toEqual([0, null])
+      const events = await run.done
+      expectOneEnd(events)
+      expect(events.filter((e) => e.type === 'sdk').map((e) => (e.type === 'sdk' ? e.message.i : null))).toEqual(Array.from({ length: n }, (_, i) => i))
+      expect(events.at(-1)?.type).toBe('finished')
+      if (how === 'ack') expect(events.filter((e) => e.type === 'audit')).toHaveLength(1)
+      else expect(events.filter((e) => e.type === 'audit')).toEqual([])
+      const pipeErrors = own.logs.filter((l) => l.type === 'session_pipe_error' && l.runId === start.runId)
+      if (fd4 === 'fd 4 ended') expect(pipeErrors).toEqual([])
+      // The failed write, logged once (one error listener per socket), on fd 4 only.
+      else expect(pipeErrors).toEqual([expect.objectContaining({ fd: 4, error: expect.stringMatching(/EPIPE|ECONNRESET/) })])
+    } finally {
+      await own.close()
+    }
+  }, 30_000)
+})
+
+describe('a Worker that reads slowly', () => {
+  // The root pauses fd 3 behind a slow Worker. A session that has sent everything and exited must still be read to its
+  // end: the grace after its exit only bounds a process outside its group that holds a pipe, never unread events.
+  it("the root paused through the session's exit, past the grace: the run still ends finished, with every event", async () => {
+    const users = testSessionUsers()
+    const spawned: ChildProcess[] = []
+    try {
+      const user = await users.allocate('slow-worker')
+      const child = spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) })(user, sessionEnv(user, 9))
+      const channel = channelOf(child)
+      // All of it fits in what the root takes into its own buffer while paused (it reads until that is full), so the
+      // session can flush it and exit with the root paused, whatever the kernel's buffers hold. Sent in two halves, so
+      // the root holds it as at least two reads: one read handed on (and paused again) must leave the other unread.
+      const n = 8
+      const bytes = Math.floor(channel.readableHighWaterMark / 2 / n)
+      const { runToken: _token, ...config } = runStart({ prompt: `split-words:${n}:${bytes}` })
+      const events: RunEvent[] = []
+      const logs: Record<string, unknown>[] = []
+      // A Worker whose response never drains: every event written pauses the session again, as the root does.
+      let slow = false
+      let handle: SessionHandle | undefined
+      const stream = new RunStream(config.runId, (e) => {
+        events.push(e)
+        if (slow) handle?.pause()
+      })
+      stream.emit({ type: 'started', sessionId: config.sessionId, resume: config.resume })
+      handle = hostSession({ child, stream, config, stopGraceMs: 200, log: (l) => logs.push(l), canWrite: () => true })
+      await waitFor(() => existsSync(join(user.workDir, 'got-run')), 'the session has its run')
+      slow = true
+      handle.pause()
+      child.kill('SIGUSR2')
+      await waitFor(() => channel.readableLength > 0, "the first half in the root's buffer")
+      child.kill('SIGUSR2')
+      await handle.done
+      expectOneEnd(events)
+      expect(events.filter((e) => e.type === 'sdk').map((e) => (e.type === 'sdk' ? e.message.i : null))).toEqual(Array.from({ length: n }, (_, i) => i))
+      expect(events.at(-1)?.type).toBe('finished')
+      expect([spawned[0]!.exitCode, spawned[0]!.signalCode]).toEqual([0, null])
+    } finally {
+      cleanup(users)
+    }
+  }, 30_000)
 })
 
 describe('streams', () => {
@@ -236,7 +496,7 @@ describe('streams', () => {
     }
   }
 
-  it("a slow Worker pauses reading the session's stdout: memory stays bounded, nothing is lost or reordered", async () => {
+  it("a slow Worker pauses reading the session's channel (fd 3): memory stays bounded, nothing is lost or reordered", async () => {
     const spawned: ChildProcess[] = []
     const slow = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }))
     try {
@@ -250,8 +510,8 @@ describe('streams', () => {
       })
       expect(res.statusCode).toBe(200)
       // The response isn't read yet: its socket fills, the root's write returns false and it stops reading the session.
-      await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
-      const out = spawned[0]!.stdout!
+      await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
+      const out = channelOf(spawned[0]!)
       // Then it stays stalled: paused, and holding no more than its buffers' worth, whatever the kernel takes first.
       let quiet = 0
       let last = -1
@@ -309,14 +569,14 @@ describe('streams', () => {
         req.end(JSON.stringify(start))
       })
       expect(res.statusCode).toBe(200)
-      await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
+      await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
       // Stalled: the root holds the same bytes, poll after poll. A session that didn't wait would have run its loop to
       // the end by now (its sends only queue in its own memory); one that waits is held at a full channel.
       let quiet = 0
       let last = -1
       await waitFor(() => {
         const buffered = slow.bufferedBytes(start.runId)!
-        quiet = spawned[0]!.stdout!.isPaused() && buffered === last ? quiet + 1 : 0
+        quiet = channelOf(spawned[0]!).isPaused() && buffered === last ? quiet + 1 : 0
         last = buffered
         return quiet >= 100
       }, 'the run stalled behind the slow Worker')
@@ -363,7 +623,7 @@ describe('streams', () => {
         req.end(JSON.stringify(start))
       })
       // Paused before the timeout fires: once the run has ended, the root never pauses again, so this would fail.
-      await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
+      await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
       const child = spawned[0]!
       // And stalled for good: every buffer on the way to the test is full (32 MB is far more than they hold), so no
       // drain can come from the Worker's side any more. Only the timer's own resume can let the session go on.
@@ -371,7 +631,7 @@ describe('streams', () => {
       let last = -1
       await waitFor(() => {
         const buffered = slow.bufferedBytes(start.runId)!
-        quiet = child.stdout!.isPaused() && buffered === last ? quiet + 1 : 0
+        quiet = channelOf(child).isPaused() && buffered === last ? quiet + 1 : 0
         last = buffered
         return quiet >= 100
       }, 'the run stalled behind the slow Worker')
@@ -381,7 +641,7 @@ describe('streams', () => {
       if (how === 'hang-up') {
         res.destroy()
         req.destroy()
-      } else await waitFor(() => !child.stdout!.isPaused(), 'the timeout resumed the session')
+      } else await waitFor(() => !channelOf(child).isPaused(), 'the timeout resumed the session')
       // The flood ignores stop: it ends by itself once every line is read. Killed after the grace, it'd be SIGKILL.
       expect(await exited).toEqual([0, null])
       await waitFor(() => slow.liveCount() === 0)
@@ -412,7 +672,7 @@ describe('streams', () => {
         req.on('response', resolve).on('error', reject)
         req.end(JSON.stringify(start))
       })
-      await waitFor(() => spawned.length === 1 && spawned[0]!.stdout!.isPaused(), 'the root paused the session')
+      await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
       const child = spawned[0]!
       const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once('exit', (code, signal) => r([code, signal])))
       const stopped = how === 'stop' ? post(slow, `/runs/${start.runId}/stop`) : slow.stopAll()

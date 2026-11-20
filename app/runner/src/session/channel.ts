@@ -1,29 +1,40 @@
-// The session's end of the local channel: NDJSON on the session process's own stdin (from the root) and stdout (to the
-// root). No Node IPC channel, so nothing the session sends is parsed by Node's own channel code in the root.
+// The session's end of the local channel: NDJSON on two sockets, one per direction. The session writes to the root on
+// its fd 3 and reads the root on its fd 4 (the root spawns it with `stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe']`).
+// One socket per direction because Node destroys a socket on any write error, read side included: on one socket both
+// ways, a root write that failed once the session had gone took the session's unread last events with it. No Node IPC
+// channel, so nothing the session sends is parsed by Node's own channel code in the root.
 //
-// stdout is the channel and nothing else: every log line goes to stderr. `openRootChannel` points `console` at stderr,
-// so a stray console call can't corrupt the channel; a stray direct write to stdout still reaches the root, which ends
-// only this session with `protocol`.
+// Not fds 0 and 1: Node builds `process.stdin` and `process.stdout` on those, and the SDK touches them when it loads, so
+// a channel socket of our own on fd 0 made Node's fail (`open EEXIST ... process.getStdin`). fds 0 to 2 are Node's as
+// usual: stdin is /dev/null, and what the session prints on stdout or stderr is never read as the channel (the root
+// drains stdout and keeps stderr's tail for its crash log). `openRootChannel` still points `console` at stderr, so logs
+// stay in one place.
 //
-// Children of the session (the CLI and its tools) never get these descriptors: the SDK spawns the CLI with its own
-// stdio pipes (`stdio: ['pipe', 'pipe', 'pipe']`), and Node opens every other descriptor close-on-exec. A tool can't
-// reopen them through /proc/<session pid>/fd/0 or /1 either: Node's stdio pipes are socketpairs (libuv), and the
-// kernel refuses to open a socket through /proc (ENXIO). No zod here, so a plain-Node fixture can import it.
+// Children of the session (the CLI and its tools) don't inherit fds 3 and 4: the SDK spawns the CLI with its own stdio
+// pipes (`stdio: ['pipe', 'pipe', 'pipe']`), and the fds are close-on-exec there (the grandchild test checks fds 3 to
+// 5). Nor can they open them through /proc/<session pid>/fd/3 or 4: the root's pipes are socketpairs (libuv), and the
+// kernel refuses to open a socket through /proc (ENXIO; tested on Linux). Known gap: a tool running as the session's
+// uid can still ptrace the session or take its fds with pidfd_getfd. Closing that (PR_SET_DUMPABLE 0, or a seccomp rule)
+// is P3 security work. No zod here, so a plain-Node fixture can import it.
 import { Console } from 'node:console'
 import net from 'node:net'
 import { LineReader, ROOT_TO_SESSION_MAX_BYTES, encodeLine, type LineResult } from '../protocol/ndjson.ts'
 
-export const FROM_ROOT_FD = 0
-export const TO_ROOT_FD = 1
+/** Session -> root: the session only writes it. The root's spawn puts a pipe at this index of `stdio`. */
+export const TO_ROOT_FD = 3
+/** Root -> session: the session only reads it. The root's spawn puts a pipe at this index of `stdio`. */
+export const FROM_ROOT_FD = 4
 
 export type RootChannel = {
   /** Writes one message. Returns a promise when the socket's buffer is full, settled once it drains (or closes). */
   send(message: unknown): void | Promise<void>
+  /** Writes text as it is (tests send lines `send` never would). Same backpressure as `send`. */
+  writeRaw(text: string | Buffer): void | Promise<void>
   /** Every line from the root, parsed, or the one error that ends the channel. Lines that came early are queued. */
   onMessage(handler: (line: LineResult) => void): void
-  /** The root's side closed (stdin ended or broke): nothing more will come. Called once. */
+  /** The root's side closed (either socket ended or broke): nothing more will come or get through. Called once. */
   onClose(handler: () => void): void
-  /** Flushes what was sent, then closes both descriptors. */
+  /** Closes fd 4 (from the root) at once; flushes what was sent on fd 3, then closes it. */
   close(): Promise<void>
 }
 
@@ -39,10 +50,10 @@ export function consoleToStderr(): void {
 export function openRootChannel(maxLineBytes: number = ROOT_TO_SESSION_MAX_BYTES): RootChannel {
   consoleToStderr()
   const out = new net.Socket({ fd: TO_ROOT_FD, readable: false, writable: true })
-  const inp = new net.Socket({ fd: FROM_ROOT_FD, readable: true, writable: false })
+  const inn = new net.Socket({ fd: FROM_ROOT_FD, readable: true, writable: false })
   // The root went away: nothing more can be said; the root decides the run's end from how this process exits.
   out.on('error', (e) => process.stderr.write(`session: channel to the root failed: ${e.message}\n`))
-  inp.on('error', (e) => process.stderr.write(`session: channel from the root failed: ${e.message}\n`))
+  inn.on('error', (e) => process.stderr.write(`session: channel from the root failed: ${e.message}\n`))
 
   const reader = new LineReader(maxLineBytes)
   const queued: LineResult[] = []
@@ -60,27 +71,31 @@ export function openRootChannel(maxLineBytes: number = ROOT_TO_SESSION_MAX_BYTES
     closed = true
     for (const h of closeHandlers.splice(0)) h()
   }
-  inp.on('data', (chunk: Buffer) => deliver(reader.push(chunk)))
-  inp.on('end', () => {
+  inn.on('data', (chunk: Buffer) => deliver(reader.push(chunk)))
+  inn.on('end', () => {
     deliver(reader.end())
     closedNow()
   })
-  inp.on('close', closedNow)
+  inn.on('close', closedNow)
+  out.on('close', closedNow)
+
+  const writeRaw = (text: string | Buffer): void | Promise<void> => {
+    // A closed channel takes nothing more (write would only raise an error); the root decides the run's end.
+    if (out.destroyed || out.writableEnded || out.write(text)) return
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        out.off('drain', done)
+        out.off('close', done)
+        resolve()
+      }
+      out.on('drain', done)
+      out.on('close', done)
+    })
+  }
 
   return {
-    send(m) {
-      // A closed channel takes nothing more (write would only raise an error); the root decides the run's end.
-      if (out.destroyed || out.write(encodeLine(m))) return
-      return new Promise<void>((resolve) => {
-        const done = () => {
-          out.off('drain', done)
-          out.off('close', done)
-          resolve()
-        }
-        out.on('drain', done)
-        out.on('close', done)
-      })
-    },
+    send: (m) => writeRaw(encodeLine(m)),
+    writeRaw,
     onMessage(h) {
       handler = h
       for (const l of queued.splice(0)) h(l)
@@ -91,8 +106,13 @@ export function openRootChannel(maxLineBytes: number = ROOT_TO_SESSION_MAX_BYTES
     },
     close: () =>
       new Promise<void>((resolve) => {
-        inp.destroy()
-        out.end(() => resolve())
+        inn.destroy()
+        if (out.destroyed) return resolve()
+        // Everything written reaches the kernel first, then the descriptor closes.
+        out.end(() => {
+          out.destroy()
+          resolve()
+        })
       }),
   }
 }
