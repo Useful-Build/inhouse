@@ -1099,7 +1099,7 @@ describe('paging', () => {
 describe('the parts that stay the stub until their phase', () => {
   const STUBS: [string, (c: AgentClient) => Promise<unknown>][] = [
     ['approve', c => c.approve('p')], ['undo', c => c.undo('p')], ['editDraft', c => c.editDraft('p', 'x')],
-    ['createChat', c => c.createChat({ id: 'c', title: 't' })], ['send', c => c.send('r', 'x')], ['pause', c => c.pause()],
+    ['createChat', c => c.createChat({ id: 'c', title: 't' })], ['send', c => c.send('c', { clientTurnKey: 'key-12345', text: 'x', model: 'sonnet' })], ['listChats', c => c.listChats()], ['getChat', c => c.getChat('c')], ['interrupt', c => c.interrupt('t')], ['stop', c => c.stop('t')], ['resetSession', c => c.resetSession('c')], ['pause', c => c.pause()],
     ['requestTool', c => c.requestTool('k', true)], ['setToggle (a routine)', c => c.setToggle('r:Morning', true)],
     ['markNoticesRead', c => c.markNoticesRead(['n'])], ['deleteFiles', c => c.deleteFiles(['f'])], ['runRoutine', c => c.runRoutine('r')],
     ['renameChat', c => c.renameChat('c', 't')], ['deleteChats', c => c.deleteChats(['c'])],
@@ -1112,10 +1112,11 @@ describe('the parts that stay the stub until their phase', () => {
     expect(heard).toEqual([{ type: 'error', code: 'unavailable', text: (e as AgentError).message }])
   })
 
-  test('ask never starts a run, a listener that unsubscribed hears nothing, and the lists are empty and stable', async () => {
+  test('no run is ever attached to, a listener that unsubscribed hears nothing, and the lists are empty and stable', async () => {
     const { agent, heard } = await loaded(reads())
-    const e = await errorOf(agent.ask('Which orders are stuck?', { chatId: 'c' })[Symbol.asyncIterator]().next())
-    expect((e as AgentError).code).toBe('unavailable')
+    expect(await agent.activeRuns()).toEqual([])
+    expect(agent.link()).toBe('live')
+    agent.attach('r', () => { throw new Error('a frame') })()
     expect(heard).toEqual([])
     const quiet: AgentNotice[] = []
     agent.onNotice(n => quiet.push(n))()
@@ -1123,7 +1124,7 @@ describe('the parts that stay the stub until their phase', () => {
     expect(quiet).toEqual([])
     expect(agent.listFiles()).toBe(agent.listFiles())
     expect(agent.listNotifications()).toBe(agent.listNotifications())
-    expect(agent.getTrace('any')).toBeNull()
+    expect(await agent.getTrace('any')).toBeNull()
   })
 })
 

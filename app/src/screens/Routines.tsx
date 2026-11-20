@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { agent } from '../agent'
+import { traceOf, useTraces } from './chat/traces'
 import { keepUnitsTogether } from '../agent/clock'
 import type { RoutineDef } from '../agent'
 import { flags, lastRunLine, routineRuns, STAGE_TAGS, whenOf } from '../state/derive'
@@ -169,6 +170,7 @@ function RoutineMenu({ item, phone, paused, actions }: { item: Item; phone: bool
 }
 
 function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; phone: boolean; paused: boolean; actions: Actions; onClose: () => void }) {
+  useTraces()
   const ctx = useCtx()
   const { openTrace, go } = useUi.getState()
   const { r, locked, on } = item
@@ -218,7 +220,7 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
           {runs.length === 0 ? <p className="mt-2 text-sm text-foreground-3">Not run yet.</p> : (
             <ul aria-label="Last runs" className="m-0 mt-1 list-none p-0">
               {runs.map(l => {
-                const trace = l.trace && agent.getTrace(l.trace) ? l.trace : undefined
+                const trace = l.trace && traceOf(l.trace) ? l.trace : undefined
                 return (
                   <li key={l.key} data-run-line className="flex min-h-11.25 items-center gap-3 border-b border-divider py-1 text-sm">
                     <Icon name="check_circle" size={18} className="flex-none text-done" />

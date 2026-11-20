@@ -2,7 +2,7 @@
 // the timeline is a plain list of the steps, each name in full with its time under it (H6, L9).
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { agent } from '../agent'
+import { traceOf, useTraces } from '../screens/chat/traces'
 import type { Trace, TraceStep, TraceStepKind } from '../agent/types'
 import { fmtDuration, fmtMoney, traceTicks } from '../lib/format'
 import { display } from '../state/display'
@@ -51,7 +51,9 @@ export function TraceWindow() {
 function TraceBody({ id }: { id: string }) {
   const close = useUi(s => s.closeOverlays)
   useCtx() // stage and scenario change what getTrace returns (Run drops approval waits, a tool can fail)
-  const trace = agent.getTrace(id)
+  useTraces()
+  const trace = traceOf(id)
+  if (trace === undefined) return null
   if (!trace) {
     return (
       <Window onClose={close} label="What your Inhouse agent did" size="sm" layer="trace">
