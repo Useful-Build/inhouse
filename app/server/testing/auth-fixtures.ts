@@ -76,8 +76,8 @@ export const principals = {
 
 /**
  * The 21 rows of p2-design section 3 as written there (row 12 with `admin` in `allow` and row 21 a `report` row, per
- * the review round 1 calls), for
- * the properties until PR0b commits server/access-matrix.ts; the invariants then run on the committed rows too.
+ * the review round 1 calls): the properties' rows, and the independent copy server/access-matrix.ts must equal
+ * (matrix.test.ts).
  */
 export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/health', class: 'open', allow: [], services: ['monitor'] },
