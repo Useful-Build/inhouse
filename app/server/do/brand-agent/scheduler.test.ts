@@ -24,6 +24,18 @@ const T = 4_102_444_800_000
 type Stub = DurableObjectStub<import('../../index.ts').BrandAgent>
 let objects = 0
 const freshStub = (): Stub => env.BRAND_AGENT.getByName(`scheduler-${++objects}`)
+/**
+ * A fresh BrandAgent whose own start seeds (its class's `ensureSeeds()`: W4's usage sweep and audit copy since PR 2b)
+ * are cleared, so the scheduler under test starts from an empty table and no alarm.
+ */
+async function emptyStub(): Promise<Stub> {
+  const stub = freshStub()
+  await runInDurableObject(stub, async (_i, state) => {
+    state.storage.sql.exec('DELETE FROM due_tasks')
+    await state.storage.deleteAlarm()
+  })
+  return stub
+}
 
 interface Harness<C> {
   stub: Stub
@@ -40,7 +52,7 @@ interface Opts<C> {
 
 /** A scheduler inside a fresh BrandAgent, with the object's `alarm()` routed to it (the class gets its own in W1's next PR). */
 async function harness(opts: Opts<{ nowMs: number }>): Promise<Harness<{ nowMs: number }>> {
-  const stub = freshStub()
+  const stub = await emptyStub()
   const clock = { now: T }
   let sql!: SqlStorage
   const build = (o: Opts<{ nowMs: number }>) => runInDurableObject(stub, (instance, state) => {
@@ -354,7 +366,7 @@ describe('a failed alarm write (failure 4)', () => {
     return { ...real, set: async at => { sets.push(at); if (failures-- > 0) throw new Error('storage down'); await real.set(at) } }
   }
   it('settled() rethrows it once, then clears', async () => {
-    await runInDurableObject(freshStub(), async (_i, state) => {
+    await runInDurableObject(await emptyStub(), async (_i, state) => {
       const sched = createScheduler({ sql: state.storage.sql, alarm: flaky(state, 1, []), now: () => T, handlers: {}, context: n => ({ nowMs: n }) })
       sched.schedule({ id: 'f', kind: 'a', dueAtMs: T + 1 })
       await expect(sched.settled()).rejects.toThrow('storage down')
@@ -362,7 +374,7 @@ describe('a failed alarm write (failure 4)', () => {
     })
   })
   it('a pass whose alarm write fails leaves a fallback alarm 30 s on', async () => {
-    const stub = freshStub()
+    const stub = await emptyStub()
     const sets: number[] = []
     await runInDurableObject(stub, async (instance, state) => {
       const sched = createScheduler({ sql: state.storage.sql, alarm: alarmPort(state.storage), now: () => T, handlers: { a: async () => ({ done: true }) }, context: n => ({ nowMs: n }) })

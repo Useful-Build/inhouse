@@ -14,7 +14,8 @@ import { signals } from './signals/index.ts'
 import { health, healthHandler } from './health.ts'
 
 const stores = openStores(env)
-const VERSIONED = { CF_VERSION_METADATA: { id: 'v-123', tag: '', timestamp: '' } } as unknown as HandlerEnv
+// P3 lists signals that ask the BrandAgent (runs) and read the usage ledger (usage_stranded): the env carries the binding.
+const VERSIONED = { CF_VERSION_METADATA: { id: 'v-123', tag: '', timestamp: '' }, BRAND_AGENT: env.BRAND_AGENT } as unknown as HandlerEnv
 const c = { env: VERSIONED, stores }
 const call = async (h: ReturnType<typeof healthHandler>, ctx = c) => {
   const res = await h(ctx)
@@ -28,6 +29,9 @@ describe('the health route', () => {
       status: 200,
       body: { version: 'v-123', ok: true, signals: [
         { name: 'version', ok: true, detail: 'v-123' }, { name: 'd1', ok: true }, { name: 'migrations', ok: true, detail: `${SHIPPED_MIGRATIONS.length} applied` },
+        { name: 'runs_failed', ok: true, detail: '0 of 0 failed in the last hour' }, { name: 'runs_stuck', ok: true, detail: '0 stuck' },
+        { name: 'session_damaged', ok: true, detail: '0 damaged in 24 h' }, { name: 'scheduler', ok: true, detail: '0 quarantined' },
+        { name: 'usage_stranded', ok: true },
       ] },
     })
   })
@@ -61,7 +65,7 @@ describe('the health route', () => {
     expect(JSON.stringify(out.body)).not.toContain('@')
   })
   it('fails the migration signal when a shipped migration is not applied (failure 4)', async () => {
-    const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => ['0001_members', '0002_settings', '0003_support_grants', '0005_service_rows', '0100_chats', '0101_tool_calls', '0120_chat_files'] } }
+    const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => ['0001_members', '0002_settings', '0003_support_grants', '0005_service_rows', '0100_chats', '0101_tool_calls', '0120_chat_files', '0130_usage'] } }
     const out = await call(health, { ...c, stores: behind })
     expect(out.status).toBe(503)
     expect(out.body.signals.find(s => s.name === 'migrations')).toEqual({ name: 'migrations', ok: false, detail: 'not applied: 0004_audit_log' })

@@ -71,6 +71,10 @@ export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> 
   const stub = env.BRAND_AGENT.getByName(`core-${++objects}-${Math.random()}`)
   await runInDurableObject(stub, async (_i, state) => {
     const sql = state.storage.sql
+    // The real class's constructor seeded its tasks at the wall clock (W4's audit copy among them, dated today); this
+    // harness runs its own instance on a fake clock far ahead, where those would all be overdue and its daily chain
+    // would replay every day up to it. The harness's own tasks start from its clock.
+    sql.exec('DELETE FROM due_tasks')
     const clock = { now: T0 }
     const pool = new FakeRunnerPool()
     const nextRunner = { name: 'runner-0' }

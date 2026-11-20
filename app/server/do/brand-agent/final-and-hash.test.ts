@@ -4,6 +4,7 @@
 //     caller sent (a changed send dedupes); key order or an `undefined` changes it;
 //  2. a path that makes a turn final skips the one `storeFinal` step, or runs it twice.
 import { describe, expect, it } from 'vitest'
+import coreSource from './core.ts?raw'
 import { canonicalJson, submitPayloadHash } from './run-start.ts'
 import { MEMBER, ev, inAgent, settle, MIN } from '../../testing/brand-agent/core-harness.ts'
 import type { TurnRow } from './core.ts'
@@ -89,5 +90,60 @@ describe('one final-state step on every path (failure 2)', () => {
     h.usage.reserveAnswer = { refused: 'cap_reached' }
     const t = id(await h.submit('c1', 'key-fin09')); await settle()
     expect(seen).toEqual([`${t} cancelled - cap_reached`])
+  }))
+})
+
+describe('only storeFinal writes a final state (L10)', () => {
+  it('no other UPDATE of turns sets state to ended, cancelled or a bound value', () => {
+    const start = coreSource.indexOf('  private storeFinal(')
+    const end = coreSource.indexOf('\n  }\n', start)
+    expect(start).toBeGreaterThan(0)
+    const outside = coreSource.slice(0, start) + coreSource.slice(end)
+    const writes = [...outside.matchAll(/UPDATE turns SET[^`"]*?\bstate = ('ended'|'cancelled'|\?)/g)].map(m => m[0])
+    expect(writes).toEqual([])
+    expect(coreSource.slice(start, end)).toMatch(/UPDATE turns SET state = \?/)
+  })
+})
+
+describe('more final paths go through storeFinal once (L10)', () => {
+  const watch = (h: { core: { onFinal?: (t: TurnRow) => void } }) => {
+    const seen: string[] = []
+    h.core.onFinal = t => { seen.push(`${t.state} ${t.outcome ?? '-'} ${t.failure ?? t.cancel_why ?? '-'}`) }
+    return seen
+  }
+  it('budget_busy failure', () => inAgent(async h => {
+    const seen = watch(h)
+    h.usage.reserveAnswer = { refused: 'budget_busy' }
+    await h.submit('c1', 'key-l10b1'); await settle()
+    for (let i = 0; i < 9; i++) await h.tick(15 * 1000)
+    expect(seen).toEqual(['ended failed budget_busy'])
+  }))
+  it('files, protocol (rejected) and pool_full placement answers', () => inAgent(async h => {
+    const seen = watch(h)
+    h.pool.placeAnswer = { refused: 'files' }
+    await h.submit('c1', 'key-l10f1'); await settle()
+    h.pool.placeAnswer = { refused: 'rejected', status: 413 }
+    await h.submit('c2', 'key-l10p1'); await settle()
+    h.pool.placeAnswer = { refused: 'pool_full' }
+    await h.submit('c3', 'key-l10q1'); await settle()
+    expect(seen).toEqual(['ended failed files', 'ended failed protocol', 'cancelled - pool_full'])
+  }))
+  it('the timeout fence, and a release with no terminal event', () => inAgent(async h => {
+    const seen = watch(h)
+    const a = await h.submit('c1', 'key-l10t1'); await settle()
+    const id = (a as { turnId: string }).turnId
+    h.push(id, ev.started())
+    for (let i = 0; i < 13; i++) { await h.tick(MIN); h.push(id, ev.heartbeat()) }
+    h.push(id, ev.released(null, false))
+    const b = await h.submit('c2', 'key-l10r1'); await settle()
+    h.push((b as { turnId: string }).turnId, ev.started(), ev.released(null, false))
+    expect(seen).toEqual(['ended failed timeout', 'ended failed protocol'])
+  }))
+  it('L9: the engine refuses an attachment named twice (callers that skip the schema)', () => inAgent(async h => {
+    const att = { fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'a.pdf' }
+    // The input exists, so only the duplicate can refuse it.
+    h.files.inputs.set('c1', [{ id: att.fileId, chatId: 'c1', kind: 'input', path: `inputs/${att.fileId}-a.pdf`, name: 'a.pdf', contentType: 'application/pdf', bytes: 1, sha256: 'a'.repeat(64), turnId: null }])
+    expect(await h.submit('c1', 'key-l9dup1', { attachments: [att, att] })).toEqual({ refused: { code: 'invalid' } })
+    expect(h.turns()).toEqual([])
   }))
 })

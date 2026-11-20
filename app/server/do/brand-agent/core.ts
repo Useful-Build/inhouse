@@ -29,6 +29,7 @@ import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
 import { ModelGate } from './gate.ts'
 import { callsMicro } from './turn-calls.ts'
+import { ensureUsageTasks } from '../../usage/seeds.ts'
 import { activeRuns, runsHealth, traceOf } from './runs-read.ts'
 import type { RunScope, RunsHealth } from './ports.ts'
 import type { ActiveRun } from '../../../shared/contract/runs.ts'
@@ -209,6 +210,10 @@ export class AgentCore {
     // A retried POST answers what the first one did, before any other rule (4.3).
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
+    // The runner refuses a start that names an attachment twice; route 29's schema refuses it, and so does the engine
+    // for callers that skip the schema (L9).
+    const ids = t.input.attachments.map(a => a.fileId)
+    if (new Set(ids).size !== ids.length) return refuse('invalid')
     let files: ChatFile[] = []
     if (t.input.attachments.length > 0) {
       const found = await this.d.ports.files.inputsOf(t.chatId, t.input.attachments.map(a => a.fileId))
@@ -1241,6 +1246,8 @@ export class AgentCore {
       this.d.scheduler.ensure({ id: `call-lease:${r.turn_id}`, kind: 'call-lease', dueAtMs: now })
     }
     this.gate.seeds()
+    // W4's usage tasks: the hourly sweep and today's audit copy (ensure: never moves one that exists).
+    ensureUsageTasks(this.d.scheduler, now)
   }
 }
 

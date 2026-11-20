@@ -11,11 +11,6 @@ const fromRuns = (name: string, pick: keyof RunsHealth): Signal => ({
   check: async ({ env }) => (await brandAgent(env).runsHealth())[pick],
 })
 
-/**
- * Built, not yet listed: the health route's test (`ops/health.test.ts`, the orchestrator's) runs the registry on an env
- * without `BRAND_AGENT`, so listing these turns it red. The orchestrator lists them (with W2's `POOL_SIGNALS`) by
- * setting `runsSignals = RUNS_SIGNALS` and giving that test the binding.
- */
 export const RUNS_SIGNALS: readonly Signal[] = [
   fromRuns('runs_failed', 'failures'),
   fromRuns('runs_stuck', 'stuck'),
@@ -23,4 +18,5 @@ export const RUNS_SIGNALS: readonly Signal[] = [
   fromRuns('scheduler', 'quarantined'),
 ]
 
-export const runsSignals: readonly Signal[] = []
+/** Listed in signals/index.ts. */
+export const runsSignals: readonly Signal[] = RUNS_SIGNALS

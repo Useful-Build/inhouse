@@ -3,6 +3,7 @@
 import { coreSignals } from './core.ts'
 import { poolSignals } from './pool.ts'
 import { runsSignals } from './runs.ts'
+import { usageSignals } from '../../usage/signal.ts'
 import type { Signal } from './types.ts'
 
-export const signals: readonly Signal[] = [...coreSignals, ...runsSignals, ...poolSignals]
+export const signals: readonly Signal[] = [...coreSignals, ...runsSignals, ...poolSignals, ...usageSignals]
