@@ -301,6 +301,12 @@ Product build: Not connected yet
   Expected: one "Not connected yet" screen in place of every page; no sample name, no demo switches or Reset demo, `?demo` ignored (the demo clock's absence is proved by `scripts/check-product-build.mjs`)
   Covered:  e2e/product/no-demo.spec.ts
 
+Test build: the product Worker's API and app (P2)
+  Path:     `npm run build:product-test`, then `/api/*` with no Access JWT, and `/` in a browser
+  Selector: the `api` project (status and body), the `real-desktop` and `real-phone` projects (heading "Not connected yet")
+  Expected: every `/api/*` path (an unknown one too) answers 401 `{"error":{"code":"unauthorized"}}` with the security headers and `no-store`; the app loads under the enforced CSP with no violation
+  Covered:  e2e/api/skeleton.spec.ts, e2e/real/skeleton.spec.ts
+
 Demo upgrade: a stored demo
   Path:     a browser holding the demo as the build before the agent seam saved it -> open Today
   Selector: sidebar chat, model button, chat composer, Today card "going out"

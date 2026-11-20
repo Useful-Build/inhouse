@@ -6,6 +6,7 @@ import { vi } from 'vitest'
 import type { AgentClient, AgentErrorCode, AgentNotice, AgentState, DemoContext, TeamRequest } from '../types'
 import { AgentError } from '../types'
 import type { MockAgent } from '../mock'
+import { realTargets } from './targets/real/index'
 
 /** Every client method that writes and returns a promise: the ones `injectError` can fail. */
 export type WriteMethod =
@@ -247,4 +248,7 @@ function mockTarget(): ContractTarget {
   }
 }
 
-export const targets: ContractTarget[] = [mockTarget()]
+// CONTRACT_REAL_ORIGIN (the test build's origin, e.g. http://brand.localhost:5195): also run the suite on the real
+// client against it (src/agent/contract/targets/real/).
+const realOrigin: string | undefined = import.meta.env.CONTRACT_REAL_ORIGIN
+export const targets: ContractTarget[] = [mockTarget(), ...(realOrigin ? realTargets(realOrigin) : [])]

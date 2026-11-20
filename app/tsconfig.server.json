@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.server.tsbuildinfo",
+    // The product Worker's bindings, from `npx wrangler types -c wrangler.product.jsonc --strict-vars false server/worker-configuration.d.ts`.
+    "types": ["./server/worker-configuration.d.ts", "vite/client"],
+  },
+  "include": ["server", "shared", "ops"]
+}

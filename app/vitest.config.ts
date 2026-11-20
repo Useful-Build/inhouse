@@ -3,6 +3,10 @@ import { fileURLToPath } from 'node:url'
 
 // Property tests live in src/**/*.property.test.ts, the other unit tests (the contract suite, the formatter tests) in
 // src/**/*.test.ts, the build helpers' tests (the demo deploy redirect) in build-support/. The Playwright specs in e2e/ are never picked up here.
+// The product Worker's tests (P2) live beside their code in server/, ops/ and shared/, the scripts' own tests in
+// scripts/**/*.test.mjs. They run in node like the rest: @cloudflare/vitest-pool-workers (0.23.0, the latest) supports
+// vitest ^4.1 only and this repo is on vitest 5, so D1 is tested through a D1-shaped adapter over node:sqlite that reads
+// the real migrations (server/db/testing/, W2).
 export default defineConfig({
   resolve: {
     alias: {
@@ -12,8 +16,13 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  // The test build's compile-time switch (vite.config.ts): off here, as in every build but `product-test`.
+  define: { __INHOUSE_TEST_BUILD__: 'false' },
   test: {
-    include: ['src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts'],
+    include: [
+      'src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts',
+      'server/**/*.test.ts', 'ops/**/*.test.ts', 'shared/**/*.test.ts', 'scripts/**/*.test.mjs',
+    ],
     environment: 'node',
     // Node 24.11.1 has a V8 garbage-collector bug: a mark-compact pass crashes with SIGSEGV
     // (ClearStaleLeftTrimmedPointerVisitor) when it meets a baseline (Sparkplug) frame. The property tests hit it on long

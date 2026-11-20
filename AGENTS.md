@@ -4,7 +4,8 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
 
 ## Layout
 
-- `app/` is the whole app: a React single-page app served by a Cloudflare Worker.
+- `app/` is the whole app: a React single-page app served by a Cloudflare Worker. The demo's Worker is `app/worker/`
+  (assets plus the client-error route); the product's is `app/server/` (P2, below).
 - `app/src/agent/` holds the `AgentClient` interface, the mock agent and its sample data (`sample-data/`, invented). The
   two client entries (`client.demo.ts`, `client.product.ts`) pick the client at build time; `src/agent/http/` is the
   product's client stub.
@@ -36,6 +37,10 @@ Run them in `app/`.
 | `npm run test:unit` | Vitest: `src/**/*.test.ts` (property tests included) and `build-support/` |
 | `npm run build` | Type check and production build (the demo build) |
 | `npm run build:product` | The product build into `dist-product/`: no mock, sample data, demo controls or demo clock. `node scripts/check-product-build.mjs` checks it (CI runs both) |
+| `npm run build:product-test` | The test build into `dist-product-test/`: the product Worker with the test issuer compiled in and `wrangler.test.jsonc`. Never deployed |
+| `npm run test-build:migrate` | Apply `server/migrations/` to the test build's local D1 (`.wrangler/test-build`) |
+| `npm run test-build:seed` | Seed that D1 with the invented brand (W2's `server/seed/run.ts`; fails until it exists) |
+| `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone` | The test build's specs (`e2e/api/`, `e2e/real/`), after `npm run build:product-test`. No other run includes them |
 | `npm run preview` | Build, then serve the build |
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
 | `npm run test:visual:linux` | The visual suite in the Playwright Docker image (`:update` regenerates baselines) |
@@ -122,5 +127,27 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`.
-- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`). Give each parallel worktree its own `E2E_PORT` and `E2E_PRODUCT_PORT`.
+- **The product Worker (P2).** `app/server/` is the product Worker (entry `server/index.ts`): every `/api/*` request is
+  authenticated (Access JWT), then the `Origin` check, the route (`server/routes.ts`), its row in
+  `server/access-matrix.ts` and `checkAccess`, then the handler; every answer carries the security headers
+  (`shared/security-headers.ts`, from `public/_headers`). Layout: `server/auth/` (sign-in, principals, the test
+  issuer), `server/db/` (the D1 data layer), `server/api/` (handlers), `server/migrations/`, `server/seed/`,
+  `server/ops/` (health and its signals), `app/ops/tables/` (the table registry). `routes.ts`, `access-matrix.ts`, the
+  registries' `index.ts` files, `app/wrangler.*.jsonc`, `vite.config.ts`, `vitest.config.ts`, `playwright.config.ts`
+  and the workflows are the orchestrator's. Configs: `app/wrangler.product.jsonc` is a template with no account id,
+  host, `aud`, client id or brand name (the private ops repo fills them at release); `app/wrangler.test.jsonc` is the
+  test build's, made-up values only, and never deploys.
+- **The test build** is the proof path for the backend: `npm run build:product-test`, then the `api` and `real`
+  Playwright projects with `E2E_TEST_BUILD=1` (the `verify` skill has the details). It runs the product Worker under
+  `wrangler dev` with a fresh local D1 and a test issuer whose key pair is made per run; only the public half reaches
+  the Worker, and only a build compiled with the test flag trusts it. CI's `test-build` job runs it on every PR, with
+  no secret.
+- **Migrations:** `app/server/migrations/`, forward-only (never rename or drop in the release that stops using it).
+  Ranges per phase: P2 `0001`-`0099`, then a block of 100 each (P3 `0100`-`0199` up to P8 `0600`-`0699`); the
+  orchestrator gives each worker its numbers in landing order. Wrangler applies every file not yet in `d1_migrations` in file-name order, so a lower number
+  merged after a higher one still applies (checked 2026-11-20 with wrangler 4.162.0). CI's `test-build` job applies
+  them all to an empty D1 (the migration job's fresh install); from P3 it also upgrades from the last release tag.
+- **Candidate deploys** go to the separate sandbox Cloudflare account only, with invented data, before a phase's final
+  PR. Nothing from a `fleet/` branch deploys to the house or a brand account; releases come from tags on `main`.
+- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`), the test build 5195 (`E2E_TEST_BUILD_PORT`). Give each parallel worktree its own `E2E_PORT`, `E2E_PRODUCT_PORT` and `E2E_TEST_BUILD_PORT`.
 - **Fleet repo:** no. `fleet/<topic>` is only the integration branch name here.
