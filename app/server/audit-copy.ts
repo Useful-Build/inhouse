@@ -6,8 +6,9 @@
 // 3. the cursor advances only `WHERE last_id = from - 1 AND pending_from = from`, so a lost reply or a rerun moves it once;
 // 4. lines are read in keyset pages of 1,000; a range holds at most 10,000 lines, and a pass copies at most five ranges;
 // 5. then tomorrow's task is ensured. After a D1 restore the cursor is reset by P8's restore (flagged to P8).
-// R2 `put` overwrites an existing key whole: https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
-// (read 2026-11-20).
+// R2 `put` "stores the given value and metadata under the associated key"
+// (https://developers.cloudflare.com/r2/api/workers/workers-api-reference/, read 2026-11-20; the page doesn't say more
+// about an existing key): a rerun puts the same lines under the same key, and audit-copy.test.ts proves one object per range.
 import { auditCopyKey } from './db/r2-keys.ts'
 import type { DueTask, TaskContext, TaskHandler, TaskResult } from './do/brand-agent/scheduler.ts'
 
