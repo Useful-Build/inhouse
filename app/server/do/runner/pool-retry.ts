@@ -1,6 +1,9 @@
-// The `pool-retry` due task (p3-design section 7). Owner: W2 (p3-w2.md). A stub from W1's first PR, so tasks/index.ts can list every P3 kind; the owner
-// replaces the body. Idempotent by task id once built (p3-design section 6).
+// The `pool-retry` due task (p3-design section 7): expires turns queued 60 s and hands queued turns back to W1 while a
+// slot is free; reschedules itself while the queue isn't empty. Idempotent by task id: a pass with nothing to do
+// changes nothing.
 import type { TaskHandler } from '../brand-agent/scheduler.ts'
-import { notBuilt } from '../brand-agent/tasks/not-built.ts'
 
-export const poolRetry: TaskHandler = notBuilt
+export const poolRetry: TaskHandler = async (_task, ctx) => {
+  await ctx.ports.pool.retryQueue()
+  return { done: true }
+}
