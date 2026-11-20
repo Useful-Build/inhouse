@@ -9,7 +9,8 @@
 	"$schema": "./hub/node_modules/wrangler/config-schema.json",
 	"name": "inhouse-hub",
 	"main": "hub/index/index.ts",
-	"compatibility_date": "2026-11-13",
+	// The newest date the pinned wrangler 4.158.0's workerd supports (app/wrangler.jsonc is on 2026-11-13).
+	"compatibility_date": "2026-11-11",
 	// workers_dev defaults to true when there's no route, and an omitted preview_urls leaves an existing setting alone:
 	// both are explicitly false.
 	"workers_dev": false,

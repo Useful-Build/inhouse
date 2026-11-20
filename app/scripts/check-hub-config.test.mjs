@@ -15,17 +15,25 @@ const FIXTURES = 'scripts/check-hub-config-fixtures'
 const EXPECTED = {
   'pass.jsonc': [],
   'fail-routes.jsonc': ['routes'],
+  'fail-routes-empty.jsonc': ['routes'],
   'fail-route.jsonc': ['route'],
   'fail-custom-domain.jsonc': ['routes', 'custom-domain'],
   'fail-workers-dev-missing.jsonc': ['workers-dev'],
   'fail-workers-dev-true.jsonc': ['workers-dev'],
   'fail-preview-urls-missing.jsonc': ['preview-urls'],
   'fail-triggers.jsonc': ['triggers'],
+  'fail-assets.jsonc': ['public-surface'],
+  'fail-site.jsonc': ['public-surface'],
+  'fail-env.jsonc': ['env'],
   'fail-test-define.jsonc': ['test-define'],
   'fail-test-define-missing.jsonc': ['test-define'],
   'fail-test-build-var.jsonc': ['test-build-var'],
   'fail-secret-hub-token-keys.jsonc': ['secret-in-vars'],
   'fail-secret-client-secret.jsonc': ['secret-in-vars'],
+  'fail-secret-define-hub-token-keys.jsonc': ['secret-in-define'],
+  'fail-secret-define-client-secret.jsonc': ['secret-in-define'],
+  'fail-secrets-required-missing.jsonc': ['secrets-required'],
+  'fail-secrets-required-partial.jsonc': ['secrets-required'],
   'fail-signin-binding.jsonc': ['signin-binding'],
   'fail-signin-binding-script.jsonc': ['signin-binding'],
   'fail-signin-migration.jsonc': ['signin-migration'],
@@ -58,7 +66,7 @@ test('the hub template passes', () => {
 test('the hub test config fails (the test build can never pass as deployable)', () => {
   const r = run('wrangler.hub.test.jsonc')
   assert.equal(r.status, 1, r.out)
-  assert.deepEqual(r.rules, ['secret-in-vars', 'test-build-var', 'test-define'], r.out)
+  assert.deepEqual(r.rules, ['secret-in-vars', 'secrets-required', 'test-build-var', 'test-define'], r.out)
 })
 
 test('an unreadable file exits 2, never 0 or 1', () => {

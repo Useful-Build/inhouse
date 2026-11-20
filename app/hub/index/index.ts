@@ -3,10 +3,9 @@
 //
 // The test upstream seam (hub/testing/) is reached only inside the guarded branch below. `__INHOUSE_HUB_TEST__` is a
 // wrangler `define`: "false" in wrangler.hub.jsonc, so esbuild drops the branch and its dynamic import from the
-// deployable bundle; "true" only in wrangler.hub.test.jsonc. scripts/check-hub-build.mjs proves both.
+// deployable bundle; "true" only in wrangler.hub.test.jsonc. scripts/check-hub-build.mjs proves both. Declared in
+// hub/globals.d.ts.
 export { SignIn } from '../signin/signin'
-
-declare const __INHOUSE_HUB_TEST__: boolean
 
 const notFound = (): Response =>
   new Response(JSON.stringify({ error: 'not_found' }), {

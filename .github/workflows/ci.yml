@@ -148,6 +148,9 @@ jobs:
       - run: npm test
       - run: npm run bundle
       - run: npm run bundle:test
+      - name: Hub bundle scan, its own tests
+        working-directory: app
+        run: node --test scripts/check-hub-build.test.mjs
       - name: Hub bundle scan
         working-directory: app
         run: node scripts/check-hub-build.mjs

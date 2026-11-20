@@ -8,6 +8,8 @@ export default defineConfig({
   test: {
     projects: [
       {
+        // The deployable value: node tests see the hub as it ships, with the test seam's branch off.
+        define: { __INHOUSE_HUB_TEST__: 'false' },
         test: {
           name: 'node',
           environment: 'node',

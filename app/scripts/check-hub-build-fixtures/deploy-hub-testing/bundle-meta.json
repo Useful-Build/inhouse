@@ -1,0 +1,29 @@
+{
+  "inputs": {
+    "hub/signin/signin.ts": {
+      "bytes": 1,
+      "imports": [],
+      "format": "esm"
+    },
+    "hub/index/index.ts": {
+      "bytes": 1,
+      "imports": [],
+      "format": "esm"
+    },
+    "hub/testing/index.ts": {
+      "bytes": 1,
+      "imports": [],
+      "format": "esm"
+    }
+  },
+  "outputs": {
+    "scripts/check-hub-build-fixtures/deploy-hub-testing/index.js": {
+      "imports": [],
+      "exports": [
+        "default"
+      ],
+      "inputs": {},
+      "bytes": 68
+    }
+  }
+}
