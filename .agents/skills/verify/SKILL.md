@@ -13,7 +13,8 @@ What counts as verified is the global `verification` skill. This is how to do it
 - `npm run dev` serves on 5173 and shows the demo switches without `?demo`.
 - The Playwright config starts its own preview. `E2E_PORT` moves it (default 5193). `E2E_PREBUILT=1` serves the existing `dist/` instead of building again.
 - Parallel worktrees: give each its own `E2E_PORT`.
-- The product build: `npm run build:product` (into `dist-product/`), then `E2E_PRODUCT=1 E2E_PREBUILT=1 npx playwright test --project=product` (it serves the build with `wrangler dev` on `E2E_PRODUCT_PORT`, default 5194; every URL shows "Not connected yet" and `?demo` does nothing). The product build puts the demo's deploy pointer back when it ends, so `vite preview` keeps serving `dist/`. `node scripts/check-product-build.mjs` checks both builds.
+- The product build: `npm run build:product` (into `dist-product/`), then `E2E_PRODUCT=1 E2E_PREBUILT=1 npx playwright test --project=product` (it serves the build with `wrangler dev` on `E2E_PRODUCT_PORT`, default 5194; every URL shows "Not connected yet" and `?demo` does nothing). The product build puts the demo's deploy pointer back when it ends, so `vite preview` keeps serving `dist/`. `node scripts/check-product-build.mjs` checks both builds (and, since P2, the server bundle scan: run `npm run build:product-test` first). Since P2 the product build is the product Worker (`server/`, `wrangler.product.jsonc`), served from `dist-product/inhouse_product/wrangler.json`.
+- The test build (P2): `npm run build:product-test` (into `dist-product-test/`), then `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone`. Its web server makes a fresh local D1 under `.wrangler/test-build` (migrated, then seeded once W2's seed exists), and serves the build with `wrangler dev` on `E2E_TEST_BUILD_PORT` (default 8787) with this run's test issuer key (public half only, as `--var TEST_ISSUER_JWKS`). Origins: `http://brand.localhost:<port>` and `http://inhouse.localhost:<port>`. Specs sign in with `signIn(memberKey, app)` from `e2e/support/test-build/`. Outside Playwright: `node e2e/support/test-build/serve.ts -- <command>` (the contract suite on the real client: `-- npx vitest run src/agent/contract`). Heavy job: through the heavy lock.
 
 ## Demo and seed switches
 
@@ -34,7 +35,8 @@ Projects are in `app/playwright.config.ts`.
 
 | Suite | Command | Notes |
 |---|---|---|
-| unit and property | `npm run test:unit` | Vitest with fast-check: `src/**/*.test.ts` (property tests included) and `build-support/`. Light job. |
+| unit and property | `npm run test:unit` | Vitest with fast-check: `src/**/*.test.ts` (property tests included), `build-support/`, and since P2 `server/`, `ops/`, `shared/` and `scripts/**/*.test.mjs`. Light job. |
+| test build: API and real app | `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone` | After `npm run build:product-test`. `e2e/api/` (Playwright `request`) and `e2e/real/` (browser, CSP guard). No other project runs them. |
 | desktop and phone E2E | `npm run test:e2e` | Every project. On macOS the visual projects match nothing and warn. On Windows they run against Linux baselines and fail: run `npx playwright test --project=desktop --project=phone --project=a11y` there. Specs with `phone` in the file name run in the `phone` project. |
 | one spec | `npx playwright test e2e/<name>.spec.ts --project=desktop` | |
 | visual | `npm run test:visual:linux` | Docker only on the Mac (and Windows). Baselines are `-linux.png`; never write a `-darwin.png`. |

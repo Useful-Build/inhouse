@@ -2,10 +2,11 @@
 // under `wrangler dev`) joins this list with its own target and no test changes. That means everything a test needs from
 // its target goes through it: time (`advance`), seeding, resets, forced failures, injected errors and every id, name and
 // scripted question (`fixtures`). Every method that touches the client's world is async: a real target talks over HTTP.
-import { vi } from 'vitest'
+import { inject, vi } from 'vitest'
 import type { AgentClient, AgentErrorCode, AgentNotice, AgentState, DemoContext, TeamRequest } from '../types'
 import { AgentError } from '../types'
 import type { MockAgent } from '../mock'
+import { realTargets } from './targets/real/index'
 
 /** Every client method that writes and returns a promise: the ones `injectError` can fail. */
 export type WriteMethod =
@@ -247,4 +248,18 @@ function mockTarget(): ContractTarget {
   }
 }
 
-export const targets: ContractTarget[] = [mockTarget()]
+declare module 'vitest' {
+  export interface ProvidedContext {
+    /** CONTRACT_REAL_ORIGIN, or '' (vitest.config.ts reads it from the environment). */
+    contractRealOrigin: string
+  }
+}
+
+// CONTRACT_REAL_ORIGIN (the test build's origin, e.g. http://brand.localhost:8787): also run the suite on the real
+// client against it (src/agent/contract/targets/real/). vitest.config.ts hands it over with `provide`.
+export const realOrigin: string | undefined = inject('contractRealOrigin') || undefined
+/** The real targets for `origin` (none without one). `make` is for targets.test.ts, which proves the origin reaches it. */
+export function realTargetsFor(origin: string | undefined, make: (origin: string) => ContractTarget[] = realTargets): ContractTarget[] {
+  return origin ? make(origin) : []
+}
+export const targets: ContractTarget[] = [mockTarget(), ...realTargetsFor(realOrigin)]

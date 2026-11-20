@@ -1,6 +1,8 @@
-// The product build check (P1, C8). Run in app/ after `npm run build` and `npm run build:product`:
+// The product build check (P1, C8; part 4 P2). Run in app/ after `npm run build`, `npm run build:product` and
+// `npm run build:product-test`:
 //   node scripts/check-product-build.mjs                      checks dist-product/ (must pass) and dist/ (must fail)
-//   node scripts/check-product-build.mjs --product DIR --demo DIR   other build folders
+//   node scripts/check-product-build.mjs --product DIR --demo DIR --product-test DIR   other build folders
+//   ... --server DIR   the server source part 4 looks in for the test issuer (default server/; its tests use fixtures)
 // The product build ships no sample data, mock code, demo controls or demo clock. Three parts, each run on both builds:
 //   1. Canary strings in the client output: the sample brand's and people's names, the brand's email domain and the user's
 //      email (read from src/agent/sample-data/) and a
@@ -13,6 +15,12 @@
 // The same three parts run on the demo build and must each FAIL there: a check that passes on the demo scanned the wrong
 // folder or looks for the wrong thing, so it can't go green by accident. Exit code 0 only when the product build is clean
 // and every part caught the demo.
+//   4. The server bundle scan (P2): the deployable Worker output (the product build's Worker folder, the one with a
+//      wrangler.json beside client/, which `wrangler deploy -c <it>/wrangler.json` uploads as built) holds no test-issuer
+//      canary (INHOUSE_TEST_ISSUER_CANARY_7f3c) and no `test-issuer` module in its graph (<build>/server-modules.json).
+//      Its proof is the test build (dist-product-test/), where the canary MUST be found once the test issuer exists in
+//      any form (server/auth/test-issuer.ts, the canary anywhere under server/, or a test-issuer module in the test
+//      build's graph; W1). Until then the proof is reported as not yet possible, never as passed.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,6 +36,8 @@ const flag = (name, fallback) => {
 }
 const productDir = flag('--product', join(root, 'dist-product'))
 const demoDir = flag('--demo', join(root, 'dist'))
+const productTestDir = flag('--product-test', join(root, 'dist-product-test'))
+const serverDir = flag('--server', join(root, 'server'))
 
 const fail = msg => { console.error(`check-product-build: ${msg}`); process.exit(2) }
 const readJson = rel => JSON.parse(readFileSync(join(root, 'src/agent/sample-data', rel), 'utf8'))
@@ -125,6 +135,52 @@ for (const [name, run] of PARTS) {
     bad = true
     console.error(`FAIL  ${name}: found nothing in the demo build (${relative(root, demoDir)}), so it proves nothing: it scanned the wrong folder or looks for the wrong thing.`)
   } else console.log(`ok    ${name}: caught the demo build (${inDemo.length} hit${inDemo.length === 1 ? '' : 's'}).`)
+}
+
+// ---------- 4. the server bundle scan ----------
+const SERVER_CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
+const TEST_ISSUER_MODULE = /test-issuer/
+/** The Worker folder of a product build: the one subfolder (not client/) holding a wrangler.json. */
+function workerDir(dir, label) {
+  if (!existsSync(dir)) fail(`${label} build folder ${dir} doesn't exist. Run its build first.`)
+  const found = readdirSync(dir, { withFileTypes: true })
+    .filter(d => d.isDirectory() && d.name !== 'client' && existsSync(join(dir, d.name, 'wrangler.json')))
+    .map(d => join(dir, d.name))
+  if (found.length !== 1) fail(`${label}: expected one Worker folder with a wrangler.json in ${relative(root, dir)}, found ${found.length}.`)
+  return found[0]
+}
+/** Canary hits in the Worker's files, and test-issuer modules in its graph (<build>/server-modules.json, vite.config.ts). */
+function serverScan(dir) {
+  const hits = []
+  for (const f of walk(dir).filter(f => TEXT.test(f))) {
+    if (readFileSync(f, 'utf8').includes(SERVER_CANARY)) hits.push(`"${SERVER_CANARY}" in ${relative(root, f)}`)
+  }
+  const list = join(dir, '..', 'server-modules.json')
+  if (!existsSync(list)) fail(`${relative(root, list)} is missing. vite.config.ts's writeServerModuleList writes it in product builds.`)
+  const modules = JSON.parse(readFileSync(list, 'utf8'))
+  if (!Array.isArray(modules) || !modules.some(id => /(^|\/)server\/index\.ts$/.test(id))) fail(`${relative(root, list)} doesn't list server/index.ts: it's not the product Worker's graph.`)
+  for (const id of modules) if (TEST_ISSUER_MODULE.test(id)) hits.push(`module ${id}`)
+  return hits
+}
+const productWorker = workerDir(productDir, 'product')
+const inServer = serverScan(productWorker)
+if (inServer.length) {
+  bad = true
+  console.error(`FAIL  server bundle: the deployable Worker (${relative(root, productWorker)}) has the test issuer:\n${show(inServer)}`)
+} else console.log(`ok    server bundle: no test issuer in the deployable Worker (${relative(root, productWorker)}).`)
+const testWorker = workerDir(productTestDir, 'product-test')
+const inTest = serverScan(testWorker)
+// The proof is required once the test issuer exists in any form: its file, the canary anywhere under server/, or a
+// test-issuer module in the test build's graph. Before that (PR0, until W1) it can't be made yet, and says so.
+const canaryInSource = walk(serverDir).some(f => /\.(ts|mts|js|mjs)$/.test(f) && readFileSync(f, 'utf8').includes(SERVER_CANARY))
+const issuerExists = existsSync(join(serverDir, 'auth/test-issuer.ts')) || canaryInSource || inTest.some(h => h.startsWith('module '))
+if (issuerExists) {
+  if (!inTest.some(h => h.includes(SERVER_CANARY))) {
+    bad = true
+    console.error(`FAIL  server bundle: no "${SERVER_CANARY}" in the test build (${relative(root, testWorker)}), so the scan proves nothing.`)
+  } else console.log(`ok    server bundle: caught the test build (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
+} else {
+  console.log(`note  server bundle: no test issuer yet (no server/auth/test-issuer.ts, no canary under server/, no test-issuer module in the test build; W1 adds it), so the scan can't be proven on the test build yet.`)
 }
 
 process.exit(bad ? 1 : 0)

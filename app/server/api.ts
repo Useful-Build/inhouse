@@ -1,0 +1,40 @@
+// The /api/* request path (p2-design sections 2 to 4): authenticate (401 before any route lookup, so an unknown path
+// without a JWT is 401, not 404), the Origin check on non-GET and on a WebSocket upgrade, the route (unknown: 404), its
+// matrix row (none: 500, never the handler), checkAccess, then the handler. Every answer carries the security headers
+// and no-store: the errors through server/http.ts, and a handler's own Response is wrapped here, so no handler can opt
+// out. Its parts come in as `ApiParts` (server/index.ts passes the real ones), so tests can drive the path itself.
+import type { AccessRow } from './access-matrix.ts'
+import type { authenticate, checkAccess, checkOrigin } from './auth/index.ts'
+import { SECURITY_HEADERS, apiError } from './http.ts'
+import { withSecurityHeaders } from '../shared/security-headers.ts'
+import { matchRoute } from './routes.ts'
+import type { Route } from './routes.ts'
+
+export interface ApiParts {
+  authenticate: typeof authenticate
+  checkOrigin: typeof checkOrigin
+  checkAccess: typeof checkAccess
+  routes: readonly Route[]
+  accessMatrix: readonly AccessRow[]
+}
+
+export async function api(parts: ApiParts, request: Request, env: Env, ctx: ExecutionContext, requestId: string): Promise<Response> {
+  const principal = await parts.authenticate(request, env, requestId)
+  if (!principal) return apiError('unauthorized')
+  const upgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
+  if (upgrade || (request.method !== 'GET' && request.method !== 'HEAD')) {
+    const reason = parts.checkOrigin(request, env, principal)
+    if (reason) return apiError('forbidden', { reason })
+  }
+  const { pathname } = new URL(request.url)
+  const found = matchRoute(parts.routes, request.method, pathname)
+  if (!found) return apiError('not_found')
+  const row = parts.accessMatrix.find(r => r.method === found.route.method && r.pattern === found.route.pattern)
+  if (!row) {
+    console.error({ event: 'route_without_matrix_row', requestId, method: found.route.method, pattern: found.route.pattern })
+    return apiError('unknown')
+  }
+  const denied = parts.checkAccess(row, principal, request)
+  if (denied) return apiError(denied.code, denied.reason ? { reason: denied.reason } : {})
+  return withSecurityHeaders(SECURITY_HEADERS, await found.route.handler({ request, env, ctx, principal, params: found.params, requestId }))
+}

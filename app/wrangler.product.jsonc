@@ -1,0 +1,40 @@
+/**
+ * The product Worker's config TEMPLATE (P2). No account id, hostname, Access `aud`, client id, database id or brand
+ * name lives here: the private ops repo fills them per account at release (INHOUSE_ACCESS, the D1 `database_id`, the
+ * routes) and sets the AUDIT_HASH_KEY secret. `vite build --mode product` builds server/index.ts from this file
+ * (vite.config.ts). The test build's config is wrangler.test.jsonc; the demo's is wrangler.jsonc.
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "inhouse-product",
+	"main": "server/index.ts",
+	"compatibility_date": "2026-11-13",
+	"assets": {
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		// /api/* always reaches the Worker (authenticated first), never the SPA fallback.
+		"run_worker_first": ["/api/*"]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "inhouse",
+			// No database_id: the ops repo fills it per account.
+			"migrations_dir": "server/migrations"
+		}
+	],
+	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-files" }],
+	"vars": {
+		// JSON text, filled by the ops repo: { teamDomain, apps: [{ name, origin, aud }], serviceTokens } (p2-design section 2).
+		// Empty here, so a release that doesn't fill it fails the config check.
+		"INHOUSE_ACCESS": ""
+	},
+	// A brand deployment answers only on its own routes: no workers.dev URL and no preview URLs.
+	"workers_dev": false,
+	"preview_urls": false,
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true
+}
