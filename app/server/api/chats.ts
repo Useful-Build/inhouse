@@ -170,15 +170,18 @@ function deleteOrRestore(deleted: boolean): Handler {
     c.access.requireObject({ ownerId: by.memberId })
     const after = await stores.chats.setDeleted(ids, by.memberId, deleted, writer(c))
     // A deleted chat's queued turns are cancelled and its running one stopped, each through the BrandAgent's own
-    // paths (every one ends in its final-state step). A retry after a failure here repeats it (the write is idempotent).
+    // paths (every one ends in its final-state step), and the BrandAgent refuses sends into it until a restore tells it
+    // otherwise (route 29's D1 read may predate the delete). A retry after a failure here repeats it (the write is
+    // idempotent).
     if (deleted) await brandAgent(c.env).endChats(ids)
+    else await brandAgent(c.env).restoreChats(ids)
     return apiJson({ items: await summaries(c, after) })
   }
 }
 
 /** Route 27, `POST /api/chats/delete` `{ ids }`: also cancels the chats' queued turns and stops their running one. */
 export const deleteChats: Handler = deleteOrRestore(true)
-/** Route 28, `POST /api/chats/restore` `{ ids }`. */
+/** Route 28, `POST /api/chats/restore` `{ ids }`: sends into the chats are admitted again. */
 export const restoreChats: Handler = deleteOrRestore(false)
 
 /**

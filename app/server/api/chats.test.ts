@@ -7,7 +7,9 @@
 //  4. a delete or restore with one id not the caller's changes any chat (all-or-nothing), or 51 ids pass;
 //  5. a create isn't idempotent for its owner, or a failed save leaves a row, or a lost reply makes a second one;
 //  6. a delete leaves a queued turn waiting or a live one running, or ends them outside the BrandAgent's paths;
-//  7. `running` and `runs` don't follow the BrandAgent's live run.
+//  7. `running` and `runs` don't follow the BrandAgent's live run;
+//  8. a send whose D1 read happened before a delete committed is admitted into the deleted chat, or a restored chat
+//     still refuses sends.
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -269,5 +271,30 @@ describe('routes 27 and 28: delete and restore, all or nothing (failures 4 and 6
       { turn_id: second.body.turnId, state: 'cancelled', outcome: null, cancel_why: 'deleted', fenced: 0 },
     ])
     expect(['ending', 'cancelled']).toContain(rows[0].state)
+  })
+
+  it('a send that read the chat before the delete committed is refused 404 by the BrandAgent; after a restore it is admitted (failure 8)', async () => {
+    await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 's:cap', ?, 1, ?, ?, 'r')").bind(JSON.stringify('$320'), NOW, admin).run()
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    // The barrier: route 29's owner read returns (the chat not deleted), then waits until the delete is done.
+    let release!: () => void
+    const held = new Promise<void>(r => { release = r })
+    let read!: () => void
+    const readDone = new Promise<void>(r => { read = r })
+    const slow: Stores = { ...stores, chats: { ...stores.chats, ownerOf: async chatId => { const o = await stores.chats.ownerOf(chatId); read(); await held; return o } } }
+    const key = `key${uniq()}`
+    const body = { clientTurnKey: key, text: 'hi', model: 'sonnet' }
+    const late = call(sendPriced, me(alice), { method: 'POST', path: `/api/chats/${id}/turns`, params: { id }, body }, slow)
+    await readDone
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    release()
+    expect(await late).toMatchObject({ status: 404, body: { error: { code: 'not_found' } } })
+    const turns = () => runInDurableObject(brandAgent(env), (_i, s) => s.storage.sql.exec('SELECT COUNT(*) AS n FROM turns WHERE chat_id = ?', id).one().n)
+    expect(await turns()).toBe(0)
+    expect((await restore(me(alice), { ids: [id] })).status).toBe(200)
+    const again = await call(sendPriced, me(alice), { method: 'POST', path: `/api/chats/${id}/turns`, params: { id }, body })
+    expect(again).toMatchObject({ status: 200, body: { position: 'starting' } })
+    expect(await turns()).toBe(1)
   })
 })

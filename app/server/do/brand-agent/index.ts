@@ -115,6 +115,10 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async endChats(chatIds: string[]): Promise<void> {
     this.core.endChats(chatIds)
   }
+  /** Route 28: the chats were restored; the BrandAgent admits sends into them again. */
+  async restoreChats(chatIds: string[]): Promise<void> {
+    this.core.restoreChats(chatIds)
+  }
   /** Route 32: PR 2b. */
   async activeRuns(_scope: RunScope): Promise<ActiveRun[]> {
     throw new Error('activeRuns: not built (PR 2b)')

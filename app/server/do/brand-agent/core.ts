@@ -212,6 +212,8 @@ export class AgentCore {
     if (prior) return this.replay(prior, hash, t.by.memberId)
     const member = t.by.memberId
     if (this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", member).toArray().length > 0) return refuse('forbidden', 'removed')
+    // A deleted chat is not found, as route 29 answers it from D1 (that read may predate the delete).
+    if (this.sql.exec('SELECT 1 FROM deleted_chats WHERE chat_id = ?', t.chatId).toArray().length > 0) return refuse('not_found')
     if (this.paused()) return refuse('forbidden', 'paused')
     if (this.draining_()) return refuse('unavailable', 'draining')
     const cs = this.chatState(t.chatId)
@@ -1084,13 +1086,16 @@ export class AgentCore {
   }
 
   /**
-   * Route 27 (4.6): the chats were deleted. Their queued turns are cancelled and their running ones fenced, each through
-   * the fence's own paths, so every one ends in `storeFinal`. One synchronous step: the runs' `advance` is held until
-   * every turn is ended or fenced, so no queued turn is claimed on the way.
+   * Route 27 (4.6): the chats were deleted. They join `deleted_chats` (sends refused until a restore), their queued
+   * turns are cancelled and their running ones fenced, each through the fence's own paths, so every one ends in
+   * `storeFinal`. One synchronous step: the runs' `advance` is held until every turn is ended or fenced, so no queued
+   * turn is claimed on the way.
    */
   endChats(chatIds: string[]) {
     if (chatIds.length === 0) return
     const marks = chatIds.map(() => '?').join(', ')
+    const now = this.d.now()
+    for (const id of chatIds) this.sql.exec('INSERT INTO deleted_chats (chat_id, at_ms) VALUES (?, ?) ON CONFLICT DO NOTHING', id, now)
     const runs = this.sql.exec<{ run_id: string }>(`SELECT run_id FROM runs WHERE state = 'live' AND chat_id IN (${marks})`, ...chatIds).toArray().map(r => r.run_id)
     for (const r of runs) this.holding.add(r)
     try {
@@ -1104,6 +1109,12 @@ export class AgentCore {
       for (const r of runs) this.holding.delete(r)
     }
     for (const r of runs) this.advance(r)
+  }
+
+  /** Route 28: the chats were restored; sends into them are admitted again. */
+  restoreChats(chatIds: string[]) {
+    if (chatIds.length === 0) return
+    this.sql.exec(`DELETE FROM deleted_chats WHERE chat_id IN (${chatIds.map(() => '?').join(', ')})`, ...chatIds)
   }
 
   // ---------- pause, drain (4.11, 7) ----------

@@ -14,7 +14,9 @@
 // - `turn_effects`: 4.2.6's awaited side effects (file confirms), one at a time per turn, keyed `(turn_id, seq)`;
 // - `turn_trace`: audit and step records for the trace (route 33), never parts;
 // - `authority`: the object's removed-member and ended-grant sets (4.3, 4.10);
-// - `turn_rows`: a final turn's D1 rows, fixed at its end (4.8, projection.ts), so a retry replays the same ones.
+// - `turn_rows`: a final turn's D1 rows, fixed at its end (4.8, projection.ts), so a retry replays the same ones;
+// - `deleted_chats`: the chats route 27 deleted (until route 28 restores them): `submitTurn` refuses them, so a send
+//   that read the chat in D1 before the delete committed can't start a turn in it.
 
 import { TURN_ROWS_TABLE } from './projection.ts'
 
@@ -60,4 +62,5 @@ export function createAgentTables(sql: SqlStorage): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS authority (kind TEXT NOT NULL CHECK (kind IN ('member', 'grant')), id TEXT NOT NULL,
     at_ms INTEGER NOT NULL, PRIMARY KEY (kind, id))`)
   sql.exec(TURN_ROWS_TABLE)
+  sql.exec('CREATE TABLE IF NOT EXISTS deleted_chats (chat_id TEXT PRIMARY KEY, at_ms INTEGER NOT NULL)')
 }
