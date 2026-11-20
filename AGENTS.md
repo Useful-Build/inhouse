@@ -38,7 +38,7 @@ Run them in `app/`.
 | `npm run preview` | Build, then serve the build |
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
 | `npm run test:visual:linux` | The visual suite in the Playwright Docker image (`:update` regenerates baselines) |
-| `E2E_PRODUCT=1 npx playwright test --project=product` | The product build's specs (`e2e/product/`), after `npm run build:product`. No other run includes them |
+| `E2E_PRODUCT=1 E2E_PREBUILT=1 npx playwright test --project=product` | The product build's specs (`e2e/product/`), after `npm run build:product`. No other run includes them |
 | `npm run test:a11y` | axe, WCAG 2.1 A and AA |
 | `npm run deploy` | Build and deploy to the Cloudflare account wrangler is signed in to (a fork's own). Don't use it for this repo's production: that's `deploy.yml` |
 

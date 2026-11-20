@@ -31,20 +31,28 @@ const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' }
 test('A demo stored by the build before the seam opens with its chat, draft, model pick and approval mid-hold intact', async ({ fx, page }) => {
   expect(demoEntry, 'the fixture holds the demo state').toBeDefined()
   const [approvalId, approval] = Object.entries(demoState.approved as Record<string, { ms: number; title: string }>)[0]
+  // The card's aria-label is its problem's title: problem `stock` in src/agent/sample-data/problems.json, which the
+  // fixture's approval is for (copied: a spec reads sample data only through `fx`).
+  expect(approvalId).toBe('stock')
+  const problemTitle = 'Ridge 30L Pack runs out in 9 days'
   const chat = session.started[0]
   const answer = session.chats[chat.id].extras.find(m => m.part?.type === 'text')!.part!.text!
   const table = session.chats[chat.id].extras.find(m => m.part?.type === 'table')!.part!.table!.summary
   const [draftChat, draft] = Object.entries(session.drafts)[0]
   const draftTitle = fx.names.chats.find(c => c.id === draftChat)!.title
 
-  // The approval's hold runs on real time and the demo on the demo clock: the page clock starts at the moment the
-  // approval was logged, so its 10 s hold is pending however long the load takes, and runFor ends it.
+  // The page clock starts at the moment the approval was logged and keeps ticking while the page loads, so it is paused
+  // as soon as the app is up: the hold (10 s from the approval) is then still pending, and only runFor moves it. If a
+  // very slow load let the hold run out before the pause, the held check below fails rather than passes by accident.
   await page.clock.install({ time: approval.ms })
-  await fx.seedSaved({ stage: 'Act', demo: { ambient: 'Always' } }, demoState)
+  // The seed carries no demo switches: the restore below writes the fixture's own switches entry, whose ambient is Off.
+  // Passing `demo: { ambient: 'Always' }` here would be silently overridden by it, so it isn't passed.
+  await fx.seedSaved({ stage: 'Act' }, demoState)
   // After the seed (which clears storage first), so the fixture's other entries stay.
   await page.addInitScript(restore, rest.map(e => [e.key, e.value] as [string, string]))
   await fx.open('#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Good morning, Sam.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(`Good morning, ${fx.names.user.name.split(' ')[0]}.`)
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 100)
 
   // The model pick.
   const pick = { sonnet: 'Fast' }[session.modelSel] ?? session.modelSel
@@ -63,9 +71,12 @@ test('A demo stored by the build before the seam opens with its chat, draft, mod
 
   // The approval is mid-hold, then goes out on the clock.
   await side(page).getByRole('button', { name: 'Today', exact: true }).click()
-  const held = page.getByRole('article').filter({ hasText: 'going out' })
-  await expect(held).toHaveCount(1)
+  // The card is the fixture's approval, found by its problem title (the card's aria-label).
+  const approved = page.getByRole('article', { name: problemTitle, exact: true })
+  await expect(approved).toContainText('going out')
+  await expect(page.getByRole('article').filter({ hasText: 'going out' })).toHaveCount(1)
+  expect(Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).not.toContain(approvalId)
   await page.clock.runFor(12_000)
-  await expect(page.getByRole('article').filter({ hasText: 'going out' })).toHaveCount(0)
+  await expect(approved).not.toContainText('going out')
   await expect.poll(async () => Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).toContain(approvalId)
 })
