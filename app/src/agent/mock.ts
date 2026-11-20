@@ -11,7 +11,7 @@ import type { ProblemSeed, TraceKey } from './data'
 import type {
   AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, AskOptions, Attachment, ChatThread, ClockTime, DemoContext,
   Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, RunEvent, Scenario, SeedTurn, SendPriority, SetAsideReason, SetAsideRecord,
-  SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolsData, Trace, UsageData,
+  SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, photoKey, stageIndex } from './types'
 import { shownClock, shownDateTimeIn, shownTimeOn } from './upgrade-times'
@@ -39,7 +39,7 @@ const override = (() => {
 export const dataOverrideActive = !!override.brandName || override.channels === false
 const meta = override.brandName ? { ...sampleMeta, brand: { ...sampleMeta.brand, name: override.brandName } } : sampleMeta
 /** Every tool connected and read: the scenarios below set `connection`, `setup` and `readDone` their own way. */
-const tools: ToolsData = { ...sampleTools, ...(override.channels === false ? { channels: [] } : {}), connection: {}, setup: [], readDone: sampleTools.connected.length }
+const tools: ToolsData = { ...sampleTools, ...(override.channels === false ? { channels: [] } : {}), connection: {}, setup: {}, readDone: sampleTools.connected.length }
 
 /** v2: times are on the demo clock and records carry who did it. v1 is dropped. Before C1 (P1) a time was saved as it
  *  showed ("8:03 AM", with a sortable minute); `sanitize` turns those into instants, so the key doesn't change. */
@@ -194,6 +194,20 @@ const NOTHING_YET = {
   usage: noUsage(usage), usageMonths: [noUsage(usage)],
   chat: { ...DATA.chat, chats: [] },
 } satisfies Partial<AgentData>
+const SETUP_DUE: ToolSetup['due'][] = ['today', 'tomorrow', 'this-week']
+/** Day one's setup list (scenarios.json): each of `being` (the tools being connected) the Inhouse team is setting up, by key, with when it should connect. Bad data stops the app. */
+function firstDaySetup(being: string[]): ToolsData['setup'] {
+  const out: ToolsData['setup'] = {}
+  for (const [key, when] of Object.entries(scenarios['First day'].today.setup)) {
+    if (!being.includes(key) || !Object.hasOwn(tools.details, key)) throw new Error(`Sample data: the First day setup names "${key}", which isn't a tool being connected.`)
+    const due = SETUP_DUE.find(d => d === when)
+    if (!due) throw new Error(`Sample data: the First day setup has "${key}" due "${when}", which isn't today, tomorrow or this-week.`)
+    out[key] = { due }
+  }
+  return out
+}
+/** The tools being connected on day one, in display order: the ones the agent will read, then the one already on its way. */
+const FIRST_DAY_TOOLS = [...tools.connected, ...tools.beingConnected.filter(k => !tools.connected.includes(k))]
 /**
  * Day one, before the agent has read anything: no tools or channels connected yet (the six are being connected, per
  * scenarios.json), nothing found, asked or run, no Library files and no notifications (see `listFiles` and
@@ -203,10 +217,7 @@ const NOTHING_YET = {
 const FIRST_DAY: AgentData = {
   ...DATA,
   ...NOTHING_YET,
-  tools: {
-    ...DATA.tools, connected: [], channels: [], beingConnected: [...tools.connected, ...tools.beingConnected.filter(k => !tools.connected.includes(k))],
-    setup: scenarios['First day'].today.setup as [string, string][], readDone: 0,
-  },
+  tools: { ...DATA.tools, connected: [], channels: [], beingConnected: FIRST_DAY_TOOLS, setup: firstDaySetup(FIRST_DAY_TOOLS), readDone: 0 },
   routines: DATA.routines.filter(r => !r.inChat).map(({ last: _last, ...r }) => r),
   skills: skills.filter(s => !s.mine).map(s => ({ ...s, used: 'Not used yet' })),
 }
@@ -893,7 +904,7 @@ export class MockAgent implements AgentClient {
     const S = stageIndex(stage)
     const st = this.state
     const data = this.read()
-    const ctx = { S, scenario, agent: st, data }
+    const ctx = { S, agent: st, data }
     // The same counts as Today: what's waiting in Act and Run, what Today lists in Watch.
     const nNeed = S >= 1 ? pendingIds(ctx).length : visibleProblems(ctx).length
     const out: AgentNotification[] = []

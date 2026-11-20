@@ -1,6 +1,6 @@
 // The tools the agent reads, the channels it posts to and the tool catalog.
 import { z } from 'zod'
-import { InstantSchema, PairSchema, StageIndexSchema } from './common.ts'
+import { InstantSchema, StageIndexSchema } from './common.ts'
 import { AttachmentSchema } from './chat.ts'
 
 export const ToolDetailSchema = z.object({
@@ -47,6 +47,10 @@ export type ToolChannel = z.infer<typeof ToolChannelSchema>
 export const ToolConnectionSchema = z.object({ status: z.literal('disconnected'), since: InstantSchema })
 export type ToolConnection = z.infer<typeof ToolConnectionSchema>
 
+/** A tool the Inhouse team is setting up: when it should connect, counted in the brand's days from today. */
+export const ToolSetupSchema = z.object({ due: z.enum(['today', 'tomorrow', 'this-week']) })
+export type ToolSetup = z.infer<typeof ToolSetupSchema>
+
 export const ToolsDataSchema = z.object({
   /** The six tools Inhouse agent reads, in display order. */
   connected: z.array(z.string()),
@@ -62,10 +66,10 @@ export const ToolsDataSchema = z.object({
   /** Connected tools the agent can't read now, by key, with since when. A tool not listed reads as `connected` says. */
   connection: z.record(z.string(), ToolConnectionSchema),
   /**
-   * Before the first tool is live: the tools the Inhouse team is setting up, in order, each by name with when it should
-   * connect ("Tomorrow"). Empty once the agent has a tool to read.
+   * Before the first tool is live: the tools the Inhouse team is setting up, by key, each with when it should connect.
+   * Every key is in `beingConnected`, which gives their order. Empty once the agent has a tool to read.
    */
-  setup: z.array(PairSchema),
+  setup: z.record(z.string(), ToolSetupSchema),
   /** How many of `connected` the morning check has read so far: all of them once the agent's data is ready. */
   readDone: z.number().int().nonnegative(),
 })

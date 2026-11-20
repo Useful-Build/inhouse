@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import {
   AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, InstantSchema, LibraryFileSchema,
-  RoutineRunSchema, RunEventSchema, TraceSchema,
+  RoutineRunSchema, RunEventSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
 import type { AgentNotice, RunEvent, Scenario, SendPriority, Stage } from '../types'
 import { AgentError, photoKey, SCENARIOS, STAGES } from '../types'
@@ -215,8 +215,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
           expect(tools.connected, `${scenario}: tools.connection names "${key}", which isn't connected`).toContain(key)
           expect(Object.hasOwn(tools.details, key), `${scenario}: tools.connection names an unknown tool "${key}"`).toBe(true)
         }
-        const names = Object.values(tools.details).map(d => d.name)
-        for (const [name] of tools.setup) expect(names, `${scenario}: tools.setup names an unknown tool`).toContain(name)
+        // A setup entry is keyed by a tool being connected that the data describes (Today lists it by that key, in
+        // `beingConnected`'s order), and the list is over once the agent has a tool to read.
+        for (const key of Object.keys(tools.setup)) {
+          expect(tools.beingConnected, `${scenario}: tools.setup names "${key}", which isn't being connected`).toContain(key)
+          expect(Object.hasOwn(tools.details, key), `${scenario}: tools.setup names an unknown tool "${key}"`).toBe(true)
+        }
+        if (tools.connected.length) expect(tools.setup, `${scenario}: a setup list although a tool is connected`).toEqual({})
         expect(tools.readDone, `${scenario}: read more tools than are connected`).toBeLessThanOrEqual(tools.connected.length)
         if (data.status === 'ready') expect(tools.readDone, `${scenario}: a ready agent has read every connected tool`).toBe(tools.connected.length)
       }
@@ -236,11 +241,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await fresh('Act', 'First day')
       const first = t.client.read().tools
       expect(first.connected).toEqual([])
-      expect(first.setup.length).toBeGreaterThan(0)
-      const being = first.beingConnected.map(k => first.details[k].name)
-      for (const [name] of first.setup) expect(being, `setup lists "${name}", which isn't being connected`).toContain(name)
+      expect(Object.keys(first.setup).length).toBeGreaterThan(0)
+      for (const [key, s] of Object.entries(first.setup)) {
+        expect(first.beingConnected, `setup lists "${key}", which isn't being connected`).toContain(key)
+        parse(ToolSetupSchema, s, `tools.setup["${key}"]`)
+      }
       await fresh('Act', 'Normal')
-      expect(t.client.read().tools.setup).toEqual([])
+      expect(t.client.read().tools.setup).toEqual({})
     })
   })
 

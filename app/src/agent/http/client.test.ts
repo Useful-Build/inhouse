@@ -41,7 +41,7 @@ describe('the product client stub', () => {
     AgentStateSchema.parse(c.getSnapshot())
     expect(Object.keys(c.read())).not.toContain('scenarios')
     expect(Object.keys(c.getSnapshot())).not.toContain('demoStartedAt')
-    expect(c.read().tools).toMatchObject({ connection: {}, setup: [], readDone: 0 })
+    expect(c.read().tools).toMatchObject({ connection: {}, setup: {}, readDone: 0 })
     expect(c.getTrace('any')).toBeNull()
   })
 

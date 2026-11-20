@@ -4,32 +4,14 @@
     "Normal": {},
     "First day": {
       "today": {
-        "setup": [
-          [
-            "Shopify",
-            "Connecting today"
-          ],
-          [
-            "Amazon",
-            "Tomorrow"
-          ],
-          [
-            "ShipBob",
-            "Tomorrow"
-          ],
-          [
-            "Xero",
-            "This week"
-          ],
-          [
-            "Gorgias",
-            "This week"
-          ],
-          [
-            "Meta Ads",
-            "This week"
-          ]
-        ]
+        "setup": {
+          "shopify": "today",
+          "amazon": "tomorrow",
+          "shipbob": "tomorrow",
+          "xero": "this-week",
+          "gorgias": "this-week",
+          "meta-ads": "this-week"
+        }
       }
     },
     "Loading": {

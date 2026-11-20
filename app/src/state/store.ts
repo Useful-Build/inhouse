@@ -1189,13 +1189,15 @@ export const useAgentState = (): AgentState => useSyncExternalStore(agent.subscr
 /** Read-only domain data (problems, tools, usage, people, chat strings): everything that is not state. */
 export const useAgentData = (): AgentData => useSyncExternalStore(agent.subscribe, agent.read)
 
-/** Stage index, scenario, agent state and data: the input every selector in derive.ts takes. */
+/**
+ * Stage index, agent state and data: the input every selector in derive.ts takes. The demo's scenario switch isn't in it:
+ * a scenario shows through the data the client reads (the mock serves another snapshot per scenario).
+ */
 export function useCtx(): Ctx {
   const agentState = useAgentState()
   const data = useAgentData()
   const stage = useUi(s => s.stage)
-  const scenario = useUi(s => s.scenario)
-  return useMemo(() => ({ S: stageIndex(stage), scenario, agent: agentState, data }), [stage, scenario, agentState, data])
+  return useMemo(() => ({ S: stageIndex(stage), agent: agentState, data }), [stage, agentState, data])
 }
 
 // ---------- composer drafts (PR 4): swap drafts when the open composer changes ----------

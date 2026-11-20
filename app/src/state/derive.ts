@@ -1,12 +1,13 @@
-// Pure selectors: stage + scenario + agent state -> what the screens show.
+// Pure selectors: stage + agent state + agent data -> what the screens show. The demo's scenario switch isn't an input:
+// what a scenario changes on screen is in the agent's data.
 import { photoKey } from '../agent/types'
-import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Prose, Scenario, StageIndex, TeamRequest, ThinkingMode, ToolDetail } from '../agent/types'
+import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Prose, StageIndex, TeamRequest, ThinkingMode, ToolDetail, ToolSetup } from '../agent/types'
 import { calendarOf, fmtAgo, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtProse, fmtTime, fmtWeekday, majorOf, moneyOf, type Display } from '../lib/format'
 import { display, nowOf } from './display'
 
 export const STAGE_TAGS = ['Watch', 'Act', 'Run'] as const
 
-export interface Ctx { S: StageIndex; scenario: Scenario; agent: AgentState; data: AgentData }
+export interface Ctx { S: StageIndex; agent: AgentState; data: AgentData }
 
 /** The channel the team hears from the agent on at a stage: the first one whose stage is reached. None: no channel wording. */
 export const channelFrom = (data: AgentData, stage: StageIndex): ToolChannel | undefined => data.tools.channels.find(c => stage >= c.need)
@@ -38,10 +39,6 @@ export const toolState = (ctx: Ctx, key: string): ToolState => {
   if (ctx.agent.toolPaused[key]) return 'paused'
   return 'connected'
 }
-/**
- * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
- * none is, or it's First day, when nothing is live yet and Today lists the setup instead.
- */
 /** The first connected tool whose login failed, with since when, or null when every one reads. The banner and Activity name it. */
 export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
   for (const key of ctx.data.tools.connected) {
@@ -50,8 +47,17 @@ export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
   }
   return null
 }
+/**
+ * Day one: the agent's data has arrived and no tool is connected yet, so it has nothing to read. Today lists the setup
+ * instead of problems. A client that is still loading isn't there yet: it doesn't know its tools.
+ */
+export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && data.tools.connected.length === 0
+/**
+ * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
+ * none is, or it's day one, when nothing is live yet and Today lists the setup instead.
+ */
 export const goingLive = (ctx: Ctx): { name: string; by: string } | null => {
-  if (ctx.scenario === 'First day') return null
+  if (isFirstDay(ctx.data)) return null
   for (const key of Object.keys(ctx.data.tools.details)) {
     const d = toolDetail(ctx.data, key)
     if (d.liveBy && toolState(ctx, key) === 'connecting') return { name: d.name, by: fmtWeekday(d.liveBy, display()) }
@@ -66,6 +72,12 @@ export const teamRequestLine = (q: Omit<TeamRequest, 'icon'>, now: number, sentH
   const d0 = display()
   return { sub: `${q.sub}, ${sentHere ? 'just now' : fmtAgo(q.at, now, d0)}`, status: q.statusAt ? `${q.status} ${fmtWeekday(q.statusAt, d0)}` : q.status }
 }
+/** When a tool being set up should connect, as Today's setup list and its row on Tools say it. */
+const SETUP_DUE: Record<ToolSetup['due'], string> = { today: 'Connecting today', tomorrow: 'Tomorrow', 'this-week': 'This week' }
+export interface SetupRow { key: string; name: string; when: string }
+/** Day one's setup list: the tools being connected that have a setup entry, in that order, each with when it should connect. */
+export const setupRows = (data: AgentData): SetupRow[] =>
+  data.tools.beingConnected.filter(key => Object.hasOwn(data.tools.setup, key)).map(key => ({ key, name: toolDetail(data, key).name, when: SETUP_DUE[data.tools.setup[key].due] }))
 /** The connected tools the agent can read right now, in display order: not paused, not disconnected. */
 export const readingTools = (ctx: Ctx): string[] => ctx.data.tools.connected.filter(k => toolState(ctx, k) === 'connected')
 /** The tools this morning's check read: every connected tool but one whose login had failed. Pausing one later doesn't change what was read. */
@@ -122,13 +134,14 @@ export function toolView(ctx: Ctx, key: string): ToolView {
   const lastRead = ctx.data.tools.lastRead[key] ?? ctx.data.tools.lastRead.default
   const readAt = fmtTime(lastRead, d0)
   const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet' }[state]
+  const setup = Object.hasOwn(ctx.data.tools.setup, key) ? SETUP_DUE[ctx.data.tools.setup[key].due] : null
   const ability = (k: ToolAbility['key'], icon: string, title: string, text: string, need: StageIndex): ToolAbility =>
     ({ key: k, icon, title, text, need, locked: ctx.S < need, tag: ctx.S < need ? STAGE_TAGS[need] : tagOf })
   return {
     key, name: d.name, state,
     statusText: { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}` }[state],
     // Being connected: on day one, when Today's setup list says it connects; else when it goes live ("Live by Fri, Nov 20").
-    listLine: { connecting: ctx.data.tools.setup.find(([n]) => n === d.name)?.[1] || sinceLine(d, d0), connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting' }[state],
+    listLine: { connecting: setup ?? sinceLine(d, d0), connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting' }[state],
     connectedRow: state === 'connecting' ? 'Not yet' : `${sinceLine(d, d0)}, by your Inhouse team`,
     lastRead: state === 'connecting' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
     abilities: [
@@ -213,9 +226,9 @@ export function usageSummary(m: { total: Money; cap: Money; alertAt: number; dai
 }
 
 export function flags(ctx: Ctx) {
-  const { S, scenario, agent } = ctx
-  const isFirst = scenario === 'First day'
-  // Loading is the agent's data status (a real client starts there), not a scenario name.
+  const { S, agent } = ctx
+  // Day one and loading are what the agent's data says (a real client starts loading), not a scenario name.
+  const isFirst = isFirstDay(ctx.data)
   const isLoading = ctx.data.status === 'loading'
   // A tool's login failed: the agent's data says so (`tools.connection`), not a scenario name.
   const disc = lostTool(ctx) !== null

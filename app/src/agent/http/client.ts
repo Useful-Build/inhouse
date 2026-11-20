@@ -19,7 +19,7 @@ const LOADING: AgentData = {
     currentUser: { id: '', name: '', initials: '', email: '', title: '', role: '' },
   },
   problems: [],
-  tools: { connected: [], channels: [], beingConnected: [], lastRead: { default: instantOf(0) }, catalog: [], details: {}, connection: {}, setup: [], readDone: 0 },
+  tools: { connected: [], channels: [], beingConnected: [], lastRead: { default: instantOf(0) }, catalog: [], details: {}, connection: {}, setup: {}, readDone: 0 },
   routines: [],
   skills: [],
   skillSuggestions: [],
