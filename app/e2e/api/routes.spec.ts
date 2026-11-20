@@ -42,6 +42,8 @@ test('the matrix keeps the design\'s invariants over every row', () => {
     // Decision 19: Inhouse may write baseline rows that list it; never brand data or personal, and never a grant.
     if (row.method !== 'GET' && ['brand_data', 'personal'].includes(row.class)) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
     if (row.method !== 'GET' && row.pattern.startsWith('/api/grants')) expect(row.allow, `${where}: Inhouse never grants itself access`).not.toContain('inhouse')
+    // Decision 19b: every role change makes or unmakes an Admin, so it is Admin-only.
+    if (row.method === 'PUT' && row.pattern === '/api/members/:id/role') expect(row.allow, `${where}: Inhouse never changes a role`).not.toContain('inhouse')
     if (row.pattern.startsWith('/api/audit')) expect(row.class, `${where}: the audit log is brand data`).toBe('brand_data')
     if (row.services.includes('monitor')) expect(row.class, `${where}: monitor is for open rows`).toBe('open')
     // Changed in P3 (p3-design section 3): smoke is no longer GET-only; it's never on open or report rows.

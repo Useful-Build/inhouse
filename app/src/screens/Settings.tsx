@@ -407,7 +407,7 @@ export function Settings() {
         </div>
       </div>
       )}
-      {inviting && <InviteDialog onClose={() => setInviting(false)} />}
+      {inviting && <InviteDialog onClose={() => setInviting(false)} memberOnly={me?.role === 'inhouse'} />}
       {ask && (
         <Confirm label={ask.title} title={ask.title} action={ask.action} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
           {ask.text}

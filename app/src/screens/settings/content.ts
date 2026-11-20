@@ -255,7 +255,7 @@ export function settingsPage(tab: string, env: Env): Page {
         const first = m.name.split(' ')[0]
         const named = namedOnRules(m.id)
         return withAvatar({ ...SEL(m.name, [m.email, m.title].filter(Boolean).join(' · '), `p:${m.id}`, m.role === 'admin' ? 'Admin' : 'Member', ['Admin', 'Member']), display: label === 'Approver' ? label : undefined, tag: m.status === 'invited' ? 'Invited' : undefined, tagVariant: 'muted', can: 'changeRole', save: v => env.setRole(m.id, v === 'Admin' ? 'admin' : 'member'), onChange: v => demoted(m, v), confirm: v => removesAdmin(m, v),
-          remove: m.id === me.id ? undefined : { label: `Remove ${m.name}`, title: `Remove ${m.name}?`, text: `${first} loses access to Inhouse.${named > 0 ? ` ${first} stays named on ${named} approval ${named === 1 ? 'rule' : 'rules'}, tagged "Not an approver".` : ''} The audit log keeps what ${first} did.`, action: 'Remove', go: () => env.removeMember(m.id) } }, m.id)
+          remove: m.id === me.id || (env.me?.role === 'inhouse' && m.role === 'admin') ? undefined : { label: `Remove ${m.name}`, title: `Remove ${m.name}?`, text: `${first} loses access to Inhouse.${named > 0 ? ` ${first} stays named on ${named} approval ${named === 1 ? 'rule' : 'rules'}, tagged "Not an approver".` : ''} The audit log keeps what ${first} did.`, action: 'Remove', go: () => env.removeMember(m.id) } }, m.id)
       }), { ...R('Invite someone', 'They sign in with their work email.', 'button', 'Invite', 0, undefined, undefined, env.invite), can: 'invite' }] },
     ] },
     'team-approvals': { title: 'Who approves what', sections: [
