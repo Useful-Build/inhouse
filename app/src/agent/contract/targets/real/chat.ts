@@ -2,15 +2,21 @@
 // usage (route 42). What's particular here: the client reads both pages from fixed paths, and a forget goes to route 44
 // or 45 by the line's scope, which only the read shows. W7 PR 1; the chat methods (C4, C5) join in PR 2 on W5's real client.
 //
-// Lines the orchestrator adds to index.ts (an orchestrator-only file):
-//   import { CHAT_READ_PATH, forgetRoute } from './chat'
-//   SERVED gains 'forgetMemory'; READ_PATH gains ...CHAT_READ_PATH; routeOf's `forgetMemory` case awaits `forgetRoute(s, who, key)`.
-// No fact can be made by any route (only the agent's tools write memory), so a fixture line has to be seeded under the
-// test build; that is left to the orchestrator (members.ts: a second writer on wrangler's open SQLite file isn't safe).
+// `forgetMemory` is EXEMPT on the real target (A5, 2026-11-20): it stays out of index.ts's SERVED, so the contract suite
+// skips its tests by name, with the reason below. index.ts needs no change until the exemption goes (then: 'forgetMemory'
+// in SERVED, the import of CHAT_READ_PATH and forgetRoute, `...CHAT_READ_PATH` in READ_PATH, routeOf's forgetMemory case).
+// The later PR that removes the exemption is W7 PR 2 (feat/chat-w7-specs): on the Q2 test deployment a chat turn runs, so
+// the agent's memory_save makes the fact through the API alone.
+
 import { findMemoryLine, forgetPath } from '../../../http/memory'
 import type { MemoryData } from '../../../../../shared/contract/memory'
 import type { ResourceKey } from '../../../types'
 import type { Seeded, Signer } from './me'
+
+/** Client methods the real target doesn't serve yet, each with why (the suite skips them by name). */
+export const CHAT_EXEMPT: Readonly<Record<string, string>> = {
+  forgetMemory: 'no route creates a memory fact until a chat turn can run on the test build (W7 PR 2, Q2 deployment); seeding would need a second writer on wrangler\'s open SQLite file',
+}
 
 /** The paths the client reads the Memory and Usage pages from (`readMemory`, `readUsage`). */
 export const CHAT_READ_PATH: Partial<Record<ResourceKey, string>> = { memory: '/api/memory', usage: '/api/usage' }

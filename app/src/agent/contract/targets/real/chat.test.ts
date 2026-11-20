@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CHAT_READ_PATH, forgetRoute, usagePath } from './chat'
+import { CHAT_EXEMPT, CHAT_READ_PATH, forgetRoute, usagePath } from './chat'
 import type { Signer } from './me'
 
 const KEY_B = 'mem_AAAAAAAAAAAAAAAAAAAAAA'
@@ -13,6 +13,10 @@ describe('the real target\'s memory and usage parts', () => {
     expect(CHAT_READ_PATH).toEqual({ memory: '/api/memory', usage: '/api/usage' })
     expect(usagePath()).toBe('/api/usage')
     expect(usagePath('2026-03')).toBe('/api/usage?month=2026-03')
+  })
+  it('exempts forgetMemory with a reason that names the later PR', () => {
+    expect(Object.keys(CHAT_EXEMPT)).toEqual(['forgetMemory'])
+    expect(CHAT_EXEMPT.forgetMemory).toMatch(/second writer.*W7 PR 2|W7 PR 2.*second writer/)
   })
   it('sends a team line to route 45 and a person\'s own to route 44', async () => {
     expect(await forgetRoute(signer(200, page), 'admin', KEY_B)).toEqual({ verbs: ['PUT'], path: `/api/memory/brand/${KEY_B}/forgotten` })
