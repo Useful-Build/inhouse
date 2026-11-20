@@ -357,6 +357,8 @@ describe('the model and the counts (failure 7)', () => {
   })
   it("the CLI's own count_tokens pass unpriced, 50 per turn, then 400", async () => {
     const h = await harness()
+    // W1's fake counts only turns it knows (an unknown turn answers false, like the real counter).
+    h.rpc.turns.add(GRANT.turnId)
     h.answer = async () => Response.json({ input_tokens: 12 })
     for (let i = 0; i < 50; i++) expect((await handleEgress(egressRequest('/model/v1/messages/count_tokens', { body: small }), h.deps)).status).toBe(200)
     const res = await handleEgress(egressRequest('/model/v1/messages/count_tokens', { body: small }), h.deps)

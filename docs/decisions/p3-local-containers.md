@@ -51,6 +51,18 @@ Evidence: `verify/backend-impl/s6/mac-5/`, `mac-6/` and `mac-6-diagnosis.md` (pr
 
 Verdict: Q2 stands for the Mac too. The Mac is a local path for everything except sandboxed tool calls.
 
+### Leg 1 on protocol v2 (2026-11-20, runs run1 and run2)
+
+The same check (`app/runner/harness/s6-check.mjs`) against the runner on protocol v2 (#137), with the harness taking
+the runner's pushed events (#147). Evidence: `verify/backend-impl/s6-v2/run1/` and `run2/` (private verify folder).
+
+| Run | Result |
+|---|---|
+| run1 | the protocol check passes (v2) and the scripted model sees no misses; chats run as distinct pool users, never root; every chat is refused at the sandbox: the VM's AppArmor user-namespace restriction, as mac-5 |
+| run2 (VM-only `sysctl kernel.apparmor_restrict_unprivileged_userns=0`, as mac-6) | the `hello` chat passes end to end on v2: `finished` success, then `released` with the checkpoint and `queryRan: true`; chats run as distinct pool users, never root. `write-output` fails at `bwrap: pivot_root: Operation not permitted`, then a scripted-model miss as a cascade: the mac-6 cause (Docker's default seccomp denies `pivot_root`; miniflare has no seccomp option) |
+
+This closes the S6 Mac re-run on v2: the protocol v2 path works locally; sandboxed tool calls still need Q2.
+
 ## Leg 2: a GitHub runner (native amd64)
 
 CI job `runner-dev` (removed after S6; in git history at e48242e), ubuntu-latest, wrangler 4.162.0, Docker 29.4.2,

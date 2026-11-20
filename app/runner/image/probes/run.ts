@@ -48,6 +48,8 @@ import {
   startEgress,
   waitUntil,
   type Script,
+  INHOUSE_ALWAYS,
+  INHOUSE_ON_DEMAND,
   type ScriptState,
   type ShellProbe,
   type ShellResult,
@@ -185,7 +187,7 @@ const terminalOf = (r: Run): { type: string; reason?: string } | undefined => {
 /** The stream ends first; wait for the pool to report a completed release or quarantine for this chat. */
 async function releaseOf(r: Run): Promise<Release> {
   if (r.via === 'direct') return { ok: r.cleanup === '', uid: agentUser(r.chatId).uid, detail: r.cleanup || 'direct release passed' }
-  if (r.status !== 200) return { ok: false, detail: `POST /runs returned ${r.status}: ${r.body}` }
+  if (r.status !== 202) return { ok: false, detail: `POST /runs returned ${r.status}: ${r.body}` }
   try {
     // Cache the event as it may already be here by the time the caller inspects the stream.
     return rootReleases.get(r.chatId) ?? ((await once(releaseEvents, r.chatId, { signal: AbortSignal.timeout(30_000) }))[0] as Release)
@@ -235,7 +237,11 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
     run.status = res.status
     const text = await res.text()
     run.body = text
-    if (res.status === 200) for (const line of text.split('\n')) if (line.trim() !== '') run.events.push(JSON.parse(line) as RunEvent)
+    // Protocol v2: admitted (202), the run's events come to the egress; the run is over at its `released`.
+    if (res.status === 202) {
+      await Promise.race([state.released, new Promise<void>((r) => setTimeout(r, 10 * 60_000).unref())])
+      run.events = state.pushed.filter((e) => e.type !== 'released' && e.type !== 'heartbeat') as RunEvent[]
+    }
     return run
   })()
   return { run, done }
@@ -260,7 +266,7 @@ function checkRun(name: string, r: Run, bashSteps: number[]) {
   const audited = new Set(r.events.filter((e) => e.type === 'audit').map((e) => (e as { entry: { toolUseId: string } }).entry.toolUseId))
   // A direct session has no stream: its audit hook is proven by the audit probe instead.
   const missing = r.via === 'direct' ? [] : bashSteps.map((i) => r.state.ids[i]!).filter((id) => !audited.has(id))
-  const ok = r.status === 200 && t?.type === 'finished' && r.state.misses.length === 0 && missing.length === 0
+  const ok = r.status === (r.via === 'root' ? 202 : 200) && t?.type === 'finished' && r.state.misses.length === 0 && missing.length === 0
   record(`${name}.run`, ok, `via ${r.via}, status ${r.status}, end ${JSON.stringify(t)?.slice(0, 200)}, misses ${JSON.stringify(r.state.misses)}, Bash calls without an audit entry ${JSON.stringify(missing)}`)
 }
 
@@ -1248,6 +1254,34 @@ const sysv = (u: PoolUser, ...args: string[]) => runCommand('python3', [`${PROBE
 const wipe = (u: PoolUser) => host.wipeUserFiles(u).then(() => 'passed', (e: unknown) => `threw: ${String(e instanceof Error ? e.message : e)}`)
 const shmRows = () => readFileSync('/proc/sysvipc/shm', 'utf8').split('\n').slice(1).filter((l) => l.trim() !== '')
 
+/**
+ * The inhouse server's 20 tools with the pinned SDK, wired as production wires them: a run through the root, its
+ * `inhouse` server from baseOptions (the proxy URL in sessionEnv), served by the probe egress with the 20 tools (six
+ * marked `anthropic/alwaysLoad`). The six must go to the model loaded at start; each of the fourteen must be deferred,
+ * shown positively: sent with `defer_loading`, or found by a ToolSearch call the script makes; and the request must
+ * carry the DeferredToolPlaceholder. Compared with literal lists.
+ */
+async function probeInhouseTools() {
+  if (VIA !== 'root') return record('inhouse-tools.via-root', false, `runs go ${VIA}: the proxy-URL server needs the root`)
+  const prefix = `mcp__${INHOUSE_MCP_SERVER}__`
+  const search = () => ({ tool: 'ToolSearch', input: { query: `select:${INHOUSE_ON_DEMAND.map((n) => `${prefix}${n}`).join(',')}`, max_results: 20 } })
+  const { run, done } = startRun({ chatId: 'p-inhouse-tools', script: { steps: [search], mcp20: true } })
+  await done
+  checkRun('inhouse-tools', run, [])
+  const first = run.state.requests[0]
+  if (!first) return record('inhouse-tools.first-request', false, `no model request: ${run.body.slice(-400)}`)
+  const tools = (first.tools ?? []) as { name: string; defer_loading?: boolean }[]
+  const loaded = tools.filter((t) => t.name.startsWith(prefix) && t.defer_loading !== true).map((t) => t.name.slice(prefix.length)).sort()
+  const sentDeferred = tools.filter((t) => t.name.startsWith(prefix) && t.defer_loading === true).map((t) => t.name.slice(prefix.length))
+  const found = result(run, 0)?.text ?? ''
+  const viaSearch = INHOUSE_ON_DEMAND.filter((n) => found.includes(`${prefix}${n}`))
+  const deferred = INHOUSE_ON_DEMAND.filter((n) => !loaded.includes(n) && (sentDeferred.includes(n) || viaSearch.includes(n)))
+  fact('inhouse-tools.first-request', `loaded ${JSON.stringify(loaded)}, sent deferred ${JSON.stringify(sentDeferred)}, found by ToolSearch ${JSON.stringify(viaSearch)}, tool names ${JSON.stringify(tools.map((t) => t.name))}`)
+  record('inhouse-tools.six-at-start', JSON.stringify(loaded) === JSON.stringify([...INHOUSE_ALWAYS].sort()), `loaded at start: ${JSON.stringify(loaded)}`)
+  record('inhouse-tools.fourteen-deferred', deferred.length === INHOUSE_ON_DEMAND.length, `deferred and reachable: ${JSON.stringify(deferred)}; not: ${JSON.stringify(INHOUSE_ON_DEMAND.filter((n) => !deferred.includes(n)))}`)
+  record('inhouse-tools.placeholder', tools.some((t) => t.name === 'DeferredToolPlaceholder'), `tool names ${JSON.stringify(tools.map((t) => t.name))}`)
+}
+
 async function probeSysV() {
   const [x, y, z] = [userNamed('s52'), userNamed('s53'), userNamed('s54')]
   // a: X makes Y the owner of a segment and stays attached: Y's wipe must still pass.
@@ -1377,6 +1411,7 @@ await step('code-review', probeCodeReview)
 await step('isolation', probeIsolation)
 await step('process-limit', probeProcessLimit)
 await step('direct', probeDirect)
+await step('inhouse-tools', probeInhouseTools)
 await step('sysv', probeSysV)
 await step('closed-folder', probeClosedFolder)
 await step('zombie-leader', probeZombieLeader)

@@ -166,15 +166,19 @@ export function fileStore({ db, bucket }: { db: D1Database; bucket: Pick<KeyedBu
       return row ? { ...file(row), ownerId: row.owner_id } : null
     },
 
-    /** Whether every id is a saved `input` of this chat (route 29's attachment check, `FileLedgerPort.inputsOf`). */
-    async inputsOf(chatId: string, fileIds: readonly string[]): Promise<{ ok: true } | { missing: string[] }> {
-      if (fileIds.length === 0) return { ok: true }
-      const have = new Set((await all<{ id: string }>(db, stmt(
-        `SELECT id FROM chat_files WHERE chat_id = ? AND kind = 'input' AND state = 'saved' AND id IN (${fileIds.map(() => '?').join(', ')})`,
+    /**
+     * The saved `input` rows of this chat for these ids, in the order asked (`FileLedgerPort.inputsOf`: route 29 builds a
+     * turn's attachments from them), or the ids that aren't one.
+     */
+    async inputsOf(chatId: string, fileIds: readonly string[]): Promise<{ ok: true; files: StoredFile[] } | { missing: string[] }> {
+      if (fileIds.length === 0) return { ok: true, files: [] }
+      const rows = await all<Row>(db, stmt(
+        `SELECT * FROM chat_files WHERE chat_id = ? AND kind = 'input' AND state = 'saved' AND id IN (${fileIds.map(() => '?').join(', ')})`,
         chatId, ...fileIds,
-      ))).map(r => r.id))
-      const missing = fileIds.filter(id => !have.has(id))
-      return missing.length === 0 ? { ok: true } : { missing }
+      ))
+      const byId = new Map(rows.map(r => [r.id, file(r)]))
+      const missing = fileIds.filter(id => !byId.has(id))
+      return missing.length === 0 ? { ok: true, files: fileIds.map(id => byId.get(id)!) } : { missing }
     },
   }
 }

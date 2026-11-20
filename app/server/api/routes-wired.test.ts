@@ -236,27 +236,67 @@ describe('Inhouse under a live grant reads brand data, each read logged first (f
   })
 })
 
-describe('the Inhouse team holds every Admin control, each write audited as its own (decision 19)', () => {
+describe('the Inhouse team holds every Admin control but the Admin role, each write audited as its own (decisions 19, 19b)', () => {
   const mark = async () => (await db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM audit_log').first<number>('n'))!
   const linesAfter = async (id: number) =>
     (await db.prepare('SELECT actor_id, action, args_json FROM audit_log WHERE id > ? ORDER BY id').bind(id).all<{ actor_id: string; action: string; args_json: string }>()).results
       .map(l => [l.actor_id, l.action, JSON.parse(l.args_json)])
   const asInhouse = (path: string, init: Omit<Parameters<typeof send>[1], 'token' | 'origin'> = {}) => call(path, { ...init, token: tokens.inhouse, origin: INHOUSE.origin })
 
-  it('invites, changes a role and removes without a grant, and each line names the Inhouse member', async () => {
+  it('invites and removes a Member without a grant, and each line names the Inhouse member', async () => {
     const before = await mark()
     const invited = await asInhouse('/api/members/invites', { method: 'POST', body: { name: 'New Example', email: `ih-new-${k}@example.test`, role: 'member' } })
     expect(invited).toMatchObject({ status: 201, body: { status: 'invited', role: 'member' } })
     const id = invited.body.id as string
-    expect(await asInhouse(`/api/members/${id}/role`, { method: 'PUT', body: { role: 'admin', ifRev: 1 } })).toMatchObject({ status: 200, body: { role: 'admin', rev: 2 } })
-    expect(await asInhouse(`/api/members/${id}?ifRev=2`, { method: 'DELETE' })).toMatchObject({ status: 200, body: { status: 'removed' } })
+    expect(await asInhouse(`/api/members/${id}?ifRev=1`, { method: 'DELETE' })).toMatchObject({ status: 200, body: { status: 'removed' } })
     expect(await linesAfter(before)).toEqual([
       [who.inhouse, 'member.invited', { memberId: id, role: 'member' }],
-      [who.inhouse, 'member.role_changed', { memberId: id, from: 'member', to: 'admin' }],
       [who.inhouse, 'member.removed', { memberId: id }],
     ])
     // No grant was live, and none of these is brand data: no support.access line.
   })
+
+  // Decision 19b: the Inhouse team can't create, promote, demote or remove an Admin. Every one of the 12 pairs (action,
+  // and whether the Admin target is the brand's active Admin or a fresh invited one) runs every time, each with fresh
+  // targets, so a rule that covers only one kind of Admin fails on every run, not on some random draws.
+  type Action = 'invite admin' | 'invite member' | 'promote to admin' | 'demote an admin' | 'remove an admin' | 'remove a member'
+  const ACTIONS: Action[] = ['invite admin', 'invite member', 'promote to admin', 'demote an admin', 'remove an admin', 'remove a member']
+  const TOUCHES_ADMIN: Action[] = ['invite admin', 'promote to admin', 'demote an admin', 'remove an admin']
+  /** Who each action is aimed at: promoting targets the Member (the real attack); demoting and removing an Admin target the Admin. */
+  const AIMS_AT_ADMIN: Action[] = ['demote an admin', 'remove an admin']
+  let n = 0
+  const PAIRS = ACTIONS.flatMap(action => [true, false].map(activeAdmin => [action, activeAdmin] as const))
+  it.each(PAIRS)(
+    'exactly the four Admin-touching actions are refused (403 forbidden, nothing written, no line); the two Member ones pass: %s (active Admin: %s)', async (action, activeAdmin) => {
+      const stores = openStores(env)
+      const tag = `${k}-${++n}`
+      const made = async (role: 'member' | 'admin') => {
+        const r = await stores.members.invite({ name: 'Target Example', email: `t-${role}-${tag}@example.test`, role }, at(SYSTEM_MEMBER_ID))
+        if (!('ok' in r)) throw new Error('invite')
+        return r.ok
+      }
+      const member = await made('member')
+      const admin = activeAdmin ? (await stores.members.get(who.admin))! : await made('admin')
+      const target = AIMS_AT_ADMIN.includes(action) ? admin : member
+      const revBefore = await memberRev(target.id)
+      const before = await mark()
+      const res = action.startsWith('invite')
+        ? await asInhouse('/api/members/invites', { method: 'POST', body: { name: 'New Example', email: `ih-${tag}@example.test`, role: action === 'invite admin' ? 'admin' : 'member' } })
+        : action.startsWith('remove')
+          ? await asInhouse(`/api/members/${target.id}?ifRev=${revBefore}`, { method: 'DELETE' })
+          : await asInhouse(`/api/members/${target.id}/role`, { method: 'PUT', body: { role: action === 'promote to admin' ? 'admin' : 'member', ifRev: revBefore } })
+      const lines = await linesAfter(before)
+      if (TOUCHES_ADMIN.includes(action)) {
+        expect(res, action).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })
+        expect(lines, `${action}: a refusal writes no line`).toEqual([])
+        expect(await memberRev(target.id), `${action}: nothing changed`).toBe(revBefore)
+        const invitedAdmin = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE email_norm = ?').bind(`ih-${tag}@example.test`).first<number>('n')
+        expect(invitedAdmin).toBe(0)
+      } else {
+        expect(res.status, action).toBe(action === 'invite member' ? 201 : 200)
+        expect(lines.map(l => l.slice(0, 2)), action).toEqual([[who.inhouse, action === 'invite member' ? 'member.invited' : 'member.removed']])
+      }
+    })
   it('edits a brand setting without a grant, audited as the Inhouse member', async () => {
     const before = await mark()
     expect(await asInhouse('/api/settings/brand/g:tz', { method: 'PUT', body: { value: 'Europe/Paris', ifRev: 0 } })).toMatchObject({ status: 200, body: { key: 'g:tz', value: 'Europe/Paris', updatedBy: who.inhouse } })
@@ -265,13 +305,16 @@ describe('the Inhouse team holds every Admin control, each write audited as its 
     expect(lines[0].slice(0, 2)).toEqual([who.inhouse, 'setting.changed'])
     expect(lines[0][2]).toMatchObject({ scope: 'brand', key: 'g:tz' })
   })
-  it("can't demote or remove the brand's last Admin, any more than an Admin can, and writes no line", async () => {
+  it('the role change is refused by the matrix, before any store call; an Admin still invites, promotes, demotes and removes an Admin', async () => {
     const rev = await memberRev(who.admin)
-    const before = await mark()
-    expect(await asInhouse(`/api/members/${who.admin}/role`, { method: 'PUT', body: { role: 'member', ifRev: rev } })).toEqual({ status: 409, body: { error: { code: 'conflict', reason: 'last_admin' } } })
-    expect(await asInhouse(`/api/members/${who.admin}?ifRev=${rev}`, { method: 'DELETE' })).toEqual({ status: 409, body: { error: { code: 'conflict', reason: 'last_admin' } } })
-    expect(await memberRev(who.admin)).toBe(rev)
-    expect(await linesAfter(before)).toEqual([])
+    expect(await asInhouse(`/api/members/${who.admin}/role`, { method: 'PUT', body: { role: 'member', ifRev: rev } })).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })
+    expect(handlerCalls()).toEqual([])
+    const invited = await call('/api/members/invites', { method: 'POST', token: tokens.admin, body: { name: 'Second Example', email: `adm2-${k}@example.test`, role: 'admin' } })
+    expect(invited).toMatchObject({ status: 201, body: { role: 'admin' } })
+    const id = invited.body.id as string
+    expect(await call(`/api/members/${id}/role`, { method: 'PUT', token: tokens.admin, body: { role: 'member', ifRev: 1 } })).toMatchObject({ status: 200, body: { role: 'member' } })
+    expect(await call(`/api/members/${id}/role`, { method: 'PUT', token: tokens.admin, body: { role: 'admin', ifRev: 2 } })).toMatchObject({ status: 200, body: { role: 'admin' } })
+    expect(await call(`/api/members/${id}?ifRev=3`, { method: 'DELETE', token: tokens.admin })).toMatchObject({ status: 200, body: { status: 'removed' } })
   })
   it('never grants itself access, and never reads the audit log without a grant', async () => {
     expect(await asInhouse('/api/grants', { method: 'POST', body: { hours: 1 } })).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })

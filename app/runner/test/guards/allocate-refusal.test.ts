@@ -37,6 +37,8 @@ async function startWith(failure: () => unknown) {
       throw new Error('never spawned')
     },
     proxyPort: 9,
+    egressUrl: 'http://egress.internal',
+    fetch: async () => new Response('the egress is never called for a refused run', { status: 500 }),
     stopGraceMs: 1000,
     runTimeoutMs: 60_000,
     memory: () => ({ totalBytes: null, availableBytes: null, rssBytes: 1, heapUsedBytes: 1 }),

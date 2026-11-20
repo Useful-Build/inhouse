@@ -162,7 +162,9 @@ describe('uploads (failures 3, 5)', () => {
     expect(await new Response(await files.readBytes(a)).text()).toBe('# one')
     expect(await new Response(await files.readBytes(b)).text()).toBe('# two')
     expect((await env.FILES.head(a.r2Key))?.checksums.sha256).toBeDefined()
-    expect(await files.inputsOf(chatId, [a.id, b.id])).toEqual({ ok: true })
+    // The rows, in the order asked.
+    expect(await files.inputsOf(chatId, [b.id, a.id])).toEqual({ ok: true, files: [b, a] })
+    expect(await files.inputsOf(chatId, [])).toEqual({ ok: true, files: [] })
     expect(await files.inputsOf(chatId, [a.id, out, 'f_missing'])).toEqual({ missing: [out, 'f_missing'] })
     // Another chat's input is not this chat's.
     const other = await newChat()

@@ -3,7 +3,8 @@
 // (quarantined tasks never count). A pass runs up to 20 tasks or 10 s, `grant-expiry` and `authority-sweep` first,
 // then by due time. A handler's result commits only while the task's generation is the one it started with, so a
 // reschedule or a cancel during the handler's await wins. Alarms can be late and run at least once (docs): handlers are
-// idempotent by task id, and nothing relies on alarm timing for authority.
+// idempotent by task id, and nothing relies on alarm timing for authority. Passes never overlap: the runtime runs one
+// `alarm()` at a time per object ("Only one alarm() invocation runs per instance at a given moment", alarms docs).
 // https://developers.cloudflare.com/durable-objects/api/alarms/ and /api/sqlite-storage-api/ (read 2026-11-20)
 import type { BrandAgentPorts } from './ports.ts'
 import type { RunTokens } from './tokens.ts'
@@ -22,12 +23,22 @@ export interface DueTask {
 export interface Scheduler {
   /** Upsert: sets the kind, due time and payload, a new generation, attempts 0 and `ready` (a quarantined task too). */
   schedule(t: { id: string; kind: string; dueAtMs: number; payload?: unknown }): void
-  /** Insert only if no task has this id (never moves an existing one). */
+  /**
+   * Insert only if no task has this id; never moves an existing ready one. A task of the same kind quarantined as an
+   * unknown kind is revived (new generation, attempts 0, `ready`), so a seed whose handler was missing comes back once
+   * it exists. One quarantined after 10 failures stays quarantined (its signal stays red until someone fixes it).
+   */
   ensure(t: { id: string; kind: string; dueAtMs: number; payload?: unknown }): void
   cancel(id: string): void
 }
 
 export type TaskResult = { done: true } | { retryAtMs: number; error: string }
+/**
+ * A handler runs its task and answers `done` (the task is deleted) or `retryAtMs` (it runs again then). To run again
+ * later, a handler returns `retryAtMs` or calls `schedule()` for its own id; `ensure()` for its own id while it runs
+ * changes nothing (the row exists), so a `done` answer still deletes it. A result of any other shape counts as a
+ * retry with the default backoff.
+ */
 export type TaskHandler<C = TaskContext> = (task: DueTask, ctx: C) => Promise<TaskResult>
 
 /** What a handler gets: the BrandAgent's parts. */
@@ -61,6 +72,13 @@ export const PASS_MAX_MS = 10_000
 export const MAX_ATTEMPTS = 10
 /** The retry delay after `attempts` failures: 30 s doubling, at most an hour. */
 export const backoffMs = (attempts: number): number => Math.min(2 ** attempts * 30_000, 3_600_000)
+/** When the alarm couldn't be set to the earliest task, a pass leaves one this far ahead instead. */
+export const FALLBACK_ALARM_MS = 30_000
+
+const isResult = (r: unknown): r is TaskResult =>
+  typeof r === 'object' && r !== null && (
+    (r as { done?: unknown }).done === true
+    || (Number.isFinite((r as { retryAtMs?: unknown }).retryAtMs) && typeof (r as { error?: unknown }).error === 'string'))
 
 export interface SqlScheduler extends Scheduler {
   /** One pass: the object's `alarm()` calls this. */
@@ -101,24 +119,28 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
   // again during a handler's await must not get back the generation that handler holds. Only handlers of this
   // instance can be in flight, so the counter starts above every stored generation.
   let lastGen = sql.exec<{ g: number | null }>('SELECT MAX(gen) AS g FROM due_tasks').one().g ?? 0
-  let chain: Promise<void> = Promise.resolve()
+  let pending: Promise<void>[] = []
   let failure: unknown = null
 
   const earliest = () => sql.exec<{ at: number | null }>("SELECT MIN(due_at_ms) AS at FROM due_tasks WHERE state = 'ready'").one().at
-  const setAlarm = async () => {
-    const at = earliest()
-    if (at === null) await o.alarm.delete()
-    else await o.alarm.set(at)
-  }
-  /** Queues an alarm update; each reads the table when it runs, so the last one leaves the alarm current. */
-  const changed = () => {
-    chain = chain.then(setAlarm).catch(err => {
+  /**
+   * Sets the alarm to the earliest ready task now, in the caller's turn. Storage operations apply in the order they're
+   * issued, so the last change leaves the alarm current; `pending` only collects the results for `settled()`.
+   */
+  /** `notBefore`: after a failed pass, never arm earlier than this (no hot loop without backoff). */
+  const changed = (notBefore?: number) => {
+    const first = earliest()
+    const at = first === null || notBefore === undefined ? first : Math.max(first, notBefore)
+    const op = at === null ? o.alarm.delete() : o.alarm.set(at)
+    pending.push(op.catch(err => {
       failure ??= err
       console.error({ event: 'scheduler_alarm_failed', error: errorText(err) })
-    })
+    }))
   }
   const settled = async () => {
-    await chain
+    const ops = pending
+    pending = []
+    await Promise.all(ops)
     if (failure !== null) {
       const err = failure
       failure = null
@@ -153,6 +175,51 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
     ).rowsWritten > 0
   }
 
+  /** One pass: up to 20 due tasks or 10 s, each at most once. */
+  let degraded = false
+  const pass = async () => {
+    const started = o.now()
+    const ran = new Set<string>()
+    // Bounded by its own count, so the pass ends at 20 whatever `next` returns.
+    for (let runs = 0; runs < PASS_MAX_TASKS && o.now() - started < PASS_MAX_MS; runs++) {
+      const row = next(o.now(), ran)
+      if (!row) break
+      ran.add(row.id)
+      const task: DueTask = {
+        id: row.id, kind: row.kind, gen: row.gen, dueAtMs: row.due_at_ms, attempts: row.attempts,
+        payload: row.payload_json === null ? null : JSON.parse(row.payload_json),
+      }
+      const handler = Object.hasOwn(o.handlers, task.kind) ? o.handlers[task.kind] : undefined
+      if (!handler) {
+        sql.exec(
+          "UPDATE due_tasks SET state = 'quarantined', last_error = ? WHERE id = ? AND gen = ?",
+          `unknown kind ${task.kind}`.slice(0, 500), task.id, task.gen,
+        )
+        console.error({ event: 'due_task_quarantined', kind: task.kind, why: 'unknown_kind' })
+        continue
+      }
+      let result: TaskResult
+      try {
+        const answer: unknown = await handler(task, o.context(o.now()))
+        if (!isResult(answer)) throw new TypeError('the handler answered neither done nor retryAtMs')
+        result = answer
+      } catch (err) {
+        result = { retryAtMs: o.now() + backoffMs(task.attempts), error: errorText(err) }
+      }
+      o.afterHandler?.(task, result)
+      let applied = false
+      try {
+        applied = commit(task, result)
+      } catch (err) {
+        degraded = true
+        console.error({ event: 'due_task_commit_failed', kind: task.kind, error: errorText(err) })
+      }
+      if (applied && !('done' in result) && task.attempts + 1 >= MAX_ATTEMPTS) {
+        console.error({ event: 'due_task_quarantined', kind: task.kind, why: 'attempts' })
+      }
+    }
+  }
+
   return {
     schedule(t) {
       insert(t, `UPDATE SET kind = excluded.kind, gen = excluded.gen, due_at_ms = excluded.due_at_ms,
@@ -160,7 +227,9 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
       changed()
     },
     ensure(t) {
-      insert(t, 'NOTHING')
+      insert(t, `UPDATE SET gen = excluded.gen, due_at_ms = excluded.due_at_ms, payload_json = excluded.payload_json,
+        attempts = 0, state = 'ready', last_error = NULL WHERE due_tasks.state = 'quarantined' AND due_tasks.kind = excluded.kind
+          AND due_tasks.last_error = 'unknown kind ' || due_tasks.kind`)
       changed()
     },
     cancel(id) {
@@ -168,38 +237,23 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
       changed()
     },
     async alarm() {
-      const started = o.now()
-      const ran = new Set<string>()
-      while (ran.size < PASS_MAX_TASKS && o.now() - started < PASS_MAX_MS) {
-        const row = next(o.now(), ran)
-        if (!row) break
-        ran.add(row.id)
-        const task: DueTask = {
-          id: row.id, kind: row.kind, gen: row.gen, dueAtMs: row.due_at_ms, attempts: row.attempts,
-          payload: row.payload_json === null ? null : JSON.parse(row.payload_json),
-        }
-        const handler = Object.hasOwn(o.handlers, task.kind) ? o.handlers[task.kind] : undefined
-        if (!handler) {
-          sql.exec(
-            "UPDATE due_tasks SET state = 'quarantined', last_error = ? WHERE id = ? AND gen = ?",
-            `unknown kind ${task.kind}`.slice(0, 500), task.id, task.gen,
-          )
-          console.error({ event: 'due_task_quarantined', kind: task.kind, why: 'unknown_kind' })
-          continue
-        }
-        let result: TaskResult
-        try {
-          result = await handler(task, o.context(o.now()))
-        } catch (err) {
-          result = { retryAtMs: o.now() + backoffMs(task.attempts), error: errorText(err) }
-        }
-        o.afterHandler?.(task, result)
-        if (commit(task, result) && !('done' in result) && task.attempts + 1 >= MAX_ATTEMPTS) {
-          console.error({ event: 'due_task_quarantined', kind: task.kind, why: 'attempts' })
-        }
+      degraded = false
+      try {
+        await pass()
+      } catch (err) {
+        // A pass that failed part way (storage, a test's injected crash) leaves its task as it was: it runs again.
+        degraded = true
+        console.error({ event: 'scheduler_pass_failed', error: errorText(err) })
       }
-      changed()
-      await settled()
+      // Always leave an alarm: the earliest ready task (after a failure, no sooner than the fallback delay), else the
+      // fallback alone if setting that failed.
+      try {
+        changed(degraded ? o.now() + FALLBACK_ALARM_MS : undefined)
+        await settled()
+      } catch (err) {
+        console.error({ event: 'scheduler_alarm_fallback', error: errorText(err) })
+        await o.alarm.set(o.now() + FALLBACK_ALARM_MS)
+      }
     },
     async syncAlarm() {
       changed()

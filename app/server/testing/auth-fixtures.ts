@@ -81,8 +81,8 @@ export const principals = {
 
 /**
  * The 21 rows of p2-design section 3 as written there (row 12 with `admin` in `allow` and row 21 a `report` row, per
- * the review round 1 calls), as decision 19 amends them (rows 3 to 6 and 15 `baseline`; 4, 5, 6 and 10 list
- * `inhouse`), then P3's rows 22 to 49 as p3-design section 3's table writes them: the properties' rows, and the
+ * the review round 1 calls), as decision 19 amends them (rows 3 to 6 and 15 `baseline`; 4, 6 and 10 list `inhouse`,
+ * and 5 doesn't, decision 19b), then P3's rows 22 to 49 as p3-design section 3's table writes them: the properties' rows, and the
  * independent copy server/access-matrix.ts must equal (matrix.test.ts).
  */
 export const DESIGN_ROWS: readonly AccessRow[] = [
@@ -90,7 +90,7 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/me', class: 'baseline', allow: ['member', 'admin', 'inhouse'], services: ['smoke'] },
   { method: 'GET', pattern: '/api/members', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/members/invites', class: 'baseline', allow: ['admin', 'inhouse'] },
-  { method: 'PUT', pattern: '/api/members/:id/role', class: 'baseline', allow: ['admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/members/:id/role', class: 'baseline', allow: ['admin'] },
   { method: 'DELETE', pattern: '/api/members/:id', class: 'baseline', allow: ['admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/settings/personal', class: 'personal', allow: ['member', 'admin'], services: ['smoke'] },
   { method: 'PUT', pattern: '/api/settings/personal/:key', class: 'personal', allow: ['member', 'admin'] },

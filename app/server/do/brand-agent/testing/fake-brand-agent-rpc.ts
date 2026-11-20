@@ -2,7 +2,7 @@
 // and answers what a test sets. Token checks go through a real `RunTokens` when one is given (W3's scope property runs
 // on the real tokens.ts), else through `grants`, a map from token hash to grant.
 import type {
-  Actor, AdmitAnswer, BrandAgentRpc, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PoolHealth, Refusal, RunsHealth,
+  Actor, AdmitAnswer, BrandAgentRpc, RunScope, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PoolHealth, Refusal, RunsHealth,
   SubmitTurn,
 } from '../ports.ts'
 import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from '../tokens.ts'
@@ -24,7 +24,10 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   renewAnswer: LeaseAnswer = ok
   releaseAnswer: LeaseAnswer = ok
   submitAnswer: SendTurnResult | Refusal = { refused: { code: 'unavailable' } }
+  /** What `getPause()` answers; `pause` and `resume` change it. */
   pauseState: PauseState = { paused: false, at: null, by: null }
+  /** The turns `noteCountTokens` knows (an unknown turn answers false, like the real counter). */
+  turns = new Set<string>()
   drainAnswer: DrainState = { live: 0, starting: 0, ending: 0, queued: 0, drainingUntilMs: null }
   poolHealthAnswer: PoolHealth = { protocol: green, restarts: green, shortfall: green }
   runsHealthAnswer: RunsHealth = { failures: green, stuck: green, damaged: green, quarantined: green }
@@ -49,6 +52,7 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   }
   async noteCountTokens(turnId: string) {
     this.log('noteCountTokens', turnId)
+    if (!this.turns.has(turnId)) return false
     const n = this.countTokens.get(turnId) ?? 0
     if (n >= 50) return false
     this.countTokens.set(turnId, n + 1)
@@ -66,12 +70,23 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   async submitTurn(turn: SubmitTurn) { this.log('submitTurn', turn); return this.submitAnswer }
   async interrupt(turnId: string, by: Actor) { this.log('interrupt', turnId, by); return ok }
   async stop(turnId: string, by: Actor) { this.log('stop', turnId, by); return ok }
-  async pause(by: Actor) { this.log('pause', by); return this.pauseState }
-  async resume(by: Actor) { this.log('resume', by); return this.pauseState }
+  async pause(by: Actor) {
+    this.log('pause', by)
+    if (!this.pauseState.paused) {
+      const ms = this.now()
+      this.pauseState = { paused: true, at: { iso: new Date(ms).toISOString(), ms }, by: by.memberId }
+    }
+    return this.pauseState
+  }
+  async resume(by: Actor) {
+    this.log('resume', by)
+    this.pauseState = { paused: false, at: null, by: null }
+    return this.pauseState
+  }
   async getPause() { this.log('getPause'); return this.pauseState }
   async resetSession(chatId: string, by: Actor) { this.log('resetSession', chatId, by); return ok }
-  async activeRuns(ownerId: string | null): Promise<ActiveRun[]> { this.log('activeRuns', ownerId); return [] }
-  async trace(id: string, ownerId: string | null): Promise<Trace | null> { this.log('trace', id, ownerId); return null }
+  async activeRuns(scope: RunScope): Promise<ActiveRun[]> { this.log('activeRuns', scope); return [] }
+  async trace(id: string, scope: RunScope): Promise<Trace | null> { this.log('trace', id, scope); return null }
   async onMemberRemoved(memberId: string) { this.log('onMemberRemoved', memberId) }
   async onGrantEnded(grantId: string) { this.log('onGrantEnded', grantId) }
   async containerExited(runner: string, gen: number) { this.log('containerExited', runner, gen) }

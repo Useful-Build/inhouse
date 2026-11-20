@@ -4,6 +4,8 @@
 // lives in the BrandAgent, so its anchor also gets the object's parts (its SQLite, scheduler, clock and placement hooks).
 import type { BrandAgentParts, BrandAgentPorts, FileLedgerPort, RunnerPoolPort, UsageLedgerPort } from './ports.ts'
 import { fileStore } from '../../files-io/store.ts'
+import type { StoredFile } from '../../files-io/store.ts'
+import type { ChatFile } from './ports.ts'
 import { FakeRunnerPool } from './testing/fake-pool.ts'
 import { FakeUsageLedger } from './testing/fake-usage.ts'
 
@@ -26,12 +28,17 @@ function poolPort(_env: Env, _parts: BrandAgentParts): RunnerPoolPort {
 // ---------- W3's anchor (p3-w3.md): FileLedgerPort ----------
 function filesPort(env: Env): FileLedgerPort {
   const files = fileStore({ db: env.DB, bucket: env.FILES })
+  const chatFile = (f: StoredFile): ChatFile =>
+    ({ id: f.id, chatId: f.chatId, kind: f.kind, path: f.path, name: f.name, contentType: f.contentType, bytes: f.bytes, sha256: f.sha256, turnId: f.turnId })
   return {
     async confirm(chatId, turnId, path, sha256, nowMs) {
       const f = await files.confirm(chatId, turnId, path, sha256, nowMs)
-      return f && { id: f.id, chatId: f.chatId, kind: f.kind, path: f.path, name: f.name, contentType: f.contentType, bytes: f.bytes, sha256: f.sha256, turnId: f.turnId }
+      return f && chatFile(f)
     },
-    inputsOf: (chatId, fileIds) => files.inputsOf(chatId, fileIds),
+    async inputsOf(chatId, fileIds) {
+      const r = await files.inputsOf(chatId, fileIds)
+      return 'missing' in r ? r : { ok: true, files: r.files.map(chatFile) }
+    },
   }
 }
 

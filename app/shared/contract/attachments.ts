@@ -4,8 +4,11 @@ import { z } from 'zod'
 import { FileRefusalReason } from '../protocol/index.ts'
 import { FileIdSchema } from './chat-ids.ts'
 
-/** A file the person attached to a message: an `input` of the chat (route 39 made it), named as uploaded. */
-export const AttachmentRefSchema = z.object({ fileId: FileIdSchema, name: z.string().min(1).max(200) })
+/**
+ * A file the person attached to a message: an `input` of the chat (route 39 made it), named as uploaded (no control
+ * characters). Route 29 takes the stored name and path from the file's row, never this one.
+ */
+export const AttachmentRefSchema = z.object({ fileId: FileIdSchema, name: z.string().min(1).max(200).regex(/^\P{Cc}*$/u) })
 export type AttachmentRef = z.infer<typeof AttachmentRefSchema>
 
 /** Why the runner didn't save an output file: the protocol's own list, so the two never drift. */

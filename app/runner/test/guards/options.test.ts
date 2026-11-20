@@ -65,7 +65,8 @@ const config = fc
     effort: fc.constantFrom('low', 'medium', 'high', 'xhigh', 'max'),
     maxTurns: fc.integer({ min: 1, max: 500 }),
     maxBudgetUsd: fc.double({ min: 0.01, max: 1000, noNaN: true }),
-    webFetchDomains: fc.uniqueArray(domain, { maxLength: 8 }),
+    // null: WebFetch to any public host (Wasim, decision 20); a list: only those.
+    webFetchDomains: fc.option(fc.uniqueArray(domain, { maxLength: 8 }), { nil: null, freq: 3 }),
     fileCaps: fc.constant({ maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 0, allowedTypes: [] }),
   })
   .map((c) => RunConfig.parse({ ...c, expect: c.resume ? { mainEntries: 1, lastUuid: null, lastUuidIndex: null } : null }))
@@ -105,11 +106,12 @@ describe('the guarded options', () => {
       expect(allowed.has(tool), rule).toBe(true)
     }
     const fetchRules = (o.allowedTools ?? []).filter((r) => r.startsWith('WebFetch'))
-    expect(fetchRules).toEqual(c.webFetchDomains.map((d) => `WebFetch(domain:${d})`))
-    // Writes only inside the session folder; never a bare Edit, Write or WebFetch.
+    expect(fetchRules).toEqual(c.webFetchDomains === null ? ['WebFetch'] : c.webFetchDomains.map((d) => `WebFetch(domain:${d})`))
+    // Writes only inside the session folder; never a bare Edit or Write.
     const wd = sessionPaths(c.chatId).workDir
     expect((o.allowedTools ?? []).filter((r) => /^(Edit|Write)\b/.test(r))).toEqual([`Edit(/${wd}/**)`])
-    expect(o.allowedTools).not.toContain('WebFetch')
+    // A bare WebFetch rule only when it's open to any public host (the hook then decides each URL).
+    if (c.webFetchDomains !== null) expect(o.allowedTools).not.toContain('WebFetch')
   })
 
   it.prop([config])('skills and plugins: the other 15 bundled skills and the 3 built-in plugins are off', (c) => {
@@ -153,7 +155,8 @@ describe('the guarded options', () => {
 
   it.prop([config])('the network: only the listed domains, never this container', (c) => {
     const net = guards.apply(base(c), c, run).sandbox!.network!
-    expect(net.allowedDomains).toEqual(c.webFetchDomains)
+    // With WebFetch open to any public host, Bash still reaches none.
+    expect(net.allowedDomains).toEqual(c.webFetchDomains ?? [])
     expect(net.strictAllowlist).toBe(true)
     expect(net.allowLocalBinding).toBe(false)
     expect(net.allowAllUnixSockets).toBe(false)
@@ -216,7 +219,7 @@ describe('the guarded options', () => {
   it.prop([config, fc.oneof(fc.ipV4(), fc.ipV4Extended(), fc.constantFrom(...LOCAL_NAMES, ...ADDRS, 'a.localhost', 'printer.local', 'db.internal', 'r.home.arpa', '1.2', '0x7f.1', 'Example.com', 'example.com.', ...INTERNAL_NAMES))])(
     'refuses a WebFetch domain that is an IP literal, a local name or this container',
     (c, bad) => {
-      expect(() => guards.apply(base(c), { ...c, webFetchDomains: [...c.webFetchDomains, bad] }, run)).toThrow(/webFetchDomains/)
+      expect(() => guards.apply(base(c), { ...c, webFetchDomains: [...(c.webFetchDomains ?? []), bad] }, run)).toThrow(/webFetchDomains/)
     },
   )
 
