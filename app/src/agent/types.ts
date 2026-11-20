@@ -6,7 +6,6 @@ import type { Stage, StageIndex, Scenario, AgentErrorCode, Instant } from '../..
 import type { RoutineRun } from '../../shared/contract/routine'
 import type { Trace } from '../../shared/contract/trace'
 import type { ModelMode } from '../../shared/contract/model'
-import type { RunEvent } from '../../shared/contract/run-event'
 import type { LibraryFile } from '../../shared/contract/library'
 import type { ApproveResult, TeamRequest, SetAsideReason, AgentState } from '../../shared/contract/state'
 import type { AgentNotice, AgentNotification } from '../../shared/contract/notice'
@@ -14,7 +13,11 @@ import type { AgentData } from '../../shared/contract/data'
 import type { ErrorReason, ResourceKey } from '../../shared/contract/common'
 import type { Me } from '../../shared/contract/me'
 import type { InviteInput, MemberRole } from '../../shared/contract/members'
-import type { AskOptions, CreateChatInput, SendOptions } from '../../shared/contract/requests'
+import type { CreateChatInput, SendPriority } from '../../shared/contract/requests'
+import type { ActiveRun, SendTurnResult } from '../../shared/contract/runs'
+import type { ChatList, ChatPage } from '../../shared/contract/chats'
+import type { AttachmentRef } from '../../shared/contract/attachments'
+import type { RunFrame } from '../../shared/contract/run-event'
 
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
@@ -30,11 +33,14 @@ export type { PeopleData, ApprovalRule, Approver } from '../../shared/contract/p
 export type { MemberRecord, MemberRole, MemberId, InviteInput } from '../../shared/contract/members'
 export type { Me, Role, Can, CanKey } from '../../shared/contract/me'
 export type { SupportGrant, GrantHours } from '../../shared/contract/grants'
-export type { AskOptions, CreateChatInput, DemoContext, SendOptions, SendPriority } from '../../shared/contract/requests'
+export type { CreateChatInput, DemoContext, SendPriority } from '../../shared/contract/requests'
+export type { ChatEvent, ActiveRun, SendTurnResult, TurnFailure, PauseState } from '../../shared/contract/runs'
+export type { ChatSummary, ChatList, ChatPage, StoredMessage } from '../../shared/contract/chats'
+export type { AttachmentRef } from '../../shared/contract/attachments'
 export type { ActivityLine } from '../../shared/contract/activity'
 export type { AuditEntry, AuditLine } from '../../shared/contract/audit'
 export type { Attachment, TablePart, RoutineCard, SkillCard, MessagePart, ChatMessage, SeedTurn, ChatThread, ChatData } from '../../shared/contract/chat'
-export type { RunEvent } from '../../shared/contract/run-event'
+export type { RunEvent, RunFrame } from '../../shared/contract/run-event'
 export type { LibraryKind, LibraryPlace, DocPreview, LibraryLink, LibraryFile } from '../../shared/contract/library'
 export type { ApprovalRecord, ApproveResult, TeamRequest, StampRecord, SetAsideReason, SetAsideRecord, AgentState } from '../../shared/contract/state'
 export type { AgentNotice, NoticePage, AgentNotification } from '../../shared/contract/notice'
@@ -42,6 +48,20 @@ export type { AgentData } from '../../shared/contract/data'
 
 export const STAGES: Stage[] = ['Watch', 'Act', 'Run']
 export const SCENARIOS: Scenario[] = ['Normal', 'First day', 'Loading', 'Tool disconnected', 'Cap reached']
+export type LinkState = 'live' | 'held' | 'reload' | 'grantEnded'
+
+/** One message into a chat. `clientTurnKey` (8 to 64 of A-Z a-z 0-9 _ -) is kept by the caller for retries of this send. */
+export interface ChatSendInput {
+  clientTurnKey: string
+  text: string
+  quote?: string
+  priority?: SendPriority
+  /** The picker's model id (`fable`, `opus`, ...). */
+  model: string
+  replacesRun?: string
+  attachments?: AttachmentRef[]
+}
+
 export const stageIndex = (s: Stage): StageIndex => STAGES.indexOf(s) as StageIndex
 
 /** A model as the Composer gets it: the team's chosen effort, and whether the team can use it. */
@@ -92,18 +112,33 @@ export interface AgentClient {
   redoHandled(id: string): Promise<void>
 
   // chat
-  /** The client makes the chat's id, so the chat shows at once, and tells the agent here. */
+  /** The client makes the chat's id, so the chat shows at once, and tells the agent here. A failed save takes the chat back (a notice tells the person). Saying it twice is fine (idempotent for its owner). */
   createChat(chat: CreateChatInput): Promise<void>
-  ask(text: string, opts: AskOptions): AsyncIterable<RunEvent>
-  /** A message into a running answer (the engine's streaming input). The run's stream carries on with `turn.started`.
-   *  Rejects when the run has ended. */
-  send(runId: string, text: string, opts?: SendOptions): Promise<void>
-  /** Ends the current turn and keeps the session, so messages waiting go next. */
-  interrupt(runId: string): Promise<void>
-  /** The hard stop: ends the run and everything waiting in it. */
-  stop(runId: string): void
-  /** `id` comes from the agent: a run id from `run.started`, a `trace` on a message, problem or activity line. Null when the steps aren't available. */
-  getTrace(id: string): Trace | null
+  /** One page of the person's chats, newest first (`deleted` lists the deleted ones). Each answer carries the `rev` the writes below send as `ifRev`. */
+  listChats(opts?: { cursor?: string; limit?: number; deleted?: boolean }): Promise<ChatList>
+  /** A chat's history, newest first from `cursor`, and `runs`: the live run and any ended run whose turns aren't all stored yet (attach to each, from 0). Rejects with not found for a chat the person doesn't have. */
+  getChat(id: string, cursor?: string): Promise<ChatPage>
+  /** A message into the chat: a new run, or a queued turn of its live run (`position` says which). Never waits for the answer. The same `clientTurnKey` with the same text answers the same turn, so a retry never asks twice;
+   *  the same key with other text rejects with a conflict (key reused). Other refusals: forbidden (paused, model off, removed), unavailable (draining), conflict (session damaged, waiting for an answer), rate limited (queue full) and invalid. */
+  send(chatId: string, input: ChatSendInput): Promise<SendTurnResult>
+  /** Ends that turn and keeps the session, so what waits goes next. A turn still waiting is cancelled. Rejects with a conflict (the turn ended) for one that already ended. */
+  interrupt(turnId: string): Promise<void>
+  /** The hard stop of that turn only (plan S4): the run's other queued turns carry on. A turn still waiting is cancelled. A conflict (the turn ended) once it ended. */
+  stop(turnId: string): Promise<void>
+  /** The runs the person can attach to now. */
+  activeRuns(): Promise<ActiveRun[]>
+  /**
+   * Follows a run: `onFrame` gets every event after `fromSeq` (default 0) in order, each exactly once, whatever the
+   * connection does underneath (dropped frames, a replay after a reconnect, a stale tab). Returns the detach.
+   */
+  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq?: number): () => void
+  /** The chat socket's state: `live`, `held` (the server restarts: reconnecting), `reload` (this build can't read the server's frames) or `grantEnded` (a support grant ended, the chat's data was dropped). */
+  link(): LinkState
+  onLink(listener: (state: LinkState) => void): () => void
+  /** `id` is a run id, a turn id, or a `trace` on a message, problem or activity line. Null when the steps aren't available. */
+  getTrace(id: string): Promise<Trace | null>
+  /** The owner's recovery for a chat whose session is damaged: the history stays, the next message starts the session fresh. */
+  resetSession(chatId: string): Promise<void>
 
   // Pause and resume
   /** Resolves to when it was paused. */
@@ -143,13 +178,13 @@ export interface AgentClient {
   // ---------- managing chats ----------
   // Chats are keyed by id: the agent's chats in `AgentData.chat.chats` and chats a person started. The UI's chat list
   // applies `AgentState.chatTitles`, hides `chatDeleted` and lists `chatPinned` first.
-  /** A person's title for a chat, trimmed and cut to CHAT_TITLE_MAX. Null puts the chat's own title back. */
+  /** A person's title for a chat, trimmed and cut to CHAT_TITLE_MAX. Null puts the chat's own title back. Sends the chat's last `rev` as `ifRev`: a stale one rejects with `conflict` and the list shows the chat as it is now. */
   renameChat(id: string, title: string | null): Promise<void>
   pinChat(id: string, pinned: boolean): Promise<void>
-  /** Soft delete: the chats leave every list until `restoreChats`. It doesn't stop an answer still being written to
-   *  one of them: the caller stops that run with `stop` first (the app does, for every deleted chat that is answering). */
+  /** Soft delete of 1 to 50 chats (more rejects with `invalid`): they leave every list until `restoreChats`. The agent
+   *  cancels their queued turns and stops their live one (each ends with a turn.cancelled event). All must be the person's own, else not found and nothing changes. */
   deleteChats(ids: string[]): Promise<void>
-  /** Undo a delete. */
+  /** Undo a delete (1 to 50). */
   restoreChats(ids: string[]): Promise<void>
 
   // ---------- P2: who is signed in, the team, support access, paging and retry (p2-design.md section 11) ----------

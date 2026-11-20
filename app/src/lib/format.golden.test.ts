@@ -131,25 +131,28 @@ const answerBar = (data: AgentData, trace: Trace, at: Instant) => {
   return F.fmtAnswerBar({ model, steps: trace.steps.length - 1, durationMs: trace.durationMs, at }, d)
 }
 
+let asked = 0
 /** Asks for a routine in a chat and returns the card it made, with the answer bar's text as the store stamps it. */
 async function askRoutine(chatId: string, q: string): Promise<{ routine: RoutineCard; bar: string }> {
   const events: RunEvent[] = []
   const bars: string[] = []
-  const run = (async () => {
-    for await (const ev of agent.ask(q, { chatId })) {
-      events.push(ev)
-      // The store stamps an answer with the demo clock when its part arrives (store.ts:699,719).
-      if (ev.type === 'part') {
-        const trace = agent.getTrace(ev.trace)
-        if (!trace) throw new Error(`No trace ${ev.trace}`)
+  const pending: Promise<void>[] = []
+  const sent = await agent.send(chatId, { clientTurnKey: `golden-${++asked}`, text: q, model: 'sonnet' })
+  // Frames after the first are delivered as the demo clock runs; the golden file never saw ids, only the answer bar's text.
+  agent.attach(sent.runId, f => {
+    events.push(f.event)
+    // The store stamps an answer with the demo clock when its part arrives.
+    if (f.event.type === 'part') {
+      const turnId = f.event.turnId
+      pending.push(agent.getTrace(turnId).then(trace => {
+        if (!trace) throw new Error(`No trace ${turnId}`)
         bars.push(answerBar(agent.read(), trace, instantOf(now())))
-      }
+      }))
     }
-  })()
+  })
   await vi.runAllTimersAsync()
-  await run
-  const i = events.findIndex(ev => ev.type === 'part' && ev.part.type === 'routine')
-  const ev = events[i]
+  await Promise.all(pending)
+  const ev = events.find(e => e.type === 'part' && e.part.type === 'routine')
   if (!ev || ev.type !== 'part' || ev.part.type !== 'routine') throw new Error(`"${q}" made no routine`)
   return { routine: ev.part.routine, bar: bars[bars.length - 1] }
 }
@@ -213,12 +216,12 @@ async function capture(): Promise<Record<string, string>> {
   const traceIds = Object.keys(tracesJson.traces)
   at('Act', 'Normal')
   for (const id of traceIds) {
-    const t = agent.getTrace(id)
+    const t = await agent.getTrace(id)
     if (!t) throw new Error(`No trace ${id}`)
     traceLines(`traces.${id}`, t)
   }
   at('Act', 'Tool disconnected')
-  traceLines('traces.morning@toolDisconnected', agent.getTrace('morning')!)
+  traceLines('traces.morning@toolDisconnected', (await agent.getTrace('morning'))!)
 
   // ---------- Usage: every month and every scenario with spend
   for (const sc of ['Normal', 'Cap reached', 'First day'] as const) {

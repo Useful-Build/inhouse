@@ -10,8 +10,8 @@ import { NOT_FOUND, REASON } from '../../../shared/contract/error-codes'
 import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError } from '../types'
 import type {
-  AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AskOptions, AuditLine, ErrorReason, Instant, LibraryFile, Me,
-  MemberRecord, ResourceKey, ResourceStatus, RoutineRun, RunEvent, SupportGrant, Trace,
+  AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AuditLine, LinkState, ErrorReason, Instant, LibraryFile, Me,
+  MemberRecord, ResourceKey, ResourceStatus, RoutineRun, SupportGrant, Trace,
 } from '../types'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
@@ -678,13 +678,19 @@ export class HttpAgent implements AgentClient {
   undoHandled = (_id: string) => this.refuse<string>()
   redoHandled = (_id: string) => this.refuse()
 
-  createChat = (_chat: { id: string; title: string }) => this.refuse()
-  /** A run that never starts: the first `next()` rejects. Not a write, so no notice: the caller shows the failed answer. */
-  ask = (_text: string, _opts: AskOptions): AsyncIterable<RunEvent> => ({ [Symbol.asyncIterator]: () => ({ next: () => rejected<IteratorResult<RunEvent>>() }) })
-  send = (_runId: string, _text: string, _opts?: Parameters<AgentClient['send']>[2]) => this.refuse()
-  interrupt = (_runId: string) => this.refuse()
-  stop = (_runId: string): void => undefined
-  getTrace = (_id: string): Trace | null => null
+  createChat = (_chat: Parameters<AgentClient['createChat']>[0]) => this.refuse()
+  // The chat surface (C4, C5) is the next PR's: until then each call is refused, and a read or an attach finds nothing.
+  listChats = (_opts?: Parameters<AgentClient['listChats']>[0]) => this.refuse<Awaited<ReturnType<AgentClient['listChats']>>>()
+  getChat = (_id: string, _cursor?: string) => this.refuse<Awaited<ReturnType<AgentClient['getChat']>>>()
+  send = (_chatId: string, _input: Parameters<AgentClient['send']>[1]) => this.refuse<Awaited<ReturnType<AgentClient['send']>>>()
+  interrupt = (_turnId: string) => this.refuse()
+  stop = (_turnId: string) => this.refuse()
+  activeRuns = () => Promise.resolve([] as Awaited<ReturnType<AgentClient['activeRuns']>>)
+  attach = (_runId: string, _onFrame: Parameters<AgentClient['attach']>[1], _fromSeq?: number): (() => void) => () => undefined
+  link = (): LinkState => 'live'
+  onLink = (_l: (s: LinkState) => void): (() => void) => () => undefined
+  getTrace = (_id: string): Promise<Trace | null> => Promise.resolve(null)
+  resetSession = (_chatId: string) => this.refuse()
 
   pause = () => this.refuse<Instant>()
   resume = () => this.refuse()

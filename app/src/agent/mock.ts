@@ -9,17 +9,18 @@ import {
 import { clockTimeOf, sampleAt } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
-  ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
-  AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, AskOptions, Attachment, ChatThread, ClockTime, DemoContext,
-  Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, RunEvent, Scenario, SeedTurn, SendPriority, SetAsideReason, SetAsideRecord,
+  CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
+  AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, ActiveRun, ChatEvent, ChatList, ChatPage, ChatSendInput, ChatSummary, ChatThread, LinkState, RunFrame, SendTurnResult, StoredMessage, TurnFailure, ClockTime, DemoContext,
+  Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, Scenario, SeedTurn, SetAsideReason, SetAsideRecord,
   SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, stageIndex } from './types'
 import { shownClock, shownDateTimeIn, shownTimeOn } from './upgrade-times'
 import { DEMO_START, demoDayAt, demoNow, nextLocalRun } from './demo-clock'
 import { instantOf } from '../lib/format'
-import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
+import { INVALID, NOT_FOUND, REASON, CONFLICT, FORBIDDEN, RATE_LIMITED } from '../../shared/contract/error-codes'
 import type { ErrorReason } from '../../shared/contract/common'
+import { FAIL, NOTICE } from '../../shared/contract/chat-codes'
 import type { SupportGrant } from '../../shared/contract/grants'
 import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS } from '../../shared/contract/keys'
 import type { Can } from '../../shared/contract/me'
@@ -744,10 +745,17 @@ const QUERY_ANSWER = [
  *  isn't made twice, but never takes it back (this run didn't make it). A failed run carries the earlier `skill` as its own.
  *  One per turn: the first turn's id is the run's, a turn started by `send` is `${runId}-t${n}`. */
 type RunInfo = { trace: TraceKey; routine?: string; kept?: string; skill?: string }
-/** A message sent into a running answer, waiting for its turn. */
-type Queued = { text: string; priority: SendPriority; attachments?: Attachment[] }
-/** A run in progress: `stop` ends it, `turn` ends only the current turn (interrupt), `queue` is what was sent into it. */
-type LiveRun = { stop: AbortController; turn: AbortController; queue: Queued[] }
+/** One turn of a run in the mock (the server's `turns` row): its state, and the two ways to end it early. */
+interface MockTurn {
+  turnId: string; runId: string; chatId: string; input: ChatSendInput; ord: number; queuedAt: Instant
+  state: 'queued' | 'live' | 'ended'
+  /** `interrupt` ends this turn and keeps the session; `stop` is the hard stop. Both end only this turn. */
+  interrupt: AbortController; hard: AbortController
+}
+/** A run in the mock: its events by seq (kept, so any attach replays them), who follows it, and its turns. */
+interface MockRun { runId: string; chatId: string; frames: RunFrame[]; live: boolean; turns: MockTurn[]; subs: Set<(f: RunFrame) => void>; info?: RunInfo }
+/** What `scriptNextTurn` can make the next turn do (a test hook: the real target scripts the same through its scripted model). */
+export type ScriptedTurn = 'turnBudget' | 'maxTurns' | 'capReached' | 'budgetBusyThenStart' | 'budgetBusyThenFail' | 'sessionDamaged' | 'crash'
 
 const TRACE_KEYS = Object.keys(traces)
 /** A trace named in the sample data ("routine (without the approval step)" names `routine`). An unknown one stops the app. */
@@ -790,12 +798,23 @@ export class MockAgent implements AgentClient {
   private listeners = new Set<() => void>()
   private noticeListeners = new Set<(n: AgentNotice) => void>()
   private holdTimers: Record<string, ReturnType<typeof setTimeout>> = {}
-  private runs = new Map<string, LiveRun>()
+  private mockRuns = new Map<string, MockRun>()
+  private turnsById = new Map<string, MockTurn>()
+  /** `chatId/clientTurnKey` to what the send answered, so a retry answers the same turn. */
+  private sendKeys = new Map<string, { hash: string; result: SendTurnResult }>()
+  /** The chat's messages the server stored (D1), beyond the sample chats' own turns. */
+  private history = new Map<string, StoredMessage[]>()
+  private damaged = new Set<string>()
+  private scripted: ScriptedTurn | null = null
+  private idSeq = 0
+  private linkState: LinkState = 'live'
+  private linkListeners = new Set<(l: LinkState) => void>()
   /** Run id to what it replayed and made, saved (bounded) so a saved chat's run ids keep their steps after a reload. */
   private runInfo = loadRunInfo()
-  private runSeq = 0
   /** Chats the app made with `createChat`. `ask` takes these and the sample chats, nothing else. */
   private created = new Set<string>()
+  /** What each chat made with `createChat` is called and when it began. */
+  private createdInfo = new Map<string, { title: string; at: Instant }>()
   private demo: DemoContext = { stage: 'Act', scenario: 'Normal' }
 
   constructor() {
@@ -992,8 +1011,9 @@ export class MockAgent implements AgentClient {
   reset() {
     Object.values(this.holdTimers).forEach(clearTimeout)
     this.holdTimers = {}
-    this.runs.forEach(r => r.stop.abort())
-    this.created.clear()
+    this.mockRuns.forEach(r => r.turns.forEach(t => t.hard.abort()))
+    this.mockRuns.clear(); this.turnsById.clear(); this.sendKeys.clear(); this.history.clear(); this.damaged.clear(); this.scripted = null
+    this.created.clear(); this.createdInfo.clear()
     this.runInfo.clear()
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
     try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
@@ -1073,7 +1093,13 @@ export class MockAgent implements AgentClient {
 
   // ----- Pause and resume -----
 
-  pause(): Promise<Instant> { const { at } = this.stamp(); return this.writeThen({ paused: at }, at) }
+  pause(): Promise<Instant> {
+    const { at } = this.stamp()
+    const done = this.writeThen({ paused: at }, at)
+    // A paused agent ends what is running and cancels what waits (the server's fence).
+    if (this.state.paused === at) this.fence(() => true, 'paused')
+    return done
+  }
   resume() { return this.write({ paused: null }) }
 
   // ----- plain reads and writes -----
@@ -1164,7 +1190,7 @@ export class MockAgent implements AgentClient {
   }
 
   /** Test hook (the contract suite's `writeElsewhere`): change a record behind this client, as another session would, so its next write is stale. */
-  changeElsewhere(ref: { kind: 'setting'; key: string } | { kind: 'member'; id: string } | { kind: 'grant'; id: string } | { kind: 'routine' | 'memory' | 'file'; id: string }, value?: string | boolean): void {
+  changeElsewhere(ref: { kind: 'setting'; key: string } | { kind: 'member'; id: string } | { kind: 'grant'; id: string } | { kind: 'routine' | 'memory' | 'file' | 'chat'; id: string }, value?: string | boolean): void {
     const rec = ref.kind === 'setting' ? `setting:${ref.key}` : ref.kind === 'memory' ? `memory:${ref.id}` : `${ref.kind}:${ref.id}`
     const base = ref.kind === 'setting' ? 0 : 1
     this.seen[rec] ??= this.rev(rec, base)
@@ -1391,7 +1417,8 @@ export class MockAgent implements AgentClient {
 
   // ----- traces -----
 
-  getTrace(id: string): Trace | null {
+  getTrace(id: string): Promise<Trace | null> { return Promise.resolve(this.traceOf(id)) }
+  private traceOf(id: string): Trace | null {
     const problem = id.startsWith(DRAFT_TRACE) ? problems.find(p => p.id === id.slice(DRAFT_TRACE.length)) : undefined
     const key = problem ? 'draft' : this.runInfo.get(id)?.trace ?? id
     const found = Object.hasOwn(traces, key) ? traces[key] : undefined
@@ -1560,151 +1587,410 @@ export class MockAgent implements AgentClient {
 
   private knownChat(id: string) { return this.created.has(id) || chats.some(c => c.id === id) }
 
-  createChat(chat: { id: string; title: string }): Promise<void> {
-    if (!chat.id.trim()) return this.rejected('unknown', "Couldn't start the chat.", true)
-    this.created.add(chat.id)
-    // A write changes the snapshot's identity (the contract), so a React reader of `getSnapshot` sees the new chat.
+  // ----- chats (the server's side of C4, in memory and in the saved state) -----
+
+  /** A chat's id and when it began, for the sample chats the scenario shows and the ones the app made. */
+  private chatUniverse(): { id: string; title: string; at: Instant }[] {
+    const seed = this.read().chat.chats.map(c => ({ id: c.id, title: c.title, at: c.at }))
+    const made = [...this.created].flatMap(id => { const i = this.createdInfo.get(id); return i ? [{ id, ...i }] : [] })
+    return [...made, ...seed]
+  }
+  private chatBase(id: string): { id: string; title: string; at: Instant } | undefined {
+    const c = chats.find(x => x.id === id)
+    if (c) return { id, title: c.title, at: c.at }
+    const i = this.createdInfo.get(id)
+    return this.created.has(id) && i ? { id, ...i } : undefined
+  }
+  private chatRecord(id: string): Record<string, unknown> | null {
+    const base = this.chatBase(id)
+    return base ? { ...this.summary(base) } : null
+  }
+  /** The last time anything happened in the chat: its start, or its newest stored message. */
+  private lastAt(id: string, began: Instant): Instant {
+    const h = this.history.get(id)
+    return h?.length ? h[h.length - 1].at : began
+  }
+  private summary(c: { id: string; title: string; at: Instant }): ChatSummary {
+    const custom = this.state.chatTitles[c.id] ?? null
+    return {
+      id: c.id, title: custom ?? c.title, customTitle: custom, pinned: !!this.state.chatPinned[c.id], deleted: !!this.state.chatDeleted[c.id],
+      at: this.lastAt(c.id, c.at), rev: this.rev(`chat:${c.id}`, 1),
+      running: [...this.mockRuns.values()].some(r => r.live && r.chatId === c.id),
+    }
+  }
+  /** A paging cursor: opaque to the caller, base64url (no padding) of the last key. */
+  private cursorOf = (key: string) => btoa(key).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  private keyOf(cursor: string): string | null {
+    try { return atob(cursor.replace(/-/g, '+').replace(/_/g, '/')) } catch { return null }
+  }
+
+  createChat(chat: CreateChatInput): Promise<void> {
+    const id = chat.id
+    if (!id.trim()) return this.rejected(INVALID, "Couldn't start the chat.", true)
+    // Saying it twice is fine: the chat is the same one (idempotent for its owner).
+    if (this.created.has(id)) return Promise.resolve()
+    if (chats.some(c => c.id === id)) return Promise.resolve()
+    this.created.add(id)
+    this.createdInfo.set(id, { title: chat.title.slice(0, 200) || 'New chat', at: instantOf(demoNow(this.startedAt).getTime()) })
+    // A write changes the snapshot's identity (the contract), so a React reader of `getSnapshot` sees the new chat. Saved
+    // like any write: a refused save takes the chat back, and `commit` already told the person.
+    const before = this.state
     this.state = { ...this.state }
+    // Saved without `commit`, which tells the listeners in this call: the store makes the chats it restored at load while
+    // it is still being created.
+    try { localStorage.setItem(STORAGE_KEY, this.saved()) }
+    catch (e) {
+      console.warn('Inhouse demo: could not save state.', e)
+      this.state = before
+      this.created.delete(id); this.createdInfo.delete(id)
+      this.notify({ type: 'save.failed', text: SAVE_FAILED })
+      queueMicrotask(() => this.listeners.forEach(l => l()))
+      return this.rejected('unknown', SAVE_FAILED, false)
+    }
     // `allChatIds` changed, so `subscribe` listeners are told. On the next microtask, not in this call: the store makes the
     // chats it restored at load while it is still being created, and a listener must not run into it half made.
     queueMicrotask(() => this.listeners.forEach(l => l()))
     return Promise.resolve()
   }
 
-  async *ask(question: string, opts: AskOptions): AsyncGenerator<RunEvent> {
-    // A chat the agent doesn't know is a wiring bug in the app: fail loud.
-    if (!this.knownChat(opts.chatId)) throw new AgentError(NOT_FOUND, `ask: unknown chat id "${opts.chatId}". Make it with createChat first.`)
-    const runId = `run-${SESSION}-${++this.runSeq}`
-    const run: LiveRun = { stop: new AbortController(), turn: new AbortController(), queue: [] }
-    this.runs.set(runId, run)
-    // Waits, or ends early on Stop (the run) or interrupt (this turn).
-    const wait = (ms: number) => new Promise<void>(resolve => {
-      const signals = [run.stop.signal, run.turn.signal]
+  listChats(opts: { cursor?: string; limit?: number; deleted?: boolean } = {}): Promise<ChatList> {
+    const limit = opts.limit ?? 50
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return this.rejected(INVALID, 'The page size must be 1 to 100.', true)
+    let all = this.chatUniverse().map(c => this.summary(c)).filter(c => c.deleted === !!opts.deleted)
+      .sort((a, b) => b.at.ms - a.at.ms || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+    if (opts.cursor !== undefined) {
+      const key = this.keyOf(opts.cursor)
+      const m = key === null ? null : /^(-?\d+):(.*)$/.exec(key)
+      if (!m) return this.rejected(INVALID, 'That page cursor is not valid.', true)
+      const [ms, id] = [Number(m[1]), m[2]]
+      all = all.filter(c => c.at.ms < ms || (c.at.ms === ms && c.id < id))
+    }
+    const items = all.slice(0, limit)
+    const last = items.at(-1)
+    for (const c of items) this.seen[`chat:${c.id}`] = c.rev
+    return Promise.resolve({ items, nextCursor: all.length > limit && last ? this.cursorOf(`${last.at.ms}:${last.id}`) : null })
+  }
+
+  /** The sample chat's turns as stored messages: ids from the chat's place in the list, so they never change. */
+  private seedMessages(id: string): StoredMessage[] {
+    const ci = chats.findIndex(c => c.id === id)
+    if (ci < 0) return []
+    const c = chats[ci]
+    const id22 = (kind: string, a: number, b: number) => `${kind}_${`s${a.toString(36).padStart(3, '0')}${b.toString(36).padStart(3, '0')}`.padEnd(22, '0')}`
+    const runId = id22('r', ci, 0)
+    const out: StoredMessage[] = []
+    let turnId = '', n = 0
+    c.turns.forEach((t, j) => {
+      if (t.role === 'user') {
+        turnId = id22('t', ci, j); n = 0
+        out.push({ id: `${turnId}.u`, role: 'user', text: t.text, turnId, runId, pos: out.length, at: c.at })
+        return
+      }
+      if (t.stage !== undefined && t.stage !== this.demo.stage) return
+      for (const part of t.parts) out.push({ id: `${turnId}.${n++}`, role: 'agent', part, trace: t.trace, model: t.model, at: c.at, turnId, runId, pos: out.length })
+    })
+    return out
+  }
+  private allMessages(id: string): StoredMessage[] { return [...this.seedMessages(id), ...(this.history.get(id) ?? [])] }
+
+  getChat(id: string, cursor?: string): Promise<ChatPage> {
+    const base = this.chatBase(id) ?? this.read().chat.chats.find(c => c.id === id)
+    if (!base) return this.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
+    const all = this.allMessages(id)
+    let below = all.length
+    if (cursor !== undefined) {
+      const key = this.keyOf(cursor)
+      const m = key === null ? null : /^p(\d+)$/.exec(key)
+      if (!m) return this.rejected(INVALID, 'That page cursor is not valid.', true)
+      below = Number(m[1])
+    }
+    const size = 50
+    const page = all.filter(m => m.pos < below).slice(-size).reverse()
+    const first = page.at(-1)
+    const runs: ActiveRun[] = [...this.mockRuns.values()].filter(r => r.live && r.chatId === id).map(r => ({ runId: r.runId, chatId: r.chatId, lastSeq: r.frames.length, live: true }))
+    const chat = this.summary(base)
+    this.seen[`chat:${id}`] = chat.rev
+    return Promise.resolve({ chat, messages: page, nextCursor: first && first.pos > 0 ? this.cursorOf(`p${first.pos}`) : null, runs })
+  }
+
+  resetSession(chatId: string): Promise<void> {
+    if (!this.knownChat(chatId)) return this.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
+    this.damaged.delete(chatId)
+    return Promise.resolve()
+  }
+
+  // ----- chat runs -----
+
+  private id22(kind: 'r' | 't'): string { return `${kind}_${(SESSION + (++this.idSeq).toString(36).padStart(6, '0')).padEnd(22, '0').slice(0, 22)}` }
+  private nowInstant = (): Instant => instantOf(demoNow(this.startedAt).getTime())
+
+  private emit(run: MockRun, event: ChatEvent) {
+    const frame: RunFrame = { runId: run.runId, seq: run.frames.length + 1, at: this.nowInstant(), event }
+    run.frames.push(frame)
+    for (const sub of [...run.subs]) sub(frame)
+  }
+
+  /** The send's refusals and checks, in the design's order (4.3). Null when the send may go on. */
+  private sendRefusal(input: ChatSendInput): Promise<never> | null {
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(input.clientTurnKey)) return this.rejected(INVALID, 'The send needs a key of 8 to 64 letters, numbers, _ or -.', true)
+    if (!input.text.trim()) return this.rejected(INVALID, 'There is nothing to send.', true)
+    if ((input.attachments?.length ?? 0) > 10) return this.rejected(INVALID, 'A message takes at most 10 files.', true, { reason: REASON.tooMany })
+    if (!models.some(m => m.id === input.model)) return this.rejected(INVALID, `"${input.model}" isn't a model.`, true)
+    return null
+  }
+
+  send(chatId: string, input: ChatSendInput): Promise<SendTurnResult> {
+    if (!this.knownChat(chatId) || this.state.chatDeleted[chatId]) return this.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
+    const bad = this.sendRefusal(input)
+    if (bad) return bad
+    // The same key and payload answers the same turn; the same key with another payload is refused. Checked before any other rule.
+    const hash = JSON.stringify([input.text, input.quote ?? null, input.priority ?? 'next', input.model, input.replacesRun ?? null, input.attachments ?? []])
+    const keyed = this.sendKeys.get(`${chatId}/${input.clientTurnKey}`)
+    if (keyed) return keyed.hash === hash ? Promise.resolve(keyed.result) : this.rejected(CONFLICT, 'That key was already used for another message.', true, { reason: REASON.keyReused })
+    if (this.state.paused !== null) return this.rejected(FORBIDDEN, 'Your Inhouse agent is paused.', true, { reason: REASON.paused })
+    if (this.damaged.has(chatId)) return this.rejected(CONFLICT, "This chat's memory couldn't be saved. Start it fresh to go on.", true, { reason: REASON.sessionDamaged })
+    const live = [...this.mockRuns.values()].find(r => r.live && r.chatId === chatId)
+    const waiting = [...this.mockRuns.values()].flatMap(r => r.turns).filter(t => t.chatId === chatId && t.state === 'queued').length
+    if (waiting >= 10) return this.rejected(RATE_LIMITED, 'Too many messages are waiting in this chat.', true, { reason: REASON.queueFull })
+    const priority = input.priority ?? 'next'
+    const run: MockRun = live ?? { runId: this.id22('r'), chatId, frames: [], live: true, turns: [], subs: new Set() }
+    const turn: MockTurn = {
+      turnId: this.id22('t'), runId: run.runId, chatId, input: { ...input, priority }, ord: ++this.idSeq, queuedAt: this.nowInstant(), state: 'queued',
+      interrupt: new AbortController(), hard: new AbortController(),
+    }
+    const result: SendTurnResult = { runId: run.runId, turnId: turn.turnId, messageId: `${turn.turnId}.u`, position: live && run.turns.some(t => t.state !== 'ended') ? 'queued' : 'starting' }
+    this.sendKeys.set(`${chatId}/${input.clientTurnKey}`, { hash, result })
+    this.turnsById.set(turn.turnId, turn)
+    run.turns.push(turn)
+    if (!live) {
+      this.mockRuns.set(run.runId, run)
+      this.emit(run, { type: 'run.started', runId: run.runId, chatId })
+    }
+    this.emit(run, {
+      type: 'turn.queued', turnId: turn.turnId, messageId: result.messageId, text: input.text, ...(input.quote !== undefined ? { quote: input.quote } : {}),
+      attachments: input.attachments ?? [], priority, by: ME_ID,
+    })
+    if (!live) void this.drive(run)
+    // `now` ends the live turn (the engine has no mid-turn input) and goes next; it never ends a turn that started after the send.
+    else if (priority === 'now') run.turns.find(t => t.state === 'live')?.interrupt.abort()
+    return Promise.resolve(result)
+  }
+
+  private rank = (t: MockTurn) => ({ now: 0, next: 1, later: 2 }[t.input.priority ?? 'next'])
+  private pickNext(run: MockRun): MockTurn | undefined {
+    return run.turns.filter(t => t.state === 'queued').sort((a, b) => this.rank(a) - this.rank(b) || a.ord - b.ord)[0]
+  }
+
+  /** A turn that never ran: out of the queue, with the reason. */
+  private cancel(run: MockRun, turn: MockTurn, why: Extract<ChatEvent, { type: 'turn.cancelled' }>['why']) {
+    if (turn.state === 'ended') return
+    turn.state = 'ended'
+    turn.hard.abort()
+    this.emit(run, { type: 'turn.cancelled', turnId: turn.turnId, why })
+  }
+
+  private async drive(run: MockRun) {
+    const began = Date.now()
+    let count = 0
+    try {
+      for (let turn = this.pickNext(run); turn; turn = this.pickNext(run)) {
+        if (await this.runTurn(run, turn)) count++
+      }
+    } finally {
+      // Over the moment nothing waits: a message sent after this starts a run of its own.
+      run.live = false
+      const last = [...run.turns].reverse().find(t => this.traceOf(t.turnId))
+      const t = last ? this.traceOf(last.turnId) : null
+      this.emit(run, { type: 'run.finished', runId: run.runId, turns: count, durationMs: t?.durationMs ?? Date.now() - began, cost: t?.cost ?? { minor: 0, currency: 'USD' } })
+    }
+  }
+
+  /** Waits `ms` of demo time, or until the turn is ended early. */
+  private pause_(ms: number, turn: MockTurn): Promise<void> {
+    return new Promise<void>(resolve => {
+      const signals = [turn.interrupt.signal, turn.hard.signal]
       if (signals.some(x => x.aborted)) { resolve(); return }
       let t: ReturnType<typeof setTimeout> | undefined = undefined
       const done = () => { clearTimeout(t); signals.forEach(x => x.removeEventListener('abort', done)); resolve() }
       t = setTimeout(done, ms)
       signals.forEach(x => x.addEventListener('abort', done, { once: true }))
     })
-    let info: RunInfo = { trace: 'generic' }
-    // Each turn has its own trace id: the run's for the first, `${runId}-t${n}` for a message sent into it.
-    let turnId = runId
-    // Over before it says so: the run is removed first, so a message sent once it's stopped is refused, not queued and lost.
-    const stopped = (): RunEvent => { this.runs.delete(runId); return { type: 'run.stopped', runId } }
-    try {
-      yield { type: 'run.started', runId }
-      let q = question
-      // Only the first turn replaces the earlier run's answer; messages sent in later are new questions.
-      let replaces = opts.replacesRun
-      for (let first = true, n = 1; ; first = false, n++) {
-        if (!first) {
-          turnId = `${runId}-t${n}`
-          info = { trace: 'generic' }
-          yield { type: 'turn.started', text: q }
-        }
-        const s = this.script(q.trim(), opts.chatId)
-        info.trace = s.trace
-        this.saveRunInfo(turnId, info)
-        yield { type: 'step', label: 'Reading your question…' }
-        let elapsed = 0, i = 0
-        while (elapsed < s.delayMs && !run.turn.signal.aborted) {
-          const slice = Math.min(THINKING_STEP_MS, s.delayMs - elapsed)
-          await wait(slice)
-          if (run.stop.signal.aborted) { yield stopped(); return }
-          if (run.turn.signal.aborted) break
-          elapsed += slice
-          if (elapsed < s.delayMs) yield { type: 'step', label: s.thinking[Math.min(i++, s.thinking.length - 1)] }
-        }
-        if (run.stop.signal.aborted) { yield stopped(); return }
-        if (!run.turn.signal.aborted) {
-          for (const part of s.parts) {
-            // A routine from a request is saved as its card appears, so its id comes from what is saved at that moment.
-            const out = part.type === 'routine' && part.routine.id === '' ? this.saveRoutine(part, replaces, info) : part
-            // When it answered, on the demo clock. The model is the store's pick: the mock doesn't know it, so it sends none.
-            yield { type: 'part', part: out, trace: turnId, at: instantOf(demoNow(this.startedAt).getTime()) }
-            if (out.type === 'approval') yield { type: 'approval.requested', approvalId: out.problemId }
-          }
-          s.after?.(info, replaces)
-          const failed = s.parts.find(x => x.type === 'error')
-          // An answer that failed replaces nothing: what the earlier run made stays, and this run carries it on, so the
-          // next answer in the chain (Try again, or Regenerate of the error) updates it instead of making a second.
-          if (replaces && !failed) this.takeBack(replaces, info)
-          const was = replaces && failed ? this.runInfo.get(replaces) : undefined
-          if (was) { info.kept = was.routine ?? was.kept; info.skill = was.skill }
-          this.saveRunInfo(turnId, info)
-          if (failed && failed.type === 'error') {
-            // Over before it says so, like run.finished: a message sent now is refused, not queued and lost.
-            this.runs.delete(runId)
-            yield { type: 'run.failed', runId, message: failed.text }
-            return
-          }
-        }
-        replaces = undefined
-        const next = run.queue.shift()
-        if (!next) {
-          // Interrupted with nothing waiting: the run ends there.
-          if (run.turn.signal.aborted) { yield stopped(); return }
-          break
-        }
-        run.turn = new AbortController()
-        q = next.text
+  }
+
+  private finish(run: MockRun, turn: MockTurn, outcome: 'done' | 'interrupted' | 'stopped' | 'failed', reason?: TurnFailure) {
+    turn.state = 'ended'
+    this.emit(run, { type: 'turn.finished', turnId: turn.turnId, outcome, ...(reason ? { reason } : {}) })
+  }
+
+  /** What the server stores once the turn ends (D1): the question and the parts that were written. */
+  private project(run: MockRun, turn: MockTurn, parts: { messageId: string; part: MessagePart; at: Instant }[], info: RunInfo, model: string) {
+    const list = this.history.get(turn.chatId) ?? []
+    let pos = this.seedMessages(turn.chatId).length + list.length
+    const atts = turn.input.attachments?.map(a => ({ name: a.name, meta: '', icon: 'description' }))
+    const user: StoredMessage = {
+      id: `${turn.turnId}.u`, role: 'user', text: turn.input.text, ...(turn.input.quote !== undefined ? { quote: turn.input.quote } : {}), ...(atts?.length ? { atts } : {}),
+      turnId: turn.turnId, runId: run.runId, pos: pos++, at: turn.queuedAt,
+    }
+    const answers = parts.map((p): StoredMessage => ({ id: p.messageId, role: 'agent', part: p.part, trace: turn.turnId, model, at: p.at, turnId: turn.turnId, runId: run.runId, pos: pos++ }))
+    this.history.set(turn.chatId, [...list, user, ...answers])
+    void info
+  }
+
+  /** Runs one turn to its end. True when it started (a cancelled one didn't). */
+  private async runTurn(run: MockRun, turn: MockTurn): Promise<boolean> {
+    const { input } = turn
+    const forced = this.scripted
+    this.scripted = null
+    if (forced === 'capReached') {
+      this.emit(run, { type: 'notice', code: NOTICE.capReached })
+      this.finish(run, turn, 'failed', FAIL.capReached)
+      return false
+    }
+    if (forced === 'budgetBusyThenStart' || forced === 'budgetBusyThenFail') {
+      // Back to waiting, not failed: it tries again every 15 s, and gives up after 2 minutes.
+      this.emit(run, { type: 'notice', code: NOTICE.budgetBusy })
+      await this.pause_(forced === 'budgetBusyThenStart' ? 15_000 : 120_000, turn)
+      if (turn.state === 'ended') return false
+      if (forced === 'budgetBusyThenFail') { this.finish(run, turn, 'failed', FAIL.budgetBusy); return false }
+    }
+    turn.state = 'live'
+    this.emit(run, { type: 'turn.started', turnId: turn.turnId, model: input.model })
+    const s = this.script(input.text.trim(), turn.chatId)
+    let info: RunInfo = { trace: s.trace }
+    this.saveRunInfo(turn.turnId, info)
+    let stepN = 0
+    const step = (label: string) => this.emit(run, { type: 'step', turnId: turn.turnId, stepId: `${turn.turnId}.s${stepN++}`, label })
+    const ended = () => turn.interrupt.signal.aborted || turn.hard.signal.aborted
+    step('Reading your question…')
+    let elapsed = 0, i = 0
+    while (elapsed < s.delayMs && !ended()) {
+      const slice = Math.min(THINKING_STEP_MS, s.delayMs - elapsed)
+      await this.pause_(slice, turn)
+      if (ended()) break
+      elapsed += slice
+      if (elapsed < s.delayMs) step(s.thinking[Math.min(i++, s.thinking.length - 1)])
+    }
+    const written: { messageId: string; part: MessagePart; at: Instant }[] = []
+    if (!ended()) {
+      if (forced === 'crash') { this.finish(run, turn, 'failed', FAIL.sessionCrashed); this.project(run, turn, written, info, input.model); return true }
+      const replaces = input.replacesRun
+      // A routine or skill the answer makes is saved as its card appears, so its id comes from what is saved at that moment.
+      const chosen = forced === 'turnBudget' || forced === 'maxTurns' ? s.parts.slice(0, 1) : s.parts
+      let n = 0
+      for (const part of chosen) {
+        const out = part.type === 'routine' && part.routine.id === '' ? this.saveRoutine(part, replaces, info) : part
+        const at = this.nowInstant()
+        written.push({ messageId: `${turn.turnId}.${n++}`, part: out, at })
+        this.emit(run, { type: 'part', turnId: turn.turnId, messageId: `${turn.turnId}.${n - 1}`, part: out, model: input.model, at })
       }
-      const t = this.getTrace(turnId)
-      if (!t) throw new Error(`No recorded trace for ${info.trace}`)
-      // Over before it says so: a message sent after this point is refused, not queued and lost.
-      this.runs.delete(runId)
-      yield { type: 'run.finished', runId, steps: t.steps.length - 1, durationMs: t.durationMs, cost: t.cost }
-    } finally {
-      this.runs.delete(runId)
+      if (forced !== 'turnBudget' && forced !== 'maxTurns') s.after?.(info, replaces)
+      const failed = s.parts.some(x => x.type === 'error')
+      // An answer that failed replaces nothing: what the earlier run made stays, and this run carries it on, so the next
+      // answer in the chain (Try again, or Regenerate of the error) updates it instead of making a second.
+      if (replaces && !failed) this.takeBack(replaces, info)
+      const was = replaces && failed ? this.runInfo.get(replaces) : undefined
+      if (was) { info.kept = was.routine ?? was.kept; info.skill = was.skill }
+      this.saveRunInfo(turn.turnId, info)
+      if (!run.info || info.routine || info.skill) { run.info = info; this.saveRunInfo(run.runId, info) }
+      if (forced === 'turnBudget') this.finish(run, turn, 'failed', FAIL.turnBudget)
+      else if (forced === 'maxTurns') this.finish(run, turn, 'failed', FAIL.maxTurns)
+      else this.finish(run, turn, 'done')
+      if (forced === 'sessionDamaged') { this.damaged.add(turn.chatId); this.emit(run, { type: 'notice', code: NOTICE.sessionDamaged }) }
+    } else {
+      this.finish(run, turn, turn.hard.signal.aborted ? 'stopped' : 'interrupted')
     }
+    this.project(run, turn, written, info, input.model)
+    info = { trace: info.trace }
+    return true
   }
 
-  send(runId: string, text: string, opts: { priority?: SendPriority; attachments?: Attachment[] } = {}): Promise<void> {
-    const run = this.runs.get(runId)
-    if (!run) return this.rejected('conflict', FINISHED, true)
-    const priority = opts.priority ?? 'next'
-    const item: Queued = { text, priority, attachments: opts.attachments }
-    if (priority === 'later') run.queue.push(item)
-    else {
-      // `now` and `next` go before anything sent as `later`; `now` goes first and ends the current turn (the mock's
-      // steer: the engine would take it at its next step).
-      const at = priority === 'now' ? 0 : (i => (i < 0 ? run.queue.length : i))(run.queue.findIndex(x => x.priority === 'later'))
-      run.queue.splice(at, 0, item)
-      if (priority === 'now') run.turn.abort()
-    }
+  /** The next turn of the run this test hook names starts as it says (a spending cap, a busy budget, a damaged session). */
+  scriptNextTurn(kind: ScriptedTurn | null) { this.scripted = kind }
+  /** Test hook: the connection state the app shows (the mock has no socket). */
+  setLink(state: LinkState) { this.linkState = state; this.linkListeners.forEach(l => l(state)) }
+
+  interrupt(turnId: string): Promise<void> { return this.endTurn(turnId, 'interrupt') }
+  stop(turnId: string): Promise<void> { return this.endTurn(turnId, 'hard') }
+  private endTurn(turnId: string, how: 'interrupt' | 'hard'): Promise<void> {
+    const turn = this.turnsById.get(turnId)
+    const run = turn && this.mockRuns.get(turn.runId)
+    if (!turn || !run) return this.rejected(NOT_FOUND, 'That answer is not here.', true)
+    if (turn.state === 'ended') return this.rejected(CONFLICT, FINISHED, true, { reason: REASON.turnEnded })
+    if (turn.state === 'queued') this.cancel(run, turn, 'removed')
+    else (how === 'interrupt' ? turn.interrupt : turn.hard).abort()
     return Promise.resolve()
   }
 
-  interrupt(runId: string): Promise<void> {
-    const run = this.runs.get(runId)
-    if (!run) return this.rejected('conflict', FINISHED, true)
-    run.turn.abort()
-    return Promise.resolve()
+  activeRuns(): Promise<ActiveRun[]> {
+    return Promise.resolve([...this.mockRuns.values()].filter(r => r.live).map(r => ({ runId: r.runId, chatId: r.chatId, lastSeq: r.frames.length, live: true })))
   }
 
-  stop(runId: string) { this.runs.get(runId)?.stop.abort() }
+  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq = 0): () => void {
+    const run = this.mockRuns.get(runId)
+    if (!run) return () => undefined
+    // The replay and the subscription are one step: nothing sent in between is missed or sent twice.
+    for (const f of run.frames) if (f.seq > fromSeq) onFrame(f)
+    run.subs.add(onFrame)
+    return () => { run.subs.delete(onFrame) }
+  }
+
+  link = (): LinkState => this.linkState
+  onLink = (l: (s: LinkState) => void) => { this.linkListeners.add(l); return () => { this.linkListeners.delete(l) } }
+
+  /** Everything live ends: queued turns are cancelled with `why`, live ones are stopped (pause, delete). */
+  private fence(match: (run: MockRun) => boolean, why: 'paused' | 'deleted') {
+    for (const run of this.mockRuns.values()) {
+      if (!run.live || !match(run)) continue
+      if (why === 'paused') this.emit(run, { type: 'notice', code: 'paused' })
+      for (const t of run.turns) {
+        if (t.state === 'queued') this.cancel(run, t, why)
+        else if (t.state === 'live') t.hard.abort()
+      }
+    }
+  }
 
   // ----- managing chats -----
 
+  /** The ids of a delete or restore: 1 to 50, every one the person's own (else nothing changes). */
+  private idsRefusal(ids: string[]): Promise<never> | null {
+    if (ids.length < 1 || ids.length > 50) return this.rejected(INVALID, 'Pick 1 to 50 chats.', true, ids.length > 50 ? { reason: REASON.tooMany } : undefined)
+    if (ids.some(id => !this.knownChat(id))) return this.rejected(NOT_FOUND, "One of those chats isn't available.", true)
+    return null
+  }
+  private chatConflict(id: string) { return this.conflict(`chat:${id}`, 1, () => this.chatRecord(id) ?? { id }) }
+
   renameChat(id: string, title: string | null) {
+    if (!this.knownChat(id)) return this.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
+    const stale = this.chatConflict(id)
+    if (stale) return stale
     const chatTitles = { ...this.state.chatTitles }
     const t = title?.trim().replace(/\s+/g, ' ').slice(0, CHAT_TITLE_MAX).trimEnd()
     if (t) chatTitles[id] = t; else delete chatTitles[id]
-    return this.write({ chatTitles })
+    return this.writeRecs([[`chat:${id}`, 1]], { chatTitles })
   }
   pinChat(id: string, pinned: boolean) {
+    if (!this.knownChat(id)) return this.rejected(NOT_FOUND, "That chat isn't available. It may have been deleted.", true)
+    const stale = this.chatConflict(id)
+    if (stale) return stale
     const chatPinned = { ...this.state.chatPinned }
     if (pinned) chatPinned[id] = true; else delete chatPinned[id]
-    return this.write({ chatPinned })
+    return this.writeRecs([[`chat:${id}`, 1]], { chatPinned })
   }
   deleteChats(ids: string[]) {
+    const bad = this.idsRefusal(ids)
+    if (bad) return bad
     const chatDeleted = { ...this.state.chatDeleted }
     for (const id of ids) chatDeleted[id] = true
-    return this.write({ chatDeleted })
+    const done = this.writeRecs(ids.map(id => [`chat:${id}`, 1] as [string, number]), { chatDeleted })
+    // Their queued turns are cancelled and their live one stopped, once the delete is saved.
+    if (this.state.chatDeleted === chatDeleted) this.fence(run => ids.includes(run.chatId), 'deleted')
+    return done
   }
   restoreChats(ids: string[]) {
+    const bad = this.idsRefusal(ids)
+    if (bad) return bad
     const chatDeleted = { ...this.state.chatDeleted }
     for (const id of ids) delete chatDeleted[id]
-    return this.write({ chatDeleted })
+    return this.writeRecs(ids.map(id => [`chat:${id}`, 1] as [string, number]), { chatDeleted })
   }
 }

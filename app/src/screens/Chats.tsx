@@ -1,7 +1,9 @@
 // Chats: the thread (one card per answer, D2), hover actions under each answer and your own messages, the "···" menu,
 // long messages that fold, Retry on a stopped answer, Jump to latest, the queued messages and the ask box.
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
+import { traceOf, useTraces } from './chat/traces'
+import { CONNECTION_TEXT, NOTICE_TEXT } from './chat/turn-text'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'
@@ -129,11 +131,14 @@ function Thinking({ text }: { text: string }) {
 }
 
 function Thread() {
+  useTraces()
   const ctx = useCtx()
   const { fresh, chatId, extras, hidden, phone, feedback } = useUi()
   const run = useUi(openRun)
   const thinking = !!run
-  const thinkingText = run?.text ?? ''
+  const view = useUi(s => { const k = openChatKey(s, agent.read()); return k !== null && Object.hasOwn(s.views, k) ? s.views[k] : undefined })
+  const link = useSyncExternalStore(agent.onLink, agent.link)
+  const thinkingText = view?.budgetWait ? NOTICE_TEXT.budget_busy : run?.text ?? ''
   const editingId = useUi(s => s.editMsg?.id)
   const { ask, openTrace, patch, showToast, openTeam, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue, sendQueuedNow } = useUi.getState()
   const [menuId, setMenuId] = useState<string | null>(null)
@@ -146,7 +151,10 @@ function Thread() {
 
   // Null for a new chat, and when there are no chats at all (day one): the thread then starts empty.
   const openId = openChatKey({ fresh, chatId }, ctx.data)
-  const queue = useUi(s => (openId === null ? NO_QUEUE : s.queued[openId] ?? NO_QUEUE))
+  const localQueue = useUi(s => (openId === null ? NO_QUEUE : s.queued[openId] ?? NO_QUEUE))
+  // What the agent holds waiting in the run, then what waits paused here (after a reload).
+  const sentQueue = run?.sent
+  const queue = useMemo(() => (sentQueue?.length ? [...sentQueue, ...localQueue] : localQueue), [sentQueue, localQueue])
   // After Send now or Remove, focus goes to the chip that takes that one's place (the same button), else to the field;
   // on a phone to Send instead (the field would pop the keyboard), or to "+" while Send is off or Stop holds its place
   // (a tap or Enter there would stop the answer just asked).
@@ -168,7 +176,7 @@ function Thread() {
     focusAfter.current = { at: queue.indexOf(q), button }
     if (button === 'send') sendQueuedNow(q.id); else unqueue(q.id)
     // Nothing changed (it had already gone): no focus move waits for a later change.
-    if (openId === null || useUi.getState().queued[openId] === queue) focusAfter.current = null
+    if (openId === null || (useUi.getState().queued[openId] ?? NO_QUEUE) === localQueue && (openRun(useUi.getState())?.sent ?? NO_QUEUE) === (run?.sent ?? NO_QUEUE)) focusAfter.current = null
   }
   const queueStatus = queue.length === 0 ? '' : `${queue.length} ${queue.length === 1 ? 'message' : 'messages'} ${queue.every(q => q.paused) ? 'paused' : 'queued'}`
   const all = useMemo(() => (openId === null ? [] : chatMessages(ctx, openId)).concat(extras), [ctx, openId, extras])
@@ -274,7 +282,7 @@ function Thread() {
     const i = b.at + b.ms.length - 1
     const next = msgs[i + 1]
     const menuOpen = menuId === m.id
-    const tr = agent.getTrace(m.trace)
+    const tr = traceOf(m.trace)
     const failed = m.part.type === 'error'
     // Mode, step count, time taken and when it answered, as far as they're known.
     const modelLabel = m.model ? ctx.data.models.find(x => x.id === m.model)?.label : undefined
@@ -503,6 +511,31 @@ function Thread() {
                   <QueuedChip q={q} editing={editingId !== undefined} onEdit={editQueued} onSendNow={x => chipAction(x, 'send')} onRemove={x => chipAction(x, 'remove')} />
                 </div>
               ))}
+            </div>
+          )}
+          {/* What holds the agent back, said where the person is about to type: a pause, a busy budget, a damaged session, a lost link. */}
+          {(ctx.agent.paused !== null || view?.notice || view?.damaged || link !== 'live') && (
+            <div data-chat-notice role="status" className="mb-2 flex flex-col gap-1.5">
+              {link !== 'live' && (
+                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
+                  <Icon name={link === 'held' ? 'refresh' : 'info'} size={16} className="flex-none" />
+                  <span className="min-w-0 flex-1">{CONNECTION_TEXT[link]}</span>
+                  {link === 'reload' && <Button variant="soft" size="sm" onClick={() => location.reload()}>Reload</Button>}
+                </div>
+              )}
+              {ctx.agent.paused !== null && (
+                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3"><Icon name="pause" size={16} className="flex-none" /><span className="min-w-0 flex-1">{NOTICE_TEXT.paused}</span></div>
+              )}
+              {view?.notice && !view.damaged && view.notice.code !== 'paused' && !view.budgetWait && (
+                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3"><Icon name="info" size={16} className="flex-none" /><span className="min-w-0 flex-1">{view.notice.text}</span></div>
+              )}
+              {view?.damaged && openId !== null && (
+                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
+                  <Icon name="error" size={16} className="flex-none" />
+                  <span className="min-w-0 flex-1">{NOTICE_TEXT.session_damaged}</span>
+                  <Button variant="soft" size="sm" onClick={() => useUi.getState().resetSession(openId)}>Start fresh</Button>
+                </div>
+              )}
             </div>
           )}
           {/* Always there, so a screen reader hears each change to the queue. */}

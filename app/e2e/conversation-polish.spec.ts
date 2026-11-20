@@ -444,9 +444,8 @@ test.describe('desktop', () => {
     await expect(stop(page)).toBeVisible()
     await page.keyboard.press('Enter')
     await expect(queued(page)).toHaveCount(1)
-    // Stopped, so the message waits (paused) however long this takes.
-    await stop(page).click()
-    await expect(chip(page, MD_Q)).toContainText('Paused')
+    // Still answering, so the message waits (queued) however long this takes.
+    await expect(chip(page, MD_Q)).not.toContainText('Paused')
     const edit = chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ })
     await expect(edit).toBeEnabled()
 
@@ -462,7 +461,7 @@ test.describe('desktop', () => {
     await expect(edit).toBeEnabled()
   })
 
-  test('Conversation polish: Stop pauses the queue, a later answer leaves it be, and Edit on a queued message asks before it replaces a draft', async ({ page }) => {
+  test('Conversation polish: Stop ends that answer only and the queue carries on, and Edit on a queued message asks before it replaces a draft', async ({ page }) => {
     test.setTimeout(90_000)
     await start(page, '#/chats/new')
     await field(page).fill(REFUNDS_Q)
@@ -476,31 +475,25 @@ test.describe('desktop', () => {
     }
     await expect(queued(page)).toHaveCount(2)
 
-    // Stop: the answer ends and both messages stay, paused, and a screen reader hears it.
+    // Stop ends that answer only (plan S4): the first queued message goes on and is answered, the other still waits.
     await stop(page).click()
     await expect(log(page).getByText(STOPPED)).toBeVisible()
-    await expect(queued(page)).toHaveCount(2)
-    for (const q of [MD_Q, STUCK_Q]) await expect(chip(page, q)).toContainText('Paused')
-    await expect(page.getByRole('status').filter({ hasText: '2 messages paused' })).toHaveCount(1)
-    await expect(msg(page, MD_Q)).toHaveCount(0)
-
-    // A new message after Stop is a normal question. When its answer ends, the paused ones still wait.
-    await field(page).fill(OTHER_Q)
-    await expect(dock(page).getByRole('button', { name: 'Queue message' })).toHaveCount(0)
-    await page.keyboard.press('Enter')
-    await expect(msg(page, OTHER_Q)).toHaveCount(1)
-    await expect(stepsButtons(page)).toHaveCount(1, { timeout: 15_000 })
-    await expect(stop(page)).toHaveCount(0)
-    await page.clock.runFor(3500)
-    await expect(queued(page)).toHaveCount(2)
-    await expect(msg(page, MD_Q)).toHaveCount(0)
+    await expect(msg(page, MD_Q)).toHaveCount(1)
+    await expect(queued(page)).toHaveCount(1)
+    await expect(chip(page, STUCK_Q)).not.toContainText('Paused')
     await expect(msg(page, STUCK_Q)).toHaveCount(0)
-    await expect(stop(page)).toHaveCount(0)
-    await shot(page, 'queue-paused')
+    await expect(page.getByRole('status').filter({ hasText: '1 message queued' })).toHaveCount(1)
+    await shot(page, 'queue-carries-on')
+
+    // Two chips again, still answering: a new message queues behind them.
+    await field(page).fill(OTHER_Q)
+    await expect(dock(page).getByRole('button', { name: 'Queue message' })).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(queued(page)).toHaveCount(2)
 
     // Edit on a queued message over a draft asks first: Cancel keeps both.
     await field(page).fill('Draft I keep')
-    await chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ }).click()
+    await chip(page, STUCK_Q).getByRole('button', { name: /^Edit queued message: Which orders/ }).click()
     const ask = page.getByRole('dialog', { name: 'Replace your draft?' })
     await expect(ask).toBeVisible()
     await shot(page, 'queue-replace-draft')
@@ -510,21 +503,13 @@ test.describe('desktop', () => {
     await expect(queued(page)).toHaveCount(2)
 
     // Replace: the queued message is in the box, focused, and out of the queue.
-    await chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ }).click()
+    await chip(page, STUCK_Q).getByRole('button', { name: /^Edit queued message: Which orders/ }).click()
     await ask.getByRole('button', { name: 'Replace' }).click()
     await expect(ask).toHaveCount(0)
-    await expect(field(page)).toHaveValue(MD_Q)
+    await expect(field(page)).toHaveValue(STUCK_Q)
     await expect(field(page)).toBeFocused()
     await expect(queued(page)).toHaveCount(1)
-    await expect(page.getByRole('status').filter({ hasText: '1 message paused' })).toHaveCount(1)
-
-    // Send now on the last paused one: nothing runs, so it's simply asked, and focus goes to the box.
-    await chip(page, STUCK_Q).getByRole('button', { name: /^Send now: Which orders/ }).click()
-    await expect(queued(page)).toHaveCount(0)
-    await expect(field(page)).toBeFocused()
-    await expect(msg(page, STUCK_Q)).toHaveCount(1)
-    await expect(stepsButtons(page)).toHaveCount(2, { timeout: 15_000 })
-    await expect(field(page)).toHaveValue(MD_Q)
+    await expect(page.getByRole('status').filter({ hasText: '1 message queued' })).toHaveCount(1)
   })
 
   test('Conversation polish: a chat left mid-answer asks its queued message in the background (D9)', async ({ page, fx }) => {

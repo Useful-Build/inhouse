@@ -9,6 +9,7 @@ import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AttachmentChip, Button, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
 import { TAP } from '../ui/fields'
+import { ATTACHMENT_NAME_TOO_LONG, NO_MODEL_NOTE, NO_MODEL_YET, attachmentNameTooLong } from '../screens/chat/turn-text'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Textarea } from '@/components/ui/textarea'
@@ -111,6 +112,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
     const bad: { name: string; reason: string }[] = []
     for (const file of files) {
       if (file.size > MAX_MB * 1e6) bad.push({ name: file.name, reason: `Over the ${MAX_MB} MB limit` })
+      else if (attachmentNameTooLong(file.name)) bad.push({ name: file.name, reason: ATTACHMENT_NAME_TOO_LONG })
       else if (have + ok.length >= MAX_FILES) bad.push({ name: file.name, reason: `Only ${MAX_FILES} files per message` })
       else ok.push({ name: file.name, meta: fileSize(file.size), icon: fileIcon(file.name) })
     }
@@ -172,9 +174,10 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
 
   // Stubs say what they are (M36).
   const notConnected = (what: string) => useUi.getState().showToast(`${what} isn't connected in this demo.`, { icon: 'info', ms: 4000 })
-  const canSend = !!draft.trim()
+  const noModel = thinkingModes(data, ctx.agent.settings).every(m => !m.on)
+  const canSend = !!draft.trim() && !noModel
   const send = () => {
-    if (!draft.trim()) return
+    if (!draft.trim() || noModel) return
     setRejected([])
     // Editing goes first: it replaces the old question (and stops an answer to it). Over a running answer a message
     // waits above the box for its turn.
@@ -246,6 +249,12 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
           <Icon name="edit" size={15} />
           <b id={editNote} className="min-w-0 flex-1 font-semibold text-foreground">Editing your message</b>
           <Button variant="ghost" size="sm" onClick={cancelEdit} className={cn('-my-1.5 flex-none', phone && TAP)}>Cancel</Button>
+        </div>
+      )}
+      {noModel && (
+        <div className={NOTE_BAR}>
+          <Icon name="info" size={15} />
+          <b className="min-w-0 flex-1 font-semibold text-foreground">{NO_MODEL_NOTE}</b>
         </div>
       )}
       {variant === 'chat' && replyTo && (
@@ -389,8 +398,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             </button>
           </Tip>
         ) : (
-          <Tip label="Send">
-            <button type="button" data-composer-send aria-label="Send" onClick={send} disabled={!canSend} className={SEND}>
+          <Tip label={noModel ? NO_MODEL_YET : 'Send'}>
+            <button type="button" data-composer-send aria-label={noModel ? `Send, ${NO_MODEL_YET}` : 'Send'} onClick={send} disabled={!canSend} className={SEND}>
               <Icon name="arrow_upward" size={19} weight={400} />
             </button>
           </Tip>
