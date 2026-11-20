@@ -1280,7 +1280,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('setToolPaused', c => c.setToolPaused(k, b))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('forgetMemory', c => c.forgetMemory(k, b))),
       fc.tuple(fc.constantFrom(fx.settingKey, fx.otherSetting.key, fx.choices.key), fc.boolean()).map(([k, reset]) => step('setSetting', c => c.setSetting(k, reset ? null : k === fx.choices.key ? fx.choices.values[0] : k === fx.settingKey ? fx.settingValue : fx.otherSetting.value))),
-      fc.tuple(pick(50), fc.option(fc.string(), { nil: null })).map(([n, v]) => step('setPhoto', (c, i) => on(i.members, n, id => c.setPhoto(id, v)))),
+      // `forSave` takes an active member: a removed member's photo is refused (`not_found`) before any save, and that is not a save failure.
+      fc.tuple(pick(50), fc.option(fc.string(), { nil: null })).map(([n, v]) => step('setPhoto', (c, i, forSave) => on(forSave ? c.read().people.members.filter(m => m.status !== 'removed').map(m => m.id) : i.members, n, id => c.setPhoto(id, v)))),
       // `forSave` skips what the client refuses for its own reason (the last Admin, a live grant, an email already invited), so a save failure is the only way it can reject.
       fc.tuple(pick(50), fc.constantFrom('admin', 'member', 'remove', 'invite', 'grant', 'end')).map(([n, a]) => step(`member-${a}`, (c, i, forSave) => {
         const live = c.read().people.supportGrant?.live

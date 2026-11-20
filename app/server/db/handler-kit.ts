@@ -13,7 +13,7 @@ export type ApiCtx = Pick<HandlerContext, 'request' | 'principal' | 'params' | '
  * The request's stores as W2's `Stores` (server/index.ts passes `openStores`, a superset of `AuthStores`). Fails loud
  * when the route has none or they aren't W2's.
  */
-export function storesOf(c: ApiCtx): Stores {
+export function storesOf(c: Pick<ApiCtx, 'stores'>): Stores {
   const s = c.stores
   if (!s || !('settings' in s)) throw new Error("this route has no stores, or they aren't the D1 stores")
   return s as Stores
@@ -33,7 +33,7 @@ export const MAX_BODY_BYTES = 16 * 1024
  * The body's bytes, read from the stream and counted as they arrive: null past `max` bytes, whatever `Content-Length`
  * says or whether it's sent at all (a chunked body has none). Stops reading at the cap.
  */
-async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
+export async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
   const declared = request.headers.get('Content-Length')
   if (declared !== null && Number(declared) > max) return null
   if (!request.body) return new Uint8Array()

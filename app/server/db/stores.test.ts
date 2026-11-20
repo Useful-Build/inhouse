@@ -16,7 +16,7 @@ describe('AUDIT_HASH_KEY unset', () => {
   it('answers 503 and logs AuditKeyMissingError by name (failures 1, 2)', async () => {
     const logged: unknown[] = []
     vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void logged.push(args))
-    const parts: ApiParts = { authenticate, checkOrigin, checkAccess, stores: e => openStores({ DB: e.DB, AUDIT_HASH_KEY: '' }), routes: [], accessMatrix: [] }
+    const parts: ApiParts = { authenticate, checkOrigin, checkAccess, stores: e => openStores({ DB: e.DB, FILES: e.FILES, AUDIT_HASH_KEY: '' }), routes: [], accessMatrix: [] }
     const res = await api(parts, new Request('http://brand.localhost:8787/api/members'), env, ctx, 'req-key')
     expect(res.status).toBe(503)
     expect(logged).toEqual([[{ event: 'auth_store_failed', requestId: 'req-key', error: 'AuditKeyMissingError' }]])

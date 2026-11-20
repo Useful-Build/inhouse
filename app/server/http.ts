@@ -33,3 +33,22 @@ export function apiError(code: ApiErrorCode, extra: { reason?: string; current?:
 export function apiJson(value: unknown, status = 200): Response {
   return respond(SECURITY_HEADERS, status, { headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) })
 }
+
+/**
+ * A member photo's own headers (route 15, p2-design section 3): no script, no plugin, no navigation from the bytes
+ * (`default-src 'none'; sandbox`, stricter than the site's CSP), and private revalidated caching (`private, no-cache`:
+ * the design's value for photos, which lets a browser keep the bytes and revalidate; it is not stricter than
+ * `no-store`). The only values a handler may put in place of the site's CSP and `no-store` (`keepPhotoHeaders`).
+ */
+export const PHOTO_RESPONSE_HEADERS = { 'Content-Security-Policy': "default-src 'none'; sandbox", 'Cache-Control': 'private, no-cache' } as const
+
+/**
+ * `wrapped` (the handler's response with the security headers) with the photo headers put back when, and only when,
+ * the handler set exactly those values. Any other CSP or Cache-Control a handler sets stays overwritten.
+ */
+export function keepPhotoHeaders(handler: Response, wrapped: Response): Response {
+  for (const [name, value] of Object.entries(PHOTO_RESPONSE_HEADERS)) {
+    if (handler.headers.get(name) === value) wrapped.headers.set(name, value)
+  }
+  return wrapped
+}
