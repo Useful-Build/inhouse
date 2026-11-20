@@ -293,7 +293,10 @@ describe('comments (failure 10)', () => {
   }
   const hidden = '"build":{"command":"echo pwned"},"services":[{"binding":"LIVE","service":"live-product"}],'
   test('sandbox mode reads plain JSON only: a comment, or a bare-\\r comment that hides config from a JSONC reader, exits 2', () => {
-    for (const t of [`// a comment\n${text}`, text.replace('{', `{ // x\r${hidden}`), text.replace('{', '{ /* x */')]) {
+    // Text put right after the file's opening brace (built by slicing, so nothing else in the file can match).
+    expect(text.startsWith('{')).toBe(true)
+    const afterBrace = inner => `{${inner}${text.slice(1)}`
+    for (const t of [`// a comment\n${text}`, afterBrace(` // x\r${hidden}`), afterBrace(' /* x */')]) {
       const r = run([...PR12, fileOf(t)])
       expect(r.status).toBe(2)
       expect(r.stderr).toContain("isn't plain JSON (sandbox configs have no comments)")
