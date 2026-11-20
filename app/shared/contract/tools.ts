@@ -52,7 +52,10 @@ export const ToolSetupSchema = z.object({ due: z.enum(['today', 'tomorrow', 'thi
 export type ToolSetup = z.infer<typeof ToolSetupSchema>
 
 export const ToolsDataSchema = z.object({
-  /** The six tools Inhouse agent reads, in display order. */
+  /**
+   * The tools Inhouse agent reads, in display order. Empty only before the brand's first tool is live: the UI reads an
+   * empty list on a ready agent as day one. A tool whose login fails stays listed and is reported in `connection`.
+   */
   connected: z.array(z.string()),
   /** Connected channels the team hears from the agent on (Slack, from Act): not tools it reads. Decision D6. */
   channels: z.array(ToolChannelSchema),
