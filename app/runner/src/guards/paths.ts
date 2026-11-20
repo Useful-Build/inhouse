@@ -38,20 +38,42 @@ export function assertSessionKey(key: unknown): asserts key is string {
   if (!validSessionKey(key)) throw new InvalidSessionKeyError('a session key must be 1 to 64 of A-Z, a-z, 0-9, _ and -')
 }
 
-/**
- * The names under a session folder. `.home` is the session's HOME and `.tmp` its TMPDIR, each closed to everything but
- * its user.
- */
+/** The names under a session folder. */
 export const INPUTS = 'inputs'
 export const OUTPUTS = 'outputs'
-export const HOME = '.home'
-export const TMP = '.tmp'
 
-export type SessionPaths = { workDir: string; home: string; tmp: string; inputs: string; outputs: string }
+export type SessionPaths = { workDir: string; inputs: string; outputs: string }
 
 /** A session's folders. Throws on a key that isn't a single safe segment. */
 export function sessionPaths(key: string, root: string = WORK_ROOT): SessionPaths {
   assertSessionKey(key)
   const workDir = join(root, key)
-  return { workDir, home: join(workDir, HOME), tmp: join(workDir, TMP), inputs: join(workDir, INPUTS), outputs: join(workDir, OUTPUTS) }
+  return { workDir, inputs: join(workDir, INPUTS), outputs: join(workDir, OUTPUTS) }
+}
+
+/**
+ * Where each pool user's own folders live, outside the work tree: 0755 root, with one root-owned folder per pool user
+ * that holds the session's HOME and TMPDIR (`home`, `tmp`), each closed to everything but that user. Two reasons they
+ * aren't in the session folder:
+ * - Bash writes the session folder, and the sandbox write-protects `$HOME/.claude`: with HOME in there it has to mask
+ *   each name under it, and fails on one the CLI makes meanwhile (`bwrap: Can't create file at .../.claude/projects`);
+ * - the sandbox keeps its bridge sockets in TMPDIR, and a Unix socket path holds 107 bytes: named by the pool user,
+ *   never the chat id, the path is short whatever the chat id's length.
+ */
+export const USERS_ROOT = '/users'
+export const HOME = 'home'
+export const TMP = 'tmp'
+
+/** A pool user's name as one plain path segment (the names useradd takes): no `/`, no `.`. */
+const USER_NAME = /^[a-z_][a-z0-9_-]{0,31}$/
+
+export class InvalidUserNameError extends Error {}
+
+export type UserPaths = { dir: string; home: string; tmp: string }
+
+/** A pool user's own folders. Throws on a name that isn't a single safe segment. */
+export function userPaths(user: unknown, root: string = USERS_ROOT): UserPaths {
+  if (typeof user !== 'string' || !USER_NAME.test(user)) throw new InvalidUserNameError('a user name must be 1 to 32 of a-z, 0-9, _ and -, starting with a letter or _')
+  const dir = join(root, user)
+  return { dir, home: join(dir, HOME), tmp: join(dir, TMP) }
 }

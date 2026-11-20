@@ -4,10 +4,13 @@
 // - a base that already sets a guarded option (tools, permissions, sandbox, settings...) is merged rather than refused;
 // - permission mode isn't dontAsk, settings files are read, or an MCP server other than ours is configured;
 // - the deny rules for .claude/, .mcp.json, the home and /opt are missing for the session's real paths;
+// - HOME or TMPDIR isn't the session user's own folder (a HOME inside the session folder puts `$HOME/.claude` where
+//   Bash writes), or a user name with a `/` or `..` in it steers either path;
 // - WebFetch: the permission rules and the sandbox allowlist differ from the run config's list;
 // - the container's own addresses or localhost aren't denied to sandboxed commands;
 // - our hooks are dropped, or run after the base's, or the base's hooks are lost;
-// - reads of other sessions, /home, the runner's code or /root are open to Bash;
+// - reads of other sessions, other users' homes and temp folders, /home, the runner's code or /root are open to Bash,
+//   or its own home and temp folder aren't given back (the temp folder to write: the sandbox's sockets sit in it);
 // - the in-process Read, Glob and Grep (unsandboxed, as the session uid) reach /proc or the shared tmp folders;
 // - webFetchDomains lets in an IP literal, a local name, an internal name (`*.svc`, `*.corp`) or this container's own
 //   address;
@@ -25,13 +28,15 @@ import { sessionEnv } from '../../src/session/env.ts'
 import type { RunContext } from '../../src/session/seam.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF } from '../../src/guards/lists.ts'
 import { GUARDED_OPTIONS, GuardConfigError, LOCAL_NAMES, LOCAL_SUFFIXES, assertFetchDomain, createQueryGuards } from '../../src/guards/options.ts'
-import { PLUGIN_DIR, sessionPaths } from '../../src/guards/paths.ts'
+import { PLUGIN_DIR, sessionPaths, userPaths } from '../../src/guards/paths.ts'
 
 const run: RunContext = { audit: async () => {} }
 /** Names inside a company or a cluster, with no local suffix a resolver would know. */
 const INTERNAL_NAMES = ['db.svc', 'api.prod.svc', 'api.prod.svc.cluster.local', 'wiki.corp', 'hr.intranet', 'nas.home', 'git.private', 'router.localdomain', 'xn--a.com']
 const ADDRS = ['172.17.0.5', 'fe80::1', '127.0.0.1']
 const guards = createQueryGuards({ hostAddresses: () => ADDRS })
+/** The session user's own folders (the base below runs as s01). */
+const own = userPaths('s01')
 
 // No `--` in the third and fourth places: those labels are reserved, and the URL parser refuses an `xn--` one that
 // isn't valid punycode (`xn--a`), which the guards then refuse too.
@@ -62,7 +67,7 @@ const config = fc
 /** R1's real base options for a session folder, as the session process builds them. */
 function base(c: RunConfig): Options {
   const p = sessionPaths(c.chatId)
-  const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: p.home, workDir: p.workDir }, 8081)
+  const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: own.home, workDir: p.workDir }, 8081)
   return baseOptions(c, p.workDir, cliEnv(env), new AbortController())
 }
 
@@ -115,8 +120,8 @@ describe('the guarded options', () => {
       `Edit(/${p.workDir}/.claude)`,
       `Edit(/${p.workDir}/.claude/**)`,
       `Edit(/${p.workDir}/.mcp.json)`,
-      `Edit(/${p.home})`,
-      `Edit(/${p.home}/**)`,
+      `Edit(/${own.home})`,
+      `Edit(/${own.home}/**)`,
       'Edit(//opt/**)',
       'Read(//opt/runner/**)',
       'Read(//root/**)',
@@ -139,10 +144,12 @@ describe('the guarded options', () => {
     for (const a of [...ADDRS, ...LOCAL_NAMES]) expect(net.deniedDomains).toContain(a)
   })
 
-  it.prop([config])('the filesystem: other sessions, /home, the runner and /root are unreadable; the session folder is', (c) => {
+  it.prop([config])("the filesystem: other sessions, other users' folders, /home, the runner and /root are unreadable; the session's own are", (c) => {
     const fs = guards.apply(base(c), c, run).sandbox!.filesystem!
-    expect(fs.denyRead).toEqual(expect.arrayContaining(['/work', '/home', '/opt/runner', '/root']))
-    expect(fs.allowRead).toEqual([sessionPaths(c.chatId).workDir])
+    expect(fs.denyRead).toEqual(expect.arrayContaining(['/work', '/users', '/home', '/opt/runner', '/root']))
+    expect(fs.allowRead).toEqual([sessionPaths(c.chatId).workDir, own.home, own.tmp])
+    // Bash writes its temp folder (and the session folder, by default): never its home.
+    expect(fs.allowWrite).toEqual([own.tmp])
   })
 
   it.prop([config, fc.constantFrom(...GUARDED_OPTIONS), fc.anything()])('a base that sets a guarded option is refused', (c, k, v) => {
@@ -163,7 +170,7 @@ describe('the guarded options', () => {
     expect(o.hooks!.PostToolUse).toEqual([post])
   })
 
-  it('refuses settings files, a foreign MCP server, a cwd outside the work root and a home outside the session', () => {
+  it("refuses settings files, a foreign MCP server, a cwd outside the work root and a home or temp folder that isn't the user's own", () => {
     const c = fc.sample(config, 1)[0]!
     const b = base(c)
     expect(() => guards.apply({ ...b, settingSources: ['project'] }, c, run)).toThrow(/settingSources/)
@@ -175,7 +182,15 @@ describe('the guarded options', () => {
     for (const cwd of ['/tmp/x', '/work', '/work/a/b', '/work/a/', '/work//a', '/work/../etc', '/workx/a', undefined]) {
       expect(() => guards.apply({ ...b, cwd }, c, run), String(cwd)).toThrow(/cwd/)
     }
-    expect(() => guards.apply({ ...b, env: { ...b.env, HOME: '/root' } }, c, run)).toThrow(/HOME/)
+    for (const HOME of ['/root', `${b.cwd}/.home`, b.cwd!, userPaths('s02').home, `${own.home}/`, undefined]) {
+      expect(() => guards.apply({ ...b, env: { ...b.env, HOME } }, c, run), String(HOME)).toThrow(/HOME/)
+    }
+    for (const TMPDIR of ['/tmp', `${b.cwd}/.tmp`, own.home, userPaths('s02').tmp, undefined]) {
+      expect(() => guards.apply({ ...b, env: { ...b.env, TMPDIR } }, c, run), String(TMPDIR)).toThrow(/TMPDIR/)
+    }
+    for (const USER of ['../s01', 's01/..', '', 'S01', undefined]) {
+      expect(() => guards.apply({ ...b, env: { ...b.env, USER } }, c, run), String(USER)).toThrow(/USER/)
+    }
   })
 
   it('guards agents and disableBundledSkills', () => {

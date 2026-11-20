@@ -7,16 +7,22 @@
 //   /work/<key>/.mcp.json  root 0644 "{}"
 //   /work/<key>/inputs/    root:<group> 1770   root's, so the session can't swap it for a symlink; it adds files in it
 //   /work/<key>/outputs/   root:<group> 1770   the same
-//   /work/<key>/.home/     <user> 0700         the session's HOME
-//   /work/<key>/.tmp/      <user> 0700         the session's TMPDIR
 // Anything root reads or writes inside inputs/ or outputs/ (the session's entries) opens it with O_NOFOLLOW or does it
 // as the session's uid: a session can put a symlink there.
 // Between sessions a folder is parked: root:root 0700, so no session user can reach it, whoever had it before.
+//
+// Each pool user's own folders, outside the work tree (why: src/guards/paths.ts, USERS_ROOT):
+//   /users                 root 0755
+//   /users/<user>/         root 0755           root's, so the session can't rename or swap what's in it
+//   /users/<user>/home/    <user> 0700         the session's HOME
+//   /users/<user>/tmp/     <user> 0700         the session's TMPDIR
+// They belong to the uid, not the chat: the wipe empties both (as the uid itself), so a uid's next session finds
+// nothing of the last one. What a chat keeps is its session folder, and its transcript in the session store.
 import { spawn } from 'node:child_process'
 import { chmodSync, lchownSync, lstatSync, readdirSync } from 'node:fs'
 import { chmod, chown, lchown, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { HOME, INPUTS, OUTPUTS, TMP, WORK_ROOT, sessionPaths } from './paths.ts'
+import { INPUTS, OUTPUTS, USERS_ROOT, WORK_ROOT, sessionPaths, userPaths } from './paths.ts'
 import type { PoolUser, SessionHost } from './users.ts'
 
 /** The sandbox mounts over these in `.claude/`; they must exist and be root's (P0 S2, problem 2). */
@@ -32,8 +38,6 @@ export const STUB_FILES: Record<string, string> = {
 export const ROOT_ENTRIES = new Set(['.claude', '.mcp.json'])
 /** root:<group> 1770: the session adds files in them but can't rename them. Remade on every take-over. */
 export const GROUP_DIRS = [INPUTS, OUTPUTS]
-/** The session's own folders, <user> 0700, remade on every take-over. */
-export const USER_DIRS = [HOME, TMP]
 /** Writable by any user outside the work tree (checked by the image probe in PR B). */
 export const SHARED_WRITABLE = ['/tmp', '/var/tmp', '/dev/shm', '/dev/mqueue', '/run/lock']
 
@@ -47,6 +51,7 @@ export type RunAsRoot = (cmd: string, args: string[]) => Promise<{ code: number 
 
 export type HostDeps = {
   workRoot?: string
+  usersRoot?: string
   sharedWritable?: string[]
   procDir?: string
   /** Every pool uid: a file in a session folder owned by anyone else (root, say) is never handed to a session. */
@@ -73,6 +78,7 @@ export class KillError extends Error {}
 
 export function createSessionHost(deps: HostDeps): SessionHost {
   const workRoot = deps.workRoot ?? WORK_ROOT
+  const usersRoot = deps.usersRoot ?? USERS_ROOT
   const shared = deps.sharedWritable ?? SHARED_WRITABLE
   const procDir = deps.procDir ?? '/proc'
   const doLchown = deps.lchown ?? lchown
@@ -117,6 +123,8 @@ export function createSessionHost(deps: HostDeps): SessionHost {
   async function wipeUserFiles(user: PoolUser) {
     // Every place is tried before it throws: a uid that fails (and is quarantined) leaves as little behind as it can.
     const failed: string[] = []
+    const own = userPaths(user.user, usersRoot)
+    for (const dir of [own.home, own.tmp]) await emptyOwn(dir, user, runAs, runRoot).catch((e: unknown) => void failed.push(String(e instanceof Error ? e.message : e)))
     for (const dir of shared) await wipeOwned(dir, user, runAs, runRoot).catch((e: unknown) => void failed.push(String(e instanceof Error ? e.message : e)))
     await wipeSysV(user, runAs, join(procDir, 'sysvipc')).catch((e: unknown) => void failed.push(String(e instanceof Error ? e.message : e)))
     if (failed.length > 0) throw new Error(failed.join('; '))
@@ -126,6 +134,7 @@ export function createSessionHost(deps: HostDeps): SessionHost {
     const p = sessionPaths(sessionKey, workRoot)
     await mustBeRootDir(workRoot)
     if (((await lstat(workRoot)).mode & 0o777) !== 0o711) throw new Error(`${workRoot} must be 0711: sessions must not list it`)
+    const own = await ownFolders(user)
     await mkdir(p.workDir, { recursive: false, mode: 0o700 }).catch(existsOk)
     await mustBeRootDir(p.workDir)
     // Closed while it's rebuilt, then opened to the session's group.
@@ -142,19 +151,38 @@ export function createSessionHost(deps: HostDeps): SessionHost {
     for (const name of await readdir(p.workDir)) {
       if (!ROOT_ENTRIES.has(name)) await handOver(join(p.workDir, name), user)
     }
-    for (const name of [...GROUP_DIRS, ...USER_DIRS]) {
+    for (const name of GROUP_DIRS) {
       const dir = join(p.workDir, name)
       const st = await lstat(dir).catch(() => null)
       // Anything that isn't a real directory there (a symlink, a file) is replaced.
       if (st !== null && !st.isDirectory()) await rm(dir, { recursive: true, force: true })
       await mkdir(dir, { mode: 0o700 }).catch(existsOk)
-      const mine = USER_DIRS.includes(name)
-      await doLchown(dir, mine ? user.uid : 0, user.gid)
-      await chmod(dir, mine ? 0o700 : 0o1770)
+      await doLchown(dir, 0, user.gid)
+      await chmod(dir, 0o1770)
     }
     await doChown(p.workDir, 0, user.gid)
     await chmod(p.workDir, 0o1770)
-    return { workDir: p.workDir, home: p.home }
+    return { workDir: p.workDir, home: own.home }
+  }
+
+  /**
+   * The user's own home and temp folder (see the top). Root makes them in a folder of its own, so no session can swap
+   * one for a symlink, and closes each to everyone else again: its owner may have opened it. It never empties them:
+   * that's the wipe's, done as the uid.
+   */
+  async function ownFolders(user: PoolUser) {
+    const own = userPaths(user.user, usersRoot)
+    await mustBeRootDir(usersRoot)
+    await mkdir(own.dir, { mode: 0o755 }).catch(existsOk)
+    await mustBeRootDir(own.dir)
+    await chmod(own.dir, 0o755)
+    for (const dir of [own.home, own.tmp]) {
+      await mkdir(dir, { mode: 0o700 }).catch(existsOk)
+      if (!(await lstat(dir)).isDirectory()) throw new Error(`${dir} must be a directory`)
+      await doLchown(dir, user.uid, user.gid)
+      await chmod(dir, 0o700)
+    }
+    return own
   }
 
   async function parkFolder(sessionKey: string) {
@@ -228,6 +256,24 @@ export async function wipeOwned(dir: string, user: PoolUser, run: RunAsUser, run
   // non-zero, and that must not fail another uid's wipe.
   const left = await runRoot('find', [...mine, '-print', '-quit'])
   if (left.stdout.trim() !== '') throw new Error(`uid ${user.uid} still owns ${left.stdout.trim()} after the wipe`)
+}
+
+/**
+ * Empties one of the uid's own folders (its home or its temp folder), as the uid itself, and throws when anything is
+ * still in it afterwards. Everything in it goes, whoever owns it: the folder is this uid's alone, the next chat on the
+ * uid must find nothing in it, and a file another uid put there (in a folder this one opened to it) counts too. The
+ * folder itself stays: it sits in root's folder, where the uid can't remove it. The look afterwards is root's and only
+ * reads. A missing folder is fine: the uid hasn't served a session yet.
+ */
+export async function emptyOwn(dir: string, user: PoolUser, run: RunAsUser, runRoot: RunAsRoot): Promise<void> {
+  // The folders it closed to itself first: this one (it's in root's folder, so the name is the folder root made), then
+  // the ones in it (find tests each before going in). Then everything in it, deepest first. `find -P` never follows a
+  // symlink.
+  await run(user, 'chmod', ['u+rwx', dir])
+  await run(user, 'find', [dir, '-xdev', '-mindepth', '1', '-type', 'd', '!', '-perm', '-u=rwx', '-exec', 'chmod', 'u+rwx', '{}', ';'])
+  await run(user, 'find', [dir, '-xdev', '-mindepth', '1', '-delete'])
+  const left = await runRoot('find', [dir, '-xdev', '-mindepth', '1', '-print', '-quit'])
+  if (left.stdout.trim() !== '') throw new Error(`uid ${user.uid}'s own folder still holds ${left.stdout.trim()} after the wipe`)
 }
 
 /** /proc/sysvipc's files, the column each keeps its ids in, and the `ipcrm` flag that removes one by id. */

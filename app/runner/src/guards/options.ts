@@ -8,7 +8,7 @@ import type { RunConfig } from '../protocol/local.ts'
 import type { QueryGuards, RunContext } from '../session/seam.ts'
 import { auditHook } from './audit.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER } from './lists.ts'
-import { CLI_WRAPPER, HOME, PLUGIN_DIR, RUNNER_DIR, WORK_ROOT, validSessionKey } from './paths.ts'
+import { CLI_WRAPPER, PLUGIN_DIR, RUNNER_DIR, USERS_ROOT, WORK_ROOT, userPaths, validSessionKey, type UserPaths } from './paths.ts'
 import { webFetchAllowRules, webFetchHook } from './webfetch.ts'
 
 type Settings = Exclude<Options['settings'], string | undefined>
@@ -44,6 +44,7 @@ export type QueryGuardDeps = {
   /** The container's own addresses, denied to sandboxed commands (src/proxy/proc-net.ts's `hostAddresses`). */
   hostAddresses: () => string[]
   workRoot?: string
+  usersRoot?: string
   pluginDir?: string
   /** The CLI the SDK starts (the wrapper that sets the session's process limit). */
   cliPath?: string
@@ -88,11 +89,12 @@ export function assertFetchDomain(domain: string, hostAddresses: readonly string
 
 export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
   const workRoot = deps.workRoot ?? WORK_ROOT
+  const usersRoot = deps.usersRoot ?? USERS_ROOT
   const pluginDir = deps.pluginDir ?? PLUGIN_DIR
   const cliPath = deps.cliPath ?? CLI_WRAPPER
   return {
     kind: 'production',
-    apply: (base, config, run) => guardedOptions(base, config, run, { ...deps, workRoot, pluginDir, cliPath }),
+    apply: (base, config, run) => guardedOptions(base, config, run, { ...deps, workRoot, usersRoot, pluginDir, cliPath }),
   }
 }
 
@@ -100,7 +102,7 @@ export function guardedOptions(
   base: Options,
   config: Pick<RunConfig, 'webFetchDomains'>,
   run: RunContext,
-  deps: QueryGuardDeps & { workRoot: string; pluginDir: string; cliPath: string },
+  deps: QueryGuardDeps & { workRoot: string; usersRoot: string; pluginDir: string; cliPath: string },
 ): Options {
   for (const key of GUARDED_OPTIONS) {
     if (Object.hasOwn(base, key) && (base as Record<string, unknown>)[key] !== undefined) {
@@ -115,8 +117,16 @@ export function guardedOptions(
   if (typeof cwd !== 'string' || !validSessionKey(basename(cwd)) || cwd !== join(deps.workRoot, basename(cwd))) {
     throw new GuardConfigError('cwd must be a session folder under the work root')
   }
-  const home = join(cwd, HOME)
-  if (base.env?.HOME !== home) throw new GuardConfigError("HOME must be the session folder's home")
+  // HOME and TMPDIR: the session user's own folders, outside the session folder (src/guards/host.ts makes them).
+  let own: UserPaths
+  try {
+    own = userPaths(base.env?.USER, deps.usersRoot)
+  } catch {
+    throw new GuardConfigError('USER must be a plain user name')
+  }
+  const home = own.home
+  if (base.env?.HOME !== home) throw new GuardConfigError("HOME must be the session user's own home")
+  if (base.env?.TMPDIR !== own.tmp) throw new GuardConfigError("TMPDIR must be the session user's own temp folder")
   const servers = Object.keys(base.mcpServers ?? {})
   if (servers.some((s) => s !== INHOUSE_MCP_SERVER)) throw new GuardConfigError(`only the "${INHOUSE_MCP_SERVER}" MCP server is allowed`)
   // Ours is the root's proxy over http: never a program to run.
@@ -141,7 +151,7 @@ export function guardedOptions(
         'Read(//root/**)',
         'Read(//home/**)',
         // Read, Glob and Grep run in-process, unsandboxed, as the session's uid: no other process's /proc entries
-        // (their command lines), and none of the shared tmp folders (the session's TMPDIR is in its own folder).
+        // (their command lines), and none of the shared tmp folders (the session's TMPDIR is its user's own folder).
         'Read(//proc/**)',
         'Read(//tmp/**)',
         'Read(//var/tmp/**)',
@@ -165,7 +175,7 @@ export function guardedOptions(
     ...base,
     tools: [...BUILT_IN_TOOLS],
     // Pre-approved; `dontAsk` refuses everything else. Edits only inside the session folder (the deny rules above
-    // carve out .claude/, .mcp.json and the home); WebFetch only to the listed domains.
+    // carve out .claude/ and .mcp.json, and name the home); WebFetch only to the listed domains.
     allowedTools: [
       ...BUILT_IN_TOOLS.filter((t) => t !== 'Edit' && t !== 'Write' && t !== 'WebFetch'),
       `Edit(${abs(cwd)}/**)`,
@@ -194,8 +204,13 @@ export function guardedOptions(
         allowAllUnixSockets: false,
       },
       filesystem: {
-        denyRead: [deps.workRoot, '/home', RUNNER_DIR, '/root'],
-        allowRead: [cwd],
+        // Out of Bash's view: every other session's folder and every other user's home and temp folder. Its own come
+        // back. The temp folder is also Bash's to write: its own `$TMPDIR` is a folder in it, and the sandbox's bridge
+        // sockets sit in it (hidden with the rest of the users root unless it's given back whole). The home is read
+        // only, as for any sandboxed command.
+        denyRead: [deps.workRoot, deps.usersRoot, '/home', RUNNER_DIR, '/root'],
+        allowRead: [cwd, home, own.tmp],
+        allowWrite: [own.tmp],
       },
     },
     hooks,

@@ -5,6 +5,7 @@
 // Input: PROBE_DIRECT (JSON, below). Output: one JSON line per thing seen on stdout (init, permission asks, the result).
 import type { CanUseTool, Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { createQueryGuards } from '../../src/guards/options.ts'
+import { USERS_ROOT } from '../../src/guards/paths.ts'
 import { hostAddresses } from '../../src/proxy/proc-net.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
 import type { RunConfig } from '../../src/protocol/local.ts'
@@ -14,8 +15,11 @@ import { PROBE_MODEL } from './lib.ts'
 export type DirectVariant =
   /** The guarded options as production builds them: an agent run without the root (run.ts's fallback path). */
   | 'plain'
-  /** The same with HOME outside the session folder (test-only: the diagnosis of bwrap and `$HOME/.claude`). */
-  | 'home-outside'
+  /**
+   * The same with the users root left in Bash's view and the temp folder in neither list (test-only: tells a sandbox
+   * that can't start at all from one that can't hide the users root and give the session's own folders back).
+   */
+  | 'users-readable'
   /** canUseTool and a stub inhouse MCP server (one tool, one resource): which of the four tools register. */
   | 'four-tools'
   /** The audit transport refuses every entry: the call must be blocked. */
@@ -31,7 +35,7 @@ export type DirectVariant =
   /** The bundled skills not turned off (test-only): a typed /code-review must then expand. */
   | 'skills-not-off'
 
-export type DirectInput = { variant: DirectVariant; prompt: string; webFetchDomains: string[]; ip?: string; mcpUrl?: string; home?: string }
+export type DirectInput = { variant: DirectVariant; prompt: string; webFetchDomains: string[]; ip?: string; mcpUrl?: string }
 
 const say = (o: unknown) => process.stdout.write(`${JSON.stringify(o)}\n`)
 
@@ -49,7 +53,7 @@ const config = {
   prompt: input.prompt,
   model: PROBE_MODEL,
   effort: 'low',
-  maxTurns: 8,
+  maxTurns: 20,
   maxBudgetUsd: 1,
   webFetchDomains: input.webFetchDomains,
   fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 1, allowedTypes: [] },
@@ -71,9 +75,13 @@ const allowAll: CanUseTool = async (tool, toolInput) => {
 }
 const net = options.sandbox!.network!
 switch (input.variant) {
-  case 'home-outside':
-    options.env = { ...options.env, HOME: input.home! }
+  case 'users-readable': {
+    const fs = options.sandbox!.filesystem!
+    fs.denyRead = fs.denyRead!.filter((d) => d !== USERS_ROOT)
+    fs.allowRead = [process.cwd()]
+    delete fs.allowWrite
     break
+  }
   case 'four-tools':
     options.canUseTool = allowAll
     break

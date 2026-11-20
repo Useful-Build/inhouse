@@ -18,13 +18,13 @@
 // outside the container that the sandbox's allowlist can name.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { appendFileSync, chownSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { PROTOCOL_HEADER, PROTOCOL_VERSION, type RunEvent } from '../../../shared/protocol/index.ts'
 import { SHARED_WRITABLE, createSessionHost, parseStatus, readProcs } from '../../src/guards/host.ts'
 import { ALLOWED_SKILLS, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER, PLUGIN_NAME } from '../../src/guards/lists.ts'
-import { SESSION_PROCESS_LIMIT, sessionPaths } from '../../src/guards/paths.ts'
+import { SESSION_PROCESS_LIMIT, USERS_ROOT, sessionPaths, userPaths } from '../../src/guards/paths.ts'
 import { readPool, type PoolUser } from '../../src/guards/users.ts'
 import { productionHostDeps } from '../../src/server/production.ts'
 import { sessionEnv } from '../../src/session/env.ts'
@@ -134,6 +134,8 @@ async function startRoot() {
  * folder, without the root's channel, proxy and token. `root.session-starts` says which, and fails while it's direct.
  */
 let VIA: 'root' | 'direct' = 'root'
+/** The direct sessions' options: production's (`plain`), unless the sandbox step found only a test-only variant runs Bash. */
+let AGENT_VARIANT: DirectVariant = 'plain'
 
 type Run = {
   chatId: string
@@ -169,7 +171,7 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
   const token = `probe_${randomBytes(24).toString('hex')}`
   const run: Run = { chatId: opts.chatId, via: VIA, state, events: [], status: 0, body: '', token, lines: [], cleanup: '' }
   if (VIA === 'direct') {
-    const done = spawnDirect(opts.chatId, agentUser(opts.chatId), 'plain', { prompt: opts.prompt ?? 'Run the probe.', webFetchDomains: opts.webFetchDomains ?? [] }, state).then((d) => {
+    const done = spawnDirect(opts.chatId, agentUser(opts.chatId), AGENT_VARIANT, { prompt: opts.prompt ?? 'Run the probe.', webFetchDomains: opts.webFetchDomains ?? [] }, state).then((d) => {
       Object.assign(run, { status: 200, lines: d.lines, body: d.raw, cleanup: d.cleanup })
       return run
     })
@@ -391,20 +393,23 @@ async function probeClaudeDir() {
   })
   const r = await done
   checkRun('claude-dir', r, [0])
-  judge('claude-dir', parseShell(result(r, 0)?.text ?? ''), null, probes.map((p) => ({ name: p.name })))
   fact('claude-dir.write-tool', `${result(r, 1)?.text.slice(0, 200)} | ${result(r, 2)?.text.slice(0, 200)}`)
   const leaks = claudeDirLeaks(wd)
-  // Guard off: the same script as root in a folder the real host laid out the same way.
+  // Guard off: the same script as root in a folder the real host laid out the same way (its HOME a scratch folder).
   const selfKey = 'p-claude-self'
   const self = await host.prepareFolder(selfKey, userNamed('s49'))
-  await rootShell(script, { HOME: join(self.workDir, '.home') }, self.workDir)
+  const off = await rootShell(script, { HOME: join(self.workDir, 'home-off') }, self.workDir)
   const offLeaks = claudeDirLeaks(self.workDir)
+  // The home is the user's own, outside the session folder, and read-only to Bash: it can't plant a skill or a
+  // settings file there for the CLI to load.
+  const made = (x: ShellResult) => x.out.includes('made')
+  judge('claude-dir', parseShell(result(r, 0)?.text ?? ''), off, probes.map((p) => (p.name.startsWith('home-') ? { name: p.name, leak: made } : { name: p.name })))
   rmSync('/opt/inhouse/plugin/x', { force: true })
   rmSync('/opt/runner/x', { force: true })
   await host.parkFolder(selfKey)
   record('claude-dir.not-writable', leaks.length === 0 && offLeaks.length >= 6, `agent: ${JSON.stringify(leaks)} | guard off (root, same layout): ${JSON.stringify(offLeaks)}`)
 
-  // The home is the session's own and writable; what it writes there must not load: settingSources [] and the lists.
+  // And whatever a home held, nothing in it loads: settingSources [] and the lists (the wipe empties it besides).
   const again = await startRun({ chatId: 'p-claude', script: { steps: [] } }).done
   const init = initOf(again)
   const loaded = [...(init?.skills ?? []), ...(init?.slash_commands ?? [])].filter((s) => s.includes('evil'))
@@ -427,7 +432,8 @@ async function probeFacts() {
   checkRun('facts', r, [0])
   const real = parseShell(result(r, 0)?.text ?? '')
   const off = await userShell(userNamed('s50'), script)
-  judge('facts', real, off, [{ name: 'shell' }, { name: 'tmpdir' }, { name: 'ns' }, { name: 'unix-socket', leak: (x) => x.out.includes('made') }, { name: 'seccomp' }, { name: 'ps' }, { name: 'sysctl' }])
+  // The filter refuses a named Unix socket; a socketpair reaches nothing outside its maker, and is left alone.
+  judge('facts', real, off, [{ name: 'shell' }, { name: 'tmpdir' }, { name: 'ns' }, { name: 'unix-socket', leak: (x) => x.out.split('\n').includes('made') }, { name: 'seccomp' }, { name: 'ps' }, { name: 'sysctl' }])
   const shell = real.get('shell')
   fact('bash-under-nologin-without-SHELL', shell && shell.rc === 0 ? `works (${shell.out.replace(/\n/g, ' ')})` : `FAILED: R1 must add SHELL=/bin/bash (${shell?.out})`)
   record('facts.bash-runs-under-nologin', shell?.rc === 0, shell?.out ?? 'no output')
@@ -459,9 +465,12 @@ async function probeLongTmpdir() {
   const { done } = startRun({ chatId, script: { steps: [bash('echo "TMPDIR=$TMPDIR"; touch "$TMPDIR/probe-long" && echo wrote; ls -ld "$TMPDIR"')] } })
   const r = await done
   checkRun('long-tmpdir', r, [0])
-  fact('tmpdir.long-chat-id', result(r, 0)?.text.replace(/\n/g, ' ') ?? 'no output')
-  // The run is over and its uid released: nothing it left in a shared folder may still be there.
-  const left = await runCommand('find', ['/tmp', '/var/tmp', '/dev/shm', '-xdev', '-name', 'probe-long'])
+  const out = result(r, 0)?.text.replace(/\n/g, ' ') ?? 'no output'
+  fact('tmpdir.long-chat-id', out)
+  // The temp folder is named by the pool user, so the longest chat id leaves room for the sandbox's sockets in it.
+  record('long-tmpdir.bash-runs', out.split(' ').includes('wrote'), out.slice(0, 300))
+  // The run is over and its uid released: nothing it left in its temp folder or a shared one may still be there.
+  const left = await runCommand('find', ['/tmp', '/var/tmp', '/dev/shm', USERS_ROOT, '-xdev', '-name', 'probe-long'])
   record('long-tmpdir.wiped-at-release', left.out.trim() === '', `left: ${left.out.trim() || 'nothing'}`)
 }
 
@@ -485,7 +494,7 @@ async function probeIsolation() {
     script: {
       steps: [
         bash(
-          `echo CANARY_A_FILE > inputs/secret.txt; echo CANARY_A_TMPDIR > "$TMPDIR/secret"; echo CANARY_A_HOME > "$HOME/secret"; echo CANARY_A_TMP > /tmp/iso-a-secret; ls -l inputs/secret.txt; ` +
+          `echo CANARY_A_FILE > inputs/secret.txt; echo CANARY_A_TMPDIR > "$TMPDIR/secret"; echo CANARY_A_TMP > /tmp/iso-a-secret; ls -l inputs/secret.txt "$TMPDIR/secret"; ` +
             `CANARY_ENV=CANARY_A_ENVIRON sh -c 'while [ ! -e outputs/.go ]; do sleep 0.1; done' canary-A-cmdline-holder`,
           { timeout: 300_000 },
         ),
@@ -500,16 +509,23 @@ async function probeIsolation() {
   }, "A's holder process", 60_000)
   const aSession = procs().find((p) => p.cwd === wa && /session\/main\.mjs|probes\/direct\.mjs/.test(p.cmdline))
   fact('isolation.a', `holder pid ${holder.pid} uid ${holder.uid}, session pid ${aSession?.pid}`)
+  // A's own home and temp folder. Bash can't write its home, so A's user puts the home canary there itself; the temp
+  // canary is wherever A's `$TMPDIR` was (the folder, or one the CLI made in it).
+  const aUser = pool.find((u) => u.uid === holder.uid)!
+  const aOwn = userPaths(aUser.user)
+  await runCommand('sh', ['-c', `echo CANARY_A_HOME > ${aOwn.home}/secret`], { uid: aUser.uid, gid: aUser.gid })
+  const aTmpSecret = () => [join(aOwn.tmp, 'secret'), ...readdirSync(aOwn.tmp).map((d) => join(aOwn.tmp, d, 'secret'))].find((f) => existsSync(f)) ?? join(aOwn.tmp, 'secret')
 
   let bSession: Proc | undefined
   const findB = () => (bSession ??= procs().find((p) => p.cwd === sessionPaths('p-iso-b').workDir && /session\/main\.mjs|probes\/direct\.mjs/.test(p.cmdline)))
   const split = (t: string) => [t.slice(0, 20), t.slice(20)]
   const filesProbes = (): ShellProbe[] => [
     { name: 'ls-work', cmd: 'ls -la /work' },
-    { name: 'ls-a', cmd: `ls -la ${wa} ${wa}/inputs ${wa}/.tmp ${wa}/.home` },
+    { name: 'ls-users', cmd: `ls -la ${USERS_ROOT} ${aOwn.dir}` },
+    { name: 'ls-a', cmd: `ls -la ${wa} ${wa}/inputs ${aOwn.tmp} ${aOwn.home}` },
     { name: 'cat-a-file', cmd: `cat ${wa}/inputs/secret.txt` },
-    { name: 'cat-a-tmpdir', cmd: `cat ${wa}/.tmp/secret` },
-    { name: 'cat-a-home', cmd: `cat ${wa}/.home/secret` },
+    { name: 'cat-a-tmpdir', cmd: `cat ${aOwn.tmp}/secret ${aOwn.tmp}/*/secret` },
+    { name: 'cat-a-home', cmd: `cat ${aOwn.home}/secret` },
     { name: 'cat-a-tmp', cmd: 'cat /tmp/iso-a-secret' },
     { name: 'grep-shared', cmd: `grep -rs 'CANARY.A' /tmp /var/tmp /dev/shm /run/lock` },
     { name: 'proc-holder', cmd: `tr '\\0' ' ' < /proc/${holder.pid}/cmdline; tr '\\0' ' ' < /proc/${holder.pid}/environ` },
@@ -543,7 +559,8 @@ async function probeIsolation() {
         () => ({ tool: 'Read', input: { file_path: '/tmp/iso-a-secret' } }),
         () => ({ tool: 'Read', input: { file_path: `/proc/${holder.pid}/cmdline` } }),
         () => ({ tool: 'Read', input: { file_path: `/proc/${holder.pid}/environ` } }),
-        () => ({ tool: 'Read', input: { file_path: `${wa}/.tmp/secret` } }),
+        () => ({ tool: 'Read', input: { file_path: aTmpSecret() } }),
+        () => ({ tool: 'Read', input: { file_path: `${aOwn.home}/secret` } }),
         () => ({ tool: 'Grep', input: { pattern: 'CANARY.A', path: '/tmp', output_mode: 'content' } }),
         () => ({ tool: 'Grep', input: { pattern: 'CANARY.A', path: '/work', output_mode: 'content' } }),
         () => ({ tool: 'Glob', input: { pattern: '**/*', path: wa } }),
@@ -556,20 +573,24 @@ async function probeIsolation() {
     },
   })
   const rb = await b.done
+  const canary = (t: string) => /CANARY_A|canary-A-cmdline/.test(t)
+  const files = filesProbes()
+  // Guard off: root reads the same, while A is still up (its release empties its home and temp folder).
+  const off = await rootShell(shellScript(files))
+  const offReadable = [`${wa}/inputs/secret.txt`, aTmpSecret(), `${aOwn.home}/secret`].every((p) => existsSync(p) && canary(readFileSync(p, 'utf8')))
+  // A file A couldn't make (its sandbox may not let it write /tmp) can't be judged: printed as a fact instead.
+  const observeOnly = ['ls-work', 'ls-users', 'ps', 'proc-holder', 'proc-a-session', 'proc-all', ...(existsSync('/tmp/iso-a-secret') ? [] : ['cat-a-tmp', 'grep-shared'])]
   // A's process ends once the probe is done (a condition, not a timer).
   appendFileSync(join(wa, 'outputs', '.go'), '')
   const ra = await a.done
   checkRun('isolation.a', ra, [0])
-  checkRun('isolation.b', rb, [0, 9])
+  checkRun('isolation.b', rb, [0, 10])
   fact('isolation.a-wrote', ra.state.results.get(ra.state.ids[0]!)?.text.slice(0, 300) ?? '')
+  // A's release: nothing of it is left in its home or its temp folder for the uid's next chat.
+  const aLeft = await runCommand('find', [aOwn.home, aOwn.tmp, '-mindepth', '1'])
+  record('isolation.a.own-folders-emptied-at-release', aLeft.out.trim() === '', `left: ${aLeft.out.trim().slice(0, 300) || 'nothing'}`)
 
-  const canary = (t: string) => /CANARY_A|canary-A-cmdline/.test(t)
-  const files = filesProbes()
   const real = parseShell(result(rb, 0)?.text ?? '')
-  // Guard off: root reads the same (A's files are still there; its holder has ended, so the /proc probes use A's session-less view).
-  const off = await rootShell(shellScript(files))
-  // A file A couldn't make (its sandbox may not let it write /tmp) can't be judged: printed as a fact instead.
-  const observeOnly = ['ls-work', 'ps', 'proc-holder', 'proc-a-session', 'proc-all', ...(existsSync('/tmp/iso-a-secret') ? [] : ['cat-a-tmp', 'grep-shared'])]
   judge(
     'isolation.bash',
     real,
@@ -579,20 +600,19 @@ async function probeIsolation() {
     ),
   )
   rmSync('/tmp/iso-a-secret', { force: true })
-  // The /proc probes: A's holder is gone by now, so they're judged on the agent's run alone (and printed above).
+  // The /proc probes are judged on the agent's run alone (and printed above).
   for (const n of ['proc-holder', 'proc-a-session', 'proc-all']) {
     const x = real.get(n)
     record(`isolation.bash.${n}-no-canary`, x !== undefined && !canary(x.out), x?.out.slice(0, 200) ?? 'no output')
   }
-  const tools = ['read-a-file', 'read-a-tmp', 'read-a-holder-cmdline', 'read-a-holder-environ', 'read-a-tmpdir', 'grep-tmp', 'grep-work', 'glob-a']
-  const offReadable = [`${wa}/inputs/secret.txt`, `${wa}/.tmp/secret`].every((p) => canary(readFileSync(p, 'utf8')))
+  const tools = ['read-a-file', 'read-a-tmp', 'read-a-holder-cmdline', 'read-a-holder-environ', 'read-a-tmpdir', 'read-a-home', 'grep-tmp', 'grep-work', 'glob-a']
   tools.forEach((n, i) => {
     const t = result(rb, i + 1)
     const leak = t !== undefined && (canary(t.text) || (n === 'glob-a' && t.text.includes('secret.txt')))
     record(`isolation.tool.${n}`, t !== undefined && !leak && offReadable, `agent: ${t?.text.slice(0, 200)} | guard off (root reads A's files): ${offReadable ? 'leak seen' : 'NO LEAK SEEN'}`)
   })
 
-  const tok = parseShell(result(rb, 9)?.text ?? '')
+  const tok = parseShell(result(rb, 10)?.text ?? '')
   if (rb.via === 'direct') {
     record('token.not-reachable', false, 'needs the root path (the token lives only in the root): sessions through the root crash, see root.session-starts')
     record('channel.not-reachable', false, "needs the root path (the session's stdin and stdout channel): see root.session-starts")
@@ -646,7 +666,7 @@ for _ in range(n): os.wait()
 /** A direct session as a pool user, with one test-only variant of the guarded options (direct.ts). */
 const directUsers: Record<DirectVariant, string> = {
   plain: 's38',
-  'home-outside': 's37',
+  'users-readable': 's37',
   'four-tools': 's40',
   'audit-refused': 's41',
   'audit-hook-removed': 's42',
@@ -714,8 +734,9 @@ async function probeDirect() {
   const marker = (wd: string) => existsSync(join(wd, 'outputs', 'audit-marker'))
   record('audit.refused-entry-blocks-the-call', !marker(refused.workDir) && marker(removed.workDir), `with the hook: ${marker(refused.workDir) ? 'RAN' : 'blocked'} (${refused.state.results.get(refused.state.ids[0]!)?.text.slice(0, 150)}) | hook removed: ${marker(removed.workDir) ? 'ran (leak seen)' : 'NOT RUN: the probe cannot detect this'}`)
 
-  // deniedDomains with an IP literal.
-  const curl = { steps: [bash(`curl -sS -m 8 ${GW_URL}`)] }
+  // deniedDomains with an IP literal. The sandbox's NO_PROXY lists the private ranges, so curl would go round the proxy
+  // (and find no network): `--noproxy ''` sends it through, where the lists decide.
+  const curl = { steps: [bash(`curl -sS -m 8 --noproxy '' ${GW_URL}`)] }
   const allow = await direct('ip-allow', { prompt: 'Run the probe.', webFetchDomains: [], ip: GW }, curl)
   const deny = await direct('ip-deny', { prompt: 'Run the probe.', webFetchDomains: [], ip: GW }, curl)
   const got = (d: { state: ScriptState }) => d.state.results.get(d.state.ids[0]!)?.text ?? ''
@@ -820,26 +841,33 @@ async function probeZombieLeader() {
   record('zombie-leader.killed', status.threads > 1 && killed === 'passed' && left.length === 0, `threads ${status.threads}, killAll ${killed}, left ${left.length}`)
 }
 
-/** Which sandbox setups run a Bash command at all here: HOME inside or outside the session folder. */
-async function probeSandboxMatrix() {
+/**
+ * What the sandbox needs from the platform, checked before any agent probe so one clear line says so when it's missing:
+ * a session user's command inside bubblewrap must be able to make a user namespace that holds capabilities. The CLI's
+ * seccomp helper does exactly that, for its own PID and mount namespace, and every sandboxed command dies without it
+ * (`apply-seccomp: write /proc/self/setgroups ... Permission denied`). A host whose AppArmor has a profile for
+ * /usr/bin/bwrap that strips capabilities from what bwrap runs (Ubuntu's bwrap-userns-restrict) takes it away, in a
+ * container too: the profile attaches by path. Then two Bash calls in a row, as production runs them.
+ */
+async function probeSandboxPlatform() {
   const u = userNamed('s36')
-  const nested = await runCommand('bash', ['-c', 'unshare -Ur sh -c "unshare -Ur true && echo nested-ok"; cat /proc/sys/user/max_user_namespaces; for f in /proc/sys/kernel/apparmor_restrict_unprivileged_*; do echo "$f=$(cat $f)"; done; cat /proc/self/attr/current 2>&1'], { uid: u.uid, gid: u.gid, cwd: '/tmp' })
-  fact('userns.as-session-user', nested.out.replace(/\n/g, ' '))
-  const cmd = { steps: [bash(`echo bash-ran; python3 -c 'import socket; socket.socket(socket.AF_UNIX); print("unix-socket-made")'`), bash('echo second-call')] }
-  {
-    for (const variant of ['plain', 'home-outside'] as const) {
-      let home: string | undefined
-      if (variant === 'home-outside') {
-        // Outside every shared folder, so the wipe before the run leaves it alone.
-        const owner = userNamed(directUsers[variant])
-        home = '/var/lib/probe-home'
-        mkdirSync(home, { mode: 0o700 })
-        chownSync(home, owner.uid, owner.gid)
-      }
-      const d = await direct(variant, { prompt: 'Run the probe.', webFetchDomains: [], home }, cmd)
-      const out = [0, 1].map((i) => d.state.results.get(d.state.ids[i]!)?.text.replace(/\s+/g, ' ').slice(0, 300) ?? 'no result')
-      fact(`sandbox-matrix.${variant}`, `first: ${out[0]} | second: ${out[1]}`)
-    }
+  const asUser = (script: string) => runCommand('bash', ['-c', script], { uid: u.uid, gid: u.gid, cwd: '/tmp' }).then((r) => r.out.replace(/\s+/g, ' ').trim())
+  fact('userns.as-session-user', await asUser('unshare -Ur sh -c "unshare -Ur true && echo nested-ok"; cat /proc/sys/user/max_user_namespaces; for f in /proc/sys/kernel/apparmor_restrict_unprivileged_*; do echo "$f=$(cat $f 2>&1)"; done'))
+  const inBwrap = await asUser(`bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid -- sh -c 'echo "label=$(cat /proc/self/attr/current 2>&1)"; unshare -Ur true && echo nested-ok' 2>&1`)
+  record('platform.nested-userns-inside-bwrap', inBwrap.includes('nested-ok'), inBwrap)
+
+  const cmd = { steps: [bash(`echo bash-ran; echo "TMPDIR=$TMPDIR HOME=$HOME"; touch "$TMPDIR/p" && echo tmp-writable; ls "$HOME" > /dev/null && echo home-readable; touch "$HOME/p" 2>&1`), bash('echo second-call')] }
+  const ran: Partial<Record<DirectVariant, boolean>> = {}
+  for (const variant of ['plain', 'users-readable'] as const) {
+    const d = await direct(variant, { prompt: 'Run the probe.', webFetchDomains: [] }, cmd)
+    const out = [0, 1].map((i) => d.state.results.get(d.state.ids[i]!)?.text.replace(/\s+/g, ' ').slice(0, 300) ?? 'no result')
+    ran[variant] = out[0]!.includes('bash-ran') && out[1]!.includes('second-call')
+    fact(`sandbox.${variant}`, `first: ${out[0]} | second: ${out[1]}`)
+  }
+  record('sandbox.bash-runs-twice', ran.plain === true, `production options: ${ran.plain ? 'ran' : 'FAILED'}; users root left readable (test-only): ${ran['users-readable'] ? 'ran' : 'failed'}`)
+  if (!ran.plain && ran['users-readable']) {
+    AGENT_VARIANT = 'users-readable'
+    fact('agent-runs-with', 'the test-only users-readable options, so the other probes still say something: every result below is NOT production\'s')
   }
 }
 
@@ -872,7 +900,7 @@ await step('root-session', async () => {
     fact('agent-runs-via', 'direct sessions (same guards, sandbox, wrapper, pool user and folder layout; no root channel, proxy or token)')
   }
 })
-await step('sandbox-matrix', probeSandboxMatrix)
+await step('sandbox-platform', probeSandboxPlatform)
 await step('egress', probeEgress)
 await step('no-unsandboxed-retry', probeNoUnsandboxedRetry)
 await step('claude-dir', probeClaudeDir)

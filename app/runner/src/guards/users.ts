@@ -22,9 +22,9 @@ export type PoolUser = { user: string; uid: number; gid: number }
 export interface SessionHost {
   /** Kills every process of the uid; resolves only once none is left. Throws if it can't make sure. */
   killAll(user: PoolUser): Promise<void>
-  /** Removes whatever the uid owns in the shared writable places outside the work tree (/tmp and the like). */
+  /** Empties the uid's own home and temp folder, and removes whatever it owns in the shared writable places (/tmp and the like). */
   wipeUserFiles(user: PoolUser): Promise<void>
-  /** Makes (or takes over) the session's folder for this user and returns its paths. */
+  /** Makes (or takes over) the session's folder for this user, and the user's own home and temp folder; returns the paths. */
   prepareFolder(sessionKey: string, user: PoolUser): Promise<{ workDir: string; home: string }>
   /** Hands the session's folder back to root, closed to every session user. */
   parkFolder(sessionKey: string): Promise<void>

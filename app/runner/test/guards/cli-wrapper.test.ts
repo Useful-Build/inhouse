@@ -8,7 +8,7 @@ import { readFileSync, statSync } from 'node:fs'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { createQueryGuards } from '../../src/guards/options.ts'
-import { CLI_WRAPPER, SESSION_PROCESS_LIMIT, sessionPaths } from '../../src/guards/paths.ts'
+import { CLI_WRAPPER, SESSION_PROCESS_LIMIT, sessionPaths, userPaths } from '../../src/guards/paths.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import { RunConfig } from '../../src/protocol/local.ts'
@@ -33,7 +33,7 @@ describe('the CLI wrapper', () => {
       fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 1, allowedTypes: [] },
     })
     const p = sessionPaths(id)
-    const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: p.home, workDir: p.workDir }, 8081)
+    const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: userPaths('s01').home, workDir: p.workDir }, 8081)
     const o = createQueryGuards({ hostAddresses: () => [] }).apply(baseOptions(c, p.workDir, cliEnv(env), new AbortController()), c, { audit: async () => {} })
     expect(o.pathToClaudeCodeExecutable).toBe(CLI_WRAPPER)
   })

@@ -30,7 +30,7 @@ import { monotonicMs, parseSessionMessage } from '../../src/protocol/local.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards, RunContext } from '../../src/session/seam.ts'
 import { AuditRefusedError } from '../../src/guards/audit.ts'
-import { sessionPaths } from '../../src/guards/paths.ts'
+import { sessionPaths, userPaths } from '../../src/guards/paths.ts'
 import { poolUserName } from '../../src/guards/users.ts'
 import { RunConfig } from '../../src/protocol/local.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
@@ -801,7 +801,7 @@ describe('the production wiring', () => {
     await waitForTicks(() => run !== undefined)
 
     const p = sessionPaths(config.chatId)
-    const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: p.home, workDir: p.workDir }, 8081)
+    const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: userPaths('s01').home, workDir: p.workDir }, 8081)
     const o = productionQueryGuards().apply(baseOptions(config, p.workDir, cliEnv(env), new AbortController()), config, run!)
     const audit = o.hooks!.PreToolUse!.filter((m) => m.matcher === undefined)
     expect(audit).toHaveLength(1)

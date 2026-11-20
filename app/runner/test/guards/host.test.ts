@@ -2,7 +2,12 @@
 // fail, written first:
 // - the session folder isn't 1770 to the session's group, or `.claude/` and `.mcp.json` aren't root's with the stubs;
 // - a symlink the session left is followed (a chown or a recursion through it reaches outside the folder);
-// - a symlink or file squatting on `inputs`, `outputs`, `.home` or `.claude` survives the take-over;
+// - a symlink or file squatting on `inputs`, `outputs` or `.claude` survives the take-over;
+// - the user's home or temp folder sits inside the session folder, or in a folder a session can write (it could swap
+//   either for a symlink), or stays open to others (or closed to its owner) after a session changed its mode;
+// - a file from the uid's last session is still in its home or temp folder when the next one starts: the wipe skips
+//   those folders, removes only the uid's own files there, or passes with something left;
+// - the wipe empties those folders as root, by path, rather than as the uid;
 // - a file someone other than a session user owns is handed to the session;
 // - a parked folder stays open to the last session's group;
 // - the wipe removes another user's files, follows a symlink, or misses the user's files deeper down;
@@ -34,6 +39,7 @@ import {
   STUB_FILES,
   SYSV_BATCH,
   createSessionHost,
+  emptyOwn,
   parkAllFolders,
   parseStatus,
   runAsRoot,
@@ -44,6 +50,7 @@ import {
   type RunAsRoot,
   type RunAsUser,
 } from '../../src/guards/host.ts'
+import { userPaths } from '../../src/guards/paths.ts'
 import type { PoolUser } from '../../src/guards/users.ts'
 
 const me = process.getuid!()
@@ -51,11 +58,13 @@ const myGid = process.getgid!()
 const user: PoolUser = { user: 's01', uid: 30001, gid: 30001 }
 let dir: string
 let root: string
+let users: string
 let chowns: [string, number, number][]
 
 const host = (poolUids: number[] = [me]) =>
   createSessionHost({
     workRoot: root,
+    usersRoot: users,
     poolUids: new Set(poolUids),
     rootUid: me,
     chown: async (p, u, g) => void chowns.push([p, u, g]),
@@ -69,6 +78,8 @@ beforeEach(() => {
   root = join(dir, 'work')
   mkdirSync(root)
   chmodSync(root, 0o711)
+  users = join(dir, 'users')
+  mkdirSync(users)
   chowns = []
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
@@ -77,7 +88,6 @@ describe('session folders', () => {
   it('makes the stubs layout for the session user', async () => {
     const { workDir, home } = await host().prepareFolder('chat1', user)
     expect(workDir).toBe(join(root, 'chat1'))
-    expect(home).toBe(join(workDir, '.home'))
     expect(mode(workDir)).toBe(0o1770)
     expect(lastOwner(workDir)).toEqual([0, user.gid])
     expect(mode(join(workDir, '.claude'))).toBe(0o755)
@@ -94,10 +104,45 @@ describe('session folders', () => {
       expect(mode(join(workDir, d))).toBe(0o1770)
       expect(lastOwner(join(workDir, d))).toEqual([0, user.gid])
     }
-    for (const d of ['.home', '.tmp']) {
-      expect(mode(join(workDir, d))).toBe(0o700)
-      expect(lastOwner(join(workDir, d))).toEqual([user.uid, user.gid])
+    // The home and the temp folder are the user's own, outside the session folder, in a folder of root's.
+    const own = userPaths(user.user, users)
+    expect(home).toBe(own.home)
+    expect(readdirSync(workDir).sort()).toEqual(['.claude', '.mcp.json', 'inputs', 'outputs'])
+    expect(mode(own.dir)).toBe(0o755)
+    expect(lstatSync(own.dir).uid).toBe(me)
+    expect(lastOwner(own.dir)).toBeUndefined()
+    for (const d of [own.home, own.tmp]) {
+      expect(mode(d)).toBe(0o700)
+      expect(lastOwner(d)).toEqual([user.uid, user.gid])
     }
+  })
+
+  it("closes the user's own folders to everyone else again, and keeps what's in them for the wipe", async () => {
+    const h = host()
+    await h.prepareFolder('chat1', user)
+    const own = userPaths(user.user, users)
+    chmodSync(own.home, 0o777)
+    chmodSync(own.tmp, 0o000)
+    await h.prepareFolder('chat2', user)
+    for (const d of [own.home, own.tmp]) expect(mode(d)).toBe(0o700)
+    // Root never deletes in there (a session could steer a delete by path): the wipe does, as the uid.
+    writeFileSync(join(own.home, 'kept'), 'x')
+    await h.prepareFolder('chat3', user)
+    expect(readdirSync(own.home)).toEqual(['kept'])
+  })
+
+  it("refuses a users root, or a user's folder in it, that isn't a folder of root's", async () => {
+    const outside = join(dir, 'outside')
+    mkdirSync(outside)
+    symlinkSync(outside, join(users, user.user))
+    await expect(host().prepareFolder('chat1', user)).rejects.toThrow(/owned by root/)
+    expect(readdirSync(outside)).toEqual([])
+    rmSync(users, { recursive: true })
+    symlinkSync(outside, users)
+    await expect(host().prepareFolder('chat1', user)).rejects.toThrow(/owned by root/)
+    expect(readdirSync(outside)).toEqual([])
+    // Nothing was opened to the session on the way.
+    expect(existsSync(join(root, 'chat1'))).toBe(false)
   })
 
   it('never hands over a hard-linked file', async () => {
@@ -276,6 +321,39 @@ describe('the wipe', () => {
     await expect(wipeOwned(join(dir, 'missing'), self, runAsUser, runAsRoot)).resolves.toBeUndefined()
   })
 
+  it("empties the uid's own folder, whoever owns what's in it and however it was closed, without following symlinks (real find, as this uid)", async () => {
+    const own = join(dir, 'own')
+    const outside = join(dir, 'outside')
+    mkdirSync(join(own, 'a', 'b'), { recursive: true })
+    writeFileSync(join(own, 'a', 'b', 'f'), 'x')
+    writeFileSync(join(own, '.hidden'), 'x')
+    mkdirSync(join(own, 'locked'))
+    writeFileSync(join(own, 'locked', 'f'), 'x')
+    chmodSync(join(own, 'locked'), 0o000)
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'keep'), 'x')
+    symlinkSync(outside, join(own, 'link'))
+    // Closed to its owner too: the wipe still gets in.
+    chmodSync(own, 0o000)
+    // No `-user` test: a file another uid left in it goes too (here every file is this uid's; the arguments say it).
+    const ran: string[][] = []
+    await emptyOwn(own, self, (u, cmd, args) => (ran.push(args), runAsUser(u, cmd, args)), runAsRoot)
+    expect(readdirSync(own)).toEqual([])
+    expect(readdirSync(outside)).toEqual(['keep'])
+    for (const args of ran) expect(args).not.toContain('-user')
+    await expect(emptyOwn(join(dir, 'missing'), self, runAsUser, runAsRoot)).resolves.toBeUndefined()
+  })
+
+  it("throws when anything is left in the uid's own folder, and root's look removes nothing", async () => {
+    const own = join(dir, 'own')
+    mkdirSync(join(own, 'theirs'), { recursive: true })
+    writeFileSync(join(own, 'theirs', 'f'), 'x')
+    // Another uid's closed folder in it: the uid's own commands can't empty it.
+    const blind: RunAsUser = async () => ({ code: 1, stdout: '' })
+    await expect(emptyOwn(own, self, blind, runAsRoot)).rejects.toThrow(/own folder still holds .*theirs/)
+    expect(existsSync(join(own, 'theirs', 'f'))).toBe(true)
+  })
+
   it('throws when something of the uid is still there after the delete', async () => {
     const stuck: RunAsRoot = async () => ({ code: 0, stdout: '/tmp/stuck\n' })
     await expect(wipeOwned('/tmp', self, quiet, stuck)).rejects.toThrow(/stuck/)
@@ -306,13 +384,19 @@ describe('the wipe', () => {
     expect(calls.length).toBeGreaterThan(0)
     for (const [u] of calls) expect(u).toEqual(user)
     const finds = calls.filter(([, cmd]) => cmd === 'find')
+    const own = userPaths(user.user)
+    for (const d of [own.home, own.tmp]) expect(finds.some(([, , a]) => a[0] === d && a.includes('-delete')), d).toBe(true)
     for (const d of SHARED_WRITABLE) {
       const mine = finds.filter(([, , a]) => a[0] === d)
       expect(mine.some(([, , a]) => a.includes('-delete')), d).toBe(true)
       for (const [, , a] of mine) expect(a).toEqual(expect.arrayContaining(['-xdev', '-user', String(user.uid)]))
     }
-    // Root's part, in full: one find per place that prints the first thing of the uid's it sees. No delete, no exec.
-    expect(looks).toEqual(SHARED_WRITABLE.map((d) => ['find', [d, '-xdev', '-mindepth', '1', '-user', String(user.uid), '-print', '-quit']]))
+    // Root's part, in full: one find per place that prints the first thing it sees (in the uid's own folders,
+    // anything; in the shared ones, anything of the uid's). No delete, no exec.
+    expect(looks).toEqual([
+      ...[own.home, own.tmp].map((d) => ['find', [d, '-xdev', '-mindepth', '1', '-print', '-quit']]),
+      ...SHARED_WRITABLE.map((d) => ['find', [d, '-xdev', '-mindepth', '1', '-user', String(user.uid), '-print', '-quit']]),
+    ])
     expect(SHARED_WRITABLE).toContain('/dev/mqueue')
     expect(calls.filter(([, cmd]) => cmd === 'ipcrm').map(([, , a]) => a)).toEqual([['-m', '7']])
     expect(k.left.size).toBe(0)
@@ -328,7 +412,7 @@ describe('the wipe', () => {
     await expect(h.wipeUserFiles({ ...user, uid: 30003 })).resolves.toBeUndefined()
   })
 
-  it('tries every shared folder and the SysV wipe before it throws, then throws every failure', async () => {
+  it("tries the uid's own folders, every shared folder and the SysV wipe before it throws, then throws every failure", async () => {
     const k = sysvKernel([{ kind: 'shm', id: 7, uid: user.uid, cuid: user.uid }])
     const looked: string[] = []
     const h = createSessionHost({
@@ -336,14 +420,14 @@ describe('the wipe', () => {
       poolUids: new Set(),
       procDir: join(dir, 'proc'),
       runAsUser: k.run,
-      // The first two places keep a leftover: the rest, and the SysV wipe, still run.
-      runAsRoot: async (_cmd, args) => (looked.push(args[0]!), { code: 0, stdout: looked.length <= 2 ? `${args[0]}/stuck\n` : '' }),
+      // The first three places keep a leftover: the rest, and the SysV wipe, still run.
+      runAsRoot: async (_cmd, args) => (looked.push(args[0]!), { code: 0, stdout: looked.length <= 3 ? `${args[0]}/stuck\n` : '' }),
     })
     const err = await h.wipeUserFiles(user).then(() => null, (e: Error) => e)
-    expect(looked).toEqual(SHARED_WRITABLE)
+    const own = userPaths(user.user)
+    expect(looked).toEqual([own.home, own.tmp, ...SHARED_WRITABLE])
     expect(k.left.size).toBe(0)
-    expect(err?.message).toContain(`${SHARED_WRITABLE[0]}/stuck`)
-    expect(err?.message).toContain(`${SHARED_WRITABLE[1]}/stuck`)
+    for (const d of [own.home, own.tmp, SHARED_WRITABLE[0]]) expect(err?.message).toContain(`${d}/stuck`)
   })
 
   it("a row that only names the uid as owner never fails its wipe; a row it created does, whoever owns it now (the kernel's own text)", async () => {
