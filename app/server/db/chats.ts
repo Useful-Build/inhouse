@@ -41,8 +41,16 @@ export interface ChatStore {
   setPinned(chatId: string, ownerId: string, pinned: boolean, ifRev: number, at: At): Promise<RevWrite>
   /** Each id's owner, rev and whether it's deleted (ids not found are absent). */
   statesOf(chatIds: string[]): Promise<Map<string, { ownerId: string; rev: number; deleted: boolean }>>
-  /** Marks the owner's chats deleted or not, in one statement; a chat already so keeps its rev. The chats after, in order. */
-  setDeleted(chatIds: string[], ownerId: string, deleted: boolean, at: At): Promise<ChatRecord[]>
+  /**
+   * Marks the owner's chats deleted (a chat already deleted keeps its rev) and reads them back in the same batch (one
+   * D1 transaction), so each record carries the delete's own rev. The chats after, in order.
+   */
+  markDeleted(chatIds: string[], ownerId: string, at: At): Promise<ChatRecord[]>
+  /**
+   * Restores `chats`, each only while it is still deleted at the rev it was read at (one statement per chat, one batch),
+   * and reads `chatIds` back in the same batch. `applied`: every one of `chats` was restored.
+   */
+  restore(chats: { id: string; rev: number }[], chatIds: string[], ownerId: string, at: At): Promise<{ records: ChatRecord[]; applied: boolean }>
   /** Up to `limit` messages, `pos DESC`, below `beforePos` when given. */
   messages(chatId: string, beforePos: number | null, limit: number): Promise<StoredMessage[]>
 }
@@ -59,6 +67,12 @@ interface MessageRow {
 const CHAT_COLUMNS = 'id, owner_id, title, custom_title, pinned, deleted_at_ms, last_at_ms, rev'
 const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ')
+
+const readBack = (chatIds: string[]) => stmt(`SELECT ${CHAT_COLUMNS} FROM chats WHERE id IN (${marks(chatIds.length)})`, ...chatIds)
+const inOrder = (chatIds: string[], rows: ChatRow[]): ChatRecord[] => {
+  const byId = new Map(rows.map(r => [r.id, record(r)]))
+  return chatIds.map(id => byId.get(id)!)
+}
 
 const record = (r: ChatRow): ChatRecord => ({
   id: r.id, ownerId: r.owner_id, title: r.custom_title ?? r.title, customTitle: r.custom_title, pinned: r.pinned === 1,
@@ -134,16 +148,21 @@ export function chatStore(deps: { db: D1Database }): ChatStore {
         stmt(`SELECT id, owner_id, rev, deleted_at_ms FROM chats WHERE id IN (${marks(chatIds.length)})`, ...chatIds))
       return new Map(rows.map(r => [r.id, { ownerId: r.owner_id, rev: r.rev, deleted: r.deleted_at_ms !== null }]))
     },
-    async setDeleted(chatIds, ownerId, deleted, at) {
-      const change = deleted ? 'deleted_at_ms = ?' : 'deleted_at_ms = NULL'
-      const guard = deleted ? 'deleted_at_ms IS NULL' : 'deleted_at_ms IS NOT NULL'
-      const params: (string | number)[] = deleted ? [at.nowMs] : []
-      await runBatch(db, [stmt(
-        `UPDATE chats SET ${change}, rev = rev + 1, req_id = ? WHERE id IN (${marks(chatIds.length)}) AND owner_id = ? AND ${guard}`,
-        ...params, at.requestId, ...chatIds, ownerId)])
-      const rows = await all<ChatRow>(db, stmt(`SELECT ${CHAT_COLUMNS} FROM chats WHERE id IN (${marks(chatIds.length)})`, ...chatIds))
-      const byId = new Map(rows.map(r => [r.id, record(r)]))
-      return chatIds.map(id => byId.get(id)!)
+    async markDeleted(chatIds, ownerId, at) {
+      const results = await runBatch(db, [
+        stmt(`UPDATE chats SET deleted_at_ms = ?, rev = rev + 1, req_id = ? WHERE id IN (${marks(chatIds.length)}) AND owner_id = ? AND deleted_at_ms IS NULL`,
+          at.nowMs, at.requestId, ...chatIds, ownerId),
+        readBack(chatIds),
+      ])
+      return inOrder(chatIds, results[1].results as ChatRow[])
+    },
+    async restore(chats, chatIds, ownerId, at) {
+      const writes = chats.map(c => stmt(
+        'UPDATE chats SET deleted_at_ms = NULL, rev = rev + 1, req_id = ? WHERE id = ? AND owner_id = ? AND rev = ? AND deleted_at_ms IS NOT NULL',
+        at.requestId, c.id, ownerId, c.rev))
+      const results = await runBatch(db, [...writes, readBack(chatIds)])
+      const applied = results.slice(0, writes.length).every(r => r.meta.changes === 1)
+      return { records: inOrder(chatIds, results[writes.length].results as ChatRow[]), applied }
     },
     async messages(chatId, beforePos, limit) {
       const rows = await all<MessageRow>(db, beforePos === null

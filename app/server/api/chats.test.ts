@@ -386,4 +386,67 @@ describe('routes 27 and 28: delete and restore, all or nothing (failures 4 and 6
     })
     expect(answer).toEqual({ refused: { code: 'not_found' } })
   })
+
+  /** A send straight to the BrandAgent (route 29 would refuse from D1 first): what the object itself says. */
+  const agentSend = (id: string) => brandAgent(env).submitTurn({
+    chatId: id, by: { kind: 'person', memberId: alice }, model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium', sideModel: 'claude-haiku-5-5',
+    maxTurns: 25, webFetchDomains: null, input: { clientTurnKey: `key${uniq()}`, text: 'hi', priority: 'next', model: 'sonnet', attachments: [] },
+  })
+  /** Stores whose `statesOf` runs `between` after its read, before the handler goes on (a request landing in the gap). */
+  const readThen = (between: () => Promise<void>): Stores => ({ ...stores, chats: { ...stores.chats, statesOf: async ids => { const r = await stores.chats.statesOf(ids); await between(); return r } } })
+
+  it("a restore landing between a delete's D1 write and its BrandAgent call wins: D1 and the BrandAgent agree, sends are admitted (round 2, 1)", async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    let fired = false
+    const gap: Stores = { ...stores, chats: chatStore({ db: { prepare: (q: string) => db.prepare(q), batch: async (b: D1PreparedStatement[]) => {
+      const r = await db.batch(b)
+      if (!fired) { fired = true; expect((await restore(me(alice), { ids: [id] })).status).toBe(200) }
+      return r
+    } } as unknown as D1Database }) }
+    const done = await call(deleteChats, me(alice), { method: 'POST', path: '/api/chats/delete', body: { ids: [id] } }, gap)
+    // The delete answers the chat as its own write left it.
+    expect(done.body.items).toEqual([summary(id, { deleted: true, rev: 2 })])
+    expect(await deletedCount([id])).toBe(0)
+    expect(await agentSend(id)).toMatchObject({ position: expect.any(String) })
+  })
+
+  it('a restore that read the chat live does nothing, so a delete landing after its read stays (round 2, 2)', async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const late = readThen(async () => { expect((await del(me(alice), { ids: [id] })).status).toBe(200) })
+    expect((await call(restoreChats, me(alice), { method: 'POST', path: '/api/chats/restore', body: { ids: [id] } }, late)).status).toBe(200)
+    expect(await deletedCount([id])).toBe(1)
+    expect(await agentSend(id)).toEqual({ refused: { code: 'not_found' } })
+  })
+
+  it('a restore whose read went stale (another restore, then a delete) answers 409 and flips nothing (round 2, 2)', async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    const late = readThen(async () => {
+      expect((await restore(me(alice), { ids: [id] })).status).toBe(200)
+      expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    })
+    const r = await call(restoreChats, me(alice), { method: 'POST', path: '/api/chats/restore', body: { ids: [id] } }, late)
+    expect(r).toMatchObject({ status: 409, body: { error: { code: 'conflict' } } })
+    expect(await deletedCount([id])).toBe(1)
+    expect(await db.prepare('SELECT rev FROM chats WHERE id = ?').bind(id).first('rev')).toBe(4)
+    expect(await agentSend(id)).toEqual({ refused: { code: 'not_found' } })
+  })
+
+  it("a restore whose BrandAgent call landed but whose D1 write failed heals on retry (the BrandAgent skips the equal rev)", async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    let failOnce = true
+    const flaky: Stores = { ...stores, chats: chatStore({ db: { prepare: (q: string) => db.prepare(q), batch: async (b: D1PreparedStatement[]) => {
+      if (failOnce) { failOnce = false; throw new Error('D1_ERROR: scripted failure') }
+      return db.batch(b)
+    } } as unknown as D1Database }) }
+    await expect(call(restoreChats, me(alice), { method: 'POST', path: '/api/chats/restore', body: { ids: [id] } }, flaky)).rejects.toBeInstanceOf(StoreUnavailableError)
+    expect(await deletedCount([id])).toBe(1)
+    expect((await restore(me(alice), { ids: [id] })).body.items).toEqual([summary(id, { rev: 3 })])
+    expect(await agentSend(id)).toMatchObject({ position: expect.any(String) })
+  })
 })

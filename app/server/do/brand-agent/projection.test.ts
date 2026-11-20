@@ -265,8 +265,10 @@ describe('a chat delete ends its turns through storeFinal (failure 4)', () => {
       h.core.endChats([{ id: c, rev: 2 }])
       const ok = await send(h, c, 'key-proj19')
       expect(ok.turnId).toMatch(/^t_/)
-      // The same restore again (a retry) is applied again; a newer delete wins over it.
-      h.core.restoreChats([{ id: c, rev: 3 }])
+      // An opposite op at an equal rev is skipped (only a newer rev applies): the chat stays restored.
+      h.core.endChats([{ id: c, rev: 3 }])
+      expect(h.sql.exec('SELECT deleted, rev FROM chat_deletion WHERE chat_id = ?', c).one()).toEqual({ deleted: 0, rev: 3 })
+      // A newer delete wins.
       h.core.endChats([{ id: c, rev: 4 }])
       expect(await h.submit(c, 'key-proj20', { member: owner })).toEqual({ refused: { code: 'not_found' } })
       expect(h.sql.exec('SELECT deleted, rev FROM chat_deletion WHERE chat_id = ?', c).one()).toEqual({ deleted: 1, rev: 4 })
