@@ -80,4 +80,6 @@ test('A demo stored by the build before the seam opens with its chat, draft, mod
   await expect(approved).not.toContainText('going out')
   await expect(approved).toContainText('Approved by')
   await expect.poll(async () => Object.keys(((await fx.saved()).demo.sent as Record<string, unknown>) ?? {})).toContain(approvalId)
+  // The CSP guard's teardown waits one animation frame per page, and a paused fake clock holds animation frames too.
+  await page.clock.resume()
 })
