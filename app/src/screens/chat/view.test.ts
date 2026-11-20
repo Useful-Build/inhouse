@@ -70,3 +70,14 @@ describe('notices', () => {
     expect(v.notice).toBeNull()
   })
 })
+
+describe('a turn ends once', () => {
+  test('a second turn.finished for it changes nothing: no second line, the outcome stays', () => {
+    const fin = (outcome: 'done' | 'failed', reason?: 'max_turns'): ChatEvent => ({ type: 'turn.finished', turnId: T, outcome, ...(reason ? { reason } : {}) })
+    const once = run(queued, { type: 'turn.started', turnId: T, model: 'sonnet' }, fin('failed', 'max_turns'))
+    const twice = [fin('failed', 'max_turns'), fin('done')].reduce((v, e) => reduce(v, e, AT), once)
+    expect(twice).toBe(once)
+    expect(twice.messages.filter(m => m.id === `${T}.f`)).toHaveLength(1)
+    expect(twice.turns[T].state).toBe('failed')
+  })
+})

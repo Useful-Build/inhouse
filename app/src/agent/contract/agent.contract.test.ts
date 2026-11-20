@@ -497,6 +497,88 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices).toHaveLength(2)
     })
 
+    test('replacesRun is a run id: a turn id, an empty string or anything else is refused with invalid', async () => {
+      const c = chatId()
+      const real = startRun(fx.questions.table)
+      await real.toEnd()
+      for (const replacesRun of [real.result.turnId, '', 'r_short', 'run-1']) {
+        const failure = await errorOf(t.client.send(c, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model(), replacesRun }))
+        expect(failure, `replacesRun "${replacesRun}"`).toBeInstanceOf(AgentError)
+        expect((failure as AgentError).code).toBe('invalid')
+      }
+      checkRun(await drain(fx.questions.followUp, { replacesRun: real.result.runId }))
+    })
+
+    test('the key is checked before the pause: a retried send answers its turn even while paused; a new one is refused', async () => {
+      const key = nextKey()
+      const run = startRun(fx.questions.table, { key })
+      await run.next()
+      await t.client.pause()
+      const again = await t.client.send(run.chatId, { clientTurnKey: key, text: fx.questions.table, model: model() })
+      expect(again, 'the retry answers the original, paused or not').toEqual(run.result)
+      const fresh = await errorOf(t.client.send(run.chatId, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() }))
+      expect((fresh as AgentError).reason).toBe('paused')
+      await t.client.resume()
+      await run.toEnd()
+    })
+
+    test('turns queued in a run start by priority (now, next, later) and first come first served within one', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      const ask = (text: string, priority: SendPriority) => t.client.send(run.chatId, { clientTurnKey: nextKey(), text, model: model(), priority })
+      const later1 = await ask('later one', 'later')
+      const next1 = await ask('next one', 'next')
+      const later2 = await ask('later two', 'later')
+      const next2 = await ask('next two', 'next')
+      const events = checkRun(await run.toEnd())
+      const order = events.flatMap(e => (e.type === 'turn.started' ? [e.turnId] : []))
+      expect(order, 'the first turn, then next in order, then later in order').toEqual([run.result.turnId, next1.turnId, next2.turnId, later1.turnId, later2.turnId])
+    })
+
+    test('now interrupts only the turn that is live: the turns queued behind it still finish', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      const queued = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: 'queued one', model: model(), priority: 'next' })
+      const urgent = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: 'urgent', model: model(), priority: 'now' })
+      const events = checkRun(await run.toEnd())
+      const outcome = (turnId: string) => (events.find(e => e.type === 'turn.finished' && e.turnId === turnId) as { outcome: string } | undefined)?.outcome
+      expect(outcome(run.result.turnId), 'the live turn was interrupted').toBe('interrupted')
+      expect(outcome(urgent.turnId), 'the urgent turn was not').toBe('done')
+      expect(outcome(queued.turnId), 'nor the one queued before it').toBe('done')
+      expect(events.flatMap(e => (e.type === 'turn.started' ? [e.turnId] : []))).toEqual([run.result.turnId, urgent.turnId, queued.turnId])
+    })
+
+    test('ten messages can wait in a chat and the eleventh is refused with rate_limited (queue_full)', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      for (let i = 0; i < 10; i++) await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: `waiting ${i}`, model: model(), priority: 'later' })
+      const refused = await errorOf(t.client.send(run.chatId, { clientTurnKey: nextKey(), text: 'one too many', model: model(), priority: 'later' }))
+      expect(refused).toBeInstanceOf(AgentError)
+      expect((refused as AgentError).code).toBe('rate_limited')
+      expect((refused as AgentError).reason).toBe('queue_full')
+      await run.toEnd()
+    })
+
+    test('attach to a run nobody has is refused: onRefused hears not_found and no frame comes', async () => {
+      const refused: string[] = []
+      const frames: number[] = []
+      const off = t.client.attach('r_Zzzzzzzzzzzzzzzzzzzzzz', f => frames.push(f.seq), 0, code => refused.push(code))
+      off()
+      await t.settle()
+      expect(refused).toEqual(['not_found'])
+      expect(frames).toEqual([])
+    })
+
+    test('a turn that never started (cancelled while waiting) keeps its question in the history', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      const waiting = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: 'never asked', model: model(), priority: 'later' })
+      await t.client.stop(waiting.turnId)
+      await run.toEnd()
+      const page = await t.client.getChat(run.chatId)
+      expect(page.messages.find(m => m.id === waiting.messageId), 'the question is stored').toMatchObject({ role: 'user', text: 'never asked' })
+    })
+
     test('sending into a chat the client never made fails loud', async () => {
       const failure = await errorOf(t.client.send(fx.unknownChatId, { clientTurnKey: nextKey(), text: fx.questions.table, model: model() }))
       expect(failure).toBeInstanceOf(AgentError)
@@ -611,6 +693,26 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         expect(finished(events)).toMatchObject({ outcome: 'failed', reason: 'budget_busy' })
       })
 
+      test('a turn that fails before it starts keeps its question in the history', async () => {
+        await script('capReached')
+        const run = startRun(fx.questions.table)
+        await run.toEnd()
+        const page = await t.client.getChat(run.chatId)
+        expect(page.messages.find(m => m.id === run.result.messageId)).toMatchObject({ role: 'user', text: fx.questions.table })
+      })
+
+      test('a paused agent says paused even when the chat is also damaged (the pause is checked first)', async () => {
+        const c = chatId()
+        await script('sessionDamaged')
+        await drain(fx.questions.table, { chatId: c })
+        await t.client.pause()
+        const refused = await errorOf(t.client.send(c, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() }))
+        expect((refused as AgentError).reason).toBe('paused')
+        await t.client.resume()
+        const damaged = await errorOf(t.client.send(c, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() }))
+        expect((damaged as AgentError).reason).toBe('session_damaged')
+      })
+
       test('a damaged session refuses sends (conflict, session_damaged) until resetSession; the history stays', async () => {
         const c = chatId()
         await script('sessionDamaged')
@@ -716,6 +818,16 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(current.id).toBe(id)
       expect(current.pinned, 'the stale pin never applied').toBe(false)
       expect(current.rev).toBeGreaterThan(renamed.rev)
+    })
+
+    test('a stale rename never applies: it rejects with conflict and the chat as it is now', async () => {
+      const [id] = await made(1)
+      await t.client.listChats()
+      await t.writeElsewhere({ kind: 'chat', id })
+      const stale = await errorOf(t.client.renameChat(id, 'Mine'))
+      expect(stale).toBeInstanceOf(AgentError)
+      expect((stale as AgentError).code).toBe('conflict')
+      expect(parse(ChatSummarySchema, (stale as AgentError).current, 'current').customTitle, 'it never applied').toBeNull()
     })
 
     test('getChat: the chat, its messages newest first by pos with stable ids, and the live run to attach to', async () => {

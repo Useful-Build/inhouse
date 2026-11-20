@@ -230,3 +230,16 @@ describe('one re-attach per gap', () => {
     expect(feed.contiguous, 'everything that was kept followed seq 1').toBe(2001)
   })
 })
+
+describe('a frame seen twice', () => {
+  const s = STREAMS[0]
+  test('the first copy of a frame waiting ahead is the one delivered', () => {
+    const feed = new RunFeed(s.runId, parts())
+    const out: unknown[] = []
+    const first = s.frames[2]
+    const lookalike = { ...first, event: { type: 'turn.finished', turnId: 't_Aaaaaaaaaaaaaaaaaaaaaa', outcome: 'stopped' } }
+    feed.push(first); feed.push(lookalike)
+    feed.push(s.frames[0]); out.push(...feed.push(s.frames[1]).out)
+    expect(out.map(o => (o as { event: { type: string } }).event.type)).toEqual(['turn.queued', 'turn.started'])
+  })
+})
