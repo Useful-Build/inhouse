@@ -766,10 +766,12 @@ describe('the production wiring', () => {
       // Reports the umask the process ends with, however it ends.
       const preload = join(out, 'umask.cjs')
       writeFileSync(preload, "process.on('exit', () => process.stderr.write('umask=' + process.umask().toString(8) + '\\n'))")
+      // fd 3 is the session's channel, as the root spawns it (src/server/session-host.ts).
       const start = (entry: string) =>
         spawnSync(process.execPath, ['--require', preload, join(out, entry)], {
           env: { PATH: process.env.PATH, EGRESS_URL: 'http://127.0.0.1:9' },
           encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
           timeout: 30_000,
         })
       const root = start('main.mjs')

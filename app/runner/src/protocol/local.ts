@@ -1,6 +1,6 @@
 // The local channel between the root runner and a session process (runner-internal; not the Worker wire protocol).
-// The session process's own stdio carries NDJSON (its stdout to the root, its stdin from the root; src/protocol/ndjson.ts
-// frames them); both ends parse every message through these schemas. A line that is unreadable, oversized or fails to parse ends that session
+// One socket at the session process's fd 3 carries NDJSON both ways (src/session/channel.ts; src/protocol/ndjson.ts
+// frames it); both ends parse every message through these schemas. A line that is unreadable, oversized or fails to parse ends that session
 // with a `failed` event (reason `protocol`); it never crashes the root.
 import { z } from 'zod'
 import { AuditEntry, RunEventBody, RunStartFields, checkRunStart } from '../../../shared/protocol/index.ts'

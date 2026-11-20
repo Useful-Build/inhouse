@@ -3,15 +3,17 @@
 // root keeps running: a line that is unreadable, oversized or fails the schema ends the session (`protocol`), and an
 // end without a terminal event is `session_crashed` (or `stopped` after a stop).
 //
-// The local channel is the session's own stdio, parsed by the root itself as NDJSON (src/protocol/ndjson.ts), not Node's
-// IPC channel: the session's stdout carries its messages to the root, its stdin the root's to the session. Its stderr
-// is for logs (the root keeps a tail).
+// The local channel is one socket at the session's fd 3 (`stdio[3]`), NDJSON both ways, parsed by the root itself
+// (src/protocol/ndjson.ts), not Node's IPC channel. fds 0 to 2 are left to Node in the session (the SDK builds
+// process.stdin on fd 0): stdin is /dev/null (the root has nothing to say there), and stdout and stderr are log only
+// (the root keeps a tail of both and never parses them). A session that closes fd 3 before its terminal event can't be
+// told anything more: its group is killed and the run ends as `session_crashed` (or `stopped` after a stop).
 //
 // Leftover processes: the session leads its own process group (`detached`). On stop or timeout the whole group is
 // killed after the grace period, and once the session has exited the group is killed at once, so nothing it started
 // outlives it inside that group. A process that left the group (setsid) is `SessionUsers.release()`'s to end (seam.ts).
 import { spawn, type ChildProcess } from 'node:child_process'
-import type { Readable, Writable } from 'node:stream'
+import type { Duplex, Readable, Writable } from 'node:stream'
 import { SDK_MESSAGE_MAX_BYTES } from '../../../shared/protocol/index.ts'
 import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '../protocol/ndjson.ts'
 import { capSdkMessage, monotonicMs, parseSessionMessage, type RootMessage, type RunConfig } from '../protocol/local.ts'
@@ -36,7 +38,9 @@ export function spawnSessionProcess(entry: string): SpawnSession {
       cwd: user.workDir,
       env,
       detached: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      // fd 3 is the channel (CHANNEL_FD in src/session/channel.ts). stdin: nothing to send. stdout: a pipe the root
+      // drains into the log tail, so a stray print is kept for diagnosis and never blocks the session.
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
     })
 }
 
@@ -53,6 +57,8 @@ export type SessionHandle = {
 }
 
 const STDERR_TAIL = 4096
+/** How much of the tail of a session's output (stdout and stderr) the root logs when it ends without a terminal event. */
+export const STDERR_LOG_CHARS = 2000
 
 /**
  * The session's deadline for its end phase after a stop, below the grace after which the root kills it: the grace less
@@ -72,8 +78,9 @@ export function hostSession(opts: {
 }): SessionHandle {
   const { child, stream, config, log } = opts
   const runId = stream.runId
-  const fromSession: Readable | null = child.stdout
-  const toSession: Writable | null = child.stdin
+  const channel = (child.stdio[3] ?? null) as Duplex | null
+  const fromSession: Readable | null = channel
+  const toSession: Writable | null = channel
   let sentRun = false
   let stopping = false
   let interruptPending = false
@@ -167,18 +174,23 @@ export function hostSession(opts: {
       for (const line of reader.push(chunk)) onLine(line)
     }),
   )
-  fromSession?.on('end', () =>
+  fromSession?.on('end', () => {
     guarded('read', () => {
       for (const line of reader.end()) onLine(line)
-    }),
-  )
+    })
+    // The session closed the channel (or died) with no terminal event: it can't be reached any more. Its group is
+    // killed; `close` then ends the run once its output is read.
+    if (!stream.ended) killGroup()
+  })
   // Pipe errors (EPIPE once the session is gone) are logged; the run's end comes from `close`.
   fromSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, error: e.message }))
   toSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, error: e.message }))
-  child.stderr?.on('data', (d: Buffer) => {
+  const keepOutput = (d: Buffer) => {
     stderrBytes += d.length
     stderrTail = (stderrTail + d.toString('utf8')).slice(-STDERR_TAIL)
-  })
+  }
+  child.stdout?.on('data', keepOutput)
+  child.stderr?.on('data', keepOutput)
 
   const finish = (how: string) => {
     if (closed) return
@@ -186,8 +198,8 @@ export function hostSession(opts: {
     clearTimeout(killTimer)
     clearTimeout(closeTimer)
     if (!stream.ended) {
-      // Length and first line only: the tail can hold anything the session printed.
-      log({ type: 'session_exit', runId, how, stderrBytes, stderrFirstLine: stderrTail.split('\n', 1)[0]!.slice(0, 200) })
+      // Length and the last STDERR_LOG_CHARS only: enough for a stack trace, bounded whatever the session printed.
+      log({ type: 'session_exit', runId, how, stderrBytes, stderrTail: stderrTail.slice(-STDERR_LOG_CHARS) })
       if (stopping) stream.emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
       else stream.emit({ type: 'failed', reason: 'session_crashed', message: `the session process ended (${how})` })
     }

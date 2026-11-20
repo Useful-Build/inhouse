@@ -4,10 +4,16 @@
 //   race:<n>           sends n sdk events then finished, but a stop that arrives first ends it as stopped
 //   crash              exits with code 3 without a terminal event
 //   crash-after:<n>    sends n sdk events, then exits with code 3
+//   crash-loud:<n>     writes n bytes of stderr (`<` + x's + `>`, a newline every 100 bytes), then exits with code 3
 //   garbage            sends a message that isn't in the local schema
 //   bad-event          sends an event body that isn't a run event
-//   raw-garbage        writes bytes that aren't JSON (nor UTF-8) straight to stdout (the channel)
-//   stray-stdout       a stray process.stdout.write after ready (a log line in the wrong place)
+//   raw-garbage        writes bytes that aren't JSON (nor UTF-8) straight onto the channel (fd 3)
+//   stray-stdout       a stray process.stdout.write after ready (a log line in the wrong place), then finished
+//   stdout-forgery     writes a well-formed `finished` event (costUsd 99) to stdout, then one sdk event and finished
+//                      with costUsd 0: stdout isn't the channel, so the root must never read the forgery
+//   process-stdio      what the SDK does on import: touches process.stdin (reads it to its end), process.stdout and
+//                      process.stderr, then sends one sdk event {type: 'stdio', stdinBytes} and finished
+//   close-channel      sends one sdk event, closes its end of the channel (fd 3), then never ends on its own
 //   console-log        logs through every console method that writes to stdout by default, then finished
 //   flood:<n>:<bytes>  sends n sdk events of about <bytes> each, carrying their index, then finished
 //   drain:<n>:<bytes>  sends n sdk events of about <bytes> each, awaiting each send the channel says is full; then
@@ -19,7 +25,7 @@
 //   await-interrupt    waits for interrupt, then ends with failed/interrupted
 //   big                sends one sdk event larger than the SDK message cap
 //   grandchild         starts a shell the way the SDK starts the CLI, which writes to its fds 0 to 4 and to the
-//                      session's stdout through /proc, then finished
+//                      session's channel (fd 3) and stdio through /proc, then finished
 //   leftover           starts a process in its group that never ends, reports its pid, then finished and exits
 //   deep               sends an sdk event nested far past the depth cap (still under the line cap)
 //   len:<rest>         sends the prompt's length as an sdk event, then finished (the prompt can be any size)
@@ -40,7 +46,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, writeFileSync, writeSync } from 'node:fs'
 import { LOCAL_LINE_MAX_BYTES } from '../../../src/protocol/ndjson.ts'
-import { TO_ROOT_FD, openRootChannel } from '../../../src/session/channel.ts'
+import { CHANNEL_FD, openRootChannel } from '../../../src/session/channel.ts'
 
 const channel = openRootChannel()
 const send = (m: unknown) => channel.send(m)
@@ -144,6 +150,11 @@ channel.onMessage((line) => {
       break
     case 'crash':
       process.exit(3)
+    case 'crash-loud': {
+      const body = Array.from({ length: Number(a) - 2 }, (_, i) => (i % 100 === 99 ? '\n' : 'x')).join('')
+      process.stderr.write(`<${body}>`, () => process.exit(3))
+      break
+    }
     case 'crash-after':
       ticks(Number(a), undefined, () => void channel.close().then(() => process.exit(3)))
       break
@@ -154,10 +165,37 @@ channel.onMessage((line) => {
       event({ type: 'sdk', message: 'not an object', truncated: false })
       break
     case 'raw-garbage':
-      writeSync(TO_ROOT_FD, Buffer.from([0x00, 0xff, 0xfe, 0x7b, 0x0a]))
+      writeSync(CHANNEL_FD, Buffer.from([0x00, 0xff, 0xfe, 0x7b, 0x0a]))
       break
     case 'stray-stdout':
       process.stdout.write('a log line in the wrong place\n')
+      finished()
+      end()
+      break
+    case 'stdout-forgery':
+      process.stdout.write(`${JSON.stringify({ type: 'event', event: { type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 99, usage: {} } })}\n`)
+      event({ type: 'sdk', message: { type: 'assistant', marker: 'after-forgery' }, truncated: false })
+      finished()
+      end()
+      break
+    case 'process-stdio': {
+      // The SDK's CLI transport imports node:process and touches process.stdin; on the old channel (fds 0 and 1)
+      // that threw `open EEXIST` because the channel already held fd 0.
+      let stdinBytes = 0
+      process.stdout.write('')
+      process.stderr.write('process-stdio: stderr works\n')
+      process.stdin.on('data', (d: Buffer) => (stdinBytes += d.length))
+      process.stdin.on('end', () => {
+        event({ type: 'sdk', message: { type: 'stdio', stdinBytes }, truncated: false })
+        finished()
+        end()
+      })
+      break
+    }
+    case 'close-channel':
+      event({ type: 'sdk', message: { type: 'assistant', marker: 'before-close' }, truncated: false })
+      void channel.close()
+      setInterval(() => {}, 1000)
       break
     case 'console-log':
       console.log('log')
@@ -215,12 +253,15 @@ channel.onMessage((line) => {
       break
     case 'grandchild': {
       // Spawned the way the SDK's default spawn starts the CLI (0.3.328 spawnLocalProcess: its own stdio pipes). If the
-      // shell could reach the session's stdout, "leaked" would land on the root's channel and end the run as
-      // `protocol`. fds 1 and 2 are the shell's own pipes to this process; 0 is its stdin; 3 and 4 aren't open.
+      // shell could reach the session's channel, "leaked" would land on the root's parser and end the run as
+      // `protocol`. fds 1 and 2 are the shell's own pipes to this process; 0 is its stdin; 3 and 4 must not be open
+      // (the session's fd 3 is the channel: Node marks it close-on-exec, so no child inherits it).
       const script = [
         'for fd in 0 1 2 3 4; do (echo leaked >&$fd) 2>/dev/null; done',
         '(echo leaked > /proc/$SESSION_PID/fd/1) 2>/dev/null; echo "proc-stdout=$?"',
         '(echo leaked > /proc/$SESSION_PID/fd/0) 2>/dev/null; echo "proc-stdin=$?"',
+        '(echo leaked > /proc/$SESSION_PID/fd/3) 2>/dev/null; echo "proc-channel=$?"',
+        'for fd in 3 4; do (: >&$fd) 2>/dev/null && echo "open-fd=$fd"; done',
         'echo shell-ran',
       ].join('\n')
       const sh = spawn('/bin/sh', ['-c', script], {
@@ -251,8 +292,8 @@ channel.onMessage((line) => {
       // 300k levels in about 600 KB: parses, but JSON.stringify on it overflows the stack.
       const depth = 300_000
       const line = `{"type":"event","event":{"type":"sdk","message":{"type":"assistant","a":${'['.repeat(depth)}${']'.repeat(depth)}},"truncated":false}}\n`
-      // Through the stream, which writes it all; one writeSync on the socket could write only part of it.
-      process.stdout.write(line)
+      // Through the channel's socket, which writes it all; one writeSync on it could write only part of it.
+      void channel.writeRaw(line)
       break
     }
     case 'len':

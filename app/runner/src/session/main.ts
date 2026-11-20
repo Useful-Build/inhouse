@@ -1,6 +1,6 @@
 // The session process entry, spawned by the root runner as the session's own OS user with `sessionEnv()` as its whole
-// environment and the local channel (its own stdin and stdout; src/session/channel.ts) as its only link to the root.
-// It holds no token. Logs go to stderr only: stdout is the channel.
+// environment and the local channel (its fd 3; src/session/channel.ts) as its only link to the root.
+// It holds no token. Logs go to stderr; nothing on stdout or stderr is read as the channel.
 import { productionQueryGuards } from '../server/production.ts'
 import { openRootChannel } from './channel.ts'
 import { runSession, type QueryFn } from './core.ts'

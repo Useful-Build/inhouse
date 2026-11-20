@@ -255,16 +255,19 @@ describe('what a run leaves behind', () => {
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
       const events = await postRun(root, runStart({ prompt: 'grandchild' }))
       expectOneEnd(events)
-      // Had any write reached the session's stdout, "leaked" would have hit the root's parser and ended the run as
-      // protocol.
+      // Had any write reached the session's channel (fd 3), "leaked" would have hit the root's parser and ended the run
+      // as protocol.
       expect(events.at(-1)?.type).toBe('finished')
       const sdk = events.find((e) => e.type === 'sdk')
       expect(sdk).toMatchObject({ message: { type: 'grandchild', code: 0 } })
       const out = sdk?.type === 'sdk' ? String(sdk.message.out) : ''
       expect(out).toContain('shell-ran')
-      // Neither of the session's stdio sockets opens through /proc (ENXIO on Linux; no /proc elsewhere).
+      // Neither the channel nor the session's stdio sockets open through /proc (ENXIO on Linux; no /proc elsewhere).
       expect(out).toMatch(/^proc-stdout=[1-9]/m)
       expect(out).toMatch(/^proc-stdin=[1-9]/m)
+      expect(out).toMatch(/^proc-channel=[1-9]/m)
+      // The channel's fd 3 (and anything above) is not inherited by the CLI or its tools.
+      expect(out).not.toMatch(/^open-fd=/m)
     })
   })
 
