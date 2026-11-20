@@ -602,6 +602,7 @@ export class MockAgent implements AgentClient {
   scripted: ScriptedTurn | null = null
   /** The chat engine (mock-chat.ts): runs, turns and the chat reads. Loads with the first send, so it isn't in Today's first load. */
   private engine: ChatEngine | null = null
+  private sendDelayMs = 0
   readonly k = { chats, ME_ID, SESSION, FINISHED, THINKING_STEP_MS, tools, traceKey, meName: () => this.meName() }
   private linkState: LinkState = 'live'
   private linkListeners = new Set<(l: LinkState) => void>()
@@ -810,7 +811,7 @@ export class MockAgent implements AgentClient {
     Object.values(this.holdTimers).forEach(clearTimeout)
     this.holdTimers = {}
     this.mockRuns.forEach(r => r.turns.forEach(t => t.hard.abort()))
-    this.mockRuns.clear(); this.history.clear(); this.engine?.clear(); this.scripted = null
+    this.mockRuns.clear(); this.history.clear(); this.engine?.clear(); this.scripted = null; this.sendDelayMs = 0
     this.created.clear(); this.createdInfo.clear()
     this.runInfo.clear()
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
@@ -1356,12 +1357,23 @@ export class MockAgent implements AgentClient {
   async listChats(opts: { cursor?: string; limit?: number; deleted?: boolean } = {}): Promise<ChatList> { return (await this.loadEngine()).listChats(opts) }
   async getChat(id: string, cursor?: string): Promise<ChatPage> { return (await this.loadEngine()).getChat(id, cursor) }
   async resetSession(chatId: string): Promise<void> { return (await this.loadEngine()).resetSession(chatId) }
-  async send(chatId: string, input: ChatSendInput): Promise<SendTurnResult> { return (await this.loadEngine()).send(chatId, input) }
+  async send(chatId: string, input: ChatSendInput): Promise<SendTurnResult> {
+    const engine = await this.loadEngine()
+    // Test hook (`delaySends`): the answer takes this long to get back, as over a network; the server has the message only then.
+    if (this.sendDelayMs > 0) await new Promise<void>(resolve => setTimeout(resolve, this.sendDelayMs))
+    return engine.send(chatId, input)
+  }
+  /** Test hook: every send takes `ms` of demo time before the agent has it (default 0, as before). */
+  delaySends(ms: number) { this.sendDelayMs = ms }
   // Before the first send nothing runs: a turn can't be found, there are no active runs and nothing to attach to.
   interrupt(turnId: string): Promise<void> { return this.engine ? this.engine.interrupt(turnId) : this.rejected(NOT_FOUND, 'That answer is not here.', true) }
   stop(turnId: string): Promise<void> { return this.engine ? this.engine.stop(turnId) : this.rejected(NOT_FOUND, 'That answer is not here.', true) }
   activeRuns(): Promise<ActiveRun[]> { return this.engine ? this.engine.activeRuns() : Promise.resolve([]) }
-  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq = 0): () => void { return this.engine ? this.engine.attach(runId, onFrame, fromSeq) : () => undefined }
+  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq = 0, onRefused?: (code: AgentErrorCode) => void): () => void {
+    if (this.engine) return this.engine.attach(runId, onFrame, fromSeq, onRefused)
+    onRefused?.(NOT_FOUND)
+    return () => undefined
+  }
 
   /** The next turn of the run this test hook names starts as it says (a spending cap, a busy budget, a damaged session). */
   scriptNextTurn(kind: ScriptedTurn | null) { this.scripted = kind }

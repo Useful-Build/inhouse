@@ -686,7 +686,7 @@ export class HttpAgent implements AgentClient {
   interrupt = (_turnId: string) => this.refuse()
   stop = (_turnId: string) => this.refuse()
   activeRuns = () => Promise.resolve([] as Awaited<ReturnType<AgentClient['activeRuns']>>)
-  attach = (_runId: string, _onFrame: Parameters<AgentClient['attach']>[1], _fromSeq?: number): (() => void) => () => undefined
+  attach = (_runId: string, _onFrame: Parameters<AgentClient['attach']>[1], _fromSeq?: number, _onRefused?: Parameters<AgentClient['attach']>[3]): (() => void) => () => undefined
   link = (): LinkState => 'live'
   onLink = (_l: (s: LinkState) => void): (() => void) => () => undefined
   getTrace = (_id: string): Promise<Trace | null> => Promise.resolve(null)

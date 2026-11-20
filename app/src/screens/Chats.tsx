@@ -469,7 +469,7 @@ function Thread() {
                 {/* One white card per answer (D2): its text, tables, drafts and routines inside, and while it streams
                     the thinking line at its foot, so no second card shows. */}
                 <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
-                  {b.ms.map(x => <AgentPart key={x.id} part={x.part} trace={x.trace} />)}
+                  {b.ms.map(x => <AgentPart key={x.id} id={x.id} part={x.part} trace={x.trace} />)}
                   {streaming && <Thinking text={thinkingText} />}
                 </div>
                 {/* The actions show once the turn is done, so the live log announces them once, not with every streamed part. */}

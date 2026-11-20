@@ -129,9 +129,10 @@ export interface AgentClient {
   activeRuns(): Promise<ActiveRun[]>
   /**
    * Follows a run: `onFrame` gets every event after `fromSeq` (default 0) in order, each exactly once, whatever the
-   * connection does underneath (dropped frames, a replay after a reconnect, a stale tab). Returns the detach.
+   * connection does underneath (dropped frames, a replay after a reconnect, a stale tab). Returns the detach. A run the agent
+   * refuses (not the person's, or unknown) calls `onRefused` with the code, and no frame comes.
    */
-  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq?: number): () => void
+  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq?: number, onRefused?: (code: AgentErrorCode) => void): () => void
   /** The chat socket's state: `live`, `held` (the server restarts: reconnecting), `reload` (this build can't read the server's frames) or `grantEnded` (a support grant ended, the chat's data was dropped). */
   link(): LinkState
   onLink(listener: (state: LinkState) => void): () => void

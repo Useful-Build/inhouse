@@ -143,6 +143,8 @@ export class ChatEngine {
     if (!input.text.trim()) return this.h.rejected(INVALID, 'There is nothing to send.', true)
     if ((input.attachments?.length ?? 0) > 10) return this.h.rejected(INVALID, 'A message takes at most 10 files.', true, { reason: REASON.tooMany })
     if (!models.some(m => m.id === input.model)) return this.h.rejected(INVALID, `"${input.model}" isn't a model.`, true)
+    // The run whose answer this one replaces is a run id (`r_` and 22 characters): a turn id, an empty string or anything else is refused, as the server's schema does.
+    if (input.replacesRun !== undefined && !/^r_[A-Za-z0-9_-]{22}$/.test(input.replacesRun)) return this.h.rejected(INVALID, 'replacesRun is not a run id.', true)
     return null
   }
 
@@ -194,6 +196,8 @@ export class ChatEngine {
     turn.state = 'ended'
     turn.hard.abort()
     this.emit(run, { type: 'turn.cancelled', turnId: turn.turnId, why })
+    // The question is kept in the chat's history, as the server's D1 keeps it.
+    this.project(run, turn, [], { trace: 'generic' }, turn.input.model)
   }
 
   async drive(run: MockRun) {
@@ -251,6 +255,7 @@ export class ChatEngine {
     if (forced === 'capReached') {
       this.emit(run, { type: 'notice', code: NOTICE.capReached })
       this.finish(run, turn, 'failed', FAIL.capReached)
+      this.project(run, turn, [], { trace: 'generic' }, input.model)
       return false
     }
     if (forced === 'budgetBusyThenStart' || forced === 'budgetBusyThenFail') {
@@ -258,7 +263,7 @@ export class ChatEngine {
       this.emit(run, { type: 'notice', code: NOTICE.budgetBusy })
       await this.pause_(forced === 'budgetBusyThenStart' ? 15_000 : 120_000, turn)
       if (turn.state === 'ended') return false
-      if (forced === 'budgetBusyThenFail') { this.finish(run, turn, 'failed', FAIL.budgetBusy); return false }
+      if (forced === 'budgetBusyThenFail') { this.finish(run, turn, 'failed', FAIL.budgetBusy); this.project(run, turn, [], { trace: 'generic' }, input.model); return false }
     }
     turn.state = 'live'
     this.emit(run, { type: 'turn.started', turnId: turn.turnId, model: input.model })
@@ -327,9 +332,10 @@ export class ChatEngine {
     return Promise.resolve([...this.h.mockRuns.values()].filter(r => r.live).map(r => ({ runId: r.runId, chatId: r.chatId, lastSeq: r.frames.length, live: true })))
   }
 
-  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq = 0): () => void {
+  attach(runId: string, onFrame: (f: RunFrame) => void, fromSeq = 0, onRefused?: (code: AgentErrorCode) => void): () => void {
     const run = this.h.mockRuns.get(runId)
-    if (!run) return () => undefined
+    // A run nobody here knows is refused, as the server's socket answers `refused`.
+    if (!run) { onRefused?.(NOT_FOUND); return () => undefined }
     // The replay and the subscription are one step: nothing sent in between is missed or sent twice.
     for (const f of run.frames) if (f.seq > fromSeq) onFrame(f)
     run.subs.add(onFrame)
