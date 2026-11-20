@@ -15,7 +15,7 @@ export const NOTICE_TEXT = {
   [NOTICE.sessionDamaged]: "This chat's memory couldn't be saved, so it can't go on. Start it fresh to keep asking.",
   [NOTICE.capReached]: 'Your team has reached its spending cap.',
   [NOTICE.budgetBusy]: "You're close to your spending cap, so this answer is waiting for others to finish",
-  [NOTICE.paused]: 'Your Inhouse agent is paused. Questions wait until an Admin resumes it.',
+  [NOTICE.paused]: "Your Inhouse agent is paused, so it can't answer questions until an Admin resumes it.",
   [NOTICE.poolBusy]: 'Your Inhouse agent is busy, so this answer starts in a moment.',
 } as const
 

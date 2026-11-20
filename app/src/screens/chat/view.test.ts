@@ -56,7 +56,7 @@ describe('budget_busy waits, it does not fail', () => {
 describe('notices', () => {
   test('cap_reached and paused say what they are', () => {
     expect(run({ type: 'notice', code: 'cap_reached' }).notice?.text).toBe('Your team has reached its spending cap.')
-    expect(run({ type: 'notice', code: 'paused' }).notice?.text).toBe('Your Inhouse agent is paused. Questions wait until an Admin resumes it.')
+    expect(run({ type: 'notice', code: 'paused' }).notice?.text).toBe("Your Inhouse agent is paused, so it can't answer questions until an Admin resumes it.")
   })
   test('a damaged session stays damaged through the run ending and keeps its notice', () => {
     for (const code of ['session_damaged', 'mirror_error'] as const) {

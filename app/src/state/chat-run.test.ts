@@ -111,7 +111,7 @@ describe('a send the agent refuses', () => {
     await l.mock.pause()
     void l.ui().ask(Q)
     await run(1000)
-    expect(texts(l)).toContain('Your Inhouse agent is paused. Questions wait until an Admin resumes it.')
+    expect(texts(l)).toContain("Your Inhouse agent is paused, so it can't answer questions until an Admin resumes it.")
     const err = l.ui().extras.find(m => m.role === 'agent' && m.part.type === 'error')
     expect(err && err.role === 'agent' && err.part.type === 'error' && err.part.retryQuestion).toBe(Q)
     expect(Object.keys(l.ui().runs), 'no run is left waiting').toEqual([])
