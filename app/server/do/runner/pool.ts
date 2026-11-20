@@ -47,7 +47,9 @@ export const RETRY_PASS_MAX = 3
 /**
  * A runner with an admission in flight longer than this isn't offered new turns until it answers: a healthy runner
  * admits in milliseconds, and without this every turn placed in the 15 s before a hung admission times out (and makes
- * the runner suspect) would pile onto it.
+ * the runner suspect) would pile onto it. An admission to a runner that was sleeping or starting doesn't count: it
+ * waits on a cold start, and turns placed during the start join it rather than waking the next runner (the boot's own
+ * 60 s deadline and the 15 s admit abort still bound it).
  */
 export const SLOW_ADMIT_MS = 3_000
 /** `pool_shortfall`: a turn queued longer than this, or a `pool_full`, within the window. */
@@ -107,9 +109,9 @@ export class RunnerPool implements RunnerPoolPort {
   /**
    * Admissions in flight (turn id → runner and start time): their own answer decides them, never a container exit
    * meanwhile; a second `place` of the same turn answers ambiguous (that admission decides it); a runner with one in
-   * flight past `SLOW_ADMIT_MS` isn't picked.
+   * flight past `SLOW_ADMIT_MS` isn't picked, unless that admission went to a sleeping or starting runner (`waking`: a cold start, not a hang).
    */
-  readonly #placing = new Map<string, { runner: string; atMs: number }>()
+  readonly #placing = new Map<string, { runner: string; atMs: number; waking: boolean }>()
 
   constructor(deps: PoolDeps) {
     if (!Number.isInteger(deps.size) || deps.size < 1) throw new Error(`RUNNER_POOL must be a whole number of at least 1, got ${deps.size}`)
@@ -151,7 +153,7 @@ export class RunnerPool implements RunnerPoolPort {
       this.#d.sql.exec('UPDATE turns SET runner = ? WHERE turn_id = ? AND gen = ?', r.runner, turnId, gen)
       if (r.state === 'sleeping') this.#setState(r.runner, 'starting')
       let a: AdmitResult
-      this.#placing.set(turnId, { runner: r.runner, atMs: this.#d.now() })
+      this.#placing.set(turnId, { runner: r.runner, atMs: this.#d.now(), waking: r.state === 'sleeping' || r.state === 'starting' })
       try {
         a = await this.#d.runner(r.runner).admit(rs)
       } catch {
@@ -215,13 +217,17 @@ export class RunnerPool implements RunnerPoolPort {
     const rows = this.#d.sql
       .exec<Omit<RunnerRow, 'idx'> & { idx: number }>(`SELECT *, ${RUNNER_IDX} AS idx FROM pool_runners WHERE ${RUNNER_IDX} < ? ORDER BY idx`, this.#d.size)
       .toArray() as RunnerRow[]
-    const slow = new Set([...this.#placing.values()].filter(p => now - p.atMs > SLOW_ADMIT_MS).map(p => p.runner))
+    const slow = new Set([...this.#placing.values()].filter(p => !p.waking && now - p.atMs > SLOW_ADMIT_MS).map(p => p.runner))
     const free = (r: RunnerRow) =>
       !tried.has(r.runner) && !slow.has(r.runner) && (live.get(r.runner) ?? 0) < PER_RUNNER && (r.refused_until_ms ?? 0) <= now
     // `starting`: another placement is waking it; an admission there joins that start.
     const up = rows.find(r => (r.state === 'up' || r.state === 'starting' || r.state === 'refused') && free(r))
     if (up) return up
     return rows.find(r => r.state === 'sleeping' && free(r)) ?? null
+  }
+
+  #unfinishedOn(runner: string): number {
+    return this.#d.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM turns WHERE runner = ? AND state IN ${UNFINISHED}`, runner).one().n
   }
 
   #liveCounts(): Map<string, number> {
@@ -442,7 +448,11 @@ export class RunnerPool implements RunnerPoolPort {
     const names = Array.from({ length: Math.min(WARM_RUNNERS, this.#d.size) }, (_, i) => runnerName(i))
     const results = await Promise.all(
       names.map(async (n): Promise<WarmResult> => {
-        const drainGen = draining ? this.#d.sql.exec<{ drain_gen: number | null }>('SELECT drain_gen FROM pool_runners WHERE runner = ?', n).one().drain_gen : null
+        // A replacement is offered only to a runner the pool knows to be idle: no unfinished turn on it and no admission
+        // in flight to it. During a drain the pool starts no admission, so nothing can land between the Runner's
+        // /health read and its destroy. A busy runner gets null: its old container stays, and the check below refuses.
+        const idle = this.#unfinishedOn(n) === 0 && ![...this.#placing.values()].some(p => p.runner === n)
+        const drainGen = draining && idle ? this.#d.sql.exec<{ drain_gen: number | null }>('SELECT drain_gen FROM pool_runners WHERE runner = ?', n).one().drain_gen : null
         try {
           return await this.#d.runner(n).warm(drainGen)
         } catch (e) {

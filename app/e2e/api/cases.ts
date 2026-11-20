@@ -86,9 +86,10 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/pause': { design: d('baseline', ['admin', 'inhouse']), path: '/api/pause', json: {}, passes: STUB },
   'POST /api/resume': { design: d('baseline', ['admin', 'inhouse']), path: '/api/resume', json: {}, passes: STUB },
   'GET /api/models': { design: d('baseline', ALL, ['smoke']), path: '/api/models', passes: 200 },
-  'POST /api/chats/:id/attachments': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/attachments`, bytes: { content: Buffer.from('x'), contentType: 'application/octet-stream' }, passes: STUB },
-  'GET /api/chats/:id/files': { design: owned(ALL), path: `/api/chats/${NO_CHAT}/files`, passes: STUB },
-  'GET /api/files/:fileId': { design: d('brand_data', ALL), path: '/api/files/f_e2e_nobody', passes: STUB },
+  // Routes 39 to 41 are built (W3 #146): the cases' ids name nothing, so a caller the matrix lets through gets 404.
+  'POST /api/chats/:id/attachments': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/attachments`, bytes: { content: Buffer.from('x'), contentType: 'application/octet-stream' }, passes: 404 },
+  'GET /api/chats/:id/files': { design: owned(ALL), path: `/api/chats/${NO_CHAT}/files`, passes: 404 },
+  'GET /api/files/:fileId': { design: d('brand_data', ALL), path: '/api/files/f_e2e_nobody', passes: 404 },
   'GET /api/usage': { design: d('baseline', ALL), path: '/api/usage', passes: STUB },
   'GET /api/memory': { design: d('brand_data', ALL), path: '/api/memory', passes: STUB },
   'PUT /api/memory/personal/:id/forgotten': { design: d('personal', PEOPLE), path: '/api/memory/personal/mem_e2e_nobody/forgotten', json: {}, passes: STUB },

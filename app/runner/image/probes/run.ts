@@ -197,7 +197,7 @@ async function releaseOf(r: Run): Promise<Release> {
 }
 
 /** Starts one run through the root's API; `done` settles once its stream has ended. */
-function startRun(opts: { chatId: string; script: Script; prompt?: string; webFetchDomains?: string[] }): { run: Run; done: Promise<Run> } {
+function startRun(opts: { chatId: string; script: Script; prompt?: string; webFetchDomains?: string[]; outputFormat?: RunStart['outputFormat'] }): { run: Run; done: Promise<Run> } {
   const state = newScript(opts.script)
   const token = `probe_${randomBytes(24).toString('hex')}`
   const run: Run = { chatId: opts.chatId, via: VIA, state, events: [], status: 0, body: '', token, lines: [], cleanup: '' }
@@ -232,6 +232,7 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
         runToken: token,
         webFetchDomains: opts.webFetchDomains ?? [],
         fileCaps: { maxFileBytes: 1_000_000, maxFilesPerTurn: 10, maxRestoreBytes: 1_000_000, allowedTypes: ['text/plain'] },
+        ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
       } satisfies RunStart),
     })
     run.status = res.status
@@ -1261,6 +1262,41 @@ const shmRows = () => readFileSync('/proc/sysvipc/shm', 'utf8').split('\n').slic
  * shown positively: sent with `defer_loading`, or found by a ToolSearch call the script makes; and the request must
  * carry the DeferredToolPlaceholder. Compared with literal lists.
  */
+/**
+ * Structured output with the pinned SDK through the root (R3 follow-up): the guards let the SDK's StructuredOutput tool
+ * through only when the run asks for structured output. Asked: a valid answer arrives as `finished.structuredOutput`,
+ * and answers that never match the schema end the run `failed structured_output`. Not asked: StructuredOutput isn't
+ * among the tools at all, and a call to it doesn't produce structured output.
+ * What `not-asked` proves: end to end, with no outputFormat, the tool is absent and no output comes back. What it
+ * doesn't: that the guards' `tools` entry is what gates it (the SDK may add the tool only with outputFormat anyway);
+ * that rule is pinned by test/guards/options.test.ts, not here.
+ */
+async function probeStructured() {
+  if (VIA !== 'root') return record('structured.via-root', false, `runs go ${VIA}`)
+  const schema = { type: 'object', properties: { late_orders: { type: 'integer' } }, required: ['late_orders'], additionalProperties: false }
+  const outputFormat = { type: 'json_schema' as const, schema }
+  const answer = (input: Record<string, unknown>) => () => ({ tool: 'StructuredOutput', input })
+
+  const ok = startRun({ chatId: 'p-structured-ok', script: { steps: [answer({ late_orders: 3 })] }, outputFormat })
+  await ok.done
+  const okEnd = terminalOf(ok.run) as { type: string; structuredOutput?: unknown } | undefined
+  record('structured.asked-answer', okEnd?.type === 'finished' && JSON.stringify(okEnd.structuredOutput) === '{"late_orders":3}', `end ${JSON.stringify(okEnd)?.slice(0, 300)}, misses ${JSON.stringify(ok.run.state.misses)}`)
+  record('structured.asked-tool-present', initOf(ok.run)?.tools.includes('StructuredOutput') === true, `tools ${JSON.stringify(initOf(ok.run)?.tools)}`)
+
+  const bad = startRun({ chatId: 'p-structured-bad', script: { steps: Array.from({ length: 12 }, () => answer({ late_orders: 'many' })) }, outputFormat })
+  await bad.done
+  const badEnd = terminalOf(bad.run)
+  const badResult = sdkMessages(bad.run.events).find((m) => m.type === 'result') as { subtype?: string } | undefined
+  fact('structured.retries', `the SDK's result subtype ${badResult?.subtype}, model requests ${bad.run.state.requests.length}`)
+  record('structured.retries-fail', badEnd?.type === 'failed' && badEnd.reason === 'structured_output', `end ${JSON.stringify(badEnd)?.slice(0, 300)}`)
+
+  const plain = startRun({ chatId: 'p-structured-plain', script: { steps: [answer({ late_orders: 3 })] } })
+  await plain.done
+  const plainEnd = terminalOf(plain.run) as { type: string; structuredOutput?: unknown } | undefined
+  record('structured.not-asked-tool-absent', initOf(plain.run) !== undefined && !initOf(plain.run)!.tools.includes('StructuredOutput'), `tools ${JSON.stringify(initOf(plain.run)?.tools)}`)
+  record('structured.not-asked-no-output', plainEnd !== undefined && plainEnd.structuredOutput === undefined, `end ${JSON.stringify(plainEnd)?.slice(0, 300)}; the call's result ${result(plain.run, 0)?.text.slice(0, 200)}`)
+}
+
 async function probeInhouseTools() {
   if (VIA !== 'root') return record('inhouse-tools.via-root', false, `runs go ${VIA}: the proxy-URL server needs the root`)
   const prefix = `mcp__${INHOUSE_MCP_SERVER}__`
@@ -1412,6 +1448,7 @@ await step('isolation', probeIsolation)
 await step('process-limit', probeProcessLimit)
 await step('direct', probeDirect)
 await step('inhouse-tools', probeInhouseTools)
+await step('structured', probeStructured)
 await step('sysv', probeSysV)
 await step('closed-folder', probeClosedFolder)
 await step('zombie-leader', probeZombieLeader)
