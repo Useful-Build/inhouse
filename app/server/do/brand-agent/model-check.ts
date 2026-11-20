@@ -3,12 +3,14 @@
 import { BRAND_OWNER } from '../../db/settings.ts'
 import type { Stores } from '../../db/stores.ts'
 import { resolveModel } from '../../model/catalog.ts'
-import type { SettingsView } from '../../model/catalog.ts'
+import type { CatalogModel, SettingsView } from '../../model/catalog.ts'
+import { CATALOG } from '../../model/catalog.ts'
 
-export function modelUsable(stores: Pick<Stores, 'settings'>): (pickerId: string) => Promise<boolean> {
+/** `catalog` is for tests only (an unpriced copy); the BrandAgent uses the shipped one. */
+export function modelUsable(stores: Pick<Stores, 'settings'>, catalog: readonly CatalogModel[] = CATALOG): (pickerId: string) => Promise<boolean> {
   return async pickerId => {
     const settings: Record<string, string | boolean | null> = {}
     for (const s of await stores.settings.list(BRAND_OWNER, 'technical')) settings[s.key] = s.value as string | boolean | null
-    return !('refused' in resolveModel(pickerId, settings as SettingsView))
+    return !('refused' in resolveModel(pickerId, settings as SettingsView, catalog))
   }
 }

@@ -435,6 +435,21 @@ describe('the model is checked again at start (A3, #153 review)', () => {
   }))
 })
 
+describe('the model check that fails to read (#159 round 1, high 2b)', () => {
+  it('a throwing settings read leaves the turn starting, nothing reserved or placed; the watchdog requeues it at the deadline', () => inAgent(async h => {
+    h.modelCheck.throws = true
+    const a = ok(await h.submit('c1', 'key-mchk1'))
+    await settle()
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'starting', placed: 0, requeues: 0 })
+    expect(h.usage.calls.filter(c => c.method === 'reserve')).toEqual([])
+    expect(h.placed()).toEqual([])
+    await h.tick(3 * 60 * SEC)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'starting', placed: 0, requeues: 1 })
+    expect(h.usage.calls.filter(c => c.method === 'reserve')).toEqual([])
+    expect(h.placed()).toEqual([])
+  }))
+})
+
 describe('waits: money, order, bounds (8.2 rules 1 and 3)', () => {
   it('a money wait with a sibling that runs 3 minutes: admitted when it closes, the turn lives', () => inAgent(async h => {
     const t = (await liveTurn(h)).turnId
