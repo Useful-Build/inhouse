@@ -34,12 +34,12 @@ Run them in `app/`.
 | `npm run dev` | Dev server on port 5173 |
 | `npm run typecheck` | `tsc -b` |
 | `npm run lint` | oxlint, then `lint:tokens` (the token, app and no-fixed-wait checks) |
-| `npm run test:unit` | Vitest: `src/**/*.test.ts` (property tests included) and `build-support/` |
+| `npm run test:unit` | Vitest: `src/**/*.test.ts` (property tests included), `build-support/` and the rest in node; `server/**/*.test.ts` in the Workers runtime with a migrated local D1 (`@cloudflare/vitest-plugin`) |
 | `npm run build` | Type check and production build (the demo build) |
 | `npm run build:product` | The product build into `dist-product/`: no mock, sample data, demo controls or demo clock. `node scripts/check-product-build.mjs` checks it (CI runs both) |
 | `npm run build:product-test` | The test build into `dist-product-test/`: the product Worker with the test issuer compiled in and `wrangler.test.jsonc`. Never deployed |
-| `npm run test-build:migrate` | Apply `server/migrations/` to the test build's local D1 (`.wrangler/test-build`) |
-| `npm run test-build:seed` | Seed that D1 with the invented brand (W2's `server/seed/run.ts`; fails until it exists) |
+| `npm run test-build:migrate` | Apply `server/migrations/` to the test build's local D1 (`.wrangler/test-build`, or `-- --persist-to <dir>`) |
+| `npm run test-build:seed` | Seed that D1 with the invented brand (W2's `server/seed/run.ts`; refuses an unmigrated D1 and fails until the seed exists; same `-- --persist-to <dir>`) |
 | `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone` | The test build's specs (`e2e/api/`, `e2e/real/`), after `npm run build:product-test`. No other run includes them |
 | `npm run preview` | Build, then serve the build |
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
@@ -136,7 +136,12 @@ skill before any UI change. Repo specifics:
   registries' `index.ts` files, `app/wrangler.*.jsonc`, `vite.config.ts`, `vitest.config.ts`, `playwright.config.ts`
   and the workflows are the orchestrator's. Configs: `app/wrangler.product.jsonc` is a template with no account id,
   host, `aud`, client id or brand name (the private ops repo fills them at release); `app/wrangler.test.jsonc` is the
-  test build's, made-up values only, and never deploys.
+  test build's, made-up values only, and never deploys. `scripts/check-product-config.mjs` (W1) exits 0 for a
+  deployable config, 1 when it refuses one and 2 on usage or a crash; CI requires exactly 1 on `wrangler.test.jsonc`.
+- **The test issuer stays out of the product build:** import it only as `@test-issuer`, never by its path. Only
+  `vite build --mode product-test` resolves that to `server/auth/test-issuer.ts`; every other build gets
+  `server/auth/issuer-off.ts` (same exports, trusting nothing), and `check-product-build.mjs` fails the deployable
+  build on any `test-issuer` module or the canary.
 - **The test build** is the proof path for the backend: `npm run build:product-test`, then the `api` and `real`
   Playwright projects with `E2E_TEST_BUILD=1` (the `verify` skill has the details). It runs the product Worker under
   `wrangler dev` with a fresh local D1 and a test issuer whose key pair is made per run; only the public half reaches
@@ -149,5 +154,5 @@ skill before any UI change. Repo specifics:
   them all to an empty D1 (the migration job's fresh install); from P3 it also upgrades from the last release tag.
 - **Candidate deploys** go to the separate sandbox Cloudflare account only, with invented data, before a phase's final
   PR. Nothing from a `fleet/` branch deploys to the house or a brand account; releases come from tags on `main`.
-- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`), the test build 5195 (`E2E_TEST_BUILD_PORT`). Give each parallel worktree its own `E2E_PORT`, `E2E_PRODUCT_PORT` and `E2E_TEST_BUILD_PORT`.
+- **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`), the test build 8787 (`E2E_TEST_BUILD_PORT`; the `ship` workflow serves it there too). Give each parallel worktree its own `E2E_PORT`, `E2E_PRODUCT_PORT` and `E2E_TEST_BUILD_PORT`.
 - **Fleet repo:** no. `fleet/<topic>` is only the integration branch name here.

@@ -20,16 +20,29 @@ const server = spawn('npx', [
   '--var', `TEST_ISSUER_JWKS:${jwks}`, '--var', `INHOUSE_ACCESS:${JSON.stringify(testAccessConfig())}`,
 ], { stdio: ['ignore', 'pipe', 'inherit'], detached: true })
 const stop = () => { if (server.pid && server.exitCode === null) process.kill(-server.pid, 'SIGTERM') }
+// Ctrl+C or a CI cancel stops wrangler dev too (it runs in its own process group), then exits as signalled.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => { stop(); process.exit(signal === 'SIGINT' ? 130 : 143) })
+}
 
-// Ready when wrangler says so on stdout; an exit first is a failure. No timer: the CI job's timeout covers a hang.
+// Ready when wrangler says so on stdout. An exit first, or no "Ready on" by the deadline (a condition with an upper
+// bound, not a sleep: it ends the moment wrangler is ready), fails with its output.
+const READY_MS = 120_000
+const deadline = AbortSignal.timeout(READY_MS)
+let seen = ''
 await new Promise<void>((resolve, reject) => {
-  let seen = ''
+  const late = () => reject(new Error(`wrangler dev wasn't ready within ${READY_MS / 1000} s.`))
+  deadline.addEventListener('abort', late, { once: true })
   server.stdout.on('data', (chunk: Buffer) => {
     process.stdout.write(chunk)
     seen += chunk.toString()
-    if (/Ready on /.test(seen)) resolve()
+    if (/Ready on /.test(seen)) { deadline.removeEventListener('abort', late); resolve() }
   })
-  server.once('exit', code => reject(new Error(`wrangler dev exited (${code}) before it was ready.`)))
+  server.once('exit', code => { deadline.removeEventListener('abort', late); reject(new Error(`wrangler dev exited (${code}) before it was ready.`)) })
+}).catch((err: Error) => {
+  stop()
+  console.error(`${err.message}\n--- wrangler dev output ---\n${seen}`)
+  process.exit(1)
 })
 
 const child = spawn(command[0], command.slice(1), { stdio: 'inherit', env: { ...process.env, CONTRACT_REAL_ORIGIN: appOrigin('brand') } })

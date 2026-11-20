@@ -17,8 +17,9 @@
 //   4. The server bundle scan (P2): the deployable Worker output (the product build's Worker folder, the one with a
 //      wrangler.json beside client/, which `wrangler deploy -c <it>/wrangler.json` uploads as built) holds no test-issuer
 //      canary (INHOUSE_TEST_ISSUER_CANARY_7f3c) and no `test-issuer` module in its graph (<build>/server-modules.json).
-//      Its proof is the test build (dist-product-test/), where the canary MUST be found, once the test issuer exists
-//      (server/auth/test-issuer.ts, W1). Until then the proof is reported as not yet possible, never as passed.
+//      Its proof is the test build (dist-product-test/), where the canary MUST be found once the test issuer exists in
+//      any form (server/auth/test-issuer.ts, the canary anywhere under server/, or a test-issuer module in the test
+//      build's graph; W1). Until then the proof is reported as not yet possible, never as passed.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -167,13 +168,18 @@ if (inServer.length) {
 } else console.log(`ok    server bundle: no test issuer in the deployable Worker (${relative(root, productWorker)}).`)
 const testWorker = workerDir(productTestDir, 'product-test')
 const inTest = serverScan(testWorker)
-if (existsSync(join(root, 'server/auth/test-issuer.ts'))) {
+// The proof is required once the test issuer exists in any form: its file, the canary anywhere under server/, or a
+// test-issuer module in the test build's graph. Before that (PR0, until W1) it can't be made yet, and says so.
+const serverDir = join(root, 'server')
+const canaryInSource = walk(serverDir).some(f => /\.(ts|mts|js|mjs)$/.test(f) && readFileSync(f, 'utf8').includes(SERVER_CANARY))
+const issuerExists = existsSync(join(serverDir, 'auth/test-issuer.ts')) || canaryInSource || inTest.some(h => h.startsWith('module '))
+if (issuerExists) {
   if (!inTest.some(h => h.includes(SERVER_CANARY))) {
     bad = true
     console.error(`FAIL  server bundle: no "${SERVER_CANARY}" in the test build (${relative(root, testWorker)}), so the scan proves nothing.`)
   } else console.log(`ok    server bundle: caught the test build (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
 } else {
-  console.log(`note  server bundle: server/auth/test-issuer.ts doesn't exist yet (W1 adds it), so the scan can't be proven on the test build yet.`)
+  console.log(`note  server bundle: no test issuer yet (no server/auth/test-issuer.ts, no canary under server/, no test-issuer module in the test build; W1 adds it), so the scan can't be proven on the test build yet.`)
 }
 
 process.exit(bad ? 1 : 0)

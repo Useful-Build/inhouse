@@ -208,7 +208,13 @@ export default defineConfig(({ mode }) => {
       ...(product ? [keepDemoDeployRedirect(), productHtmlTitle(), writeServerModuleList()] : demoPublicFiles()),
     ],
     resolve: {
-      alias: { '@client': clientEntry(product), '@sample': sampleData, '@': fileURLToPath(new URL('./src', import.meta.url)) },
+      alias: {
+        '@client': clientEntry(product), '@sample': sampleData,
+        // The test issuer (W1) only in the test build; every other build gets the switched-off stand-in, so the module
+        // never enters their graph (server/auth/issuer-off.ts; check-product-build.mjs proves it).
+        '@test-issuer': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/auth/test-issuer.ts' : './server/auth/issuer-off.ts', import.meta.url)),
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+      },
     },
     // The Cloudflare plugin puts each environment under build.outDir: dist-product/client and dist-product/inhouse_product
     // (dist-product-test/ the same).

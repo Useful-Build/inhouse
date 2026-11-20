@@ -2,6 +2,9 @@
 // playwright.config.ts loads in the main process and handed to the worker processes through the environment (they
 // inherit it), so the Worker under `wrangler dev` (given only the public JWKS, as a --var) and every spec agree on it.
 // The private key never leaves the test runner. W1's server/auth/test-issuer-mint.ts replaces `mint` once it lands.
+// The `ship` workflow's test-build mode (SHIP=1) starts the test build itself: it makes the key pair and passes the
+// private JWK as a file (TEST_ISSUER_PRIVATE_JWK_FILE) and the origins as BASE_URL (brand) and TEST_BUILD_INHOUSE_URL
+// (inhouse). Those win when set, so `signIn` works there with no key from playwright.config.ts.
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { SignJWT, importJWK } from 'jose'
@@ -11,10 +14,14 @@ import type { JWK } from 'jose'
 export const TEST_ISSUER = 'https://test-issuer.invalid'
 /** Where the test build's Worker config lands (`npm run build:product-test`), relative to app/. */
 export const TEST_BUILD_WORKER_CONFIG = 'dist-product-test/inhouse_product/wrangler.json'
-/** The test build's port: its origins (`http://brand.localhost:<port>`) carry it. */
-export const testBuildPort = () => Number(process.env.E2E_TEST_BUILD_PORT ?? 5195)
+/** The test build's port: its origins (`http://brand.localhost:<port>`) carry it. 8787 by default, as in wrangler.test.jsonc. */
+export const testBuildPort = () => Number(process.env.E2E_TEST_BUILD_PORT ?? 8787)
 
 const PRIVATE_ENV = 'INHOUSE_TEST_ISSUER_PRIVATE_JWK'
+/** A file holding this run's private JWK (with `kid` and `alg`), made by whoever started the test build (`ship.yml`). */
+const PRIVATE_FILE_ENV = 'TEST_ISSUER_PRIVATE_JWK_FILE'
+/** Each app's origin, when the test build runs somewhere this process didn't configure (`ship.yml`). */
+const ORIGIN_ENV: Record<AppName, string> = { brand: 'BASE_URL', inhouse: 'TEST_BUILD_INHOUSE_URL' }
 const JWKS_ENV = 'INHOUSE_TEST_ISSUER_JWKS'
 
 /** The public JWKS (JSON text) for this run, making the key pair on the first call in the main process. */
@@ -33,11 +40,40 @@ export function testIssuerJwks(): string {
 export type AppName = 'brand' | 'inhouse'
 type AccessConfig = { teamDomain: string; apps: { name: AppName; origin: string; aud: string }[]; serviceTokens: Record<string, string> }
 
-/** INHOUSE_ACCESS for this run: the test build's own, with each origin on the port the run uses. */
+/** The test build's config source, relative to app/. The build copies its vars into TEST_BUILD_WORKER_CONFIG unchanged. */
+export const TEST_BUILD_CONFIG_SOURCE = 'wrangler.test.jsonc'
+
+/** JSONC to JSON: drops comments outside strings. A trailing comma stays, so JSON.parse fails loud on one. */
+export function stripJsonc(text: string): string {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === '"') {
+      let j = i + 1
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1
+      out += text.slice(i, j + 1)
+      i = j
+    } else if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++
+      out += '\n'
+    } else if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2)
+      if (end === -1) throw new Error('Unterminated /* comment in JSONC.')
+      i = end + 1
+    } else out += c
+  }
+  return out
+}
+
+/**
+ * INHOUSE_ACCESS for this run: the test build's own (from wrangler.test.jsonc, so it needs no build), with each origin
+ * on the port the run uses.
+ */
 export function testAccessConfig(): AccessConfig {
-  const config = JSON.parse(readFileSync(new URL(`../../../${TEST_BUILD_WORKER_CONFIG}`, import.meta.url), 'utf8')) as { vars?: Record<string, unknown> }
+  const source = readFileSync(new URL(`../../../${TEST_BUILD_CONFIG_SOURCE}`, import.meta.url), 'utf8')
+  const config = JSON.parse(stripJsonc(source)) as { vars?: Record<string, unknown> }
   const raw = config.vars?.INHOUSE_ACCESS
-  if (typeof raw !== 'string' || !raw) throw new Error(`${TEST_BUILD_WORKER_CONFIG} has no INHOUSE_ACCESS var. Is it the test build's config?`)
+  if (typeof raw !== 'string' || !raw) throw new Error(`${TEST_BUILD_CONFIG_SOURCE} has no INHOUSE_ACCESS var.`)
   const access = JSON.parse(raw) as AccessConfig
   const port = String(testBuildPort())
   for (const app of access.apps) {
@@ -54,17 +90,28 @@ const app = (name: AppName) => {
   return found
 }
 
-/** The app's origin in this run, e.g. `http://brand.localhost:5195`. */
-export const appOrigin = (name: AppName) => app(name).origin
+/** The app's origin in this run, e.g. `http://brand.localhost:8787`: BASE_URL (brand) or TEST_BUILD_INHOUSE_URL (inhouse) when set. */
+export const appOrigin = (name: AppName) => {
+  const given = process.env[ORIGIN_ENV[name]]
+  return given ? new URL(given).origin : app(name).origin
+}
+
+/** This run's private key: TEST_ISSUER_PRIVATE_JWK_FILE when set, else the one playwright.config.ts made. */
+function privateJwk(): JWK {
+  const file = process.env[PRIVATE_FILE_ENV]
+  const text = file ? readFileSync(file, 'utf8') : process.env[PRIVATE_ENV]
+  if (!text) throw new Error(`No test issuer key in this process: set ${PRIVATE_FILE_ENV}, or run with E2E_TEST_BUILD=1 (playwright.config.ts makes one).`)
+  const jwk = JSON.parse(text) as JWK
+  if (!jwk.kid || jwk.alg !== 'RS256') throw new Error(`The test issuer's private JWK${file ? ` in ${file}` : ''} needs a kid and alg RS256.`)
+  return jwk
+}
 
 /**
  * The header Access would set for this person on this app: `Cf-Access-Jwt-Assertion` with a JWT from the test issuer.
  * `memberKey` is the seeded person's subject (W2's seed names them; its email is `<memberKey>@example.test`).
  */
 export async function signIn(memberKey: string, appName: AppName): Promise<Record<string, string>> {
-  const priv = process.env[PRIVATE_ENV]
-  if (!priv) throw new Error('No test issuer key in this process: playwright.config.ts makes it when E2E_TEST_BUILD=1.')
-  const jwk = JSON.parse(priv) as JWK
+  const jwk = privateJwk()
   const key = await importJWK(jwk, 'RS256')
   const jwt = await new SignJWT({ email: `${memberKey}@example.test`, type: 'app' })
     .setProtectedHeader({ alg: 'RS256', kid: jwk.kid })

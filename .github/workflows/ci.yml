@@ -147,6 +147,8 @@ jobs:
         run: rm -rf .wrangler/test-build && npm run test-build:migrate
       # The deployable-config check must refuse the test build's config (it sets the test flag and test origins).
       # W1 adds scripts/check-product-config.mjs and its fixture tests (which run with test:unit, in e2e shard 1).
+      # Its exit codes (AGENTS.md): 0 deployable, 1 refused, 2 usage or a crash. Only 1 counts as refusing here: a crash
+      # (2) or any other code fails this step too.
       - name: The config check refuses wrangler.test.jsonc
         if: ${{ !cancelled() }}
         run: |
@@ -154,11 +156,13 @@ jobs:
             echo "::notice::scripts/check-product-config.mjs doesn't exist yet (W1 adds it). Nothing to assert."
             exit 0
           fi
-          if node scripts/check-product-config.mjs wrangler.test.jsonc; then
-            echo "::error::check-product-config.mjs passed wrangler.test.jsonc, a config that must never deploy."
+          rc=0
+          node scripts/check-product-config.mjs wrangler.test.jsonc || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::check-product-config.mjs exited $rc on wrangler.test.jsonc; it must refuse it with exit code 1 (0 = passed a config that must never deploy, 2 = usage or a crash)."
             exit 1
           fi
-          echo "check-product-config.mjs refused wrangler.test.jsonc, as it must."
+          echo "check-product-config.mjs refused wrangler.test.jsonc (exit 1), as it must."
       # The api and real projects. Their web server migrates and seeds a fresh local D1 first (prepare.mjs).
       - name: Playwright, api and real
         if: ${{ !cancelled() }}
