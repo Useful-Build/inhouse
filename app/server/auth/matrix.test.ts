@@ -14,6 +14,7 @@ import type { AccessObject, AccessRow, CanRows } from './matrix.ts'
 import { CanKeySchema } from '../../shared/contract/me.ts'
 import { AuditArgsSchema } from '../../shared/contract/audit.ts'
 import { DESIGN_CAN_ROWS, DESIGN_ROWS, SMOKE_MEMBER, principals } from '../testing/auth-fixtures.ts'
+import { INHOUSE_BRAND_WRITES } from '../testing/inhouse-brand-writes.ts'
 
 const NOW = Date.parse('2026-11-20T10:00:00.000Z')
 const row = fc.constantFrom(...DESIGN_ROWS)
@@ -41,13 +42,21 @@ const object: fc.Arbitrary<AccessObject | undefined> = fc.option(fc.record({
   value: fc.option(fc.oneof(fc.constantFrom('off', 'on', 'OFF', false, 0), fc.anything()), { nil: undefined }),
 }, { requiredKeys: [] }), { nil: undefined })
 const ok = (d: ReturnType<typeof checkAccess>) => 'ok' in d && !d.objectCheck
+/**
+ * Item 19 (2026-11-20): a brand_data write row that lists inhouse (row 45 once the orchestrator lists inhouse on it).
+ * Written here as a literal, so the properties below run on a write row whatever the committed rows hold.
+ */
+const BRAND_WRITE_ROW: AccessRow = { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', class: 'brand_data', allow: ['admin', 'inhouse'] }
+const rowOrWrite = fc.constantFrom(...DESIGN_ROWS, BRAND_WRITE_ROW)
 
 describe('checkAccess properties', () => {
-  test.prop([row, grant, object, fc.integer({ min: NOW - 2, max: NOW + 2 })])(
-    'Inhouse never reads brand_data without a live grant, and always carries the audit duty when it does', (r, g, o, now) => {
+  // Changed for item 19: "only on GET" became "only on a row that lists inhouse" (reads and writes); the grant and the
+  // audit duty are unchanged, and the arbitrary now includes a literal brand_data write row that lists inhouse.
+  test.prop([rowOrWrite, grant, object, fc.integer({ min: NOW - 2, max: NOW + 2 })])(
+    'Inhouse never reads or writes brand_data without a live grant, and always carries the audit duty when it does', (r, g, o, now) => {
       const d = checkAccess(principals.inhouse(g), r, o, now)
       if (r.class !== 'brand_data') return
-      if (!g || g.endsAtMs <= now || r.method !== 'GET') expect('refused' in d).toBe(true)
+      if (!g || g.endsAtMs <= now || !r.allow.includes('inhouse')) expect('refused' in d).toBe(true)
       else expect(d).toEqual({ ok: true, audit: 'support.access' })
     })
 
@@ -89,10 +98,13 @@ describe('checkAccess properties', () => {
   // Changed in P3 (p3-design section 3): "smoke only reads" became "smoke only on rows that list it, never open or
   // report"; release reaches only open rows that list it. Changed for decision 19: Inhouse may write a baseline row
   // that lists it.
-  test.prop([principal, row, object])('Inhouse never writes brand_data or personal, and a baseline row only where it lists inhouse; monitor only reads open rows; smoke and release only where listed', (p, r, o) => {
+  // Changed for item 19: Inhouse may also write a brand_data row that lists it, and only under a live grant with the
+  // audit duty (the arbitrary includes a literal such row).
+  test.prop([principal, rowOrWrite, object])('Inhouse never writes personal, brand_data only where it lists inhouse and under a grant, and a baseline row only where it lists inhouse; monitor only reads open rows; smoke and release only where listed', (p, r, o) => {
     const d = checkAccess(p, r, o, NOW)
     if (!('ok' in d)) return
-    if (p.kind === 'inhouse') expect(r.method === 'GET' || r.class === 'technical' || r.class === 'report' || (r.class === 'baseline' && r.allow.includes('inhouse'))).toBe(true)
+    if (p.kind === 'inhouse') expect(r.method === 'GET' || r.class === 'technical' || r.class === 'report' || (r.class === 'baseline' && r.allow.includes('inhouse')) || (r.class === 'brand_data' && r.allow.includes('inhouse') && d.audit === 'support.access')).toBe(true)
+    if (p.kind === 'inhouse' && r.class === 'personal') expect.unreachable('Inhouse reached a personal row')
     if (p.kind === 'service' && p.name === 'monitor') expect(r.class === 'open' && r.method === 'GET').toBe(true)
     if (p.kind === 'service' && p.name === 'release') expect(r.class).toBe('open')
     if (p.kind === 'service' && p.name === 'smoke') expect(r.class !== 'open' && r.class !== 'report').toBe(true)
@@ -123,6 +135,21 @@ describe('checkAccess cases', () => {
   it('a grant ending exactly at nowMs is not live', () => {
     expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW }), r('GET', '/api/audit'), undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
     expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), r('GET', '/api/audit'), undefined, NOW)).toEqual({ ok: true, audit: 'support.access' })
+  })
+  it('item 19: a brand_data write row that lists inhouse takes Inhouse only under a live grant, with the audit duty', () => {
+    const forget = BRAND_WRITE_ROW
+    expect(checkAccess(principals.inhouse(), forget, undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
+    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW }), forget, undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
+    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), forget, undefined, NOW)).toEqual({ ok: true, audit: 'support.access' })
+    expect(checkAccess(principals.admin(), forget, undefined, NOW)).toEqual({ ok: true })
+    expect(checkAccess(principals.member(), forget, undefined, NOW)).toEqual({ refused: 'forbidden' })
+    expect(checkAccess(principals.smoke(), forget, undefined, NOW)).toEqual({ refused: 'forbidden' })
+    // The same write row without inhouse in `allow` (row 45 as committed today): refused even under a live grant.
+    const adminOnly: AccessRow = { ...forget, allow: ['admin'] }
+    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), adminOnly, undefined, NOW)).toEqual({ refused: 'forbidden' })
+    // A personal write row stays the owner's, even if a row ever listed inhouse.
+    const personalListing: AccessRow = { method: 'PUT', pattern: '/api/memory/personal/:id/forgotten', class: 'personal', allow: ['member', 'admin', 'inhouse'] }
+    expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), personalListing, { ownerId: 'm_ih' }, NOW)).toEqual({ refused: 'forbidden' })
   })
   it('a personal row asks for the object, then only the owner passes', () => {
     const row7 = r('PUT', '/api/settings/personal/:key')
@@ -230,7 +257,8 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/usage': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'GET /api/memory': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'PUT /api/memory/personal/:id/forgotten': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
-  'PUT /api/memory/brand/:id/forgotten': ['no', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  // Item 19 (2026-11-20): the Inhouse team forgets a team fact only under a live grant, audited.
+  'PUT /api/memory/brand/:id/forgotten': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'GET /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'POST /api/ops/warmup': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
@@ -260,9 +288,11 @@ describe('every row against every principal (the hand-written oracle)', () => {
   }
 })
 
-/** Rows outside technical, report and baseline that list Inhouse on a non-GET method (brand_data and personal). */
+// INHOUSE_BRAND_WRITES (server/testing/inhouse-brand-writes.ts): the brand_data writes the Inhouse team may make under a
+// live grant (item 19). Changed for item 19: before it, no brand_data write row could list inhouse.
+/** Rows outside technical, report and baseline that list Inhouse on a non-GET method: personal, or brand_data off the list. */
 const inhouseWriteProblems = (rows: readonly AccessRow[]) =>
-  rows.filter(x => x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal') && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
+  rows.filter(x => x.method !== 'GET' && (x.class === 'personal' || (x.class === 'brand_data' && !INHOUSE_BRAND_WRITES.includes(`${x.method} ${x.pattern}`))) && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
 
 /**
  * The Inhouse team never grants itself access (decision 19), never changes a role (19b: every change makes or unmakes
@@ -336,6 +366,11 @@ describe('the invariant checks catch a bad row', () => {
     const bad = DESIGN_ROWS.map(r => (r === invites ? { ...r, class: 'brand_data' as const } : r === photo ? { ...r, allow: [...r.allow, 'inhouse' as const] } : r))
     expect(inhouseWriteProblems(bad)).toEqual(['POST /api/members/invites', 'PUT /api/photo'])
     expect(inhouseWriteProblems(DESIGN_ROWS)).toEqual([])
+    // Item 19: row 45 listing inhouse is on the closed list; the personal forget listing inhouse never is.
+    const brandForget = rowFor(DESIGN_ROWS, 'PUT', '/api/memory/brand/:id/forgotten')!
+    const personalForget = rowFor(DESIGN_ROWS, 'PUT', '/api/memory/personal/:id/forgotten')!
+    const listed = DESIGN_ROWS.map(r => (r === brandForget || r === personalForget ? { ...r, allow: [...r.allow, 'inhouse' as const] } : r))
+    expect(inhouseWriteProblems(listed)).toEqual(['PUT /api/memory/personal/:id/forgotten'])
   })
   it('a grant row listing inhouse, or an audit row that is not brand_data', () => {
     const create = rowFor(DESIGN_ROWS, 'POST', '/api/grants')!
@@ -360,10 +395,14 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
     it('the open rows are exactly health, drain and warm-up (a closed list)', () => {
       expect(openProblems(rows)).toEqual([])
     })
-    it('no row lets Inhouse write brand_data or personal, and no personal row allows Inhouse', () => {
+    // Changed for item 19: the brand_data writes on INHOUSE_BRAND_WRITES (row 45) take Inhouse under a live grant, with
+    // the audit duty; every other brand_data or personal write still refuses it.
+    it('no row lets Inhouse write brand_data (off the closed list) or personal, and no personal row allows Inhouse', () => {
       const ih = principals.inhouse({ id: 'g', endsAtMs: Number.MAX_SAFE_INTEGER })
       for (const x of rows) {
-        if (x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal')) expect(ok(checkAccess(ih, x, { ownerId: 'm_ih' }, NOW))).toBe(false)
+        const listed = x.class === 'brand_data' && INHOUSE_BRAND_WRITES.includes(`${x.method} ${x.pattern}`)
+        if (x.method !== 'GET' && listed) expect(checkAccess(ih, x, undefined, NOW)).toEqual({ ok: true, audit: 'support.access' })
+        else if (x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal')) expect(ok(checkAccess(ih, x, { ownerId: 'm_ih' }, NOW))).toBe(false)
         if (x.class === 'personal') expect(x.allow).not.toContain('inhouse')
       }
     })

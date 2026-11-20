@@ -19,6 +19,8 @@ export const AuditActionSchema = z.enum([
   'grant.expired', 'support.access',
   // P3 (p3-design sections 3, 4.10 and 4.11): an Admin's or the Inhouse team's pause and resume, and an Inhouse socket attach.
   'agent.paused', 'agent.resumed', 'support.attach',
+  // P3 (p3-design section 10, item 19): an Admin or the Inhouse team (under a live grant) forgets a team fact, or undoes that.
+  'memory.forgotten', 'memory.restored',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -32,6 +34,12 @@ const RoutePatternSchema = z.enum([
   '/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files',
   '/api/files/:fileId', '/api/memory',
 ])
+/**
+ * The `brand_data` write routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
+ * a team fact. `support.access` pairs `PUT` with these only, and `GET` with `RoutePatternSchema` only.
+ */
+const WritePatternSchema = z.enum(['/api/memory/brand/:id/forgotten'])
+const MemoryIdArgSchema = z.string().regex(/^mem_[A-Za-z0-9_-]{22}$/)
 const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
@@ -59,11 +67,19 @@ const otherLines = [
   line('grant.created', { grantId: GrantIdSchema, hours: GrantHoursSchema }),
   line('grant.ended', { grantId: GrantIdSchema }),
   line('grant.expired', { grantId: GrantIdSchema }),
-  line('support.access', { grantId: GrantIdSchema, method: z.literal('GET'), route: RoutePatternSchema }),
+  line('support.access', { grantId: GrantIdSchema, method: z.enum(['GET', 'PUT']), route: z.union([RoutePatternSchema, WritePatternSchema]) })
+    .superRefine((a, ctx) => {
+      // Runs even when a field above failed (zod 4), so it checks each value's type before using it.
+      const pattern = a.method === 'GET' ? RoutePatternSchema : a.method === 'PUT' ? WritePatternSchema : null
+      if (pattern && !pattern.safeParse(a.route).success) ctx.addIssue({ code: 'custom', path: ['route'], message: 'Not a route for this method' })
+    }),
   line('agent.paused', {}),
   line('agent.resumed', {}),
   /** An Inhouse socket attach to a run, written before any of its frames are sent (p3-design 4.10). */
   line('support.attach', { grantId: GrantIdSchema, runId: RunIdSchema }),
+  /** A team fact forgotten, or that undone (it then waits for an admin's OK again). Ids only, never the fact's text. */
+  line('memory.forgotten', { memoryId: MemoryIdArgSchema }),
+  line('memory.restored', { memoryId: MemoryIdArgSchema }),
 ] as const
 
 /**
