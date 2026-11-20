@@ -1,9 +1,11 @@
 // Push delivery (protocol v2, P3 R3): the root posts one run's events to the Worker's egress (`POST /events/`, the
 // run's token), so nothing holds a long request open. The rules (design section 1):
-// - a batch goes at 20 events, on a terminal event or `released`, and at least every 30 s; with nothing to send for
-//   30 s the run gets a `heartbeat` (before its terminal event), so the Worker sees it alive through a silent tool call;
+// - a batch goes when 20 events are queued, on a terminal event or `released`, or 250 ms after the first unsent event
+//   (the linger), whichever comes first; with nothing sent for 30 s the run gets a `heartbeat` (before its terminal
+//   event), so the Worker sees it alive through a silent tool call (orchestrator's decision, 2026-11-20);
 // - one batch in flight per run: the next goes only after this one's ack, and a failed one is sent again unchanged
-//   (backoff, without end while the run lives), so a resend can never overtake and look like a seq gap;
+//   (backoff, without end while the run lives), so a resend can never overtake and look like a seq gap; events that
+//   queued while a batch was in flight go in the next batch right after its ack;
 // - the buffer (sent and unsent, unacked) is bounded: past `PUSH_BUFFER_MAX_BYTES` the root stops reading the session
 //   (`onFull(true)`) until acks bring it back under; nothing is dropped and the run doesn't fail;
 // - an ack with `stop: true` (the Worker fenced the run) stops the run, and the pusher goes on pushing everything after
@@ -15,7 +17,10 @@ import { PUSH_BATCH_MAX_EVENTS, PUSH_BUFFER_MAX_BYTES, PushAck, TERMINAL_EVENTS,
 import { RUN_TOKEN_HEADER } from '../proxy/server.ts'
 
 export const FLUSH_EVENTS = 20
-export const FLUSH_MS = 30_000
+/** How long the first unsent event waits for others before its batch goes. */
+export const LINGER_MS = 250
+/** Nothing sent for this long: a `heartbeat`. */
+export const HEARTBEAT_MS = 30_000
 /** One push's own deadline; past it the batch counts as failed and is sent again. */
 export const PUSH_TIMEOUT_MS = 30_000
 /** After the run's release, how long delivery may keep failing before the pusher gives up (the token is gone by then). */
@@ -72,9 +77,9 @@ export function createPusher(opts: {
   onFull: (full: boolean) => void
   maxBytes?: number
   giveUpMs?: number
-  /** The longest a run's events wait unsent (`FLUSH_MS`; tests shorten it). */
-  flushMs?: number
-  /** How long the run may go with nothing sent before a `heartbeat` (`FLUSH_MS`; tests set it apart). */
+  /** The linger (`LINGER_MS`; tests may change it). */
+  lingerMs?: number
+  /** How long the run may go with nothing sent before a `heartbeat` (`HEARTBEAT_MS`). */
   heartbeatMs?: number
 }): Pusher {
   const timers = opts.timers ?? realTimers
@@ -84,7 +89,8 @@ export function createPusher(opts: {
   let inFlight: { events: RunEvent[]; bytes: number; body: string } | null = null
   let bytes = 0
   let full = false
-  let flushDue = false
+  /** The linger ran out (or an ack came) while events waited: they go at the next chance. */
+  let due = false
   let terminalSeen = false
   let releasedSeen = false
   let releasedAt: number | null = null
@@ -93,8 +99,8 @@ export function createPusher(opts: {
   let last: number | null = null
   let acked: number | null = null
   let attempt = 0
-  let lastSentAt = timers.now()
-  let tick: unknown = null
+  let linger: unknown = null
+  let quiet: unknown = null
   let retry: unknown = null
   let resolveDone!: () => void
   const done = new Promise<void>((r) => (resolveDone = r))
@@ -102,7 +108,8 @@ export function createPusher(opts: {
   const finish = (why: string) => {
     if (finished) return
     finished = true
-    timers.clearTimeout(tick)
+    timers.clearTimeout(linger)
+    timers.clearTimeout(quiet)
     timers.clearTimeout(retry)
     pending.length = 0
     inFlight = null
@@ -115,24 +122,35 @@ export function createPusher(opts: {
     resolveDone()
   }
 
-  const armTick = () => {
-    timers.clearTimeout(tick)
-    tick = timers.setTimeout(onTick, opts.flushMs ?? FLUSH_MS)
+  /** The heartbeat clock: restarted at every send; when it runs out with nothing to send, a `heartbeat`. */
+  const armQuiet = () => {
+    timers.clearTimeout(quiet)
+    quiet = timers.setTimeout(onQuiet, opts.heartbeatMs ?? HEARTBEAT_MS)
   }
-  const onTick = () => {
+  const onQuiet = () => {
     if (finished) return
-    flushDue = true
-    const quiet = timers.now() - lastSentAt >= (opts.heartbeatMs ?? FLUSH_MS)
-    if (quiet && inFlight === null && pending.length === 0 && !terminalSeen) opts.heartbeat()
-    trySend()
-    armTick()
+    if (inFlight === null && pending.length === 0 && !terminalSeen) {
+      opts.heartbeat()
+      due = true
+      trySend()
+    }
+    armQuiet()
+  }
+  /** The linger starts with the first event that waits unsent; it doesn't restart for later ones. */
+  const armLinger = () => {
+    if (linger !== null) return
+    linger = timers.setTimeout(() => {
+      linger = null
+      due = true
+      trySend()
+    }, opts.lingerMs ?? LINGER_MS)
   }
 
   const shouldSend = () =>
     !finished &&
     inFlight === null &&
     pending.length > 0 &&
-    (flushDue || pending.length >= FLUSH_EVENTS || pending.some((p) => TERMINAL_EVENTS.has(p.event.type) || p.event.type === 'released'))
+    (due || pending.length >= FLUSH_EVENTS || pending.some((p) => TERMINAL_EVENTS.has(p.event.type) || p.event.type === 'released'))
 
   function trySend() {
     if (!shouldSend()) return
@@ -140,9 +158,10 @@ export function createPusher(opts: {
     const events = take.map((p) => p.event)
     const batch: PushBatch = { turnId: opts.runId, events }
     inFlight = { events, bytes: take.reduce((n, p) => n + p.bytes, 0), body: JSON.stringify(batch) }
-    flushDue = false
-    lastSentAt = timers.now()
-    armTick()
+    due = false
+    timers.clearTimeout(linger)
+    linger = null
+    armQuiet()
     void send()
   }
 
@@ -199,6 +218,8 @@ export function createPusher(opts: {
       opts.onStop()
     }
     if (batch.events.some((e) => e.type === 'released')) return finish('released')
+    // What queued while this batch was in flight goes now, without another linger.
+    if (pending.length > 0) due = true
     trySend()
   }
 
@@ -218,8 +239,9 @@ export function createPusher(opts: {
         full = true
         opts.onFull(true)
       }
-      if (tick === null) armTick()
+      if (quiet === null) armQuiet()
       trySend()
+      if (pending.length > 0 && inFlight === null) armLinger()
     },
     bufferedBytes: () => bytes,
     lastSeq: () => last,

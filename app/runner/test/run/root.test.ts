@@ -518,6 +518,8 @@ describe('streams', () => {
       const run = openRun(slow, start)
       await run.admitted
       await waitFor(() => spawned.length === 1 && channelOf(spawned[0]!).isPaused(), 'the root paused the session')
+      // The full buffer stops reading before 20 events: the first batch goes when the linger runs out.
+      await waitFor(() => slow.egress.pushes.some((p) => p.runId === start.runId), 'the first batch sent')
       const out = channelOf(spawned[0]!)
       // Then it stays stalled: paused, and holding no more than the buffer's cap and one read's worth.
       let quiet = 0

@@ -11,7 +11,7 @@
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { PushBatch, type RunEvent } from '../../../shared/protocol/index.ts'
-import { FLUSH_MS, createPusher, type PushFetch, type Timers } from '../../src/server/pusher.ts'
+import { HEARTBEAT_MS, LINGER_MS, createPusher, type PushFetch, type Timers } from '../../src/server/pusher.ts'
 
 /** A fake clock: timers fire only when the test advances it. */
 function fakeClock(): Timers & { advance(ms: number): Promise<void>; pending(): number } {
@@ -155,7 +155,51 @@ describe('the pusher', () => {
     expect(egress.held.map((e) => e.seq)).toEqual([...Array(26).keys()])
   })
 
-  it('a silent run gets a heartbeat every 30 s on the clock, and none after its terminal event', async () => {
+  it('the linger: an event at t=0 is pushed by 250 ms, not before; later events in the window ride along', async () => {
+    const clock = fakeClock()
+    const egress = fakeEgress(() => 'ok')
+    const { p } = pusherOn(clock, egress)
+    p.push(LITERAL[0]!)
+    await clock.advance(100)
+    p.push(LITERAL[1]!)
+    await clock.advance(LINGER_MS - 101)
+    expect(egress.bodies).toHaveLength(0)
+    await clock.advance(1)
+    expect(egress.held.map((e) => e.seq)).toEqual([0, 1])
+    expect(egress.bodies).toHaveLength(1)
+  })
+
+  it('events that queue while a batch is in flight go in the next batch right after its ack, with no linger', async () => {
+    const clock = fakeClock()
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const base = fakeEgress(() => 'ok')
+    let first = true
+    const egress = {
+      fetch: (async (url, init) => {
+        if (first) {
+          first = false
+          await gate
+        }
+        return base.fetch(url, init)
+      }) as PushFetch,
+    }
+    const { p } = pusherOn(clock, egress)
+    p.push(LITERAL[0]!)
+    await clock.advance(LINGER_MS)
+    p.push(LITERAL[1]!)
+    p.push(LITERAL[2]!)
+    await clock.advance(10 * LINGER_MS)
+    expect(base.bodies).toHaveLength(0)
+    release()
+    // Each fake push takes a few turns of the loop; the clock doesn't move.
+    for (let i = 0; i < 4; i++) await settle()
+    // The ack came with no clock moving: the queued two went at once.
+    expect(base.held.map((e) => e.seq)).toEqual([0, 1, 2])
+    expect(base.bodies.map((b) => (JSON.parse(b) as { events: RunEvent[] }).events.length)).toEqual([1, 2])
+  })
+
+  it('a silent run gets one heartbeat per 30 s with nothing sent, and none after its terminal event', async () => {
     const clock = fakeClock()
     const egress = fakeEgress(() => 'ok')
     let seq = 1
@@ -163,17 +207,24 @@ describe('the pusher', () => {
     const { p } = pusherOn(clock, egress, { heartbeat: () => holder.p!.push(ev(seq++, { type: 'heartbeat' })) })
     holder.p = p
     p.push(LITERAL[0]!)
-    await clock.advance(FLUSH_MS)
-    // The first tick sends what waited (`started`); with nothing else for 30 s more, a heartbeat each time.
+    await clock.advance(LINGER_MS)
     expect(egress.held.map((e) => e.type)).toEqual(['started'])
-    await clock.advance(FLUSH_MS)
-    await clock.advance(FLUSH_MS)
-    await clock.advance(FLUSH_MS - 1)
+    // 30 s after that send, one heartbeat; none before.
+    await clock.advance(HEARTBEAT_MS - 1)
+    expect(egress.held.map((e) => e.type)).toEqual(['started'])
+    await clock.advance(1)
+    expect(egress.held.map((e) => e.type)).toEqual(['started', 'heartbeat'])
+    await clock.advance(HEARTBEAT_MS)
     expect(egress.held.map((e) => e.type)).toEqual(['started', 'heartbeat', 'heartbeat'])
+    // Traffic resets the clock: an event 20 s in means no heartbeat at 30 s.
+    await clock.advance(20_000)
+    p.push(ev(seq++, { type: 'sdk', message: { type: 'assistant' }, truncated: false }))
+    await clock.advance(HEARTBEAT_MS - 20_000)
+    expect(egress.held.filter((e) => e.type === 'heartbeat')).toHaveLength(2)
     p.push(ev(seq++, { type: 'failed', reason: 'stopped', message: 'stopped' }))
     await settle()
-    await clock.advance(5 * FLUSH_MS)
-    expect(egress.held.map((e) => e.type)).toEqual(['started', 'heartbeat', 'heartbeat', 'failed'])
+    await clock.advance(5 * HEARTBEAT_MS)
+    expect(egress.held.map((e) => e.type)).toEqual(['started', 'heartbeat', 'heartbeat', 'sdk', 'failed'])
   })
 
   it('a slow egress: the buffer goes over its cap, says full once, and says so again only after acks bring it under', async () => {
@@ -195,8 +246,8 @@ describe('the pusher', () => {
     expect(calls.full).toEqual([true])
     expect(p.bufferedBytes()).toBeGreaterThan(4096)
     release()
-    await clock.advance(FLUSH_MS)
-    await clock.advance(FLUSH_MS)
+    await clock.advance(HEARTBEAT_MS)
+    await clock.advance(HEARTBEAT_MS)
     expect(base.held.map((e) => e.seq)).toEqual([...Array(30).keys()])
     expect(calls.full).toEqual([true, false])
     expect(p.bufferedBytes()).toBe(0)
@@ -212,7 +263,7 @@ describe('the pusher', () => {
     await settle()
     await p.done
     for (const e of LITERAL.slice(26)) p.push(e)
-    await clock.advance(10 * FLUSH_MS)
+    await clock.advance(10 * HEARTBEAT_MS)
     expect(calls.gone).toBe(1)
     expect(egress.bodies).toHaveLength(2)
     expect(egress.held.map((e) => e.seq)).toEqual([...Array(20).keys()])

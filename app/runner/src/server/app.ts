@@ -66,8 +66,8 @@ export type RootDeps = {
   /** The root's own calls to the egress (never through the session proxy). */
   fetch: PushFetch
   timers?: Timers
-  /** The longest a run's events wait unsent, and the heartbeat interval (30 s; tests shorten it). */
-  pushFlushMs?: number
+  /** The push linger (250 ms; tests may change it). */
+  pushLingerMs?: number
   /** How long a run may go with nothing pushed before a heartbeat (30 s; tests set it apart from the flush). */
   pushHeartbeatMs?: number
   /** The intercept CA's path for the sessions (the entrypoint's NODE_EXTRA_CA_CERTS), when there is one. */
@@ -227,7 +227,7 @@ export function createRoot(deps: RootDeps): Root {
       egressUrl: deps.egressUrl,
       fetch: deps.fetch,
       timers,
-      flushMs: deps.pushFlushMs,
+      lingerMs: deps.pushLingerMs,
       heartbeatMs: deps.pushHeartbeatMs,
       maxBytes: deps.pushMaxBytes,
       log: deps.log,

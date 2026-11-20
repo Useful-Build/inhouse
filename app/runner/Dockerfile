@@ -16,12 +16,16 @@ FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c01
 # - bubblewrap, socat: the Agent SDK's Bash sandbox on Linux (ripgrep ships inside the CLI).
 # - tini: PID 1 reaps orphans, so a session's leftovers don't linger as zombies the pool's release would wait on.
 # - python3 and its libraries: the file skills (PDF, Word, spreadsheet; decision Q7).
+# - ca-certificates: the system trust store the entrypoint adds Cloudflare's intercept CA to (update-ca-certificates),
+#   so Python and other OpenSSL tools trust the HTTPS intercept too. Pinned to bookworm-security's version
+#   (packages.debian.org, read 2026-11-20).
 # Pinned to bookworm's versions: a build fails loudly when Debian replaces one, and the pin is bumped then.
 # Pins checked 2026-11-19. To bump: `docker run --rm <the base image above> sh -c 'apt-get update -qq && apt-cache policy
 # <package>'`, take each package's Candidate version, update it here and the date above, and let CI's runner job build.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bubblewrap=0.8.0-2+deb12u1 \
+      ca-certificates=20250419~deb12u2 \
       socat=1.7.4.4-2 \
       tini=0.19.0-1+b3 \
       procps=2:4.0.2-3 \
@@ -54,8 +58,10 @@ COPY runner/image/plugin /opt/inhouse/plugin
 # The CLI as each session starts it: image/bin/claude sets the session's process limit (RLIMIT_NPROC, prlimit from
 # util-linux), then runs the SDK's own CLI for this platform, linked here as claude-cli (the build fails if it's missing).
 COPY runner/image/bin/claude /opt/inhouse/bin/claude
-# The entrypoint trusts Cloudflare's intercept CA (it exists only at run time), then starts the root runner.
+# The entrypoint trusts Cloudflare's intercept CA (it exists only at run time): the system store and
+# NODE_EXTRA_CA_CERTS. The build fails here if the trust store tool is missing.
 COPY runner/image/bin/entrypoint.sh /opt/inhouse/bin/entrypoint.sh
+RUN command -v update-ca-certificates && test -d /usr/local/share/ca-certificates
 RUN cli="/opt/runner/node_modules/@anthropic-ai/claude-agent-sdk-linux-$(node -p process.arch)/claude" \
  && test -x "$cli" && test -x /usr/bin/prlimit \
  && ln -s "$cli" /opt/inhouse/bin/claude-cli

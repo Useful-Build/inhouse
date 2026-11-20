@@ -22,13 +22,12 @@ while [ ! -s "$ca" ] && [ "$i" -lt "$wait_s" ]; do
 done
 
 if [ -s "$ca" ]; then
-  if [ -d "$trust_dir" ] && command -v update-ca-certificates >/dev/null 2>&1; then
-    cp "$ca" "$trust_dir/cloudflare-containers-ca.crt"
-    update-ca-certificates >/dev/null
-    store=system
-  else
-    store=none
-  fi
+  # The image pins ca-certificates (its build checks the tool is there), so the system store always takes it; a
+  # failed update stops the container rather than running with an intercept nothing but Node trusts.
+  mkdir -p "$trust_dir"
+  cp "$ca" "$trust_dir/cloudflare-containers-ca.crt"
+  update-ca-certificates >/dev/null
+  store=system
   export NODE_EXTRA_CA_CERTS="$ca"
   printf '{"type":"intercept_ca","found":true,"systemStore":"%s"}\n' "$store"
 else

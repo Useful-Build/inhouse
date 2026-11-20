@@ -97,7 +97,7 @@ export type TestRoot = Root & { url: string; logs: Record<string, unknown>[]; us
 
 export async function startTestRoot(
   spawnSession: SpawnSession,
-  opts: { stopGraceMs?: number; runTimeoutMs?: number; users?: TestUsers; egress?: TestEgress; pushFlushMs?: number; pushHeartbeatMs?: number; pushMaxBytes?: number } = {},
+  opts: { stopGraceMs?: number; runTimeoutMs?: number; users?: TestUsers; egress?: TestEgress; pushLingerMs?: number; pushHeartbeatMs?: number; pushMaxBytes?: number } = {},
 ): Promise<TestRoot> {
   const logs: Record<string, unknown>[] = []
   const users = opts.users ?? testSessionUsers()
@@ -108,8 +108,7 @@ export async function startTestRoot(
     proxyPort: 9,
     egressUrl: 'http://egress.internal',
     fetch: egress.fetch,
-    // Short, so a run's first events reach the egress at once in lifecycle tests; the push tests set their own.
-    pushFlushMs: opts.pushFlushMs ?? 50,
+    pushLingerMs: opts.pushLingerMs,
     pushHeartbeatMs: opts.pushHeartbeatMs,
     pushMaxBytes: opts.pushMaxBytes,
     stopGraceMs: opts.stopGraceMs ?? 2000,

@@ -118,7 +118,7 @@ describe('the Worker ends the run (protocol v2: a hang-up no longer exists; a 41
   ])('a 410 %s: the session is stopped, nothing more is pushed, and the run, chat and token are gone', async (_, marker) => {
     const spawned: ChildProcess[] = []
     const users = testSessionUsers({ onAllocate: (_k, dir) => (marker ? writeFileSync(join(dir, marker), '') : undefined) })
-    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users, stopGraceMs: 50, pushFlushMs: 20 }), async (root) => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users, stopGraceMs: 50 }), async (root) => {
       const start = runStart({ prompt: 'hang' })
       root.egress.onPush = (b) => (b.turnId === start.runId ? new Response('ended', { status: 410 }) : null)
       const run = openRun(root, start)
@@ -135,7 +135,7 @@ describe('the Worker ends the run (protocol v2: a hang-up no longer exists; a 41
 
   it('an ack with stop: true stops the run; its terminal event and released still reach the Worker', async () => {
     const spawned: ChildProcess[] = []
-    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 2000, pushFlushMs: 20 }), async (root) => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 2000 }), async (root) => {
       const start = runStart({ prompt: 'hang' })
       root.egress.stopRuns.add(start.runId)
       const run = openRun(root, start)
