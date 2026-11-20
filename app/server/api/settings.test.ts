@@ -169,8 +169,12 @@ describe('redaction (failure 4)', () => {
     const lines = await linesSince(db, before)
     expect(lines).toHaveLength(1)
     const args = JSON.parse(lines[0].args_json)
-    expect(args).toEqual({ scope, key, redacted: await redact(HASH_KEY, value) })
-    if (value.length >= 4) expect(lines[0].args_json).not.toContain(JSON.stringify(value).slice(1, -1))
+    const expected = { scope, key, redacted: await redact(HASH_KEY, value) }
+    expect(args).toEqual(expected)
+    // The raw text must not appear in the line, unless it's already part of the line's own parts (the value "name" is in
+    // the key "g:name", a hex value can be in the hash): the toEqual above already rules out any extra field.
+    const needle = JSON.stringify(value).slice(1, -1)
+    if (value.length >= 4 && !JSON.stringify(expected).includes(needle)) expect(lines[0].args_json).not.toContain(needle)
   })
   it('no email appears in any line', async () => {
     const rows = await linesSince(db, 0)
