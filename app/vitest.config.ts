@@ -24,6 +24,8 @@ if (testConfigDate !== PIN_CHECKED_AGAINST) {
     'supports, then update the pin and PIN_CHECKED_AGAINST.',
   )
 }
+// P8's backup, retention, export and deletion jobs (ops/{backup,retention,export,delete}) run in the Workers runtime.
+const OPS_JOB_TESTS = ['ops/{backup,retention,export,delete}/**/*.test.ts']
 const alias = {
   // The demo client entry, as in tsconfig.app.json; vite.config.ts picks it by mode.
   '@client': fileURLToPath(new URL('./src/agent/client.demo.ts', import.meta.url)),
@@ -49,6 +51,8 @@ export default defineConfig({
             'src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts', 'e2e/support/**/*.test.ts',
             'ops/**/*.test.ts', 'shared/**/*.test.ts', 'scripts/**/*.test.mjs',
           ],
+          // P8's ops jobs import `cloudflare:test`, so they run in the `server` project.
+          exclude: ['**/node_modules/**', ...OPS_JOB_TESTS],
           environment: 'node',
           // The contract suite's real target (src/agent/contract/targets.ts reads it with `inject`): the test build's
           // origin, set by e2e/support/test-build/serve.ts. Read here from the environment, so it can't be dropped on the way.
@@ -69,12 +73,14 @@ export default defineConfig({
             miniflare: {
               compatibilityDate: '2026-11-11',
               bindings: { TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL('./server/migrations', import.meta.url))) },
+              // Test-only: the restore's target (P8 G1). A second local D1, never in any wrangler config.
+              d1Databases: { RESTORE_DB: '00000000-0000-4000-8000-000000000002' },
             },
           })),
         ],
         test: {
           name: 'server',
-          include: ['server/**/*.test.ts'],
+          include: ['server/**/*.test.ts', ...OPS_JOB_TESTS],
           setupFiles: ['server/testing/apply-migrations.ts'],
         },
       },

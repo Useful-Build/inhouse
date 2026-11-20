@@ -15,6 +15,8 @@ const registry = tables as readonly TableEntry[]
 // Read through Vite (no node types in this program): every migration file's text, by path.
 const migrations = import.meta.glob<string>('../../server/migrations/*.sql', { query: '?raw', import: 'default', eager: true })
 const serverSources = import.meta.glob<string>(['../../server/**/*.ts', '!../../server/**/*.test.ts'], { query: '?raw', import: 'default', eager: true })
+// P8's jobs (ops/backup, retention, export, delete) write R2 too: the same rule covers every non-test module under ops/.
+const opsSources = import.meta.glob<string>(['../../ops/**/*.ts', '!../../ops/**/*.test.ts'], { query: '?raw', import: 'default', eager: true })
 
 /** Every `CREATE TABLE` across the migrations (comments stripped), D1's own `d1_*` and `sqlite_*` tables aside. */
 function d1Tables(): string[] {
@@ -41,7 +43,7 @@ function doClasses(config: string = productConfig): string[] {
  */
 const usesR2 = (text: string) => /\bR2Bucket\b|\bFILES\s*\.\s*(put|get|delete|list|head|createMultipartUpload)\b/.test(text)
 const R2_EXEMPT = ['/server/worker-configuration.d.ts', '/server/routes.ts', '/server/db/r2-keys.ts']
-const importsR2Keys = (text: string) => /from\s+['"][./]*(?:db\/)?r2-keys\.ts['"]/.test(text)
+const importsR2Keys = (text: string) => /from\s+['"][./]*(?:server\/)?(?:db\/)?r2-keys\.ts['"]/.test(text)
 
 const sources = (): Record<TableEntry['kind'], string[]> => ({ d1: d1Tables(), do: doClasses(), r2: [...R2_PREFIXES] })
 
@@ -70,10 +72,18 @@ describe('the table registry', () => {
     expect(usesR2('function store(bucket: R2Bucket) {}')).toBe(true)
     expect(usesR2("const k = 'FILES'")).toBe(false)
     expect(importsR2Keys("import { photoKey } from '../db/r2-keys.ts'")).toBe(true)
+    expect(importsR2Keys("import { backupManifestKey } from '../../server/db/r2-keys.ts'")).toBe(true)
     // Every key builder's key sits under a listed prefix.
     const builders = Object.entries(r2Keys).filter(([, v]) => typeof v === 'function') as [string, (...a: string[]) => string][]
     expect(builders.map(([n]) => n)).toContain('photoKey')
     for (const [name, build] of builders) expect(R2_PREFIXES.some(p => build('m_x', 'r', 's').startsWith(p)), name).toBe(true)
+  })
+
+  it('every ops/ module that writes R2 builds its keys through r2-keys.ts (failure 3, P8)', () => {
+    const files = Object.keys(opsSources)
+    expect(files.length).toBeGreaterThan(3)
+    const offenders = files.filter(f => usesR2(opsSources[f]) && !importsR2Keys(opsSources[f]))
+    expect(offenders).toEqual([])
   })
 
   for (const kind of ['d1', 'do', 'r2'] as const) {
