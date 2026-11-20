@@ -26,6 +26,11 @@ export const attachmentNameTooLong = (name: string): boolean => new TextEncoder(
 export const ATTACHMENT_NAME_TOO_LONG = 'The name is too long. Keep it under 230 letters or numbers, or about 76 characters in Chinese, Japanese or Korean.'
 export const NO_MODEL_NOTE = 'No model yet. An Admin turns one on in Settings.'
 
+/** What a turn says when its model was switched off: the failed turn and the refused send (turn-text.ts). The failed line offers "Pick another model" when its text is one of these. */
+export const MODEL_OFF_FAILED = "The model for this answer is switched off, so it didn't run. Pick another model and ask again."
+export const MODEL_OFF_REFUSED = 'Your team turned this model off. Pick another and ask again.'
+export const MODEL_OFF_TEXTS: readonly string[] = [MODEL_OFF_FAILED, MODEL_OFF_REFUSED]
+
 /** No model is on for the team (route 38), so Send waits. */
 export const NO_MODEL_YET = 'No model yet'
 export const NO_MODEL_TEXT = "Your team hasn't turned on a model yet, so there's nothing to answer with."
@@ -43,6 +48,19 @@ export function upsert(messages: ChatMessage[], m: ChatMessage): ChatMessage[] {
   const next = messages.slice()
   next[i] = m
   return next
+}
+
+/**
+ * What a chat shows: its stored history in the order the agent stored it (by position), then the sample turns (a chat has
+ * one or the other), then what happened in this tab that the history doesn't hold yet. A message is keyed by its stable id
+ * (`<turnId>.u`, `<turnId>.<n>`), so one the history and the live stream both carry shows once, at its stored place; a reloaded
+ * chat can therefore order its messages differently from the live stream that showed them first, and the stored order is the
+ * one that stays.
+ */
+export function mergeHistory(history: readonly ChatMessage[] | undefined, seed: readonly ChatMessage[], extras: readonly ChatMessage[]): ChatMessage[] {
+  if (!history?.length) return seed.length ? [...seed, ...extras] : [...extras]
+  const stored = new Set(history.map(m => m.id))
+  return [...history, ...seed, ...extras.filter(m => !stored.has(m.id))]
 }
 
 /** A chat with nothing in it yet. */

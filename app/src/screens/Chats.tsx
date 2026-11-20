@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
-import { CONNECTION_TEXT, NOTICE_TEXT } from './chat/notes'
+import { CONNECTION_TEXT, NOTICE_TEXT, mergeHistory } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'
@@ -179,7 +179,12 @@ function Thread() {
     if (openId === null || (useUi.getState().queued[openId] ?? NO_QUEUE) === localQueue && (openRun(useUi.getState())?.sent ?? NO_QUEUE) === (run?.sent ?? NO_QUEUE)) focusAfter.current = null
   }
   const queueStatus = queue.length === 0 ? '' : `${queue.length} ${queue.length === 1 ? 'message' : 'messages'} ${queue.every(q => q.paused) ? 'paused' : 'queued'}`
-  const all = useMemo(() => (openId === null ? [] : chatMessages(ctx, openId)).concat(extras), [ctx, openId, extras])
+  const history = useUi(s => (openId === null ? undefined : s.history[openId]))
+  const noSeed = openId !== null && !ctx.data.chat.chats.find(c => c.id === openId)?.turns.length
+  const loadHistory = useUi(s => s.loadHistory)
+  // A chat the agent keeps (no sample turns) reads its past when it opens.
+  useEffect(() => { if (openId !== null && noSeed) loadHistory(openId) }, [openId, noSeed, loadHistory])
+  const all = useMemo(() => mergeHistory(history?.messages, openId === null ? [] : chatMessages(ctx, openId), extras), [ctx, openId, extras, history?.messages])
   const msgs = all.filter(m => !hidden[m.id])
 
   // Keep the view at the bottom as messages and thinking steps arrive, but only while the person is near it:
@@ -409,6 +414,13 @@ function Thread() {
 
           {/* The conversation as a log, so screen readers hear each new answer once (not every thinking step).
               Keyed by chat, so opening a chat doesn't read out its whole history. */}
+          {history && (history.next !== null || history.state === 'error') && (
+            <div className="mt-2 flex justify-center">
+              <Button variant="soft" size="sm" disabled={history.state === 'loading'} onClick={() => loadHistory(openId!, history.state !== 'error' || history.next !== null)}>
+                {history.state === 'error' ? "Couldn't load earlier messages. Try again" : 'Show earlier messages'}
+              </Button>
+            </div>
+          )}
           <div key={threadKey} role="log" aria-label="Conversation" className="flex flex-col">
           {blocks.map((b, k) => {
             const mt = k === 0 ? 'mt-2' : b.kind === 'event' ? 'mt-3.5' : 'mt-5.5'

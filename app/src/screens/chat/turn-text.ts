@@ -2,7 +2,7 @@
 // notices that show without a run are in notes.ts. House voice: contractions, no dashes, plain.
 import type { TurnFailure } from '../../../shared/contract/runs'
 import { CANCEL, FAIL, NOTICE } from '../../../shared/contract/chat-codes'
-import { ATTACHMENT_NAME_TOO_LONG, NOTICE_TEXT, RUN_FAILED } from './notes'
+import { ATTACHMENT_NAME_TOO_LONG, MODEL_OFF_FAILED, MODEL_OFF_REFUSED, NOTICE_TEXT, RUN_FAILED } from './notes'
 import { RATE_LIMITED, REASON } from '../../../shared/contract/error-codes'
 
 /** Why a failed turn failed, in the person's words. */
@@ -19,7 +19,7 @@ export const FAILURE_TEXT: Record<TurnFailure, string> = {
   [FAIL.budgetBusy]: "This answer waited for others to finish and didn't get its turn. Try again in a minute.",
   [FAIL.poolFull]: 'Your Inhouse agent is busy right now. Try again in a moment.',
   [FAIL.unknown]: RUN_FAILED,
-  [FAIL.modelOff]: "The model for this answer is switched off, so it didn't run. Pick another model and ask again.",
+  [FAIL.modelOff]: MODEL_OFF_FAILED,
 }
 
 /** Why a turn that was waiting never ran. Null: nothing to say (the person removed or deleted it). */
@@ -36,7 +36,7 @@ export const CANCELLED_TEXT: Record<(typeof CANCEL)[keyof typeof CANCEL], string
 export function sendFailureText(e: { code: string; reason?: string }): string {
   switch (e.reason) {
     case REASON.paused: return NOTICE_TEXT[NOTICE.paused]
-    case REASON.modelOff: return 'Your team turned this model off. Pick another and ask again.'
+    case REASON.modelOff: return MODEL_OFF_REFUSED
     case REASON.sessionDamaged: return NOTICE_TEXT[NOTICE.sessionDamaged]
     case REASON.waitingAnswer: return 'This chat is waiting for an answer from you first.'
     case REASON.queueFull: return 'Too many messages are waiting in this chat. Ask again when some have been answered.'

@@ -202,7 +202,11 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const toolsLabel = counts.connected === 0 ? 'No tools connected yet'
     : offHere > 0 ? `${onTools.length} of ${TOOL_KEYS.length} tools on in this chat`
       : counts.reading < counts.connected ? `${counts.reading} of ${counts.connected} tools connected` : `${counts.reading} tools connected`
-  const modes = thinkingModes(data, ctx.agent.settings).filter(m => m.on)
+  const everyMode = thinkingModes(data, ctx.agent.settings)
+  const modes = everyMode.filter(m => m.on)
+  // A model the person picked that an Admin has since switched off stays in the list, greyed, until they pick another.
+  const offPick = everyMode.find(m => !m.on && m.id === modelSel)
+  const listed = offPick ? [offPick, ...modes] : modes
   const sel = activeMode(data, ctx.agent.settings, modelSel)?.id ?? ''
   const modelLabel = modes.find(m => m.id === sel)?.label ?? ''
 
@@ -330,7 +334,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
                   <>
                     <DropdownMenuSeparator className="mx-1.5 my-1" />
                     <DropdownMenuLabel className="px-2.5 pt-2 pb-1 text-sm font-normal text-muted-foreground">Model</DropdownMenuLabel>
-                    <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
+                    <ModelItems modes={listed} sel={sel} onPick={id => patch({ modelSel: id })} />
                   </>
                 )}
               </>
@@ -370,7 +374,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             </DropdownMenuTrigger>
           </Tip>
           <DropdownMenuContent {...menuProps} align="end" alignOffset={-46} className={cn(MENU, phone ? 'w-menu-mode-phone' : 'w-menu-mode')}>
-            <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
+            <ModelItems modes={listed} sel={sel} onPick={id => patch({ modelSel: id })} />
             <div className="mt-1 border-t border-divider px-2.5 pt-2 pb-1.5 text-xs text-muted-foreground">Admins choose which models the team can use, in Settings.</div>
           </DropdownMenuContent>
         </DropdownMenu>}
@@ -410,14 +414,14 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
 }
 
 /** The model choices, in the model menu and, on a phone, in "+". */
-function ModelItems({ modes, sel, onPick }: { modes: { id: string; label: string; model: string; sub: string }[]; sel: string; onPick: (id: string) => void }) {
+function ModelItems({ modes, sel, onPick }: { modes: { id: string; label: string; model: string; sub: string; on?: boolean }[]; sel: string; onPick: (id: string) => void }) {
   return (
     <DropdownMenuRadioGroup aria-label="Model" value={sel} onValueChange={onPick}>
       {modes.map(m => (
-        <DropdownMenuRadioItem key={m.id} value={m.id} className={cn(OWN_MARK, 'py-2')}>
+        <DropdownMenuRadioItem key={m.id} value={m.id} disabled={m.on === false} className={cn(OWN_MARK, 'py-2')}>
           <span className="min-w-0 flex-1">
             <span className="block text-base font-medium">{m.label}</span>
-            <span className="block text-xs text-muted-foreground">{m.model} · {m.sub}</span>
+            <span className="block text-xs text-muted-foreground">{m.on === false ? `${m.model} · Switched off by your Admin` : `${m.model} · ${m.sub}`}</span>
           </span>
           {sel === m.id && <Icon name="check" size={18} className="text-foreground" />}
         </DropdownMenuRadioItem>

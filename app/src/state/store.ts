@@ -78,6 +78,9 @@ export const openRun = (s: Pick<UiState, 'fresh' | 'chatId' | 'runs'>): ChatRun 
   return key === null ? undefined : own(s.runs, key)
 }
 
+/** A chat's stored messages in the order the agent stored them (by position), and where the page before them starts. */
+export interface ChatHistory { messages: ChatMessage[]; next: string | null; state: 'loading' | 'ready' | 'error' }
+
 export interface UiState {
   // demo switches (dev only)
   stage: Stage
@@ -130,6 +133,8 @@ export interface UiState {
   runs: Record<string, ChatRun>
   /** What each chat's run events built (queued turns, notices, a damaged session). Not saved: a reload attaches again. */
   views: Record<string, ChatView>
+  /** What the agent holds of a chat's past (`getChat`), by chat id: read when a chat that has no seed turns opens. Not saved. */
+  history: Record<string, ChatHistory>
   /** Messages waiting for a chat's answer to end, by chat id, oldest first. Saved (D7): after a reload they wait paused. */
   queued: Record<string, QueuedMsg[]>
   /** The question being edited in the composer, or null. */
@@ -226,6 +231,8 @@ export interface UiActions {
   pinChat(id: string, pinned: boolean): void
   /** Copies the chat's full URL. */
   copyChatLink(id: string): void
+  /** Reads a chat's history (the newest page, or with `more` the page before what is shown). A chat with seed turns has none to read. */
+  loadHistory(chatId: string, more?: boolean): void
   /** The recovery for a chat whose session is damaged: the history stays and the next message starts fresh. */
   resetSession(chatId: string): void
   /** Deletes with an Undo toast. Deleting the open chat opens the newest one left, or a new chat. */
@@ -575,7 +582,7 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
   team: { type: 'tool', text: '', shot: true }, traceId: null, toasts: [], phone: false, sideOpen: false,
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
   chatId: null, chatList: false, fresh: false, extras: [], hidden: {}, stash: {}, started: [], replyTo: null,
-  runs: {}, views: {}, queued: {}, editMsg: null, libraryView: 'masonry',
+  runs: {}, views: {}, history: {}, queued: {}, editMsg: null, libraryView: 'masonry',
   actFilter: 'all', actOpen: null, usageTab: 'person', usageMonth: 0, skillTab: 'all', todaySort: 'default',
   drafts: {}, composerFocus: 0,
   feedback: {},
@@ -658,6 +665,13 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     // A stale save: the Settings screen follows with what the record is now, in this same toast (key `conflict`).
     else if (n.type === 'error') showToast(n.text, { icon: 'error', ...(n.code === 'conflict' ? { key: 'conflict' } : {}) })
     else showToast(n.text, { icon: 'info' })
+  })
+
+  // A support grant ended (close 4403): what the grant showed is dropped, the chats' messages and runs with it. The agent client
+  // already dropped its own copy and detached every run.
+  agent.onLink(state => {
+    if (state !== 'grantEnded') return
+    set({ runs: {}, views: {}, history: {}, extras: [], hidden: {}, stash: {}, queued: {}, started: [] })
   })
 
   // ---------- runs ----------
@@ -1122,6 +1136,23 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     pinChat: (id, pinned) => {
       agent.pinChat(id, pinned).catch(logFailure('could not pin the chat'))
       showToast(pinned ? 'Chat pinned' : 'Chat unpinned', { icon: 'keep', ms: 4000 })
+    },
+    loadHistory: (chatId, more = false) => {
+      const have = own(get().history, chatId)
+      if (have?.state === 'loading' || (have && have.state !== 'error' && !more) || (more && (!have || have.next === null))) return
+      const cursor = more ? have?.next ?? undefined : undefined
+      set(s => ({ history: { ...s.history, [chatId]: { messages: have?.messages ?? [], next: have?.next ?? null, state: 'loading' } } }))
+      agent.getChat(chatId, cursor).then(page => {
+        // The page is newest first; the thread reads oldest first, by stored position.
+        const older = [...page.messages].sort((a, b) => a.pos - b.pos)
+        set(s => {
+          const cur = own(s.history, chatId)
+          return { history: { ...s.history, [chatId]: { messages: more ? [...older, ...(cur?.messages ?? [])] : older, next: page.nextCursor, state: 'ready' } } }
+        })
+      }, (e: unknown) => {
+        console.warn('Inhouse: could not read the chat history.', e)
+        set(s => ({ history: { ...s.history, [chatId]: { messages: have?.messages ?? [], next: have?.next ?? null, state: 'error' } } }))
+      })
     },
     resetSession: chatId => {
       agent.resetSession(chatId).then(() => {

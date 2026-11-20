@@ -9,6 +9,13 @@ import { useCtx, useUi } from '../../state/store'
 import { Button, Icon, LogoTile } from '../../ui'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Markdown } from './Markdown'
+import { MODEL_OFF_TEXTS } from './notes'
+
+/** Opens the composer's model menu (on a phone, the "+" menu that holds it). */
+const openModelPicker = () => {
+  const picker = document.querySelector<HTMLButtonElement>('[data-composer] button[aria-label^="Model:"]') ?? document.querySelector<HTMLButtonElement>('[data-composer] button[aria-label^="Attach"]')
+  picker?.click()
+}
 import { cn } from '@/lib/utils'
 import { SuggestionChip } from '../../ui/chat'
 
@@ -184,6 +191,7 @@ export function AgentPart({ part, trace, id }: { part: MessagePart; trace: strin
         <div className="box-border flex max-w-prose-measure items-center gap-3 text-base leading-normal">
           <Icon name="error" size={19} className="text-destructive" />
           <span className="min-w-0 flex-1">{part.text}</span>
+          {MODEL_OFF_TEXTS.includes(part.text) && <Button variant="soft" onClick={openModelPicker}>Pick another model</Button>}
           <Button variant="soft" onClick={() => { retryAnswer(id, trace, part.retryQuestion) }}>Try again</Button>
         </div>
       )
