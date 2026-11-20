@@ -1,0 +1,267 @@
+// Person deletion and the deletion log (P8 acceptance 3, decision Q3). Ways it can fail, written down first:
+//  1. it removes or changes anything of another person's, a brand setting or grant that only references the person,
+//     an audit line, the service rows, a backup or an earlier deletion-log entry;
+//  2. it leaves the person's name, email, title, subject, personal settings or photo objects (an orphan included);
+//  3. the dry run writes something, or counts other than what the run then removes;
+//  4. it acts on a plan made before a change (a new setting or photo nobody counted), or without a plan;
+//  5. a run that fails half way can't be finished, or a re-run changes anything more;
+//  6. it deletes the last active Admin, an Inhouse or service row, an unknown id, or puts a malformed id into a key;
+//  7. any statement writes the audit log;
+//  8. a deletion isn't in the log, or the log holds a name, an email or content, or can't be listed after a watermark;
+//  9. a store registered later is skipped silently (no rule).
+import { fc, test } from '@fast-check/vitest'
+import { env } from 'cloudflare:workers'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { SYSTEM_MEMBER_ID } from '../../server/db/ids.ts'
+import { FORMER_MEMBER } from '../../server/db/members.ts'
+import { openStores } from '../../server/db/stores.ts'
+import { seedBrand } from '../../server/seed/seed.ts'
+import type { Seeded } from '../../server/seed/seed.ts'
+import { planExport, runExport } from '../export/export.ts'
+import { tables } from '../tables/index.ts'
+import { listDeletionLog, newRunId, writeLogEntry } from './log.ts'
+import { planPersonDeletion, runPersonDeletion } from './person.ts'
+import type { DeletionDeps, PersonDeletionPlan } from './person.ts'
+import { deletionRules } from './rules.ts'
+import { addGrant, addLine, addPerson, addPhoto, addSetting, readLines, recordingDb, snapshotAll, token, withoutLog, writesAudit } from './test-support.ts'
+import type { Snapshot } from './test-support.ts'
+
+const db = env.DB
+const bucket = env.FILES as R2Bucket
+const BASE = 1_800_000_000_000
+let clock = BASE
+const deps = (over: Partial<DeletionDeps> = {}): DeletionDeps => ({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs: (clock += 1000) }, ...over })
+let seeded: Seeded
+
+beforeAll(async () => {
+  seeded = await seedBrand(db, openStores(env), BASE)
+  // Something in the backup set and an earlier deletion-log entry, both of which must never change.
+  await bucket.put('backups/d1/b1/manifest.json', '{"tables":[]}')
+  await bucket.put('restore/r1/record.json', '{}')
+  await writeLogEntry(bucket, { format: 1, runId: newRunId(), phase: 'done', kind: 'retention', atMs: BASE - 1, actorId: SYSTEM_MEMBER_ID, cutoffs: [], removed: [] })
+})
+
+const planOk = async (d: DeletionDeps, memberId: string): Promise<PersonDeletionPlan> => {
+  const r = await planPersonDeletion(d, { memberId })
+  if (!('ok' in r)) throw new Error(`plan refused: ${r.refused}`)
+  return r.ok
+}
+
+/** The independent count: a plain filter over the snapshot. */
+const oracleCounts = (s: Snapshot, memberId: string) => ({
+  members: (s.d1.members.find(r => r.id === memberId)?.pseudonymised_at_ms ?? null) === null ? 1 : 0,
+  settings: s.d1.settings.filter(r => r.owner === memberId).length,
+  'photos/': Object.keys(s.r2).filter(k => k.startsWith(`photos/${memberId}/`)).length,
+})
+
+describe('refusals (failure 6)', () => {
+  it('refuses at plan, writing nothing: the last active Admin, Inhouse and service rows, unknown and malformed ids', async () => {
+    const before = await snapshotAll(db, bucket)
+    const cases: [string, string][] = [
+      [seeded.members.admin, 'last_admin'],
+      [seeded.members.inhouse, 'not_person'],
+      [SYSTEM_MEMBER_ID, 'not_person'],
+      ['m_smoke', 'not_person'],
+      ['m_nobodyhasthisid', 'not_found'],
+      ['x', 'bad_id'],
+      ['m_../backups', 'bad_id'],
+      ['m_a/b', 'bad_id'],
+      ['', 'bad_id'],
+    ]
+    for (const [memberId, refused] of cases) expect(await planPersonDeletion(deps(), { memberId }), memberId).toEqual({ refused })
+    expect(await snapshotAll(db, bucket)).toEqual(before)
+  })
+
+  it('refuses at run through P2\'s guard when the person became the last active Admin, with a refused entry only', async () => {
+    const other = await addPerson(db, { role: 'admin', status: 'active' }, seeded.members.admin, BASE)
+    const plan = await planOk(deps(), other.id)
+    // Sam stops being an active Admin: `other` is now the last one.
+    await db.prepare("UPDATE members SET status = 'removed' WHERE id = ?").bind(seeded.members.admin).run()
+    try {
+      const before = await snapshotAll(db, bucket)
+      const d = deps()
+      expect(await runPersonDeletion(d, plan)).toEqual({ refused: 'last_admin' })
+      const after = await snapshotAll(db, bucket)
+      expect(withoutLog(after)).toEqual(withoutLog(before))
+      const mine = (await listDeletionLog(bucket)).filter(e => e.entry.memberId === other.id).map(e => e.entry.phase)
+      expect(mine.sort()).toEqual(['refused', 'start'])
+    } finally {
+      await db.prepare("UPDATE members SET status = 'active' WHERE id = ?").bind(seeded.members.admin).run()
+    }
+  })
+
+  it('runs only from a plan made by planPersonDeletion (failure 4)', async () => {
+    const p = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
+    const forged = { memberId: p.id, alreadyPseudonymised: false, counts: {}, atMs: 0, steps: [] }
+    await expect(runPersonDeletion(deps(), forged)).rejects.toThrow(/only from a plan/)
+  })
+})
+
+/** Generated people, with personal and brand settings, grants, audit lines and photos that reference them. */
+const worldArb = fc.record({
+  people: fc.array(fc.record({ role: fc.constantFrom('member' as const, 'admin' as const), status: fc.constantFrom('invited' as const, 'active' as const, 'removed' as const) }), { minLength: 1, maxLength: 4 }),
+  personal: fc.array(fc.nat(), { maxLength: 6 }),
+  brand: fc.array(fc.tuple(fc.nat(), fc.nat(), fc.boolean()), { maxLength: 4 }),
+  grants: fc.array(fc.tuple(fc.nat(), fc.option(fc.nat(), { nil: null })), { maxLength: 3 }),
+  lines: fc.array(fc.tuple(fc.nat(), fc.nat(), fc.nat()), { maxLength: 4 }),
+  photos: fc.array(fc.nat(), { maxLength: 4 }),
+  pick: fc.nat(),
+})
+
+type World = { ids: string[]; people: Awaited<ReturnType<typeof addPerson>>[]; markers: Record<string, string[]> }
+
+type WorldSpec = typeof worldArb extends fc.Arbitrary<infer T> ? T : never
+
+async function build(w: WorldSpec): Promise<World> {
+  const people = []
+  for (const spec of w.people) people.push(await addPerson(db, spec, seeded.members.admin, clock))
+  const ids = [...people.map(p => p.id), seeded.members.dana, seeded.members.leo, seeded.members.invite, seeded.members.admin, seeded.members.inhouse]
+  const at = (n: number) => ids[n % ids.length]
+  for (const n of w.personal) await addSetting(db, at(n), 'Dark', at(n), clock)
+  for (const [a, b, approver] of w.brand) await addSetting(db, 'brand', approver ? at(a) : 'USD', at(b), clock)
+  for (const [a, b] of w.grants) await addGrant(db, at(a), b === null ? null : at(b), clock)
+  for (const [a, b, c] of w.lines) await addLine(db, at(a), at(b), { memberId: at(c), value: at(a) }, clock)
+  const markers: Record<string, string[]> = {}
+  for (const n of w.photos) (markers[at(n)] ??= []).push((await addPhoto(db, bucket, at(n))).marker)
+  return { ids, people, markers }
+}
+
+describe('one person, nothing else (failures 1, 2, 3, 7, 8)', () => {
+  test.prop([worldArb], { numRuns: 25 })('removes exactly the person\'s data and logs it', async w => {
+    const world = await build(w)
+    // Any person but the seeded Admin (the last active Admin: refused, tested above).
+    const candidates = world.ids.filter(id => id !== seeded.members.admin && id !== seeded.members.inhouse)
+    const P = candidates[w.pick % candidates.length]
+    const before = await snapshotAll(db, bucket)
+    const formerRow = before.d1.members.find(r => r.id === P)!
+
+    const rec = recordingDb(db)
+    const d = deps({ db: rec.db })
+    const plan = await planOk(d, P)
+    expect(await snapshotAll(db, bucket), 'the dry run writes nothing').toEqual(before)
+    expect(plan.counts).toEqual(oracleCounts(before, P))
+    const result = await runPersonDeletion(d, plan)
+    if (!('ok' in result)) throw new Error(`run refused: ${JSON.stringify(result)}`)
+    expect(result.ok.removed).toEqual(plan.counts)
+    expect(rec.sql.filter(writesAudit)).toEqual([])
+
+    const after = await snapshotAll(db, bucket)
+    // Every table but members and settings is identical; the audit log above all.
+    for (const t of Object.keys(before.d1)) if (t !== 'members' && t !== 'settings') expect(after.d1[t], t).toEqual(before.d1[t])
+    expect(after.d1.settings).toEqual(before.d1.settings.filter(r => r.owner !== P))
+    expect(after.d1.members.filter(r => r.id !== P)).toEqual(before.d1.members.filter(r => r.id !== P))
+    const row = after.d1.members.find(r => r.id === P)!
+    if (formerRow.pseudonymised_at_ms === null) {
+      expect(row).toEqual({
+        ...formerRow,
+        name: FORMER_MEMBER, title: null, email_norm: null, photo_key: null, subject: null, status: 'removed',
+        removed_at_ms: formerRow.removed_at_ms ?? d.at.nowMs, pseudonymised_at_ms: d.at.nowMs, rev: (formerRow.rev as number) + 1, req_id: row.req_id,
+      })
+    } else expect(row).toEqual(formerRow)
+    // R2: only the person's photos went, and the log gained exactly this run's start and done.
+    const expectR2 = Object.fromEntries(Object.entries(before.r2).filter(([k]) => !k.startsWith(`photos/${P}/`)))
+    const added = Object.keys(after.r2).filter(k => !(k in before.r2))
+    expect(Object.fromEntries(Object.entries(after.r2).filter(([k]) => !added.includes(k)))).toEqual(expectR2)
+    expect(added.every(k => k.startsWith('deletion-log/'))).toBe(true)
+    const log = (await listDeletionLog(bucket)).filter(e => e.entry.runId === result.ok.runId)
+    expect(log.map(e => e.entry.phase).sort()).toEqual(['done', 'start'])
+    expect(added.sort()).toEqual(log.map(e => e.key).sort())
+    const done = log.find(e => e.entry.phase === 'done')!.entry
+    expect(done).toMatchObject({ kind: 'person', memberId: P, actorId: SYSTEM_MEMBER_ID, atMs: d.at.nowMs })
+    expect(Object.fromEntries(done.removed!.map(r => [r.store, r.count]))).toEqual(plan.counts)
+    expect(done.removed!.find(r => r.store === 'photos/')!.keys!.sort()).toEqual(Object.keys(before.r2).filter(k => k.startsWith(`photos/${P}/`)).sort())
+
+    // Their export afterwards holds none of what they were.
+    const exp = await planExport(d, { kind: 'person', memberId: P })
+    if (!('ok' in exp)) throw new Error('export refused')
+    const { text } = await readLines(runExport(d, exp.ok))
+    const former = [formerRow.name, formerRow.email_norm, formerRow.title, formerRow.subject].filter((v): v is string => typeof v === 'string' && v !== FORMER_MEMBER)
+    for (const v of former) expect(text.includes(v), v).toBe(false)
+    for (const m of world.markers[P] ?? []) expect(text.includes(btoa(m))).toBe(false)
+    // And the log holds none of it either.
+    const logText = JSON.stringify(log)
+    for (const v of former) expect(logText.includes(v), v).toBe(false)
+  })
+})
+
+describe('stale plans (failure 4)', () => {
+  for (const change of ['setting', 'photo'] as const) {
+    it(`refuses plan_stale and changes nothing when a ${change} lands between plan and run`, async () => {
+      const p = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
+      await addSetting(db, p.id, 'Dark', p.id, BASE)
+      const plan = await planOk(deps(), p.id)
+      if (change === 'setting') await addSetting(db, p.id, 'Light', p.id, BASE)
+      else await addPhoto(db, bucket, p.id)
+      const before = await snapshotAll(db, bucket)
+      const r = await runPersonDeletion(deps(), plan)
+      expect(r).toMatchObject({ refused: 'plan_stale', planned: plan.counts })
+      expect(await snapshotAll(db, bucket)).toEqual(before)
+    })
+  }
+})
+
+describe('idempotent (failure 5)', () => {
+  const failures = ['start', 'pseudonymise', 'rows', 'objects', 'r2-delete'] as const
+  for (const where of failures) {
+    it(`a run that fails after ${where} is finished by a re-run, and a third run changes nothing more`, async () => {
+      const p = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
+      await addSetting(db, p.id, 'Dark', p.id, BASE)
+      await addPhoto(db, bucket, p.id)
+      await addPhoto(db, bucket, p.id)
+      const boom = new Error(`injected after ${where}`)
+      const failing = where === 'r2-delete'
+        ? deps({ bucket: Object.assign(Object.create(bucket) as R2Bucket, { delete: () => Promise.reject(boom), list: bucket.list.bind(bucket), get: bucket.get.bind(bucket), put: bucket.put.bind(bucket) }) })
+        : deps()
+      const plan = await planOk(failing, p.id)
+      await expect(runPersonDeletion(failing, plan, { afterStep: async s => { if (s === where) throw boom } })).rejects.toThrow(boom.message)
+
+      const again = await planOk(deps(), p.id)
+      expect(again.alreadyPseudonymised).toBe(where !== 'start')
+      const second = await runPersonDeletion(deps(), again)
+      if (!('ok' in second)) throw new Error('second run refused')
+      const settled = await snapshotAll(db, bucket)
+      expect(settled.d1.settings.filter(r => r.owner === p.id)).toEqual([])
+      expect(Object.keys(settled.r2).filter(k => k.startsWith(`photos/${p.id}/`))).toEqual([])
+      expect(settled.d1.members.find(r => r.id === p.id)).toMatchObject({ name: FORMER_MEMBER, email_norm: null, subject: null })
+
+      const third = await planOk(deps(), p.id)
+      expect(third).toMatchObject({ alreadyPseudonymised: true, counts: { members: 0, settings: 0, 'photos/': 0 } })
+      expect(await runPersonDeletion(deps(), third)).toMatchObject({ ok: { removed: { members: 0, settings: 0, 'photos/': 0 } } })
+      expect(withoutLog(await snapshotAll(db, bucket))).toEqual(withoutLog(settled))
+    })
+  }
+})
+
+describe('the registry guard (failure 9)', () => {
+  it('throws by name on a store with no rule, or a rule its class forbids', async () => {
+    const p = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
+    const extra = { kind: 'd1' as const, name: 'later_store', retention: 'retention_period' as const, personKeys: ['member_id'], export: true }
+    await expect(planPersonDeletion(deps({ registry: [...tables, extra] }), { memberId: p.id })).rejects.toThrow(/later_store/)
+    await expect(planPersonDeletion(deps({ rules: { ...deletionRules, audit_log: { action: 'delete_rows', column: 'actor_id' } } }), { memberId: p.id })).rejects.toThrow(/audit_log/)
+    const { members: _m, ...noMembers } = deletionRules
+    await expect(planPersonDeletion(deps({ rules: noMembers }), { memberId: p.id })).rejects.toThrow(/members/)
+  })
+
+  it('has a rule for every store in the real registry', () => {
+    expect(tables.filter(e => deletionRules[e.name] === undefined).map(e => e.name)).toEqual([])
+  })
+})
+
+describe('the deletion log (failure 8)', () => {
+  it('lists in key order, after a watermark, and refuses an object that is not an entry', async () => {
+    const all = await listDeletionLog(bucket)
+    expect(all.length).toBeGreaterThan(2)
+    expect(all.map(e => e.key)).toEqual([...all.map(e => e.key)].sort())
+    const mark = all[1].key
+    expect((await listDeletionLog(bucket, { after: mark })).map(e => e.key)).toEqual(all.slice(2).map(e => e.key))
+    // A malformed entry is refused by the schema, never written.
+    await expect(writeLogEntry(bucket, { format: 1, runId: 'nothex', phase: 'done', kind: 'person', atMs: 1, actorId: SYSTEM_MEMBER_ID })).rejects.toThrow()
+    const key = `deletion-log/9999999999999-${'f'.repeat(16)}-done.json`
+    await bucket.put(key, JSON.stringify({ format: 1, runId: 'f'.repeat(16), phase: 'done', kind: 'person', atMs: 9_999_999_999_999, actorId: 'm_x', name: 'Someone' }))
+    try {
+      await expect(listDeletionLog(bucket)).rejects.toThrow(key)
+    } finally {
+      await bucket.delete(key)
+    }
+  })
+})
