@@ -11,23 +11,27 @@
 // - the in-process Read, Glob and Grep (unsandboxed, as the session uid) reach /proc or the shared tmp folders;
 // - webFetchDomains lets in an IP literal, a local name, an internal name (`*.svc`, `*.corp`) or this container's own
 //   address;
-// - a cwd that only looks like a session folder (`/work/a/`) passes; `agents` or a non-http `inhouse` server gets in.
+// - a cwd that only looks like a session folder (`/work/a/`) passes; `agents` or a non-http `inhouse` server gets in;
+// - the audit hook isn't on the run's own transport (`RunContext.audit`), lets a call go before it resolved, or lets
+//   one go when it rejected.
 import { fc, it } from '@fast-check/vitest'
 import type { HookCallbackMatcher, Options } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect } from 'vitest'
+import { AuditEntry } from '../../../shared/protocol/index.ts'
+import { AuditRefusedError } from '../../src/guards/audit.ts'
 import { RunConfig } from '../../src/protocol/local.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
-import type { AuditChannel } from '../../src/guards/audit.ts'
+import type { RunContext } from '../../src/session/seam.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF } from '../../src/guards/lists.ts'
 import { GUARDED_OPTIONS, GuardConfigError, LOCAL_NAMES, LOCAL_SUFFIXES, assertFetchDomain, createQueryGuards } from '../../src/guards/options.ts'
 import { PLUGIN_DIR, sessionPaths } from '../../src/guards/paths.ts'
 
-const ack: AuditChannel = { send: async () => ({ ok: true }) }
+const run: RunContext = { audit: async () => {} }
 /** Names inside a company or a cluster, with no local suffix a resolver would know. */
 const INTERNAL_NAMES = ['db.svc', 'api.prod.svc', 'api.prod.svc.cluster.local', 'wiki.corp', 'hr.intranet', 'nas.home', 'git.private', 'router.localdomain', 'xn--a.com']
 const ADDRS = ['172.17.0.5', 'fe80::1', '127.0.0.1']
-const guards = createQueryGuards({ audit: ack, hostAddresses: () => ADDRS })
+const guards = createQueryGuards({ hostAddresses: () => ADDRS })
 
 // No `--` in the third and fourth places: those labels are reserved, and the URL parser refuses an `xn--` one that
 // isn't valid punycode (`xn--a`), which the guards then refuse too.
@@ -64,7 +68,7 @@ function base(c: RunConfig): Options {
 
 describe('the guarded options', () => {
   it.prop([config])('for any run config: sandbox mandatory, the 20 tools, the allowed skills, dontAsk, no settings files', (c) => {
-    const o = guards.apply(base(c), c)
+    const o = guards.apply(base(c), c, run)
     expect(o.sandbox?.enabled).toBe(true)
     expect(o.sandbox?.failIfUnavailable).toBe(true)
     expect(o.sandbox?.allowUnsandboxedCommands).toBe(false)
@@ -82,7 +86,7 @@ describe('the guarded options', () => {
   })
 
   it.prop([config])('every allow rule names one of the 20, our MCP server, or WebFetch for a listed domain', (c) => {
-    const o = guards.apply(base(c), c)
+    const o = guards.apply(base(c), c, run)
     const allowed = new Set<string>(BUILT_IN_TOOLS)
     for (const rule of o.allowedTools ?? []) {
       const tool = rule.replace(/\(.*$/, '')
@@ -98,7 +102,7 @@ describe('the guarded options', () => {
   })
 
   it.prop([config])('skills and plugins: the other 15 bundled skills and the 3 built-in plugins are off', (c) => {
-    const s = guards.apply(base(c), c).settings as { skillOverrides: Record<string, string>; enabledPlugins: Record<string, boolean> }
+    const s = guards.apply(base(c), c, run).settings as { skillOverrides: Record<string, string>; enabledPlugins: Record<string, boolean> }
     expect(Object.keys(s.skillOverrides).sort()).toEqual([...BUNDLED_SKILLS_OFF].sort())
     expect(new Set(Object.values(s.skillOverrides))).toEqual(new Set(['off']))
     expect(s.enabledPlugins).toEqual(Object.fromEntries(BUILT_IN_PLUGINS_OFF.map((p) => [p, false])))
@@ -106,7 +110,7 @@ describe('the guarded options', () => {
 
   it.prop([config])("deny rules cover the session's .claude/, .mcp.json, home, /opt and the runner's code", (c) => {
     const p = sessionPaths(c.chatId)
-    const deny = (guards.apply(base(c), c).settings as { permissions: { deny: string[] } }).permissions.deny
+    const deny = (guards.apply(base(c), c, run).settings as { permissions: { deny: string[] } }).permissions.deny
     for (const rule of [
       `Edit(/${p.workDir}/.claude)`,
       `Edit(/${p.workDir}/.claude/**)`,
@@ -127,7 +131,7 @@ describe('the guarded options', () => {
   })
 
   it.prop([config])('the network: only the listed domains, never this container', (c) => {
-    const net = guards.apply(base(c), c).sandbox!.network!
+    const net = guards.apply(base(c), c, run).sandbox!.network!
     expect(net.allowedDomains).toEqual(c.webFetchDomains)
     expect(net.strictAllowlist).toBe(true)
     expect(net.allowLocalBinding).toBe(false)
@@ -136,20 +140,20 @@ describe('the guarded options', () => {
   })
 
   it.prop([config])('the filesystem: other sessions, /home, the runner and /root are unreadable; the session folder is', (c) => {
-    const fs = guards.apply(base(c), c).sandbox!.filesystem!
+    const fs = guards.apply(base(c), c, run).sandbox!.filesystem!
     expect(fs.denyRead).toEqual(expect.arrayContaining(['/work', '/home', '/opt/runner', '/root']))
     expect(fs.allowRead).toEqual([sessionPaths(c.chatId).workDir])
   })
 
   it.prop([config, fc.constantFrom(...GUARDED_OPTIONS), fc.anything()])('a base that sets a guarded option is refused', (c, k, v) => {
     fc.pre(v !== undefined)
-    expect(() => guards.apply({ ...base(c), [k]: v } as Options, c)).toThrow(GuardConfigError)
+    expect(() => guards.apply({ ...base(c), [k]: v } as Options, c, run)).toThrow(GuardConfigError)
   })
 
   it.prop([config])('our hooks run first and block; the base keeps its own', (c) => {
     const theirs: HookCallbackMatcher = { hooks: [async () => ({})] }
     const post: HookCallbackMatcher = { hooks: [async () => ({})] }
-    const o = guards.apply({ ...base(c), hooks: { PreToolUse: [theirs], PostToolUse: [post] } }, c)
+    const o = guards.apply({ ...base(c), hooks: { PreToolUse: [theirs], PostToolUse: [post] } }, c, run)
     const pre = o.hooks!.PreToolUse!
     expect(pre).toHaveLength(3)
     expect(pre[0]!.matcher).toBe('WebFetch')
@@ -162,16 +166,16 @@ describe('the guarded options', () => {
   it('refuses settings files, a foreign MCP server, a cwd outside the work root and a home outside the session', () => {
     const c = fc.sample(config, 1)[0]!
     const b = base(c)
-    expect(() => guards.apply({ ...b, settingSources: ['project'] }, c)).toThrow(/settingSources/)
-    expect(() => guards.apply({ ...b, settingSources: undefined }, c)).toThrow(/settingSources/)
-    expect(() => guards.apply({ ...b, mcpServers: { other: { type: 'http', url: 'http://x.y' } } }, c)).toThrow(/MCP/)
-    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'http', url: 'http://x.y' } } }, c)).not.toThrow()
-    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'stdio', command: 'sh' } } }, c)).toThrow(/MCP/)
-    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'sse', url: 'http://x.y' } } }, c)).toThrow(/MCP/)
+    expect(() => guards.apply({ ...b, settingSources: ['project'] }, c, run)).toThrow(/settingSources/)
+    expect(() => guards.apply({ ...b, settingSources: undefined }, c, run)).toThrow(/settingSources/)
+    expect(() => guards.apply({ ...b, mcpServers: { other: { type: 'http', url: 'http://x.y' } } }, c, run)).toThrow(/MCP/)
+    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'http', url: 'http://x.y' } } }, c, run)).not.toThrow()
+    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'stdio', command: 'sh' } } }, c, run)).toThrow(/MCP/)
+    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'sse', url: 'http://x.y' } } }, c, run)).toThrow(/MCP/)
     for (const cwd of ['/tmp/x', '/work', '/work/a/b', '/work/a/', '/work//a', '/work/../etc', '/workx/a', undefined]) {
-      expect(() => guards.apply({ ...b, cwd }, c), String(cwd)).toThrow(/cwd/)
+      expect(() => guards.apply({ ...b, cwd }, c, run), String(cwd)).toThrow(/cwd/)
     }
-    expect(() => guards.apply({ ...b, env: { ...b.env, HOME: '/root' } }, c)).toThrow(/HOME/)
+    expect(() => guards.apply({ ...b, env: { ...b.env, HOME: '/root' } }, c, run)).toThrow(/HOME/)
   })
 
   it('guards agents and disableBundledSkills', () => {
@@ -181,11 +185,41 @@ describe('the guarded options', () => {
   it.prop([config, fc.oneof(fc.ipV4(), fc.ipV4Extended(), fc.constantFrom(...LOCAL_NAMES, ...ADDRS, 'a.localhost', 'printer.local', 'db.internal', 'r.home.arpa', '1.2', '0x7f.1', 'Example.com', 'example.com.', ...INTERNAL_NAMES))])(
     'refuses a WebFetch domain that is an IP literal, a local name or this container',
     (c, bad) => {
-      expect(() => guards.apply(base(c), { ...c, webFetchDomains: [...c.webFetchDomains, bad] })).toThrow(/webFetchDomains/)
+      expect(() => guards.apply(base(c), { ...c, webFetchDomains: [...c.webFetchDomains, bad] }, run)).toThrow(/webFetchDomains/)
     },
   )
 
   it('refuses every internal name, each one checked', () => {
     for (const name of INTERNAL_NAMES) expect(() => assertFetchDomain(name, ADDRS), name).toThrow(GuardConfigError)
+  })
+
+  it("a tool call waits on the run's audit: blocked when it rejects, allowed only once it resolves", async () => {
+    const c = fc.sample(config, 1)[0]!
+    const sent: AuditEntry[] = []
+    let settle!: { resolve: () => void; reject: (e: Error) => void }
+    const ctx: RunContext = { audit: (e) => (sent.push(e), new Promise<void>((resolve, reject) => (settle = { resolve, reject }))) }
+    const hook = guards.apply(base(c), c, ctx).hooks!.PreToolUse!.find((m) => m.matcher === undefined)!
+    expect(hook.onFailure).toBe('block')
+    const call = (id: string) =>
+      hook.hooks[0]!({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: id, session_id: 's', transcript_path: '', cwd: '/work/a' } as never, id, {
+        signal: new AbortController().signal,
+      })
+    const turn = () => new Promise<void>((r) => setImmediate(r))
+
+    let allowed = false
+    const first = call('u1').then((r) => ((allowed = true), r))
+    for (let i = 0; i < 5; i++) await turn()
+    expect(allowed).toBe(false)
+    expect(sent).toEqual([{ hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', decision: 'allow', input: { command: 'ls' } }])
+    // The shape the root checks.
+    expect(AuditEntry.safeParse(sent[0]).success).toBe(true)
+    settle.resolve()
+    await expect(first).resolves.toEqual({})
+
+    const second = call('u2')
+    for (let i = 0; i < 5; i++) await turn()
+    settle.reject(new Error('audit refused: the Worker has gone'))
+    await expect(second).rejects.toThrow(AuditRefusedError)
+    await expect(second).rejects.toThrow(/the Worker has gone/)
   })
 })

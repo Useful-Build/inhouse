@@ -787,22 +787,47 @@ describe('the production wiring', () => {
     }
   })
 
-  it('production cannot run a tool call unrecorded, takes no injected host deps, and refuses a missing guard', async () => {
+  it('production cannot run a tool call unrecorded (blocked on the transport\'s nack), takes no injected host deps, and refuses a missing guard', async () => {
     const config = RunConfig.parse({
       runId: 'r1', chatId: 'chat1', sessionId: '00000000-0000-4000-8000-000000000000', resume: false, prompt: 'hi',
       model: 'claude-sonnet-5-5', effort: 'low', maxTurns: 1, maxBudgetUsd: 1, webFetchDomains: [],
       fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 0, allowedTypes: [] },
     })
+    // The run's real audit transport (R1's, src/session/core.ts), on a channel this test answers for the root.
+    let run: RunContext | undefined
+    const q = fakeQuery([assistant], { holdUntilInterrupt: true })
+    const h = harness(q.query, { kind: 'test', apply: (o, _c, r) => ((run = r), o) })
+    h.deliver({ type: 'run', config: config })
+    await waitForTicks(() => run !== undefined)
+
     const p = sessionPaths(config.chatId)
     const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: p.home, workDir: p.workDir }, 8081)
-    const o = productionQueryGuards().apply(baseOptions(config, p.workDir, cliEnv(env), new AbortController()), config)
+    const o = productionQueryGuards().apply(baseOptions(config, p.workDir, cliEnv(env), new AbortController()), config, run!)
     const audit = o.hooks!.PreToolUse!.filter((m) => m.matcher === undefined)
-    expect(audit.length).toBeGreaterThan(0)
-    const input = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'u1', session_id: 's', transcript_path: '', cwd: p.workDir }
-    for (const m of audit) {
-      expect(m.onFailure).toBe('block')
-      await expect(m.hooks[0]!(input as never, 'u1', { signal: new AbortController().signal })).rejects.toThrow(AuditRefusedError)
-    }
+    expect(audit).toHaveLength(1)
+    const m = audit[0]!
+    expect(m.onFailure).toBe('block')
+    const call = (id: string) =>
+      m.hooks[0]!({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: id, session_id: 's', transcript_path: '', cwd: p.workDir } as never, id, {
+        signal: new AbortController().signal,
+      })
+    const sentAudits = () => h.sent.filter((x) => x.type === 'audit')
+
+    // The root nacks: the call is blocked.
+    const refused = call('u1')
+    await waitForTicks(() => sentAudits().length === 1)
+    expect(sentAudits()[0]).toMatchObject({ type: 'audit', id: 0, entry: { hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', input: { command: 'ls' } } })
+    h.deliver({ type: 'audit_nack', id: 0, error: 'the Worker has gone' })
+    await expect(refused).rejects.toThrow(AuditRefusedError)
+    await expect(refused).rejects.toThrow(/the Worker has gone/)
+    // The root acks: only then does the call go.
+    const allowed = call('u2')
+    await waitForTicks(() => sentAudits().length === 2)
+    h.deliver({ type: 'audit_ack', id: 1 })
+    await expect(allowed).resolves.toEqual({})
+    q.release()
+    await h.done
+
     const pool = Array.from({ length: 2 }, (_, i) => ({ user: poolUserName(i), uid: 30000 + i, gid: 30000 + i }))
     expect(Object.keys(productionHostDeps(pool))).toEqual(['poolUids'])
     expect(() => requireProduction(undefined, 'QueryGuards')).toThrow(GuardsMissingError)
