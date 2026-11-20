@@ -271,7 +271,14 @@ export class AgentCore {
     if (this.count(`run_id = ? AND state IN ${ACTIVE}`, runId) > 0) return null
     const next = this.sql.exec<TurnRow>(`SELECT * FROM turns WHERE run_id = ? AND state = 'queued' ORDER BY ${PRIORITY_ORDER}, ord LIMIT 1`, runId).toArray()[0]
     if (next) {
-      if (this.paused() || this.draining_()) return null
+      if (this.paused()) return null
+      if (this.draining_()) {
+        // Comes back at the drain's expiry, whatever re-armed this run's advance earlier (a budget retry, a file
+        // confirm's retry), so the expiry's advance is never overwritten into nothing (L5).
+        const until = this.d.ports.pool.drainState().drainingUntilMs!
+        this.d.scheduler.schedule({ id: `run-advance:${runId}`, kind: 'run-advance', dueAtMs: until })
+        return null
+      }
       this.claim(next)
       return next.turn_id
     }
@@ -439,7 +446,9 @@ export class AgentCore {
       case 'pool_full': return this.cancelUnstarted(this.turn(turnId)!, 'pool_full')
       case 'files': return this.failUnstarted(this.turn(turnId)!, { outcome: 'failed', reason: 'files' })
       case 'rejected': return this.failUnstarted(this.turn(turnId)!, { outcome: 'failed', reason: 'protocol' })
-      case 'draining': return this.requeue(this.turn(turnId)!, false)
+      // Back to the run's queue, tried again by `run-advance` (not at once: a pool that answers `draining` while
+      // `drainState` says none would otherwise loop the claim).
+      case 'draining': return this.requeue(this.turn(turnId)!, false, false)
     }
   }
 
@@ -475,7 +484,7 @@ export class AgentCore {
    * Back to `queued` for another attempt (1.3): the attempt's tokens are revoked first; past 2 requeues (counted when
    * `counts`) the turn fails `session_crashed`.
    */
-  private requeue(t: TurnRow, counts: boolean) {
+  private requeue(t: TurnRow, counts: boolean, advanceNow = true) {
     this.d.tokens.revokeTurn(t.turn_id, 'requeued')
     if (counts && t.requeues >= MAX_REQUEUES) return this.failUnstarted(t, { outcome: 'failed', reason: 'session_crashed' })
     if (t.pool_queued === 1) this.d.ports.pool.dequeue(t.turn_id)
@@ -483,7 +492,8 @@ export class AgentCore {
       `UPDATE turns SET state = 'queued', gen = gen + 1, placed = 0, pool_queued = 0, runner = NULL, runner_last_seq = -1,
         watch_json = NULL, starting_deadline_ms = NULL, requeues = requeues + ? WHERE turn_id = ?`, counts ? 1 : 0, t.turn_id)
     this.d.scheduler.cancel(`turn-watch:${t.turn_id}`)
-    this.advance(t.run_id)
+    if (advanceNow) this.advance(t.run_id)
+    else this.d.scheduler.schedule({ id: `run-advance:${t.run_id}`, kind: 'run-advance', dueAtMs: this.d.now() + BUDGET_RETRY_MS })
   }
 
   // ---------- the placement hooks (W2 fit point 3; obligation 9) ----------
@@ -966,21 +976,28 @@ export class AgentCore {
     return this.turn(turnId)?.owner_id ?? null
   }
 
+  /**
+   * Marks the interrupt asked and sends it. A failed send clears the mark, so the next click asks again (L4). A live turn
+   * always has its runner named (the pool writes it before it awaits the admission); with none, nothing is sent and
+   * the mark stays: the outcome reads `interrupted` when the runner's answer comes.
+   */
   private askInterrupt(t: TurnRow) {
     this.sql.exec('UPDATE turns SET interrupt_asked = 1 WHERE turn_id = ?', t.turn_id)
     const runner = t.runner
-    if (runner !== null) void this.d.ports.pool.interrupt(runner, t.turn_id).catch(err => console.error({ event: 'turn_interrupt_failed', error: errorText(err) }))
+    if (runner === null) return
+    const gen = t.gen
+    void this.d.ports.pool.interrupt(runner, t.turn_id).catch(err => {
+      console.error({ event: 'turn_interrupt_failed', error: errorText(err) })
+      this.sql.exec("UPDATE turns SET interrupt_asked = 0 WHERE turn_id = ? AND gen = ? AND state = 'live' AND outcome IS NULL", t.turn_id, gen)
+    })
   }
 
   /** The SDK interrupt of a live turn; a queued (or not yet placed) one is cancelled instead. */
   interrupt(turnId: string, by: Actor): { ok: true } | Refusal {
     const t = this.turn(turnId)
     if (!t || t.owner_id !== by.memberId) return refuse('not_found')
-    if (t.state === 'queued' || (t.state === 'starting' && (t.placed === 0 || t.pool_queued === 1))) {
-      this.fence(t, { outcome: 'interrupted' })
-      return { ok: true }
-    }
-    if (t.state === 'starting') {
+    // A turn not yet running (queued, or starting anywhere short of live) is ended `interrupted` instead.
+    if (t.state === 'queued' || t.state === 'starting') {
       this.fence(t, { outcome: 'interrupted' })
       return { ok: true }
     }

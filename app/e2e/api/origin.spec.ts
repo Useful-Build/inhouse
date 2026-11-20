@@ -5,6 +5,10 @@ import { caseFor } from './cases.ts'
 import { actor, appOrigin, call, expectError, matrixRows, rowKey } from './kit.ts'
 import type { CallOptions } from './kit.ts'
 
+// The matrix POSTs /api/pause (route 36): resume after this file so the test build's agent isn't left paused for later
+// specs (#153 round 1, L7; approved exception to the orchestrator-owned specs, this hook only).
+test.afterAll(async ({ request }) => { await call(request, actor('admin'), 'POST', '/api/resume', { json: {} }) })
+
 const admin = actor('admin')
 const rows = matrixRows()
 const writes = rows.filter(r => r.method !== 'GET')
