@@ -8,7 +8,8 @@
 // only writes it, the root only reads it), and its fd 4 (`stdio[4]`) carries root -> session (the root only writes, the
 // session only reads). Node destroys a socket on any write error, read side included; with one socket both ways, a
 // root write that failed once the session had gone (an ack, an interrupt, a stop) dropped the session's unread last
-// events. Now a failed write breaks fd 4 only, and fd 3 is read to its end.
+// events. Now a failed write breaks fd 4 only, and fd 3 is read to its end once the session has exited, even behind a
+// slow Worker: from the exit on, fd 3 is no longer paused.
 // fds 0 to 2 are left to Node in the session (the SDK builds process.stdin on fd 0): stdin is /dev/null (the root has
 // nothing to say there), stdout is drained and counted, never kept, and stderr is the session's log (the root keeps its
 // tail). Neither is parsed. A session whose fd 3 closes (an end or an error) before its terminal event can't be heard
@@ -54,7 +55,7 @@ export type SessionHandle = {
   interrupt(): void
   /** The SIGTERM path: ask the session to interrupt, flush and end; kill its group if it hasn't exited after the grace. */
   stop(): void
-  /** Backpressure from the Worker's response: stop reading the session's events until `resume()`. */
+  /** Backpressure from the Worker's response: stop reading the session's events until `resume()`. A no-op once it has exited. */
   pause(): void
   resume(): void
   /** Resolves once the process has exited, its pipes have closed, its group has been killed and the run has ended. */
@@ -201,14 +202,15 @@ export function hostSession(opts: {
     }),
   )
   // fd 3 closed (a clean end, every line read; or an error, ECONNRESET say) with no terminal event: the session can't
-  // be heard any more. Its group is killed; the child's `close` then ends the run.
+  // be heard any more. Its group is killed; the child's `close` then ends the run. Diagnostic only: a session that
+  // closes fd 3 and then exits on its own races this kill, so the crash log's `how` may read SIGKILL for it.
   fromSession?.on('close', () => {
     if (!stream.ended) killGroup()
   })
   // Pipe errors are logged, one listener per socket; the run's end comes from `close`. A write that fails on fd 4
   // (EPIPE once the session is gone) breaks fd 4 only: fd 3 is still read to its end.
-  fromSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, error: e.message }))
-  toSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, error: e.message }))
+  fromSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, fd: 3, error: e.message }))
+  toSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, fd: 4, error: e.message }))
   // Nothing comes to the root on fd 4; read it anyway, so its end is seen and it closes with the session.
   toSession?.resume()
   // Only stderr's tail is kept, for the crash log: the session's stdout can hold anything it printed (chat content, a
@@ -251,6 +253,10 @@ export function hostSession(opts: {
     clearTimeout(killTimer)
     // Leftovers in the session's group die now; their copies of its pipes close with them.
     killGroup()
+    // What the session sent is read now, whatever the Worker's pace (pause is a no-op from here on): it is bounded by
+    // the kernel's buffer (fds 3 and 4 aren't inherited, so no one else adds to it), and the grace below must never cut
+    // off unread events.
+    fromSession?.resume()
     // A process outside the group can still hold a pipe open; don't wait on it past the grace.
     closeTimer = setTimeout(() => {
       for (const s of child.stdio) s?.destroy()
@@ -274,7 +280,9 @@ export function hostSession(opts: {
       if (sentRun) send({ type: 'stop', endWithinMs: stopEndWithinMs(opts.stopGraceMs) })
       killAfterGrace()
     },
-    pause: () => fromSession?.pause(),
+    pause: () => {
+      if (!exited) fromSession?.pause()
+    },
     resume: () => fromSession?.resume(),
   }
 }

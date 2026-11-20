@@ -14,6 +14,9 @@
 //   and keeps running holds its run open; a crash's log loses the stack trace past the first 200 chars.
 // - a root write that fails once the session has gone (an ack or nack, an interrupt, a stop) takes the session's unread
 //   last events and its finished with it (one socket both ways: Node destroys it, read side included, on a write error);
+// - a root write that really fails on a still-open fd 4 (EPIPE) breaks fd 3 too, or is logged more than once;
+// - a session that has sent everything and exited, behind a slow Worker, is cut off after the grace (`session_crashed`
+//   with its events unread);
 // - a channel that breaks (an error, no clean end) leaves the session running until the run's timeout; a pipe error is
 //   logged twice;
 // - a session that never reads what the root sends makes the root buffer without bound;
@@ -21,16 +24,18 @@
 import type { ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import http from 'node:http'
-import type { Readable } from 'node:stream'
+import type { Readable, Writable } from 'node:stream'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
 import { ACCEPTED_VERSIONS, Health, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
-import { spawnFixture, testSessionUsers } from './support/test-seams.ts'
+import { cleanup, spawnFixture, testSessionUsers } from './support/test-seams.ts'
 import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
 import { API_MAX_CONNECTIONS } from '../../src/server/app.ts'
-import { STDERR_LOG_CHARS, stopEndWithinMs } from '../../src/server/session-host.ts'
+import { RunStream } from '../../src/server/run-stream.ts'
+import { STDERR_LOG_CHARS, hostSession, stopEndWithinMs, type SessionHandle } from '../../src/server/session-host.ts'
+import { sessionEnv } from '../../src/session/env.ts'
 
 let root: TestRoot
 beforeEach(async () => {
@@ -137,7 +142,10 @@ describe('a session that misbehaves', () => {
     }
   }, 30_000)
 
-  it('a stop, then the session closes its channel with no terminal event: killed at once, the run ends as stopped', async () => {
+  // What this proves: after a stop, a channel close with no terminal event kills the session well before the grace,
+  // and the run ends `stopped`. It passes whether the kill comes on fd 3's `end` or its `close`; the channel-error test
+  // above is the guard for `close` (an error, no end).
+  it('a stop, then the session closes its channel with no terminal event: killed well before the grace, the run ends as stopped', async () => {
     const spawned: ChildProcess[] = []
     // A grace far past the test's own: only the kill on the channel's close can end this run in time.
     const own = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 120_000 })
@@ -280,31 +288,52 @@ describe('a session that misbehaves', () => {
 })
 
 describe('a root write that fails once the session has gone', () => {
-  // The session writes its last events and finished and closes its channel while the root isn't reading it (the tail
-  // sits in the root's buffer and the kernel's). Then the root writes to it (an ack or nack for an audit entry at the
-  // head of that tail, an interrupt, a stop) and the write fails, or is skipped as the root has seen the session's end
-  // of fd 4 close. The tail must still be read, whole. The session exits only after: at its exit Node resumes every
-  // stdio stream of the child (flushStdio), which would undo the test's pause.
-  it.each(['interrupt', 'stop', 'ack', 'nack'] as const)('%s: the run still ends finished, with every event', async (how) => {
+  // The session writes its last events and finished and closes its channel while the root isn't reading fd 3: fd 4 at
+  // once, fd 3 once its tail is flushed. With fd 4 closed and the tail unread on fd 3, the root writes (an ack or nack
+  // for an audit entry at the head of that tail, an interrupt, a stop). Either the root has already seen fd 4's end and
+  // skips the write (`fd 4 ended`), or it hasn't (the test stops its reads on fd 4) and the write really fails on a
+  // still-open fd 4, EPIPE (`fd 4 open`). Either way the tail must still be read, whole.
+  // What it needs: unread data on fd 3 when the root writes, nothing more. The session never needs buffer room: what
+  // the kernel won't take waits in the session's own buffer, and it exits only once all of it has been flushed, after
+  // the root reads again. So no buffer size (the root's, the kernel's) can turn this into a timeout. 30 events of about
+  // 4 KB are past the root's own buffer while paused (64 KB), so the tail sits in the root, the kernel and the session.
+  // The session exits only after the root reads again: at its exit Node resumes every stdio stream of the child
+  // (flushStdio), which would undo the test's pause.
+  it.each([
+    ['interrupt', 'fd 4 ended'],
+    ['stop', 'fd 4 ended'],
+    ['ack', 'fd 4 ended'],
+    ['nack', 'fd 4 ended'],
+    ['interrupt', 'fd 4 open'],
+    ['stop', 'fd 4 open'],
+    ['ack', 'fd 4 open'],
+    ['nack', 'fd 4 open'],
+  ] as const)('%s, %s: the run still ends finished, with every event', async (how, fd4) => {
     const spawned: ChildProcess[] = []
     // A grace past the test's own: the pipes the session left aren't destroyed under the test.
     const own = await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 60_000 })
     try {
-      // About 120 KB: more than the root holds in its own buffer while paused (64 KB), so part of it is still in the
-      // kernel when the write fails; less than the root's buffer and the kernel's together, so the session can exit.
       const n = 30
       const first = how === 'ack' ? 'audit' : how === 'nack' ? 'audit-expired' : 'none'
       const start = runStart({ prompt: `last-words:${n}:4000:${first}` })
       const run = openRun(own, start)
-      await waitFor(() => spawned.length === 1 && existsSync(join(own.users.dirs.get(start.chatId)!, 'got-run')), 'the session has its run')
+      const dir = () => own.users.dirs.get(start.chatId)!
+      await waitFor(() => spawned.length === 1 && existsSync(join(dir(), 'got-run')), 'the session has its run')
       const child = spawned[0]!
       const channel = channelOf(child)
+      const toSession = child.stdio[4] as Writable
       channel.pause()
+      // Below the stream: libuv stops reading fd 4, so the root never sees its end and the socket stays open to write.
+      if (fd4 === 'fd 4 open') (toSession as unknown as { _handle: { readStop(): number } })._handle.readStop()
       child.kill('SIGUSR2')
-      await waitFor(() => existsSync(join(own.users.dirs.get(start.chatId)!, 'closed')), 'the session closed its channel')
+      await waitFor(() => existsSync(join(dir(), 'fd4-closed')), 'the session closed fd 4')
+      await waitFor(() => channel.readableLength > 0, 'unread data on fd 3')
+      if (fd4 === 'fd 4 ended') await waitFor(() => toSession.writableEnded || toSession.destroyed, "the root has seen fd 4's end")
+      else expect(toSession.writableEnded || toSession.destroyed).toBe(false)
       if (how === 'interrupt') expect(await post(own, `/runs/${start.runId}/interrupt`)).toBe(202)
       if (how === 'stop') expect(await post(own, `/runs/${start.runId}/stop`)).toBe(202)
       channel.resume()
+      await waitFor(() => existsSync(join(dir(), 'closed')), 'the session flushed and closed fd 3')
       const exited = new Promise<[number | null, NodeJS.Signals | null]>((r) => child.once('exit', (code, signal) => r([code, signal])))
       child.kill('SIGUSR2')
       expect(await exited).toEqual([0, null])
@@ -314,10 +343,56 @@ describe('a root write that fails once the session has gone', () => {
       expect(events.at(-1)?.type).toBe('finished')
       if (how === 'ack') expect(events.filter((e) => e.type === 'audit')).toHaveLength(1)
       else expect(events.filter((e) => e.type === 'audit')).toEqual([])
-      // A write that failed is logged once at most (one error listener per socket).
-      expect(own.logs.filter((l) => l.type === 'session_pipe_error' && l.runId === start.runId).length).toBeLessThanOrEqual(1)
+      const pipeErrors = own.logs.filter((l) => l.type === 'session_pipe_error' && l.runId === start.runId)
+      if (fd4 === 'fd 4 ended') expect(pipeErrors).toEqual([])
+      // The failed write, logged once (one error listener per socket), on fd 4 only.
+      else expect(pipeErrors).toEqual([expect.objectContaining({ fd: 4, error: expect.stringMatching(/EPIPE|ECONNRESET/) })])
     } finally {
       await own.close()
+    }
+  }, 30_000)
+})
+
+describe('a Worker that reads slowly', () => {
+  // The root pauses fd 3 behind a slow Worker. A session that has sent everything and exited must still be read to its
+  // end: the grace after its exit only bounds a process outside its group that holds a pipe, never unread events.
+  it("the root paused through the session's exit, past the grace: the run still ends finished, with every event", async () => {
+    const users = testSessionUsers()
+    const spawned: ChildProcess[] = []
+    try {
+      const user = await users.allocate('slow-worker')
+      const child = spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) })(user, sessionEnv(user, 9))
+      const channel = channelOf(child)
+      // All of it fits in what the root takes into its own buffer while paused (it reads until that is full), so the
+      // session can flush it and exit with the root paused, whatever the kernel's buffers hold. Sent in two halves, so
+      // the root holds it as at least two reads: one read handed on (and paused again) must leave the other unread.
+      const n = 8
+      const bytes = Math.floor(channel.readableHighWaterMark / 2 / n)
+      const { runToken: _token, ...config } = runStart({ prompt: `split-words:${n}:${bytes}` })
+      const events: RunEvent[] = []
+      const logs: Record<string, unknown>[] = []
+      // A Worker whose response never drains: every event written pauses the session again, as the root does.
+      let slow = false
+      let handle: SessionHandle | undefined
+      const stream = new RunStream(config.runId, (e) => {
+        events.push(e)
+        if (slow) handle?.pause()
+      })
+      stream.emit({ type: 'started', sessionId: config.sessionId, resume: config.resume })
+      handle = hostSession({ child, stream, config, stopGraceMs: 200, log: (l) => logs.push(l), canWrite: () => true })
+      await waitFor(() => existsSync(join(user.workDir, 'got-run')), 'the session has its run')
+      slow = true
+      handle.pause()
+      child.kill('SIGUSR2')
+      await waitFor(() => channel.readableLength > 0, "the first half in the root's buffer")
+      child.kill('SIGUSR2')
+      await handle.done
+      expectOneEnd(events)
+      expect(events.filter((e) => e.type === 'sdk').map((e) => (e.type === 'sdk' ? e.message.i : null))).toEqual(Array.from({ length: n }, (_, i) => i))
+      expect(events.at(-1)?.type).toBe('finished')
+      expect([spawned[0]!.exitCode, spawned[0]!.signalCode]).toEqual([0, null])
+    } finally {
+      cleanup(users)
     }
   }, 30_000)
 })

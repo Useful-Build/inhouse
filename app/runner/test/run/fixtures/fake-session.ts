@@ -20,8 +20,12 @@
 //                      and never ends on its own
 //   last-words:<n>:<bytes>:<first>  writes `got-run` in its cwd and waits for SIGUSR2; then sends <first> (`audit`: an
 //                      audit entry; `audit-expired`: an expired one; `none`: nothing) without awaiting the answer, n sdk
-//                      events of about <bytes> each carrying their index, and finished; closes its channel (fds 3 and
-//                      4), writes `closed` in its cwd, and exits 0 at the next SIGUSR2
+//                      events of about <bytes> each carrying their index, and finished; closes its channel: fd 4 at
+//                      once (`fd4-closed` in its cwd once it has closed), fd 3 once all of that is flushed to it
+//                      (`closed` in its cwd then); exits 0 at the next SIGUSR2
+//   split-words:<n>:<bytes>  writes `got-run` in its cwd and waits for SIGUSR2; then sends the first half of n sdk events
+//                      of about <bytes> each, carrying their index; at the next SIGUSR2 the rest and finished, closes its
+//                      channel and exits 0 once all of it is flushed
 //   audit-flood        never reads the root again: blocks its own event loop writing expired audit entries straight onto
 //                      the channel (fd 3), one after another, until it is killed
 //   console-log        logs through every console method that writes to stdout by default, then finished
@@ -193,6 +197,8 @@ channel.onMessage((line) => {
         const blob = 'w'.repeat(Number(b))
         for (let i = 0; i < Number(a); i++) event({ type: 'sdk', message: { type: 'assistant', i, blob }, truncated: false })
         finished()
+        // close() closes fd 4 at once; its `close` (the descriptor is gone) is the first the channel reports.
+        channel.onClose(() => writeFileSync('fd4-closed', ''))
         void channel.close().then(() => {
           process.once('SIGUSR2', () => process.exit(0))
           setInterval(() => {}, 1000)
@@ -202,9 +208,28 @@ channel.onMessage((line) => {
       writeFileSync('got-run', '')
       break
     }
+    case 'split-words': {
+      const n = Number(a)
+      const blob = 'w'.repeat(Number(b))
+      const words = (from: number, to: number) => {
+        for (let i = from; i < to; i++) event({ type: 'sdk', message: { type: 'assistant', i, blob }, truncated: false })
+      }
+      process.once('SIGUSR2', () => {
+        process.once('SIGUSR2', () => {
+          words(Math.ceil(n / 2), n)
+          finished()
+          void channel.close().then(() => process.exit(0))
+        })
+        words(0, Math.ceil(n / 2))
+      })
+      writeFileSync('got-run', '')
+      break
+    }
     case 'audit-flood': {
       // Blocks the event loop, so nothing the root sends is read again. The channel's fd is non-blocking: a full socket
-      // gives EAGAIN, and the loop sleeps a millisecond and goes on.
+      // gives EAGAIN, and the loop sleeps a millisecond and goes on. The nap is an EAGAIN back-off inside a fixture (so
+      // the loop doesn't spin a core while the root's side is full), not a wait for a condition: the root ends this
+      // session by killing it, whenever that comes.
       const nap = new Int32Array(new SharedArrayBuffer(4))
       for (let id = 0; ; id++) {
         const line = Buffer.from(`${JSON.stringify({ type: 'audit', id, expiresAt: 0, entry: auditEntry(id) })}\n`)

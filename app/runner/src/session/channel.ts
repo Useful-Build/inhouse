@@ -34,7 +34,7 @@ export type RootChannel = {
   onMessage(handler: (line: LineResult) => void): void
   /** The root's side closed (either socket ended or broke): nothing more will come or get through. Called once. */
   onClose(handler: () => void): void
-  /** Flushes what was sent, then closes both sockets. */
+  /** Closes fd 4 (from the root) at once; flushes what was sent on fd 3, then closes it. */
   close(): Promise<void>
 }
 
