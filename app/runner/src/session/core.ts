@@ -69,8 +69,11 @@ export const AUTO_COMPACT_WINDOW = 600_000
  * the egress allows (the run's `model` or `sideModel`): `ANTHROPIC_DEFAULT_HAIKU_MODEL` is the `haiku` alias and the
  * background model; subagents run on the turn's model (`CLAUDE_CODE_SUBAGENT_MODEL`, forced so a model Claude names
  * when it spawns one doesn't win); the `sonnet`, `opus` and `fable` aliases resolve to the turn's model too.
- * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sets how full the context gets before compaction; subagents inherit it (the SDK's
- * per-agent `autoCompactWindow` only lowers it, and the runner defines no agents). The CLI's own concurrency
+ * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sets how full the context gets before compaction (no `CLAUDE_CODE_DISABLE_1M_CONTEXT`:
+ * the 1M window stays). It binds subagents too: the subagents page (read 2026-11-20) says a subagent uses the lowest of
+ * its own `autoCompactWindow`, the model's window and the window this variable sets. A per-subagent value can only
+ * lower that, and would need custom agent definitions, which R2's guard refuses (`agents` is a guarded option), so
+ * none is set. The CLI's own concurrency
  * (parallel subagents) isn't limited here: the Worker's gate holds a turn to 4 model calls in flight.
  */
 export function modelEnv(config: Pick<RunConfig, 'model' | 'sideModel'>): Record<string, string> {
