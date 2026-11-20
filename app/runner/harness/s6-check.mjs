@@ -53,6 +53,9 @@ let failedEarly
 
 async function main() {
   facts.docker = sh('docker', ['version', '--format', '{{.Server.Version}} {{.Server.Arch}} {{.Server.Os}}']).out.trim()
+  facts.dockerInfo = sh('docker', ['info', '--format', '{{json .SecurityOptions}} driver={{.Driver}} cgroup={{.CgroupVersion}}']).out.trim()
+  facts.dockerHost = process.env.DOCKER_HOST ?? null
+  facts.devFuseOnHost = sh('test', ['-c', '/dev/fuse']).ok
   facts.wrangler = sh('npx', ['wrangler', '--version'], { cwd: HERE }).out.trim()
   facts.host = {
     kernel: sh('uname', ['-srm']).out.trim(),
@@ -99,7 +102,7 @@ async function main() {
   if (!cid) throw new Error(`no runner container among the new ones: ${fresh.join(' ') || 'none'}`)
   log(`runner container ${cid.slice(0, 12)}`)
   facts.inspect = JSON.parse(sh('docker', ['inspect', cid, '--format',
-    '{"capAdd":{{json .HostConfig.CapAdd}},"capDrop":{{json .HostConfig.CapDrop}},"securityOpt":{{json .HostConfig.SecurityOpt}},"privileged":{{.HostConfig.Privileged}},"user":{{json .Config.User}},"image":{{json .Config.Image}},"maskedPaths":{{json .HostConfig.MaskedPaths}},"networkMode":{{json .HostConfig.NetworkMode}}}']).out)
+    '{"capAdd":{{json .HostConfig.CapAdd}},"capDrop":{{json .HostConfig.CapDrop}},"securityOpt":{{json .HostConfig.SecurityOpt}},"privileged":{{.HostConfig.Privileged}},"user":{{json .Config.User}},"image":{{json .Config.Image}},"maskedPaths":{{json .HostConfig.MaskedPaths}},"networkMode":{{json .HostConfig.NetworkMode}},"devices":{{json .HostConfig.Devices}}}']).out)
   const inC = (script, user) => sh('docker', ['exec', ...(user ? ['-u', user] : []), cid, 'sh', '-c', script])
   facts.container = {
     id: inC('id').out.trim(),
