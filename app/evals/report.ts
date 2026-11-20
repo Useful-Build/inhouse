@@ -92,12 +92,17 @@ export function buildReport(cases: Case[], rows: Row[], meta: ReportMeta) {
   const bypasses: { caseId: string; rep: number; kind: ExfilKind; check: string; detail: string }[] = []
   for (const r of rows) {
     if (!r.exfil) continue
-    const k = kinds[r.exfil.kind]
-    k.attempts += r.exfil.attempts
-    k.refused += r.exfil.refused
-    k.bypasses += r.exfil.bypasses.length
-    for (const b of r.exfil.bypasses) bypasses.push({ caseId: r.caseId, rep: r.rep, kind: r.exfil.kind, check: b.check, detail: b.detail })
+    for (const kind of Object.keys(kinds) as ExfilKind[]) {
+      kinds[kind].attempts += r.exfil.byKind[kind].attempts
+      kinds[kind].refused += r.exfil.byKind[kind].refused
+    }
+    for (const b of r.exfil.bypasses) {
+      kinds[b.kind].bypasses++
+      bypasses.push({ caseId: r.caseId, rep: r.rep, kind: b.kind, check: b.check, detail: b.detail })
+    }
   }
+  // An exfiltration chat that didn't run to an answer proved nothing: the nightly fails on any.
+  const exfilNotOk = rows.filter((r) => r.cat === 'exfil' && !r.runOk).length
 
   const perCase = [...done.reduce((m, x) => {
     const y = m.get(x.id) ?? { id: x.id, cat: x.cat, passes: 0, n: 0, cost: 0 }
@@ -121,7 +126,7 @@ export function buildReport(cases: Case[], rows: Row[], meta: ReportMeta) {
     summary, recallSplit, toolChoiceStrict,
     costPerConversation: costStats(done.map((x) => x.cost)),
     totalCostUsd: rows.reduce((s, r) => s + r.costUsd, 0),
-    exfiltration: { kinds, bypasses },
+    exfiltration: { kinds, bypasses, notOk: exfilNotOk },
     perCase,
     failures: failed.map((r) => ({ id: r.caseId, rep: r.rep, chat: r.chat, checks: r.checks, called: r.called, err: r.err ?? null, answer: r.answer })),
     confusion,

@@ -157,6 +157,19 @@ describe('budget, timeout and failures', () => {
     expect(out.rows[0]).toMatchObject({ runOk: false, pass: false, err: 'http 500' })
   })
 
+  it('queues the exfiltration cases first, so a budget stop never leaves them unrun', async () => {
+    const mixed = [...CASES.filter((c) => c.id === 'N01'), ...CASES.filter((c) => c.id === 'X01' || c.id === 'X04')]
+    const out = await runEvals({ target: stub(0.02), cases: mixed, reps: 1, concurrency: 1, budgetUsd: 0.04 })
+    expect(out.rows.map((r) => r.caseId)).toEqual(['X01', 'X04'])
+    expect(out.stoppedByBudget).toBe(true)
+  })
+
+  it('counts an exfiltration chat that did not run to an answer', async () => {
+    const boom = stub(0, async () => ({ chat: async () => { throw new Error('http 500') }, reset: async () => {} }))
+    const out = await runEvals({ target: boom, cases: CASES.filter((c) => c.id === 'X01'), reps: 2, concurrency: 1 })
+    expect(buildReport(CASES, out.rows, META).exfiltration.notOk).toBe(2)
+  })
+
   it('estimates S5\'s price: about $0.011 a chat, $1.5 for the 43 x 3 set', () => {
     const s5 = CASES.filter((c) => c.cat !== 'exfil')
     expect(estimateUsd(s5, 3)).toBeCloseTo(0.011 * 138, 9)

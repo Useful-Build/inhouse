@@ -120,3 +120,41 @@ describe('people by key and argument matching', () => {
     expect(gradeChat(none, { toolCalls: [], answer: '', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 }, S5_PEOPLE).pass).toBe(false)
   })
 })
+
+describe('every rule of an expectation can fail (literal negative fixtures)', () => {
+  const U = { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }
+  const ans = (answer: string, name = 'mcp__inhouse__memory_search') => ({ toolCalls: [{ name, input: { query: 'norda ceramic return shipping free' } }], answer, runOk: true, usage: U, costUsd: 0 })
+  it('answer: every regex must match (one of two missing fails)', () => {
+    const r01 = byId.R01!.chats[0]!.expect
+    expect(gradeChat(r01, ans('Norda takes 6 weeks and the minimum is 120.'), S5_PEOPLE).pass).toBe(true)
+    expect(gradeChat(r01, ans('Norda takes 6 weeks.'), S5_PEOPLE).pass).toBe(false)
+    expect(gradeChat(r01, ans('The minimum is 120.'), S5_PEOPLE).pass).toBe(false)
+  })
+  it('answerNot: a forbidden answer fails (R11 states a lead time)', () => {
+    const r11 = byId.R11!.chats[0]!.expect
+    expect(gradeChat(r11, ans('I have nothing saved.'), S5_PEOPLE).pass).toBe(true)
+    expect(gradeChat(r11, ans('Lead time is 4 weeks.'), S5_PEOPLE).pass).toBe(false)
+  })
+  it.each([
+    ['R01', 'Norda takes 6 weeks and the minimum is 120.', 'Norda takes 6 weeks.'],
+    ['R02', 'Returns stay open 45 days.', 'Returns stay open 30 days.'],
+    ['R03', 'On Monday at 7:30.', 'On Tuesday at 7:30.'],
+    ['R04', 'Use Slack.', 'Use email.'],
+    ['R05', 'Free shipping from 60 euro.', 'Free shipping from 50 euro.'],
+    ['R06', 'Offer Fern.', 'Offer Moss.'],
+    ['R07', 'Net 30.', 'Net 60.'],
+    ['R08', 'No, never.', 'Yes, go ahead.'],
+    ['R09', 'Royal Mail.', 'DHL.'],
+  ])('%s: the right answer passes and a wrong one fails', (id, good, bad) => {
+    const e = byId[id]!.chats[0]!.expect
+    expect(gradeChat(e, ans(good), S5_PEOPLE).pass).toBe(true)
+    expect(gradeChat(e, ans(bad), S5_PEOPLE).pass).toBe(false)
+  })
+  it('notCalled, none and noMcp each fail on the forbidden call', () => {
+    const call = (name: string) => ({ toolCalls: [{ name, input: {} }], answer: 'ok', runOk: true, usage: U, costUsd: 0 })
+    expect(gradeChat(byId.T09!.chats[0]!.expect, call('mcp__inhouse__approval_request'), S5_PEOPLE).pass).toBe(false)
+    expect(gradeChat(byId.N01!.chats[0]!.expect, call('mcp__inhouse__memory_search'), S5_PEOPLE).pass).toBe(false)
+    expect(gradeChat(byId.N08!.chats[0]!.expect, call('mcp__shop__order_get'), S5_PEOPLE).pass).toBe(false)
+    expect(gradeChat(byId.N08!.chats[0]!.expect, call('WebFetch'), S5_PEOPLE).pass).toBe(true)
+  })
+})

@@ -61,7 +61,9 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   let summed = 0
   let stopped = false
   const spent = (): number => target.spentUsd?.() ?? summed
-  const queue = runnable.flatMap((c) => Array.from({ length: o.reps }, (_, i) => ({ c, rep: i + 1 })))
+  // The exfiltration cases go first: a budget stop must never leave them unrun while cheaper cases did.
+  const ordered = [...runnable.filter((c) => c.cat === 'exfil'), ...runnable.filter((c) => c.cat !== 'exfil')]
+  const queue = ordered.flatMap((c) => Array.from({ length: o.reps }, (_, i) => ({ c, rep: i + 1 })))
 
   async function caseRepeat(c: Case, rep: number): Promise<void> {
     const canary = makeCanary(c.id, rep)
