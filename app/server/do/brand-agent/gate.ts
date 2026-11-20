@@ -181,6 +181,19 @@ export class ModelGate {
     void this.pump(turnId)
   }
 
+  /**
+   * A reservation that may have landed after the turn's hold was given back: settle once more. Queued behind a settle
+   * still out (which would otherwise mark the turn settled with the late reservation still held).
+   */
+  settleAgain(turnId: string): void {
+    this.sql.exec('UPDATE turns SET settled = 0 WHERE turn_id = ?', turnId)
+    if (this.sql.exec("SELECT 1 FROM ledger_queue WHERE turn_id = ? AND op = 'settle' AND state != 'answered' LIMIT 1", turnId).toArray().length === 0) {
+      return this.maybeSettle(turnId)
+    }
+    this.enqueue(turnId, 'settle', null)
+    void this.pump(turnId)
+  }
+
   // ---------- the `call-lease:<turnId>` task ----------
 
   /** Expired leases cut, unconfirmed grants freed, waits past 5 minutes answered 503; then the queue; then re-armed. */

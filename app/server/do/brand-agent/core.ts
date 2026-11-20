@@ -621,8 +621,8 @@ export class AgentCore {
    * once more.
    */
   private queueSettle(turnId: string, again: boolean) {
-    if (again) this.sql.exec('UPDATE turns SET settled = 0 WHERE turn_id = ?', turnId)
-    this.gate.maybeSettle(turnId)
+    if (again) this.gate.settleAgain(turnId)
+    else this.gate.maybeSettle(turnId)
   }
 
   /** The `call-lease:<turnId>` task: leases, confirm deadlines, 5-minute waits, the ledger queue (gate.ts). */

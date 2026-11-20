@@ -315,6 +315,28 @@ describe('interrupt, fence and settle (8.2, 4.6, 9)', () => {
     expect(h2.usage.booked.get(t)).toBe(70_000)
   }))
 
+  it('a reservation landing while the first release is still out is given back by a second one', () => inAgent(async h => {
+    const inReserve = deferred()
+    const realReserve = h.usage.reserve.bind(h.usage)
+    h.usage.reserve = async t => { await inReserve.promise; return realReserve(t) }
+    const inRelease = deferred()
+    const realRelease = h.usage.release.bind(h.usage)
+    let first = true
+    h.usage.release = async (...a) => { if (first) { first = false; await inRelease.promise } return realRelease(...a) }
+    const a = ok(await h.submit('c1', 'key-gate9'))
+    await settle()
+    h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    await settle()
+    // The first release is out (unanswered) when the reserve lands.
+    inReserve.resolve()
+    await settle()
+    inRelease.resolve()
+    await settle()
+    expect(h.usage.calls.map(c => c.method)).toEqual(['reserve', 'release', 'release'])
+    expect(h.usage.holds.get(a.turnId)).toBe(0)
+    expect(h.usage.final.has(a.turnId)).toBe(true)
+  }))
+
   it('a turn with no model call gives its hold back with release (design 9)', () => inAgent(async h => {
     const t = (await liveTurn(h)).turnId
     h.push(t, ...fullAnswer('done', 2))
