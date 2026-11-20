@@ -91,3 +91,15 @@ describe('ending (failures 2 to 4)', () => {
     expect((await linesSince(db, before)).map(l => [l.action, l.at_ms])).toEqual([['grant.expired', a.endsAt.ms], ['grant.created', later]])
   })
 })
+
+describe('ending vs the logged expiry (fix round 1)', () => {
+  it('a grant whose expiry is logged can not also be ended, even by a request whose clock is just before ends_at_ms', async () => {
+    const made = SupportGrantSchema.parse((await create(1)).body)
+    const before = await lastLineId(db)
+    // A request with a later clock sees it run out and logs the expiry.
+    await stores.grants.active({ nowMs: made.endsAt.ms + 1, requestId: 'r' })
+    const ended = await end(made.id, 1, made.endsAt.ms - 1)
+    expect(ended).toMatchObject({ status: 409, body: { error: { code: 'conflict', current: { id: made.id, rev: 1, endedAt: null } } } })
+    expect((await linesSince(db, before)).map(l => l.action)).toEqual(['grant.expired'])
+  })
+})

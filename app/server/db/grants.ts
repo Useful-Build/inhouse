@@ -109,12 +109,15 @@ export function grantStore({ db, hook = s => s }: GrantStoreDeps) {
       return { ok: grantRecord(r, at.nowMs) }
     },
 
-    /** Ends a live grant at once, at its rev, with its `grant.ended` line. */
+    /**
+     * Ends a live grant at once, at its rev, with its `grant.ended` line. Never one whose expiry is logged already (a
+     * request with a later clock saw it run out): a grant gets `grant.expired` or `grant.ended`, not both.
+     */
     async end(input: { id: string; ifRev: number }, at: At): Promise<Outcome<SupportGrant, 'not_found'>> {
       const stamp = writeStamp(at.requestId)
       const [change] = await write([
         stmt(
-          `UPDATE support_grants SET ended_at_ms = ?, ended_by = ?, rev = rev + 1, req_id = ? WHERE id = ? AND rev = ? AND ${LIVE}`,
+          `UPDATE support_grants SET ended_at_ms = ?, ended_by = ?, rev = rev + 1, req_id = ? WHERE id = ? AND rev = ? AND expiry_logged = 0 AND ${LIVE}`,
           at.nowMs, at.actorId, stamp, input.id, input.ifRev, at.nowMs,
         ),
         auditInsert(

@@ -20,16 +20,18 @@ export async function putPhoto(c: ApiCtx): Promise<Response> {
   const declared = c.request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()
   if (type === null || declared !== type) return apiError('invalid', { reason: 'bad_type' })
   const done = await storesOf(c).photos.set({ memberId: at.actorId, bytes, type }, at)
-  // Another upload or a removal changed the photo first: nothing of this one was kept.
-  if (!done.changed) return apiError('conflict')
+  // Another upload or a removal changed the photo first: nothing of this one was kept; the photo as it is now.
+  if ('conflict' in done) return apiError('conflict', { current: { photoUrl: done.conflict.photoKey ? photoUrl(at.actorId) : null } })
   return apiJson({ photoUrl: photoUrl(at.actorId) })
 }
 
-/** Route 14, `DELETE /api/photo`: `{ photoUrl: null }` (also when there was none: nothing changes, nothing is logged). */
+/** Route 14, `DELETE /api/photo`: `{ photoUrl: null }` (also when there was none: nothing changes, nothing is logged); 409 on a lost race. */
 export async function deletePhoto(c: ApiCtx): Promise<Response> {
   const at = writer(c)
   c.access.requireObject({ ownerId: at.actorId })
-  await storesOf(c).photos.remove(at.actorId, at)
+  const done = await storesOf(c).photos.remove(at.actorId, at)
+  // Another upload or removal changed it first: the photo as it is now (as the upload's race answers).
+  if ('conflict' in done) return apiError('conflict', { current: { photoUrl: done.conflict.photoKey ? photoUrl(at.actorId) : null } })
   return apiJson({ photoUrl: null })
 }
 

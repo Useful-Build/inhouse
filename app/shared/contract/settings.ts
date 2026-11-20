@@ -58,6 +58,27 @@ if (PATTERN_EXAMPLES.length !== PATTERN_ROWS.length || PATTERN_ROWS.some(([re], 
 /** One key per registry entry: every exact key, and an example of each key pattern. */
 export const SETTING_KEY_EXAMPLES: readonly string[] = [...Object.keys(EXACT_ROWS), ...PATTERN_EXAMPLES]
 
+/** Each exact key's name as the settings page shows it (src/screens/settings/content.ts), for the audit log's text. */
+const SETTING_LABELS: Record<string, string> = {
+  'g:name': 'Name', 'g:theme': 'Theme', 'g:lang': 'Language', 'g:size': 'Text size', 'g:tz': 'Time zone',
+  'n:wait': 'Approvals waiting', 'n:channel': 'Send alerts to', 'n:slack': 'Chat app alerts', 'n:weekly': 'Weekly report',
+  'm:learn': 'Learn from my chats', 'm:ask': 'Ask before saving a team rule', 's:cap': 'Monthly cap', 's:alert': 'Alert at',
+  's:currency': 'Show amounts in', 'stage': 'Stage', 't:tone': 'Tone', 't:signs': 'Signs emails as', 'g:mode': 'Default model',
+  'l:daily': 'Daily limit', 'l:restock': 'Largest restock', 'd:chats': 'Chats', 'd:steps': 'Activity and steps',
+  'd:2fa': 'Two-step sign-in',
+}
+
+/** A key's readable name: the page's label for an exact key, a described one for a key pattern, else null. */
+export function settingLabel(key: string): string | null {
+  if (Object.hasOwn(SETTING_LABELS, key)) return SETTING_LABELS[key]
+  let m = /^tm:([^:]+):effort$/.exec(key)
+  if (m) return `Effort for ${m[1]}`
+  if ((m = /^tm:([^:]+):on$/.exec(key))) return `Model ${m[1]}`
+  if ((m = /^a:(\d+)$/.exec(key))) return `Approver for rule ${Number(m[1]) + 1}`
+  if ((m = /^l:([^:]+)$/.exec(key))) return `Job ${m[1]} may finish by itself`
+  return null
+}
+
 /** A setting as the API serves it. Never set: `value` null, `rev` 0, no time or author. Reset to null: `rev` still counts up. */
 export const SettingRecordSchema = z.object({
   key: SettingKeySchema,

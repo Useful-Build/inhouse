@@ -7,7 +7,7 @@
 //  4. a money value past its range, or in another shape, parses.
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
-import { SETTING_KEY_EXAMPLES, settingSpec } from './settings.ts'
+import { SETTING_KEY_EXAMPLES, settingLabel, settingSpec } from './settings.ts'
 
 const parses = (key: string, v: unknown) => settingSpec(key)!.value.safeParse(v).success
 
@@ -44,5 +44,12 @@ describe('SETTING_KEY_EXAMPLES', () => {
     for (const key of SETTING_KEY_EXAMPLES) expect(settingSpec(key), key).not.toBeNull()
     expect(new Set(SETTING_KEY_EXAMPLES).size).toBe(SETTING_KEY_EXAMPLES.length)
     expect(SETTING_KEY_EXAMPLES).toEqual(expect.arrayContaining(['g:name', 'tm:fable:effort', 'tm:fable:on', 'l:returns', 'a:0']))
+  })
+})
+
+describe('settingLabel', () => {
+  it('names every registry entry (an exact key added without a label fails here)', () => {
+    for (const key of SETTING_KEY_EXAMPLES) expect(settingLabel(key), key).not.toBeNull()
+    expect(settingLabel('x:gone')).toBeNull()
   })
 })

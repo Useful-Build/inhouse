@@ -36,8 +36,9 @@ export function apiJson(value: unknown, status = 200): Response {
 
 /**
  * A member photo's own headers (route 15, p2-design section 3): no script, no plugin, no navigation from the bytes
- * (`default-src 'none'; sandbox`), and private revalidated caching. The only values a handler may put in place of the
- * site's CSP and `no-store`: each is stricter than or as strict as what it replaces (`keepPhotoHeaders`).
+ * (`default-src 'none'; sandbox`, stricter than the site's CSP), and private revalidated caching (`private, no-cache`:
+ * the design's value for photos, which lets a browser keep the bytes and revalidate; it is not stricter than
+ * `no-store`). The only values a handler may put in place of the site's CSP and `no-store` (`keepPhotoHeaders`).
  */
 export const PHOTO_RESPONSE_HEADERS = { 'Content-Security-Policy': "default-src 'none'; sandbox", 'Cache-Control': 'private, no-cache' } as const
 

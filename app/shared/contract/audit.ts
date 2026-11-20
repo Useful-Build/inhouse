@@ -29,13 +29,15 @@ const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
 
-/**
- * A line's arguments, one shape per action. People are named by member id only; no field holds a name, an email, a
- * token, a secret or photo bytes. A setting reset to its default records `value: null` for any key (a reset holds
- * nothing personal). Any other value is kept as it is only for a key the registry marks audit-safe; a key that isn't
- * keeps the value's length and hash in `redacted` instead.
- */
-export const AuditArgsSchema = z.discriminatedUnion('action', [
+/** `setting.changed` as stored: the shape only. The registry's checks (below) run when a line is written. */
+const settingChanged = line('setting.changed', {
+  scope: SettingScopeSchema,
+  key: SettingKeySchema,
+  value: SettingValueSchema.nullable().optional(),
+  redacted: RedactedValueSchema.optional(),
+})
+
+const otherLines = [
   line('member.invited', { ...member, role: MemberRoleSchema }),
   line('member.reinvited', { ...member, role: MemberRoleSchema }),
   /** `replaces`: the removed row of an earlier identity the invite was on (a re-invite that signed in as someone new). */
@@ -44,12 +46,22 @@ export const AuditArgsSchema = z.discriminatedUnion('action', [
   line('member.role_changed', { ...member, from: MemberRoleSchema, to: MemberRoleSchema }),
   line('member.removed', member),
   line('inhouse.first_sign_in', member),
-  line('setting.changed', {
-    scope: SettingScopeSchema,
-    key: SettingKeySchema,
-    value: SettingValueSchema.nullable().optional(),
-    redacted: RedactedValueSchema.optional(),
-  }).superRefine((a, ctx) => {
+  line('photo.changed', { type: PhotoTypeSchema, size: z.number().int().min(1).max(1024 * 1024) }),
+  line('photo.removed', {}),
+  line('grant.created', { grantId: GrantIdSchema, hours: GrantHoursSchema }),
+  line('grant.ended', { grantId: GrantIdSchema }),
+  line('grant.expired', { grantId: GrantIdSchema }),
+  line('support.access', { grantId: GrantIdSchema, method: z.literal('GET'), route: RoutePatternSchema }),
+] as const
+
+/**
+ * A line's arguments, one shape per action, as the writer checks them. People are named by member id only; no field
+ * holds a name, an email, a token, a secret or photo bytes. A setting reset to its default records `value: null` for
+ * any key (a reset holds nothing personal). Any other value is kept as it is only for a key the registry marks
+ * audit-safe; a key that isn't keeps the value's length and hash in `redacted` instead.
+ */
+export const AuditArgsSchema = z.discriminatedUnion('action', [
+  settingChanged.superRefine((a, ctx) => {
     const spec = settingSpec(a.key)
     if (!spec) return void ctx.addIssue({ code: 'custom', path: ['key'], message: 'Not a setting' })
     if (spec.scope !== a.scope) ctx.addIssue({ code: 'custom', path: ['scope'], message: "Not this key's scope" })
@@ -62,13 +74,16 @@ export const AuditArgsSchema = z.discriminatedUnion('action', [
       ctx.addIssue({ code: 'custom', path: ['redacted'], message: 'This key keeps only its length and hash' })
     }
   }),
-  line('photo.changed', { type: PhotoTypeSchema, size: z.number().int().min(1).max(1024 * 1024) }),
-  line('photo.removed', {}),
-  line('grant.created', { grantId: GrantIdSchema, hours: GrantHoursSchema }),
-  line('grant.ended', { grantId: GrantIdSchema }),
-  line('grant.expired', { grantId: GrantIdSchema }),
-  line('support.access', { grantId: GrantIdSchema, method: z.literal('GET'), route: RoutePatternSchema }),
+  ...otherLines,
 ])
+
+/**
+ * A stored line's arguments as a reader parses them: the same shapes, without the registry's checks, so a line written
+ * under an older registry (a key since removed, or no longer audit-safe) still reads. What a reader shows of a value is
+ * decided against the registry as it is now (shared/audit-text.ts).
+ */
+export const StoredAuditArgsSchema = z.discriminatedUnion('action', [settingChanged, ...otherLines])
+
 export type AuditArgs = z.infer<typeof AuditArgsSchema>
 
 /**

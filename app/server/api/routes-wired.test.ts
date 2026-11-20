@@ -47,14 +47,14 @@ function recorded(s: Stores): Stores {
   return wrap(s)
 }
 
-const parts = (table: readonly Route[] = routes): ApiParts => ({
+const parts = (table: readonly Route[] = routes, open: (e: Env) => Stores = e => openStores(e)): ApiParts => ({
   authenticate: (r, e, st, n, id) => authenticate(r, e, st, n, id, good.keys),
-  checkOrigin, checkAccess, stores: e => recorded(openStores(e)), routes: table, accessMatrix,
+  checkOrigin, checkAccess, stores: e => recorded(open(e)), routes: table, accessMatrix,
 })
-const send = (path: string, init: { method?: string; token: string; body?: unknown; raw?: BodyInit; type?: string; origin?: string; table?: readonly Route[] }) => {
+const send = (path: string, init: { method?: string; token: string; body?: unknown; raw?: BodyInit; type?: string; origin?: string; table?: readonly Route[]; open?: (e: Env) => Stores }) => {
   const origin = init.origin ?? BRAND.origin
   const type = init.type ?? (init.body === undefined ? undefined : 'application/json')
-  return api(parts(init.table), new Request(`${origin}${path}`, {
+  return api(parts(init.table, init.open), new Request(`${origin}${path}`, {
     method: init.method ?? 'GET',
     headers: { 'Cf-Access-Jwt-Assertion': init.token, Origin: origin, ...(type ? { 'Content-Type': type } : {}) },
     body: init.raw ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
@@ -283,5 +283,50 @@ describe('object-check rows: requireObject comes before any store call, and skip
     } finally {
       vi.restoreAllMocks()
     }
+  })
+})
+
+describe('a D1 or R2 failure is 503 unavailable; a bug is still 500 (fix round 1, p2-design section 4)', () => {
+  /** The test D1 with every statement whose SQL matches `fails` throwing (sign-in's member reads still work). */
+  const failingDb = (fails: RegExp): D1Database => new Proxy(env.DB, {
+    get(t, prop) {
+      if (prop === 'prepare') return (sql: string) => { if (fails.test(sql)) throw new Error('D1_ERROR: storage is down'); return t.prepare(sql) }
+      if (prop === 'batch') return (stmts: D1PreparedStatement[]) => t.batch(stmts)
+      const v = Reflect.get(t, prop, t)
+      return typeof v === 'function' ? v.bind(t) : v
+    },
+  })
+  const failingR2 = { ...env.FILES, put: async () => { throw new Error('R2 down') }, get: env.FILES.get.bind(env.FILES), delete: env.FILES.delete.bind(env.FILES) } as unknown as R2Bucket
+  const quiet = () => vi.spyOn(console, 'error').mockImplementation(() => {})
+  it.each([
+    ['a read route', 'GET', '/api/settings/brand', 'member', undefined, /FROM settings/],
+    ['a write route', 'PUT', '/api/settings/brand/g:tz', 'admin', { value: 'Europe/Paris', ifRev: 0 }, /settings/],
+    ['the export, first page', 'GET', '/api/audit/export.csv', 'member', undefined, /FROM audit_log a/],
+    ['the members list', 'GET', '/api/members', 'member', undefined, /id > \?/],
+  ] as const)('%s: 503 unavailable, logged by name', async (_name, method, path, role, body, fails) => {
+    const error = quiet()
+    try {
+      const res = await call(path, { method, token: tokens[role], body, open: e => openStores({ ...e, DB: failingDb(fails) }) })
+      expect(res).toEqual({ status: 503, body: { error: { code: 'unavailable' } } })
+      expect(error.mock.calls.some(([l]) => (l as { event?: string; error?: string }).event === 'store_unavailable' && (l as { error?: string }).error === 'StoreUnavailableError')).toBe(true)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+  it('a throwing R2 put on PUT /api/photo: 503 unavailable, nothing written', async () => {
+    quiet()
+    try {
+      const before = await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first<number>('n')
+      const res = await call('/api/photo', { method: 'PUT', token: tokens.member, raw: PNG, type: 'image/png', open: e => openStores({ ...e, FILES: failingR2 }) })
+      expect(res).toEqual({ status: 503, body: { error: { code: 'unavailable' } } })
+      expect(await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first<number>('n')).toBe(before)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+  it('a TypeError in a handler is not 503: api() rethrows it (server/index.ts answers 500 unknown)', async () => {
+    const bug: Handler = async () => { throw new TypeError('a bug') }
+    const table = routes.map(r => (r.pattern === '/api/members' && r.method === 'GET' ? { ...r, handler: bug } : r))
+    await expect(send('/api/members', { token: tokens.member, table })).rejects.toThrow(TypeError)
   })
 })

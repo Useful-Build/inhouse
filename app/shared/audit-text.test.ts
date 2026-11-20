@@ -32,7 +32,7 @@ describe('auditText', () => {
   })
   it('never shows a redacted value (failure 2)', () => {
     const t = auditText({ action: 'setting.changed', scope: 'personal', key: 'n:channel', redacted: { len: 9, hash: 'ab'.repeat(16) } }, names)
-    expect(t.detail).toBe('n:channel: changed (not shown)')
+    expect(t.detail).toBe('Send alerts to: changed (not shown)')
     expect(JSON.stringify(t)).not.toContain('ab'.repeat(16))
   })
   it('names members by current name, else "Former member", never by id (failure 3)', () => {
@@ -42,8 +42,23 @@ describe('auditText', () => {
     expect(JSON.stringify(t)).not.toContain('m_gone')
   })
   it("shows an approver's name, and anyone as it is (failure 4)", () => {
-    expect(auditText({ action: 'setting.changed', scope: 'brand', key: 'a:0', value: 'm_a' }, names).detail).toBe('a:0: Ada Example')
-    expect(auditText({ action: 'setting.changed', scope: 'brand', key: 'a:0', value: 'anyone' }, names).detail).toBe('a:0: anyone')
-    expect(auditText({ action: 'setting.changed', scope: 'brand', key: 'm:ask', value: null }, names).detail).toBe('m:ask: reset')
+    expect(auditText({ action: 'setting.changed', scope: 'brand', key: 'a:0', value: 'm_a' }, names).detail).toBe('Approver for rule 1: Ada Example')
+    expect(auditText({ action: 'setting.changed', scope: 'brand', key: 'a:0', value: 'anyone' }, names).detail).toBe('Approver for rule 1: anyone')
+    expect(auditText({ action: 'setting.changed', scope: 'brand', key: 'm:ask', value: null }, names).detail).toBe('Ask before saving a team rule: reset')
+  })
+})
+
+describe('setting names and values under the registry as it is now (fix round 1)', () => {
+  it("uses the page's label where the key has one, the raw key otherwise", () => {
+    expect(auditText({ action: 'setting.changed', scope: 'brand', key: 'm:ask', value: true }, names).detail).toBe('Ask before saving a team rule: on')
+    expect(auditText({ action: 'setting.changed', scope: 'technical', key: 'tm:fable:effort', value: 'High' }, names).detail).toBe('Effort for fable: High')
+    expect(auditText({ action: 'setting.changed', scope: 'brand', key: 'x:gone', value: null }, names).detail).toBe('x:gone: reset')
+  })
+  it('shows no value for a key the registry no longer knows or no longer marks audit-safe', () => {
+    for (const key of ['x:gone', 'n:channel']) {
+      const t = auditText({ action: 'setting.changed', scope: 'personal', key, value: 'Secret Value' }, names)
+      expect(t.detail).toMatch(/: changed \(not shown\)$/)
+      expect(JSON.stringify(t)).not.toContain('Secret')
+    }
   })
 })

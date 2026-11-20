@@ -1,7 +1,7 @@
 // Reading the audit log (p2-design section 8, routes 19 and 20): keyset pages newest first, each line with its actor's
 // current name ("Former member" once pseudonymised) and the current names of the members its arguments name. The text
 // of a line (`what`, `detail`) is app/shared/audit-text.ts's, composed by the handler from what this returns.
-import { AuditArgsSchema } from '../../shared/contract/audit.ts'
+import { StoredAuditArgsSchema } from '../../shared/contract/audit.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { MemberIdSchema } from '../../shared/contract/members.ts'
 import { FORMER_MEMBER } from './members.ts'
@@ -48,10 +48,10 @@ export function auditReader({ db }: { db: D1Database }) {
         page.beforeId ?? Number.MAX_SAFE_INTEGER, page.limit + 1,
       ))
       const more = rows.length > page.limit
-      // A stored line always parses: the writer checked it against the same schema (fail loud if one doesn't).
+      // Parsed by shape only (a key may have left the registry since); a line that doesn't fit its shape fails loud.
       const lines = rows.slice(0, page.limit).map(r => ({
         id: r.id, atMs: r.at_ms, actorId: r.actor_id, who: r.actor_name ?? FORMER_MEMBER,
-        args: AuditArgsSchema.parse({ action: r.action, ...(JSON.parse(r.args_json) as object) }),
+        args: StoredAuditArgsSchema.parse({ action: r.action, ...(JSON.parse(r.args_json) as object) }),
       }))
       const ids = [...new Set(lines.flatMap(l => memberIdsIn(l.args)))]
       const names: Record<string, string> = {}

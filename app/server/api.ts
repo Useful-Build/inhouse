@@ -6,6 +6,7 @@
 import type { AccessRow } from './access-matrix.ts'
 import { AccessRefusedError, closedAfterRefusal, objectGate } from './auth/index.ts'
 import type { AuthStores, authenticate, checkAccess, checkOrigin } from './auth/index.ts'
+import { StoreUnavailableError } from './db/sql.ts'
 import { SECURITY_HEADERS, apiError, keepPhotoHeaders } from './http.ts'
 import { respond, withSecurityHeaders } from '../shared/security-headers.ts'
 import { STORE_BINDINGS, matchRoute } from './routes.ts'
@@ -81,6 +82,11 @@ export async function api(parts: ApiParts, request: Request, env: Env, ctx: Exec
     // A refusal answers 403 whatever the handler threw after it (a closed store's StoresClosed included).
     if (gate.refusal) return apiError('forbidden', gate.refusal.reason ? { reason: gate.refusal.reason } : {})
     if (err instanceof AccessRefusedError) return apiError('forbidden', err.reason ? { reason: err.reason } : {})
+    // D1 or R2 failed (the stores' storage boundary, server/db/sql.ts): 503, logged by name. Anything else is a bug: 500.
+    if (err instanceof StoreUnavailableError) {
+      console.error({ event: 'store_unavailable', requestId, error: err.name })
+      return apiError('unavailable')
+    }
     throw err
   }
   // Fails closed on the outcome, not the call: any refusal is 403 whatever the handler answered (it may have caught it),

@@ -8,11 +8,12 @@
 //  6. the owner check comes after the write.
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_PHOTO_BYTES, photoType } from '../db/photo-bytes.ts'
+import { photoStore } from '../db/photos.ts'
 import { openStores } from '../db/stores.ts'
 import type { Stores } from '../db/stores.ts'
-import { lastLineId, linesSince, person, personPrincipal, reset } from '../db/test-support.ts'
+import { at, lastLineId, linesSince, person, personPrincipal, reset } from '../db/test-support.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
 import { PHOTO_RESPONSE_HEADERS } from '../http.ts'
 import { deletePhoto, getMemberPhoto, putPhoto } from './photo.ts'
@@ -138,5 +139,74 @@ describe('serving (failure 5) and the owner check (failure 6)', () => {
     expect(seen).toEqual([{ ownerId: me }])
     expect(await objects()).toEqual([])
     expect(c.request.bodyUsed).toBe(false)
+  })
+})
+
+describe('after the commit, and races (fix round 1)', () => {
+  const store = (over: { files?: Partial<R2Bucket>; db?: D1Database; beforeBatch?: () => Promise<void> } = {}) =>
+    photoStore({ db: over.db ?? db, files: { put: files.put.bind(files), get: files.get.bind(files), delete: files.delete.bind(files), ...over.files } as R2Bucket, beforeBatch: over.beforeBatch })
+  it("a failing delete of the old object after the commit is logged with the key only, and the upload still succeeds", async () => {
+    await put(bytesOf(PNG), 'image/png')
+    const [old] = await objects()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const s = store({ files: { delete: async (k: string | string[]) => { if (k === old) throw new Error('R2 down'); await files.delete(k) } } })
+      expect(await s.set({ memberId: me, bytes: bytesOf(JPEG), type: 'image/jpeg' }, at(me))).toEqual({ ok: true })
+      expect(error.mock.calls).toEqual([[{ event: 'photo_old_delete_failed', key: old, error: 'StoreUnavailableError' }]])
+      const row = await db.prepare('SELECT photo_key FROM members WHERE id = ?').bind(me).first<string>('photo_key')
+      expect(row).not.toBe(old)
+      expect(await objects()).toEqual([old, row].sort())
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+  it('a batch that committed but reported a failure keeps the new object the row points to', async () => {
+    // The batch runs, then its reply is lost.
+    const lostReply = new Proxy(db, {
+      get(t, prop) {
+        if (prop === 'batch') return async (stmts: D1PreparedStatement[]) => { await t.batch(stmts); throw new Error('reply lost') }
+        const v = Reflect.get(t, prop, t)
+        return typeof v === 'function' ? v.bind(t) : v
+      },
+    })
+    expect(await store({ db: lostReply }).set({ memberId: me, bytes: bytesOf(PNG), type: 'image/png' }, at(me))).toEqual({ ok: true })
+    const row = await db.prepare('SELECT photo_key FROM members WHERE id = ?').bind(me).first<string>('photo_key')
+    expect(await objects()).toEqual([row])
+  })
+  it('a removal that loses a race is 409 conflict with the photo as it is now, and logs nothing', async () => {
+    await put(bytesOf(PNG), 'image/png')
+    const before = await lastLineId(db)
+    // Another upload lands between the removal's read and its write.
+    const racing = openStores(env, undefined, { beforePhotoBatch: async () => { await db.prepare("UPDATE members SET photo_key = 'photos/' || id || '/other' WHERE id = ?").bind(me).run() } })
+    const res = await deletePhoto(photoCtx(null, {}, racing))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo` } } })
+    expect(await linesSince(db, before)).toEqual([])
+  })
+  it('an upload that loses a race is 409 conflict with the photo as it is now', async () => {
+    const racing = openStores(env, undefined, { beforePhotoBatch: async () => { await db.prepare("UPDATE members SET photo_key = 'photos/' || id || '/other' WHERE id = ?").bind(me).run() } })
+    const res = await putPhoto(photoCtx(bytesOf(PNG) as Uint8Array<ArrayBuffer>, { 'Content-Type': 'image/png' }, racing))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: { code: 'conflict', current: { photoUrl: `/api/members/${me}/photo` } } })
+    expect(await objects()).toEqual([])
+  })
+})
+
+describe('the Content-Length check and the count, each on its own (fix round 1)', () => {
+  it('a small lying Content-Length with a large streamed body is refused by the count', async () => {
+    const big = bytesOf(PNG, MAX_PHOTO_BYTES + 4096)
+    let sent = 0
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { if (sent >= big.length) return c.close(); c.enqueue(big.subarray(sent, sent + 65536)); sent += 65536 } })
+    const res = await putPhoto(photoCtx(stream, { 'Content-Type': 'image/png', 'Content-Length': '100' }))
+    expect(await res.json()).toEqual({ error: { code: 'invalid', reason: 'too_large' } })
+    expect(await objects()).toEqual([])
+  })
+  it('an honest oversize Content-Length is refused before any byte is read', async () => {
+    let pulled = 0
+    // highWaterMark 0: the stream is pulled only when someone reads it.
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { pulled++; c.enqueue(new Uint8Array(1)) } }, { highWaterMark: 0 })
+    const res = await putPhoto(photoCtx(stream, { 'Content-Type': 'image/png', 'Content-Length': String(MAX_PHOTO_BYTES + 1) }))
+    expect(await res.json()).toEqual({ error: { code: 'invalid', reason: 'too_large' } })
+    expect(pulled).toBe(0)
   })
 })

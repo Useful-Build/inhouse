@@ -1,7 +1,9 @@
 // What an audit line says (p2-design section 8): its `what` and `detail` from the action and its arguments, one function
 // for the audit page and the CSV. People are named by their current name, looked up by member id (`name`); a member id
-// nobody can name shows as "Former member". A redacted setting never shows its value.
+// nobody can name shows as "Former member". A setting shows its value only when the registry, as it is now, marks the
+// key audit-safe (a line written under an older registry may hold a value a later one redacts); otherwise none.
 import type { AuditArgs } from './contract/audit.ts'
+import { settingLabel, settingSpec } from './contract/settings.ts'
 
 export interface AuditText {
   what: string
@@ -32,12 +34,12 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'inhouse.first_sign_in': return { what: 'signed in for the first time', detail: 'Inhouse team' }
     case 'setting.changed': {
       let value: string
-      if (args.redacted) value = 'changed (not shown)'
-      else if (args.value === null || args.value === undefined) value = 'reset'
+      if (args.value === null) value = 'reset'
+      else if (args.redacted || args.value === undefined || !settingSpec(args.key)?.auditSafe) value = 'changed (not shown)'
       else if (typeof args.value === 'boolean') value = args.value ? 'on' : 'off'
       else if (/^a:/.test(args.key) && args.value !== 'anyone') value = who(args.value)
       else value = args.value
-      return { what: 'changed a setting', detail: `${args.key}: ${value}` }
+      return { what: 'changed a setting', detail: `${settingLabel(args.key) ?? args.key}: ${value}` }
     }
     case 'photo.changed': return { what: 'changed their photo', detail: '' }
     case 'photo.removed': return { what: 'removed their photo', detail: '' }
