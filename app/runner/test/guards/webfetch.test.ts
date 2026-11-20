@@ -3,7 +3,10 @@
 // - a host that only ends with, starts with or contains a listed domain passes (evil-example.com, example.com.evil);
 // - a URL with credentials, an odd scheme, an IP or localhost passes;
 // - case or a trailing dot lets a listed host fail, or an unlisted one pass;
-// - the hook lets a call through on a malformed input instead of denying it.
+// - the hook lets a call through on a malformed input instead of denying it;
+// - with WebFetch open to any public host (null, decision 20), a public host is refused, or an IP literal (any form),
+//   `localhost`, a `.local`/`.internal` name, this container's own host or a reserved label passes; a list doesn't
+//   narrow it, or `[]` lets anything through.
 import { fc, it } from '@fast-check/vitest'
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect } from 'vitest'
@@ -27,6 +30,55 @@ async function decide(domains: string[], url: unknown) {
   }
   return out.hookSpecificOutput?.permissionDecision ?? 'pass'
 }
+
+const OWN = ['10.0.0.7', 'runner-host.example']
+async function decideOpen(url: unknown) {
+  const out = (await webFetchHook(null, OWN).hooks[0]!(call(url), 't1', { signal: new AbortController().signal })) as {
+    hookSpecificOutput?: { permissionDecision?: string }
+  }
+  return out.hookSpecificOutput?.permissionDecision ?? 'pass'
+}
+
+describe('WebFetch open to any public host (null)', () => {
+  it.prop([domain, fc.constantFrom('http', 'https'), fc.webPath()])('a public host passes', async (host, scheme, path) => {
+    const url = `${scheme}://${host}${path}`
+    expect(allowedFetchHost(url, null, OWN)).toBe(host)
+    expect(await decideOpen(url)).toBe('pass')
+  })
+
+  it.each([
+    'http://127.0.0.1/',
+    'http://10.0.0.7/',
+    'http://169.254.169.254/latest/meta-data/',
+    'http://[::1]/',
+    'http://0x7f.1/',
+    'http://2130706433/',
+    'http://localhost:8080/',
+    'http://LOCALHOST./',
+    'http://printer.local/',
+    'http://egress.internal/events/',
+    'http://db.svc/',
+    'http://intranet/',
+    'https://runner-host.example/',
+    'https://xn--a-ecp.example/',
+    'https://user:pw@example.com/',
+    'ftp://example.com/',
+    'not a url',
+    42,
+  ])('%s is still refused', async (url) => {
+    expect(allowedFetchHost(url, null, OWN)).toBeNull()
+    expect(await decideOpen(url)).toBe('deny')
+  })
+
+  it('the permission rule is a bare WebFetch; a list narrows to its domains; [] allows none', async () => {
+    expect(webFetchAllowRules(null)).toEqual(['WebFetch'])
+    expect(webFetchAllowRules(['docs.example.com'])).toEqual(['WebFetch(domain:docs.example.com)'])
+    expect(webFetchAllowRules([])).toEqual([])
+    expect(await decide(['docs.example.com'], 'https://other.example.com/')).toBe('deny')
+    expect(await decide(['docs.example.com'], 'https://docs.example.com/a')).toBe('pass')
+    expect(await decide([], 'https://docs.example.com/a')).toBe('deny')
+  })
+})
 
 describe('WebFetch domains', () => {
   it.prop([fc.array(domain, { maxLength: 5 }), domain, fc.constantFrom('http', 'https'), fc.webPath()])(
