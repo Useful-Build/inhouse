@@ -10,7 +10,7 @@
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { createScriptedModel, type ScriptedBranch, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
-import { HARNESS_MODEL, SCENARIOS, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
+import { HARNESS_MODEL, SCENARIOS, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
 
 type Msg = { role: 'user' | 'assistant'; content: unknown }
 const req = (messages: Msg[], stream = false, extra: Record<string, unknown> = {}) =>
@@ -18,6 +18,11 @@ const req = (messages: Msg[], stream = false, extra: Record<string, unknown> = {
 /** A main-loop request as the CLI makes it for a harness run: the run's model and its tool list. */
 const mainReq = (messages: Msg[], stream = false) =>
   req(messages, stream, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] })
+/** A structured run's main-loop request: the CLI adds the StructuredOutput tool when outputFormat is set. */
+const structuredReq = (messages: Msg[]) =>
+  req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }, { name: 'StructuredOutput' }] })
+/** The main-loop request a scenario expects: a structured one for the structured scenarios. */
+const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : mainReq)
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
@@ -83,7 +88,7 @@ describe('the scripted model', () => {
     expect((await model.handle(req(convo(0), false, { model: HARNESS_MODEL }), name)).status).toBe(400)
     expect((await model.handle(req(convo(0), false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
     expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn', 'the request does not match the turn'])
-    expect((await model.handle(mainReq(convo(0)), name)).status).toBe(200)
+    expect((await model.handle(mainFor(name)(convo(0)), name)).status).toBe(200)
   })
 
   it("ask: the resume (turn 1) answers only a request whose last user message carries the question's result", async () => {
@@ -217,5 +222,29 @@ describe('branches', () => {
     openParallelHold()
     await p
     expect(answered).toBe(true)
+  })
+})
+
+// The structured scenarios (R3 follow-up): `structured` answers with StructuredOutput matching STRUCTURED_SCHEMA;
+// `structured-retries` answers it with input that never matches, at every position, so the SDK gives up first.
+describe('structured scenarios', () => {
+  it('structured: turn 0 calls StructuredOutput with the answer, which matches the schema by hand', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    // A request without the StructuredOutput tool (a run not asked for structured output) gets no answer.
+    expect((await model.handle(mainReq(convo(0)), 'structured')).status).toBe(400)
+    const r = await model.handle(structuredReq(convo(0)), 'structured')
+    const body = (await r.json()) as { content: { type: string; name?: string; input?: unknown }[] }
+    expect(body.content).toEqual([{ type: 'tool_use', id: 'toolu_scripted_structured', name: 'StructuredOutput', input: { late_orders: 3, summary: 'Three orders shipped late.' } }])
+    expect(STRUCTURED_SCHEMA.required).toEqual(['late_orders', 'summary'])
+  })
+
+  it('structured-retries: every position answers StructuredOutput with a string where the schema wants an integer', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    for (let n = 0; n < STRUCTURED_BAD_TURNS; n++) {
+      const body = (await (await model.handle(structuredReq(convo(n)), 'structured-retries')).json()) as { content: { name: string; input: { late_orders: unknown } }[] }
+      expect(body.content[0]!.name).toBe('StructuredOutput')
+      expect(typeof body.content[0]!.input.late_orders).toBe('string')
+    }
+    expect(model.misses).toEqual([])
   })
 })
