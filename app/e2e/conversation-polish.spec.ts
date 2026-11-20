@@ -444,8 +444,9 @@ test.describe('desktop', () => {
     await expect(stop(page)).toBeVisible()
     await page.keyboard.press('Enter')
     await expect(queued(page)).toHaveCount(1)
-    // Still answering, so the message waits (queued) however long this takes.
-    await expect(chip(page, MD_Q)).not.toContainText('Paused')
+    // Held from here: the answer stays running while the chip is checked, however long this takes.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
+    await expect(chip(page, MD_Q)).toContainText('Queued')
     const edit = chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ })
     await expect(edit).toBeEnabled()
 
@@ -459,6 +460,7 @@ test.describe('desktop', () => {
     await page.keyboard.press('Escape')
     await expect(editing).toHaveCount(0)
     await expect(edit).toBeEnabled()
+    await page.clock.resume()
   })
 
   test('Conversation polish: Stop ends that answer only and the queue carries on, and Edit on a queued message asks before it replaces a draft', async ({ page }) => {
@@ -474,13 +476,15 @@ test.describe('desktop', () => {
       await expect(field(page)).toHaveValue('')
     }
     await expect(queued(page)).toHaveCount(2)
+    // Held from here: the answers move only when the test says so, so the chips stay put while they are checked.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
 
     // Stop ends that answer only (plan S4): the first queued message goes on and is answered, the other still waits.
     await stop(page).click()
     await expect(log(page).getByText(STOPPED)).toBeVisible()
     await expect(msg(page, MD_Q)).toHaveCount(1)
     await expect(queued(page)).toHaveCount(1)
-    await expect(chip(page, STUCK_Q)).not.toContainText('Paused')
+    await expect(chip(page, STUCK_Q)).toContainText('Queued')
     await expect(msg(page, STUCK_Q)).toHaveCount(0)
     await expect(page.getByRole('status').filter({ hasText: '1 message queued' })).toHaveCount(1)
     await shot(page, 'queue-carries-on')
@@ -510,6 +514,14 @@ test.describe('desktop', () => {
     await expect(field(page)).toBeFocused()
     await expect(queued(page)).toHaveCount(1)
     await expect(page.getByRole('status').filter({ hasText: '1 message queued' })).toHaveCount(1)
+
+    // Send now on the last chip: the answer running goes (a note says so), this one is asked, and focus goes to the box.
+    await chip(page, OTHER_Q).getByRole('button', { name: /^Send now: What should we skip/ }).click()
+    await expect(queued(page)).toHaveCount(0)
+    await expect(field(page)).toBeFocused()
+    await expect(msg(page, OTHER_Q)).toHaveCount(1)
+    await expect(field(page)).toHaveValue(STUCK_Q)
+    await page.clock.resume()
   })
 
   test('Conversation polish: a chat left mid-answer asks its queued message in the background (D9)', async ({ page, fx }) => {
