@@ -1,6 +1,6 @@
 // Every dropdown and menu list fits its content: no sideways scroll, and every check mark sits inside the list's box.
 // Runs at 1440 and 390. Screenshots go to VERIFY_DIR (or e2e-artifacts/).
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { atRest } from './states.js'
@@ -10,12 +10,7 @@ const TITLES: Record<string, string> = { 'you-general': 'General', 'you-notif': 
 const PAGES = ['you-general', 'you-notif', 'you-memory', 'team-plan', 'team-agent', 'team-memory', 'team-members', 'team-approvals', 'team-limits', 'team-spend', 'team-data', 'team-audit']
 
 async function start(page: Page, hash: string) {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Run', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Run', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 

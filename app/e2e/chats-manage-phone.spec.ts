@@ -1,13 +1,8 @@
 // PR 3, managing chats on a phone (390 px): the row menu shows without hover in the drawer, and Rename works there.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 
 test('Phone: the chat row menu opens from the drawer and renames in place; Escape cancels without closing the drawer', async ({ page }) => {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   const side = page.getByRole('complementary', { name: 'Sidebar' })
   await page.getByRole('button', { name: 'Menu' }).click()

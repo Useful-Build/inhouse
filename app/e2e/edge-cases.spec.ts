@@ -1,6 +1,6 @@
 // Modals sit above the Sidebar, a chat's additions survive a stale link, a failed save and a failed
 // photo are told, a demoted approver is flagged on the rules that still name them. Screenshots go to VERIFY_DIR (or e2e-artifacts/).
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import path from 'node:path'
 import { atRest } from './states.js'
@@ -9,12 +9,7 @@ const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
 const FIXTURE = path.join(import.meta.dirname, 'fixtures', 'photo.png')
 
 async function start(page: Page, hash: string, scenario = 'Normal') {
-  await page.addInitScript(s => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: s, ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  }, scenario)
+  await fxFor(page, undefined).seed({ stage: 'Act', scenario, demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
   await expect(page.getByRole('heading', { level: 1 }).or(page.getByRole('banner')).first()).toBeVisible()
 }

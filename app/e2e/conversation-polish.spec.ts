@@ -11,19 +11,14 @@
 // card's edge through Select. On a phone: the answer row is Copy, steps and "···" (D3) with the thumbs as radio items,
 // every step name in the trace reads in full, Send now on the last queued message puts focus on "+" (never Stop), and
 // Select mode's bar never covers the last chat.
-import { expect, test } from './csp.js'
+import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
 async function start(page: Page, hash: string) {
   // Time keeps flowing; runFor adds app time on top (answers, the session save, toasts), so no real sleep.
   await page.clock.install()
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('e2e-seeded')) return
-    localStorage.clear()
-    localStorage.setItem('inhouse.demo.switches.v1', JSON.stringify({ stage: 'Act', scenario: 'Normal', ambient: 'Always', animateMark: false }))
-    sessionStorage.setItem('e2e-seeded', '1')
-  })
+  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo' + hash)
 }
 
@@ -48,7 +43,6 @@ const STOPPED = 'You stopped your Inhouse agent. Nothing was changed.'
 const RELOADED = 'Your Inhouse agent stopped when the page reloaded. Nothing was changed.'
 // Scripted (the Friday answer): plain text, no suggestion chips, so no other question's text shows in its card.
 const OTHER_Q = 'What should we skip this Friday?'
-const SESSION = 'inhouse.ui.session.v1'
 /** Waits out the session save (debounced 300 ms). */
 const saved = (page: Page) => page.clock.runFor(500)
 const chip = (page: Page, text: string) => queued(page).filter({ hasText: text })
@@ -160,7 +154,7 @@ test.describe('desktop', () => {
 
     // The sent-now answer has steps of its own: the run's second turn (`<run id>-t2`) holds the query's steps, and its
     // steps line and window show them (3 steps, "Last week by SKU"), not the refunds steps the run started with.
-    const turns = await page.evaluate(() => JSON.parse(localStorage.getItem('inhouse.demo.runs.v1') ?? '[]') as [string, { trace: string }][])
+    const turns = (await fxFor(page, undefined).saved()).runs
     expect(turns.filter(([id, info]) => /-t2$/.test(id) && info.trace === 'query')).toHaveLength(1)
     const mdAnswer = log(page).locator('[data-answer]').filter({ has: page.locator('[data-md-code]') })
     await expect(mdAnswer).toHaveCount(1)
@@ -555,12 +549,12 @@ test.describe('desktop', () => {
     await expect(stop(page)).toHaveCount(0)
 
     // Meanwhile the first chat's answer ends and its queued message is asked and answered there.
-    await expect.poll(() => page.evaluate(([key, q]) => {
-      const s = JSON.parse(localStorage.getItem(key) ?? '{}') as { chats?: Record<string, { extras: { role: string; text?: string; part?: { type: string } }[] }>; answering?: string[]; queued?: Record<string, unknown> }
+    await expect.poll(async () => {
+      const s = (await fxFor(page, undefined).saved()).session
       const chats = Object.values(s.chats ?? {})
-      const asked = chats.some(c => c.extras.some(m => m.role === 'user' && m.text === q))
+      const asked = chats.some(c => c.extras.some(m => m.role === 'user' && m.text === MD_Q))
       return asked && !(s.answering ?? []).length && !Object.keys(s.queued ?? {}).length
-    }, [SESSION, MD_Q] as const), { timeout: 20_000 }).toBe(true)
+    }, { timeout: 20_000 }).toBe(true)
     await expect(msg(page, MD_Q)).toHaveCount(0)
 
     // Back in the first chat: the refunds answer, then the queued question with its answer, and an empty queue.
