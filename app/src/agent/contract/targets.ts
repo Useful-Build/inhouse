@@ -3,7 +3,7 @@
 // its target goes through it: time (`advance`), seeding, resets, forced failures, injected errors and every id, name and
 // scripted question (`fixtures`). Every method that touches the client's world is async: a real target talks over HTTP.
 import { vi } from 'vitest'
-import type { AgentClient, AgentErrorCode, AgentNotice, AgentState, DemoContext } from '../types'
+import type { AgentClient, AgentErrorCode, AgentNotice, AgentState, DemoContext, TeamRequest } from '../types'
 import { AgentError } from '../types'
 import type { MockAgent } from '../mock'
 
@@ -44,7 +44,7 @@ export interface Fixtures {
   settingValue: string
   personId: string
   photoDataUrl: string
-  teamRequest: { icon: string; title: string; sub: string; status: string }
+  teamRequest: TeamRequest
   newChat: { id: string; title: string }
   /** A title with spaces round it: `renameChat` trims it to `paddedTitleTrimmed`. */
   paddedTitle: string
@@ -165,7 +165,7 @@ function injecting(mock: MockAgent, armed: Map<string, AgentErrorCode>): AgentCl
           for (const k of changed) {
             if (now[k] === optimistic[k]) { kept[k] = before[k]; continue }
             // A concurrent write replaced the same record: take back only the entries this call changed.
-            const [was, mine, cur] = [before[k], optimistic[k], now[k]]
+            const [was, mine, cur]: unknown[] = [before[k], optimistic[k], now[k]]
             if (!isRecord(was) || !isRecord(mine) || !isRecord(cur)) continue
             const entries: Record<string, unknown> = { ...cur }
             for (const e of new Set([...Object.keys(was), ...Object.keys(mine)])) {
@@ -218,7 +218,7 @@ function mockTarget(): ContractTarget {
       settingValue: 'Sam Example',
       personId: 'person-1',
       photoDataUrl: 'data:image/png;base64,AAAA',
-      teamRequest: { icon: 'build', title: 'Connect Klaviyo', sub: 'From Settings', status: 'Requested' },
+      teamRequest: { icon: 'build', title: 'Connect Klaviyo', sub: 'From Settings', at: { iso: '2026-11-19T14:04:00.000Z', ms: Date.UTC(2026, 10, 19, 14, 4) }, status: 'Requested' },
       newChat: { id: 'contract-chat-1', title: 'A new chat' },
       paddedTitle: '  Padded   title  ',
       paddedTitleTrimmed: 'Padded title',

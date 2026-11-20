@@ -20,7 +20,7 @@ import { fc } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import {
-  AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, LibraryFileSchema,
+  AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, InstantSchema, LibraryFileSchema,
   RoutineRunSchema, RunEventSchema, TraceSchema,
 } from '../../../shared/contract'
 import type { AgentNotice, RunEvent, Scenario, SendPriority, Stage } from '../types'
@@ -450,9 +450,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     test('pause resolves to when, resume clears it', async () => {
-      const at = parse(z.string(), await t.client.pause(), 'pause()')
-      expect(parse(AgentStateSchema, t.client.getSnapshot(), 'getSnapshot()').paused).toBe(at)
-      expect(at.length).toBeGreaterThan(0)
+      const at = parse(InstantSchema, await t.client.pause(), 'pause()')
+      expect(parse(AgentStateSchema, t.client.getSnapshot(), 'getSnapshot()').paused).toEqual(at)
+      expect(Date.parse(at.iso), 'iso and ms name one moment').toBe(at.ms)
       await t.client.resume()
       expect(t.client.getSnapshot().paused).toBeNull()
     })
@@ -782,10 +782,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test('the Cap reached scenario reads at the cap, and the agent still answers and writes there', async () => {
       const normal = parse(AgentDataSchema, t.client.read(), 'read()').usage
-      expect(normal.total, 'a normal month is under the cap').toBeLessThan(normal.cap)
+      expect(normal.total.currency, 'spend and cap share a currency').toBe(normal.cap.currency)
+      expect(normal.total.minor, 'a normal month is under the cap').toBeLessThan(normal.cap.minor)
       await fresh('Act', 'Cap reached')
       const data = parse(AgentDataSchema, t.client.read(), 'read()')
-      expect(data.usage.total, 'spend is at or over the cap').toBeGreaterThanOrEqual(data.usage.cap)
+      expect(data.usage.total.currency, 'spend and cap share a currency').toBe(data.usage.cap.currency)
+      expect(data.usage.total.minor, 'spend is at or over the cap').toBeGreaterThanOrEqual(data.usage.cap.minor)
       expect(data.status).toBe('ready')
       await t.client.setToggle(fx.toggleKey, false)
       expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(false)
@@ -833,6 +835,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     const key = fc.string({ unit: 'grapheme-ascii', minLength: 1, maxLength: 8 })
     const pick = (n: number) => fc.nat(n === 0 ? 0 : n - 1)
     const question = fc.oneof(fc.constantFrom(...Object.values(fx.questions)), fc.string())
+    /** A valid instant: the same moment as ISO text and epoch ms, in years `toISOString` writes as four digits. */
+    const instant = fc.date({ min: new Date(Date.UTC(2000, 0, 1)), max: new Date(Date.UTC(2100, 0, 1)), noInvalidDate: true }).map(d => ({ iso: d.toISOString(), ms: d.getTime() }))
 
     type Ids = ReturnType<typeof ids>
     /** `forSave`: the step is there to be failed by a save, so it skips what a client would refuse for another reason (undo of nothing approved). */
@@ -856,7 +860,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('forgetMemory', c => c.forgetMemory(k, b))),
       fc.tuple(key, fc.option(fc.string(), { nil: null })).map(([k, v]) => step('setSetting', c => c.setSetting(k, v))),
       fc.tuple(key, fc.option(fc.string(), { nil: null })).map(([k, v]) => step('setPhoto', c => c.setPhoto(k, v))),
-      fc.tuple(fc.string(), fc.string(), fc.string(), fc.string()).map(([icon, title, sub, status]) => step('sendTeamRequest', c => c.sendTeamRequest({ icon, title, sub, status }))),
+      fc.tuple(fc.string(), fc.string(), fc.string(), instant, fc.string(), fc.option(instant, { nil: undefined })).map(([icon, title, sub, at, status, statusAt]) => step('sendTeamRequest', c => c.sendTeamRequest({ icon, title, sub, at, status, ...(statusAt ? { statusAt } : {}) }))),
       fc.boolean().map(all => step('markNoticesRead', c => {
         const fresh = c.listNotifications().filter(n => n.unread).map(n => n.id)
         const wanted = all ? fresh : fresh.slice(0, 1)
