@@ -233,8 +233,8 @@ freezes the principal type and the object-check interface; W2 and W3 fan out fro
     with its own seeded D1, closing the PR deletes the D1, the R2 prefix and any container app, and no job that runs
     PR code holds a service token.
 14. The candidate deploy in the sandbox account passed before the ship packet. After the merge, one tag deploys to
-    the house account, passes the read-only smoke and Wasim's own sign-in, then and the
-    release fails on an unset setting; the rollback rehearsal ran once a second tag existed.
+    the house account and passes the read-only smoke and Wasim's own sign-in; the release fails on an unset setting;
+    the rollback rehearsal ran once a second tag existed.
 15. The demo build and its visual suite are unchanged.
 16. QA PASS and the ship recording on S1 to S10.
 
