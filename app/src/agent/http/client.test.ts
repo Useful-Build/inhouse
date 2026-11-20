@@ -12,7 +12,7 @@
 //  - the stub parts (a run, the library) that stop refusing.
 import { fc, test as fcTest } from '@fast-check/vitest'
 import { describe, expect, test } from 'vitest'
-import { AgentDataSchema, AgentStateSchema, ErrorBodySchema, MeSchema } from '../../../shared/contract'
+import { AgentDataSchema, AgentStateSchema, MeSchema } from '../../../shared/contract'
 import { CAN_KEYS } from '../../../shared/contract/keys'
 import type { AgentClient, AgentNotice } from '../types'
 import { AgentError } from '../types'
@@ -182,14 +182,22 @@ describe('refusals become AgentErrors', () => {
       const { agent } = await loaded({ ...reads(), 'PUT /api/settings/personal/g:theme': { status, text: '<html>nope</html>' } })
       expect(((await errorOf(agent.setSetting('g:theme', 'Dark'))) as AgentError).code).toBe(code)
     })
-  test('a lost connection is offline', async () => {
-    const { agent } = await loaded(reads())
-    const dead = new HttpAgent({ fetch: () => Promise.reject(new TypeError('failed to fetch')) })
-    expect(((await errorOf(dead.setSetting('g:theme', 'Dark'))) as AgentError).code).toBe('offline')
-    expect(agent).toBeDefined()
+  test('a lost connection is offline: the write rejects with it, tells once, and is taken back', async () => {
+    // Reads work; every write's request is lost on the way.
+    const s = server(reads({ settings: { personal: [record('g:theme', 'Dark', 3)] } }))
+    const agent = new HttpAgent({ fetch: (i, init) => ((init?.method ?? 'GET') === 'GET' ? s.fetch(i, init) : Promise.reject(new TypeError('failed to fetch'))) })
+    const heard: AgentNotice[] = []
+    agent.onNotice(n => heard.push(n))
+    await agent.whenLoaded()
+    const before = agent.getSnapshot()
+    const e = await errorOf(agent.setSetting('g:theme', 'Light')) as AgentError
+    expect(e.code).toBe('offline')
+    expect(heard).toEqual([{ type: 'error', code: 'offline', text: e.message }])
+    expect(agent.getSnapshot()).toBe(before)
   })
-  test('the error body is the shared schema: the codes it names are the codes the client rejects with', () => {
-    for (const code of ErrorBodySchema.shape.error.shape.code.options) expect(cases.map(c => c[1]).concat(['offline', 'cap_reached'])).toContain(code)
+  test('a body of ours with a code the server may send passes through as that code (cap reached)', async () => {
+    const { agent } = await loaded({ ...reads(), 'PUT /api/settings/personal/g:theme': refusal(429, 'cap_reached') })
+    expect(((await errorOf(agent.setSetting('g:theme', 'Dark'))) as AgentError).code).toBe('cap_reached')
   })
 })
 
@@ -409,6 +417,192 @@ describe('writes', () => {
     expect(agent.read()).toBe(before)
     expect(heard).toHaveLength(1)
   })
+})
+
+/** A record the fake server revs the way the real one does: a write at any rev but the current one is a 409 with the record. */
+function revved(key: string, first: { value: unknown; rev: number }, refuse?: (n: number) => Answer | undefined) {
+  const rec = { ...first }
+  let n = 0
+  const sent: number[] = []
+  const answer = (r: Req): Answer => {
+    const { value, ifRev } = JSON.parse(r.body!) as { value: unknown; ifRev: number }
+    sent.push(ifRev)
+    const no = refuse?.(++n)
+    if (no) return no
+    if (ifRev !== rec.rev) return refusal(409, 'conflict', { current: record(key, rec.value, rec.rev) })
+    rec.value = value; rec.rev++
+    return { body: record(key, rec.value, rec.rev) }
+  }
+  return { answer, sent, rec }
+}
+
+describe('writes to one record go one at a time', () => {
+  test('two overlapping toggles on one key: the second sends the rev the first answered with, both save, no notice, the last value stays', async () => {
+    const k = revved('n:weekly', { value: true, rev: 2 })
+    const { agent, heard } = await loaded({ ...reads({ settings: { personal: [record('n:weekly', true, 2)] } }), 'PUT /api/settings/personal/n:weekly': k.answer })
+    const first = agent.setToggle('n:weekly', false)
+    const second = agent.setToggle('n:weekly', true)
+    expect(agent.getSnapshot().toggles['n:weekly'], 'the change shows at once').toBe(true)
+    await Promise.all([first, second])
+    expect(k.sent).toEqual([2, 3])
+    expect(heard).toEqual([])
+    expect(agent.getSnapshot().toggles['n:weekly']).toBe(true)
+    expect(k.rec).toEqual({ value: true, rev: 4 })
+  })
+
+  test('the screen shows the second change throughout, not the first answer', async () => {
+    const k = revved('n:weekly', { value: true, rev: 2 })
+    const { agent } = await loaded({ ...reads({ settings: { personal: [record('n:weekly', true, 2)] } }), 'PUT /api/settings/personal/n:weekly': k.answer })
+    const seen: unknown[] = []
+    agent.subscribe(() => seen.push(agent.getSnapshot().toggles['n:weekly']))
+    await Promise.all([agent.setToggle('n:weekly', false), agent.setToggle('n:weekly', true)])
+    expect(seen.every(v => v === true || seen.indexOf(v) === 0 || v === false)).toBe(true)
+    expect(seen.at(-1)).toBe(true)
+    // After the second change was applied, the value never goes back to the first write's.
+    const second = seen.indexOf(true, 1)
+    expect(seen.slice(second)).not.toContain(false)
+  })
+
+  test('two overlapping role changes on one member both save', async () => {
+    let rev = 1
+    const sent: number[] = []
+    const { agent, heard } = await loaded({
+      ...reads(),
+      'PUT /api/members/m_dana/role': r => {
+        const b = JSON.parse(r.body!) as { role: string; ifRev: number }
+        sent.push(b.ifRev)
+        if (b.ifRev !== rev) return refusal(409, 'conflict', { current: member('m_dana', { rev }) })
+        rev++
+        return { body: member('m_dana', { role: b.role, rev }) }
+      },
+    })
+    await Promise.all([agent.setMemberRole('m_dana', 'admin'), agent.setMemberRole('m_dana', 'member')])
+    expect(sent).toEqual([1, 2])
+    expect(heard).toEqual([])
+    expect(agent.read().people.members.find(m => m.id === 'm_dana')).toMatchObject({ role: 'member', rev: 3 })
+  })
+
+  test('the name saved twice in a row: each carries the member rev the earlier save left', async () => {
+    let rev = 1
+    const sent: number[] = []
+    const { agent, heard } = await loaded({
+      ...reads({ members: [member(ME_ID, { role: 'admin', rev: 1 })], settings: { personal: [record('g:name', 'Sam Mercer', 1)] } }),
+      'GET /api/members': () => ({ body: { items: [member(ME_ID, { role: 'admin', rev })], nextCursor: null } }),
+      'PUT /api/settings/personal/g:name': r => {
+        const b = JSON.parse(r.body!) as { value: string; ifRev: number }
+        sent.push(b.ifRev)
+        if (b.ifRev !== rev) return refusal(409, 'conflict', { current: record('g:name', 'x', rev) })
+        rev++
+        return { body: record('g:name', b.value, rev) }
+      },
+    })
+    await Promise.all([agent.setSetting('g:name', 'Sam A'), agent.setSetting('g:name', 'Sam B')])
+    expect(sent).toEqual([1, 2])
+    expect(heard).toEqual([])
+  })
+
+  test('the first of two overlapping writes refused: only it is taken back, and the second still saves at the rev the refusal gave', async () => {
+    const k = revved('n:weekly', { value: true, rev: 2 }, n => (n === 1 ? refusal(409, 'conflict', { current: record('n:weekly', true, 5) }) : undefined))
+    // The refusal's `current` rev is the one the second must send, so the fake holds the record at 5.
+    k.rec.rev = 5
+    const { agent, heard } = await loaded({ ...reads({ settings: { personal: [record('n:weekly', true, 2)] } }), 'PUT /api/settings/personal/n:weekly': k.answer })
+    const first = errorOf(agent.setToggle('n:weekly', false))
+    const second = agent.setToggle('n:weekly', true)
+    expect(((await first) as AgentError).code).toBe('conflict')
+    await second
+    expect(k.sent).toEqual([2, 5])
+    expect(heard).toHaveLength(1)
+    expect(agent.getSnapshot().toggles['n:weekly']).toBe(true)
+  })
+
+  test('a refusal on one of two writes to different keys takes back only its own change', async () => {
+    const { agent, heard } = await loaded({
+      ...reads(),
+      'PUT /api/settings/personal/n:weekly': refusal(503, 'unavailable'),
+      'PUT /api/settings/personal/n:slack': { body: record('n:slack', true, 1) },
+    })
+    const refused = errorOf(agent.setToggle('n:weekly', true))
+    const kept = agent.setToggle('n:slack', true)
+    expect(agent.getSnapshot().toggles).toMatchObject({ 'n:weekly': true, 'n:slack': true })
+    expect(((await refused) as AgentError).code).toBe('unavailable')
+    await kept
+    expect(agent.getSnapshot().toggles['n:weekly']).toBeUndefined()
+    expect(agent.getSnapshot().toggles['n:slack']).toBe(true)
+    expect(heard).toHaveLength(1)
+  })
+})
+
+describe('the schemas chunk', () => {
+  test('a chunk that fails to load: a write rejects with unavailable and one notice, sends nothing, and nothing is left unhandled', async () => {
+    const s = server(reads())
+    const unhandled: unknown[] = []
+    const on = (e: unknown) => { unhandled.push(e) }
+    const proc = (globalThis as unknown as { process: { on(e: string, f: (x: unknown) => void): void; off(e: string, f: (x: unknown) => void): void } }).process
+    proc.on('unhandledRejection', on)
+    const err = console.error
+    console.error = () => undefined
+    try {
+      const agent = new HttpAgent({ fetch: s.fetch, loadContract: () => Promise.reject(new TypeError('Failed to fetch dynamically imported module')) })
+      const heard: AgentNotice[] = []
+      agent.onNotice(n => heard.push(n))
+      const e = await errorOf(agent.setSetting('g:theme', 'Dark')) as AgentError
+      expect(e).toBeInstanceOf(AgentError)
+      expect(e.code).toBe('unavailable')
+      expect(heard).toEqual([{ type: 'error', code: 'unavailable', text: e.message }])
+      expect(((await errorOf(agent.setPhoto(ME_ID, null))) as AgentError).code).toBe('unavailable')
+      expect(s.calls.filter(c => c.method !== 'GET')).toEqual([])
+      await new Promise(r => setTimeout(r, 0))
+      expect(unhandled).toEqual([])
+    } finally { console.error = err; proc.off('unhandledRejection', on) }
+  })
+})
+
+describe('leaving the team is the signed-out state, whichever request meets it', () => {
+  test.each([['removed'], ['not_invited']])('a 403 %s on a write puts meta in the signed-out state', async reason => {
+    const { agent } = await loaded({ ...reads(), 'PUT /api/settings/personal/g:theme': refusal(403, 'forbidden', { reason }) })
+    await errorOf(agent.setSetting('g:theme', 'Light'))
+    expect(agent.read().resources.meta).toEqual({ status: 'error', error: 'forbidden', reason })
+  })
+  test('a 403 removed on a later read does too, and a plain 403 does not', async () => {
+    let gone = false
+    const r = reads()
+    const { agent } = await loaded({ ...r, 'GET /api/members': () => (gone ? refusal(403, 'forbidden', { reason: 'removed' }) : r['GET /api/members']) })
+    expect(agent.read().resources.meta.status).toBe('ready')
+    gone = true
+    await agent.retry('members')
+    expect(agent.read().resources.meta).toEqual({ status: 'error', error: 'forbidden', reason: 'removed' })
+    expect(agent.read().resources.members).toMatchObject({ status: 'error', error: 'forbidden' })
+  })
+  test('the grants read: a Member-style 403 is "not for you", a 403 removed is signed out', async () => {
+    const plain = await loaded({ ...reads(), 'GET /api/grants': refusal(403, 'forbidden') })
+    expect(plain.agent.read().resources.grants).toEqual({ status: 'ready' })
+    expect(plain.agent.read().resources.meta.status).toBe('ready')
+    const left = await loaded({ ...reads(), 'GET /api/grants': refusal(403, 'forbidden', { reason: 'removed' }) })
+    expect(left.agent.read().resources.meta).toEqual({ status: 'error', error: 'forbidden', reason: 'removed' })
+    expect(left.agent.read().resources.grants.status).toBe('error')
+  })
+})
+
+describe('a photo that is not valid base64', () => {
+  const PHOTO = 'data:image/png;base64,'
+  test('base64 of a length that is one over a multiple of four is invalid: a rejection and a notice, never a throw', async () => {
+    const { agent, heard } = await loaded(reads())
+    let p: Promise<void> | undefined
+    expect(() => { p = agent.setPhoto(ME_ID, `${PHOTO}AAAAA`) }).not.toThrow()
+    const e = await errorOf(p!) as AgentError
+    expect(e.code).toBe('invalid')
+    expect(heard).toHaveLength(1)
+  })
+  fcTest.prop([fc.string({ maxLength: 40 }), fc.constantFrom('', PHOTO, 'data:image/jpeg;base64,', 'data:image/webp;base64,')], { numRuns: 200 })(
+    'setPhoto never throws on any text: it resolves or rejects with an AgentError', async (tail, head) => {
+      const s = server({ ...reads(), 'PUT /api/photo': { body: { photoUrl: `/api/members/${ME_ID}/photo` } } })
+      const agent = new HttpAgent({ fetch: s.fetch })
+      await agent.whenLoaded()
+      let p: Promise<void> | undefined
+      expect(() => { p = agent.setPhoto(ME_ID, head + tail) }).not.toThrow()
+      const e = await errorOf(p!)
+      expect(e === 'resolved' || e instanceof AgentError).toBe(true)
+    })
 })
 
 describe('paging', () => {

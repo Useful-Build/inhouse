@@ -27,7 +27,7 @@ import {
   AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, ErrorReasonSchema, InstantSchema,
   LibraryFileSchema, MeSchema, MemberRecordSchema, RoutineRunSchema, RunEventSchema, SettingRecordSchema, SupportGrantSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
-import type { AgentClient, AgentNotice, RunEvent, Scenario, SendPriority, Stage } from '../types'
+import type { AgentClient, AgentNotice, AgentState, RunEvent, Scenario, SendPriority, Stage } from '../types'
 import { AgentError, SCENARIOS, STAGES } from '../types'
 import type { ContractTarget, WriteMethod } from './targets'
 import { targets } from './targets'
@@ -67,6 +67,10 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   const lacks = (...methods: (keyof AgentClient)[]) => !methods.every(m => t.serves(m))
   /** `only('ask')('title', fn)` and `only('ask').each(rows)('title', fn)`: the test, or a skipped one by that name. */
   const only = (...methods: (keyof AgentClient)[]) => (lacks(...methods) ? test.skip : test)
+  /** An example write the target serves: `pause` where it has it, else a text setting. `shown` says whether its change is on a snapshot. */
+  const probe = () => (t.serves('pause')
+    ? { method: 'pause' as const, run: () => t.client.pause(), undo: () => t.client.resume(), shown: (s: AgentState) => s.paused !== null }
+    : { method: 'setSetting' as const, run: () => t.client.setSetting(fx.settingKey, fx.settingValue), undo: () => t.client.setSetting(fx.settingKey, null), shown: (s: AgentState) => s.settings[fx.settingKey] === fx.settingValue })
   const describeIf = (...methods: (keyof AgentClient)[]) => (lacks(...methods) ? describe.skip : describe)
   /** Property runs: the env's count, capped by the target's own (a real target makes several HTTP round trips per run). */
   const runParams: fc.Parameters<unknown> = { ...params, numRuns: Math.min(numRuns, t.propertyRuns ?? numRuns) }
@@ -551,10 +555,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().teamRequests[0]).toEqual(fx.teamRequest)
     })
 
-    only('requestTool', 'requestSkill', 'setToolPaused', 'forgetMemory')('toggles, requests, pauses, memory, settings and photos', async () => {
+    only('requestTool', 'requestSkill', 'setToolPaused', 'forgetMemory')('requests, tool pauses and memory', async () => {
       const c = t.client
-      await c.setToggle(fx.toggleKey, false)
-      expect(c.getSnapshot().toggles[fx.toggleKey]).toBe(false)
       await c.requestTool(fx.toolKey, true)
       expect(c.getSnapshot().requestedTools[fx.toolKey]).toBe(true)
       await c.requestTool(fx.toolKey, false)
@@ -569,6 +571,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(c.getSnapshot().forgot[fx.memoryKey]).toBe(true)
       await c.forgetMemory(fx.memoryKey, false)
       expect(c.getSnapshot().forgot[fx.memoryKey]).toBeUndefined()
+      checkWorld('after the plain writes')
+    })
+
+    only('setToggle', 'setSetting', 'setPhoto')('toggles, settings and photos', async () => {
+      const c = t.client
+      await c.setToggle(fx.toggleKey, false)
+      expect(c.getSnapshot().toggles[fx.toggleKey]).toBe(false)
       await c.setSetting(fx.settingKey, fx.settingValue)
       expect(c.getSnapshot().settings[fx.settingKey]).toBe(fx.settingValue)
       await c.setSetting(fx.settingKey, null)
@@ -651,12 +660,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(c.listNotifications()).toBe(c.listNotifications())
     })
 
-    only('pause')('a write gives a new state object and leaves read() alone', async () => {
+    test('a write gives a new state object and leaves read() alone', async () => {
+      const w = probe()
       const before = t.client.getSnapshot()
       const data = t.client.read()
-      await t.client.pause()
+      await w.run()
       expect(t.client.getSnapshot()).not.toBe(before)
-      expect(before.paused).toBeNull()
+      expect(w.shown(before)).toBe(false)
       expect(t.client.read(), 'a write does not change the scenario data').toBe(data)
       const after = t.client.getSnapshot()
       expect(t.client.getSnapshot(), 'reading changes nothing').toBe(after)
@@ -676,23 +686,27 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.read()).not.toBe(data)
     })
 
-    only('pause')('subscribe tells listeners of every change, and stops after unsubscribe', async () => {
+    test('subscribe tells listeners of every change, and stops after unsubscribe', async () => {
       // `seed` resolves only once the client shows the new world, so a listener has heard it by the time it returns.
+      const w = probe()
       const calls = vi.fn(() => t.client.getSnapshot())
       const off = subscribe(calls)
       const before = t.client.getSnapshot()
-      await t.client.pause()
+      await w.run()
       expect(calls.mock.calls.length, 'a write tells the listener').toBeGreaterThanOrEqual(1)
       expect(calls.mock.results.at(-1)!.value, 'what the listener saw is the new state').toBe(t.client.getSnapshot())
       expect(t.client.getSnapshot()).not.toBe(before)
       const afterWrite = calls.mock.calls.length
-      const data = t.client.read()
-      await t.seed({ stage: 'Act', scenario: 'Cap reached' })
-      expect(calls.mock.calls.length, 'a scenario change tells the listener').toBeGreaterThan(afterWrite)
-      expect(t.client.read()).not.toBe(data)
+      // A scenario change is the demo's (a target with no scenarios has no data to change).
+      if (t.serves('ask')) {
+        const data = t.client.read()
+        await t.seed({ stage: 'Act', scenario: 'Cap reached' })
+        expect(calls.mock.calls.length, 'a scenario change tells the listener').toBeGreaterThan(afterWrite)
+        expect(t.client.read()).not.toBe(data)
+      }
       off()
       const heard = calls.mock.calls.length
-      await t.client.resume()
+      await w.undo()
       expect(calls.mock.calls.length, 'nothing after unsubscribe').toBe(heard)
     })
   })
@@ -824,21 +838,23 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       })
     })
 
-    only('pause')('a write that is not awaited still tells the person when the server refuses it', async () => {
-      await t.injectError('pause', 'forbidden')
-      void t.client.pause()
+    test('a write that is not awaited still tells the person when the server refuses it', async () => {
+      const w = probe()
+      await t.injectError(w.method, 'forbidden')
+      void w.run()
       await until(() => notices.length > 0, 'the notice')
       expect(notices).toEqual([{ type: 'error', code: 'forbidden', text: expect.any(String) }])
     })
 
-    only('pause')('a refused write takes back only itself: a write made while it was in flight stays', async () => {
-      await t.injectError('pause', 'forbidden')
-      const refused = errorOf(t.client.pause())
+    test('a refused write takes back only itself: a write made while it was in flight stays', async () => {
+      const w = probe()
+      await t.injectError(w.method, 'forbidden')
+      const refused = errorOf(w.run())
       await t.client.setToggle(fx.toggleKey, false) // lands before the refusal does
       expect(await refused).toBeInstanceOf(AgentError)
       const snap = t.client.getSnapshot()
       expect(snap.toggles[fx.toggleKey], 'the write that worked is kept').toBe(false)
-      expect(snap.paused, 'the refused write is taken back').toBeNull()
+      expect(w.shown(snap), 'the refused write is taken back').toBe(false)
       expect(notices).toHaveLength(1)
       expect(notices[0]).toMatchObject({ type: 'error', code: 'forbidden' })
     })
@@ -868,14 +884,15 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(settings[fx.otherSetting.key], 'the setting saved meanwhile stays').toBe(fx.otherSetting.value)
     })
 
-    only('pause')('a refusal on one method leaves the others working', async () => {
-      await t.injectError('pause', 'forbidden')
-      await expect(t.client.pause()).rejects.toBeInstanceOf(AgentError)
+    test('a refusal on one method leaves the others working', async () => {
+      const w = probe()
+      await t.injectError(w.method, 'forbidden')
+      await expect(w.run()).rejects.toBeInstanceOf(AgentError)
       await t.client.setToggle(fx.toggleKey, false)
       expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(false)
-      await t.injectError('pause', null)
-      await t.client.pause()
-      expect(t.client.getSnapshot().paused).not.toBeNull()
+      await t.injectError(w.method, null)
+      await w.run()
+      expect(w.shown(t.client.getSnapshot())).toBe(true)
     })
 
     only('ask')('the Cap reached scenario reads at the cap, and the agent still answers and writes there', async () => {
@@ -893,9 +910,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices).toEqual([])
     })
 
-    only('pause')('a write that fails does not raise an unhandled rejection when nobody awaits it', async () => {
+    test('a write that fails does not raise an unhandled rejection when nobody awaits it', async () => {
       await t.failSaves(true)
-      void t.client.pause()
+      void probe().run()
       await until(() => notices.some(n => n.type === t.failedSaveNotice), 'the failed-save notice')
     })
 
@@ -948,7 +965,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test.skipIf(skipUnless('me', 'setMemberRole'))('can follows the role: an Admin may do what a Member may not, and every person may read', async () => {
       const admin = parse(MeSchema, t.client.me(), 'me()')
-      if (t.name === 'mock') expect(Object.values(admin.can).every(Boolean), 'the demo Admin can do everything').toBe(true)
+      if (t.capabilities.adminCanDoEverything) expect(Object.values(admin.can).every(Boolean), 'the demo Admin can do everything').toBe(true)
       // The product's Admin can what the access rows let an Admin do: no technical write but a model's switch (`adminWrite`).
       else {
         // The rows are the server's (read at run time: the client program has no Workers types to compile them with).
@@ -1077,6 +1094,14 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await t.client.setSetting(fx.otherSetting.key, fx.otherSetting.value) // another record: not stale
     })
 
+    test.skipIf(skipUnless('setToggle'))('two writes to one record, started together, both save in order: no notice, and the last one stays', async () => {
+      const first = t.client.setToggle(fx.toggleKey, false)
+      const second = t.client.setToggle(fx.toggleKey, true)
+      await Promise.all([first, second])
+      expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(true)
+      expect(notices).toEqual([])
+    })
+
     only('forgetMemory', 'deleteRoutine', 'deleteFiles')('a memory line, a routine and a file changed behind the client: forget, delete and restore reject with conflict', async () => {
       const line = t.client.read().memory.team.flatMap(g => g.lines)[0]
       const routine = t.client.read().routines[0]
@@ -1089,6 +1114,30 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect((await refusal(t.client.deleteFiles([file.id]))).code).toBe('conflict')
       expect(t.client.getSnapshot().forgot[line.key], 'nothing applied').toBeUndefined()
       expect(t.client.read().routines.find(r => r.id === routine.id)!.rev, 'the rev reads').toBeGreaterThan(routine.rev)
+    })
+
+    test.skipIf(skipUnless('setMemberRole', 'setSetting', 'grantSupport', 'endSupportGrant'))('a member, a setting and a grant carry a rev that a write bumps', async () => {
+      members().forEach(m => expect(m.rev, `${m.id}`).toBeGreaterThanOrEqual(1))
+      const before = member(fx.otherMemberId)!.rev
+      await t.client.setMemberRole(fx.otherMemberId, 'admin')
+      expect(member(fx.otherMemberId)!.rev, 'a role change bumps the member').toBeGreaterThan(before)
+      // A setting's rev shows in the record a stale write is refused with: it counts up with every write.
+      await t.client.setSetting(fx.settingKey, fx.settingValue)
+      const revOf = async () => {
+        await t.writeElsewhere({ kind: 'setting', key: fx.settingKey }, fx.settingValue)
+        const e = await errorOf(t.client.setSetting(fx.settingKey, fx.settingValue))
+        return parse(SettingRecordSchema, (e as AgentError).current, 'current').rev
+      }
+      const r1 = await revOf()
+      expect(r1).toBeGreaterThanOrEqual(2)
+      expect(await revOf(), 'each write bumps it').toBeGreaterThan(r1)
+      const live = t.client.read().people.supportGrant
+      if (live?.live) await t.client.endSupportGrant(live.id)
+      await t.client.grantSupport(1)
+      const g = t.client.read().people.supportGrant!
+      expect(g.rev).toBeGreaterThanOrEqual(1)
+      await t.client.endSupportGrant(g.id)
+      expect(t.client.read().people.supportGrant!.rev, 'ending it bumps it').toBeGreaterThan(g.rev)
     })
 
     only('deleteRoutine')('every editable record carries a rev that a write bumps', async () => {

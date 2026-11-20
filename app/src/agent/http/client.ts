@@ -6,7 +6,7 @@
 // It imports nothing from the mock or the sample data.
 import { instantOf } from '../../lib/format'
 import { RESOURCE_KEYS } from '../../../shared/contract/keys'
-import { NOT_FOUND, REASON } from '../../../shared/contract/error-codes'
+import { NOT_FOUND, REASON, REASON_NOT_INVITED } from '../../../shared/contract/error-codes'
 import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError } from '../types'
 import type {
@@ -93,6 +93,10 @@ const guard = <T,>(p: Promise<T>): Promise<T> => { p.catch(() => undefined); ret
 const rejected = <T,>(): Promise<T> => guard(Promise.reject<T>(new AgentError('unavailable', UNAVAILABLE)))
 
 const PENDING = 'pending'
+/** Base64 to bytes, or null for text that isn't base64 (the caller refuses it: `atob` throws on it). */
+const decode = (b64: string): Uint8Array | null => {
+  try { return Uint8Array.from(atob(b64), c => c.charCodeAt(0)) } catch { return null }
+}
 const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('')
 const ROLE_LABEL = { member: 'Member', admin: 'Admin', inhouse: 'Inhouse team' } as const
 const isLive = (g: SupportGrant, now: number) => g.endedAt === null && g.endsAt.ms > now
@@ -110,11 +114,17 @@ export class HttpAgent implements AgentClient {
   private loading: Promise<void> | null = null
   private paging = new Set<'audit' | 'members'>()
   private expiry: ReturnType<typeof setTimeout> | undefined
+  /** The last value the server confirmed for a record (`setting:<key>`, `member:<id>`): what a refused write goes back to. */
+  private confirmed = new Map<string, unknown>()
+  /** Writes in flight per record, and the end of the chain each record's next write waits for. */
+  private lanes = new Map<string, Promise<void>>()
+  private depth = new Map<string, number>()
 
   constructor(o: HttpAgentOptions = {}) {
     this.http = new Transport(o)
     this.now = o.now ?? (() => Date.now())
-    void this.http.contract().then(k => { this.k = k })
+    // A chunk that fails to load is reported where a write needs it, not here.
+    this.http.contract().then(k => { this.k = k }, () => undefined)
   }
 
   /**
@@ -122,7 +132,11 @@ export class HttpAgent implements AgentClient {
    * they arrive when it was called before (a write made before the first reads are in).
    */
   private needs<A extends unknown[]>(run: (k: Contract, ...a: A) => Promise<void>): (...a: A) => Promise<void> {
-    return (...a) => (this.k ? run(this.k, ...a) : guard(this.http.contract().then(k => run(k, ...a))))
+    return (...a) => (this.k ? run(this.k, ...a) : guard(this.http.contract().then(k => run(k, ...a), (e: unknown) => {
+      // The schemas chunk couldn't load (offline, a stale deploy): a fault of the client, told once, nothing sent.
+      console.error('Inhouse: the schemas chunk did not load.', e)
+      throw this.fail(new AgentError('unavailable', MESSAGE.unavailable))
+    })))
   }
 
   // ---------- state ----------
@@ -183,9 +197,14 @@ export class HttpAgent implements AgentClient {
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
+  /** A 401, or a 403 that says the person isn't on the team (never invited, or removed): the signed-out state, whichever request met it. */
+  private static gone(err: AgentError): boolean {
+    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON_NOT_INVITED || err.reason === 'removed'))
+  }
   private failStatus(k: ResourceKey, e: unknown) {
     const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
-    this.setStatus(k, { status: 'error', error: err.code, ...(err.reason ? { reason: err.reason } : {}) })
+    const status: ResourceStatus = { status: 'error', error: err.code, ...(err.reason ? { reason: err.reason } : {}) }
+    this.patch({ res: { ...this.s.res, [k]: status, ...(HttpAgent.gone(err) ? { meta: status } : {}) } })
   }
 
   /** `me` first (the settings UI fails closed until it arrives), then the settings of every scope this person can read. Fails `meta` on any error. */
@@ -201,6 +220,7 @@ export class HttpAgent implements AgentClient {
       const revs: Record<string, number> = {}
       for (const { items } of lists) for (const r of items) {
         revs[r.key] = r.rev
+        this.confirmed.set(`setting:${r.key}`, r.value)
         if (typeof r.value === 'string') settings[r.key] = r.value
         else if (typeof r.value === 'boolean') toggles[r.key] = r.value
       }
@@ -218,6 +238,7 @@ export class HttpAgent implements AgentClient {
     if (this.s.me && !this.s.me.can.viewMembers) return this.setStatus('members', { status: 'ready' })
     try {
       const page = await this.http.call({ method: 'GET', path: '/api/members', schema: 'members' })
+      page.items.forEach(m => this.confirmed.set(`member:${m.id}`, m))
       this.patch({ members: page.items, membersNext: page.nextCursor, res: { ...this.s.res, members: { status: 'ready' } } })
     } catch (e) { this.failStatus('members', e) }
   }
@@ -230,7 +251,8 @@ export class HttpAgent implements AgentClient {
       this.patch({ grant: items[0] ?? null, res: { ...this.s.res, grants: { status: 'ready' } } })
       this.watchExpiry()
     } catch (e) {
-      if (e instanceof AgentError && e.code === 'forbidden') return this.setStatus('grants', { status: 'ready' })
+      // The Member's 403 is expected; a 403 that says the person left the team is not.
+      if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('grants', { status: 'ready' })
       this.failStatus('grants', e)
     }
   }
@@ -266,6 +288,7 @@ export class HttpAgent implements AgentClient {
         this.patch({ audit: [...this.s.audit, ...page.items], auditNext: page.nextCursor })
       } else {
         const page = await this.http.call({ method: 'GET', path: `/api/members${q}`, schema: 'members' })
+        page.items.forEach(m => this.confirmed.set(`member:${m.id}`, m))
         this.patch({ members: page.items.reduce(replaceById, this.s.members), membersNext: page.nextCursor })
       }
     } catch (e) {
@@ -277,11 +300,18 @@ export class HttpAgent implements AgentClient {
   private async refreshMembers() {
     try {
       const page = await this.http.call({ method: 'GET', path: '/api/members', schema: 'members' })
+      page.items.forEach(m => this.confirmed.set(`member:${m.id}`, m))
       this.patch({ members: page.items.reduce(replaceById, this.s.members) })
-    } catch (e) { console.warn('Inhouse: could not read the team again after a save.', e) }
+    } catch (e) { this.afterRefreshFailed(e, 'the team') }
   }
   private async refreshMe() {
-    try { this.patch({ me: await this.http.call({ method: 'GET', path: '/api/me', schema: 'me' }) }) } catch (e) { console.warn('Inhouse: could not read who is signed in again after a save.', e) }
+    try { this.patch({ me: await this.http.call({ method: 'GET', path: '/api/me', schema: 'me' }) }) } catch (e) { this.afterRefreshFailed(e, 'who is signed in') }
+  }
+
+  /** A read after a save failed: the save stands. A person who has left the team is told like any other request would tell them. */
+  private afterRefreshFailed(e: unknown, what: string) {
+    if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
+    else console.warn(`Inhouse: could not read ${what} again after a save.`, e)
   }
 
   /** The grant stops being live at its end: the snapshot is told then, so a screen showing "live until" moves on. */
@@ -300,11 +330,11 @@ export class HttpAgent implements AgentClient {
     return guard(Promise.reject<T>(this.fail(new AgentError(code, text, reason ? { reason } : {}))))
   }
 
-  /** Tells the person once and returns the error to reject with. A 401 on the way puts the client in the signed-out state. */
+  /** Tells the person once and returns the error to reject with. A 401, or a 403 that says the person left the team, puts the client in the signed-out state. */
   private fail(e: unknown): AgentError {
     const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
     this.notify({ type: 'error', code: err.code, text: err.message })
-    if (err.code === 'unauthorized') this.failStatus('meta', err)
+    if (HttpAgent.gone(err)) this.failStatus('meta', err)
     return err
   }
 
@@ -312,30 +342,49 @@ export class HttpAgent implements AgentClient {
    * Optimistic write. `apply` shows the change at once; `send` saves it; `done` folds the answer in. On failure the change
    * is taken back (the earlier slices themselves when nothing else changed since, so identities come back), `onConflict`
    * puts the server's current record in, and the call rejects after one notice.
+   *
+   * Writes to one record (`lane`) go one at a time: a write sends after the earlier write on that record has answered, and
+   * builds its request in `send`, so it carries the rev that answer (or refusal) left. Writes to other records don't wait.
+   * `others` tells `done`, `undo` and `onConflict` that a later write to the same record is queued, whose change is
+   * on screen: they then take in only what the server said (the rev), not a value that would undo it.
    */
   private write<T>(o: {
+    lane?: string
     apply: (s: Slices) => Slices
     send: () => Promise<T>
-    done: (s: Slices, answer: T) => Slices
-    undo: (now: Slices, before: Slices) => Slices
-    onConflict?: (s: Slices, current: Record<string, unknown>) => Slices
+    done: (s: Slices, answer: T, others: boolean) => Slices
+    undo: (now: Slices, before: Slices, others: boolean) => Slices
+    onConflict?: (s: Slices, current: Record<string, unknown>, others: boolean) => Slices
     after?: () => Promise<void>
   }): Promise<void> {
     const before = this.s
     this.commit(o.apply(before))
     const mine = this.s
-    return guard((async () => {
+    const lane = o.lane
+    const prior = lane ? this.lanes.get(lane) : undefined
+    if (lane) this.depth.set(lane, (this.depth.get(lane) ?? 0) + 1)
+    const others = () => lane !== undefined && (this.depth.get(lane) ?? 0) > 1
+    const run = (async () => {
+      await prior
       try {
         const answer = await o.send()
-        this.commit(o.done(this.s, answer))
+        this.commit(o.done(this.s, answer, others()))
         await o.after?.()
       } catch (e) {
-        if (this.s === mine) this.commit(before); else this.commit(o.undo(this.s, before))
+        if (this.s === mine) this.commit(before); else this.commit(o.undo(this.s, before, others()))
         const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
-        if (err.current && o.onConflict) this.commit(o.onConflict(this.s, err.current))
+        if (err.current && o.onConflict) this.commit(o.onConflict(this.s, err.current, others()))
         throw this.fail(err)
+      } finally {
+        if (lane) this.depth.set(lane, (this.depth.get(lane) ?? 1) - 1)
       }
-    })())
+    })()
+    if (lane) {
+      const tail = run.then(() => undefined, () => undefined)
+      this.lanes.set(lane, tail)
+      void tail.then(() => { if (this.lanes.get(lane) === tail) { this.lanes.delete(lane); this.depth.delete(lane) } })
+    }
+    return guard(run)
   }
 
   // ----- settings -----
@@ -358,20 +407,27 @@ export class HttpAgent implements AgentClient {
     if (raw !== null && !meetsRule(row.rule, raw)) return this.refuseLocal('invalid', `That isn't a value for "${key}".`, REASON.badType)
     // Text is kept as the server keeps it: trimmed.
     const value = typeof raw === 'string' && row.rule.t === 'text' ? raw.trim() : raw
-    // The name is on the member's row: its rev is the member's, which a photo or a role change moves too.
-    const rev = key === 'g:name' ? this.s.members.find(m => m.id === this.s.me?.memberId)?.rev ?? this.s.revs[key] ?? 0 : this.s.revs[key] ?? 0
-    const body = k.BODIES.settingWrite.safeParse({ value, ifRev: rev })
-    if (!body.success) return this.refuseLocal('invalid', `That isn't a value for "${key}".`, REASON.badType)
-    const was = this.valueOf(this.s, key)
-    const put = (s: Slices, rec: { value: SettingValue; rev: number }): Slices => ({ ...this.withValue(s, key, rec.value), revs: { ...s.revs, [key]: rec.rev } })
+    if (!k.BODIES.settingWrite.safeParse({ value, ifRev: 0 }).success) return this.refuseLocal('invalid', `That isn't a value for "${key}".`, REASON.badType)
+    const record = `setting:${key}`
+    const put = (s: Slices, rec: { value: SettingValue; rev: number }, others: boolean): Slices => {
+      this.confirmed.set(record, rec.value)
+      const revs = { ...s.revs, [key]: rec.rev }
+      // A later write to this key is on screen: its value stays, and this answer only moves the rev it will send.
+      return others ? { ...s, revs } : { ...this.withValue(s, key, rec.value), revs }
+    }
     return this.write({
+      lane: record,
       apply: s => this.withValue(s, key, value),
-      send: () => this.http.call({ method: 'PUT', path: `/api/settings/${row.scope}/${encodeURIComponent(key)}`, schema: 'setting', json: body.data }),
-      done: (s, rec) => put(s, rec),
-      undo: s => this.withValue(s, key, was),
-      onConflict: (s, current) => {
+      send: () => {
+        // Read when it is sent: after the write before it on this key has answered. The name is on the member's row, so its rev is the member's.
+        const ifRev = key === 'g:name' ? this.s.members.find(m => m.id === this.s.me?.memberId)?.rev ?? this.s.revs[key] ?? 0 : this.s.revs[key] ?? 0
+        return this.http.call({ method: 'PUT', path: `/api/settings/${row.scope}/${encodeURIComponent(key)}`, schema: 'setting', json: k.BODIES.settingWrite.parse({ value, ifRev }) })
+      },
+      done: (s, rec, others) => (others || this.valueOf(s, key) === value ? put(s, rec, others) : { ...s, revs: { ...s.revs, [key]: rec.rev } }),
+      undo: (s, _before, others) => (others || this.valueOf(s, key) !== value ? s : this.withValue(s, key, (this.confirmed.get(record) ?? null) as SettingValue)),
+      onConflict: (s, current, others) => {
         const rec = k.ANSWERS.setting.safeParse(current)
-        return rec.success ? put(s, rec.data) : s
+        return rec.success ? put(s, rec.data, others) : s
       },
       // The name is on the member's record too: its rev and the account menu's name moved.
       after: key === 'g:name' ? async () => { await Promise.all([this.refreshMembers(), this.refreshMe()]) } : undefined,
@@ -382,7 +438,7 @@ export class HttpAgent implements AgentClient {
 
   // ----- photo -----
 
-  setPhoto = (memberId: string, dataUrl: string | null): Promise<void> => {
+  setPhoto = this.needs((_k, memberId: string, dataUrl: string | null): Promise<void> => {
     const me = this.s.me
     if (!me || memberId !== me.memberId) {
       return this.s.members.some(m => m.id === memberId && m.status !== 'removed')
@@ -392,14 +448,16 @@ export class HttpAgent implements AgentClient {
     let bytes: { data: Uint8Array; type: string } | undefined
     if (dataUrl !== null) {
       const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]*={0,2})$/.exec(dataUrl)
-      if (!m) return this.refuseLocal('invalid', 'Use a PNG, JPEG or WebP picture.', REASON.badType)
-      bytes = { data: Uint8Array.from(atob(m[2]), c => c.charCodeAt(0)), type: m[1] }
+      const data = m && m[2].length > 0 && m[2].length % 4 === 0 ? decode(m[2]) : null
+      if (!m || !data) return this.refuseLocal('invalid', 'Use a PNG, JPEG or WebP picture.', REASON.badType)
+      bytes = { data, type: m[1] }
     }
     const photoAs = (s: Slices, photo: string | null): Slices => ({
       ...s, me: s.me && { ...s.me, photoUrl: photo }, members: s.members.map(x => (x.id === memberId ? { ...x, photo } : x)),
     })
     const was = this.s.members.find(x => x.id === memberId)?.photo ?? me.photoUrl
     return this.write({
+      lane: 'photo',
       apply: s => photoAs(s, dataUrl),
       send: () => this.http.call({ method: bytes ? 'PUT' : 'DELETE', path: '/api/photo', schema: 'photo', ...(bytes ? { bytes } : {}) }),
       done: (s, r) => photoAs(s, r.photoUrl),
@@ -407,15 +465,25 @@ export class HttpAgent implements AgentClient {
       onConflict: (s, current) => photoAs(s, typeof current.photoUrl === 'string' ? current.photoUrl : null),
       after: () => this.refreshMembers(),
     })
-  }
+  })
 
   // ----- the team -----
 
   private serverMember = (id: string) => this.s.members.find(m => m.id === id)
   private memberAs = (id: string, f: (m: MemberRecord) => MemberRecord) => (s: Slices): Slices => ({ ...s, members: s.members.map(m => (m.id === id ? f(m) : m)) })
-  private conflictMember = (k: Contract) => (s: Slices, current: Record<string, unknown>): Slices => {
+  /** The server's record for a member comes in whole, or (a later write to the member is on screen) only its rev does. */
+  private takeMember = (s: Slices, m: MemberRecord, others: boolean): Slices => {
+    this.confirmed.set(`member:${m.id}`, m)
+    return others ? this.memberAs(m.id, x => ({ ...x, rev: m.rev }))(s) : { ...s, members: replaceById(s.members, m) }
+  }
+  /** A refused member write goes back to what the server last confirmed, unless a later write to the member is on screen. */
+  private untakeMember = (id: string) => (s: Slices, _before: Slices, others: boolean): Slices => {
+    const was = this.confirmed.get(`member:${id}`) as MemberRecord | undefined
+    return others || !was || !s.members.some(m => m.id === id) ? s : { ...s, members: replaceById(s.members, was) }
+  }
+  private conflictMember = (k: Contract) => (s: Slices, current: Record<string, unknown>, others: boolean): Slices => {
     const rec = k.ANSWERS.member.safeParse(current)
-    return rec.success ? { ...s, members: replaceById(s.members, rec.data) } : s
+    return rec.success ? this.takeMember(s, rec.data, others) : s
   }
 
   private seq = 0
@@ -427,38 +495,33 @@ export class HttpAgent implements AgentClient {
       apply: s => ({ ...s, members: [...s.members, temp] }),
       send: () => this.http.call({ method: 'POST', path: '/api/members/invites', schema: 'member', json: body.data }),
       // A person invited again keeps their old row: the answer replaces it, and the placeholder goes.
-      done: (s, m) => ({ ...s, members: replaceById(s.members.filter(x => x.id !== temp.id), m) }),
+      done: (s, m) => { this.confirmed.set(`member:${m.id}`, m); return { ...s, members: replaceById(s.members.filter(x => x.id !== temp.id), m) } },
       undo: s => ({ ...s, members: s.members.filter(x => x.id !== temp.id) }),
     })
   })
 
   setMemberRole = this.needs((k, id: string, role: Parameters<AgentClient['setMemberRole']>[1]): Promise<void> => {
     if (!k.BODIES.role.safeParse(role).success) return this.refuseLocal('invalid', 'A member is an Admin or a Member.')
-    const known = this.serverMember(id)
-    const body = k.BODIES.roleChange.parse({ role, ifRev: known?.rev ?? 0 })
-    const was = known?.role
     return this.write({
+      lane: `member:${id}`,
       apply: this.memberAs(id, m => ({ ...m, role })),
-      send: () => this.http.call({ method: 'PUT', path: `/api/members/${encodeURIComponent(id)}/role`, schema: 'member', json: body }),
-      done: (s, m) => ({ ...s, members: replaceById(s.members, m) }),
-      undo: was ? this.memberAs(id, m => ({ ...m, role: was })) : s => s,
+      send: () => this.http.call({ method: 'PUT', path: `/api/members/${encodeURIComponent(id)}/role`, schema: 'member', json: k.BODIES.roleChange.parse({ role, ifRev: this.serverMember(id)?.rev ?? 0 }) }),
+      done: (s, m, others) => this.takeMember(s, m, others),
+      undo: this.untakeMember(id),
       onConflict: this.conflictMember(k),
       // Changing your own role changes what you may do.
       after: id === this.s.me?.memberId ? () => this.refreshMe() : undefined,
     })
   })
 
-  removeMember = this.needs((k, id: string): Promise<void> => {
-    const known = this.serverMember(id)
-    const was = known?.status
-    return this.write({
-      apply: this.memberAs(id, m => ({ ...m, status: 'removed' })),
-      send: () => this.http.call({ method: 'DELETE', path: `/api/members/${encodeURIComponent(id)}?ifRev=${known?.rev ?? 0}`, schema: 'member' }),
-      done: (s, m) => ({ ...s, members: replaceById(s.members, m) }),
-      undo: was ? this.memberAs(id, m => ({ ...m, status: was })) : s => s,
-      onConflict: this.conflictMember(k),
-    })
-  })
+  removeMember = this.needs((k, id: string): Promise<void> => this.write({
+    lane: `member:${id}`,
+    apply: this.memberAs(id, m => ({ ...m, status: 'removed' })),
+    send: () => this.http.call({ method: 'DELETE', path: `/api/members/${encodeURIComponent(id)}?ifRev=${this.serverMember(id)?.rev ?? 0}`, schema: 'member' }),
+    done: (s, m, others) => this.takeMember(s, m, others),
+    undo: this.untakeMember(id),
+    onConflict: this.conflictMember(k),
+  }))
 
   // ----- support access -----
 
@@ -472,6 +535,7 @@ export class HttpAgent implements AgentClient {
     }
     const was = this.s.grant
     return this.write({
+      lane: 'grant',
       apply: s => ({ ...s, grant: temp }),
       send: () => this.http.call({ method: 'POST', path: '/api/grants', schema: 'grant', json: body.data }),
       done: (s, g) => ({ ...s, grant: g }),
@@ -483,16 +547,22 @@ export class HttpAgent implements AgentClient {
   endSupportGrant = this.needs((k, id: string): Promise<void> => {
     const was = this.s.grant
     const mine = was && was.id === id ? was : null
-    const body = k.BODIES.grantEnd.parse({ ifRev: mine?.rev ?? 1 })
     // A grant already over isn't there to end.
     if (mine && !isLive(mine, this.now())) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
     return this.write({
+      lane: 'grant',
       apply: s => ({ ...s, grant: mine && { ...mine, endedAt: instantOf(this.now()), endedBy: s.me?.memberId ?? mine.createdBy, live: false } }),
-      send: () => this.http.call({ method: 'POST', path: `/api/grants/${encodeURIComponent(id)}/end`, schema: 'grant', json: body }).catch((e: unknown) => {
-        // The server says conflict for a grant that ended behind us (its rev moved); to the person it is simply not there to end.
-        const g = e instanceof AgentError && e.code === 'conflict' ? k.ANSWERS.grant.safeParse(e.current) : null
-        throw g?.success && !g.data.live ? new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND], { current: e instanceof AgentError ? e.current : undefined }) : e
-      }),
+      send: () => {
+        const now = this.s.grant
+        return this.http.call({
+          method: 'POST', path: `/api/grants/${encodeURIComponent(id)}/end`, schema: 'grant',
+          json: k.BODIES.grantEnd.parse({ ifRev: now && now.id === id ? now.rev : mine?.rev ?? 1 }),
+        }).catch((e: unknown) => {
+          // The server says conflict for a grant that ended behind us (its rev moved); to the person it is simply not there to end.
+          const g = e instanceof AgentError && e.code === 'conflict' ? k.ANSWERS.grant.safeParse(e.current) : null
+          throw g?.success && !g.data.live ? new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND], { current: e instanceof AgentError ? e.current : undefined }) : e
+        })
+      },
       done: (s, g) => ({ ...s, grant: g }),
       undo: s => ({ ...s, grant: was }),
       onConflict: (s, current) => { const g = k.ANSWERS.grant.safeParse(current); return g.success ? { ...s, grant: g.data } : s },

@@ -17,6 +17,8 @@ export interface TransportOptions {
   fetch?: typeof fetch
   /** Extra headers per request. Under Node the contract target puts `Cf-Access-Jwt-Assertion` and `Origin` here, as Access and the browser would. */
   headers?: () => Promise<Record<string, string>> | Record<string, string>
+  /** How the schemas chunk loads (a test makes it fail). */
+  loadContract?: () => Promise<Contract>
 }
 
 /** What a person is told for each code, when the server gave no better words. */
@@ -57,14 +59,22 @@ export class Transport {
     // `fetch` called through the globalThis binding: a bare reference loses its receiver in some browsers.
     this.doFetch = o.fetch ?? ((input, init) => globalThis.fetch(input, init))
     this.extra = o.headers
+    this.contract = o.loadContract ?? loadContract
   }
 
   /** The schemas (once loaded, `import()` answers at once). */
-  contract = loadContract
+  contract: () => Promise<Contract>
 
   /** The answer, parsed through `schema`; rejects with an `AgentError` for every failure. */
   async call<K extends Answer>(c: Call<K>): Promise<z.infer<Contract['ANSWERS'][K]>> {
-    const k = this.contract()
+    // A chunk that won't load is a fault of the client: `unavailable`, and the handler is attached at once (no unhandled rejection).
+    const k = this.contract().catch((e: unknown): never => {
+      console.error('Inhouse: the schemas chunk did not load.', e)
+      throw new AgentError('unavailable', MESSAGE.unavailable)
+    })
+    k.catch(() => undefined)
+    // A write waits for the schemas before it is sent: it must not be saved by a server and then taken back for want of a parser.
+    if (c.method !== 'GET') await k
     const body = await this.send(c.method, c.path, c.json, c.bytes, k)
     const parsed = (await k).ANSWERS[c.schema].safeParse(body) as z.ZodSafeParseResult<z.infer<Contract['ANSWERS'][K]>>
     if (!parsed.success) {

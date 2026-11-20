@@ -13,7 +13,7 @@ import { endLiveGrant, staleRev } from './grants'
 import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
-import { resetPersonalSettings, settingFixtures } from './settings'
+import { resetSettings, settingFixtures } from './settings'
 
 /** The P2 methods: what this target's client serves over HTTP. */
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
@@ -26,6 +26,13 @@ const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
   'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles', 'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine',
   'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
 ])
+
+/** The route each served write method sends to: the verbs and the path. */
+const ROUTE: Partial<Record<WriteMethod, [string[], RegExp]>> = {
+  setSetting: [['PUT'], /^\/api\/settings\/(personal|brand|technical)\/[^/]+$/], setToggle: [['PUT'], /^\/api\/settings\/(personal|brand|technical)\/[^/]+$/],
+  setPhoto: [['PUT', 'DELETE'], /^\/api\/photo$/], inviteMember: [['POST'], /^\/api\/members\/invites$/], setMemberRole: [['PUT'], /^\/api\/members\/[^/]+\/role$/],
+  removeMember: [['DELETE'], /^\/api\/members\/[^/]+$/], grantSupport: [['POST'], /^\/api\/grants$/], endSupportGrant: [['POST'], /^\/api\/grants\/[^/]+\/end$/],
+}
 
 const STATUS: Record<AgentErrorCode, number> = {
   invalid: 400, unauthorized: 401, forbidden: 403, not_found: 404, conflict: 409, rate_limited: 429, cap_reached: 429, unavailable: 503, unknown: 500, offline: 503,
@@ -43,7 +50,7 @@ function realTarget(origin: string): ContractTarget {
   // What the target does to the client's requests, the way a failing network or server would.
   let clockOffset = 0
   let failAllSaves = false
-  let forced: AgentErrorCode | null = null
+  let forced: { code: AgentErrorCode; method: WriteMethod } | null = null
   const armedErrors = new Map<string, AgentErrorCode>()
   const armedReads = new Set<ResourceKey>()
   let staleGrantEnd = false
@@ -52,8 +59,8 @@ function realTarget(origin: string): ContractTarget {
     const url = new URL(String(input), origin)
     const method = (init?.method ?? 'GET').toUpperCase()
     if (method !== 'GET' && failAllSaves) return refusal('unavailable')
-    // An armed refusal answers the one write that was started with it (the next request), so a write made meanwhile isn't refused.
-    if (method !== 'GET' && forced !== null) { const code = forced; forced = null; return refusal(code) }
+    // An armed refusal answers the next request of the armed method's own route (so a write to another record, made meanwhile, isn't refused).
+    if (forced !== null && ROUTE[forced.method]?.[0].includes(method) && ROUTE[forced.method]?.[1].test(url.pathname)) { const code = forced.code; forced = null; return refusal(code) }
     if (method === 'GET') {
       for (const resource of armedReads) {
         if (READ_PATH[resource] === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
@@ -79,7 +86,7 @@ function realTarget(origin: string): ContractTarget {
       return (...args: unknown[]) => {
         const code = armedErrors.get(prop)
         if (!code) return method(...args)
-        forced = code
+        forced = { code, method: prop as WriteMethod }
         const done = method(...args) as Promise<unknown>
         const clear = () => { forced = null }
         done.then(clear, clear)
@@ -135,10 +142,10 @@ function realTarget(origin: string): ContractTarget {
       unknownChatId: 'no-such-chat',
       unknownTraceId: 'no-such-trace',
     },
-    // Each property run resets the brand and makes several HTTP round trips; 20 runs keep a property inside the 25 s timeout.
+    // Each property run resets the team, the Admin's grants and the settings the cases write, and makes several HTTP round trips; 20 runs keep a property inside the 25 s timeout.
     propertyRuns: 20,
     failedSaveNotice: 'error',
-    capabilities: { agentWritesSaveInClient: false, pagesLists: true },
+    capabilities: { agentWritesSaveInClient: false, pagesLists: true, adminCanDoEverything: false },
     async setup() { /* a server's clock isn't ours to take: `advance` moves the client's own */ },
     async teardown() { /* nothing to give back */ },
     async settle() { await agent.whenLoaded() },
@@ -149,7 +156,7 @@ function realTarget(origin: string): ContractTarget {
       const seeded = await ready()
       await resetTeam(s)
       await endLiveGrant(s)
-      await resetPersonalSettings(s)
+      await resetSettings(s)
       this.fixtures.personId = seeded.admin
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }
       this.fixtures.otherMemberId = seeded.leo

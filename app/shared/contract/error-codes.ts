@@ -13,3 +13,5 @@ export const REASON = {
   badType: 'bad_type', wrongScope: 'wrong_scope', alreadyMember: 'already_member', lastAdmin: 'last_admin', grantLive: 'grant_live',
 } as const satisfies Record<string, ErrorReason>
 export const RATE_LIMITED = 'rate_limited' satisfies AgentErrorCode
+/** The reason a 403 gives for a person who was never invited (a 403 with `removed` is the other signed-out reason). */
+export const REASON_NOT_INVITED = 'not_invited' satisfies ErrorReason
