@@ -9,7 +9,9 @@
 // - pool exhausted: a typed refusal, never a shared uid;
 // - a uid whose cleanup failed is quarantined (never handed out again in this container's life), logged, counted in
 //   `state()`, and the failure is thrown;
-// - the session folder is parked whatever the kill did: a uid whose processes survived never keeps its folder open.
+// - the session folder is parked whatever the kill did: a uid whose processes survived never keeps its folder open;
+// - a folder whose session's processes survived the kill is parked for good: a survivor may still hold it open, and
+//   root's take-over walks a folder by path, so root never prepares that folder again in this container's life.
 import type { SessionUser, SessionUsers } from '../session/seam.ts'
 import { assertSessionKey } from './paths.ts'
 
@@ -32,6 +34,10 @@ export class SessionPoolExhaustedError extends Error {
   readonly code = 'session_pool_exhausted'
 }
 export class SessionReleaseError extends Error {}
+/** The chat's folder is parked for good (see the rules above): it can't run again in this container. */
+export class SessionFolderParkedError extends Error {
+  readonly code = 'session_folder_parked'
+}
 
 /** The pool's names: s00 to s63. */
 export const POOL_SIZE = 64
@@ -77,7 +83,7 @@ type Live = {
 
 export type SessionPool = SessionUsers & {
   /** For tests and health: who's where. */
-  readonly state: () => { free: number[]; live: Map<string, number>; quarantined: number[] }
+  readonly state: () => { free: number[]; live: Map<string, number>; quarantined: number[]; parkedForGood: string[] }
 }
 
 export type PoolLog = (entry: Record<string, unknown>) => void
@@ -89,16 +95,22 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
   const free: PoolUser[] = [...pool]
   const live = new Map<string, Live>()
   const quarantined = new Set<number>()
+  /** Session keys whose folder is parked for good. At most one per quarantined uid, so never more than the pool. */
+  const parkedForGood = new Set<string>()
 
   /**
    * Takes the uid back after a failed allocate or a release: free only once its processes are gone and the folder is
    * parked. `drop` takes the session off the live map in the same tick as the uid goes back on the free list, so the
-   * uid is never in both.
+   * uid is never in both. `ran` says the uid had the folder (a release): only then can a process that survives the
+   * kill have it open, and the folder is parked for good.
    */
-  const reclaim = async (sessionKey: string, user: PoolUser, drop: () => void) => {
+  const reclaim = async (sessionKey: string, user: PoolUser, ran: boolean, drop: () => void) => {
     try {
       try {
         await host.killAll(user)
+      } catch (e) {
+        if (ran) parkedForGood.add(sessionKey)
+        throw e
       } finally {
         await host.parkFolder(sessionKey)
       }
@@ -106,7 +118,15 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
     } catch (e) {
       drop()
       quarantined.add(user.uid)
-      log({ type: 'session_user_quarantined', uid: user.uid, user: user.user, sessionKey, error: String(e instanceof Error ? e.message : e), quarantined: quarantined.size })
+      log({
+        type: 'session_user_quarantined',
+        uid: user.uid,
+        user: user.user,
+        sessionKey,
+        error: String(e instanceof Error ? e.message : e),
+        quarantined: quarantined.size,
+        folderParkedForGood: parkedForGood.has(sessionKey),
+      })
       throw e
     }
     drop()
@@ -123,6 +143,7 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
       await existing.releasing.catch(() => {})
     }
     // Synchronous from here to the map entry: no other call can take this uid.
+    if (parkedForGood.has(sessionKey)) throw new SessionFolderParkedError(`the folder of session ${sessionKey} is parked for good: a process of its last user survived the kill`)
     const user = free.shift()
     if (user === undefined) throw new SessionPoolExhaustedError(`all ${pool.length} session users are busy`)
     const entry: Live = { user, ready: null as unknown as Promise<SessionUser>, releasing: null }
@@ -135,7 +156,7 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
       } catch (e) {
         // Stays on the live map, as releasing, until the uid is reclaimed: a retry for this key waits rather than
         // preparing the same folder while it's being parked.
-        const reclaimed = reclaim(sessionKey, user, () => {
+        const reclaimed = reclaim(sessionKey, user, false, () => {
           if (live.get(sessionKey) === entry) live.delete(sessionKey)
         }).catch(() => {})
         entry.releasing ??= reclaimed
@@ -159,7 +180,7 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
           // Its allocate failed, and `ready` rejects only once the uid has been reclaimed (or quarantined).
           return
         }
-        await reclaim(sessionKey, entry.user, () => {
+        await reclaim(sessionKey, entry.user, true, () => {
           if (live.get(sessionKey) === entry) live.delete(sessionKey)
         })
       })()
@@ -176,6 +197,7 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
       free: free.map((u) => u.uid),
       live: new Map([...live].map(([k, v]) => [k, v.user.uid])),
       quarantined: [...quarantined],
+      parkedForGood: [...parkedForGood],
     }),
   }
 }

@@ -177,7 +177,8 @@ export const Health = z.strictObject({
   ok: z.boolean(),
   protocol: z.int().nonnegative(),
   live: z.int().nonnegative(),
-  quarantinedUsers: z.int().nonnegative(),
+  /** Session users a failed cleanup took out of the runner's pool. Optional: a runner from before the guards omits it. */
+  quarantinedUsers: z.int().nonnegative().optional(),
   memory: z.strictObject({
     totalBytes: z.int().nonnegative().nullable(),
     availableBytes: z.int().nonnegative().nullable(),

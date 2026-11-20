@@ -13,7 +13,10 @@ export type AuditEntry = {
   toolUseId: string
   tool: string
   input: unknown
-  /** True when `input` was over the cap and is replaced by its size, hash, start and end (see `capInput`). */
+  /**
+   * True when `input` was over the cap and is replaced by its size, hash, start and end (see `capInput`). The
+   * replacement says so itself (`truncated: true`, `bytes`), so the flag stays with it wherever the entry is carried.
+   */
   truncated: boolean
 }
 
@@ -45,9 +48,11 @@ export function capInput(input: unknown): { input: unknown; truncated: boolean }
   }
   const bytes = text === undefined ? 0 : Buffer.byteLength(text)
   if (bytes <= AUDIT_INPUT_MAX_BYTES || text === undefined) return { input, truncated: false }
-  // Padding can't hide a command: its start and end are kept, and the hash pins the whole input.
+  // Padding at either end can't hide a command: the start and end are kept, and the hash pins the whole input. What
+  // sat in the middle is gone, so the record says it was cut and how big the whole was: a reader never takes the
+  // start and end for the whole call.
   const sha256 = createHash('sha256').update(text).digest('hex')
-  return { input: { bytes, sha256, head: text.slice(0, AUDIT_EDGE_CHARS), tail: text.slice(-AUDIT_EDGE_CHARS) }, truncated: true }
+  return { input: { truncated: true, bytes, sha256, head: text.slice(0, AUDIT_EDGE_CHARS), tail: text.slice(-AUDIT_EDGE_CHARS) }, truncated: true }
 }
 
 /**

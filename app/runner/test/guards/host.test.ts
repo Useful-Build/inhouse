@@ -14,22 +14,34 @@
 //   SysV objects;
 // - a hard-linked file is handed to the next user (it could be another uid's file);
 // - inputs/ or outputs/ are the session's to rename (and swap for a symlink);
-// - the work root lists the chat ids to sessions; a folder left from before a restart stays open.
+// - the work root lists the chat ids to sessions; a folder left from before a restart stays open;
+// - a live session names another uid the owner of its SysV objects (IPC_SET, which any creator may do), or keeps them
+//   attached, and that uid's wipe fails: every uid is quarantined in turn and the pool drains;
+// - an object the uid created survives a wipe that passes: given to another owner, or still attached somewhere else;
+// - an object of the uid's it can't read (mode 000) is skipped by the removal (`ipcrm --all` stats before it removes);
+// - thousands of objects named the uid's make one command line too long to start, so its wipe fails;
+// - a leftover in a folder the uid can't read escapes both its delete and the look afterwards;
+// - root's look after the wipe changes something (it must only read).
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { fc, it } from '@fast-check/vitest'
+import { afterEach, beforeEach, describe, expect } from 'vitest'
 import {
   KillError,
   SHARED_WRITABLE,
   STUB_DIRS,
   STUB_FILES,
+  SYSV_BATCH,
   createSessionHost,
   parkAllFolders,
   parseStatus,
+  runAsRoot,
   runAsUser,
   wipeOwned,
+  wipeSysV,
   type ProcEntry,
+  type RunAsRoot,
   type RunAsUser,
 } from '../../src/guards/host.ts'
 import type { PoolUser } from '../../src/guards/users.ts'
@@ -167,8 +179,82 @@ describe('session folders', () => {
   })
 })
 
+type SysVObject = { kind: 'shm' | 'msg' | 'sem'; id: number; uid: number; cuid: number; attached?: boolean; unreadable?: boolean }
+/** The kernel's own header lines (ipc/shm.c, msg.c and sem.c; the 64-bit shm one). */
+const SYSV_HEAD = {
+  shm: '       key      shmid perms                  size  cpid  lpid nattch   uid   gid  cuid  cgid      atime      dtime      ctime                   rss                  swap',
+  msg: '       key      msqid perms      cbytes       qnum lspid lrpid   uid   gid  cuid  cgid      stime      rtime      ctime',
+  sem: '       key      semid perms      nsems   uid   gid  cuid  cgid      otime      ctime',
+}
+const SYSV_FLAG: Record<string, SysVObject['kind']> = { '-m': 'shm', '-q': 'msg', '-s': 'sem' }
+
+/**
+ * The kernel's SysV table as /proc/sysvipc shows it, and `ipcrm` as the kernel answers it: a removal is the owner's or
+ * the creator's to make and nobody else's; a segment still attached somewhere stays, marked (perms 1xxx, key 0), until
+ * its last detach; `--all` stats each object before it removes it, so it skips what its caller can't read.
+ */
+function sysvKernel(objects: SysVObject[]) {
+  const sysv = join(dir, 'proc', 'sysvipc')
+  mkdirSync(sysv, { recursive: true })
+  const left = new Set(objects)
+  const marked = new Set<SysVObject>()
+  const calls: [PoolUser, string[]][] = []
+  const row = (o: SysVObject) => {
+    const perms = ((marked.has(o) ? 0o1000 : 0) | (o.unreadable ? 0 : 0o600)).toString(8)
+    const head = `${marked.has(o) ? 0 : 4096 + o.id} ${o.id} ${perms}`
+    const who = `${o.uid} ${o.uid} ${o.cuid} ${o.cuid}`
+    if (o.kind === 'shm') return `${head} 4096 10 10 ${o.attached ? 1 : 0} ${who} 0 0 0 4096 0`
+    return o.kind === 'msg' ? `${head} 0 0 0 0 ${who} 0 0 0` : `${head} 1 ${who} 0 0`
+  }
+  const show = () => {
+    for (const kind of ['shm', 'msg', 'sem'] as const) {
+      writeFileSync(join(sysv, kind), [SYSV_HEAD[kind], ...[...left].filter((o) => o.kind === kind).map(row)].join('\n') + '\n')
+    }
+  }
+  const remove = (u: PoolUser, o: SysVObject) => {
+    if (o.uid !== u.uid && o.cuid !== u.uid) return
+    if (o.kind === 'shm' && o.attached) marked.add(o)
+    else left.delete(o)
+  }
+  const run: RunAsUser = async (u, cmd, args) => {
+    if (cmd !== 'ipcrm') return { code: 0, stdout: '' }
+    calls.push([u, args])
+    if (args.includes('--all')) {
+      for (const o of [...left]) if (!o.unreadable) remove(u, o)
+    } else {
+      const byId = new Map([...left].map((o) => [`${o.kind} ${o.id}`, o]))
+      for (let i = 0; i < args.length; i += 2) {
+        const o = byId.get(`${SYSV_FLAG[args[i]!]} ${args[i + 1]}`)
+        if (o) remove(u, o)
+      }
+    }
+    show()
+    return { code: 0, stdout: '' }
+  }
+  show()
+  return { sysv, run, left, calls }
+}
+
+const POOL = [30001, 30002, 30003, 30004]
+/** Any table: each object's owner is whoever its creator (or last owner) named, any pool uid. */
+const sysvObjects = (creators: number[]) =>
+  fc.uniqueArray(
+    fc.record({
+      kind: fc.constantFrom('shm' as const, 'msg' as const, 'sem' as const),
+      id: fc.nat(99_999),
+      uid: fc.constantFrom(...POOL),
+      cuid: fc.constantFrom(...creators),
+      attached: fc.boolean(),
+      unreadable: fc.boolean(),
+    }),
+    { maxLength: 12, selector: (o) => `${o.kind} ${o.id}` },
+  )
+/** After a wipe of `user`: what's still in the table must be exactly this. */
+const stays = (o: SysVObject, its: boolean) => (its ? o.kind === 'shm' && o.attached === true : true)
+
 describe('the wipe', () => {
   const self: PoolUser = { user: 'me', uid: me, gid: myGid }
+  const quiet: RunAsUser = async () => ({ code: 0, stdout: '' })
 
   it("removes the user's files at any depth and nothing else, without following symlinks (real find, as this uid)", async () => {
     const tmp = join(dir, 'tmp')
@@ -182,28 +268,39 @@ describe('the wipe', () => {
     writeFileSync(join(tmp, 'a', 'b', 'f'), 'x')
     symlinkSync(outside, join(tmp, 'link'))
     // Not the uid we wipe: everything stays.
-    await wipeOwned(tmp, { ...self, uid: me + 1 }, (_u, cmd, args) => runAsUser(self, cmd, args))
+    await wipeOwned(tmp, { ...self, uid: me + 1 }, (_u, cmd, args) => runAsUser(self, cmd, args), runAsRoot)
     expect(existsSync(join(tmp, 'a', 'b', 'f'))).toBe(true)
-    await wipeOwned(tmp, self, runAsUser)
+    await wipeOwned(tmp, self, runAsUser, runAsRoot)
     expect(readdirSync(tmp)).toEqual([])
     expect(readdirSync(outside)).toEqual(['keep'])
-    await expect(wipeOwned(join(dir, 'missing'), self, runAsUser)).resolves.toBeUndefined()
+    await expect(wipeOwned(join(dir, 'missing'), self, runAsUser, runAsRoot)).resolves.toBeUndefined()
   })
 
   it('throws when something of the uid is still there after the delete', async () => {
-    const stuck: RunAsUser = async (_u, _cmd, args) => ({ code: 0, stdout: args.includes('-quit') ? '/tmp/stuck\n' : '' })
-    await expect(wipeOwned('/tmp', self, stuck)).rejects.toThrow(/stuck/)
+    const stuck: RunAsRoot = async () => ({ code: 0, stdout: '/tmp/stuck\n' })
+    await expect(wipeOwned('/tmp', self, quiet, stuck)).rejects.toThrow(/stuck/)
   })
 
-  it('runs every step as the uid itself, never as root by path', async () => {
+  it("finds a leftover the uid itself can't reach: the look afterwards is root's (real find), and it removes nothing", async () => {
+    const tmp = join(dir, 'tmp')
+    mkdirSync(join(tmp, 'closed'), { recursive: true })
+    writeFileSync(join(tmp, 'closed', 'f'), 'x')
+    // The folder is another uid's and closed to this one: its own commands reach nothing in it and print nothing.
+    const blind: RunAsUser = async () => ({ code: 1, stdout: '' })
+    await expect(wipeOwned(tmp, self, blind, runAsRoot)).rejects.toThrow(/still owns .*closed/)
+    expect(existsSync(join(tmp, 'closed', 'f'))).toBe(true)
+  })
+
+  it('changes things only as the uid itself; root only looks', async () => {
     const calls: [PoolUser, string, string[]][] = []
-    const sysv = join(dir, 'proc', 'sysvipc')
-    mkdirSync(sysv, { recursive: true })
+    const looks: [string, string[]][] = []
+    const k = sysvKernel([{ kind: 'shm', id: 7, uid: user.uid, cuid: user.uid }])
     const h = createSessionHost({
       workRoot: root,
       poolUids: new Set(),
       procDir: join(dir, 'proc'),
-      runAsUser: async (u, cmd, args) => (calls.push([u, cmd, args]), { code: 0, stdout: '' }),
+      runAsUser: async (u, cmd, args) => (calls.push([u, cmd, args]), k.run(u, cmd, args)),
+      runAsRoot: async (cmd, args) => (looks.push([cmd, args]), { code: 0, stdout: '' }),
     })
     await h.wipeUserFiles(user)
     expect(calls.length).toBeGreaterThan(0)
@@ -214,8 +311,11 @@ describe('the wipe', () => {
       expect(mine.some(([, , a]) => a.includes('-delete')), d).toBe(true)
       for (const [, , a] of mine) expect(a).toEqual(expect.arrayContaining(['-xdev', '-user', String(user.uid)]))
     }
+    // Root's part, in full: one find per place that prints the first thing of the uid's it sees. No delete, no exec.
+    expect(looks).toEqual(SHARED_WRITABLE.map((d) => ['find', [d, '-xdev', '-mindepth', '1', '-user', String(user.uid), '-print', '-quit']]))
     expect(SHARED_WRITABLE).toContain('/dev/mqueue')
-    expect(calls.some(([, cmd, a]) => cmd === 'ipcrm' && a.includes('--all'))).toBe(true)
+    expect(calls.filter(([, cmd]) => cmd === 'ipcrm').map(([, , a]) => a)).toEqual([['-m', '7']])
+    expect(k.left.size).toBe(0)
   })
 
   it("throws when one of the uid's SysV objects survives", async () => {
@@ -223,15 +323,79 @@ describe('the wipe', () => {
     mkdirSync(sysv, { recursive: true })
     writeFileSync(join(sysv, 'shm'), '       key      shmid perms       size  cpid  lpid nattch   uid   gid  cuid  cgid\n         0          7   600       4096    10    10      0 30001 30001 30001 30001\n')
     writeFileSync(join(sysv, 'sem'), '       key      semid perms      nsems   uid   gid  cuid  cgid\n         0          3   600          1 30002 30002 30002 30002\n')
-    const h = createSessionHost({ workRoot: root, poolUids: new Set(), procDir: join(dir, 'proc'), runAsUser: async () => ({ code: 0, stdout: '' }) })
+    const h = createSessionHost({ workRoot: root, poolUids: new Set(), procDir: join(dir, 'proc'), runAsUser: quiet, runAsRoot: async () => ({ code: 0, stdout: '' }) })
     await expect(h.wipeUserFiles(user)).rejects.toThrow(/SysV/)
     await expect(h.wipeUserFiles({ ...user, uid: 30003 })).resolves.toBeUndefined()
   })
 
-  it('the real runner starts the command as the given uid', async () => {
+  it("a row that only names the uid as owner never fails its wipe; a row it created does, whoever owns it now (the kernel's own text)", async () => {
+    // 30002 made segment 7, named 30001 its owner (IPC_SET) and stays attached. Either uid's removal only marks it
+    // (perms 1600, key 0): it lives until 30002 detaches.
+    const sysv = join(dir, 'proc', 'sysvipc')
+    mkdirSync(sysv, { recursive: true })
+    const row = '         0          7  1600                  4096    10    10      1 30001 30001 30002 30002          0          0 1795000000                  4096                     0'
+    writeFileSync(join(sysv, 'shm'), `${SYSV_HEAD.shm}\n${row}\n`)
+    const ran: [number, string[]][] = []
+    const run: RunAsUser = async (u, _cmd, args) => (ran.push([u.uid, args]), { code: 1, stdout: '' })
+    await expect(wipeSysV(user, run, sysv)).resolves.toBeUndefined()
+    await expect(wipeSysV({ user: 's02', uid: 30002, gid: 30002 }, run, sysv)).rejects.toThrow(/uid 30002 created .*SysV shm.*\b7\b/)
+    // Both tried to remove it, each as itself: the owner may, and so may the creator.
+    expect(ran).toEqual([
+      [30001, ['-m', '7']],
+      [30002, ['-m', '7']],
+    ])
+  })
+
+  it.prop([sysvObjects([30002, 30003, 30004])])(
+    "no other uid can make this uid's wipe fail: whatever they create, give it or keep attached, it passes",
+    async (objects) => {
+      const k = sysvKernel(objects)
+      await expect(wipeSysV(user, k.run, k.sysv)).resolves.toBeUndefined()
+      // What it was named the owner of it removes anyway (an attached segment goes on its last detach); the rest stays.
+      for (const o of objects) expect(k.left.has(o), JSON.stringify(o)).toBe(stays(o, o.uid === user.uid))
+    },
+  )
+
+  it.prop([sysvObjects(POOL)])(
+    'nothing the uid created outlives a wipe that passes: it fails exactly when something it created is still there',
+    async (objects) => {
+      const k = sysvKernel(objects)
+      const stuck = objects.filter((o) => o.cuid === user.uid && o.kind === 'shm' && o.attached)
+      const wiped = wipeSysV(user, k.run, k.sysv)
+      if (stuck.length > 0) await expect(wiped).rejects.toThrow(/created .*SysV shm/)
+      else await expect(wiped).resolves.toBeUndefined()
+      // Whether it passed or not: everything it owns or created that can go is gone, the unreadable included, every
+      // removal ran as the uid itself, and nothing of anyone else's was touched.
+      for (const o of objects) expect(k.left.has(o), JSON.stringify(o)).toBe(stays(o, o.uid === user.uid || o.cuid === user.uid))
+      for (const [u] of k.calls) expect(u).toEqual(user)
+      if (stuck.length === 0) expect([...k.left].filter((o) => o.cuid === user.uid)).toEqual([])
+    },
+  )
+
+  it('removes by id in batches, so no number of objects makes a command too long to start', async () => {
+    const objects: SysVObject[] = Array.from({ length: SYSV_BATCH * 2 + 3 }, (_, i) => ({ kind: 'msg', id: i, uid: user.uid, cuid: 30002 }))
+    const k = sysvKernel(objects)
+    await wipeSysV(user, k.run, k.sysv)
+    expect(k.left.size).toBe(0)
+    expect(k.calls.map(([, a]) => a.length)).toEqual([SYSV_BATCH * 2, SYSV_BATCH * 2, 6])
+  })
+
+  it('a kernel without SysV IPC has nothing to remove; a table without the id or uid columns is refused', async () => {
+    const ran: string[] = []
+    const run: RunAsUser = async (_u, cmd) => (ran.push(cmd), { code: 0, stdout: '' })
+    await expect(wipeSysV(user, run, join(dir, 'no-sysvipc'))).resolves.toBeUndefined()
+    expect(ran).toEqual([])
+    const sysv = join(dir, 'proc', 'sysvipc')
+    mkdirSync(sysv, { recursive: true })
+    writeFileSync(join(sysv, 'msg'), '       key      msqid perms\n         0          1   600\n')
+    await expect(wipeSysV(user, run, sysv)).rejects.toThrow(/columns/)
+  })
+
+  it("the real runners: a command as the given uid, and root's as the runner itself", async () => {
     await expect(runAsUser(self, 'true', [])).resolves.toMatchObject({ code: 0 })
     // Not root here: switching to another uid is refused, which shows the uid is really set.
     await expect(runAsUser({ user: 'x', uid: me + 1, gid: myGid }, 'true', [])).rejects.toThrow(/EPERM/)
+    await expect(runAsRoot('id', ['-u'])).resolves.toEqual({ code: 0, stdout: `${me}\n` })
   })
 })
 

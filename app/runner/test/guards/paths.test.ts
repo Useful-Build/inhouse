@@ -2,11 +2,13 @@
 // - a key with `/`, `..`, `.` or a NUL makes a path outside the work root, or another session's folder;
 // - a key that passes yields a path that isn't exactly one segment under the root;
 // - an empty or overlong key passes;
-// - a non-string passes.
+// - a non-string passes;
+// - the session's TMPDIR or HOME (R1's `sessionEnv`) isn't the folder the host makes for it under the same name.
 import { basename, dirname, resolve } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { InvalidSessionKeyError, WORK_ROOT, sessionPaths, validSessionKey } from '../../src/guards/paths.ts'
+import { sessionEnv } from '../../src/session/env.ts'
 
 const tricky = fc.oneof(
   fc.string({ maxLength: 80 }),
@@ -25,6 +27,13 @@ describe('session keys', () => {
     expect(dirname(p.workDir)).toBe(WORK_ROOT)
     expect(basename(p.workDir)).toBe(key)
     for (const sub of [p.home, p.tmp, p.inputs, p.outputs]) expect(dirname(sub)).toBe(p.workDir)
+  })
+
+  it.prop([fc.stringMatching(/^[A-Za-z0-9_-]{1,64}$/)])("the session's TMPDIR and HOME are the folders the host makes for it", (key) => {
+    const p = sessionPaths(key)
+    const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: p.home, workDir: p.workDir }, 8081)
+    expect(env.TMPDIR).toBe(p.tmp)
+    expect(env.HOME).toBe(p.home)
   })
 
   it.prop([fc.anything()])('anything that is not a string is refused', (v) => {

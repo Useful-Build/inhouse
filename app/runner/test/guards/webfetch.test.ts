@@ -9,10 +9,13 @@ import type { HookInput } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect } from 'vitest'
 import { allowedFetchHost, webFetchAllowRules, webFetchHook } from '../../src/guards/webfetch.ts'
 
-const label = fc.stringMatching(/^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$/)
+// No `--` in the third and fourth places: those labels are reserved, and the URL parser refuses an `xn--` one that
+// isn't valid punycode (`xn--a`), so no URL could be built from it.
+const plain = (l: string) => !/^.{2}--/.test(l)
+const label = fc.stringMatching(/^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$/).filter(plain)
 // The top label starts with a letter: a numeric one (`a.3`) makes the URL parser read an IPv4 address, and the guards
 // refuse such a domain in the run config (options.ts, assertFetchDomain).
-const tld = fc.stringMatching(/^[a-z]([a-z0-9-]{0,10}[a-z0-9])?$/)
+const tld = fc.stringMatching(/^[a-z]([a-z0-9-]{0,10}[a-z0-9])?$/).filter(plain)
 const domain = fc.tuple(label, tld).map(([a, b]) => `${a}.${b}`)
 
 const call = (url: unknown): HookInput =>

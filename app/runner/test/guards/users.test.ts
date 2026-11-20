@@ -7,12 +7,15 @@
 // - an exhausted pool shares a uid instead of refusing; the refusal isn't typed;
 // - the same key gets two users, or a key mid-release gets the user being torn down;
 // - release of a session that isn't live (or with the wrong uid) succeeds quietly;
-// - a failed kill leaves the folder open to the uid's group (it isn't parked), or a quarantine goes unlogged;
+// - a failed kill leaves the folder open to the uid's group (it isn't parked), or a quarantine goes unlogged or
+//   uncounted (the root's /health reads `quarantined()`);
+// - a folder whose last user's processes survived the kill is walked by root again (a survivor still has it open and
+//   can swap a folder for a symlink under root's path walk), or a kill that failed before any session ran closes a chat;
 // - the pool reader accepts a missing member, a root or system uid, a login shell, or a shared uid or gid.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { InvalidSessionKeyError } from '../../src/guards/paths.ts'
-import { SessionPoolExhaustedError, SessionReleaseError, createSessionPool, poolUserName, readPool, type PoolUser, type SessionHost } from '../../src/guards/users.ts'
+import { SessionFolderParkedError, SessionPoolExhaustedError, SessionReleaseError, createSessionPool, poolUserName, readPool, type PoolUser, type SessionHost } from '../../src/guards/users.ts'
 import type { SessionUser } from '../../src/session/seam.ts'
 
 const pool = (n: number): PoolUser[] => Array.from({ length: n }, (_, i) => ({ user: poolUserName(i), uid: 30000 + i, gid: 30000 + i }))
@@ -114,8 +117,17 @@ describe('the session pool', () => {
         left.splice(i, 1)
         return true
       })
-      const p = createSessionPool(users, host)
+      const p: ReturnType<typeof createSessionPool> = createSessionPool(users, {
+        ...host,
+        // A folder parked for good is never prepared (walked) again.
+        prepareFolder: (key, u) => {
+          expect(p.state().parkedForGood).not.toContain(key)
+          return host.prepareFolder(key, u)
+        },
+      })
       await drive(s, p, users.map((u) => u.uid), play(s, p, actions))
+      for (const key of p.state().parkedForGood) await expect(p.allocate(key)).rejects.toThrow(SessionFolderParkedError)
+      expect(p.quarantined()).toBe(p.state().quarantined.length)
     },
   )
 
@@ -156,10 +168,66 @@ describe('the session pool', () => {
     const u = await p.allocate('a')
     order.length = 0
     failKill = true
+    expect(p.quarantined()).toBe(0)
     await expect(p.release('a', u)).rejects.toThrow(/survived/)
     expect(order).toEqual(['kill', 'park'])
     expect(p.state().quarantined).toEqual([30000])
-    expect(logged).toEqual([expect.objectContaining({ type: 'session_user_quarantined', uid: 30000, error: expect.stringMatching(/survived/) })])
+    expect(p.quarantined()).toBe(1)
+    expect(logged).toEqual([expect.objectContaining({ type: 'session_user_quarantined', uid: 30000, error: expect.stringMatching(/survived/), folderParkedForGood: true })])
+  })
+
+  it("a folder whose last user's processes survived the kill is parked for good: root never walks it again", async () => {
+    const prepared: string[] = []
+    let failKill = false
+    const host: SessionHost = {
+      killAll: async () => {
+        if (failKill) throw new Error('survived')
+      },
+      wipeUserFiles: async () => {},
+      prepareFolder: async (k) => (prepared.push(k), { workDir: `/work/${k}`, home: `/work/${k}/.home` }),
+      parkFolder: async () => {},
+    }
+    const p = createSessionPool(pool(3), host, () => {})
+    const u = await p.allocate('a')
+    failKill = true
+    await expect(p.release('a', u)).rejects.toThrow(/survived/)
+    failKill = false
+    const refused = await p.allocate('a').catch((e: unknown) => e)
+    expect(refused).toBeInstanceOf(SessionFolderParkedError)
+    expect((refused as SessionFolderParkedError).code).toBe('session_folder_parked')
+    expect(prepared).toEqual(['a'])
+    expect(p.state().parkedForGood).toEqual(['a'])
+    // The refusal took no uid, and other chats go on.
+    expect(p.state().free).toHaveLength(2)
+    await expect(p.allocate('b')).resolves.toMatchObject({ workDir: '/work/b' })
+  })
+
+  it('a failed wipe, or a kill that fails before any session ran in the folder, leaves the chat open to its next run', async () => {
+    let failKill = false
+    let failWipe = false
+    const host: SessionHost = {
+      killAll: async () => {
+        if (failKill) throw new Error('survived')
+      },
+      wipeUserFiles: async () => {
+        if (failWipe) throw new Error('left a file')
+      },
+      prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }),
+      parkFolder: async () => {},
+    }
+    const p = createSessionPool(pool(3), host, () => {})
+    // The kill fails in allocate: this uid never ran in the folder, so nothing of it has the folder open.
+    failKill = true
+    await expect(p.allocate('a')).rejects.toThrow(/survived/)
+    failKill = false
+    const u = await p.allocate('a')
+    // Every process is dead, a file is left: the uid is quarantined, the folder is safe to hand to another.
+    failWipe = true
+    await expect(p.release('a', u)).rejects.toThrow(/left a file/)
+    failWipe = false
+    expect(p.state().parkedForGood).toEqual([])
+    expect(p.quarantined()).toBe(2)
+    await expect(p.allocate('a')).resolves.toMatchObject({ uid: 30002 })
   })
 
   it('the same key gets the same user; an exhausted pool refuses with a typed error', async () => {

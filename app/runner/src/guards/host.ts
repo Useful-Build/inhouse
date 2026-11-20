@@ -42,6 +42,8 @@ export type ProcEntry = { pid: number; uids: number[]; zombie: boolean; threads:
 
 /** Runs a command as the user (its uid and gid, no supplementary groups). Rejects only when it can't be started. */
 export type RunAsUser = (user: PoolUser, cmd: string, args: string[]) => Promise<{ code: number | null; stdout: string }>
+/** Runs a command as the root runner itself. The wipe uses it only to look, never to change anything. */
+export type RunAsRoot = (cmd: string, args: string[]) => Promise<{ code: number | null; stdout: string }>
 
 export type HostDeps = {
   workRoot?: string
@@ -63,6 +65,8 @@ export type HostDeps = {
   rootUid?: number
   /** Runs the wipe's commands as the uid being wiped. */
   runAsUser?: RunAsUser
+  /** Runs the wipe's read-only look afterwards, as root. */
+  runAsRoot?: RunAsRoot
 }
 
 export class KillError extends Error {}
@@ -81,6 +85,7 @@ export function createSessionHost(deps: HostDeps): SessionHost {
   const now = deps.now ?? Date.now
   const rootUid = deps.rootUid ?? 0
   const runAs = deps.runAsUser ?? runAsUser
+  const runRoot = deps.runAsRoot ?? runAsRoot
   const mustBeRootDir = async (path: string) => {
     const st = await lstat(path)
     if (!st.isDirectory() || st.uid !== rootUid) throw new Error(`${path} must be a directory owned by root`)
@@ -110,7 +115,7 @@ export function createSessionHost(deps: HostDeps): SessionHost {
   }
 
   async function wipeUserFiles(user: PoolUser) {
-    for (const dir of shared) await wipeOwned(dir, user, runAs)
+    for (const dir of shared) await wipeOwned(dir, user, runAs, runRoot)
     await wipeSysV(user, runAs, join(procDir, 'sysvipc'))
   }
 
@@ -202,53 +207,101 @@ function existsOk(e: NodeJS.ErrnoException) {
  * Removes everything the uid owns under `dir`, as the uid itself: a folder swapped for a symlink mid-walk reaches only
  * what that uid could delete anyway. `find -P` (the default) never follows a symlink, `-xdev` stays on one filesystem.
  * Throws when anything of the uid is still there afterwards. A missing dir is fine.
+ *
+ * The look afterwards is root's, and it only reads: the uid can't see into a folder another uid closed, so its own
+ * look would miss a file it left there. A file is owned by whoever made it and can't be given away, so a hit is always
+ * something this uid made itself: no other session can plant one.
  */
-export async function wipeOwned(dir: string, user: PoolUser, run: RunAsUser): Promise<void> {
+export async function wipeOwned(dir: string, user: PoolUser, run: RunAsUser, runRoot: RunAsRoot): Promise<void> {
   const mine = [dir, '-xdev', '-mindepth', '1', '-user', String(user.uid)]
   // Its own folders it closed to itself first (find tests each before going in), then everything it owns, deepest
   // first. Both exit non-zero on folders of other users they can't read; the check below is what counts.
   await run(user, 'find', [...mine, '-type', 'd', '!', '-perm', '-u=rwx', '-exec', 'chmod', 'u+rwx', '{}', ';'])
   await run(user, 'find', [...mine, '-delete'])
-  const left = await run(user, 'find', [...mine, '-print', '-quit'])
+  // Only what it prints counts, never its exit code: a live session deleting its own files mid-walk makes find exit
+  // non-zero, and that must not fail another uid's wipe.
+  const left = await runRoot('find', [...mine, '-print', '-quit'])
   if (left.stdout.trim() !== '') throw new Error(`uid ${user.uid} still owns ${left.stdout.trim()} after the wipe`)
 }
 
-/**
- * Removes the uid's SysV IPC objects (shared memory, queues, semaphores): `ipcrm --all` as the uid removes exactly what
- * it may, then /proc/sysvipc must show nothing it owns or created. A kernel without SysV IPC has no such files.
- */
-export async function wipeSysV(user: PoolUser, run: RunAsUser, sysvDir = '/proc/sysvipc'): Promise<void> {
-  await run(user, 'ipcrm', ['--all'])
-  for (const kind of ['shm', 'msg', 'sem']) {
-    let text: string
-    try {
-      text = await readFile(join(sysvDir, kind), 'utf8')
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue
-      throw e
-    }
-    const [head = '', ...rows] = text.split('\n').filter((l) => l.trim() !== '')
-    const cols = head.trim().split(/\s+/)
-    const at = [cols.indexOf('uid'), cols.indexOf('cuid')]
-    if (at.includes(-1)) throw new Error(`/proc/sysvipc/${kind} has no uid columns`)
-    const owned = rows.filter((r) => {
-      const f = r.trim().split(/\s+/)
-      return at.some((i) => Number(f[i]) === user.uid)
-    })
-    if (owned.length > 0) throw new Error(`uid ${user.uid} still owns ${owned.length} SysV ${kind} objects after the wipe`)
+/** /proc/sysvipc's files, the column each keeps its ids in, and the `ipcrm` flag that removes one by id. */
+const SYSV_KINDS = [
+  ['shm', 'shmid', '-m'],
+  ['msg', 'msqid', '-q'],
+  ['sem', 'semid', '-s'],
+] as const
+/** Ids per `ipcrm` run: a session can make tens of thousands of objects, and one command line can't carry them all. */
+export const SYSV_BATCH = 500
+
+type SysVRow = { id: number; uid: number; cuid: number }
+
+/** Every object of one kind, as root sees it (all of them, whatever their mode). Null on a kernel without SysV IPC. */
+async function readSysV(sysvDir: string, kind: string, idColumn: string): Promise<SysVRow[] | null> {
+  let text: string
+  try {
+    text = await readFile(join(sysvDir, kind), 'utf8')
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw e
   }
+  const [head = '', ...rows] = text.split('\n').filter((l) => l.trim() !== '')
+  const cols = head.trim().split(/\s+/)
+  const at = [cols.indexOf(idColumn), cols.indexOf('uid'), cols.indexOf('cuid')] as const
+  if (at.includes(-1)) throw new Error(`/proc/sysvipc/${kind} has no ${idColumn}, uid or cuid columns`)
+  return rows.map((r) => {
+    const f = r.trim().split(/\s+/)
+    const [id, uid, cuid] = at.map((i) => Number(f[i])) as [number, number, number]
+    if (![id, uid, cuid].every(Number.isInteger)) throw new Error(`/proc/sysvipc/${kind} has a row that can't be read: ${r.trim()}`)
+    return { id, uid, cuid }
+  })
 }
 
-/** The real `RunAsUser`: the command as the user, empty environment, stdout collected, stderr dropped. */
-export function runAsUser(user: PoolUser, cmd: string, args: string[]): Promise<{ code: number | null; stdout: string }> {
+/**
+ * Removes the uid's SysV IPC objects (shared memory, queues, semaphores), then fails if anything it created is still
+ * there. The kernel's rules this follows (ipc/util.c):
+ * - an object has an owner (`uid`) and a creator (`cuid`). The creator is whoever made it and never changes. The owner
+ *   is whatever uid the creator (or the last owner) named with IPC_SET, which needs no privilege: a process of one
+ *   uid can name any other uid the owner of its own objects.
+ * - the owner and the creator may each remove an object, whatever its mode. A segment still attached somewhere is only
+ *   marked by that, and stays in the table (and attachable by its id) until its last detach.
+ *
+ * So the removal covers every object the uid owns or created, and runs as the uid itself, by id from root's listing:
+ * `ipcrm --all` would stat each object first and skip the ones the uid made unreadable to itself. The check counts the
+ * creator only. A row that merely names the uid as owner is another session's doing, and counting it would let one live
+ * session fail every other uid's wipe and drain the pool; a row the uid created can only be its own session's doing
+ * (its processes are dead by now, so no new one appears), and one that survives would be open to the next chat on the
+ * uid, so it fails the wipe. A kernel without SysV IPC has no such files.
+ */
+export async function wipeSysV(user: PoolUser, run: RunAsUser, sysvDir = '/proc/sysvipc'): Promise<void> {
+  const stuck: string[] = []
+  for (const [kind, idColumn, flag] of SYSV_KINDS) {
+    const its = (await readSysV(sysvDir, kind, idColumn))?.filter((r) => r.uid === user.uid || r.cuid === user.uid) ?? []
+    if (its.length === 0) continue
+    for (let i = 0; i < its.length; i += SYSV_BATCH) {
+      await run(user, 'ipcrm', its.slice(i, i + SYSV_BATCH).flatMap((r) => [flag, String(r.id)]))
+    }
+    const left = (await readSysV(sysvDir, kind, idColumn))?.filter((r) => r.cuid === user.uid) ?? []
+    if (left.length > 0) stuck.push(`${left.length} SysV ${kind} (ids ${left.slice(0, 5).map((r) => r.id).join(', ')})`)
+  }
+  // Every kind is tried before this, so a uid that fails here leaves as little behind as it can.
+  if (stuck.length > 0) throw new Error(`uid ${user.uid} created ${stuck.join(' and ')} still there after the wipe`)
+}
+
+function runCommand(cmd: string, args: string[], ids: { uid?: number; gid?: number }): Promise<{ code: number | null; stdout: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { uid: user.uid, gid: user.gid, env: { PATH: '/usr/bin:/bin' }, stdio: ['ignore', 'pipe', 'ignore'] })
+    const child = spawn(cmd, args, { ...ids, env: { PATH: '/usr/bin:/bin' }, stdio: ['ignore', 'pipe', 'ignore'] })
     let stdout = ''
     child.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d))
     child.on('error', reject)
     child.on('close', (code) => resolve({ code, stdout }))
   })
 }
+
+/** The real `RunAsUser`: the command as the user, empty environment, stdout collected, stderr dropped. */
+export const runAsUser: RunAsUser = (user, cmd, args) => runCommand(cmd, args, { uid: user.uid, gid: user.gid })
+
+/** The real `RunAsRoot`: the same, as the runner itself (root in the image). */
+export const runAsRoot: RunAsRoot = (cmd, args) => runCommand(cmd, args, {})
 
 export type ParkAllDeps = { workRoot?: string; rootUid?: number; lchownSync?: (path: string, uid: number, gid: number) => void }
 
