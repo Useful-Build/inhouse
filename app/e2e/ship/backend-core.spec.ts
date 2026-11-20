@@ -52,6 +52,15 @@ async function accountMenu(page: Page) {
   return menu
 }
 
+/** Closes the account menu, and on a phone the drawer behind it (Escape closes the menu alone, then the drawer), so Menu is reachable again. */
+async function closeMenu(page: Page) {
+  await page.keyboard.press('Escape')
+  if (phone()) {
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('complementary', { name: 'Sidebar' })).toBeHidden()
+  }
+}
+
 /** Opens a Settings page from the account menu: "Your settings" or "Team settings", then the page in the Settings list. */
 async function settingsPage(page: Page, group: 'Your settings' | 'Team settings', label: string) {
   const menu = await accountMenu(page)
@@ -163,6 +172,9 @@ test('S3: The audit log shows that change with your name and the time; Export CS
   await settingsPage(page, 'Your settings', 'General')
   const zone = await otherZone(page)
   await pickZone(page, zone)
+  // The audit list is read when the app loads (the plan's own measure is "change a setting, reload, the audit log shows it").
+  await page.reload()
+  await ready(page)
   await settingsPage(page, 'Team settings', 'Audit log')
   // The newest line first: the person, what they did, the setting and its value, and the time of day.
   const line = main(page).locator('div.py-4').filter({ hasText: `${people.admin.name} changed a setting` }).filter({ hasText: `Time zone: ${zone.id}` }).first()
@@ -198,7 +210,7 @@ test('S5: As a Member, the team pages are read-only and an admin-only action isn
   const menu = await accountMenu(page)
   await expect(menu).toContainText(`${people.dana.name}`)
   await expect(menu).toContainText(`${people.dana.email} · Member`)
-  await page.keyboard.press('Escape')
+  await closeMenu(page)
   // A team setting is text for a Member, not a control; a personal one is theirs to change.
   await settingsPage(page, 'Your settings', 'General')
   await expect(main(page).getByRole('textbox', { name: 'Name', exact: true })).toBeEnabled()
@@ -206,15 +218,14 @@ test('S5: As a Member, the team pages are read-only and an admin-only action isn
   await settingsPage(page, 'Team settings', 'Spending cap')
   await expect(main(page).getByText('Monthly cap', { exact: true })).toBeVisible()
   await expect(main(page).getByRole('textbox', { name: 'Monthly cap' })).toHaveCount(0)
-  // The admin-only actions aren't offered: Invite, Remove, the support grant and the audit log's download.
+  // The admin-only actions aren't offered: Invite, Remove and the support grant.
   await settingsPage(page, 'Team settings', 'Members')
   await expect(main(page).getByRole('button', { name: 'Invite', exact: true })).toHaveCount(0)
   await expect(main(page).getByRole('button', { name: /^Remove / })).toHaveCount(0)
   await settingsPage(page, 'Team settings', 'Data and access')
   await expect(main(page).getByText('Where your data stays', { exact: true })).toBeVisible()
   await expect(main(page).getByText('Inhouse team access', { exact: true })).toHaveCount(0)
-  await settingsPage(page, 'Team settings', 'Audit log')
-  await expect(main(page).getByRole('button', { name: 'Download CSV' })).toHaveCount(0)
+  // The audit log is brand data a Member may read and export (access matrix rows 19 and 20), so its download is offered.
 })
 
 test('S6: Two tabs edit the same setting; the second save shows a conflict with the current value', async ({ context, page }) => {
@@ -261,7 +272,7 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   await alex.goto(`${originFor('inhouse')}/`)
   await ready(alex)
   await expect(await accountMenu(alex)).toContainText('Inhouse team')
-  await alex.keyboard.press('Escape')
+  await closeMenu(alex)
   await settingsPage(alex, 'Team settings', 'Audit log')
   await expect(main(alex)).toContainText('gave the Inhouse team access')
 
@@ -286,9 +297,9 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   await expect(main(alex).getByRole('button', { name: 'Download CSV' })).toHaveCount(0)
   await settingsPage(alex, 'Team settings', 'Data and access')
   await expect(row(alex, 'Inhouse team access')).toContainText('Ended')
-  // What the grant never covered still opens: the Models page reads the technical settings, and its values load.
-  await settingsPage(alex, 'Team settings', 'Models')
-  await expect(main(alex).getByRole('combobox', { name: /^How hard it thinks: / }).first()).toBeVisible()
+  // What the grant never covered still opens: Stage and plan reads the technical settings, and the seeded stage shows.
+  await settingsPage(alex, 'Team settings', 'Stage and plan')
+  await expect(row(alex, 'Current stage')).toContainText('Watch')
   const sign = await signIn(inhouse.subject, 'inhouse')
   const at = (path: string) => request.get(`${appOrigin('inhouse')}${path}`, { headers: sign })
   expect((await at('/api/audit')).status()).toBe(403)
@@ -342,7 +353,12 @@ test('S9: A person who wasn\'t invited sees "You\'re not on this team". A remove
   await ready(theirs)
   await expect(await accountMenu(theirs)).toContainText(leaver.name)
 
+  // The Admin's page still holds the invite as it was before the first sign-in (a stale record: removing it would be a
+  // conflict), so the Admin reloads, as a person would to see the invite become a member.
   await signInAs(context, 'admin')
+  await page.reload()
+  await ready(page)
+  await settingsPage(page, 'Team settings', 'Members')
   if (phone()) {
     // The Remove button is on the desktop page only (team pages are read-only on a phone): the same route, from the page.
     const list = await api(page, 'GET', '/api/members?limit=100')

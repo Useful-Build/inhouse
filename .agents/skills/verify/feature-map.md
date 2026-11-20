@@ -316,7 +316,7 @@ Backend core: account menu, name and role (P2, test build)
 Backend core: Members page, invite and remove (P2, test build)
   Path:     Settings -> Members
   Selector: button "Invite", dialog "Invite someone", "Remove <name>", tag "Invited"
-  Expected: an invite shows the person with the Invited tag; their first sign-in binds it and lands as a Member with the invited name; a removed member's next request is refused; a Member sees no Invite or Remove; on a phone the page is read-only (Invite only)
+  Expected: an invite shows the person with the Invited tag; their first sign-in binds it and lands as a Member with the invited name; a removed member's next request is refused; a Member sees no Invite or Remove (the audit log and its download are theirs by the access matrix); on a phone the page is read-only (Invite only)
   Covered:  e2e/ship/backend-core.spec.ts (S5, S8, S9), e2e/api/members.spec.ts
 
 Backend core: Settings, typed and with conflicts (P2, test build)
@@ -334,7 +334,7 @@ Backend core: photo (P2, test build)
 Backend core: audit log and its CSV (P2, test build)
   Path:     Settings -> Audit log -> Download CSV
   Selector: rows (person, what, detail, time), button "Download CSV"
-  Expected: a change shows as a line with the person's name and the time; the CSV has the header When, Who, What, Detail and the same lines; a Member isn't offered the download; nothing can edit or delete a line
+  Expected: a change shows as a line with the person's name and the time; the CSV has the header When, Who, What, Detail and the same lines; the download is offered to a Member too (matrix rows 19 and 20); nothing can edit or delete a line
   Covered:  e2e/ship/backend-core.spec.ts (S3, S5, S7), e2e/api/audit.spec.ts
 
 Backend core: Who can get in, support grants (P2, test build)
