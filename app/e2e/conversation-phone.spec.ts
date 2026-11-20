@@ -1,8 +1,8 @@
 // PR 4 on a phone (390px): every answer shows its action row and every question its Copy and Edit, without hover.
-import { expect, fxFor, test } from './support/fx.js'
+import { expect, test } from './support/fx.js'
 
-test('Phone conversation: every answer and question shows its actions', async ({ page }) => {
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+test('Phone conversation: every answer and question shows its actions', async ({ page, fx }) => {
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   const log = page.getByRole('log', { name: 'Conversation' })
   await expect(log.getByText('Refund requests rose').first()).toBeVisible()

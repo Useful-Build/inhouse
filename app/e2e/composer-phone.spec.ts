@@ -1,10 +1,10 @@
 // PR 4, the composer on a phone (390 px): it sits above the home bar's safe area, and opening a chat doesn't focus
 // it (no keyboard popping up on navigation).
-import { expect, fxFor, test } from './support/fx.js'
+import { expect, test } from './support/fx.js'
 
-test('Phone: the chat composer stays above the safe area, and opening a chat leaves it unfocused', async ({ page }) => {
+test('Phone: the chat composer stays above the safe area, and opening a chat leaves it unfocused', async ({ page, fx }) => {
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
-  await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
+  await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
   const field = page.getByRole('textbox', { name: 'Message your Inhouse agent' })
   const composer = page.locator('[data-composer]')
