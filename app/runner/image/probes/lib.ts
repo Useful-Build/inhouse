@@ -78,18 +78,19 @@ export function runCommand(cmd: string, args: string[], opts: { uid?: number; gi
       ...(opts.uid !== undefined ? { uid: opts.uid, gid: opts.gid } : {}),
       cwd: opts.cwd ?? '/',
       env: opts.env ?? { PATH: '/usr/local/bin:/usr/bin:/bin' },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      // No input: stdin is /dev/null. A pipe written to a child that has already exited (a quick `cat`) throws EPIPE.
+      stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     })
     let out = ''
-    child.stdout.setEncoding('utf8').on('data', (d: string) => (out += d))
-    child.stderr.setEncoding('utf8').on('data', (d: string) => (out += d))
+    child.stdout!.setEncoding('utf8').on('data', (d: string) => (out += d))
+    child.stderr!.setEncoding('utf8').on('data', (d: string) => (out += d))
     const timer = setTimeout(() => child.kill('SIGKILL'), opts.timeoutMs ?? 120_000)
     child.on('error', reject)
     child.on('close', (code) => {
       clearTimeout(timer)
       resolve({ code, out })
     })
-    child.stdin.end(opts.input ?? '')
+    if (opts.input !== undefined) child.stdin!.end(opts.input)
   })
 }
 

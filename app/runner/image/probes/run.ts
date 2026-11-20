@@ -543,14 +543,25 @@ async function probeClaudeDir() {
     `guarded: ${judgeInit(guarded, loaded)} | discovery enabled: ${judgeInit(control, offLoaded)}`,
   )
   // Each layer alone, the other taken out: a layer that doesn't hold by itself shows here even while the other hides it.
-  const controlLoads = finished(control) && (offLoaded?.length ?? 0) > 0
-  for (const [name, d, kept, flipped] of [
-    ['claude-dir.home-skill-allowlist-alone', sourcesOpen, 'the skills allowlist', "settingSources: ['user']"],
-    ['claude-dir.home-skill-sources-alone', skillsOpen, 'settingSources: []', "skills: 'all'"],
-  ] as const) {
-    const l = discover(d)
-    record(name, finished(d) && l?.length === 0 && controlLoads, `${kept} kept, ${flipped}: ${judgeInit(d, l)} | both off: ${controlLoads ? 'loads' : 'DOES NOT LOAD: the probe cannot detect this'}`)
-  }
+  // Each is judged on what it does. settingSources: [] means the skill is never discovered: not in init, not in any
+  // model request. The `skills` allowlist is a context filter (the SDK's own words): an unlisted skill can still be
+  // discovered and listed in init, but the model's listing leaves it out. So that layer's observable is the model's
+  // requests; its init entries are printed as a fact.
+  const modelSees = (d: typeof guarded) => JSON.stringify(d.state.requests).includes(HOME_SKILL)
+  const controlLoads = finished(control) && (offLoaded?.length ?? 0) > 0 && modelSees(control)
+  const bothOff = `both off: ${controlLoads ? 'in init and in the model request' : `NOT SEEN (init ${JSON.stringify(offLoaded)}, model request ${modelSees(control)}): the probe cannot detect this`}`
+  const sl = discover(skillsOpen)
+  record(
+    'claude-dir.home-skill-sources-alone',
+    finished(skillsOpen) && sl?.length === 0 && !modelSees(skillsOpen) && controlLoads,
+    `settingSources: [] kept, skills: 'all': ${judgeInit(skillsOpen, sl)}, model request names it ${modelSees(skillsOpen)} | ${bothOff}`,
+  )
+  fact('claude-dir.home-skill-allowlist-alone.init', `settingSources: ['user'], allowlist kept: ${judgeInit(sourcesOpen, discover(sourcesOpen))}`)
+  record(
+    'claude-dir.home-skill-allowlist-alone',
+    finished(sourcesOpen) && sourcesOpen.state.requests.length > 0 && !modelSees(sourcesOpen) && controlLoads,
+    `the skills allowlist kept, settingSources: ['user']: model requests ${sourcesOpen.state.requests.length}, a request names it ${modelSees(sourcesOpen)} | ${bothOff}`,
+  )
 }
 
 /** The guarded init (probeFacts), for the checks whose guard-off runs come later. */
@@ -645,9 +656,15 @@ async function probeLongTmpdir() {
  * A typed skill the CLI runs goes to the model; one it refuses ends without a model request (the CLI answers it
  * itself). So the detector is "the typed command reached the model", and each run says what it saw.
  */
+/**
+ * The CLI's marker for a skill it expanded inline (`/dataviz`), or, for a bundled skill it hands over as its own first
+ * user text (`/code-review` on 0.3.328, seen in CI), a phrase from that skill's body.
+ */
+const SKILL_BODY: Record<string, string> = { 'code-review': 'diff pass (bugs)' }
 const expanded = (requests: unknown[], name: string) => {
   const t = JSON.stringify(requests)
-  return t.includes(`<command-name>/${name}</command-name>`) || t.includes(`<command-message>${name}`)
+  const body = SKILL_BODY[name]
+  return t.includes(`<command-name>/${name}</command-name>`) || t.includes(`<command-message>${name}`) || (body !== undefined && firstUserText(requests).includes(body))
 }
 const seen = (requests: unknown[], name: string) => `model requests ${requests.length}, expansion marker ${expanded(requests, name)}`
 /** The first request's user text, minus system reminders: what the model was handed for the typed command. */
@@ -902,9 +919,16 @@ async function probeIsolation() {
     const t = result(rb, i + 1)
     const leak = t !== undefined && (canary(t.text) || (n === 'glob-a' && t.text.includes('secret.txt')))
     const rc = ruleControls[n]
+    // The Read tool may not read /proc entries at all (they stat as empty): then the rule has nothing to stop, and the
+    // control can't show one. Unproven, never a pass; a leak in the agent's run still fails.
+    const procUnreadable = (text: string) => n.startsWith('read-a-holder') && !canary(text) && !/EACCES|permission denied/i.test(text)
     if (rc) {
       const seenOff = canary(rc.text)
-      record(`isolation.tool.${n}`, t !== undefined && !leak && seenOff, `agent: ${t?.text.slice(0, 160)} | guard off (${rc.rule} taken out): ${seenOff ? 'leak seen' : `NOT SEEN: ${rc.text.slice(0, 120)}`}`)
+      const detail = `agent: ${t?.text.slice(0, 160)} | guard off (${rc.rule} taken out): ${seenOff ? 'leak seen' : `NOT SEEN: ${rc.text.slice(0, 120)}`}`
+      if (t !== undefined && !leak && procUnreadable(rc.text)) markUnproven(`isolation.tool.${n}`, `the Read tool reads nothing there even with the rule out; ${detail}`)
+      else record(`isolation.tool.${n}`, t !== undefined && !leak && seenOff, detail)
+    } else if (n === 'read-a-holder-environ' && t !== undefined && !leak && procUnreadable(procEnv!)) {
+      markUnproven(`isolation.tool.${n}`, `the Read tool reads nothing there even with Read(//proc/**) out: ${procEnv!.slice(0, 120)}`)
     } else if (n === 'read-a-holder-environ') {
       // Two walls: the rule refuses it first; with the rule out, the uid wall (environ is the owner's, behind ptrace
       // checks) still does. The detector is proven by A's own uid reading the canary.
