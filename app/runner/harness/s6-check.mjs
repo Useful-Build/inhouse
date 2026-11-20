@@ -47,6 +47,7 @@ const before = dockerIds()
 const facts = { startedAt: new Date().toISOString() }
 let dev
 let sampler
+let samplerDone
 let cid
 let failedEarly
 
@@ -123,7 +124,9 @@ async function main() {
   // Watch the processes during the runs, from inside the container (no docker exec per sample, so short-lived bwrap
   // processes are caught): uid, pid, ppid and the full command line, every 20 ms.
   sampler = spawn('docker', ['exec', cid, 'sh', '-c', 'while :; do echo "=== $(date +%s.%N)"; ps -ww -eo uid,pid,ppid,args; sleep 0.02; done', SAMPLER], { stdio: ['ignore', 'pipe', 'pipe'] })
-  sampler.stdout.pipe(createWriteStream(join(OUT, 'ps.log')))
+  const psFile = createWriteStream(join(OUT, 'ps.log'))
+  sampler.stdout.pipe(psFile)
+  samplerDone = new Promise((r) => psFile.on('close', r))
 
   const runs = {}
   runs.a = await run('hello', 'chat-a', 'hello-a')
@@ -253,6 +256,7 @@ async function stopSampler() {
   if (cid) sh('docker', ['exec', cid, 'pkill', '-f', SAMPLER])
   sampler.kill()
   sampler = undefined
+  await samplerDone // ps.log fully written before anyone reads it
 }
 
 async function cleanup() {
