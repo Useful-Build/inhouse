@@ -172,25 +172,20 @@ describe('ownerObject rows (failures 4 and 5)', () => {
 })
 
 describe('the committed P3 routes are PR0 stubs (failure 6)', () => {
-  it('every route 22 to 49 still a stub answers 503 not_built to a caller the matrix lets through', async () => {
+  it('every route 22 to 49 not yet built answers 503 not_built to a caller the matrix lets through (W1 PR 2 built 29-31, 35-37, 49; W3 built 38)', async () => {
     quiet()
     const { call } = setup({ table: routes, rows: accessMatrix })
     const member = { 'Cf-Access-Jwt-Assertion': await person('member'), Origin: BRAND.origin }
-    const admin = { 'Cf-Access-Jwt-Assertion': await person('admin'), Origin: BRAND.origin }
     const release = { 'Cf-Access-Jwt-Assertion': await service(RELEASE_ID), Origin: BRAND.origin }
     const P3 = [
       ['GET', '/api/chats', member], ['POST', '/api/chats', member], ['GET', '/api/chats/c1', member], ['PUT', '/api/chats/c1/title', member],
       ['PUT', '/api/chats/c1/pin', member], ['POST', '/api/chats/delete', member], ['POST', '/api/chats/restore', member],
-      ['POST', '/api/chats/c1/turns', member], ['POST', '/api/turns/t1/interrupt', member], ['POST', '/api/turns/t1/stop', member],
-      ['GET', '/api/runs/active', member], ['GET', '/api/traces/r1', member], ['GET', '/api/socket', member], ['GET', '/api/pause', member],
-      ['POST', '/api/pause', admin], ['POST', '/api/resume', admin],
-      ['POST', '/api/ops/drain', release],
-      ['GET', '/api/ops/drain', release], ['POST', '/api/ops/warmup', release], ['POST', '/api/chats/c1/session/reset', member],
+      ['GET', '/api/runs/active', member], ['GET', '/api/traces/r1', member], ['GET', '/api/socket', member],
+      ['POST', '/api/ops/drain', release], ['GET', '/api/ops/drain', release], ['POST', '/api/ops/warmup', release],
     ] as const
-    // Routes 38 to 41 are built (W3: server/api/models.test.ts, attachments.test.ts), so they left this list.
-    // Route 42 (GET /api/usage) is built (W4 PR 1, server/usage/api.test.ts), so it left this list.
-    // Routes 43 to 45 (memory) are built (W6 PR 1, server/api/memory.test.ts), so they left it too.
-    expect(P3).toHaveLength(20)
+    // Built and so off this list: 38-41 (W3), 42 (W4 PR 1), 43-45 (W6), and 29-31, 35-37 and 49 (W1 PR 2,
+    // server/api/runs.test.ts).
+    expect(P3).toHaveLength(13)
     for (const [method, path, headers] of P3) {
       const res = await call(BRAND.origin, path, { method, headers })
       expect(res.status, `${method} ${path}`).toBe(503)

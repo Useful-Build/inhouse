@@ -9,5 +9,7 @@ export const chatTables: readonly TableEntry[] = [
   // 0100 (W1's first PR). A chat and its messages are the owner's; a user message names its author.
   { kind: 'd1', name: 'chats', retention: 'retention_period', personKeys: ['owner_id'], export: true },
   { kind: 'd1', name: 'chat_messages', retention: 'retention_period', personKeys: ['author_id'], export: true },
+  // 0101 (W1's second PR): the redacted audit of a turn's tool calls, by the turn's member.
+  { kind: 'd1', name: 'tool_calls', retention: 'retention_period', personKeys: ['member_id'], export: true },
   { kind: 'do', name: 'BrandAgent', retention: 'retention_period', personKeys: ['runs.owner_id', 'turns.owner_id', 'chat_state.owner_id', 'run_tokens.member_id'], export: false },
 ]

@@ -22,9 +22,12 @@ describe('noteCountTokens (failures 1-3)', () => {
   it('passes calls 1 to 50 of a turn and refuses the 51st on; other turns and unknown turns apart', async () => {
     await runInDurableObject(env.BRAND_AGENT.getByName('count-tokens'), async (_i, state) => {
       const sql = state.storage.sql
-      // The column as W1's next PR adds it to `turns` (the rest of the row isn't needed here).
-      sql.exec('CREATE TABLE turns (turn_id TEXT PRIMARY KEY, count_tokens_calls INTEGER NOT NULL DEFAULT 0)')
-      sql.exec("INSERT INTO turns (turn_id) VALUES ('t_a'), ('t_b')")
+      // The real `turns` table (schema.ts, created by the object on start), with two minimal rows.
+      for (const id of ['t_a', 't_b']) {
+        sql.exec(`INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, state, priority, text,
+          attachments_json, model, picker_id, side_model, effort, max_turns, answer_position, created_at_ms)
+          VALUES (?, 'r_x', ?, 'm_x', 0, ?, 'h', 'live', 'next', 'q', '[]', 'm', 'p', 's', 'low', 25, 'starting', 0)`, id, `c_${id}`, `key-${id}`)
+      }
       const a = await answers(() => noteCountTokens(sql, 't_a'), 51)
       expect(a.slice(48)).toEqual([true, true, false]) // calls 49, 50, 51
       expect(a).toEqual(expected(51))

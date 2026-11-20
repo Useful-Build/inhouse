@@ -47,8 +47,12 @@ const RS: RunStart = {
 }
 const rs = (turnId: string): RunStart => ({ ...RS, runId: turnId })
 
-/** W1's tables, as p3-design 4.1 names the columns the pool reads. */
+/**
+ * W1's tables, as p3-design 4.1 names the columns the pool reads. The BrandAgent class creates its real tables on start
+ * (W1 PR 2, schema.ts); these tests replace them with the columns the pool reads, so their rows stay minimal.
+ */
 function w1Tables(sql: SqlStorage) {
+  for (const t of ['turns', 'runs', 'flags']) sql.exec(`DROP TABLE IF EXISTS ${t}`)
   sql.exec('CREATE TABLE turns (turn_id TEXT PRIMARY KEY, run_id TEXT, state TEXT NOT NULL, gen INTEGER NOT NULL DEFAULT 1, runner TEXT)')
   sql.exec("CREATE TABLE runs (run_id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK (state IN ('live', 'ended')))")
   sql.exec('CREATE TABLE flags (key TEXT PRIMARY KEY, value)')

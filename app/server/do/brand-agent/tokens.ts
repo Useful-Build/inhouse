@@ -29,10 +29,16 @@ export interface RunTokens {
   revokeTurn(turnId: string, why: string): void
   revokeMember(memberId: string, why: string): void
   revokeAll(why: string): void
+  /** Revokes one attempt's token (a turn fenced while its token was minted; a placement retry's old token). */
+  revokeToken(tokenHash: string, why: string): void
+  /** Deletes rows expired more than `RUN_TOKEN_KEEP_MS` before `nowMs` (the table never grows without bound). */
+  prune(nowMs: number): void
 }
 
 /** How long a token lives (CHOICE, Fable: above the runner's 30-minute turn). */
 export const RUN_TOKEN_TTL_MS = 45 * 60_000
+/** How long an expired token's row is kept (its refusal stays `expired`, not `unknown`, for a day of logs). */
+export const RUN_TOKEN_KEEP_MS = 24 * 60 * 60_000
 
 const hex = (bytes: ArrayBuffer) => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('')
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -101,5 +107,7 @@ export function createRunTokens(sql: SqlStorage, now: () => number): RunTokens {
     revokeTurn(turnId, why) { revoke(' AND turn_id = ?', why, turnId) },
     revokeMember(memberId, why) { revoke(' AND member_id = ?', why, memberId) },
     revokeAll(why) { revoke('', why) },
+    revokeToken(tokenHash, why) { revoke(' AND token_hash = ?', why, tokenHash) },
+    prune(nowMs) { sql.exec('DELETE FROM run_tokens WHERE expires_at_ms < ?', nowMs - RUN_TOKEN_KEEP_MS) },
   }
 }

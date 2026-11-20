@@ -1,6 +1,8 @@
-// The `turn-watch` due task (p3-design 1.3). Owner: W1. A stub from W1's first PR, so tasks/index.ts can list every P3 kind; the owner
-// replaces the body. Idempotent by task id once built (p3-design section 6).
+// The `turn-watch:<turnId>` due task (p3-design 1.3 and 4.11): the watchdog of one unfinished turn, every 60 s while
+// it's `starting|live|ending`, with its per-state rules in core.ts (`AgentCore.watch`). Idempotent by task id: each
+// run reads the turn as stored and acts only on what it finds.
 import type { TaskHandler } from '../scheduler.ts'
-import { notBuilt } from './not-built.ts'
 
-export const turnWatch: TaskHandler = notBuilt
+export const TURN_WATCH_PREFIX = 'turn-watch:'
+
+export const turnWatch: TaskHandler = (task, ctx) => ctx.agent.watch(task.id.slice(TURN_WATCH_PREFIX.length))

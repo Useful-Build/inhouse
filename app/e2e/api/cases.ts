@@ -80,16 +80,16 @@ export const CASES: Record<string, RouteCase> = {
   'PUT /api/chats/:id/pin': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/pin`, json: {}, passes: STUB },
   'POST /api/chats/delete': { design: d('personal', PEOPLE), path: '/api/chats/delete', json: {}, passes: STUB },
   'POST /api/chats/restore': { design: d('personal', PEOPLE), path: '/api/chats/restore', json: {}, passes: STUB },
-  'POST /api/chats/:id/turns': { design: d('personal', PEOPLE, ['smoke']), path: `/api/chats/${NO_CHAT}/turns`, json: {}, passes: STUB },
-  'POST /api/turns/:turnId/interrupt': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/interrupt', json: {}, passes: STUB },
-  'POST /api/turns/:turnId/stop': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/stop', json: {}, passes: STUB },
+  'POST /api/chats/:id/turns': { design: d('personal', PEOPLE, ['smoke']), path: `/api/chats/${NO_CHAT}/turns`, json: {}, passes: 400 },
+  'POST /api/turns/:turnId/interrupt': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/interrupt', json: {}, passes: 404 },
+  'POST /api/turns/:turnId/stop': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/stop', json: {}, passes: 404 },
   'GET /api/runs/active': { design: owned(ALL, ['smoke']), path: '/api/runs/active', passes: STUB },
   'GET /api/traces/:id': { design: owned(ALL), path: '/api/traces/r_e2e_nobody', passes: STUB },
   'GET /api/socket': { design: owned(ALL, ['smoke']), path: '/api/socket?v=1', passes: STUB },
-  'GET /api/pause': { design: d('baseline', ALL), path: '/api/pause', passes: STUB },
+  'GET /api/pause': { design: d('baseline', ALL), path: '/api/pause', passes: 200 },
   // Item 19 (2026-11-20): the Inhouse team pauses and resumes too (an audited emergency pause), with no grant.
-  'POST /api/pause': { design: d('baseline', ['admin', 'inhouse']), path: '/api/pause', json: {}, passes: STUB },
-  'POST /api/resume': { design: d('baseline', ['admin', 'inhouse']), path: '/api/resume', json: {}, passes: STUB },
+  'POST /api/pause': { design: d('baseline', ['admin', 'inhouse']), path: '/api/pause', json: {}, passes: 200 },
+  'POST /api/resume': { design: d('baseline', ['admin', 'inhouse']), path: '/api/resume', json: {}, passes: 200 },
   'GET /api/models': { design: d('baseline', ALL, ['smoke']), path: '/api/models', passes: 200 },
   // Routes 39 to 41 are built (W3 #146): the cases' ids name nothing, so a caller the matrix lets through gets 404.
   'POST /api/chats/:id/attachments': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/attachments`, bytes: { content: Buffer.from('x'), contentType: 'application/octet-stream' }, passes: 404 },
@@ -102,7 +102,7 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', json: {}, passes: STUB },
   'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: STUB },
   'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: STUB },
-  'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: STUB },
+  'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */
