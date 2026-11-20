@@ -1,7 +1,7 @@
 import { describe, expect } from 'vitest'
 import { fc, test } from '@fast-check/vitest'
 import { CAN_KEYS } from '../../../shared/contract/keys'
-import { settingRow } from '../../../shared/contract/settings-table'
+import { EXACT_ROWS, settingRow } from '../../../shared/contract/settings-table'
 import type { Can } from '../../agent/types'
 import type { Row } from './content'
 import { allowance } from './allowance'
@@ -25,6 +25,19 @@ describe('allowance', () => {
   test.prop([fc.boolean(), fc.boolean(), fc.boolean()])('a model row: effort needs technical; without it the switch only turns a model off, so only while it is on', (tech, off, on) => {
     const a = allowance(row({ kind: 'mode', key: 'tm:fable:effort', switchOn: on }), canOf([...(tech ? ['editTechnical'] : []), ...(off ? ['switchModelOff'] : [])]))
     expect(a).toEqual({ control: tech || off, effort: tech, switch: tech || (off && on) })
+  })
+  const PERSONAL = Object.keys(EXACT_ROWS).filter(k => EXACT_ROWS[k].scope === 'personal')
+  test.prop([fc.constantFrom(...PERSONAL), fc.subarray([...CAN_KEYS]), fc.constantFrom('select', 'text', 'toggle') as fc.Arbitrary<Row['kind']>])(
+    'the Inhouse team gets no control on any personal key (the server refuses them), whatever `can` says; a person does', (key, on, kind) => {
+      const can = canOf(on)
+      expect(allowance(row({ key, kind }), can, true, 'inhouse')).toEqual({ control: false, effort: false, switch: false })
+      for (const role of ['member', 'admin'] as const) expect(allowance(row({ key, kind }), can, true, role).control).toBe(true)
+    },
+  )
+  test.prop([fc.subarray([...CAN_KEYS])])('the photo row: no upload for the Inhouse team, the upload for a person', on => {
+    const can = canOf(on)
+    expect(allowance(row({ kind: 'photo' }), can, true, 'inhouse').control).toBe(false)
+    for (const role of ['member', 'admin'] as const) expect(allowance(row({ kind: 'photo' }), can, true, role).control).toBe(true)
   })
   test('without me() the demo takes nothing away, and the product allows nothing', () => {
     expect(allowance(row({ key: 't:tone' }), undefined)).toEqual({ control: true, effort: true, switch: true })

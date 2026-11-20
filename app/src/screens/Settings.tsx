@@ -165,8 +165,8 @@ function GrantControl({ row, grant }: { row: Row; grant: SupportGrant | null }) 
 }
 
 function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk, switchOk, grant, caption }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean; denied: boolean; effortOk: boolean; switchOk: boolean; grant: SupportGrant | null; caption?: string }) {
-  // A button or action the person's role doesn't allow isn't offered (S5).
-  if (denied && (row.kind === 'button' || row.kind === 'grant')) return null
+  // A button, action or photo upload the person's role doesn't allow isn't offered (S5).
+  if (denied && (row.kind === 'button' || row.kind === 'grant' || row.kind === 'photo')) return null
   // A team setting on a phone is read, not changed (D4): its value shows as text under the description (see ReadValue).
   if (readOnly && row.kind !== 'button' && row.kind !== 'photo') return null
   switch (row.kind) {
@@ -381,7 +381,7 @@ export function Settings() {
                   const locked = S < row.need
                   const on = !locked && (row.on ?? st.toggles[row.key ?? ''] ?? row.def ?? false)
                   // A value shown as text (a team page on a phone) sits under the description, in the title's column.
-                  const al = allowance(row, me?.can, demo === null)
+                  const al = allowance(row, me?.can, demo === null, me?.role)
                   const denied = !al.control
                   const asText = (readOnly || denied) && row.kind !== 'button' && row.kind !== 'photo'
                   return (
