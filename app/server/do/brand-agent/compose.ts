@@ -3,10 +3,10 @@
 // port (ports.ts) and made it return the fake under testing/; each owner then returns its real port there. The pool
 // lives in the BrandAgent, so its anchor also gets the object's parts (its SQLite, scheduler, clock and placement hooks).
 import type { BrandAgentParts, BrandAgentPorts, FileLedgerPort, RunnerPoolPort, UsageLedgerPort } from './ports.ts'
+import { createUsageLedger } from '../../usage/ledger.ts'
 import { fileStore } from '../../files-io/store.ts'
 import type { StoredFile } from '../../files-io/store.ts'
 import type { ChatFile } from './ports.ts'
-import { FakeUsageLedger } from './testing/fake-usage.ts'
 import { runnerPool } from '../runner/pool.ts'
 
 /** The ports the BrandAgent runs on, built once per object from its env. */
@@ -43,6 +43,7 @@ function filesPort(env: Env): FileLedgerPort {
 }
 
 // ---------- W4's anchor (p3-w4.md): UsageLedgerPort ----------
-function usagePort(_env: Env): UsageLedgerPort {
-  return new FakeUsageLedger()
+// The D1 ledger (usage/ledger.ts). Its `settle` also takes the runner's cost as a 4th argument (stored, never added).
+function usagePort(env: Env): UsageLedgerPort {
+  return createUsageLedger({ db: env.DB })
 }

@@ -10,11 +10,12 @@ import { InviteInputSchema, MemberRecordSchema, MemberRoleSchema, PhotoResultSch
 import { MemoryDataSchema, MemoryForgetInputSchema, MemoryLineSchema } from '../../../shared/contract/memory'
 import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
+import { UsageDataSchema } from '../../../shared/contract/usage'
 
 /** What each route answers with. */
 export const ANSWERS = {
   me: MeSchema, settings: SettingsListSchema, setting: SettingRecordSchema, members: pageOf(MemberRecordSchema), member: MemberRecordSchema,
-  audit: AuditPageSchema, grants: GrantsListSchema, grant: SupportGrantSchema, photo: PhotoResultSchema,
+  audit: AuditPageSchema, grants: GrantsListSchema, grant: SupportGrantSchema, photo: PhotoResultSchema, usage: UsageDataSchema,
   // P3 (W6): routes 43 to 45.
   memory: MemoryDataSchema, memoryLine: MemoryLineSchema,
 }
