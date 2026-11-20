@@ -7,7 +7,7 @@
 // `onFailure: 'block'` turns the throw into a blocked call.
 import { createHash } from 'node:crypto'
 import type { HookCallbackMatcher, HookInput } from '@anthropic-ai/claude-agent-sdk'
-import { AUDIT_INPUT_MAX_BYTES, jsonBytes, type AuditEntry } from '../../../shared/protocol/index.ts'
+import { AUDIT_INPUT_MAX_BYTES, type AuditEntry } from '../../../shared/protocol/index.ts'
 import { LOCAL_MAX_DEPTH, deeperThan } from '../protocol/ndjson.ts'
 import type { RunContext } from '../session/seam.ts'
 
@@ -24,7 +24,9 @@ export const AUDIT_EDGE_CHARS = 2 * 1024
  * and the audit message's envelope (`{type:'audit', entry:{input}}`) adds two levels; two more are spare. A deeper input
  * goes in the over-cap form, whose edges are flat strings.
  */
-export const AUDIT_INPUT_MAX_DEPTH = LOCAL_MAX_DEPTH - 4
+export const AUDIT_INPUT_MAX_DEPTH = LOCAL_MAX_DEPTH - 5
+/** What `{ "cut": false, "value": ... }` adds around an input. */
+const WRAP_BYTES = Buffer.byteLength('{"cut":false,"value":}')
 /**
  * Our backstop for an answer that never comes. Above R1's own audit timeout (10 s, src/session/core.ts), so R1's
  * timeout and the entry's `expiresAt` are what normally end a wait; this one only fires if the transport never settles.
@@ -38,21 +40,28 @@ export const AUDIT_HOOK_TIMEOUT_S = 15
  */
 export const AUDIT_DECISION = 'allow'
 
-/** An input within the shared cap (and the depth cap) as is; any other as its size, a hash of the whole and its start and end. */
+/**
+ * The recorded input, always wrapped so a reader can't mistake an input shaped like the cut form for a cut record:
+ * `{ cut: false, value }` within the shared cap (and the depth cap); otherwise `{ cut: true, bytes, sha256, head, tail }`
+ * (its size, a hash of the whole and its start and end), or `{ cut: true, unencodable: true }` when JSON can't encode it.
+ * A missing input (`undefined`, which JSON drops) is recorded as `{ cut: false, value: null }`, so the entry keeps its
+ * `input` key on the wire.
+ */
 export function capInput(input: unknown): unknown {
   let text: string | undefined
   try {
     text = JSON.stringify(input)
   } catch {
-    return { truncated: true, unencodable: true }
+    return { cut: true, unencodable: true }
   }
-  if (text === undefined || (jsonBytes(input) <= AUDIT_INPUT_MAX_BYTES && !deeperThan(input, AUDIT_INPUT_MAX_DEPTH))) return input
+  if (text === undefined) return { cut: false, value: null }
+  const bytes = Buffer.byteLength(text)
+  if (bytes <= AUDIT_INPUT_MAX_BYTES - WRAP_BYTES && !deeperThan(input, AUDIT_INPUT_MAX_DEPTH)) return { cut: false, value: input }
   // Padding at either end can't hide a command: the start and end are kept, and the hash pins the whole input. What
   // sat in the middle is gone, so the record says it was cut and how big the whole was: a reader never takes the
   // start and end for the whole call.
-  const bytes = Buffer.byteLength(text)
   const sha256 = createHash('sha256').update(text).digest('hex')
-  return { truncated: true, bytes, sha256, head: text.slice(0, AUDIT_EDGE_CHARS), tail: text.slice(-AUDIT_EDGE_CHARS) }
+  return { cut: true, bytes, sha256, head: text.slice(0, AUDIT_EDGE_CHARS), tail: text.slice(-AUDIT_EDGE_CHARS) }
 }
 
 /** The entry for one PreToolUse call, in the shared shape the root checks. */

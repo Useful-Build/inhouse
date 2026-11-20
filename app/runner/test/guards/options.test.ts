@@ -210,7 +210,7 @@ describe('the guarded options', () => {
     const first = call('u1').then((r) => ((allowed = true), r))
     for (let i = 0; i < 5; i++) await turn()
     expect(allowed).toBe(false)
-    expect(sent).toEqual([{ hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', decision: 'allow', input: { command: 'ls' } }])
+    expect(sent).toEqual([{ hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', decision: 'allow', input: { cut: false, value: { command: 'ls' } } }])
     // The shape the root checks.
     expect(AuditEntry.safeParse(sent[0]).success).toBe(true)
     settle.resolve()

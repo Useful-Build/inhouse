@@ -816,7 +816,7 @@ describe('the production wiring', () => {
     // The root nacks: the call is blocked.
     const refused = call('u1')
     await waitForTicks(() => sentAudits().length === 1)
-    expect(sentAudits()[0]).toMatchObject({ type: 'audit', id: 0, entry: { hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', input: { command: 'ls' } } })
+    expect(sentAudits()[0]).toMatchObject({ type: 'audit', id: 0, entry: { hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', input: { cut: false, value: { command: 'ls' } } } })
     h.deliver({ type: 'audit_nack', id: 0, error: 'the Worker has gone' })
     await expect(refused).rejects.toThrow(AuditRefusedError)
     await expect(refused).rejects.toThrow(/the Worker has gone/)
