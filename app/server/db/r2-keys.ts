@@ -7,7 +7,8 @@ export const R2_PREFIXES = [
   'sessions/',
   'files/',
 
-  // W4 (p3-w4.md): 'audit-copy/' (entry in ops/tables/usage.ts).
+  // W4 (p3-w4.md): the audit log's daily copy (entry in ops/tables/usage.ts).
+  'audit-copy/',
 ] as const
 
 /** A member's photo object: `photos/<memberId>/<random>`, a new key on every upload (PR 3's photo route). */
@@ -26,3 +27,5 @@ export const sessionKey = (chatId: string, sessionId: string, projectHash: strin
 export const chatFileKey = (chatId: string, fileId: string): string => `files/${chatId}/${fileId}`
 
 // W4's key builders (audit-copy/).
+/** One range of the audit log's daily copy: `audit-copy/<date>/<fromId>-<toId>.jsonl` (p3-design section 9). */
+export const auditCopyKey = (date: string, fromId: number, toId: number): string => `audit-copy/${date}/${fromId}-${toId}.jsonl`

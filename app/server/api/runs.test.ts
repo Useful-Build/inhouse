@@ -126,6 +126,8 @@ describe('route 29: send a turn', () => {
 
 describe('routes 30 and 31: interrupt and stop', () => {
   it("another person's turn is 404 before the object check; one's own acts; a malformed id is 404", async () => {
+    // A monthly cap, so W4's ledger reserves the turn's start hold and the turn is live when it's stopped.
+    await setting('s:cap', '$320')
     const id = `c-${uniq()}`
     await chat(id, alice)
     const sent = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'sonnet' })
