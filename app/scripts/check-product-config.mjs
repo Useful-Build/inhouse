@@ -13,7 +13,12 @@
 //   - an app lacks `origin` or `aud`, an origin isn't a bare `https://` origin, two apps share a hostname (an origin,
 //     or a port-only difference: Access's cookie is per hostname) or an `aud`,
 //     or an `aud` isn't 64 hex;
-//   - a service token maps to anything but `monitor` or `smoke`;
+//   - a service token maps to anything but `monitor`, `smoke` or `release` (P3);
+//   - (P3) a config with the runner pool (a `Runner` Durable Object binding, a `containers` entry or `RUNNER_POOL`) whose
+//     `RUNNER_POOL` isn't a whole number of 2 or more, or that hasn't exactly one `Runner` container with
+//     `max_instances` = 3 x RUNNER_POOL (p3-design section 7);
+//   - (P3) a test-build config (the test issuer on) with an AI binding or a gateway var or secret: tests never reach the
+//     gateway (p3-design section 13). A test config is refused anyway; this names the gateway too, so it can't creep in;
 //   - a brand origin is on `workers.dev` (preview URLs live there too: `<version>-<worker>.<subdomain>.workers.dev`);
 //   - `workers_dev` or `preview_urls` isn't explicitly false (wrangler turns both on when they're left out).
 import { readFileSync } from 'node:fs'
@@ -124,8 +129,29 @@ export function checkConfig(config) {
   })
   const tokens = access?.serviceTokens && typeof access.serviceTokens === 'object' ? access.serviceTokens : {}
   for (const service of Object.values(tokens)) {
-    if (service !== 'monitor' && service !== 'smoke') failures.push(`INHOUSE_ACCESS.serviceTokens maps a token to "${String(service)}" (only monitor or smoke)`)
+    if (!['monitor', 'smoke', 'release'].includes(service)) failures.push(`INHOUSE_ACCESS.serviceTokens maps a token to "${String(service)}" (only monitor, smoke or release)`)
   }
+  return failures
+}
+
+/** P3's runner pool and gateway rules (p3-design sections 7 and 13), apart from INHOUSE_ACCESS so they run on any config. */
+export function checkPool(config) {
+  const failures = []
+  const vars = config.vars ?? {}
+  const runnerBound = (config.durable_objects?.bindings ?? []).some(b => b?.class_name === 'Runner')
+  const containers = Array.isArray(config.containers) ? config.containers : []
+  if (runnerBound || containers.length || Object.hasOwn(vars, 'RUNNER_POOL')) {
+    const n = /^[1-9][0-9]*$/.test(String(vars.RUNNER_POOL ?? '')) ? Number(vars.RUNNER_POOL) : NaN
+    if (!(n >= 2)) failures.push('vars.RUNNER_POOL must be a whole number of 2 or more (the runner pool size)')
+    const runners = containers.filter(c => c?.class_name === 'Runner')
+    if (runners.length !== 1 || containers.length !== 1) failures.push('containers must be exactly one, for the Runner class')
+    else if (n >= 2 && runners[0].max_instances !== 3 * n) {
+      failures.push(`the Runner container's max_instances (${String(runners[0].max_instances)}) must be 3 x RUNNER_POOL (${3 * n})`)
+    }
+  }
+  const testBuild = Object.hasOwn(vars, 'INHOUSE_TEST_BUILD') || Object.hasOwn(vars, 'TEST_ISSUER_JWKS')
+  const gateway = config.ai !== undefined || Object.keys(vars).some(k => k.startsWith('AI_GATEWAY')) || (config.secrets?.required ?? []).some(k => String(k).startsWith('AI_GATEWAY'))
+  if (testBuild && gateway) failures.push('a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway')
   return failures
 }
 
@@ -137,7 +163,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     try { text = readFileSync(args[0], 'utf8') } catch { usage(`can't read ${args[0]}`) }
     let config
     try { config = JSON.parse(stripJsonc(text)) } catch (err) { usage(`${args[0]} isn't valid JSONC: ${err.message}`) }
-    const failures = checkConfig(config)
+    const failures = [...checkConfig(config), ...checkPool(config)]
     if (failures.length) {
       console.error(`check-product-config: ${args[0]} may not deploy:\n${failures.map(f => `  - ${f}`).join('\n')}`)
       process.exit(1)

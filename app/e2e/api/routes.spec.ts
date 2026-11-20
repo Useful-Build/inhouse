@@ -20,7 +20,7 @@ test('every row has a case in the matrix spec, and every case a row', () => {
   expect(cases.filter(c => !rows.includes(c)), 'cases with no row').toEqual([])
 })
 
-test('each server row says what the design says: class, allow, services and adminWrite', () => {
+test('each server row says what the design says: class, allow, services, adminWrite and ownerObject', () => {
   const sorted = (v: readonly string[]) => [...v].sort()
   for (const row of matrixRows()) {
     const design = CASES[rowKey(row)]?.design
@@ -30,6 +30,7 @@ test('each server row says what the design says: class, allow, services and admi
     expect(sorted(row.allow), `${rowKey(row)}: allow`).toEqual(sorted(design.allow))
     expect(sorted(row.services), `${rowKey(row)}: services`).toEqual(sorted(design.services))
     expect(row.adminWrite, `${rowKey(row)}: adminWrite`).toBe(design.adminWrite)
+    expect(row.ownerObject, `${rowKey(row)}: ownerObject`).toBe(design.ownerObject)
   }
 })
 
@@ -38,9 +39,14 @@ test('the matrix keeps the design\'s invariants over every row', () => {
     const where = rowKey(row)
     if (row.class === 'technical') expect(row.allow, `${where}: Inhouse writes and reads technical`).toContain('inhouse')
     if (row.class === 'personal') expect(row.allow, `${where}: personal is never Inhouse`).not.toContain('inhouse')
-    if (row.method !== 'GET' && ['brand_data', 'baseline', 'personal'].includes(row.class)) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
+    // Changed for item 19 (2026-11-20): Inhouse may be listed on a baseline write (pause, resume); never brand_data or personal.
+    if (row.method !== 'GET' && ['brand_data', 'personal'].includes(row.class)) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
     if (row.services.includes('monitor')) expect(row.class, `${where}: monitor is for open rows`).toBe('open')
-    if (row.services.includes('smoke')) expect(row.method, `${where}: smoke only reads`).toBe('GET')
+    // Changed in P3 (p3-design section 3): smoke is no longer GET-only; it's never on open or report rows.
+    if (row.services.includes('smoke')) expect(['open', 'report'], `${where}: smoke never on open or report rows`).not.toContain(row.class)
+    if (row.services.includes('release')) expect(row.class, `${where}: release is for open rows`).toBe('open')
+    if (row.class === 'open') expect(row.allow, `${where}: no person reaches an open row`).toEqual([])
+    if (row.ownerObject) expect(row.class, `${where}: ownerObject is a brand_data flag`).toBe('brand_data')
     if (row.adminWrite) expect(row.class).toBe('technical')
   }
 })

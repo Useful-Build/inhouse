@@ -9,6 +9,14 @@ import { openStores } from './db/stores.ts'
 import { apiError } from './http.ts'
 import { routes } from './routes.ts'
 
+// P3's classes (p3-design section 1), each in its owner's file: the Durable Objects the Worker config binds, and the
+// egress entrypoints the Runner registers as intercepts. PR0's stubs until their owners replace them.
+export { BrandAgent } from './do/brand-agent/index.ts'
+export { Runner } from './do/runner/index.ts'
+export { Egress } from './egress/index.ts'
+export { WebEgress } from './egress/webfetch.ts'
+export { DenyEgress } from './egress/deny.ts'
+
 // `stores`: W2's D1 data layer (server/db/). A handler reaches D1 and R2 only through them (routes.ts, STORE_BINDINGS).
 const parts: ApiParts = { authenticate, checkOrigin, checkAccess, stores: env => openStores(env), routes, accessMatrix }
 

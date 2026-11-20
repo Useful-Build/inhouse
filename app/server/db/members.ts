@@ -109,8 +109,8 @@ export interface MemberStoreDeps {
   hook?: AuditHook
 }
 
-type PersonPrincipal = Extract<Principal, { kind: 'person' }>
-type InhouseIdentity = Omit<Extract<Principal, { kind: 'inhouse' }>, 'grant'>
+type PersonPrincipal = Omit<Extract<Principal, { kind: 'person' }>, 'expMs'>
+type InhouseIdentity = Omit<Extract<Principal, { kind: 'inhouse' }>, 'grant' | 'expMs'>
 
 export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
   /** The batch with every audit insert passed through the test hook (the identity outside tests). */

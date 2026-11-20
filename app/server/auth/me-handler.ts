@@ -6,11 +6,11 @@ import { apiError, apiJson } from '../http.ts'
 import type { Handler } from '../routes.ts'
 import { canFor } from './matrix.ts'
 import type { AccessRow, CanRows } from './matrix.ts'
-import type { Principal } from './principal.ts'
+import type { MemberPrincipal } from './principal.ts'
 import type { AuthStores } from './stores.ts'
 
 /** `Me` for a principal with a member row and its profile. */
-export function buildMe(principal: Exclude<Principal, { name: 'monitor' }>, profile: { name: string; email: string | null; photoKey: string | null }, rows: readonly AccessRow[], canRows: CanRows, nowMs: number): Me {
+export function buildMe(principal: MemberPrincipal, profile: { name: string; email: string | null; photoKey: string | null }, rows: readonly AccessRow[], canRows: CanRows, nowMs: number): Me {
   const role = principal.kind === 'inhouse' ? 'inhouse' : principal.kind === 'person' ? principal.role : 'member'
   const grant = principal.kind === 'inhouse' && principal.grant && principal.grant.endsAtMs > nowMs
     ? { id: principal.grant.id, endsAt: { iso: new Date(principal.grant.endsAtMs).toISOString(), ms: principal.grant.endsAtMs } }
@@ -32,7 +32,8 @@ export function buildMe(principal: Exclude<Principal, { name: 'monitor' }>, prof
  */
 export function meHandler(deps: { rows: readonly AccessRow[]; canRows: CanRows }): Handler {
   return async ({ principal, requestId, nowMs, stores }) => {
-    if (principal.kind === 'service' && principal.name === 'monitor') return apiError('forbidden')
+    // monitor and release have no member row (and no row 2 entry: checkAccess refuses them first).
+    if (principal.kind === 'service' && principal.name !== 'smoke') return apiError('forbidden')
     if (!stores) throw new Error('GET /api/me has no stores: its row must not be a report row')
     let profile: Awaited<ReturnType<AuthStores['members']['profile']>>
     try {

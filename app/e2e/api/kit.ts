@@ -16,8 +16,11 @@ import type { AppName } from '../support/test-build/issuer.ts'
 export type { AppName }
 export { appOrigin }
 
-/** The seven principals of the design's matrix (Inhouse with and without a grant are one person, the grant differs). */
-export type Who = 'admin' | 'memberA' | 'memberB' | 'inhouse' | 'smoke' | 'monitor'
+/**
+ * The principals of the design's matrix (Inhouse with and without a grant are one person, the grant differs), with P3's
+ * `release` service token.
+ */
+export type Who = 'admin' | 'memberA' | 'memberB' | 'inhouse' | 'smoke' | 'monitor' | 'release'
 
 /** Someone who can sign in: a person's `sub` and email on an app, or a service token's client id. */
 export type Actor =
@@ -31,13 +34,13 @@ const seeded: Record<'admin' | 'memberA' | 'memberB' | 'inhouse', Actor> = {
   inhouse: { app: 'inhouse', sub: SEED_INHOUSE.subject, email: SEED_INHOUSE.email },
 }
 
-const serviceClient = (name: 'smoke' | 'monitor'): string => {
+const serviceClient = (name: 'smoke' | 'monitor' | 'release'): string => {
   const found = Object.entries(testAccessConfig().serviceTokens).find(([, v]) => v === name)
   if (!found) throw new Error(`The test build's INHOUSE_ACCESS has no "${name}" service token.`)
   return found[0]
 }
 
-export const actor = (who: Who): Actor => (who === 'smoke' || who === 'monitor' ? { app: 'brand', clientId: serviceClient(who) } : seeded[who])
+export const actor = (who: Who): Actor => (who === 'smoke' || who === 'monitor' || who === 'release' ? { app: 'brand', clientId: serviceClient(who) } : seeded[who])
 
 /** A person who isn't seeded: fresh subject, email and name per call (the member rows they make stay in the database). */
 export function newIdentity(label: string): { sub: string; email: string; name: string } {
@@ -174,6 +177,7 @@ export interface Row {
   allow: string[]
   services: string[]
   adminWrite: boolean
+  ownerObject: boolean
 }
 
 const appFile = (rel: string) => readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8')
@@ -182,9 +186,9 @@ const list = (s: string | undefined) => (s ?? '').split(',').map(x => x.trim().r
 /** `server/access-matrix.ts`'s rows. Fails loud when a line that looks like a row isn't read as one. */
 export function matrixRows(): Row[] {
   const source = appFile('server/access-matrix.ts')
-  const re = /\{ method: '(\w+)', pattern: '([^']+)', class: '(\w+)', allow: \[([^\]]*)\](?:, services: \[([^\]]*)\])?(, adminWrite: true)? \}/g
+  const re = /\{ method: '(\w+)', pattern: '([^']+)', class: '(\w+)', allow: \[([^\]]*)\](?:, services: \[([^\]]*)\])?(, adminWrite: true)?(, ownerObject: true)? \}/g
   const rows = [...source.matchAll(re)].map(m => ({
-    method: m[1], pattern: m[2], class: m[3], allow: list(m[4]), services: list(m[5]), adminWrite: m[6] !== undefined,
+    method: m[1], pattern: m[2], class: m[3], allow: list(m[4]), services: list(m[5]), adminWrite: m[6] !== undefined, ownerObject: m[7] !== undefined,
   }))
   // Every row line, numbered or not (the canRows map has `{ method:` too, but no `class:`).
   const lines = source.split('\n').filter(l => l.includes("{ method: '") && l.includes('class:')).length

@@ -1,6 +1,7 @@
 // The migrations as applied (server/testing/apply-migrations.ts runs every file in server/migrations/). Ways it can
 // fail, written down first:
-//  1. a migration is added and latest.ts still names an older one (the health route's migration signal lies);
+//  1. the health route's list of shipped migrations misses a file (its migration signal would pass with one unapplied);
+//     P3 PR0 retired latest.ts for that list (p3-design section 11);
 //  2. the audit log can be edited or shortened: an UPDATE or a DELETE, from a handler or a migration-shaped statement;
 //  3. the service rows are missing or have no fixed ids;
 //  4. the members table takes a row the design forbids (a person with no role, a service row with no name, two open
@@ -8,16 +9,16 @@
 import { env } from 'cloudflare:workers'
 import type { D1Migration } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
-import { LATEST_MIGRATION } from '../migrations/latest.ts'
+import { SHIPPED_MIGRATIONS } from '../ops/signals/core.ts'
 
 const db = env.DB
 const migrations = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS
 
-describe('latest.ts (failure 1)', () => {
-  it('names the highest migration', () => {
+describe('the shipped migrations (failure 1)', () => {
+  it('are every file the test pool applies (read by @cloudflare/vitest-plugin, not by the signal)', async () => {
     const names = migrations.map(m => m.name.replace(/\.sql$/, '')).sort()
-    expect(names.length).toBeGreaterThan(0)
-    expect(LATEST_MIGRATION).toBe(names[names.length - 1])
+    expect(names).toEqual(expect.arrayContaining(['0001_members', '0002_settings', '0003_support_grants', '0004_audit_log', '0005_service_rows']))
+    expect(SHIPPED_MIGRATIONS).toEqual(names)
   })
 })
 
