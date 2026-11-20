@@ -153,13 +153,12 @@ test.describe('what the rows alone do not say', () => {
     const alex = actor('inhouse')
     try {
       const mark = auditMax()
-      // The routes a support.access line can name today (the audit contract's closed list). P3's chat reads join it in
-      // W1's first PR; until then an Inhouse read of one is 503 with no line ("no line, no data", p3-design section 3).
+      // Every brand_data GET route can be named by a support.access line (the audit contract's closed list; P3's chat
+      // reads joined it in W1's first PR), so no Inhouse read is refused 503 for want of a line ("no line, no data",
+      // p3-design section 3). A P3 stub still answers its own 503 `not_built` after the line is written.
       const logged = (route: string) => AuditArgsSchema.safeParse({ action: 'support.access', grantId: made.json.id, method: 'GET', route }).success
-      const unlogged = designGets('brand_data').filter(r => !logged(r.pattern))
-      for (const row of unlogged) expectError(await call(request, alex, 'GET', caseFor(row).path), 503, 'unavailable')
-      expect(auditAfter(mark).filter(l => l.action === 'support.access'), 'an unlogged read writes no line').toEqual([])
-      const reads = designGets('brand_data').filter(r => logged(r.pattern))
+      expect(designGets('brand_data').filter(r => !logged(r.pattern)).map(r => r.pattern), 'a brand_data read no line can name').toEqual([])
+      const reads = designGets('brand_data')
       for (const row of reads) {
         const r = await call(request, alex, 'GET', caseFor(row).path)
         expect(r.status, `${row.pattern}: ${r.text}`).toBe(caseFor(row).passes)

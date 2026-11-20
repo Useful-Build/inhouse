@@ -17,6 +17,14 @@ const ROUTE: Record<string, string> = {
   '/api/members/:id/photo': "A member's photo",
   '/api/audit': 'The audit log',
   '/api/audit/export.csv': 'The audit log export',
+  '/api/chats': 'The chat list',
+  '/api/chats/:id': 'A chat',
+  '/api/runs/active': 'The running answers',
+  '/api/traces/:id': "An answer's steps",
+  '/api/socket': 'A live answer',
+  '/api/chats/:id/files': "A chat's files",
+  '/api/files/:fileId': 'A file',
+  '/api/memory': 'Memory',
 }
 
 const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
@@ -47,5 +55,8 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'grant.ended': return { what: 'ended the Inhouse team’s access', detail: '' }
     case 'grant.expired': return { what: 'Inhouse team access ended', detail: 'Its time ran out' }
     case 'support.access': return { what: 'looked at brand data', detail: ROUTE[args.route] ?? args.route }
+    case 'agent.paused': return { what: 'paused the agent', detail: '' }
+    case 'agent.resumed': return { what: 'resumed the agent', detail: '' }
+    case 'support.attach': return { what: 'watched a live answer', detail: '' }
   }
 }

@@ -2,6 +2,7 @@
 import { z } from 'zod'
 import { EffortSchema, ScenarioSchema, StageSchema } from './common.ts'
 import { AttachmentSchema } from './chat.ts'
+import { ChatIdSchema } from './chat-ids.ts'
 
 /** How soon a message sent into a running answer is taken: `now` steers at the next step, `next` when the turn ends, `later` after everything waiting. */
 export const SendPrioritySchema = z.enum(['now', 'next', 'later'])
@@ -27,8 +28,8 @@ export const AskOptionsSchema = z.object({
 })
 export type AskOptions = z.infer<typeof AskOptionsSchema>
 
-/** `createChat`'s input: the client makes the id, so the chat shows at once. */
-export const CreateChatInputSchema = z.object({ id: z.string().min(1), title: z.string() })
+/** `createChat`'s input (route 23): the client makes the id, so the chat shows at once. A title of 1 to 200 characters. */
+export const CreateChatInputSchema = z.object({ id: ChatIdSchema, title: z.string().min(1).max(200) })
 export type CreateChatInput = z.infer<typeof CreateChatInputSchema>
 
 /** `send`'s options. */

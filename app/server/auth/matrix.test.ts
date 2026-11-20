@@ -12,6 +12,7 @@ import type { Principal } from './principal.ts'
 import { ADMIN_WRITE_OBJECT, AccessRefusedError, canFor, canRowsProblems, checkAccess, objectGate, rowFor } from './matrix.ts'
 import type { AccessObject, AccessRow, CanRows } from './matrix.ts'
 import { CanKeySchema } from '../../shared/contract/me.ts'
+import { AuditArgsSchema } from '../../shared/contract/audit.ts'
 import { DESIGN_CAN_ROWS, DESIGN_ROWS, SMOKE_MEMBER, principals } from '../testing/auth-fixtures.ts'
 
 const NOW = Date.parse('2026-11-20T10:00:00.000Z')
@@ -529,5 +530,16 @@ describe('P3 auth: release, smoke and ownerObject', () => {
       }
     }
     expect(checkAccess(principals.release(), rowFor(DESIGN_ROWS, 'GET', '/api/health')!, undefined, NOW)).toEqual({ refused: 'forbidden' })
+  })
+})
+
+describe('every Inhouse brand_data read has a support.access line (P3 W1 PR 1: "no line, no data")', () => {
+  it('the audit contract names each brand_data GET row that allows Inhouse, the design rows and the committed ones', () => {
+    for (const rows of [DESIGN_ROWS, accessMatrix] as readonly (readonly AccessRow[])[]) {
+      const unnamed = rows.filter(r => r.method === 'GET' && r.class === 'brand_data' && r.allow.includes('inhouse'))
+        .filter(r => !AuditArgsSchema.safeParse({ action: 'support.access', grantId: 'g_1', method: 'GET', route: r.pattern }).success)
+        .map(r => r.pattern)
+      expect(unnamed).toEqual([])
+    }
   })
 })
