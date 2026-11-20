@@ -60,6 +60,7 @@ test('ending a grant refuses the Inhouse team on its very next request, and each
   const adminId = (await me(request, admin)).memberId
   const made = await call(request, admin, 'POST', '/api/grants', { json: { hours: 24 } })
   expect(made.status, made.text).toBe(201)
+  const alexId = (await me(request, alex)).memberId
   expect((await call(request, alex, 'GET', '/api/members')).status).toBe(200)
   expect((await call(request, alex, 'GET', '/api/audit')).status).toBe(200)
 
@@ -81,9 +82,8 @@ test('ending a grant refuses the Inhouse team on its very next request, and each
   expect(again.status).toBeLessThan(500)
 
   const lines = auditAfter(mark).filter(l => JSON.parse(l.args_json).grantId === made.json.id)
-  expect(lines.map(l => l.action)).toEqual(['grant.created', 'support.access', 'support.access', 'grant.ended'])
-  expect(lines.map(l => l.actor_id)).toEqual([adminId, expect.stringMatching(/^m_/), expect.stringMatching(/^m_/), adminId])
-  expect(lines[1].actor_id).not.toBe(adminId)
+  expect(lines.map(l => l.action)).toEqual(['grant.created', 'support.access', 'support.access', 'support.access', 'grant.ended'])
+  expect(lines.map(l => l.actor_id)).toEqual([adminId, alexId, alexId, alexId, adminId])
 })
 
 test('a grant past its end is not live, and its grant.expired line is written once, by the system', async ({ request }) => {

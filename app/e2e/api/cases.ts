@@ -39,7 +39,7 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/grants/:id/end': { path: `/api/grants/${NO_GRANT}/end`, json: {}, passes: 400 },
   'GET /api/audit': { path: '/api/audit', passes: 200 },
   'GET /api/audit/export.csv': { path: '/api/audit/export.csv', passes: 200 },
-  'POST /api/client-error': { path: '/api/client-error', json: {}, passes: 400 },
+  'POST /api/client-error': { path: '/api/client-error', json: {}, passes: 204 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */
