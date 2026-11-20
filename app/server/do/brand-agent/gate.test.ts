@@ -366,6 +366,24 @@ describe('interrupt, fence and settle (8.2, 4.6, 9)', () => {
     expect(h.usage.final.has(a.turnId)).toBe(true)
   }))
 
+  it('a turn that ends with a call open: no release or settle until the call closes, then settle, never release (#154 fold item 4)', () => inAgent(async h => {
+    const t = (await liveTurn(h)).turnId
+    ask(h, t, 'c1', 100_000)
+    await settle()
+    await h.core.renewModelCall(t, 'c1', U(0))
+    h.push(t, ...fullAnswer('done', 2))
+    await settle()
+    expect(h.turn(t).state).toBe('ended')
+    for (let s = 0; s < 3; s++) {
+      await h.tick(20 * SEC)
+      expect(await h.core.renewModelCall(t, 'c1', U(10_000))).toEqual({ ok: true })
+    }
+    expect(ledger(h)).toEqual([])
+    await h.core.releaseModelCall(t, 'c1', { usage: U(60_000), cut: false })
+    await settle()
+    expect(ledger(h)).toEqual([['close', 'c1', 60_000, 250_000], ['settle', 60_000]])
+  }))
+
   it('a turn with no model call gives its hold back with release (design 9)', () => inAgent(async h => {
     const t = (await liveTurn(h)).turnId
     h.push(t, ...fullAnswer('done', 2))
