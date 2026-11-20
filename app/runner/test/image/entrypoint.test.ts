@@ -28,12 +28,21 @@ function run(env: Record<string, string>) {
   return out.trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>)
 }
 
+const PEM = '-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n'
+
 describe('the entrypoint', () => {
+  it('a CA file there but not a whole certificate (still being written): the runner does not start', () => {
+    const d = temp()
+    const ca = join(d, 'ca.crt')
+    writeFileSync(ca, '-----BEGIN CERTIFICATE-----\nMII')
+    expect(() => run({ INHOUSE_CA_FILE: ca, INHOUSE_CA_TRUST_DIR: join(d, 'trust') })).toThrow()
+  })
+
   it('with the CA: copied into the trust store and the store updated; NODE_EXTRA_CA_CERTS names it for the command', () => {
     const d = temp()
     const ca = join(d, 'ca.crt')
     // Root-only at the source, as the container's file may be.
-    writeFileSync(ca, 'pem', { mode: 0o600 })
+    writeFileSync(ca, PEM, { mode: 0o600 })
     const trust = join(d, 'trust')
     const bin = join(d, 'bin')
     execFileSync('/bin/mkdir', ['-p', trust, bin])
@@ -42,7 +51,7 @@ describe('the entrypoint', () => {
     const lines = run({ INHOUSE_CA_FILE: ca, INHOUSE_CA_TRUST_DIR: trust, PATH: `${bin}:${process.env.PATH}` })
     expect(lines[0]).toEqual({ type: 'intercept_ca', found: true, systemStore: 'system' })
     const copy = join(trust, 'cloudflare-containers-ca.crt')
-    expect(readFileSync(copy, 'utf8')).toBe('pem')
+    expect(readFileSync(copy, 'utf8')).toBe(PEM)
     // Readable by the non-root session users, whatever the source's mode; NODE_EXTRA_CA_CERTS names that copy.
     expect(statSync(copy).mode & 0o777).toBe(0o644)
     expect(existsSync(join(d, 'updated'))).toBe(true)
@@ -53,7 +62,7 @@ describe('the entrypoint', () => {
   it('with the CA but a failing trust store update: the runner does not start (no intercept only Node trusts)', () => {
     const d = temp()
     const ca = join(d, 'ca.crt')
-    writeFileSync(ca, 'pem')
+    writeFileSync(ca, PEM)
     const bin = join(d, 'bin')
     execFileSync('/bin/mkdir', ['-p', bin])
     writeFileSync(join(bin, 'update-ca-certificates'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })

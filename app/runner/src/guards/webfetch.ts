@@ -1,5 +1,6 @@
 // WebFetch's reach (the run config's `webFetchDomains`; Wasim, decision 20: on from the start):
-// - `null`: any public host, on the scheme's default port. Each URL's host is still refused here when it's an IP
+// - `null`: any public host, on port 443 only (design 8.8): an https URL with no port or `:443`; plain http (port 80)
+//   and any other port are refused. Each URL's host is still refused here when it's an IP
 //   literal, a local name (`localhost`, `*.local`, `*.internal`, ...), this container's own address or a reserved label
 //   (options.ts, fetchHostRefusal), and, best effort, when the name resolves here to a loopback, private, link-local,
 //   CGNAT or other reserved address or to this container (`127.0.0.1.nip.io`). Best effort only: DNS can answer
@@ -90,8 +91,8 @@ export function allowedFetchHost(url: unknown, domains: readonly string[] | null
   const host = parsed.hostname.toLowerCase().replace(/\.$/, '')
   if (host.split('.').some((label) => label === '')) return null
   if (domains === null) {
-    // The scheme's default port only (the URL parser drops an explicit default, so any port left is another one).
-    if (parsed.port !== '') return null
+    // Port 443 only (design 8.8): https, with no port or `:443` (the URL parser drops it, so any port left is another).
+    if (parsed.protocol !== 'https:' || parsed.port !== '') return null
     return fetchHostRefusal(host, hostAddresses) === null ? host : null
   }
   return domains.includes(host) ? host : null
@@ -129,7 +130,7 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
         const url = (input.tool_input as { url?: unknown } | null)?.url
         const host = allowedFetchHost(url, listed, own)
         if (host !== null && (listed !== null || !(await resolvesToReserved(host, own, resolve)))) return {}
-        if (listed === null) return deny('WebFetch reaches public web addresses only: not an IP address, a local or private address, another port or this container')
+        if (listed === null) return deny('WebFetch reaches public https addresses only (port 443): not an IP address, a local or private address, another port or this container')
         return deny(listed.length === 0 ? 'WebFetch is off for this brand: no domains are listed' : 'WebFetch can only reach the domains the brand listed')
       },
     ],

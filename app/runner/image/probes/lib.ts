@@ -99,7 +99,8 @@ export function runCommand(cmd: string, args: string[], opts: { uid?: number; gi
 
 export type Step = { tool: string; input: Record<string, unknown> }
 /** A run's script: each step is a tool call (built when its turn is asked for), then one closing answer. */
-export type Script = { steps: (() => Step)[]; finalText?: string }
+/** `mcp20`: the run's `inhouse` server (through the root's proxy, as production wires it) serves the 20 tools. */
+export type Script = { steps: (() => Step)[]; finalText?: string; mcp20?: boolean }
 export type ToolResult = { text: string; isError: boolean }
 
 export type ScriptState = {
@@ -270,7 +271,7 @@ export function startEgress(): Promise<Egress> {
       if (route === 'mcp' || route === 'mcp20') {
         if (req.method !== 'POST') return sendJson(res, 405, { error: 'POST only' })
         const parsed = JSON.parse(body.toString('utf8')) as unknown
-        const answer = route === 'mcp20' ? mcp20 : mcp
+        const answer = route === 'mcp20' || state?.script.mcp20 === true ? mcp20 : mcp
         const answers = (Array.isArray(parsed) ? parsed : [parsed]).map((m) => answer(mcpCalls, m as never)).filter((a) => a !== null)
         if (answers.length === 0) return res.writeHead(202).end()
         return sendJson(res, 200, Array.isArray(parsed) ? answers : answers[0])

@@ -425,9 +425,9 @@ export async function runSession(deps: {
   const untouchedResume = check.state === 'pending' && !store.touched()
   if (resumeRefused !== null || check.state === 'failed') {
     terminal = { type: 'failed', reason: 'store', message: `the store doesn't hold the transcript to resume: ${resumeRefused ?? (check.state === 'failed' ? check.error : '')}`.slice(0, 2000) }
-  } else if (check.state === 'pending' && (result !== null || !untouchedResume)) {
-    // The query got a result, or wrote to the store, without the SDK loading the main transcript: nothing proved the
-    // resume ran on the expected transcript.
+  } else if (check.state === 'pending' && !stopping && !abort.signal.aborted && (result !== null || !untouchedResume)) {
+    // An unstopped query that ended (with a result, or after writing to the store) without the SDK ever loading the main
+    // transcript: nothing proved the resume ran on the expected transcript. A stop or an interrupt keeps its own end.
     terminal = { type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' }
   } else if (result !== null && (!threw || stopping || abort.signal.aborted)) {
     // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept).

@@ -53,7 +53,7 @@ async function decideOpen(url: unknown, resolve: Resolve = fakeResolve) {
 }
 
 describe('WebFetch open to any public host (null)', () => {
-  it.each(['https://example.com:443/', 'http://example.com:80/', 'https://example.com./'])('%s passes (the default port, one trailing dot)', async (url) => {
+  it.each(['https://example.com:443/', 'https://example.com/a?b=c', 'https://example.com./'])('%s passes (https on 443, one trailing dot)', async (url) => {
     expect(await decideOpen(url)).toBe('pass')
   })
 
@@ -91,10 +91,10 @@ describe('WebFetch open to any public host (null)', () => {
     expect(reservedAddress(ip as string)).toBe(reserved)
   })
 
-  it.prop([domain, fc.constantFrom('http', 'https'), fc.webPath()])('a public host passes', async (host, scheme, path) => {
+  it.prop([domain, fc.constantFrom('http', 'https'), fc.webPath()])('a public host passes over https (443), never over http', async (host, scheme, path) => {
     const url = `${scheme}://${host}${path}`
-    expect(allowedFetchHost(url, null, OWN)).toBe(host)
-    expect(await decideOpen(url)).toBe('pass')
+    expect(allowedFetchHost(url, null, OWN)).toBe(scheme === 'https' ? host : null)
+    expect(await decideOpen(url)).toBe(scheme === 'https' ? 'pass' : 'deny')
   })
 
   it.each([
@@ -117,6 +117,9 @@ describe('WebFetch open to any public host (null)', () => {
     // Another port than the scheme's.
     'https://example.com:8443/',
     'http://example.com:443/',
+    // Port 443 only (design 8.8): plain http is port 80.
+    'http://example.com/',
+    'http://example.com:80/',
     // Empty labels (two trailing dots, or one in the middle).
     'https://example.com../',
     'https://example..com/',

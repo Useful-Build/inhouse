@@ -797,6 +797,29 @@ describe('the run lifecycle', () => {
       noStoreTrace(h)
     })
 
+    it('a stop after the SDK wrote but before it loaded: stopped (failed store is only for an unstopped query)', async () => {
+      let wake!: () => void
+      const woken = new Promise<void>((r) => (wake = r))
+      const q = scriptedQuery(async function* ({ options }) {
+        options.abortController!.signal.addEventListener('abort', () => wake(), { once: true })
+        await options.sessionStore!.append({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' }, [{ type: 'user', uuid: 'w1' }])
+        await woken
+      })
+      const real = q.query
+      const query: QueryFn = (params) => Object.assign(real(params), { interrupt: async () => wake() })
+      // The store holds the three entries the resume expects.
+      const egress = fakeEgress()
+      egress.parts.set(JSON.stringify(['k', '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11', null]), new Map([['000000000000001-000001', [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'u2' }, { type: 'user', uuid: 'u3' }]]]))
+      const h = harness(query, testQueryGuards, { egress })
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await waitForTicks(() => h.sent.some((m) => JSON.stringify(m) === '{"type":"query_started"}'))
+      h.deliver({ type: 'stop', endWithinMs: 60_000 })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'stopped', message: 'stopped' })
+      // It touched the store: its checkpoint reports what the store holds (the three, then its own).
+      expect(h.events().filter((e: { type: string }) => e.type === 'checkpoint')).toEqual([{ type: 'checkpoint', mainEntries: 4, lastUuid: 'w1', lastUuidIndex: 3, runEntries: 1 }])
+    })
+
     it('an SDK error: failed sdk_error', async () => {
       const h = harness(fakeQuery([result], { throwAt: 0 }).query)
       h.deliver({ type: 'run', config: resumeConfig() })

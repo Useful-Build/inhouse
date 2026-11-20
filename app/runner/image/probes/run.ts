@@ -1136,7 +1136,6 @@ for _ in range(n): os.wait()
 const directUsers: Record<DirectVariant, string> = {
   plain: 's38',
   'four-tools': 's40',
-  'inhouse-tools': 's34',
   'audit-refused': 's41',
   'audit-hook-removed': 's42',
   'ip-allow': 's43',
@@ -1205,25 +1204,6 @@ async function probeDirect() {
     record('four-tools.nothing-outside-the-20', outside.length === 0, `outside: ${JSON.stringify(outside)}`)
   } else record('four-tools.init', false, four.raw.slice(-600))
 
-  // The inhouse server's 20 tools with the pinned SDK: the six marked always-load go to the model at start, the
-  // fourteen others are deferred (sent with defer_loading, or left for tool search). Compared with literal lists.
-  const twenty = await direct('inhouse-tools', { prompt: 'Say hi.', webFetchDomains: [], mcpUrl: `http://127.0.0.1:${egress.port}/mcp20` }, { steps: [] })
-  const first = twenty.state.requests[0]
-  if (first) {
-    const prefix = `mcp__${INHOUSE_MCP_SERVER}__`
-    const sent = ((first.tools ?? []) as { name: string; defer_loading?: boolean }[]).filter((t) => t.name.startsWith(prefix))
-    const loaded = sent.filter((t) => t.defer_loading !== true).map((t) => t.name.slice(prefix.length)).sort()
-    // Deferred, positively: the tool is named in the first request (sent with defer_loading, or listed for tool
-    // search, as the CLI lists deferred tools) and isn't among those loaded. A name missing from the request entirely
-    // counts as not deferred.
-    const requestText = JSON.stringify(first)
-    const deferred = [...INHOUSE_ALWAYS, ...INHOUSE_ON_DEMAND].filter((n) => !loaded.includes(n) && requestText.includes(`${prefix}${n}`)).sort()
-    fact('inhouse-tools.first-request', `loaded ${JSON.stringify(loaded)}, sent deferred ${JSON.stringify(sent.filter((t) => t.defer_loading === true).map((t) => t.name))}, all tool names ${JSON.stringify(((first.tools ?? []) as { name: string }[]).map((t) => t.name))}`)
-    record('inhouse-tools.six-at-start', JSON.stringify(loaded) === JSON.stringify([...INHOUSE_ALWAYS].sort()), `loaded at start: ${JSON.stringify(loaded)}`)
-    const missing = INHOUSE_ON_DEMAND.filter((n) => !deferred.includes(n))
-    record('inhouse-tools.fourteen-deferred', JSON.stringify(deferred) === JSON.stringify([...INHOUSE_ON_DEMAND].sort()), `deferred (named in the request, not loaded): ${JSON.stringify(deferred)}; of the fourteen, not seen deferred: ${JSON.stringify(missing)}`)
-  } else record('inhouse-tools.init', false, `no model request: ${twenty.raw.slice(-600)}`)
-
   // The blocking audit hook: a refused entry blocks the call; without the hook the same call goes through.
   const touch = { steps: [bash('touch outputs/audit-marker && echo touched')] }
   const refused = await direct('audit-refused', { prompt: 'Run the probe.', webFetchDomains: [] }, touch)
@@ -1273,6 +1253,34 @@ async function held(u: PoolUser, args: string[]): Promise<{ child: ChildProcess;
 const sysv = (u: PoolUser, ...args: string[]) => runCommand('python3', [`${PROBES}/sysv.py`, ...args], { uid: u.uid, gid: u.gid, cwd: '/tmp' }).then((r) => r.out.trim())
 const wipe = (u: PoolUser) => host.wipeUserFiles(u).then(() => 'passed', (e: unknown) => `threw: ${String(e instanceof Error ? e.message : e)}`)
 const shmRows = () => readFileSync('/proc/sysvipc/shm', 'utf8').split('\n').slice(1).filter((l) => l.trim() !== '')
+
+/**
+ * The inhouse server's 20 tools with the pinned SDK, wired as production wires them: a run through the root, its
+ * `inhouse` server from baseOptions (the proxy URL in sessionEnv), served by the probe egress with the 20 tools (six
+ * marked `anthropic/alwaysLoad`). The six must go to the model loaded at start; each of the fourteen must be deferred,
+ * shown positively: sent with `defer_loading`, or found by a ToolSearch call the script makes; and the request must
+ * carry the DeferredToolPlaceholder. Compared with literal lists.
+ */
+async function probeInhouseTools() {
+  if (VIA !== 'root') return record('inhouse-tools.via-root', false, `runs go ${VIA}: the proxy-URL server needs the root`)
+  const prefix = `mcp__${INHOUSE_MCP_SERVER}__`
+  const search = () => ({ tool: 'ToolSearch', input: { query: `select:${INHOUSE_ON_DEMAND.map((n) => `${prefix}${n}`).join(',')}`, max_results: 20 } })
+  const { run, done } = startRun({ chatId: 'p-inhouse-tools', script: { steps: [search], mcp20: true } })
+  await done
+  checkRun('inhouse-tools', run, [])
+  const first = run.state.requests[0]
+  if (!first) return record('inhouse-tools.first-request', false, `no model request: ${run.body.slice(-400)}`)
+  const tools = (first.tools ?? []) as { name: string; defer_loading?: boolean }[]
+  const loaded = tools.filter((t) => t.name.startsWith(prefix) && t.defer_loading !== true).map((t) => t.name.slice(prefix.length)).sort()
+  const sentDeferred = tools.filter((t) => t.name.startsWith(prefix) && t.defer_loading === true).map((t) => t.name.slice(prefix.length))
+  const found = result(run, 0)?.text ?? ''
+  const viaSearch = INHOUSE_ON_DEMAND.filter((n) => found.includes(`${prefix}${n}`))
+  const deferred = INHOUSE_ON_DEMAND.filter((n) => !loaded.includes(n) && (sentDeferred.includes(n) || viaSearch.includes(n)))
+  fact('inhouse-tools.first-request', `loaded ${JSON.stringify(loaded)}, sent deferred ${JSON.stringify(sentDeferred)}, found by ToolSearch ${JSON.stringify(viaSearch)}, tool names ${JSON.stringify(tools.map((t) => t.name))}`)
+  record('inhouse-tools.six-at-start', JSON.stringify(loaded) === JSON.stringify([...INHOUSE_ALWAYS].sort()), `loaded at start: ${JSON.stringify(loaded)}`)
+  record('inhouse-tools.fourteen-deferred', deferred.length === INHOUSE_ON_DEMAND.length, `deferred and reachable: ${JSON.stringify(deferred)}; not: ${JSON.stringify(INHOUSE_ON_DEMAND.filter((n) => !deferred.includes(n)))}`)
+  record('inhouse-tools.placeholder', tools.some((t) => t.name === 'DeferredToolPlaceholder'), `tool names ${JSON.stringify(tools.map((t) => t.name))}`)
+}
 
 async function probeSysV() {
   const [x, y, z] = [userNamed('s52'), userNamed('s53'), userNamed('s54')]
@@ -1403,6 +1411,7 @@ await step('code-review', probeCodeReview)
 await step('isolation', probeIsolation)
 await step('process-limit', probeProcessLimit)
 await step('direct', probeDirect)
+await step('inhouse-tools', probeInhouseTools)
 await step('sysv', probeSysV)
 await step('closed-folder', probeClosedFolder)
 await step('zombie-leader', probeZombieLeader)

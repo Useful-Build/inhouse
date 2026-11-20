@@ -14,14 +14,22 @@ ca="${INHOUSE_CA_FILE:-/etc/cloudflare/certs/cloudflare-containers-ca.crt}"
 trust_dir="${INHOUSE_CA_TRUST_DIR:-/usr/local/share/ca-certificates}"
 wait_s="${INHOUSE_CA_WAIT_SECONDS:-5}"
 
-# Bounded wait for the file (the docs say it's there at start; this covers a slow mount).
+# Bounded wait for the file, whole: a file still being written passes `-s`, so it counts only once it ends with a
+# complete certificate (the docs say it's there at start; this covers a slow mount or write).
+complete() { [ -s "$ca" ] && tail -c 64 "$ca" | grep -q -- '-----END CERTIFICATE-----'; }
 i=0
-while [ ! -s "$ca" ] && [ "$i" -lt "$wait_s" ]; do
+while ! complete && [ "$i" -lt "$wait_s" ]; do
   sleep 1
   i=$((i + 1))
 done
 
-if [ -s "$ca" ]; then
+if [ -e "$ca" ] && ! complete; then
+  # There, but not a whole certificate after the wait: stop rather than trust half a file or run without it.
+  printf '{"type":"intercept_ca","found":true,"complete":false}\n'
+  exit 1
+fi
+
+if complete; then
   # The image pins ca-certificates (its build checks the tool is there), so the system store always takes it; a
   # failed update stops the container rather than running with an intercept nothing but Node trusts.
   # The copy is world-readable (0644): sessions run as non-root pool users, and the source file may be root-only.
