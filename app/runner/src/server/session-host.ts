@@ -14,7 +14,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { SDK_MESSAGE_MAX_BYTES } from '../../../shared/protocol/index.ts'
 import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '../protocol/ndjson.ts'
-import { capSdkMessage, parseSessionMessage, type RootMessage, type RunConfig } from '../protocol/local.ts'
+import { capSdkMessage, monotonicMs, parseSessionMessage, type RootMessage, type RunConfig } from '../protocol/local.ts'
 import type { SessionUser } from '../session/seam.ts'
 import type { RunStream } from './run-stream.ts'
 
@@ -54,12 +54,20 @@ export type SessionHandle = {
 
 const STDERR_TAIL = 4096
 
+/**
+ * The session's deadline for its end phase after a stop, below the grace after which the root kills it: the grace less
+ * a fifth (at least a millisecond, at most a second), so the checkpoint and the terminal event have time to reach the root.
+ */
+export const stopEndWithinMs = (stopGraceMs: number) => Math.max(1, stopGraceMs - Math.max(1, Math.min(1000, Math.floor(stopGraceMs / 5))))
+
 export function hostSession(opts: {
   child: ChildProcess
   stream: RunStream
   config: RunConfig
   stopGraceMs: number
   log: (entry: Record<string, unknown>) => void
+  /** Whether an event written now reaches the Worker (its response is open). An audit entry is acked only then. */
+  canWrite: () => boolean
   maxLineBytes?: number
 }): SessionHandle {
   const { child, stream, config, log } = opts
@@ -100,8 +108,16 @@ export function hostSession(opts: {
     killGroup()
   }
 
+  const nack = (id: number, error: string) => send({ type: 'audit_nack', id, error })
   const onLine = (line: LineResult) => {
-    if (stream.ended) return
+    if (stream.ended) {
+      // The run is over, but the session may still be running: an audit entry gets its nack at once, so the hook
+      // refuses its call now rather than wait out its timeout (and the session can end in time). Nothing else is read.
+      if (!line.ok) return
+      const late = parseSessionMessage(line.value)
+      if (late.ok && late.message.type === 'audit') nack(late.message.id, 'the run has ended')
+      return
+    }
     if (!line.ok) return failProtocol(line.error)
     const parsed = parseSessionMessage(line.value)
     if (!parsed.ok) return failProtocol(parsed.error)
@@ -110,12 +126,20 @@ export function hostSession(opts: {
       if (sentRun) return failProtocol('ready sent twice')
       sentRun = true
       // A stop that came first: the session gets the stop only, never the run, and ends without starting a query.
-      if (stopping) return send({ type: 'stop' })
+      if (stopping) return send({ type: 'stop', endWithinMs: stopEndWithinMs(opts.stopGraceMs) })
       send({ type: 'run', config })
       if (interruptPending) send({ type: 'interrupt' })
       return
     }
     if (!sentRun) return failProtocol('an event before ready')
+    if (m.type === 'audit') {
+      // Acked only once the entry is on the Worker's stream; otherwise the session's hook must not let the call run.
+      if (!opts.canWrite()) return nack(m.id, 'the run has ended or the Worker has gone')
+      // It sat in the pipe past the time the hook waits (the root wasn't reading): the call was refused already.
+      if (monotonicMs() >= m.expiresAt) return nack(m.id, 'the entry expired before the root read it')
+      stream.emit({ type: 'audit', entry: m.entry })
+      return send({ type: 'audit_ack', id: m.id })
+    }
     let event = m.event
     if (event.type === 'sdk') {
       const capped = capSdkMessage(event.message, SDK_MESSAGE_MAX_BYTES)
@@ -205,7 +229,7 @@ export function hostSession(opts: {
     stop() {
       if (closed) return
       stopping = true
-      if (sentRun) send({ type: 'stop' })
+      if (sentRun) send({ type: 'stop', endWithinMs: stopEndWithinMs(opts.stopGraceMs) })
       killAfterGrace()
     },
     pause: () => fromSession?.pause(),

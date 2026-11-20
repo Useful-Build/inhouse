@@ -8,8 +8,11 @@
 // - a stop never ends a session that ignores it;
 // - a run raced by a stop or a crash ends twice, or with a seq gap;
 // - /health doesn't show how many session users the guards took out of the pool (a draining pool goes unseen).
+// - after a timeout ends the stream, the session's files pass still uploads files the stream never names.
 import type { ChildProcess } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import http from 'node:http'
+import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
 import { ACCEPTED_VERSIONS, Health, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
@@ -17,6 +20,7 @@ import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitF
 import { spawnFixture, testSessionUsers } from './support/test-seams.ts'
 import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
 import { API_MAX_CONNECTIONS } from '../../src/server/app.ts'
+import { stopEndWithinMs } from '../../src/server/session-host.ts'
 
 let root: TestRoot
 beforeEach(async () => {
@@ -111,6 +115,14 @@ describe('a session that misbehaves', () => {
     const events = await pending
     expectOneEnd(events)
     expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'stopped' })
+    // The stop carries the session's end-phase deadline, below the root's grace (2000 ms here).
+    expect(JSON.parse(readFileSync(join(root.users.dirs.get(start.chatId)!, 'stop-message.json'), 'utf8'))).toEqual({ type: 'stop', endWithinMs: stopEndWithinMs(2000) })
+  })
+
+  it.prop([fc.integer({ min: 2, max: 600_000 })])("the session's end-phase deadline is below the grace, and at least a millisecond", (grace) => {
+    const within = stopEndWithinMs(grace)
+    expect(within).toBeGreaterThanOrEqual(1)
+    expect(within).toBeLessThan(grace)
   })
 
   it('a run over its time limit ends with timeout', async () => {
@@ -126,6 +138,22 @@ describe('a session that misbehaves', () => {
 })
 
 describe('streams', () => {
+  it("once a run's stream has ended (its timeout), the proxy takes no more files for it; the store stays open", async () => {
+    // A session that ignores the timeout's stop, so it's still live (and could still upload) when we look.
+    const short = await startTestRoot(spawnFixture('fake-session.ts'), { runTimeoutMs: 30, stopGraceMs: 3000 })
+    try {
+      const start = runStart({ prompt: 'hang', runToken: 'tok_timed_out_files_0001' })
+      const run = openRun(short, start)
+      await waitFor(() => run.events.some((e) => e.type === 'failed'), 'the timeout')
+      const uid = short.users.uids.get(start.chatId)!
+      expect(short.tokenForUid(uid, 'store')).toBe('tok_timed_out_files_0001')
+      expect(short.tokenForUid(uid, 'files')).toBeNull()
+      await run.done
+    } finally {
+      await short.close()
+    }
+  })
+
   it('an oversized SDK message arrives as a truncated stub', async () => {
     const events = await postRun(root, runStart({ prompt: 'big' }))
     const sdk = events.find((e) => e.type === 'sdk')

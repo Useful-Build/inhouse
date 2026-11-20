@@ -50,13 +50,19 @@ const runStartArb: fc.Arbitrary<RunStart> = fc
   .tuple(runStartFields, fc.boolean())
   .map(([s, resume]) => ({ ...s, resume: s.prompt === '' ? true : resume }))
 
-const reason = fc.constantFrom('session_crashed', 'protocol', 'store', 'interrupted', 'stopped', 'timeout', 'sdk_error' as const)
+const reason = fc.constantFrom('session_crashed', 'protocol', 'store', 'files', 'interrupted', 'stopped', 'timeout', 'sdk_error' as const)
 const bodyArb: fc.Arbitrary<RunEventBody> = fc.oneof(
   fc.record({ type: fc.constant('started' as const), sessionId: fc.uuid({ version: 4 }), resume: fc.boolean() }),
   // z.record drops an own `__proto__` key (safe, and intended), so the round trip leaves it out of the generators.
   fc.record({ type: fc.constant('sdk' as const), message: fc.dictionary(fc.string().filter((k) => k !== '__proto__'), fc.jsonValue()), truncated: fc.boolean() }),
   fc.record({ type: fc.constant('file_saved' as const), path: fc.string({ maxLength: 50 }), bytes: fc.nat(), contentType: fc.constant('application/pdf') }),
-  fc.record({ type: fc.constant('file_refused' as const), path: fc.string({ maxLength: 50 }), reason: fc.constantFrom('too_large', 'too_many', 'type_not_allowed', 'save_failed' as const) }),
+  fc.record({ type: fc.constant('file_refused' as const), path: fc.string({ maxLength: 50 }), reason: fc.constantFrom('too_large', 'too_many', 'type_not_allowed', 'save_failed', 'bad_name' as const) }),
+  fc.record({ type: fc.constant('files_restored' as const), restored: fc.nat(), bytes: fc.nat(), leftOut: fc.array(fc.string({ maxLength: 50 }), { maxLength: 5 }) }),
+  fc.record({
+    type: fc.constant('audit' as const),
+    entry: fc.record({ hook: fc.constantFrom('PreToolUse', 'PostToolUse'), toolName: fc.string({ maxLength: 40 }), toolUseId: fc.string({ maxLength: 40 }), decision: fc.constantFrom('allow', 'deny', 'defer'), input: fc.jsonValue({ maxDepth: 3 }) }, { requiredKeys: ['hook', 'toolName', 'decision', 'input'] }),
+  }),
+  fc.record({ type: fc.constant('mirror_error' as const), message: fc.string({ maxLength: 100 }) }),
   fc.record({ type: fc.constant('deferred' as const), toolUseId: fc.string({ maxLength: 40 }), toolName: fc.string({ maxLength: 40 }), input: fc.jsonValue() }),
   fc.record({ type: fc.constant('checkpoint' as const), entries: fc.nat() }),
   fc.record({

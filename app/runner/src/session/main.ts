@@ -16,7 +16,11 @@ const guards = productionQueryGuards()
 const channel = openRootChannel()
 const { query } = await import('@anthropic-ai/claude-agent-sdk')
 
-await runSession({ channel, query: query as QueryFn, guards, cwd: process.cwd(), env: process.env })
+// The loopback proxy (sessionEnv() sets it): the store and files routes, with no token here.
+const proxyUrl = process.env.INHOUSE_PROXY_URL
+if (!proxyUrl) throw new Error('INHOUSE_PROXY_URL is not set')
+
+await runSession({ channel, query: query as QueryFn, guards, cwd: process.cwd(), env: process.env, io: { fetch, proxyUrl } })
 // Flush the terminal event, then go: the root decides the run's end once this process and its pipes have closed.
 await channel.close()
 process.exit(0)

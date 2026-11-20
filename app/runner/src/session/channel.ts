@@ -21,6 +21,8 @@ export type RootChannel = {
   send(message: unknown): void | Promise<void>
   /** Every line from the root, parsed, or the one error that ends the channel. Lines that came early are queued. */
   onMessage(handler: (line: LineResult) => void): void
+  /** The root's side closed (stdin ended or broke): nothing more will come. Called once. */
+  onClose(handler: () => void): void
   /** Flushes what was sent, then closes both descriptors. */
   close(): Promise<void>
 }
@@ -51,8 +53,19 @@ export function openRootChannel(maxLineBytes: number = ROOT_TO_SESSION_MAX_BYTES
       else queued.push(l)
     }
   }
+  let closed = false
+  const closeHandlers: (() => void)[] = []
+  const closedNow = () => {
+    if (closed) return
+    closed = true
+    for (const h of closeHandlers.splice(0)) h()
+  }
   inp.on('data', (chunk: Buffer) => deliver(reader.push(chunk)))
-  inp.on('end', () => deliver(reader.end()))
+  inp.on('end', () => {
+    deliver(reader.end())
+    closedNow()
+  })
+  inp.on('close', closedNow)
 
   return {
     send(m) {
@@ -71,6 +84,10 @@ export function openRootChannel(maxLineBytes: number = ROOT_TO_SESSION_MAX_BYTES
     onMessage(h) {
       handler = h
       for (const l of queued.splice(0)) h(l)
+    },
+    onClose(h) {
+      if (closed) h()
+      else closeHandlers.push(h)
     },
     close: () =>
       new Promise<void>((resolve) => {

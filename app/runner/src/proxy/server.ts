@@ -11,10 +11,11 @@ export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files'] as const
 
 /**
  * The request headers forwarded, an allowlist: what the Messages API takes (`anthropic-*`), what the MCP streamable
- * HTTP transport needs (`mcp-session-id`, `mcp-protocol-version`, `last-event-id`, `accept`, `content-type`), and the
- * body's framing. Nothing else: no caller credentials (the egress adds the real key) and no token but the proxy's own.
+ * HTTP transport needs (`mcp-session-id`, `mcp-protocol-version`, `last-event-id`, `accept`, `content-type`), the
+ * body's framing, and a saved file's hash (`x-inhouse-sha256`, src/files/files.ts). Nothing else: no caller
+ * credentials (the egress adds the real key) and no token but the proxy's own.
  */
-const REQUEST_HEADERS = new Set(['content-type', 'content-length', 'accept', 'user-agent', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'])
+const REQUEST_HEADERS = new Set(['content-type', 'content-length', 'accept', 'user-agent', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id', 'x-inhouse-sha256'])
 const forwardsRequestHeader = (name: string) => REQUEST_HEADERS.has(name) || name.startsWith('anthropic-')
 
 /**
@@ -32,8 +33,8 @@ export type ProxyDeps = {
   upstream: URL
   /** The uid on the other end of an accepted connection, or null when unknown. Called once, when the connection opens. */
   lookupUid: (socket: Socket) => Promise<number | null>
-  /** The live run's token for a uid, or null. */
-  tokenForUid: (uid: number) => string | null
+  /** The live run's token for a uid and route, or null (the root closes `files` once a run's stream has ended). */
+  tokenForUid: (uid: number, route: string) => string | null
   log: (entry: Record<string, unknown>) => void
   /** The largest request body forwarded; a bigger one gets 413. */
   maxBodyBytes?: number
@@ -98,23 +99,30 @@ export function createProxy(deps: ProxyDeps): http.Server {
     const path = req.url ?? '/'
     const route = /^\/([a-z]+)\//.exec(path)?.[1]
     if (!route || !(PROXY_ROUTES as readonly string[]).includes(route)) return refuse(res, 404, 'no such route')
-    // No dot segments, backslashes or fragments (`#`, raw or encoded) in the path, so it can't climb out of its route
-    // once the URL is resolved: `/model/..#x` would resolve to `/`. The query is free to carry encoded `#` and `.`
-    // (`?q=%23x`); a raw `#` is refused anywhere, since it would end the URL there.
-    const pathOnly = path.split('?', 1)[0]!
-    if (path.includes('#') || /(^|\/)\.\.?(\/|$)|\\|%2e|%5c|%23/i.test(pathOnly)) return refuse(res, 400, 'bad path')
+    if (badProxyPath(path)) return refuse(res, 400, 'bad path')
     // And whatever the checks above miss, the URL as resolved must still sit under the upstream base and this route.
     if (targetFor(deps.upstream, path, route) === null) return refuse(res, 400, 'bad path')
 
     const uid = await (uids.get(req.socket) ?? Promise.resolve(null))
     if (uid === null) return refuseLogged(deps, res, route, null, 'unknown caller')
     if (uid === 0) return refuseLogged(deps, res, route, uid, 'root never calls through the proxy')
-    const token = deps.tokenForUid(uid)
-    if (token === null) return refuseLogged(deps, res, route, uid, 'no live run for this user')
+    const token = deps.tokenForUid(uid, route)
+    if (token === null) return refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
     forward(deps, path, req, res, token, route, uid)
   }
 
   return server
+}
+
+/**
+ * Whether the proxy refuses a path as it stands. No dot segments, backslashes or fragments (`#`, raw or encoded) in the
+ * path, so it can't climb out of its route once the URL is resolved: `/model/..#x` would resolve to `/`. The query is
+ * free to carry encoded `#` and `.` (`?q=%23x`); a raw `#` is refused anywhere, since it would end the URL there. The
+ * session's files adapter (src/files/) asks this before it sends a name, so a refusal there is a clear notice.
+ */
+export function badProxyPath(path: string): boolean {
+  const pathOnly = path.split('?', 1)[0]!
+  return path.includes('#') || /(^|\/)\.\.?(\/|$)|\\|%2e|%5c|%23/i.test(pathOnly)
 }
 
 /**
