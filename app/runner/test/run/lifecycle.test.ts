@@ -15,7 +15,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import type { RunEvent } from '../../../shared/protocol/index.ts'
+import { RunStatus, type RunEvent } from '../../../shared/protocol/index.ts'
 import { pickToken } from '../../src/server/app.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
 import { gate, spawnFixture, testSessionUsers } from './support/test-seams.ts'
@@ -359,4 +359,112 @@ describe('the chat slot and the token', () => {
       expect(pickToken(runs, uid)).toBe(on.length === 1 ? on[0]!.token : null)
     },
   )
+})
+
+describe('released (protocol v2): the last event of every run, with the checkpoint result on every exit path', () => {
+  const CP = { mainEntries: 5, lastUuid: 'u-4', lastUuidIndex: 4 }
+  const cases: [string, Partial<Parameters<typeof runStart>[0]>, (root: TestRoot, runId: string) => Promise<void>, Record<string, unknown>, string][] = [
+    ['finish', { prompt: 'cp:finish' }, async () => {}, { checkpoint: CP, queryRan: true }, 'finished'],
+    [
+      'interrupt',
+      { prompt: 'cp:wait' },
+      async (root, runId) => {
+        await waitFor(() => (root.egress.events.get(runId) ?? []).some((e) => e.type === 'sdk'), 'the query ran')
+        expect(await post(root, `/runs/${runId}/interrupt`)).toBe(202)
+      },
+      { checkpoint: CP, queryRan: true },
+      'failed',
+    ],
+    [
+      'a stop before the query (the session never started it)',
+      { prompt: 'obey-stop' },
+      async (root, runId) => {
+        await waitFor(() => (root.egress.events.get(runId) ?? []).length > 0, 'started')
+        expect(await post(root, `/runs/${runId}/stop`)).toBe(202)
+      },
+      { checkpoint: null, queryRan: false },
+      'failed',
+    ],
+  ]
+  it.each(cases)('%s', async (_, over, act, expected, terminal) => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { stopGraceMs: 2000 }), async (root) => {
+      const start = runStart(over)
+      const run = openRun(root, start)
+      await run.admitted
+      await act(root, start.runId)
+      const events = await run.done
+      expectOneEnd(events)
+      expect(events.at(-1)?.type).toBe(terminal)
+      const released = await run.released
+      expect(released).toEqual({ runId: start.runId, seq: events.length, type: 'released', ...expected })
+      expect(root.egress.violations).toEqual([])
+    })
+  })
+
+  it("a root timeout: the session's later checkpoint still rides in released", async () => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { stopGraceMs: 2000, runTimeoutMs: 300 }), async (root) => {
+      const start = runStart({ prompt: 'cp:wait' })
+      const run = openRun(root, start)
+      const events = await run.done
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'timeout' })
+      // The checkpoint came after the terminal event: not on the stream (one end), but in released.
+      expect(events.some((e) => e.type === 'checkpoint')).toBe(false)
+      expect(await run.released).toMatchObject({ type: 'released', checkpoint: CP, queryRan: true })
+    })
+  })
+
+  it('a stop during allocate (before the session exists): released says no query and no checkpoint', async () => {
+    const allocating = gate()
+    const users = testSessionUsers({ onAllocate: () => allocating.promise })
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
+      const start = runStart({ prompt: 'cp:finish' })
+      const run = openRun(root, start)
+      await waitFor(() => users.allocated.length === 1)
+      expect(await post(root, `/runs/${start.runId}/stop`)).toBe(202)
+      allocating.open()
+      const events = await run.done
+      expect(events.map((e) => e.type)).toEqual(['started', 'failed'])
+      expect(await run.released).toMatchObject({ checkpoint: null, queryRan: false })
+    })
+  })
+})
+
+describe('GET /runs/:id', () => {
+  const status = async (root: TestRoot, runId: string) => {
+    const res = await fetch(`${root.url}/runs/${runId}`, { headers: protocolHeaders })
+    expect(res.status).toBe(200)
+    return RunStatus.parse(await res.json())
+  }
+
+  it('admitted while allocating, running, ending, released; a run never seen is unknown', async () => {
+    const allocating = gate()
+    const releasing = gate()
+    const users = testSessionUsers({ onAllocate: () => allocating.promise, onRelease: () => releasing.promise })
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
+      expect(await status(root, 'run-never-seen')).toEqual({ state: 'unknown', lastSeq: null, ackedSeq: null })
+      const start = runStart({ prompt: 'cp:wait' })
+      const run = openRun(root, start)
+      await waitFor(() => users.allocated.length === 1)
+      expect(await status(root, start.runId)).toEqual({ state: 'admitted', lastSeq: null, ackedSeq: null })
+      allocating.open()
+      await waitFor(() => (root.egress.events.get(start.runId) ?? []).some((e) => e.type === 'sdk'), 'the query ran')
+      expect(await status(root, start.runId)).toMatchObject({ state: 'running' })
+      await post(root, `/runs/${start.runId}/stop`)
+      await waitFor(() => (root.egress.events.get(start.runId) ?? []).some((e) => e.type === 'failed'), 'the terminal event')
+      expect(await status(root, start.runId)).toMatchObject({ state: 'ending' })
+      releasing.open()
+      const released = await run.released
+      expect(await status(root, start.runId)).toEqual({ state: 'released', lastSeq: released.seq, ackedSeq: released.seq })
+    })
+  })
+
+  it('a POST for a run id it already released is refused run_live (never run twice)', async () => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
+      const start = runStart({ prompt: 'cp:finish' })
+      await postRun(root, start)
+      const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: protocolHeaders, body: JSON.stringify({ ...start, chatId: 'chat-other' }) })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'run_live' })
+    })
+  })
 })

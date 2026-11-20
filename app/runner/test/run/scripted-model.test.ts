@@ -95,3 +95,47 @@ describe('the scripted model', () => {
     expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe('Noted, thanks.')
   })
 })
+
+// count_tokens (P3 R3), as the token counting docs describe it (read 2026-11-20). Ways it could fail: a body the real
+// endpoint refuses gets a count (so the Worker's fallback never runs in tests); a refusal isn't the documented
+// invalid_request_error 400; a countable body is refused, or the count isn't `{ input_tokens }`.
+describe('count_tokens', () => {
+  const count = (body: Record<string, unknown>) =>
+    new Request('http://proxy/model/v1/messages/count_tokens', { method: 'POST', body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], ...body }) })
+  const img = (source: Record<string, unknown>) => ({ messages: [{ role: 'user', content: [{ type: 'image', source }, { type: 'text', text: 'what is it?' }] }] })
+  const doc = (source: Record<string, unknown>) => ({ messages: [{ role: 'user', content: [{ type: 'document', source }] }] })
+
+  it("answers a scenario's scripted count, and a default for others", async () => {
+    const model = createScriptedModel({ s: { turns: [], countTokens: 1234 } })
+    const r = await model.handle(count({}), 's')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ input_tokens: 1234 })
+    const d = await (await createScriptedModel({ t: { turns: [] } }).handle(count({}), 't')).json()
+    expect(d).toEqual({ input_tokens: expect.any(Number) })
+    expect(model.misses).toEqual([])
+  })
+
+  it.each([
+    ['a web search server tool', { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }] }],
+    ['a code execution server tool', { tools: [{ name: 'Bash' }, { type: 'code_execution_20250825', name: 'code_execution' }] }],
+    ['the MCP connector', { mcp_servers: [{ type: 'url', url: 'https://mcp.example.com', name: 'x' }] }],
+    ['an image with a url source', img({ type: 'url', url: 'https://example.com/a.png' })],
+    ['a document with a file source', doc({ type: 'file', file_id: 'file_01' })],
+    ['a document with a url source inside a tool result', { messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'document', source: { type: 'url', url: 'https://example.com/a.pdf' } }] }] }] }],
+  ])('%s: the documented invalid_request_error 400', async (_, body) => {
+    const r = await createScriptedModel({ s: { turns: [], countTokens: 1 } }).handle(count(body), 's')
+    expect(r.status).toBe(400)
+    expect(await r.json()).toMatchObject({ type: 'error', error: { type: 'invalid_request_error' } })
+  })
+
+  it.each([
+    ['client tools (with and without type custom)', { tools: [{ name: 'Bash', input_schema: { type: 'object' } }, { type: 'custom', name: 'x', input_schema: { type: 'object' } }] }],
+    ['an advisor tool', { tools: [{ type: 'advisor_20260301', name: 'advisor' }] }],
+    ['a base64 image', img({ type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' })],
+    ['a base64 PDF', doc({ type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' })],
+  ])('%s: counted', async (_, body) => {
+    const r = await createScriptedModel({ s: { turns: [], countTokens: 7 } }).handle(count(body), 's')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ input_tokens: 7 })
+  })
+})

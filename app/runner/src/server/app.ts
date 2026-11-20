@@ -70,6 +70,8 @@ export type RootDeps = {
   pushFlushMs?: number
   /** How long a run may go with nothing pushed before a heartbeat (30 s; tests set it apart from the flush). */
   pushHeartbeatMs?: number
+  /** The intercept CA's path for the sessions (the entrypoint's NODE_EXTRA_CA_CERTS), when there is one. */
+  extraCaCerts?: string
   /** The push buffer's cap (tests shrink it). */
   pushMaxBytes?: number
   /** After a stop (or a run's end) the session gets this long to exit before its process group is killed. */
@@ -309,7 +311,7 @@ export function createRoot(deps: RootDeps): Root {
     let child: ChildProcess | undefined
     let handle: SessionHandle
     try {
-      child = deps.spawnSession(user, sessionEnv(user, deps.proxyPort))
+      child = deps.spawnSession(user, sessionEnv(user, deps.proxyPort, deps.extraCaCerts))
       handle = hostSession({
         child,
         stream,

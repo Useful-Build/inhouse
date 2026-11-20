@@ -48,6 +48,8 @@ import {
   startEgress,
   waitUntil,
   type Script,
+  INHOUSE_ALWAYS,
+  INHOUSE_ON_DEMAND,
   type ScriptState,
   type ShellProbe,
   type ShellResult,
@@ -185,7 +187,7 @@ const terminalOf = (r: Run): { type: string; reason?: string } | undefined => {
 /** The stream ends first; wait for the pool to report a completed release or quarantine for this chat. */
 async function releaseOf(r: Run): Promise<Release> {
   if (r.via === 'direct') return { ok: r.cleanup === '', uid: agentUser(r.chatId).uid, detail: r.cleanup || 'direct release passed' }
-  if (r.status !== 200) return { ok: false, detail: `POST /runs returned ${r.status}: ${r.body}` }
+  if (r.status !== 202) return { ok: false, detail: `POST /runs returned ${r.status}: ${r.body}` }
   try {
     // Cache the event as it may already be here by the time the caller inspects the stream.
     return rootReleases.get(r.chatId) ?? ((await once(releaseEvents, r.chatId, { signal: AbortSignal.timeout(30_000) }))[0] as Release)
@@ -235,7 +237,11 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
     run.status = res.status
     const text = await res.text()
     run.body = text
-    if (res.status === 200) for (const line of text.split('\n')) if (line.trim() !== '') run.events.push(JSON.parse(line) as RunEvent)
+    // Protocol v2: admitted (202), the run's events come to the egress; the run is over at its `released`.
+    if (res.status === 202) {
+      await Promise.race([state.released, new Promise<void>((r) => setTimeout(r, 10 * 60_000).unref())])
+      run.events = state.pushed.filter((e) => e.type !== 'released' && e.type !== 'heartbeat') as RunEvent[]
+    }
     return run
   })()
   return { run, done }
@@ -260,7 +266,7 @@ function checkRun(name: string, r: Run, bashSteps: number[]) {
   const audited = new Set(r.events.filter((e) => e.type === 'audit').map((e) => (e as { entry: { toolUseId: string } }).entry.toolUseId))
   // A direct session has no stream: its audit hook is proven by the audit probe instead.
   const missing = r.via === 'direct' ? [] : bashSteps.map((i) => r.state.ids[i]!).filter((id) => !audited.has(id))
-  const ok = r.status === 200 && t?.type === 'finished' && r.state.misses.length === 0 && missing.length === 0
+  const ok = r.status === (r.via === 'root' ? 202 : 200) && t?.type === 'finished' && r.state.misses.length === 0 && missing.length === 0
   record(`${name}.run`, ok, `via ${r.via}, status ${r.status}, end ${JSON.stringify(t)?.slice(0, 200)}, misses ${JSON.stringify(r.state.misses)}, Bash calls without an audit entry ${JSON.stringify(missing)}`)
 }
 
@@ -1130,6 +1136,7 @@ for _ in range(n): os.wait()
 const directUsers: Record<DirectVariant, string> = {
   plain: 's38',
   'four-tools': 's40',
+  'inhouse-tools': 's34',
   'audit-refused': 's41',
   'audit-hook-removed': 's42',
   'ip-allow': 's43',
@@ -1197,6 +1204,20 @@ async function probeDirect() {
     fact('four-tools.all', `${JSON.stringify(init.tools)} servers ${JSON.stringify(init.mcp_servers)} mcp calls ${JSON.stringify(egress.mcpCalls)}`)
     record('four-tools.nothing-outside-the-20', outside.length === 0, `outside: ${JSON.stringify(outside)}`)
   } else record('four-tools.init', false, four.raw.slice(-600))
+
+  // The inhouse server's 20 tools with the pinned SDK: the six marked always-load go to the model at start, the
+  // fourteen others are deferred (sent with defer_loading, or left for tool search). Compared with literal lists.
+  const twenty = await direct('inhouse-tools', { prompt: 'Say hi.', webFetchDomains: [], mcpUrl: `http://127.0.0.1:${egress.port}/mcp20` }, { steps: [] })
+  const first = twenty.state.requests[0]
+  if (first) {
+    const prefix = `mcp__${INHOUSE_MCP_SERVER}__`
+    const sent = ((first.tools ?? []) as { name: string; defer_loading?: boolean }[]).filter((t) => t.name.startsWith(prefix))
+    const loaded = sent.filter((t) => t.defer_loading !== true).map((t) => t.name.slice(prefix.length)).sort()
+    const deferred = [...INHOUSE_ALWAYS, ...INHOUSE_ON_DEMAND].filter((n) => !loaded.includes(n)).sort()
+    fact('inhouse-tools.first-request', `loaded ${JSON.stringify(loaded)}, sent deferred ${JSON.stringify(sent.filter((t) => t.defer_loading === true).map((t) => t.name))}, all tool names ${JSON.stringify(((first.tools ?? []) as { name: string }[]).map((t) => t.name))}`)
+    record('inhouse-tools.six-at-start', JSON.stringify(loaded) === JSON.stringify([...INHOUSE_ALWAYS].sort()), `loaded at start: ${JSON.stringify(loaded)}`)
+    record('inhouse-tools.fourteen-deferred', JSON.stringify(deferred) === JSON.stringify([...INHOUSE_ON_DEMAND].sort()), `deferred: ${JSON.stringify(deferred)}`)
+  } else record('inhouse-tools.init', false, `no model request: ${twenty.raw.slice(-600)}`)
 
   // The blocking audit hook: a refused entry blocks the call; without the hook the same call goes through.
   const touch = { steps: [bash('touch outputs/audit-marker && echo touched')] }

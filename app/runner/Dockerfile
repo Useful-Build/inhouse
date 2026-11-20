@@ -54,6 +54,8 @@ COPY runner/image/plugin /opt/inhouse/plugin
 # The CLI as each session starts it: image/bin/claude sets the session's process limit (RLIMIT_NPROC, prlimit from
 # util-linux), then runs the SDK's own CLI for this platform, linked here as claude-cli (the build fails if it's missing).
 COPY runner/image/bin/claude /opt/inhouse/bin/claude
+# The entrypoint trusts Cloudflare's intercept CA (it exists only at run time), then starts the root runner.
+COPY runner/image/bin/entrypoint.sh /opt/inhouse/bin/entrypoint.sh
 RUN cli="/opt/runner/node_modules/@anthropic-ai/claude-agent-sdk-linux-$(node -p process.arch)/claude" \
  && test -x "$cli" && test -x /usr/bin/prlimit \
  && ln -s "$cli" /opt/inhouse/bin/claude-cli
@@ -67,5 +69,5 @@ RUN chown -R root:root /opt/runner /opt/inhouse \
 
 # The root runner runs as root: it starts each session as that session's own pool user.
 EXPOSE 8080
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/inhouse/bin/entrypoint.sh"]
 CMD ["node", "/opt/runner/dist/main.mjs"]

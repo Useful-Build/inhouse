@@ -408,6 +408,74 @@ function scriptedQuery(body: (p: Parameters<QueryFn>[0]) => AsyncGenerator<SDKMe
   return { query, calls }
 }
 
+describe('resume verification (protocol v2 expect)', () => {
+  const SID = '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11'
+  const MAIN = { projectKey: 'k', sessionId: SID }
+  /** A store holding `main` as the main transcript and `subs` subagent transcripts, written as one part each. */
+  function seeded(main: unknown[], subs: Record<string, unknown[]> = {}) {
+    const egress = fakeEgress()
+    egress.parts.set(JSON.stringify(['k', SID, null]), new Map([['000000000000001-000001', main]]))
+    for (const [sub, entries] of Object.entries(subs)) egress.parts.set(JSON.stringify(['k', SID, sub]), new Map([['000000000000001-000001', entries]]))
+    return egress
+  }
+  /** A query that loads the main transcript first (as the SDK does on a resume), then calls the model. */
+  function resumingQuery() {
+    const seen = { modelCalled: false }
+    const q = scriptedQuery(async function* ({ options }) {
+      await options.sessionStore!.load(MAIN)
+      seen.modelCalled = true
+      yield { type: 'assistant', parent_tool_use_id: null, message: { content: [] } } as unknown as SDKMessage
+      yield result
+    })
+    return { ...q, seen }
+  }
+  const resume = (expect: { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null }) => config({ resume: true, prompt: 'go on', expect })
+  const three = [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'u2' }, { type: 'user', uuid: 'u3' }]
+
+  it.each([
+    ['a store missing early entries', [three[2]], { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }],
+    ['a store one entry short (uuids not checked)', three.slice(0, 2), { mainEntries: 3, lastUuid: null, lastUuidIndex: null }],
+    ['a different uuid at mainEntries - 1', [three[0], three[1], { type: 'user', uuid: 'other' }], { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }],
+    ['an empty store', [], { mainEntries: 1, lastUuid: null, lastUuidIndex: null }],
+  ])('%s: failed store, and the model is never called', async (_, main, expect_) => {
+    const q = resumingQuery()
+    const h = harness(q.query, testQueryGuards, { egress: seeded(main as unknown[]) })
+    h.deliver({ type: 'run', config: resume(expect_) })
+    await h.done
+    expect(q.seen.modelCalled).toBe(false)
+    expect(h.events().at(-1)).toMatchObject({ type: 'failed', reason: 'store' })
+    expect(h.events().filter((e: { type: string }) => e.type === 'finished' || e.type === 'failed')).toHaveLength(1)
+  })
+
+  it("a subagent-heavy turn's resume passes: subagent transcripts don't count toward mainEntries", async () => {
+    const q = resumingQuery()
+    const subs = { 'subagents/agent-1': Array.from({ length: 12 }, (_, i) => ({ type: 'user', uuid: `s${i}` })) }
+    const h = harness(q.query, testQueryGuards, { egress: seeded(three, subs) })
+    h.deliver({ type: 'run', config: resume({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }) })
+    await h.done
+    expect(q.seen.modelCalled).toBe(true)
+    expect(types(h.events())).toEqual(['sdk', 'sdk', 'checkpoint', 'finished'])
+    // Nothing new written: the checkpoint is the store's main transcript as it stands.
+    expect(h.events()[2]).toEqual({ type: 'checkpoint', mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2, runEntries: 0 })
+  })
+
+  it('a store holding more than expected (a flush after the last checkpoint) passes', async () => {
+    const q = resumingQuery()
+    const h = harness(q.query, testQueryGuards, { egress: seeded([...three, { type: 'assistant', uuid: 'u4' }]) })
+    h.deliver({ type: 'run', config: resume({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }) })
+    await h.done
+    expect(h.events().at(-1)).toMatchObject({ type: 'finished' })
+  })
+
+  it('a resume whose query never loads the transcript ends failed store (nothing proved the transcript)', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query, testQueryGuards, { egress: seeded(three) })
+    h.deliver({ type: 'run', config: resume({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }) })
+    await h.done
+    expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' })
+  })
+})
+
 const toolUse = (...ids: string[]) => ({ type: 'assistant', parent_tool_use_id: null, message: { content: ids.map((id) => ({ type: 'tool_use', id, name: 'mcp__inhouse__question_ask', input: {} })) } }) as unknown as SDKMessage
 const toolResult = (id: string) => ({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } }) as unknown as SDKMessage
 const deferredResult = (id: string) => ({ ...(result as object), stop_reason: 'tool_deferred', deferred_tool_use: { id, name: 'mcp__inhouse__question_ask', input: { q: 'which?' } } }) as unknown as SDKMessage
@@ -624,6 +692,21 @@ describe('the run lifecycle', () => {
     await h.done
     expect(q.calls).toHaveLength(0)
     expect(h.events()).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped before the query started' }])
+    // No query: the root's `released` says so (queryRan: false), and the Worker keeps the chat's last good state.
+    expect(h.sent).not.toContainEqual({ type: 'query_started' })
+  })
+
+  it('query_started goes to the root before the query is called', async () => {
+    let sentBefore: unknown[] = []
+    const holder: { h?: ReturnType<typeof harness> } = {}
+    const q = scriptedQuery(async function* () {
+      sentBefore = [...holder.h!.sent]
+      yield result
+    })
+    holder.h = harness(q.query)
+    holder.h.deliver({ type: 'run', config: config() })
+    await holder.h.done
+    expect(sentBefore).toContainEqual({ type: 'query_started' })
   })
 
   it(`past ${LEFT_OUT_MAX} left-out files, the note still counts every one (the event's "and N more" is not a name)`, async () => {

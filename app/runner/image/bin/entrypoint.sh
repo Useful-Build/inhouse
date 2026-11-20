@@ -1,0 +1,39 @@
+#!/bin/sh
+# The image's entrypoint (under tini): trust Cloudflare's intercept CA, then run the root runner (or the command given).
+#
+# Cloudflare Containers' outbound-traffic docs (read 2026-11-20): with HTTPS interception on, an ephemeral CA is created
+# at /etc/cloudflare/certs/cloudflare-containers-ca.crt, there when the entrypoint runs (the Runner object registers its
+# intercepts before start()); copy it into the distro's trust store from the entrypoint (never at build time: it exists
+# only at run time), and point runtimes with their own bundle at it (NODE_EXTRA_CA_CERTS). Claude Code reads
+# NODE_EXTRA_CA_CERTS and the system store (its network-config page, read 2026-11-20). The root passes
+# NODE_EXTRA_CA_CERTS on to every session (src/session/env.ts).
+#
+# Absent (local runs, CI): logged once and the runner starts anyway; HTTPS through the intercept then fails closed.
+set -eu
+ca="${INHOUSE_CA_FILE:-/etc/cloudflare/certs/cloudflare-containers-ca.crt}"
+trust_dir="${INHOUSE_CA_TRUST_DIR:-/usr/local/share/ca-certificates}"
+wait_s="${INHOUSE_CA_WAIT_SECONDS:-5}"
+
+# Bounded wait for the file (the docs say it's there at start; this covers a slow mount).
+i=0
+while [ ! -s "$ca" ] && [ "$i" -lt "$wait_s" ]; do
+  sleep 1
+  i=$((i + 1))
+done
+
+if [ -s "$ca" ]; then
+  if [ -d "$trust_dir" ] && command -v update-ca-certificates >/dev/null 2>&1; then
+    cp "$ca" "$trust_dir/cloudflare-containers-ca.crt"
+    update-ca-certificates >/dev/null
+    store=system
+  else
+    store=none
+  fi
+  export NODE_EXTRA_CA_CERTS="$ca"
+  printf '{"type":"intercept_ca","found":true,"systemStore":"%s"}\n' "$store"
+else
+  printf '{"type":"intercept_ca","found":false}\n'
+fi
+
+if [ "$#" -eq 0 ]; then set -- node /opt/runner/dist/main.mjs; fi
+exec "$@"

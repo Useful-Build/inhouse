@@ -11,9 +11,14 @@ export function proxyBaseUrl(proxyPort: number): string {
   return `http://127.0.0.1:${proxyPort}`
 }
 
-export function sessionEnv(user: SessionUser, proxyPort: number): Record<string, string> {
+/**
+ * `extraCaCerts`: the intercept CA the image's entrypoint found (its path, from the root's own NODE_EXTRA_CA_CERTS), so
+ * the CLI and Node in the session trust Cloudflare's HTTPS intercept too. A path, not a secret.
+ */
+export function sessionEnv(user: SessionUser, proxyPort: number, extraCaCerts?: string): Record<string, string> {
   const proxy = proxyBaseUrl(proxyPort)
   return {
+    ...(extraCaCerts ? { NODE_EXTRA_CA_CERTS: extraCaCerts } : {}),
     PATH: '/usr/local/bin:/usr/bin:/bin',
     HOME: user.home,
     // Temp files stay in the user's own 0700 folder, never in the shared /tmp (R2's guards deny /tmp to Read). It's the

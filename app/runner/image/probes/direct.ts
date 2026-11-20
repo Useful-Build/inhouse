@@ -19,6 +19,8 @@ export type DirectVariant =
   | 'plain'
   /** canUseTool and a stub inhouse MCP server (one tool, one resource): which of the four tools register. */
   | 'four-tools'
+  /** A stub inhouse server with the 20 tools (six marked always-load): which load at start and which are deferred. */
+  | 'inhouse-tools'
   /** The audit transport refuses every entry: the call must be blocked. */
   | 'audit-refused'
   /** The same, with the audit hook taken out (test-only): the call goes through, so the probe can see a leak. */
@@ -79,7 +81,7 @@ const config = {
 
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'PROBE_DIRECT')) as NodeJS.ProcessEnv
 const base = baseOptions(config, process.cwd(), cliEnv(env), new AbortController())
-if (input.variant === 'four-tools' && input.mcpUrl) base.mcpServers = { inhouse: { type: 'http', url: input.mcpUrl } }
+if ((input.variant === 'four-tools' || input.variant === 'inhouse-tools') && input.mcpUrl) base.mcpServers = { inhouse: { type: 'http', url: input.mcpUrl } }
 const run: RunContext = {
   audit: input.variant === 'audit-refused' || input.variant === 'audit-hook-removed' ? async () => Promise.reject(new Error('probe: refused')) : async () => {},
 }

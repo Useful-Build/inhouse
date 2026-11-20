@@ -25,8 +25,11 @@ export type ScriptedTurn = {
   hold?: () => Promise<void>
 }
 
-/** `turns[n]` answers the request with n assistant messages before it; `null` marks a turn that must not be asked for. */
-export type Scenario = { turns: (ScriptedTurn | null)[] }
+/**
+ * `turns[n]` answers the request with n assistant messages before it; `null` marks a turn that must not be asked for.
+ * `countTokens`: what `POST /v1/messages/count_tokens` answers (default: the body's UTF-8 bytes / 4, rounded up).
+ */
+export type Scenario = { turns: (ScriptedTurn | null)[]; countTokens?: number }
 
 export type MessagesRequest = {
   model: string
@@ -39,7 +42,10 @@ export type MessagesRequest = {
 export type Miss = { scenario: string; turn: number | null; reason: string }
 
 export type ScriptedModel = {
-  /** Answers one `POST /v1/messages` (any path ending in `/v1/messages`) for `scenario`. */
+  /**
+   * Answers one `POST /v1/messages` (any path ending in `/v1/messages`) for `scenario`, or one
+   * `POST /v1/messages/count_tokens` (a scripted count, or the endpoint's documented 400).
+   */
   handle(request: Request, scenario: string): Promise<Response>
   /** Every request answered or missed, in order. */
   readonly log: { scenario: string; turn: number | null; path: string; missed: boolean }[]
@@ -64,11 +70,32 @@ export function createScriptedModel(scenarios: Record<string, Scenario>): Script
     )
   }
 
+  /**
+   * The token counting endpoint as its docs describe it (read 2026-11-20): `{ input_tokens }`, or an
+   * `invalid_request_error` 400 for a server tool (any but the advisor), the MCP connector, or an `image` or `document`
+   * block with a `url` or `file` source, so the Worker's fallback to its byte bound runs in tests.
+   */
+  async function countTokens(request: Request, scenario: string, path: string): Promise<Response> {
+    const text = await request.text()
+    let body: MessagesRequest
+    try {
+      body = JSON.parse(text) as MessagesRequest
+    } catch {
+      return miss(scenario, null, path, 'the body is not JSON')
+    }
+    const refused = uncountable(body)
+    log.push({ scenario, turn: null, path, missed: false })
+    if (refused !== null) return Response.json({ type: 'error', error: { type: 'invalid_request_error', message: refused } }, { status: 400 })
+    const count = scenarios[scenario]?.countTokens ?? Math.ceil(new TextEncoder().encode(text).length / 4)
+    return Response.json({ input_tokens: count })
+  }
+
   return {
     log,
     misses,
     async handle(request, scenario) {
       const path = new URL(request.url).pathname
+      if (request.method === 'POST' && path.endsWith('/v1/messages/count_tokens')) return countTokens(request, scenario, path)
       if (request.method !== 'POST' || !path.endsWith('/v1/messages')) return miss(scenario, null, path, `no route for ${request.method} ${path}`)
       let body: MessagesRequest
       try {
@@ -101,6 +128,26 @@ export function createScriptedModel(scenarios: Record<string, Scenario>): Script
       return body.stream ? new Response(sse(message), { headers: { 'content-type': 'text/event-stream' } }) : Response.json(message)
     },
   }
+}
+
+/** Why the count endpoint refuses a body (its docs' list), or null when it counts it. */
+export function uncountable(body: MessagesRequest): string | null {
+  for (const t of Array.isArray(body.tools) ? (body.tools as { type?: unknown }[]) : []) {
+    const type = t?.type
+    if (typeof type === 'string' && type !== 'custom' && !type.startsWith('advisor')) return `count_tokens does not support the server tool ${type}`
+  }
+  if (body.mcp_servers !== undefined) return 'count_tokens does not support the MCP connector'
+  const sources: unknown[] = []
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) return v.forEach(walk)
+    if (v === null || typeof v !== 'object') return
+    const o = v as Record<string, unknown>
+    if ((o.type === 'image' || o.type === 'document') && o.source && typeof o.source === 'object') sources.push((o.source as { type?: unknown }).type)
+    for (const x of Object.values(o)) walk(x)
+  }
+  walk(body.messages)
+  const bad = sources.find((t) => t === 'url' || t === 'file')
+  return bad === undefined ? null : `count_tokens does not support image or document blocks with a ${String(bad)} source`
 }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200)

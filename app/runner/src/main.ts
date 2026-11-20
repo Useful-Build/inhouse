@@ -32,6 +32,8 @@ const root = createRoot({
   spawnSession: spawnSessionProcess(sessionEntry),
   proxyPort,
   egressUrl: upstream.href,
+  // Set by the image's entrypoint when Cloudflare's intercept CA is there (image/bin/entrypoint.sh).
+  extraCaCerts: process.env.NODE_EXTRA_CA_CERTS || undefined,
   fetch: globalThis.fetch as PushFetch,
   stopGraceMs: 10_000,
   runTimeoutMs: 30 * 60_000,

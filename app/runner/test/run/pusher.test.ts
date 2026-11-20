@@ -1,0 +1,256 @@
+// Push delivery (protocol v2), the pusher alone on a fake clock and a fake egress. Ways it could fail, written first:
+// - an egress that drops, delays, duplicates or 500s batches ends up holding a different event list than was pushed
+//   (a loss, a repeat, a reorder), or a resent batch differs from the first send of it;
+// - a second batch goes while an earlier one is unacked (a resend could overtake it and look like a seq gap);
+// - a quiet run gets no heartbeat for 30 s (the Worker's watchdog fails it), or gets one after its terminal event;
+// - a slow egress lets the buffer grow without bound, or a full buffer drops events instead of pausing the session;
+// - a 410 is retried, or events after it are still sent;
+// - an ack with stop is acted on twice, or stops the pushing (the checkpoint, terminal and released must still go);
+// - an ack below the batch's last seq counts as delivered;
+// - the pusher never finishes after `released` is acked, or finishes before.
+import { fc, it } from '@fast-check/vitest'
+import { describe, expect } from 'vitest'
+import { PushBatch, type RunEvent } from '../../../shared/protocol/index.ts'
+import { FLUSH_MS, createPusher, type PushFetch, type Timers } from '../../src/server/pusher.ts'
+
+/** A fake clock: timers fire only when the test advances it. */
+function fakeClock(): Timers & { advance(ms: number): Promise<void>; pending(): number } {
+  let now = 0
+  let id = 0
+  const due = new Map<number, { at: number; fn: () => void }>()
+  return {
+    now: () => now,
+    setTimeout: (fn, ms) => {
+      due.set(++id, { at: now + ms, fn })
+      return id
+    },
+    clearTimeout: (h) => void due.delete(h as number),
+    pending: () => due.size,
+    async advance(ms) {
+      const until = now + ms
+      for (;;) {
+        const next = [...due.entries()].filter(([, t]) => t.at <= until).sort((a, b) => a[1].at - b[1].at)[0]
+        if (!next) break
+        now = next[1].at
+        due.delete(next[0])
+        next[1].fn()
+        await settle()
+      }
+      now = until
+      await settle()
+    },
+  }
+}
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+}
+
+const RUN = 't_run'
+const ev = (seq: number, body: Record<string, unknown>): RunEvent => ({ runId: RUN, seq, ...body }) as RunEvent
+/** A literal run: started, 23 sdk messages, a checkpoint, finished, released. */
+const LITERAL: RunEvent[] = [
+  ev(0, { type: 'started', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11', resume: false }),
+  ...Array.from({ length: 23 }, (_, i) => ev(i + 1, { type: 'sdk', message: { type: 'assistant', i }, truncated: false })),
+  ev(24, { type: 'checkpoint', mainEntries: 30, lastUuid: 'u-29', lastUuidIndex: 29, runEntries: 24 }),
+  ev(25, { type: 'finished', subtype: 'success', isError: false, numTurns: 3, costUsd: 0.01, usage: {} }),
+  ev(26, { type: 'released', checkpoint: { mainEntries: 30, lastUuid: 'u-29', lastUuidIndex: 29 }, queryRan: true }),
+]
+
+type Fault = 'ok' | 'drop' | 'fail500' | 'duplicate' | 'lostAck'
+/** A fake egress: what it holds (deduped by seq), every batch body sent, and whether two were ever in flight at once. */
+function fakeEgress(faults: () => Fault, opts: { stop?: boolean; gone?: (n: number) => boolean } = {}) {
+  const held: RunEvent[] = []
+  const bodies: string[] = []
+  let inFlight = 0
+  let overlapped = false
+  let calls = 0
+  const take = (events: RunEvent[]) => {
+    for (const e of events) if (e.seq === held.length) held.push(e)
+  }
+  const fetch: PushFetch = async (_url, init) => {
+    const n = calls++
+    bodies.push(init.body)
+    if (inFlight > 0) overlapped = true
+    inFlight++
+    try {
+      await settle()
+      const batch = PushBatch.parse(JSON.parse(init.body))
+      if (opts.gone?.(n)) return new Response('ended', { status: 410 })
+      const f = faults()
+      if (f === 'drop') throw new Error('connection reset')
+      if (f === 'fail500') return new Response('down', { status: 500 })
+      take(batch.events)
+      // The batch landed but its ack was lost on the way back: the sender must send it again; the egress dedupes.
+      if (f === 'lostAck') throw new Error('socket hang up')
+      if (f === 'duplicate') take(batch.events)
+      return Response.json({ ackSeq: held.length - 1, stop: opts.stop ?? false })
+    } finally {
+      inFlight--
+    }
+  }
+  return { fetch, held, bodies, overlapped: () => overlapped }
+}
+
+function pusherOn(clock: ReturnType<typeof fakeClock>, egress: { fetch: PushFetch }, over: Partial<Parameters<typeof createPusher>[0]> = {}) {
+  const calls = { heartbeats: 0, stops: 0, gone: 0, full: [] as boolean[] }
+  const p = createPusher({
+    runId: RUN,
+    token: 'tok_0123456789abcdef0123',
+    egressUrl: 'http://egress.internal',
+    fetch: egress.fetch,
+    timers: clock,
+    log: () => {},
+    heartbeat: () => void calls.heartbeats++,
+    onStop: () => void calls.stops++,
+    onGone: () => void calls.gone++,
+    onFull: (f) => void calls.full.push(f),
+    ...over,
+  })
+  return { p, calls }
+}
+
+describe('the pusher', () => {
+  it.prop([fc.array(fc.constantFrom<Fault>('ok', 'drop', 'fail500', 'duplicate', 'lostAck'), { minLength: 1, maxLength: 40 }), fc.array(fc.nat(30), { minLength: 1, maxLength: 10 })])(
+    'whatever the egress drops, delays, duplicates or 500s: it ends holding exactly the literal list, and never two batches in flight',
+    async (faultList, gaps) => {
+      const clock = fakeClock()
+      let i = 0
+      // The faults run out into 'ok', so delivery always ends.
+      const egress = fakeEgress(() => faultList[i++] ?? 'ok')
+      const { p } = pusherOn(clock, egress)
+      let done = false
+      void p.done.then(() => (done = true))
+      for (const [k, e] of LITERAL.entries()) {
+        p.push(e)
+        await clock.advance(gaps[k % gaps.length]!)
+      }
+      for (let t = 0; t < 200 && !done; t++) await clock.advance(1000)
+      expect(done).toBe(true)
+      expect(egress.held).toEqual(LITERAL)
+      expect(egress.overlapped()).toBe(false)
+      // A resend is the same batch, byte for byte: each body sent is a run of consecutive seqs starting where the
+      // egress's ack left off or at a batch sent before.
+      const firsts = egress.bodies.map((b) => (JSON.parse(b) as { events: RunEvent[] }).events[0]!.seq)
+      for (const [k, b] of egress.bodies.entries()) {
+        const prev = egress.bodies.slice(0, k).find((x) => (JSON.parse(x) as { events: RunEvent[] }).events[0]!.seq === firsts[k])
+        if (prev !== undefined) expect(b).toBe(prev)
+      }
+      expect(p.ackedSeq()).toBe(26)
+    },
+  )
+
+  it('flushes at 20 events without waiting for the clock, and on the terminal event', async () => {
+    const clock = fakeClock()
+    const egress = fakeEgress(() => 'ok')
+    const { p } = pusherOn(clock, egress)
+    for (const e of LITERAL.slice(0, 19)) p.push(e)
+    await settle()
+    expect(egress.bodies).toHaveLength(0)
+    p.push(LITERAL[19]!)
+    await settle()
+    expect(egress.bodies).toHaveLength(1)
+    expect((JSON.parse(egress.bodies[0]!) as { events: RunEvent[] }).events.map((e) => e.seq)).toEqual([...Array(20).keys()])
+    for (const e of LITERAL.slice(20, 26)) p.push(e)
+    await settle()
+    expect(egress.held.map((e) => e.seq)).toEqual([...Array(26).keys()])
+  })
+
+  it('a silent run gets a heartbeat every 30 s on the clock, and none after its terminal event', async () => {
+    const clock = fakeClock()
+    const egress = fakeEgress(() => 'ok')
+    let seq = 1
+    const holder: { p?: ReturnType<typeof createPusher> } = {}
+    const { p } = pusherOn(clock, egress, { heartbeat: () => holder.p!.push(ev(seq++, { type: 'heartbeat' })) })
+    holder.p = p
+    p.push(LITERAL[0]!)
+    await clock.advance(FLUSH_MS)
+    // The first tick sends what waited (`started`); with nothing else for 30 s more, a heartbeat each time.
+    expect(egress.held.map((e) => e.type)).toEqual(['started'])
+    await clock.advance(FLUSH_MS)
+    await clock.advance(FLUSH_MS)
+    await clock.advance(FLUSH_MS - 1)
+    expect(egress.held.map((e) => e.type)).toEqual(['started', 'heartbeat', 'heartbeat'])
+    p.push(ev(seq++, { type: 'failed', reason: 'stopped', message: 'stopped' }))
+    await settle()
+    await clock.advance(5 * FLUSH_MS)
+    expect(egress.held.map((e) => e.type)).toEqual(['started', 'heartbeat', 'heartbeat', 'failed'])
+  })
+
+  it('a slow egress: the buffer goes over its cap, says full once, and says so again only after acks bring it under', async () => {
+    const clock = fakeClock()
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const base = fakeEgress(() => 'ok')
+    const egress = {
+      fetch: (async (url, init) => {
+        await held
+        return base.fetch(url, init)
+      }) as PushFetch,
+    }
+    const { p, calls } = pusherOn(clock, egress, { maxBytes: 4096 })
+    const big = (seq: number) => ev(seq, { type: 'sdk', message: { type: 'assistant', blob: 'b'.repeat(1000) }, truncated: false })
+    for (let s = 0; s < 30; s++) p.push(big(s))
+    await settle()
+    // Nothing dropped: every event is still held, over the cap.
+    expect(calls.full).toEqual([true])
+    expect(p.bufferedBytes()).toBeGreaterThan(4096)
+    release()
+    await clock.advance(FLUSH_MS)
+    await clock.advance(FLUSH_MS)
+    expect(base.held.map((e) => e.seq)).toEqual([...Array(30).keys()])
+    expect(calls.full).toEqual([true, false])
+    expect(p.bufferedBytes()).toBe(0)
+  })
+
+  it('a 410 drops the batch, says gone once, sends nothing after it and finishes', async () => {
+    const clock = fakeClock()
+    const egress = fakeEgress(() => 'ok', { gone: (n) => n >= 1 })
+    const { p, calls } = pusherOn(clock, egress)
+    for (const e of LITERAL.slice(0, 20)) p.push(e)
+    await settle()
+    for (const e of LITERAL.slice(20, 26)) p.push(e)
+    await settle()
+    await p.done
+    for (const e of LITERAL.slice(26)) p.push(e)
+    await clock.advance(10 * FLUSH_MS)
+    expect(calls.gone).toBe(1)
+    expect(egress.bodies).toHaveLength(2)
+    expect(egress.held.map((e) => e.seq)).toEqual([...Array(20).keys()])
+  })
+
+  it('an ack with stop: onStop once, and every later event (checkpoint, terminal, released) is still pushed', async () => {
+    const clock = fakeClock()
+    const egress = fakeEgress(() => 'ok', { stop: true })
+    const { p, calls } = pusherOn(clock, egress)
+    for (const e of LITERAL) {
+      p.push(e)
+      await settle()
+    }
+    await p.done
+    expect(calls.stops).toBe(1)
+    expect(egress.held).toEqual(LITERAL)
+  })
+
+  it('an ack below the batch is not a delivery: the batch is sent again', async () => {
+    const clock = fakeClock()
+    const sent: number[] = []
+    let first = true
+    const egress = {
+      fetch: (async (_url, init) => {
+        const b = PushBatch.parse(JSON.parse(init.body))
+        sent.push(b.events.length)
+        // The first answer acks one short of the batch's last seq.
+        const ack = b.events.at(-1)!.seq - (first ? 1 : 0)
+        first = false
+        return Response.json({ ackSeq: ack, stop: false })
+      }) as PushFetch,
+    }
+    const { p } = pusherOn(clock, egress)
+    for (const e of LITERAL.slice(0, 20)) p.push(e)
+    await settle()
+    expect(p.ackedSeq()).toBeNull()
+    await clock.advance(1000)
+    expect(sent).toEqual([20, 20])
+    expect(p.ackedSeq()).toBe(19)
+  })
+})
