@@ -138,6 +138,9 @@ describe('the pusher', () => {
       }
       expect(p.ackedSeq()).toBe(26)
     },
+    // 100 runs of a fake clock and fake egress (each step turns the event loop many times): about 1.5 s alone, and it
+    // passed vitest's 5 s default once under the full suite's load. A time limit, not a retry.
+    30_000,
   )
 
   it('flushes at 20 events without waiting for the clock, and on the terminal event', async () => {
