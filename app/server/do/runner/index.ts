@@ -4,7 +4,7 @@
 // `ctx.container` only: no deprecated `Container` class, no beta scheduling or snapshots.
 import { DurableObject } from 'cloudflare:workers'
 import type { RunStart } from '../../../shared/protocol/index.ts'
-import { brandAgentRpc } from './brand-agent-rpc.ts'
+import { brandAgent } from '../brand-agent/client.ts'
 import { RunnerCore, sqlRunnerState, type AdmitResult, type StatusResult, type WarmResult } from './runner.ts'
 
 export class Runner extends DurableObject<Env> {
@@ -28,7 +28,7 @@ export class Runner extends DurableObject<Env> {
         web: props => exports.WebEgress({ props }),
         deny: props => exports.DenyEgress({ props }),
       },
-      exited: (runner, gen) => brandAgentRpc(env).containerExited(runner, gen),
+      exited: (runner, gen) => brandAgent(env).containerExited(runner, gen),
     })
     return this.#core
   }

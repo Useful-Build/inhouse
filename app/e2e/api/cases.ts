@@ -100,9 +100,12 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/memory': { design: d('brand_data', ALL), path: '/api/memory', passes: 200 },
   'PUT /api/memory/personal/:id/forgotten': { design: d('personal', PEOPLE), path: `/api/memory/personal/${NO_MEMORY}/forgotten`, json: { forgotten: true, ifRev: 1 }, passes: 404 },
   'PUT /api/memory/brand/:id/forgotten': { design: d('brand_data', ['admin', 'inhouse']), path: `/api/memory/brand/${NO_MEMORY}/forgotten`, json: { forgotten: true, ifRev: 1 }, passes: 404 },
-  'POST /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', json: {}, passes: STUB },
-  'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: STUB },
-  'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: STUB },
+  // Routes 46-48 are built (W2 #162). The drain POST really drains the test build's brand for 30 minutes, and each
+  // matrix or origin pass extends it: a spec that admits a real turn must run on a fresh server or call the test-build
+  // undrain (follow-up). Warm-up can't prove a runner with no containers, so it answers 503 `unavailable`.
+  'POST /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', json: {}, passes: 200 },
+  'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: 200 },
+  'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: 503 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 
