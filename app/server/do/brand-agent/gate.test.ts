@@ -535,6 +535,19 @@ describe('waits: money, order, bounds (8.2 rules 1 and 3)', () => {
     expect(ledger(h)).toEqual([['close', 'c1', 80_000, 250_000], ['close', 'c2', 50_000, 250_000]])
   }))
 
+  it('a cut release books max(admitted worst, its usage), as the egress sends it', () => inAgent(async h => {
+    const t = (await liveTurn(h)).turnId
+    ask(h, t, 'c1', 50_000)
+    ask(h, t, 'c2', 50_000)
+    await settle()
+    await h.core.renewModelCall(t, 'c1', U(0))
+    await h.core.renewModelCall(t, 'c2', U(0))
+    await h.core.releaseModelCall(t, 'c1', { usage: U(80_000), cut: true })
+    await h.core.releaseModelCall(t, 'c2', { usage: U(20_000), cut: true })
+    await settle()
+    expect(ledger(h)).toEqual([['close', 'c1', 80_000, 250_000], ['close', 'c2', 50_000, 250_000]])
+  }))
+
   it('a release after its lease closed the call prices it once', () => inAgent(async h => {
     const t = (await liveTurn(h)).turnId
     ask(h, t, 'c1', 100_000)
