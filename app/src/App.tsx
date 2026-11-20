@@ -1,14 +1,17 @@
 import { Component, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
-import type { ToolsData } from './agent/types'
+import type { AgentErrorCode, ToolsData } from './agent/types'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
 import { Sidebar } from './shell/Sidebar'
 import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
 import { NotConnected } from './shell/NotConnected'
-import { notOnTeam } from './shell/not-on-team'
+import { SignedOut } from './shell/SignedOut'
+import { StartError } from './shell/StartError'
+import { startScreen } from './shell/start-screen'
+import type { StartScreen } from './shell/start-screen'
 import { createHashSync } from './shell/route-sync'
 import { hashBar } from './shell/hash-bar'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
@@ -368,13 +371,23 @@ function Shell() {
 }
 
 /**
- * The product build's client reports `loading` for as long as it has nothing (the stub, until P2): one "Not connected yet"
- * screen in place of the pages. The demo has `demo` set and never shows it.
+ * The product build shows one screen in place of the pages until its first read (`meta`) is in (start-screen.ts): "Not
+ * connected yet" while it loads, "You're not on this team", the signed-out screen, or the load error with Retry. The
+ * demo has `demo` set and never shows them.
  */
 export default function App() {
   const data = useAgentData()
-  // The Worker refused the person as not invited, or removed: they aren't on this team (the product only).
-  if (demo === null && notOnTeam(data)) return <Suspense fallback={null}><NotOnTeam /></Suspense>
-  if (demo === null && data.status === 'loading') return <NotConnected />
+  const screen = demo === null ? startScreen(data) : 'app'
+  // Retry sets `meta` loading again: the load error stays up while it reads, with the last error's words and Retry
+  // disabled, not "Not connected yet".
+  const [last, setLast] = useState<{ screen: StartScreen; error?: AgentErrorCode }>({ screen })
+  const retrying = screen === 'not-connected' && last.screen === 'load-error'
+  const shown = retrying ? 'load-error' : screen
+  const error = retrying ? last.error : data.resources.meta.error
+  if (shown !== last.screen || error !== last.error) setLast({ screen: shown, error })
+  if (shown === 'not-on-team') return <Suspense fallback={null}><NotOnTeam /></Suspense>
+  if (shown === 'signed-out') return <SignedOut />
+  if (shown === 'load-error') return <StartError error={error} retrying={retrying} />
+  if (shown === 'not-connected') return <NotConnected />
   return <Shell />
 }

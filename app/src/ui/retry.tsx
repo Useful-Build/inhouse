@@ -10,12 +10,12 @@ const WHY: Partial<Record<AgentErrorCode, string>> = {
   rate_limited: 'Too many tries. Wait a moment and try again.',
 }
 
-/** "Couldn't load <what>." with the reason when it is known, and Retry. */
-export function LoadError({ what, error, onRetry }: { what: string; error?: AgentErrorCode; onRetry: () => void }) {
+/** "Couldn't load <what>." with the reason when it is known, and Retry (disabled while `busy`: a read is already under way). */
+export function LoadError({ what, error, onRetry, busy = false }: { what: string; error?: AgentErrorCode; onRetry: () => void; busy?: boolean }) {
   return (
     <div role="alert" className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2.5 rounded-2xl border border-border bg-card px-5.5 py-4">
       <p className="m-0 min-w-0 grow basis-60 text-base text-foreground-2">{`Couldn't load ${what}. ${(error && WHY[error]) ?? 'Try again in a moment.'}`}</p>
-      {canRetry(error) && <Button variant="outline" size="lg" onClick={onRetry}>Retry</Button>}
+      {canRetry(error) && <Button variant="outline" size="lg" disabled={busy} onClick={onRetry}>Retry</Button>}
     </div>
   )
 }

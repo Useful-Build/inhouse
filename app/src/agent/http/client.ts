@@ -113,6 +113,8 @@ export class HttpAgent implements AgentClient {
   private dataCache = new WeakMap<Slices, { live: boolean; data: AgentData }>()
   private lastBuilt: { s: Slices; live: boolean; data: AgentData } | null = null
   private loading: Promise<void> | null = null
+  /** The retries under way, by resource. */
+  private readonly retrying = new Map<ResourceKey, Promise<void>>()
   private paging = new Set<'audit' | 'members'>()
   private expiry: ReturnType<typeof setTimeout> | undefined
   /**
@@ -278,12 +280,19 @@ export class HttpAgent implements AgentClient {
     } catch (e) { this.failStatus('audit', e) }
   }
 
-  /** Reads a resource again after its read failed. The ones with nothing to read resolve at once. */
+  /**
+   * Reads a resource again after its read failed. The ones with nothing to read resolve at once. A retry while one for
+   * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
+   */
   retry = (resource: ResourceKey): Promise<void> => {
     const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit() }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
+    const running = this.retrying.get(resource)
+    if (running) return running
     this.setStatus(resource, { status: 'loading' })
-    return load().then(() => undefined)
+    const p = load().then(() => undefined).finally(() => { this.retrying.delete(resource) })
+    this.retrying.set(resource, p)
+    return p
   }
   private async reloadMeta() {
     if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit()])
