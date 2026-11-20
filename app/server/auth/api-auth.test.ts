@@ -11,7 +11,7 @@ import { authenticate, checkAccess, checkOrigin } from './index.ts'
 import { mintPerson, mintService } from './test-issuer-mint.ts'
 import { buildMe, meHandler } from './me-handler.ts'
 import { MeSchema } from '../../shared/contract/me.ts'
-import { BRAND, DESIGN_CAN_ROWS, DESIGN_ROWS, INHOUSE, MONITOR_ID, SMOKE_ID, TEAM, authEnv, fakeStores, issuer, principals } from '../testing/auth-fixtures.ts'
+import { BRAND, DESIGN_CAN_ROWS, DESIGN_ROWS, INHOUSE, MONITOR_ID, SMOKE_ID, TEAM, authEnv, fakeStores, issuer } from '../testing/auth-fixtures.ts'
 import type { Issuer } from '../testing/auth-fixtures.ts'
 
 let good: Issuer
@@ -108,6 +108,14 @@ describe('the object check', () => {
     expect((await put(ok)).status).toBe(500)
     vi.restoreAllMocks()
   })
+  it('answers 403 when the handler swallows a refusal and writes anyway', async () => {
+    const res = await put(async c => {
+      try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
+      return apiJson({ wrote: true })
+    })
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: { code: 'forbidden', reason: 'admin_read_only' } })
+  })
   it('answers 403 admin_read_only when the object fails, and 200 when it passes', async () => {
     const refused = await put(async c => { c.access.requireObject({ settingKey: c.params.key, value: 'on' }); return apiJson({}) })
     expect(refused.status).toBe(403)
@@ -127,14 +135,20 @@ describe('me', () => {
   const NOW = Date.parse('2026-11-20T10:00:00.000Z')
   const profile = { name: 'A Person', email: 'a@example.test', photoKey: 'photos/1' }
   it('builds a schema-valid Me for every principal with a member row', () => {
-    for (const p of [principals.member(), principals.admin(), principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), principals.inhouse(), principals.smoke()]) {
-      if (!('memberId' in p)) throw new Error('monitor has no member row')
+    const withRows: Parameters<typeof buildMe>[0][] = [
+      { kind: 'person', memberId: 'm_member', role: 'member', subject: 's', requestId: 'r' },
+      { kind: 'person', memberId: 'm_admin', role: 'admin', subject: 's', requestId: 'r' },
+      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: { id: 'g', endsAtMs: NOW + 1 }, requestId: 'r' },
+      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: null, requestId: 'r' },
+      { kind: 'service', name: 'smoke', memberId: 'm_smoke', requestId: 'r' },
+    ]
+    for (const p of withRows) {
       const me = buildMe(p, profile, DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
       expect(MeSchema.safeParse(me).success, p.kind).toBe(true)
       expect(me.photoUrl).toBe(`/api/members/${p.memberId}/photo`)
       expect(me.grant !== null).toBe(p.kind === 'inhouse' && p.grant !== null)
     }
-    expect(buildMe(principals.member(), { ...profile, photoKey: null }, DESIGN_ROWS, DESIGN_CAN_ROWS, NOW).photoUrl).toBeNull()
+    expect(buildMe(withRows[0], { ...profile, photoKey: null }, DESIGN_ROWS, DESIGN_CAN_ROWS, NOW).photoUrl).toBeNull()
   })
   it('answers GET /api/me through the path, for a person and for smoke', async () => {
     const s = fakeStores({ people: { member: { role: 'member' } } })

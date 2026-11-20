@@ -4,7 +4,8 @@
 // crash. CI requires exactly 1 on wrangler.test.jsonc (AGENTS.md). It refuses a config when:
 //   - the test issuer is switched on: `INHOUSE_TEST_BUILD` or `TEST_ISSUER_JWKS` in any vars block;
 //   - INHOUSE_ACCESS is missing or not JSON, or its `teamDomain` isn't `https://<name>.cloudflareaccess.com`;
-//   - an app lacks `origin` or `aud`, an origin isn't a bare `https://` origin, two apps share an origin or an `aud`,
+//   - an app lacks `origin` or `aud`, an origin isn't a bare `https://` origin, two apps share a hostname (an origin,
+//     or a port-only difference: Access's cookie is per hostname) or an `aud`,
 //     or an `aud` isn't 64 hex;
 //   - a service token maps to anything but `monitor` or `smoke`;
 //   - a brand origin is on `workers.dev` (preview URLs live there too: `<version>-<worker>.<subdomain>.workers.dev`);
@@ -81,8 +82,10 @@ export function checkConfig(config) {
       let url
       try { url = new URL(app.origin) } catch { url = null }
       if (!url || url.protocol !== 'https:' || url.origin !== app.origin) failures.push(`${label}.origin must be a bare https:// origin`)
-      if (origins.has(app.origin)) failures.push(`${label} shares its origin with apps[${origins.get(app.origin)}]`)
-      origins.set(app.origin, i)
+      // Hostname, not origin: Access's CF_Authorization cookie is per hostname, so a port-only difference shares it.
+      const key = url ? url.hostname : app.origin
+      if (origins.has(key)) failures.push(`${label} shares its hostname with apps[${origins.get(key)}]`)
+      origins.set(key, i)
       if (app.name === 'brand' && url && /(^|\.)workers\.dev$/i.test(url.hostname)) {
         failures.push(`${label}.origin is a workers.dev or preview hostname`)
       }

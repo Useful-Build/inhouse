@@ -62,7 +62,9 @@ export async function api(parts: ApiParts, request: Request, env: Env, ctx: Exec
     if (err instanceof AccessRefusedError) return apiError('forbidden', err.reason ? { reason: err.reason } : {})
     throw err
   }
-  // Fails closed: a row whose rule needs the object never answers 2xx unless the handler checked one.
+  // Fails closed on the outcome, not the call: any refusal is 403 whatever the handler answered (it may have caught it),
+  // and a row whose rule needs the object never answers 2xx without a passing check.
+  if (gate.refusal) return apiError('forbidden', gate.refusal.reason ? { reason: gate.refusal.reason } : {})
   if (decision.objectCheck === 'required' && response.status >= 200 && response.status < 300 && !gate.passed) {
     console.error({ event: 'object_check_skipped', requestId, method: row.method, pattern: row.pattern })
     return apiError('unknown')

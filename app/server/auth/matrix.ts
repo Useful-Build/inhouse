@@ -164,17 +164,26 @@ export class AccessRefusedError extends Error implements AccessRefused {
   }
 }
 
-/** `requireObject` for one request on one row, and whether a handler called it with an object that passed. */
-export function objectGate(principal: Principal, row: AccessRow, nowMs: number): { requireObject: RequireObject; readonly passed: boolean } {
+/**
+ * `requireObject` for one request on one row, with every call's outcome recorded: `refusal` is the first refusal
+ * (api.ts answers 403 with it whatever the handler returned, so a swallowed `AccessRefused` can't write), `passed`
+ * whether at least one call passed.
+ */
+export function objectGate(principal: Principal, row: AccessRow, nowMs: number): { requireObject: RequireObject; readonly passed: boolean; readonly refusal: AccessRefusedError | null } {
   let passed = false
+  let refusal: AccessRefusedError | null = null
   return {
     requireObject(object) {
       const d = checkAccess(principal, row, object, nowMs)
-      if ('refused' in d) throw new AccessRefusedError(d.reason)
-      if (d.objectCheck) throw new AccessRefusedError()
+      const refused = 'refused' in d ? new AccessRefusedError(d.reason) : d.objectCheck ? new AccessRefusedError() : null
+      if (refused) {
+        refusal ??= refused
+        throw refused
+      }
       passed = true
     },
     get passed() { return passed },
+    get refusal() { return refusal },
   }
 }
 
