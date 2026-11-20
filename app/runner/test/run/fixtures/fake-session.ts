@@ -5,6 +5,8 @@
 //   crash              exits with code 3 without a terminal event
 //   crash-after:<n>    sends n sdk events, then exits with code 3
 //   crash-loud:<n>     writes n bytes of stderr (`<` + x's + `>`, a newline every 100 bytes), then exits with code 3
+//   crash-stdout:<n>   writes n bytes of stdout (`STDOUT-TEXT` repeated, cut to n), then exits with code 3
+//   stdout-flood:<n>   writes n bytes to stdout (in 16 KB writes, each awaited), then finished
 //   garbage            sends a message that isn't in the local schema
 //   bad-event          sends an event body that isn't a run event
 //   raw-garbage        writes bytes that aren't JSON (nor UTF-8) straight onto the channel (fd 3)
@@ -13,19 +15,27 @@
 //                      with costUsd 0: stdout isn't the channel, so the root must never read the forgery
 //   process-stdio      what the SDK does on import: touches process.stdin (reads it to its end), process.stdout and
 //                      process.stderr, then sends one sdk event {type: 'stdio', stdinBytes} and finished
-//   close-channel      sends one sdk event, closes its end of the channel (fd 3), then never ends on its own
+//   close-channel      sends one sdk event, closes its end of the channel (fds 3 and 4), then never ends on its own
+//   close-on-stop      writes `got-run` in its cwd and waits for stop, then closes its channel with no terminal event
+//                      and never ends on its own
+//   last-words:<n>:<bytes>:<first>  writes `got-run` in its cwd and waits for SIGUSR2; then sends <first> (`audit`: an
+//                      audit entry; `audit-expired`: an expired one; `none`: nothing) without awaiting the answer, n sdk
+//                      events of about <bytes> each carrying their index, and finished; closes its channel (fds 3 and
+//                      4), writes `closed` in its cwd, and exits 0 at the next SIGUSR2
+//   audit-flood        never reads the root again: blocks its own event loop writing expired audit entries straight onto
+//                      the channel (fd 3), one after another, until it is killed
 //   console-log        logs through every console method that writes to stdout by default, then finished
 //   flood:<n>:<bytes>  sends n sdk events of about <bytes> each, carrying their index, then finished
 //   drain:<n>:<bytes>  sends n sdk events of about <bytes> each, awaiting each send the channel says is full; then
 //                      writes `drain: sent all` to stderr, one sdk event {type: 'drained', waits} counting those, then finished
 //   oversized          sends one line over the channel's cap
 //   dump               writes a file in its cwd, then sends its env, argv, run message and cwd files as one sdk event
-//   hang               never answers; ends only when killed
+//   hang               never answers; ends only when killed (a timer keeps it alive whatever happens to its channel)
 //   obey-stop          waits for stop, then ends with failed/stopped
 //   await-interrupt    waits for interrupt, then ends with failed/interrupted
 //   big                sends one sdk event larger than the SDK message cap
-//   grandchild         starts a shell the way the SDK starts the CLI, which writes to its fds 0 to 4 and to the
-//                      session's channel (fd 3) and stdio through /proc, then finished
+//   grandchild         starts a shell the way the SDK starts the CLI, which writes to its fds 0 to 5 and to the
+//                      session's channel (fds 3 and 4) and stdout through /proc, then finished
 //   leftover           starts a process in its group that never ends, reports its pid, then finished and exits
 //   deep               sends an sdk event nested far past the depth cap (still under the line cap)
 //   len:<rest>         sends the prompt's length as an sdk event, then finished (the prompt can be any size)
@@ -46,7 +56,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, writeFileSync, writeSync } from 'node:fs'
 import { LOCAL_LINE_MAX_BYTES } from '../../../src/protocol/ndjson.ts'
-import { CHANNEL_FD, openRootChannel } from '../../../src/session/channel.ts'
+import { TO_ROOT_FD, openRootChannel } from '../../../src/session/channel.ts'
 
 const channel = openRootChannel()
 const send = (m: unknown) => channel.send(m)
@@ -107,6 +117,12 @@ channel.onMessage((line) => {
     end()
     return
   }
+  if (raw?.type === 'stop' && mode === 'close-on-stop' && !ended) {
+    ended = true
+    void channel.close()
+    setInterval(() => {}, 1000)
+    return
+  }
   if (raw?.type === 'stop' && (mode === 'obey-stop' || mode === 'race') && !ended) {
     ended = true
     event({ type: 'failed', reason: 'stopped', message: 'stopped' })
@@ -155,6 +171,53 @@ channel.onMessage((line) => {
       process.stderr.write(`<${body}>`, () => process.exit(3))
       break
     }
+    case 'crash-stdout': {
+      const n = Number(a)
+      process.stdout.write('STDOUT-TEXT'.repeat(Math.ceil(n / 11)).slice(0, n), () => process.exit(3))
+      break
+    }
+    case 'stdout-flood':
+      void (async () => {
+        for (let left = Number(a); left > 0; left -= 16 * 1024) {
+          await new Promise<void>((r) => process.stdout.write('o'.repeat(Math.min(left, 16 * 1024)), () => r()))
+        }
+        finished()
+        end()
+      })()
+      break
+    case 'last-words': {
+      const [, , , first] = raw.config.prompt.split(':')
+      process.once('SIGUSR2', () => {
+        if (first === 'audit') void sendAudit(auditEntry(0))
+        if (first === 'audit-expired') void sendAudit(auditEntry(0), 0)
+        const blob = 'w'.repeat(Number(b))
+        for (let i = 0; i < Number(a); i++) event({ type: 'sdk', message: { type: 'assistant', i, blob }, truncated: false })
+        finished()
+        void channel.close().then(() => {
+          process.once('SIGUSR2', () => process.exit(0))
+          setInterval(() => {}, 1000)
+          writeFileSync('closed', '')
+        })
+      })
+      writeFileSync('got-run', '')
+      break
+    }
+    case 'audit-flood': {
+      // Blocks the event loop, so nothing the root sends is read again. The channel's fd is non-blocking: a full socket
+      // gives EAGAIN, and the loop sleeps a millisecond and goes on.
+      const nap = new Int32Array(new SharedArrayBuffer(4))
+      for (let id = 0; ; id++) {
+        const line = Buffer.from(`${JSON.stringify({ type: 'audit', id, expiresAt: 0, entry: auditEntry(id) })}\n`)
+        for (let off = 0; off < line.length; ) {
+          try {
+            off += writeSync(TO_ROOT_FD, line, off)
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== 'EAGAIN') throw e
+            Atomics.wait(nap, 0, 0, 1)
+          }
+        }
+      }
+    }
     case 'crash-after':
       ticks(Number(a), undefined, () => void channel.close().then(() => process.exit(3)))
       break
@@ -165,7 +228,7 @@ channel.onMessage((line) => {
       event({ type: 'sdk', message: 'not an object', truncated: false })
       break
     case 'raw-garbage':
-      writeSync(CHANNEL_FD, Buffer.from([0x00, 0xff, 0xfe, 0x7b, 0x0a]))
+      writeSync(TO_ROOT_FD, Buffer.from([0x00, 0xff, 0xfe, 0x7b, 0x0a]))
       break
     case 'stray-stdout':
       process.stdout.write('a log line in the wrong place\n')
@@ -254,14 +317,14 @@ channel.onMessage((line) => {
     case 'grandchild': {
       // Spawned the way the SDK's default spawn starts the CLI (0.3.328 spawnLocalProcess: its own stdio pipes). If the
       // shell could reach the session's channel, "leaked" would land on the root's parser and end the run as
-      // `protocol`. fds 1 and 2 are the shell's own pipes to this process; 0 is its stdin; 3 and 4 must not be open
-      // (the session's fd 3 is the channel: Node marks it close-on-exec, so no child inherits it).
+      // `protocol`. fds 1 and 2 are the shell's own pipes to this process; 0 is its stdin; 3, 4 and 5 must not be open
+      // (the session's channel fds 3 and 4 are close-on-exec, so no child inherits them). Through /proc: each write's
+      // exit code and error text (`proc-fd<n>=<code>:<error>`), and where the session's fd 0 points (`proc-fd0=`).
       const script = [
-        'for fd in 0 1 2 3 4; do (echo leaked >&$fd) 2>/dev/null; done',
-        '(echo leaked > /proc/$SESSION_PID/fd/1) 2>/dev/null; echo "proc-stdout=$?"',
-        '(echo leaked > /proc/$SESSION_PID/fd/0) 2>/dev/null; echo "proc-stdin=$?"',
-        '(echo leaked > /proc/$SESSION_PID/fd/3) 2>/dev/null; echo "proc-channel=$?"',
-        'for fd in 3 4; do (: >&$fd) 2>/dev/null && echo "open-fd=$fd"; done',
+        'for fd in 0 1 2 3 4 5; do (echo leaked >&$fd) 2>/dev/null; done',
+        'for fd in 1 3 4; do err=$( (echo leaked > /proc/$SESSION_PID/fd/$fd) 2>&1 ); echo "proc-fd$fd=$?:$err"; done',
+        'echo "proc-fd0=$(readlink /proc/$SESSION_PID/fd/0 2>&1)"',
+        'for fd in 3 4 5; do (: >&$fd) 2>/dev/null && echo "open-fd=$fd"; done',
         'echo shell-ran',
       ].join('\n')
       const sh = spawn('/bin/sh', ['-c', script], {
@@ -339,6 +402,11 @@ channel.onMessage((line) => {
       })
       break
     case 'hang':
+      setInterval(() => {}, 1000)
+      break
+    case 'close-on-stop':
+      writeFileSync('got-run', '')
+      break
     case 'obey-stop':
     case 'await-interrupt':
       break

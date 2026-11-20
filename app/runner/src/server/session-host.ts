@@ -3,17 +3,22 @@
 // root keeps running: a line that is unreadable, oversized or fails the schema ends the session (`protocol`), and an
 // end without a terminal event is `session_crashed` (or `stopped` after a stop).
 //
-// The local channel is one socket at the session's fd 3 (`stdio[3]`), NDJSON both ways, parsed by the root itself
-// (src/protocol/ndjson.ts), not Node's IPC channel. fds 0 to 2 are left to Node in the session (the SDK builds
-// process.stdin on fd 0): stdin is /dev/null (the root has nothing to say there), and stdout and stderr are log only
-// (the root keeps a tail of both and never parses them). A session that closes fd 3 before its terminal event can't be
-// told anything more: its group is killed and the run ends as `session_crashed` (or `stopped` after a stop).
+// The local channel is two sockets, one per direction, NDJSON on each, parsed by the root itself
+// (src/protocol/ndjson.ts), not Node's IPC channel: the session's fd 3 (`stdio[3]`) carries session -> root (the session
+// only writes it, the root only reads it), and its fd 4 (`stdio[4]`) carries root -> session (the root only writes, the
+// session only reads). Node destroys a socket on any write error, read side included; with one socket both ways, a
+// root write that failed once the session had gone (an ack, an interrupt, a stop) dropped the session's unread last
+// events. Now a failed write breaks fd 4 only, and fd 3 is read to its end.
+// fds 0 to 2 are left to Node in the session (the SDK builds process.stdin on fd 0): stdin is /dev/null (the root has
+// nothing to say there), stdout is drained and counted, never kept, and stderr is the session's log (the root keeps its
+// tail). Neither is parsed. A session whose fd 3 closes (an end or an error) before its terminal event can't be heard
+// any more: its group is killed and the run ends as `session_crashed` (or `stopped` after a stop).
 //
 // Leftover processes: the session leads its own process group (`detached`). On stop or timeout the whole group is
 // killed after the grace period, and once the session has exited the group is killed at once, so nothing it started
 // outlives it inside that group. A process that left the group (setsid) is `SessionUsers.release()`'s to end (seam.ts).
 import { spawn, type ChildProcess } from 'node:child_process'
-import type { Duplex, Readable, Writable } from 'node:stream'
+import type { Duplex, Readable } from 'node:stream'
 import { SDK_MESSAGE_MAX_BYTES } from '../../../shared/protocol/index.ts'
 import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '../protocol/ndjson.ts'
 import { capSdkMessage, monotonicMs, parseSessionMessage, type RootMessage, type RunConfig } from '../protocol/local.ts'
@@ -38,9 +43,9 @@ export function spawnSessionProcess(entry: string): SpawnSession {
       cwd: user.workDir,
       env,
       detached: true,
-      // fd 3 is the channel (CHANNEL_FD in src/session/channel.ts). stdin: nothing to send. stdout: a pipe the root
-      // drains into the log tail, so a stray print is kept for diagnosis and never blocks the session.
-      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+      // fd 3: session -> root, fd 4: root -> session (TO_ROOT_FD and FROM_ROOT_FD in src/session/channel.ts). stdin:
+      // nothing to send. stdout: a pipe the root drains (and counts), so a stray print never blocks the session.
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
     })
 }
 
@@ -57,8 +62,13 @@ export type SessionHandle = {
 }
 
 const STDERR_TAIL = 4096
-/** How much of the tail of a session's output (stdout and stderr) the root logs when it ends without a terminal event. */
+/** How much of the tail of a session's stderr the root logs when it ends without a terminal event. */
 export const STDERR_LOG_CHARS = 2000
+/**
+ * What the root lets wait unsent for a session on fd 4, beyond the run message: the rest is small (interrupt, stop, one
+ * answer per audit entry the session sent). A session past it isn't reading: the root ends it as `protocol`.
+ */
+export const ROOT_TO_SESSION_BACKLOG_BYTES = 64 * 1024
 
 /**
  * The session's deadline for its end phase after a stop, below the grace after which the root kills it: the grace less
@@ -78,9 +88,8 @@ export function hostSession(opts: {
 }): SessionHandle {
   const { child, stream, config, log } = opts
   const runId = stream.runId
-  const channel = (child.stdio[3] ?? null) as Duplex | null
-  const fromSession: Readable | null = channel
-  const toSession: Writable | null = channel
+  const fromSession = (child.stdio[3] ?? null) as Readable | null
+  const toSession = (child.stdio[4] ?? null) as Duplex | null
   let sentRun = false
   let stopping = false
   let interruptPending = false
@@ -90,6 +99,10 @@ export function hostSession(opts: {
   let closeTimer: NodeJS.Timeout | undefined
   let stderrTail = ''
   let stderrBytes = 0
+  let stdoutBytes = 0
+  /** What may wait unsent on fd 4: the backlog cap, plus the run message once it is sent. */
+  let backlogAllowed = ROOT_TO_SESSION_BACKLOG_BYTES
+  let backlogFailed = false
   let resolveDone!: () => void
   const done = new Promise<void>((r) => (resolveDone = r))
 
@@ -106,8 +119,16 @@ export function hostSession(opts: {
     if (killTimer === undefined && !exited) killTimer = setTimeout(killGroup, opts.stopGraceMs)
   }
   const send = (m: RootMessage) => {
-    if (closed || !toSession || toSession.destroyed || toSession.writableEnded) return
-    toSession.write(encodeLine(m))
+    if (closed || backlogFailed || !toSession || toSession.destroyed || toSession.writableEnded) return
+    const line = encodeLine(m)
+    if (m.type === 'run') backlogAllowed += Buffer.byteLength(line)
+    toSession.write(line)
+    if (toSession.writableLength > backlogAllowed) {
+      backlogFailed = true
+      log({ type: 'session_protocol_error', runId, error: `the session is not reading the channel: ${toSession.writableLength} bytes wait unsent` })
+      if (!stream.ended) stream.emit({ type: 'failed', reason: 'protocol', message: 'the session stopped reading the runner' })
+      killGroup()
+    }
   }
   const failProtocol = (error: string) => {
     log({ type: 'session_protocol_error', runId, error: error.slice(0, 500) })
@@ -174,23 +195,30 @@ export function hostSession(opts: {
       for (const line of reader.push(chunk)) onLine(line)
     }),
   )
-  fromSession?.on('end', () => {
+  fromSession?.on('end', () =>
     guarded('read', () => {
       for (const line of reader.end()) onLine(line)
-    })
-    // The session closed the channel (or died) with no terminal event: it can't be reached any more. Its group is
-    // killed; `close` then ends the run once its output is read.
+    }),
+  )
+  // fd 3 closed (a clean end, every line read; or an error, ECONNRESET say) with no terminal event: the session can't
+  // be heard any more. Its group is killed; the child's `close` then ends the run.
+  fromSession?.on('close', () => {
     if (!stream.ended) killGroup()
   })
-  // Pipe errors (EPIPE once the session is gone) are logged; the run's end comes from `close`.
+  // Pipe errors are logged, one listener per socket; the run's end comes from `close`. A write that fails on fd 4
+  // (EPIPE once the session is gone) breaks fd 4 only: fd 3 is still read to its end.
   fromSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, error: e.message }))
   toSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, error: e.message }))
-  const keepOutput = (d: Buffer) => {
+  // Nothing comes to the root on fd 4; read it anyway, so its end is seen and it closes with the session.
+  toSession?.resume()
+  // Only stderr's tail is kept, for the crash log: the session's stdout can hold anything it printed (chat content, a
+  // tool's output), and Node's crash trace goes to stderr. stdout is drained, so it never blocks the session, and
+  // counted.
+  child.stdout?.on('data', (d: Buffer) => (stdoutBytes += d.length))
+  child.stderr?.on('data', (d: Buffer) => {
     stderrBytes += d.length
     stderrTail = (stderrTail + d.toString('utf8')).slice(-STDERR_TAIL)
-  }
-  child.stdout?.on('data', keepOutput)
-  child.stderr?.on('data', keepOutput)
+  })
 
   const finish = (how: string) => {
     if (closed) return
@@ -198,8 +226,10 @@ export function hostSession(opts: {
     clearTimeout(killTimer)
     clearTimeout(closeTimer)
     if (!stream.ended) {
-      // Length and the last STDERR_LOG_CHARS only: enough for a stack trace, bounded whatever the session printed.
-      log({ type: 'session_exit', runId, how, stderrBytes, stderrTail: stderrTail.slice(-STDERR_LOG_CHARS) })
+      // stderr's length and its last STDERR_LOG_CHARS: enough for a stack trace, bounded whatever the session printed.
+      // Still, the tail can hold chat content (an error that quotes a message or a tool's output): runner logs are
+      // as sensitive as the chat. stdout gives its byte count only.
+      log({ type: 'session_exit', runId, how, stderrBytes, stderrTail: stderrTail.slice(-STDERR_LOG_CHARS), stdoutBytes })
       if (stopping) stream.emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
       else stream.emit({ type: 'failed', reason: 'session_crashed', message: `the session process ended (${how})` })
     }

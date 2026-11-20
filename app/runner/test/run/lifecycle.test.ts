@@ -7,7 +7,8 @@
 // - the chat frees before release() settles, so the next run's allocate races the last run's release;
 // - a timeout racing the session's finish gives two ends;
 // - SIGTERM (stopAll) misses a run that is still starting, or new runs are let in while stopping;
-// - a tool the CLI starts can write into the channel; a process the session left behind outlives the run;
+// - a tool the CLI starts can write into the channel (fds 3 and 4), inherits it, or opens it through /proc; a process
+//   the session left behind outlives the run;
 // - a uid maps to the wrong token, or to a token after its run's session has gone.
 import { spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
@@ -33,6 +34,13 @@ async function withRoot<T>(root: TestRoot, fn: (root: TestRoot) => Promise<T>): 
   } finally {
     await root.close()
   }
+}
+
+/** What the grandchild fixture's shell printed. */
+const grandchildOut = (events: RunEvent[]) => {
+  const sdk = events.find((e) => e.type === 'sdk')
+  expect(sdk).toMatchObject({ message: { type: 'grandchild', code: 0 } })
+  return sdk?.type === 'sdk' ? String(sdk.message.out) : ''
 }
 
 const alive = (pid: number) => {
@@ -251,23 +259,32 @@ describe('SIGTERM (stopAll)', () => {
 })
 
 describe('what a run leaves behind', () => {
-  it("a tool the CLI starts can't write into the channel, through its fds 0 to 4 or /proc", async () => {
+  it("a tool the CLI starts can't write into the channel through its fds 0 to 5, and doesn't inherit fds 3 to 5", async () => {
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
       const events = await postRun(root, runStart({ prompt: 'grandchild' }))
       expectOneEnd(events)
-      // Had any write reached the session's channel (fd 3), "leaked" would have hit the root's parser and ended the run
-      // as protocol.
+      // Had any write reached the session's channel, "leaked" would have hit the root's parser and ended the run as
+      // protocol.
       expect(events.at(-1)?.type).toBe('finished')
-      const sdk = events.find((e) => e.type === 'sdk')
-      expect(sdk).toMatchObject({ message: { type: 'grandchild', code: 0 } })
-      const out = sdk?.type === 'sdk' ? String(sdk.message.out) : ''
+      const out = grandchildOut(events)
       expect(out).toContain('shell-ran')
-      // Neither the channel nor the session's stdio sockets open through /proc (ENXIO on Linux; no /proc elsewhere).
-      expect(out).toMatch(/^proc-stdout=[1-9]/m)
-      expect(out).toMatch(/^proc-stdin=[1-9]/m)
-      expect(out).toMatch(/^proc-channel=[1-9]/m)
-      // The channel's fd 3 (and anything above) is not inherited by the CLI or its tools.
+      // The channel's fds 3 and 4 (and anything above) are not inherited by the CLI or its tools.
       expect(out).not.toMatch(/^open-fd=/m)
+    })
+  })
+
+  // Only where there is a /proc (Linux, as in the image); vitest reports it skipped elsewhere.
+  describe.skipIf(!existsSync('/proc/self'))('through /proc', () => {
+    it("a tool can't open the session's channel (fds 3 and 4) or stdout through /proc (ENXIO), and its fd 0 is /dev/null", async () => {
+      await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
+        const events = await postRun(root, runStart({ prompt: 'grandchild' }))
+        expect(events.at(-1)?.type).toBe('finished')
+        const out = grandchildOut(events)
+        // Sockets don't open through /proc: ENXIO, "No such device or address".
+        for (const fd of [1, 3, 4]) expect(out).toMatch(new RegExp(`^proc-fd${fd}=[1-9][0-9]*:.*No such device or address$`, 'm'))
+        // fd 0 is /dev/null (stdin 'ignore'): writing it through /proc succeeds, harmlessly.
+        expect(out).toMatch(/^proc-fd0=\/dev\/null$/m)
+      })
     })
   })
 

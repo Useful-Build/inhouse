@@ -36,9 +36,9 @@ export interface SessionUsers {
 export interface QueryGuards {
   readonly kind: 'production' | 'test'
   /**
-   * No spawn hook to keep: the local channel is the session's fd 3 (close-on-exec), and the SDK's default spawn gives
-   * the CLI fresh stdio pipes (src/session/channel.ts). A guard that sets `spawnClaudeCodeProcess` must not hand the
-   * CLI the session's fd 3. `baseOptions` already holds the session store (`sessionStore`,
+   * No spawn hook to keep: the local channel is the session's fds 3 and 4 (close-on-exec), and the SDK's default spawn
+   * gives the CLI fresh stdio pipes (src/session/channel.ts). A guard that sets `spawnClaudeCodeProcess` must not hand
+   * the CLI the session's fds 3 or 4. `baseOptions` already holds the session store (`sessionStore`,
    * `sessionStoreFlush`); keep them.
    */
   apply(baseOptions: Options, runConfig: RunConfig, run: RunContext): Options
