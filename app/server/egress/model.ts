@@ -24,6 +24,18 @@ export const countedInput = (count: number) => Math.ceil(count * 1.1) + 1_000
 export const COUNT_TIMEOUT_MS = 5_000
 /** How often a running call renews its 60 s lease (8.2, N1). */
 export const RENEW_EVERY_MS = 20_000
+/**
+ * How long the upstream may take to answer with its headers. A stream's headers come with `message_start`, before any
+ * output, so 2 minutes is ample even when the API queues; a non-streamed answer arrives whole, and 32,000 output tokens
+ * at a slow rate take minutes, so it gets the Anthropic SDKs' own default request timeout, 10 minutes. Past it the call
+ * is closed cut, so a stalled gateway can't hold one of the turn's 4 slots and its worst case until the turn ends.
+ */
+export const FIRST_BYTE_TIMEOUT_MS = { stream: 120_000, whole: 600_000 } as const
+/**
+ * How long a stream may go without a byte. The API sends `ping` events while it works and thinking streams its own
+ * deltas, so 5 minutes of silence is a dead stream, not a slow one; closed cut.
+ */
+export const STREAM_IDLE_TIMEOUT_MS = 300_000
 
 const ZERO: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0, webSearches: 0 }
 
@@ -47,6 +59,7 @@ export async function modelRoute(request: Request, path: string, grant: RunGrant
   const price = entry.price as Price
 
   const headers = modelRequestHeaders(request.headers)
+  if (!(headers instanceof Headers)) return messagesError(400, 'invalid_request_error', `anthropic-beta ${headers.refusedBeta.slice(0, 80)} is not allowed`)
   if (isCount) return cliCount(body, headers, grant, d)
   return messages(request, body, model, headers, grant, price, d)
 }
@@ -122,18 +135,28 @@ async function messages(request: Request, body: object, model: string, headers: 
   const confirmed = await d.rpc.renewModelCall(turnId, callId, { ...ZERO, micro: 0 })
   if ('gone' in confirmed) return messagesError(503, 'api_error', 'The call was closed before it started.')
 
-  return new CallLease(request, turnId, callId, worst, price, insp.modifiers, d).run(insp.body, headers)
+  return new CallLease(request, turnId, callId, worst, price, insp.modifiers, d).run(insp.body, headers, insp.body.stream === true)
 }
+
+/**
+ * How a call closes. `unsent`: no upstream request went out (a connect failure, the caller gone before the send), so
+ * nothing was billed: zero, not cut. `tally`: the answer is whole and carried its usage: priced from it. `cut`: anything
+ * else after the send (aborted, cancelled, timed out, lease gone, no final event, no usage): priced at the larger of its
+ * admitted worst case (8.3) and its running tally (search results past the allowance can pass the worst case).
+ */
+type CloseKind = 'unsent' | 'tally' | 'cut'
 
 /** One admitted, confirmed call: sent once, renewed every 20 s, closed exactly once. */
 class CallLease {
-  private closed = false
+  private closed: CloseKind | null = null
   private readonly upstreamAbort = new AbortController()
   private readonly done: Promise<void>
   private resolveDone!: () => void
   private timer: ReturnType<typeof setInterval> | undefined
   private usage: () => TokenUsage = () => ZERO
-  private readonly onAbort = () => void this.close(true)
+  /** True once the answer is whole and carried its usage: a late abort or cancel then closes from the tally. */
+  private whole: () => boolean = () => false
+  private readonly onAbort = () => void this.close(this.whole() ? 'tally' : 'cut')
 
   private readonly request: Request
   private readonly turnId: string
@@ -154,7 +177,6 @@ class CallLease {
     this.done = new Promise(r => (this.resolveDone = r))
     // The close outlives the response (`waitUntil`), and runs when the caller drops its request.
     d.waitUntil(this.done)
-    request.signal.addEventListener('abort', this.onAbort)
     this.timer = d.setInterval(() => void this.renew(), RENEW_EVERY_MS)
   }
 
@@ -167,23 +189,23 @@ class CallLease {
     try {
       const a = await this.d.rpc.renewModelCall(this.turnId, this.callId, this.priced(this.usage()))
       // The lease closed the call: stop the upstream at once. The close still goes out (answered `gone`, priced once).
-      if ('gone' in a) await this.close(true)
+      if ('gone' in a) await this.close('cut')
     } catch (e) {
       this.d.log({ event: 'egress_renew_failed', route: 'model', error: e instanceof Error ? e.name : 'unknown' })
     }
   }
 
-  /** Closes the call once: cut → its admitted worst case (8.3), else its tally. */
-  async close(cut: boolean): Promise<void> {
+  /** Closes the call once (see `CloseKind`). */
+  async close(kind: CloseKind): Promise<void> {
     if (this.closed) return
-    this.closed = true
+    this.closed = kind
     if (this.timer !== undefined) this.d.clearInterval(this.timer)
     this.request.signal.removeEventListener('abort', this.onAbort)
-    if (cut) this.upstreamAbort.abort()
-    const u = this.usage()
-    const usage = cut ? { ...u, micro: this.worst.micro } : this.priced(u)
+    if (kind === 'cut') this.upstreamAbort.abort()
+    const tally = this.priced(this.usage())
+    const usage = kind === 'unsent' ? { ...ZERO, micro: 0 } : kind === 'cut' ? { ...tally, micro: Math.max(this.worst.micro, tally.micro) } : tally
     try {
-      await this.d.rpc.releaseModelCall(this.turnId, this.callId, { usage, cut })
+      await this.d.rpc.releaseModelCall(this.turnId, this.callId, { usage, cut: kind === 'cut' })
     } catch (e) {
       // The lease closes it instead (priced by the cut-stream rule).
       this.d.log({ event: 'egress_release_failed', route: 'model', error: e instanceof Error ? e.name : 'unknown' })
@@ -192,28 +214,47 @@ class CallLease {
     }
   }
 
-  async run(body: object, headers: Headers): Promise<Response> {
+  /** The answer for a call this lease already closed (the caller gone, a timeout, the lease gone). */
+  private closedAnswer(): Response {
+    return this.request.signal.aborted ? messagesError(499, 'api_error', 'The caller went away.') : messagesError(504, 'api_error', 'The model service did not answer in time.')
+  }
+
+  async run(body: object, headers: Headers, stream: boolean): Promise<Response> {
+    // Gone during the confirm, or before the send: nothing went upstream.
     if (this.request.signal.aborted) {
-      await this.close(true)
+      await this.close('unsent')
       return messagesError(499, 'api_error', 'The caller went away.')
     }
+    this.request.signal.addEventListener('abort', this.onAbort)
+    const firstByte = this.d.setTimeout(() => {
+      this.d.log({ event: 'egress_model_timeout', route: 'model', phase: 'first_byte' })
+      void this.close('cut')
+    }, stream ? FIRST_BYTE_TIMEOUT_MS.stream : FIRST_BYTE_TIMEOUT_MS.whole)
     let res: Response
     try {
       res = await this.d.upstream('/v1/messages', { body: JSON.stringify(body), headers, signal: this.upstreamAbort.signal })
     } catch {
-      await this.close(true)
+      this.d.clearTimeout(firstByte)
+      if (this.closed) return this.closedAnswer()
+      // A connect failure: the request never reached the model.
+      await this.close('unsent')
       return messagesError(502, 'api_error', 'The model service failed.')
+    }
+    this.d.clearTimeout(firstByte)
+    if (this.closed) {
+      await res.body?.cancel().catch(() => undefined)
+      return this.closedAnswer()
     }
     const h = responseHeaders(res.headers)
     if (res.status >= 300 && res.status < 400) {
       await res.body?.cancel()
-      await this.close(false)
+      await this.close('tally')
       return messagesError(502, 'api_error', 'The model service redirected.')
     }
     if (!res.ok) {
-      // An error answer bills nothing: closed at zero.
+      // An error answer bills nothing: closed at zero (an empty tally).
       const mapped = await mapUpstreamError(res, h)
-      await this.close(false)
+      await this.close('tally')
       return mapped
     }
     const streamed = (res.headers.get('content-type') ?? '').includes('text/event-stream')
@@ -227,16 +268,22 @@ class CallLease {
           json = undefined
         }
         if (json === undefined) {
-          await this.close(true)
+          await this.close('cut')
           return messagesError(502, 'api_error', 'The model service answered something unreadable.')
         }
         const usage = usageOfMessage(json)
-        this.usage = () => usage
-        await this.close(false)
+        if (usage === null) {
+          // A 200 with no usage can't be priced from itself: booked at the worst case, and logged.
+          this.d.log({ event: 'egress_model_no_usage', route: 'model', shape: 'json' })
+          await this.close('cut')
+        } else {
+          this.usage = () => usage
+          await this.close('tally')
+        }
         return new Response(text, { status: res.status, headers: h })
       } catch {
-        await this.close(true)
-        return messagesError(502, 'api_error', 'The model service failed.')
+        await this.close('cut')
+        return this.closed === 'cut' && this.request.signal.aborted ? this.closedAnswer() : messagesError(502, 'api_error', 'The model service failed.')
       }
     }
     return this.stream(res, h)
@@ -245,29 +292,45 @@ class CallLease {
   private stream(res: Response, h: Headers): Response {
     const tally = createSseTally()
     this.usage = () => tally.usage()
+    this.whole = () => tally.complete && tally.sawUsage
     const reader = res.body!.getReader()
+    const end = async () => {
+      if (tally.complete && !tally.sawUsage) this.d.log({ event: 'egress_model_no_usage', route: 'model', shape: 'stream' })
+      await this.close(this.whole() ? 'tally' : 'cut')
+    }
     const out = new ReadableStream<Uint8Array>({
       pull: async c => {
+        const idle = this.d.setTimeout(() => {
+          this.d.log({ event: 'egress_model_timeout', route: 'model', phase: 'idle' })
+          void this.close('cut')
+          void reader.cancel().catch(() => undefined)
+        }, STREAM_IDLE_TIMEOUT_MS)
         try {
           const { done, value } = await reader.read()
+          this.d.clearTimeout(idle)
+          // Cut while reading (the idle timer, the lease gone): the caller sees an error, never a clean end.
+          if (this.closed === 'cut') {
+            c.error(new Error('the model stream was cut'))
+            return
+          }
           if (done) {
             c.close()
-            await this.close(!tally.complete)
+            await end()
             return
           }
           tally.push(value)
           c.enqueue(value)
         } catch (e) {
-          await this.close(true)
+          this.d.clearTimeout(idle)
+          await this.close('cut')
           c.error(e)
         }
       },
       cancel: async () => {
-        await this.close(true)
+        await this.close(this.whole() ? 'tally' : 'cut')
         await reader.cancel().catch(() => undefined)
       },
     })
     return new Response(out, { status: res.status, headers: h })
   }
 }
-

@@ -1,13 +1,46 @@
 // The session store route (p3-design 8.5): `POST /store/append|load|list-subkeys`, scoped to the grant. The key's
 // `sessionId` must be the grant's; the chat is always the grant's. R2 keys (r2-keys.ts `sessionKey`):
 // `sessions/<chatId>/<sessionId>/<sha256(projectKey)>/<sub>/<part>.json`, `<sub>` = `m` (main transcript) or
-// `s/<encodeURIComponent(subpath)>` (a subagent's), disjoint. A load pages R2's list 1,000 at a time and stops at 64 MB.
+// `s/<encodeURIComponent(subpath)>` (a subagent's), disjoint. A load pages R2's list 1,000 at a time, stops at 64 MB,
+// and streams its answer (`entriesStream`).
 import { StoreAppend, StoreListSubkeys, StoreLoad } from '../../shared/protocol/index.ts'
 import type { StoreKey } from '../../shared/protocol/index.ts'
 import { sessionKey, sessionPrefix } from '../db/r2-keys.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import type { EgressDeps } from './deps.ts'
 import { jsonAnswer, parseJson, readCapped, sha256Hex } from './http.ts'
+
+/**
+ * A load's answer, `{"entries":[...]}`, streamed one stored part at a time: each part is the JSON array an append wrote
+ * (its entries already parsed and checked then), so its inside is spliced in as it is, never parsed or re-serialised.
+ * Memory holds one part (an append is at most 16 MB), not the whole transcript, so the 64 MB stop fits a 128 MB isolate.
+ */
+function entriesStream(d: EgressDeps, keys: string[]): ReadableStream<Uint8Array> {
+  const enc = new TextEncoder()
+  let i = 0
+  let wrote = false
+  return new ReadableStream<Uint8Array>({
+    start: c => c.enqueue(enc.encode('{"entries":[')),
+    pull: async c => {
+      if (i === keys.length) {
+        c.enqueue(enc.encode(']}'))
+        c.close()
+        return
+      }
+      const obj = await d.bucket.get(keys[i++]!)
+      if (!obj) return
+      const text = (await obj.text()).trim()
+      if (!text.startsWith('[') || !text.endsWith(']')) {
+        c.error(new Error('a stored part is not a JSON array'))
+        return
+      }
+      const inner = text.slice(1, -1).trim()
+      if (inner === '') return
+      c.enqueue(enc.encode(wrote ? `,${inner}` : inner))
+      wrote = true
+    },
+  })
+}
 
 /** The most a store request body may be (an append's batch). */
 export const STORE_BODY_MAX_BYTES = 16 * 1024 * 1024
@@ -60,14 +93,7 @@ export async function storeRoute(request: Request, path: string, grant: RunGrant
     } while (cursor !== undefined)
     if (keys.length === 0) return jsonAnswer({ entries: null })
     keys.sort()
-    const entries: unknown[] = []
-    for (const k of keys) {
-      const obj = await d.bucket.get(k)
-      if (!obj) continue
-      const part = JSON.parse(await obj.text()) as unknown[]
-      for (const e of part) entries.push(e)
-    }
-    return jsonAnswer({ entries })
+    return new Response(entriesStream(d, keys), { headers: { 'content-type': 'application/json' } })
   }
 
   const body = StoreListSubkeys.safeParse(raw)

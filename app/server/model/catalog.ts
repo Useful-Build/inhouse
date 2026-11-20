@@ -86,7 +86,7 @@ export const CATALOG: readonly CatalogModel[] = [
 /**
  * The per-turn ceilings (`:turnCeiling`, p3-design 9; Wasim, item 22 E2, 2026-11-20), in micro-USD, by API id: 4 x the
  * model's single-call worst case at the input bound (700,000 tokens at the 1-hour cache-write rate, 32,000 output
- * tokens, 5 searches) + $2.00. One constant table; ceilings.test.ts recomputes each from literal rates.
+ * tokens, 5 searches) + $2.00. One constant table; pricing.test.ts recomputes each from literal rates.
  */
 export const TURN_CEILING_MICRO: Readonly<Record<string, number>> = {
   'claude-fable-5-2': 52_120_000,

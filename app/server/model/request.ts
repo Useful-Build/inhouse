@@ -22,16 +22,22 @@ export const INPUT_BOUND = 650_000
 export const IMAGE_ALLOWANCE = 5_000
 export const PDF_PAGE_ALLOWANCE = 5_000
 /**
- * A PDF whose pages can't be counted from its bytes (pages packed in compressed object streams) is taken as one page
- * per this many bytes, and is always counted (never trusted to the byte bound alone).
+ * A PDF is taken as at least one page per this many bytes, whatever pages it shows. One whose pages can't be counted from
+ * its bytes (pages packed in compressed object streams) is always counted, never trusted to the byte bound alone.
  */
 export const PDF_BYTES_PER_PAGE_GUESS = 3_000
 
 /** The fields `count_tokens` takes (its documented body). */
 const COUNT_FIELDS = ['model', 'messages', 'system', 'tools', 'tool_choice', 'thinking', 'cache_control', 'output_config', 'speed'] as const
 
-/** Top-level fields refused outright: the MCP connector, priority capacity, code execution's container. */
-const REFUSED_FIELDS = ['mcp_servers', 'service_tier', 'container'] as const
+/**
+ * Top-level fields refused outright: the MCP connector, priority capacity, code execution's container, and on-demand
+ * server-side compaction. Server-side compaction runs a summary inside the call whose tokens the top-level usage leaves
+ * out ("The top-level input_tokens and output_tokens do not include compaction iteration usage", compaction docs, read
+ * 2026-11-20); design 8.2 compacts with the CLI's own auto-compact at 600,000, whose summary is an ordinary call, so the
+ * server-side kind is never needed.
+ */
+const REFUSED_FIELDS = ['mcp_servers', 'service_tier', 'container', 'compaction'] as const
 
 export type Inspected = {
   /** The body to send: `max_tokens` and `max_uses` clamped. */
@@ -91,6 +97,15 @@ export function inspectRequest(raw: unknown, price: Price): Inspected | { refuse
   if (!isObj(raw)) return { refused: 'the body is not a JSON object' }
   for (const f of REFUSED_FIELDS) if (f in raw && raw[f] !== null && raw[f] !== undefined) return { refused: `${f} is not allowed` }
   if (!Array.isArray(raw.messages)) return { refused: 'messages is required' }
+  // Context management: the clear_* edits (they only drop content) pass; compaction (`compact_*`) is refused.
+  if (raw.context_management !== undefined && raw.context_management !== null) {
+    const edits = isObj(raw.context_management) ? raw.context_management.edits : undefined
+    if (edits !== undefined && !Array.isArray(edits)) return { refused: 'context_management.edits must be a list' }
+    for (const e of edits ?? []) {
+      if (!isObj(e) || typeof e.type !== 'string') return { refused: 'a context_management edit has no type' }
+      if (e.type.startsWith('compact')) return { refused: `context_management edit ${e.type} is not allowed` }
+    }
+  }
   const asked = raw.max_tokens
   if (typeof asked !== 'number' || !Number.isSafeInteger(asked) || asked < 1) return { refused: 'max_tokens must be a positive integer' }
   const maxTokens = Math.min(asked, MAX_OUTPUT_TOKENS)
@@ -136,9 +151,11 @@ export function inspectRequest(raw: unknown, price: Price): Inspected | { refuse
       if (o.type === 'document' && st === 'base64') {
         const bytes = typeof o.source.data === 'string' ? base64Bytes(o.source.data) : null
         if (!bytes) return { refused: 'a document is not valid base64' }
+        // Visible pages can be a decoy (one `/Type /Page` in a comment, the rest in object streams): the size guess is a
+        // floor either way.
         const pages = pdfPages(bytes)
         if (pages === null) mustCount = true
-        pdfPageCount += pages ?? Math.max(1, Math.ceil(bytes.length / PDF_BYTES_PER_PAGE_GUESS))
+        pdfPageCount += Math.max(pages ?? 0, 1, Math.ceil(bytes.length / PDF_BYTES_PER_PAGE_GUESS))
       }
     }
     if ('cache_control' in o && o.cache_control !== null && o.cache_control !== undefined) {

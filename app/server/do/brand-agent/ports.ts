@@ -50,10 +50,14 @@ export interface RunnerPoolPort {
   /**
    * Place a turn (`rs.runId` is the turn id) on a runner. `admitted`: the runner's name; `queued`: in the placement
    * queue (the turn stays `starting`, inside its 3-minute deadline, until a hook calls back); a definite refusal;
-   * `ambiguous`: the request may have reached the runner named (never try another).
+   * `ambiguous`: the request may have reached the runner named (never try another). `rejected`: the runner refused the
+   * RunStart itself with a typed 4xx (400, 413): the BrandAgent fails the turn `protocol` (no other runner would take it).
    * `gen` is the turn's generation at the claim, so an answer for an older attempt can be told apart.
    */
-  place(rs: RunStart, gen: number): Promise<{ admitted: string } | { queued: true } | { refused: 'pool_full' | 'files' | 'draining' } | { ambiguous: string }>
+  place(rs: RunStart, gen: number): Promise<
+    | { admitted: string } | { queued: true } | { refused: 'pool_full' | 'files' | 'draining' } | { refused: 'rejected'; status: number }
+    | { ambiguous: string }
+  >
   interrupt(runner: string, turnId: string): Promise<void>
   stop(runner: string, turnId: string): Promise<void>
   /** `containerGone`: the runner's container generation is gone or not running (design 1.3's second condition). */
@@ -61,7 +65,11 @@ export interface RunnerPoolPort {
   /** The turn released its runner (the next placement may use the slot). */
   turnEnded(runner: string, turnId: string): void
   health(): PoolHealth
-  /** Route 46 (W2 fit point 4): writes `draining_since_ms` and `draining_until_ms` in `flags` synchronously. */
+  /**
+   * Route 46 (W2 fit point 4): writes `draining_since_ms` and `draining_until_ms` in `flags` synchronously. The flags
+   * can outlive the drain's expiry, so a reader (the pool, the BrandAgent's admission) counts a drain only while
+   * `draining_until_ms > now`, never from the flag being present.
+   */
   drain(nowMs: number): DrainState
   /** Route 47. */
   drainState(): DrainState
@@ -69,6 +77,12 @@ export interface RunnerPoolPort {
   warmup(): Promise<{ ok: true } | Refusal>
   /** A container exited: the turn ids the BrandAgent fences, or null when this generation was already reported. */
   containerExited(runner: string, gen: number): string[] | null
+  /** The `pool-retry` task's work (its handler only gets `ctx.ports.pool`): try the placement queue again. */
+  retryQueue(): Promise<void>
+  /** Takes a turn out of the placement queue (the BrandAgent cancelled it); nothing when it isn't queued. */
+  dequeue(turnId: string): void
+  /** Empties the placement queue and returns the turn ids it held, in queue order (pause fails them `paused`, 4.11). */
+  clearQueue(): string[]
 }
 
 // ---------- the usage ledger (W4, p3-design section 9) ----------
@@ -195,6 +209,11 @@ export interface BrandAgentRpc {
   ingest(turnId: string, events: RunEvent[]): Promise<PushAck | { gone: true }>
   /** The egress's token check (8.1): the hash, never the token. */
   checkRunToken(tokenHash: string, route: EgressRoute): Promise<RunGrant | { refused: TokenRefusal }>
+  /**
+   * Counts one of the CLI's own `count_tokens` calls (they pass unpriced, 8.2): true while the turn had made fewer than
+   * 50 before it, false from then on. A conditional, atomic counter on the turn's row (count-tokens.ts).
+   */
+  noteCountTokens(turnId: string): Promise<boolean>
   admitModelCall(turnId: string, callId: string, worst: ModelCallWorst): Promise<AdmitAnswer>
   /** Confirms a grant (the first renew) and extends its 60 s lease with the running usage. */
   renewModelCall(turnId: string, callId: string, usage: ModelCallUsage): Promise<LeaseAnswer>

@@ -6,14 +6,8 @@ import type { FileStore } from '../files-io/store.ts'
 import type { SettingsView } from '../model/catalog.ts'
 import type { ModelUpstream } from './gateway.ts'
 
-/**
- * The BrandAgent's RPC as the egress uses it. `noteCountTokens` (the CLI's own counts, 50 per turn) is the
- * orchestrator's addition to `BrandAgentRpc` (W1 adds it to ports.ts in #142); until then it's declared here.
- */
-export type EgressRpc = BrandAgentRpc & {
-  /** Notes one CLI `count_tokens` call of the turn: true while under 50, false after. */
-  noteCountTokens(turnId: string): Promise<boolean>
-}
+/** The BrandAgent's RPC as the egress uses it (`noteCountTokens` included, W1's ports.ts). */
+export type EgressRpc = BrandAgentRpc
 
 /** The `inhouse` MCP handler (W6, `app/server/mcp/server.ts`); scoped to the grant's ids only. */
 export type McpHandler = (request: Request, scope: { memberId: string; chatId: string; runId: string; turnId: string }) => Promise<Response>
@@ -37,6 +31,8 @@ export interface EgressDeps {
   waitUntil(p: Promise<unknown>): void
   setInterval(fn: () => void, ms: number): ReturnType<typeof setInterval>
   clearInterval(t: ReturnType<typeof setInterval>): void
+  setTimeout(fn: () => void, ms: number): ReturnType<typeof setTimeout>
+  clearTimeout(t: ReturnType<typeof setTimeout>): void
   newCallId(): string
   now(): number
   /** Never a token, hash, key, body or upstream diagnostics. */

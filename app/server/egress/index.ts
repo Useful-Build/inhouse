@@ -89,7 +89,7 @@ type EgressEnv = Env & { AI?: AiGatewayBinding; INHOUSE_TEST_BUILD?: string }
 export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressProps): EgressDeps {
   const testBuild = __INHOUSE_TEST_BUILD__ && env.INHOUSE_TEST_BUILD === '1'
   return {
-    // W1's BrandAgent implements BrandAgentRpc (and `noteCountTokens`); the stub is typed by that interface.
+    // W1's BrandAgent implements BrandAgentRpc; the stub is typed by that interface.
     rpc: env.BRAND_AGENT.getByName('brand') as unknown as EgressRpc,
     runner: props.runner,
     touchRunner: async runner => {
@@ -105,6 +105,8 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     waitUntil: p => ctx.waitUntil(p),
     setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: t => clearInterval(t),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: t => clearTimeout(t),
     newCallId: () => `c_${crypto.randomUUID()}`,
     now: () => Date.now(),
     log: entry => console.log(entry),
