@@ -1,23 +1,8 @@
-// The demo's one clock (D5 in docs/history/UI_PLAN_2.md) and a few text helpers. Pure functions, no React. Formatting
-// lives in src/lib/format.ts.
-// The demo runs on Monday, November 16, 2026 from 8:00 AM in the device's local time (the time zone in Settings is a
-// label; it doesn't move this clock), moving on with real time while it is open and stopping at
-// 11:59 AM so the morning stays a morning. Everything a person does is stamped on this clock, never the computer's own
-// time. Holds and timers keep using real epoch ms.
+// Text helpers and the readers of times saved before C1. Pure functions, no React. Formatting lives in
+// src/lib/format.ts; the demo's own clock is in demo-clock.ts (only the demo entry and the mock import it).
 
 import type { ClockTime, Instant } from '../../shared/contract/common'
 import { instantOf } from '../lib/format'
-
-/** Monday, November 16, 2026, 8:00 AM, in the device's local time. */
-export const DEMO_START = new Date(2026, 10, 16, 8, 0, 0, 0)
-/** The latest the demo clock reads: 11:59 AM the same morning. */
-export const DEMO_LATEST = new Date(2026, 10, 16, 11, 59, 0, 0)
-/** The demo's year: every month Usage lists is in it. */
-export const DEMO_YEAR = DEMO_START.getFullYear()
-
-/** The demo's time now: DEMO_START plus the real time since `startedAt` (epoch ms), capped at DEMO_LATEST. */
-export const demoNow = (startedAt: number, now: number = Date.now()): Date =>
-  new Date(Math.min(DEMO_START.getTime() + Math.max(0, now - startedAt), DEMO_LATEST.getTime()))
 
 /** A shown time ("6:04 AM", as `fmtTime` in format.ts writes it) found in a text. */
 export const TIME_RE = /\b(1[0-2]|[1-9]):([0-5]\d)[ \u00a0](AM|PM)\b/
@@ -41,17 +26,6 @@ export const minuteOfTime = (text: string): number => {
   if (!m) throw new Error(`No time like "6:04 AM" in "${text}"`)
   return (Number(m[1]) % 12 + (m[3] === 'PM' ? 12 : 0)) * 60 + Number(m[2])
 }
-
-/** A sample instant as the sample data writes it: days from the demo's Monday and a local time ("0d 07:42" today,
- *  "-1d 16:40" Sunday, "+4d 09:00" Friday). Local, so it reads the same in every time zone. Throws on anything else. */
-export const demoAt = (rel: string): Instant => {
-  const m = /^([+-]?\d+)d (\d\d):(\d\d)$/.exec(rel)
-  if (!m || Number(m[2]) > 23 || Number(m[3]) > 59) throw new Error(`Not a sample time like "-1d 16:40": "${rel}"`)
-  return instantOf(new Date(DEMO_START.getFullYear(), DEMO_START.getMonth(), DEMO_START.getDate() + Number(m[1]), Number(m[2]), Number(m[3])).getTime())
-}
-/** The demo's Monday at a minute since midnight: how a time stored before C1 ("8:03 AM", minute 483) becomes an instant. */
-export const demoDayAt = (minute: number): Instant =>
-  instantOf(new Date(DEMO_START.getFullYear(), DEMO_START.getMonth(), DEMO_START.getDate(), 0, minute).getTime())
 
 /**
  * A routine's next run after `now`: the first day from `now` on whose weekday (0 Sunday to 6 Saturday) `runsOn` takes, at

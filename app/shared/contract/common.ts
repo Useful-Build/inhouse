@@ -15,7 +15,7 @@ export type Scenario = z.infer<typeof ScenarioSchema>
 export const EffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
 export type Effort = z.infer<typeof EffortSchema>
 
-export const AgentErrorCodeSchema = z.enum(['offline', 'forbidden', 'conflict', 'unknown'])
+export const AgentErrorCodeSchema = z.enum(['offline', 'forbidden', 'conflict', 'not_found', 'unavailable', 'unknown'])
 export type AgentErrorCode = z.infer<typeof AgentErrorCodeSchema>
 
 /** Two strings shown side by side: a label and its value, or a text and its source number. */

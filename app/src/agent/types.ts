@@ -88,10 +88,6 @@ export interface AgentClient {
   /** Every chat id the agent has, whatever the demo scenario shows (`read().chat.chats` follows the scenario): the sample
    *  chats and the ones made with `createChat`. The app checks saved chat additions against it. */
   allChatIds(): string[]
-  /** Dev switcher: stage comes from the plan in production, scenario from real state. Tells listeners when it changes. */
-  setDemo(ctx: DemoContext): void
-  /** Dev action: clear every state change. */
-  reset(): void
 
   // approvals
   /** Starts the 10 s hold, or finishes at once for reversible drafts. */

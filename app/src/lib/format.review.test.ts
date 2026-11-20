@@ -12,8 +12,11 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { writes.push(k); store.set(k, v) },
   removeItem: (k: string) => { store.delete(k) },
 })
+// The client entry first: display.ts reads the clock from it, and the entry builds the mock, which imports display (a cycle that
+// only works when the entry starts it).
+await import('../agent')
 const { MockAgent } = await import('../agent/mock')
-const { DEMO_START } = await import('../agent/clock')
+const { DEMO_START } = await import('../agent/demo-clock')
 const F = await import('./format')
 const { display } = await import('../state/display')
 const { activityRows, draftView, handled, teamRequestLine } = await import('../state/derive')

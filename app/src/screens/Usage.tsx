@@ -2,9 +2,8 @@
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { activeChannel, capStatus, usageSummary } from '../state/derive'
-import { DEMO_YEAR } from '../agent/clock'
-import { fmtCount, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
-import { display } from '../state/display'
+import { calendarOf, fmtCount, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
+import { display, nowOf } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
 import { AgentMark, Avatar, CardGrid, EmptyState, Page, PageHeader, Segmented } from '../ui'
@@ -31,8 +30,9 @@ export function Usage() {
   // recorded for them. A cap never changes what was spent: only "reached" compares the two.
   const status = capStatus(ctx)
   const usage = thisMonth ? { ...month, cap: status.cap, alertAt: status.alertAt } : month
-  // Every month listed is in the demo's year.
-  const monthLabels = usageMonths.map(m => `${m.month} ${DEMO_YEAR}`)
+  // Every month listed is in the year the client's clock is in (the demo's year in the demo).
+  const year = calendarOf(nowOf(), display()).year
+  const monthLabels = usageMonths.map(m => `${m.month} ${year}`)
   const mon = usage.month.slice(0, 3)
   const cap = thisMonth && status.reached
   const tab = useUi(s => s.usageTab)

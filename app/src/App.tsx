@@ -1,12 +1,13 @@
 import { Component, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
-import { agent } from './agent'
+import { agent, demo } from './agent'
 import type { ToolsData } from './agent/types'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
 import { Sidebar } from './shell/Sidebar'
 import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
+import { NotConnected } from './shell/NotConnected'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -260,7 +261,7 @@ function useHashRoute() {
   }, [page, appKey, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
 }
 
-export default function App() {
+function Shell() {
   const page = useUi(s => s.page)
   const appKey = useUi(s => s.appKey)
   const toolKnown = !!toolName(useAgentData().tools, appKey)
@@ -366,4 +367,14 @@ export default function App() {
       <GooDefs />
     </div>
   )
+}
+
+/**
+ * The product build's client reports `loading` for as long as it has nothing (the stub, until P2): one "Not connected yet"
+ * screen in place of the pages. The demo has `demo` set and never shows it.
+ */
+export default function App() {
+  const status = useAgentData().status
+  if (demo === null && status === 'loading') return <NotConnected />
+  return <Shell />
 }
