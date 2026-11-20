@@ -1,5 +1,10 @@
 # Ship recording. Runs a project's ship specs (app/e2e/ship/<spec>) against a PR's immutable preview deployment with
 # video on, slowed for a person to follow, and stitches one reel.mp4 with a title card per scenario.
+# Two builds, picked at dispatch with `build`:
+# - demo (the default): the PR's demo preview, found through the preview comment below.
+# - test: the backend's test build (P2 on), built and served inside the `record` job at the PR's head SHA: the product
+#   Worker under `wrangler dev` with a fresh local D1, migrated and seeded with the invented brand, and the test issuer.
+#   Its key pair is made in the job for this run only, so nothing in the job is a secret.
 # Manual only: workflow_dispatch runs from the default branch, so this file is trusted code. The PR's code runs only in
 # the `record` job, which has read access and no secrets.
 #
@@ -19,6 +24,12 @@ on:
         description: Ship spec file name under app/e2e/ship/ (for example example.spec.ts)
         required: true
         type: string
+      build:
+        description: What the spec runs against. demo is the PR's demo preview; test is the backend test build at the PR head
+        required: false
+        type: choice
+        options: [demo, test]
+        default: demo
 
 permissions:
   contents: read
@@ -36,18 +47,22 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      # Only one of the two steps below runs. The test build has no deployment URL: the record job serves it.
       url: ${{ steps.find.outputs.url }}
-      sha: ${{ steps.find.outputs.sha }}
+      sha: ${{ steps.find.outputs.sha || steps.head.outputs.sha }}
     steps:
       - name: Check the inputs
         env:
           PR: ${{ inputs.pr }}
           SPEC: ${{ inputs.spec }}
+          BUILD: ${{ inputs.build }}
         run: |
           [[ "$PR" =~ ^[1-9][0-9]{0,6}$ ]] || { echo "::error::pr must be a number"; exit 1; }
           [[ "$SPEC" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.spec\.ts$ ]] || { echo "::error::spec must be a file name like example.spec.ts"; exit 1; }
+          [[ "$BUILD" =~ ^(demo|test)$ ]] || { echo "::error::build must be demo or test"; exit 1; }
       - name: Read the preview comment and check the PR head
         id: find
+        if: inputs.build == 'demo'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -74,6 +89,22 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "url=$url" >> "$GITHUB_OUTPUT"
+      # The test build is built from the head SHA itself, so there's no preview to match against.
+      - name: Check the PR and take its head
+        id: head
+        if: inputs.build == 'test'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$REPO/pulls/$PR")
+          [ "$(jq -r .state <<< "$pr")" = open ] || { echo "::error::PR $PR is not open"; exit 1; }
+          [ "$(jq -r .head.repo.full_name <<< "$pr")" = "$REPO" ] || { echo "::error::PR $PR is from a fork"; exit 1; }
+          head=$(jq -r .head.sha <<< "$pr")
+          [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::No head SHA for PR $PR"; exit 1; }
+          echo "sha=$head" >> "$GITHUB_OUTPUT"
 
   record:
     name: Record
@@ -106,6 +137,7 @@ jobs:
           persist-credentials: false
       - run: npm ci
       - name: Record ${{ inputs.spec }}
+        if: inputs.build == 'demo'
         env:
           SHIP: "1"
           BASE_URL: ${{ needs.resolve.outputs.url }}
@@ -117,6 +149,96 @@ jobs:
         run: |
           [ -f "e2e/ship/$SPEC" ] || { echo "::error::e2e/ship/$SPEC doesn't exist at this commit"; exit 1; }
           npx playwright test "e2e/ship/$SPEC" --project=ship-desktop --project=ship-phone --forbid-only --reporter=list,html,json
+      # Test build (P2 on). The scripts land in P2's PR0; a PR without them fails here, before anything is built.
+      - name: Check the test build scripts
+        if: inputs.build == 'test'
+        run: |
+          # shellcheck disable=SC2016 # the quoted text is JavaScript
+          node -e '
+            const scripts = require("./package.json").scripts ?? {}
+            const missing = ["build:product-test", "test-build:migrate", "test-build:seed"].filter(s => !scripts[s])
+            if (missing.length) {
+              console.log(`::error::This commit has no test build: package.json lacks ${missing.join(", ")}. They land in P2 PR0; dispatch with build=demo for an earlier PR.`)
+              process.exit(1)
+            }'
+      - name: Build the test build
+        if: inputs.build == 'test'
+        run: npm run build:product-test
+      # One step, so the server lives exactly as long as the spec run. The key pair is this run's own test issuer key:
+      # the Worker gets only the public JWKS (TEST_ISSUER_JWKS), the spec gets the private JWK's file to sign members in.
+      # Readiness is a condition: /api/health answers 401 to a request without a JWT (every /api/* route authenticates
+      # first), on the brand origin. The server's log is printed when it doesn't come up.
+      - name: Record ${{ inputs.spec }} on the test build
+        if: inputs.build == 'test'
+        env:
+          SHIP: "1"
+          SPEC: ${{ inputs.spec }}
+          TEST_BUILD_PORT: "8787"
+          WRANGLER_SEND_METRICS: "false"
+          VERIFY_DIR: e2e-artifacts/ship
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-artifacts/ship/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: e2e-artifacts/ship/report
+          PLAYWRIGHT_HTML_OPEN: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f "e2e/ship/$SPEC" ] || { echo "::error::e2e/ship/$SPEC doesn't exist at this commit"; exit 1; }
+          shopt -s nullglob
+          configs=(dist-product-test/*/wrangler.json)
+          [ "${#configs[@]}" -eq 1 ] || { echo "::error::Expected one Worker config in dist-product-test/, found ${#configs[@]}"; exit 1; }
+          work="$RUNNER_TEMP/test-build"
+          state="$work/state"
+          keys="$work/issuer"
+          log="$work/wrangler-dev.log"
+          mkdir -p "$state" "$keys"
+          chmod 700 "$keys"
+          # shellcheck disable=SC2016 # JavaScript
+          node --input-type=module -e '
+            import { generateKeyPairSync, randomUUID } from "node:crypto"
+            import { writeFileSync } from "node:fs"
+            const dir = process.argv[1]
+            const kid = randomUUID()
+            const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
+            const pub = { ...publicKey.export({ format: "jwk" }), kid, alg: "RS256", use: "sig" }
+            writeFileSync(`${dir}/jwks.json`, JSON.stringify({ keys: [pub] }))
+            writeFileSync(`${dir}/private.jwk.json`, JSON.stringify({ ...privateKey.export({ format: "jwk" }), kid, alg: "RS256" }), { mode: 0o600 })
+          ' "$keys"
+          npm run test-build:migrate -- --persist-to "$state"
+          npm run test-build:seed -- --persist-to "$state"
+          npx wrangler dev -c "${configs[0]}" --ip 127.0.0.1 --port "$TEST_BUILD_PORT" --persist-to "$state" \
+            --var "TEST_ISSUER_JWKS:$(cat "$keys/jwks.json")" > "$log" 2>&1 &
+          server=$!
+          # shellcheck disable=SC2016 # expands when the trap runs
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          # shellcheck disable=SC2016 # JavaScript
+          if ! node -e '
+            const http = require("node:http")
+            const [pid, port] = process.argv.slice(1).map(Number)
+            const deadline = Date.now() + 120_000
+            const probe = () => new Promise(resolve => {
+              const req = http.get({ host: "127.0.0.1", port, path: "/api/health", headers: { host: `brand.localhost:${port}` } }, res => { res.resume(); resolve(res.statusCode) })
+              req.on("error", () => resolve(0))
+              req.setTimeout(5_000, () => req.destroy())
+            })
+            const alive = () => { try { process.kill(pid, 0); return true } catch { return false } }
+            const run = async () => {
+              for (;;) {
+                if (!alive()) { console.log("::error::wrangler dev exited before it answered"); process.exit(1) }
+                const status = await probe()
+                if (status === 401) { console.log("The test build is up: /api/health answers 401 without a JWT"); return }
+                if (status !== 0) { console.log(`::error::/api/health answered ${status} without a JWT, expected 401`); process.exit(1) }
+                if (Date.now() > deadline) { console.log("::error::The test build did not answer within 120 s"); process.exit(1) }
+                await new Promise(r => setTimeout(r, 500))
+              }
+            }
+            run()' "$server" "$TEST_BUILD_PORT"; then
+            echo "--- wrangler dev log (last 200 lines) ---"; tail -n 200 "$log"; exit 1
+          fi
+          BASE_URL="http://brand.localhost:$TEST_BUILD_PORT" \
+          TEST_BUILD_INHOUSE_URL="http://inhouse.localhost:$TEST_BUILD_PORT" \
+          TEST_ISSUER_PRIVATE_JWK_FILE="$keys/private.jwk.json" \
+            npx playwright test "e2e/ship/$SPEC" --project=ship-desktop --project=ship-phone --forbid-only --reporter=list,html,json \
+            || { rc=$?; echo "--- wrangler dev log (last 200 lines) ---"; tail -n 200 "$log"; exit "$rc"; }
       - name: Every test has a video, and at least one ran
         if: ${{ !cancelled() }}
         run: node scripts/ship-report.mjs check e2e-artifacts/ship/report.json e2e-artifacts/ship/results
@@ -177,5 +299,6 @@ jobs:
           SPEC: ${{ inputs.spec }}
           SHA: ${{ needs.resolve.outputs.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ON: ${{ inputs.build == 'test' && ' on the test build' || '' }}
         run: |
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Ship recording of \`$SPEC\` at \`${SHA:0:7}\`: reel.mp4 and the report are in the artifact \`ship-pr-$PR\` on [this run]($RUN_URL)."
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Ship recording of \`$SPEC\` at \`${SHA:0:7}\`$ON: reel.mp4 and the report are in the artifact \`ship-pr-$PR\` on [this run]($RUN_URL)."
