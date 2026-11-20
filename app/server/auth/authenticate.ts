@@ -5,7 +5,6 @@
 // email or claims.
 // Docs (2026-11-20): Access "Validate JWTs" (header over cookie, `<team>/cdn-cgi/access/certs`, RS256, iss/aud/exp/nbf)
 // and "Application token" (a user token's `type` is "app" too, so `type` doesn't tell a person from a service token).
-/// <reference path="../build-flags.d.ts" />
 import { createRemoteJWKSet, customFetch, errors, jwtVerify } from 'jose'
 import type { JWTPayload, JWTVerifyGetKey } from 'jose'
 import { TEST_ISSUER, testIssuerKeys } from '@test-issuer'
@@ -22,6 +21,10 @@ export type AuthOutcome =
   | { refused: 'unavailable' }
 
 /** Vars the test build adds (wrangler.test.jsonc and the test runner's `--var`); absent from the product's Env. */
+/** Compile-time: true only in `vite build --mode product-test` (server/build-flags.d.ts; declared here too so the
+ * server tests' tsconfig, which doesn't include that file, types it). */
+declare const __INHOUSE_TEST_BUILD__: boolean
+
 type AuthEnv = Pick<Env, 'INHOUSE_ACCESS'> & { INHOUSE_TEST_BUILD?: string; TEST_ISSUER_JWKS?: string }
 
 const TOKEN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
@@ -108,7 +111,7 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
     // A service token: `sub` empty, a client id in `common_name`, no email. Brand app only.
     if (sub === '' && nonEmpty(commonName) && email === undefined) {
       if (app.name !== 'brand') return refuse({ refused: 'unauthorized' }, 'service_on_inhouse', requestId)
-      const name = Object.hasOwn(config.serviceTokens, commonName) ? config.serviceTokens[commonName] : undefined
+      const name = config.serviceTokens.get(commonName)
       if (name === 'monitor') return { principal: { kind: 'service', name: 'monitor', requestId } }
       if (name === 'smoke') return { principal: { kind: 'service', name: 'smoke', memberId: await stores.members.serviceMember('smoke'), requestId } }
       return refuse({ refused: 'unauthorized' }, 'unknown_service', requestId)
@@ -118,7 +121,12 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
       return refuse({ refused: 'unauthorized' }, 'bad_claims', requestId)
     }
     const signIn = { subject: sub, email: email.trim().toLowerCase(), requestId, nowMs }
-    if (app.name === 'inhouse') return { principal: await stores.members.resolveInhouse(signIn) }
+    if (app.name === 'inhouse') {
+      // The one caller of `grants.active`: the grant is read fresh on every Inhouse request.
+      const member = await stores.members.resolveInhouse(signIn)
+      const grant = await stores.grants.active({ nowMs, requestId })
+      return { principal: { ...member, kind: 'inhouse', grant } }
+    }
     const found = await stores.members.resolvePerson(signIn)
     if ('ok' in found) return { principal: found.ok }
     if (found.refused === 'wrong_kind') return refuse({ refused: 'unauthorized' }, 'wrong_kind', requestId)

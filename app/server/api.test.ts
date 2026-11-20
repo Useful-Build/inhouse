@@ -13,7 +13,7 @@ const checkOrigin = vi.fn<ApiParts['checkOrigin']>()
 const parts: ApiParts = {
   authenticate: async (_r, _e, _s, _n, requestId) => ({ principal: { kind: 'person', memberId: 'm_probe', role: 'member', subject: 's', requestId } }),
   checkOrigin,
-  authorize: async () => null,
+  checkAccess: () => ({ ok: true }),
   stores: () => unwiredStores,
   routes: (['GET', 'POST'] as const).map(method => ({ method, pattern: '/api/probe', handler })),
   accessMatrix: (['GET', 'POST'] as const).map(method => ({ method, pattern: '/api/probe', class: 'baseline', allow: ['member'] })),

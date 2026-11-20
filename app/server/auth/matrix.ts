@@ -138,9 +138,11 @@ export const checkAccess: CheckAccess = (principal, row, object, nowMs) => {
 /** What `requireObject` throws: api.ts answers 403 `forbidden` with its reason. */
 export class AccessRefusedError extends Error implements AccessRefused {
   readonly code = 'forbidden' as const
-  constructor(readonly reason?: ForbiddenReason) {
+  readonly reason?: ForbiddenReason
+  constructor(reason?: ForbiddenReason) {
     super('forbidden')
     this.name = 'AccessRefused'
+    this.reason = reason
   }
 }
 

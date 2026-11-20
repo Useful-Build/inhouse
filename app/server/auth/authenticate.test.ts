@@ -39,12 +39,18 @@ const principalOf = (out: AuthOutcome) => ('principal' in out ? out.principal : 
 
 describe('properties', () => {
   // Each axis has one right value and several wrong ones; any wrong axis must refuse.
-  const issuers = fc.constantFrom({ ok: true, v: TEAM }, { ok: false, v: 'https://other-team.cloudflareaccess.com' }, { ok: false, v: 'https://test-issuer.invalid' })
-  const auds = fc.constantFrom({ ok: true, v: BRAND.aud }, { ok: false, v: INHOUSE.aud }, { ok: false, v: 'c3'.repeat(32) })
-  const hosts = fc.constantFrom({ ok: true, v: BRAND.origin }, { ok: false, v: 'https://elsewhere.example.test' }, { ok: false, v: 'https://brand.example.test:8443' })
-  const algs = fc.constantFrom('RS256', 'RS384', 'PS256', 'HS256', 'none', 'other-key')
+  const ISSUERS = [{ ok: true, v: TEAM }, { ok: false, v: 'https://other-team.cloudflareaccess.com' }, { ok: false, v: 'https://test-issuer.invalid' }]
+  const AUDS = [{ ok: true, v: BRAND.aud }, { ok: false, v: INHOUSE.aud }, { ok: false, v: 'c3'.repeat(32) }]
+  const HOSTS = [{ ok: true, v: BRAND.origin }, { ok: false, v: 'https://elsewhere.example.test' }, { ok: false, v: 'https://brand.example.test:8443' }]
+  const ALGS = ['RS256', 'RS384', 'PS256', 'HS256', 'none', 'other-key']
 
-  test.prop([issuers, auds, hosts, algs])('no token outside the issuer, aud, host and RS256 yields a principal', async (iss, aud, host, alg) => {
+  // Exhaustive over the 162 combinations (too few to leave to sampling).
+  it('no token outside the issuer, aud, host and RS256 yields a principal', async () => {
+    for (const iss of ISSUERS) for (const aud of AUDS) for (const host of HOSTS) for (const alg of ALGS) {
+      await oneCase(iss, aud, host, alg)
+    }
+  })
+  async function oneCase(iss: { ok: boolean; v: string }, aud: { ok: boolean; v: string }, host: { ok: boolean; v: string }, alg: string) {
     let token: string
     if (alg === 'none') token = new UnsecuredJWT({ email: 'a@example.test' }).setIssuer(iss.v).setAudience(aud.v).setSubject('sub-1').setIssuedAt(NOW / 1000).setExpirationTime(NOW / 1000 + 600).encode() + 'c2ln'
     else if (alg === 'HS256') {
@@ -59,8 +65,8 @@ describe('properties', () => {
     const allRight = iss.ok && aud.ok && host.ok && alg === 'RS256'
     const { out } = await run(token, host.v)
     if (allRight) expect(principalOf(out)?.kind).toBe('person')
-    else expect(out).toEqual({ refused: 'unauthorized' })
-  })
+    else expect(out, `${iss.v} ${aud.v} ${host.v} ${alg}`).toEqual({ refused: 'unauthorized' })
+  }
 
   test.prop([fc.string({ minLength: 1 }), fc.emailAddress(), fc.boolean()])('a brand-host token never yields Inhouse', async (sub, email, known) => {
     const s = fakeStores({ people: known ? { [sub]: { role: 'member' } } : {} })
@@ -147,6 +153,7 @@ describe('the host picks the app', () => {
     const { out, calls } = await run(await person({ aud: INHOUSE.aud }), INHOUSE.origin, { stores: s })
     expect(principalOf(out)).toEqual({ kind: 'inhouse', memberId: 'm_ih_sub-1', subject: 'sub-1', grant, requestId: 'req-1' })
     expect(calls.resolvePerson).toHaveLength(0)
+    expect(calls.active).toEqual([{ nowMs: NOW, requestId: 'req-1' }])
   })
   it('refuses a host that is no app (401)', async () => {
     expect((await run(await person(), 'https://other.example.test')).out).toEqual({ refused: 'unauthorized' })
