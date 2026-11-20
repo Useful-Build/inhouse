@@ -5,6 +5,10 @@ import type { AuthStores, Principal } from './auth/index.ts'
 import type { RequireObject } from './auth/matrix.ts'
 import { meHandler } from './auth/me-handler.ts'
 import { changeMemberRole, inviteMember, listMembers, removeMember } from './api/members.ts'
+import { exportAudit, readAudit } from './api/audit.ts'
+import { createGrant, endGrant, listGrants } from './api/grants.ts'
+import { deletePhoto, getMemberPhoto, putPhoto } from './api/photo.ts'
+import { health } from './ops/health.ts'
 import { getBrandSettings, getPersonalSettings, getTechnicalSettings, putBrandSetting, putPersonalSetting, putTechnicalSetting } from './api/settings.ts'
 import { SECURITY_HEADERS, apiError } from './http.ts'
 import { clientError } from '../worker/client-error.ts'
@@ -59,9 +63,6 @@ export type Handler = (c: HandlerContext) => Promise<Response>
 /** `pattern` is a path such as `/api/members/:id/role`; a `:name` segment matches one non-empty path segment. */
 export interface Route { readonly method: Method; readonly pattern: string; readonly handler: Handler }
 
-/** Every route whose handler hasn't landed yet: 503 `unavailable`. W2 and W3 replace them one by one. */
-const notYet: Handler = async () => apiError('unavailable')
-
 /**
  * Hardening's reporter (worker/client-error.ts, shared with the demo Worker and left as is) with section 4's error
  * bodies: its bare 400, 403, 413 and 429 become `invalid`, `forbidden`, `invalid` with reason `too_large` and
@@ -83,7 +84,7 @@ export async function reportClientError(request: Request): Promise<Response> {
 
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [
-  /* 1 */ { method: 'GET', pattern: '/api/health', handler: notYet },
+  /* 1 */ { method: 'GET', pattern: '/api/health', handler: health },
   /* 2 */ { method: 'GET', pattern: '/api/me', handler: meHandler({ rows: accessMatrix, canRows }) },
   /* 3 */ { method: 'GET', pattern: '/api/members', handler: listMembers },
   /* 4 */ { method: 'POST', pattern: '/api/members/invites', handler: inviteMember },
@@ -95,14 +96,14 @@ export const routes: readonly Route[] = [
   /* 10 */ { method: 'PUT', pattern: '/api/settings/brand/:key', handler: putBrandSetting },
   /* 11 */ { method: 'GET', pattern: '/api/settings/technical', handler: getTechnicalSettings },
   /* 12 */ { method: 'PUT', pattern: '/api/settings/technical/:key', handler: putTechnicalSetting },
-  /* 13 */ { method: 'PUT', pattern: '/api/photo', handler: notYet },
-  /* 14 */ { method: 'DELETE', pattern: '/api/photo', handler: notYet },
-  /* 15 */ { method: 'GET', pattern: '/api/members/:id/photo', handler: notYet },
-  /* 16 */ { method: 'GET', pattern: '/api/grants', handler: notYet },
-  /* 17 */ { method: 'POST', pattern: '/api/grants', handler: notYet },
-  /* 18 */ { method: 'POST', pattern: '/api/grants/:id/end', handler: notYet },
-  /* 19 */ { method: 'GET', pattern: '/api/audit', handler: notYet },
-  /* 20 */ { method: 'GET', pattern: '/api/audit/export.csv', handler: notYet },
+  /* 13 */ { method: 'PUT', pattern: '/api/photo', handler: putPhoto },
+  /* 14 */ { method: 'DELETE', pattern: '/api/photo', handler: deletePhoto },
+  /* 15 */ { method: 'GET', pattern: '/api/members/:id/photo', handler: getMemberPhoto },
+  /* 16 */ { method: 'GET', pattern: '/api/grants', handler: listGrants },
+  /* 17 */ { method: 'POST', pattern: '/api/grants', handler: createGrant },
+  /* 18 */ { method: 'POST', pattern: '/api/grants/:id/end', handler: endGrant },
+  /* 19 */ { method: 'GET', pattern: '/api/audit', handler: readAudit },
+  /* 20 */ { method: 'GET', pattern: '/api/audit/export.csv', handler: exportAudit },
   // A report row, so no stores.
   /* 21 */ { method: 'POST', pattern: '/api/client-error', handler: async ({ request }) => reportClientError(request) },
 ]

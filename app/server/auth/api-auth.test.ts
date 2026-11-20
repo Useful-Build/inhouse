@@ -14,6 +14,7 @@ import { buildMe, meHandler } from './me-handler.ts'
 import { MeSchema } from '../../shared/contract/me.ts'
 import { accessMatrix } from '../access-matrix.ts'
 import { reportClientError, routes } from '../routes.ts'
+import { health } from '../ops/health.ts'
 import { BRAND, DESIGN_CAN_ROWS, DESIGN_ROWS, INHOUSE, MONITOR_ID, SMOKE_ID, TEAM, authEnv, fakeStores, issuer } from '../testing/auth-fixtures.ts'
 import type { Issuer } from '../testing/auth-fixtures.ts'
 
@@ -327,17 +328,9 @@ describe('the committed route table (server/routes.ts)', () => {
     const me = MeSchema.parse(await res.json())
     expect(me).toMatchObject({ memberId: 'm_admin', role: 'admin', can: { invite: true, switchModelOff: true, editTechnical: false } })
   })
-  it('answers every route without a handler yet with 503 unavailable, after access (a Member still gets 403 on an admin row)', async () => {
+  it('refuses a Member on an admin row with 403 before its handler (every route has its handler now: W2 PR 2 and PR 3)', async () => {
     const call = committed()
     const member = await as('member')
-    const admin = await as('admin')
-    // Routes 3 to 12 have their handlers (W2 PR 2, tested through api() in server/api/routes-wired.test.ts on D1).
-    const wired = new Set(accessMatrix.slice(2, 12).map(x => `${x.method} ${x.pattern}`))
-    for (const r of accessMatrix.filter(x => x.pattern !== '/api/me' && x.pattern !== '/api/client-error' && x.class !== 'open' && !wired.has(`${x.method} ${x.pattern}`))) {
-      const res = await call(BRAND.origin, concrete(r.pattern), { method: r.method, headers: { 'Cf-Access-Jwt-Assertion': r.allow.includes('admin') ? admin : member, Origin: BRAND.origin } })
-      expect(res.status, `${r.method} ${r.pattern}`).toBe(503)
-      expect(await res.json()).toEqual({ error: { code: 'unavailable' } })
-    }
     expect((await call(BRAND.origin, '/api/grants', { method: 'POST', headers: { 'Cf-Access-Jwt-Assertion': member, Origin: BRAND.origin } })).status).toBe(403)
   })
   it('wires POST /api/client-error to the reporter (204, logged as client_error)', async () => {
@@ -350,11 +343,8 @@ describe('the committed route table (server/routes.ts)', () => {
       vi.restoreAllMocks()
     }
   })
-  it('answers GET /api/health for monitor with 503 unavailable: intended, until W2 PR 3 replaces the stub with the health handler', async () => {
-    const monitor = await mintService({ key: good.key.privateJwk, iss: TEAM, aud: BRAND.aud, clientId: MONITOR_ID })
-    const res = await committed()(BRAND.origin, '/api/health', { headers: { 'Cf-Access-Jwt-Assertion': monitor } })
-    expect(res.status).toBe(503)
-    expect(await res.json()).toEqual({ error: { code: 'unavailable' } })
+  it('wires GET /api/health to the health handler (its answers on D1: server/ops/health.test.ts)', () => {
+    expect(routes.find(r => r.method === 'GET' && r.pattern === '/api/health')?.handler).toBe(health)
   })
 })
 

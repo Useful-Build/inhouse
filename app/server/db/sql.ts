@@ -12,19 +12,40 @@ export interface Stmt {
 
 export const stmt = (sql: string, ...params: SqlValue[]): Stmt => ({ sql, params })
 
+/**
+ * A D1 or R2 call that failed (p2-design section 4: 503 `unavailable`). The stores' one boundary to storage throws it,
+ * so api.ts can tell a storage failure from a bug in the code (500 `unknown`). `message` keeps the storage error's own
+ * message (a constraint name, never a value); `cause` keeps the error.
+ */
+export class StoreUnavailableError extends Error {
+  constructor(what: string, cause: unknown) {
+    super(`${what} failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
+    this.name = 'StoreUnavailableError'
+  }
+}
+
+/** Runs `call`, turning any failure into a `StoreUnavailableError`. */
+export async function storage<T>(what: string, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call()
+  } catch (err) {
+    throw err instanceof StoreUnavailableError ? err : new StoreUnavailableError(what, err)
+  }
+}
+
 const prepare = (db: D1Database, s: Stmt): D1PreparedStatement => db.prepare(s.sql).bind(...s.params)
 
 /** Runs the statements as one batch (one transaction). Returns each statement's result, in order. */
 export async function runBatch(db: D1Database, stmts: readonly Stmt[]): Promise<D1Result[]> {
-  return db.batch(stmts.map(s => prepare(db, s)))
+  return storage('D1', () => db.batch(stmts.map(s => prepare(db, s))))
 }
 
 export async function first<T>(db: D1Database, s: Stmt): Promise<T | null> {
-  return prepare(db, s).first<T>()
+  return storage('D1', () => prepare(db, s).first<T>())
 }
 
 export async function all<T>(db: D1Database, s: Stmt): Promise<T[]> {
-  return (await prepare(db, s).all<T>()).results
+  return storage('D1', async () => (await prepare(db, s).all<T>()).results)
 }
 
 /** A value as an SQLite literal. Strings are single-quoted with `'` doubled; a NUL or a non-integer number is refused. */
