@@ -360,7 +360,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test('asking in a chat the client never made fails loud', async () => {
       const failure = await errorOf(startRun(fx.questions.table, { chatId: fx.unknownChatId }).next())
-      expect(failure).toBeInstanceOf(Error)
+      expect(failure).toBeInstanceOf(AgentError)
+      expect(parse(AgentErrorCodeSchema, (failure as AgentError).code, 'ask() error code')).toBe('not_found')
     })
   })
 
@@ -626,10 +627,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       run: (c: ContractTarget['client']) => Promise<unknown>
       /** What the write changes, when it isn't the state: compared before, during and after. */
       observe?: (c: ContractTarget['client']) => unknown
-      /** False: the write doesn't save through the client's store, so a forced save failure can't fail it. */
+      /** False: the write doesn't save through the client's store, so a forced save failure can't fail it (createChat on the mock: its chat ids live in memory only; reported to the orchestrator). */
       saves?: boolean
-      /** False: the mock doesn't tell `subscribe` listeners when this write applies (reported to the orchestrator: createChat). */
-      tellsListeners?: boolean
     }
     const noop = async () => undefined
     let deletedFile = ''
@@ -639,7 +638,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       { label: 'editDraft', method: 'editDraft', run: c => c.editDraft(heldProblem(), 'x') },
       { label: 'undoHandled', method: 'undoHandled', run: c => c.undoHandled(heldProblem()) },
       { label: 'redoHandled', method: 'redoHandled', prepare: c => c.undoHandled(heldProblem()), run: c => c.redoHandled(heldProblem()) },
-      { label: 'createChat', method: 'createChat', run: c => c.createChat(fx.newChat), observe: c => c.allChatIds(), saves: false, tellsListeners: false },
+      { label: 'createChat', method: 'createChat', run: c => c.createChat(fx.newChat), observe: c => c.allChatIds(), saves: false },
       { label: 'pause', method: 'pause', run: c => c.pause() },
       { label: 'resume', method: 'resume', prepare: c => c.pause(), run: c => c.resume() },
       { label: 'setToggle', method: 'setToggle', run: c => c.setToggle(fx.toggleKey, false) },
@@ -690,7 +689,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         expect(observe(w), 'the change shows before the write settles').not.toEqual(before.observed)
         await settled
         before.off()
-        if (w.tellsListeners !== false) expect(before.heard.length, 'listeners were told').toBeGreaterThanOrEqual(1)
+        expect(before.heard.length, 'listeners were told').toBeGreaterThanOrEqual(1)
         expect(notices).toEqual([])
         checkWorld(`after ${w.label}`)
       })
@@ -727,7 +726,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
           expect(observe(w)).toEqual(before.observed)
           expect(notices, 'exactly one notice').toHaveLength(1)
           expect(parse(AgentNoticeSchema, notices[0], 'the notice')).toMatchObject({ type: 'error', code })
-          expect(before.heard.length, 'listeners heard the change and its rollback').toBeGreaterThanOrEqual(w.tellsListeners === false ? 1 : 2)
+          expect(before.heard.length, 'listeners heard the change and its rollback').toBeGreaterThanOrEqual(2)
           expect(before.heard.at(-1)).toBe(before.snapshot)
           await neverSent(w)
         }

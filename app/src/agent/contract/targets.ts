@@ -112,12 +112,13 @@ const shim = {
 }
 Object.defineProperty(globalThis, 'localStorage', { value: shim, configurable: true, writable: true })
 
-// Imported after the shim: the mock reads storage when it loads. Until W4 merges, `reset()` makes a fresh instance;
-// W4 adds `demo.reset()` and this target switches to it.
-// The client entry first: display.ts reads the clock from it, and the entry builds the mock, which imports display (a cycle that
+// Imported after the shim: the entry builds the mock, which reads storage when it loads. The target runs on the demo entry
+// itself (the client the app gets from `src/agent/index.ts`) and resets it with `demo.reset()`, as the demo's Reset does.
+// The entry first: display.ts reads the clock from it, and the entry builds the mock, which imports display (a cycle that
 // only works when the entry starts it).
-await import('../index')
-const { MockAgent: Mock } = await import('../mock')
+const { agent: entryAgent, demo } = await import('../index')
+if (!demo) throw new Error('The contract suite needs the demo entry (its mock and demo.reset()); is @client the product entry?')
+const mockAgent = entryAgent as MockAgent
 
 /** Where the mock saves its state (its own constant isn't exported): the proxy keeps this in step when it takes a change back. */
 const MOCK_STORAGE_KEY = 'inhouse.demo.v2'
@@ -195,9 +196,8 @@ function injecting(mock: MockAgent, armed: Map<string, AgentErrorCode>): AgentCl
 }
 
 function mockTarget(): ContractTarget {
-  let mock: MockAgent = new Mock()
   const armed = new Map<string, AgentErrorCode>()
-  let proxy = injecting(mock, armed)
+  let proxy = injecting(mockAgent, armed)
   return {
     name: 'mock',
     get client() { return proxy },
@@ -237,12 +237,10 @@ function mockTarget(): ContractTarget {
     async reset() {
       savesFail = false
       armed.clear()
-      mock.reset()
-      storage.clear()
-      mock = new Mock()
-      proxy = injecting(mock, armed)
+      demo!.reset()
+      proxy = injecting(mockAgent, armed)
     },
-    async seed(state) { mock.setDemo(state) },
+    async seed(state) { demo!.setDemo(state) },
     async failSaves(on) { savesFail = on },
     async injectError(method, code) { if (code) armed.set(method, code); else armed.delete(method) },
   }
