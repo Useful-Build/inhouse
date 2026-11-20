@@ -1,7 +1,7 @@
 // "Report a bug" from the ⌘K palette: the team window opens on the bug type, Send waits for words, sending closes the
 // window, shows the confirmation and lists the report among the open requests. (`tour.spec.ts` checks the account
 // menu's item opens the window; `navigation.spec.ts` checks Send for a plain request.)
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page) {

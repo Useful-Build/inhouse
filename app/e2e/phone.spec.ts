@@ -1,5 +1,5 @@
 // Phone (390 px): Today, the problem panel, Approvals and Chats must work with no sideways scroll.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

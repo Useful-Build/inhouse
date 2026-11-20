@@ -12,13 +12,27 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { initials, memberFor, photoOf, userName } from '../state/derive'
 import { openRun, useAgentData, useAgentState, useUi } from '../state/store'
-import { Icon } from '@/components/ui/icon'
+import { Icon as BaseIcon } from '@/components/ui/icon'
+import { ICON_NAMES, type IconName } from './icon-manifest'
 import { logoSrc } from './logo'
 import { NO_MOTION } from './motion'
 import { TAP, TAP_Y } from './fields'
 import { claimTrigger, keepForToast, restoreFocus } from './dialogs'
 
-export { Icon }
+export type { IconName }
+
+const KNOWN_ICONS: ReadonlySet<string> = new Set(ICON_NAMES)
+const warned = new Set<string>()
+/**
+ * The app's Icon. The font holds only the names in `icon-manifest.ts`, so a name that isn't there (one from data, or
+ * a new one nobody added to the manifest) would draw as ligature text: it draws a neutral dot instead, and warns in dev.
+ * Literal names in code are checked by `lint:tokens` (scripts/check-icons.mjs).
+ */
+export function Icon({ name, ...rest }: Omit<ComponentProps<typeof BaseIcon>, 'name'> & { name: IconName | (string & {}) }) {
+  const known = KNOWN_ICONS.has(name)
+  if (!known && import.meta.env.DEV && !warned.has(name)) { warned.add(name); console.warn(`Icon "${name}" is not in src/ui/icon-manifest.ts: drawing the fallback.`) }
+  return <BaseIcon name={known ? name : 'circle'} {...rest} />
+}
 
 type BtnVariant = 'primary' | 'secondary' | 'outline' | 'surface' | 'inverse' | 'soft' | 'ghost' | 'link' | 'quiet' | 'requested' | 'destructive'
 // `null` is an app-only look: the ui-base Button adds no variant classes, and APP_BTN supplies them.

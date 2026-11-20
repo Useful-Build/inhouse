@@ -1,5 +1,5 @@
 // Page actions on a phone (390 px, PR 6): the Usage breakdown stacks so nothing is cut off, and small controls get a 44px hit area.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Locator, Page } from '@playwright/test'
 
 async function start(page: Page, hash: string) {

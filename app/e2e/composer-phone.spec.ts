@@ -1,6 +1,6 @@
 // PR 4, the composer on a phone (390 px): it sits above the home bar's safe area, and opening a chat doesn't focus
 // it (no keyboard popping up on navigation).
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 
 test('Phone: the chat composer stays above the safe area, and opening a chat leaves it unfocused', async ({ page }) => {
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep

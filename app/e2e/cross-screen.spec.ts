@@ -1,6 +1,6 @@
 // Chats keep what was added and new chats stay listed, saved settings reach
 // other screens, focus returns, chat URLs, and the Library's selection, Undo, Escape, counts and data check.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 
@@ -255,6 +255,8 @@ test('Library: a pick clears when the tab, place or search changes; two deletes 
   const cards = page.getByRole('list', { name: 'Files' }).getByRole('listitem')
   const tabs = page.getByRole('radiogroup', { name: 'File type' })
   const bar = page.getByRole('toolbar', { name: 'Selected files' })
+  // The Library loads on first visit (its own chunk): count once its cards are in.
+  await expect(cards.first()).toBeVisible()
   const total = await cards.count()
   await page.getByRole('button', { name: 'Select', exact: true }).click()
   await cards.nth(0).click()

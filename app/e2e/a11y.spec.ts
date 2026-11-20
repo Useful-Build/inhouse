@@ -1,6 +1,6 @@
 // Accessibility: axe (WCAG 2.1 A and AA) on the main pages and pop-ups in states.ts, light and dark, at desktop size.
 import AxeBuilder from '@axe-core/playwright'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import type { Result } from 'axe-core'
 import { openState, STATES, THEMES } from './states.js'

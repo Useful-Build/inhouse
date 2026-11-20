@@ -1,5 +1,5 @@
 // Phone: the composer's placeholder fits the box at 390 and 360 px.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import { atRest } from './states.js'
 
 const out = process.env.VERIFY_DIR ?? 'e2e-artifacts'
