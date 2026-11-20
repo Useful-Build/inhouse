@@ -27,6 +27,14 @@ import type { TurnOutcome } from './map-events.ts'
 import { buildStart, newId, submitPayloadHash } from './run-start.ts'
 import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
+import { ModelGate } from './gate.ts'
+import { callsMicro } from './turn-calls.ts'
+import { ensureUsageTasks } from '../../usage/seeds.ts'
+import { activeRuns, runsHealth, traceOf } from './runs-read.ts'
+import type { RunScope, RunsHealth } from './ports.ts'
+import type { ActiveRun } from '../../../shared/contract/runs.ts'
+import type { Trace } from '../../../shared/contract/trace.ts'
+import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst } from './ports.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
 export const STARTING_DEADLINE_MS = 3 * 60_000
@@ -72,7 +80,8 @@ export interface TurnRow {
   starting_deadline_ms: number | null; placed: number; pool_queued: number; query_ran: number; reserved: number
   interrupt_asked: number; budget_wait_since_ms: number | null; requeues: number; fenced: number
   grace_until_ms: number | null; ending_since_ms: number | null; watch_json: string | null; saw_checkpoint: number
-  mirror_error: number; deferred_json: string | null; start_json: string | null; settled: number; parts_n: number
+  mirror_error: number; deferred_json: string | null; start_json: string | null; settled: number; ledger_hold_micro: number
+  start_hold_micro: number; ledger_fails: number; ledger_retry_at_ms: number | null; runner_cost_micro: number | null; parts_n: number
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
@@ -99,6 +108,11 @@ export interface CoreDeps {
   db: D1Database
   /** A new session id (a UUID); tests pass literal ones. */
   newSessionId?: () => string
+  /**
+   * Whether the turn's model (its picker id) is still on and priced in the brand's settings, read when the turn starts
+   * (it may have waited in the queue since route 29 resolved it). Throws when the settings can't be read.
+   */
+  modelUsable: (pickerId: string) => Promise<boolean>
   /** Every stored chat event, for the sockets (PR 4). */
   onEvent?: (e: { runId: string; seq: number; atMs: number; chatId: string; event: ChatEvent }) => void
 }
@@ -113,10 +127,28 @@ export class AgentCore {
   private readonly sql: SqlStorage
   /** Turns whose effects queue is being drained by this instance (one drain per turn at a time). */
   private readonly draining = new Set<string>()
+  /** The model gate and the per-turn ledger queue (8.2, gate.ts). */
+  readonly gate: ModelGate
 
   constructor(deps: CoreDeps) {
     this.d = deps
     this.sql = deps.sql
+    this.gate = new ModelGate({
+      sql: deps.sql, scheduler: deps.scheduler, usage: deps.ports.usage, now: deps.now,
+      admits: turnId => this.admitsCalls(turnId),
+      refuseTurn: (turnId, reason) => {
+        const t = this.turn(turnId)
+        if (t && t.fenced === 0 && (t.state === 'live' || t.state === 'starting')) this.fence(t, { outcome: 'failed', reason })
+      },
+    })
+  }
+
+  /** A turn takes model calls while it runs on a runner, unfenced and not interrupted (8.2). */
+  private admitsCalls(turnId: string): boolean {
+    const t = this.turn(turnId)
+    if (!t || t.fenced === 1 || t.interrupt_asked === 1) return false
+    // Admitted and pushing before the placement's answer came back is running too (obligation 6).
+    return t.state === 'live' || (t.state === 'starting' && t.placed === 1 && t.pool_queued === 0)
   }
 
   // ---------- reads ----------
@@ -290,7 +322,10 @@ export class AgentCore {
     if (pending.length > 0) return null
     const now = this.d.now()
     const turns = this.count("run_id = ? AND state = 'ended'", runId)
-    this.emit(runId, null, { type: 'run.finished', runId, turns, durationMs: Math.max(0, now - run.started_at_ms), cost: { minor: 0, currency: 'USD' } })
+    // The run's cost from the tally (8.3): closed calls at their price, any still open at their worst case; in cents.
+    let micro = 0
+    for (const r of this.sql.exec<{ turn_id: string }>('SELECT turn_id FROM turns WHERE run_id = ?', runId).toArray()) micro += callsMicro(this.sql, r.turn_id)
+    this.emit(runId, null, { type: 'run.finished', runId, turns, durationMs: Math.max(0, now - run.started_at_ms), cost: { minor: Math.round(micro / 10_000), currency: 'USD' } })
     this.sql.exec("UPDATE runs SET state = 'ended', ended_at_ms = ? WHERE run_id = ?", now, runId)
     this.sql.exec('UPDATE chat_state SET live_run_id = NULL WHERE chat_id = ? AND live_run_id = ?', run.chat_id, runId)
     return null
@@ -310,7 +345,7 @@ export class AgentCore {
   // ---------- start (4.4) ----------
 
   /** Testing seam: runs before each awaited step of a start (a barrier, or a reset injected there). */
-  beforeStep?: (step: 'files' | 'reserve' | 'mint' | 'place', turnId: string) => Promise<void>
+  beforeStep?: (step: 'files' | 'model' | 'reserve' | 'mint' | 'place', turnId: string) => Promise<void>
 
   private async start(turnId: string, gen: number): Promise<void> {
     let t = this.current(turnId, gen, 'starting')
@@ -324,6 +359,21 @@ export class AgentCore {
       if (!t) return
       if ('missing' in found) return this.failUnstarted(t, { outcome: 'failed', reason: 'files' })
     }
+
+    // The model again (A3, from #153's review): switched off or unpriced while the turn waited → `model_off`, before
+    // any hold or runner is spent (the egress would refuse its every call anyway). A settings read that fails leaves the
+    // turn `starting`: the watchdog requeues it at the deadline (counted, so it can't loop).
+    await this.beforeStep?.('model', turnId)
+    let usable: boolean
+    try {
+      usable = await this.d.modelUsable(t.picker_id)
+    } catch (err) {
+      console.error({ event: 'turn_model_check_failed', error: errorText(err) })
+      return
+    }
+    t = this.current(turnId, gen, 'starting')
+    if (!t) return
+    if (!usable) return this.failUnstarted(t, { outcome: 'failed', reason: 'model_off' })
 
     // The start hold (section 9). `reserved = 1` before the await: a cancel during it gives the hold back.
     this.sql.exec('UPDATE turns SET reserved = MAX(reserved, 1) WHERE turn_id = ?', turnId)
@@ -345,7 +395,13 @@ export class AgentCore {
       }
       return this.budgetBusy(t)
     }
-    this.sql.exec('UPDATE turns SET reserved = 2, budget_wait_since_ms = NULL WHERE turn_id = ?', turnId)
+    // The ledger's first answer is the start hold (the floor of every close's hold, 8.2); a later attempt's reserve
+    // answers the same reservation and leaves the queue's last answer alone.
+    this.sql.exec(
+      `UPDATE turns SET reserved = 2, budget_wait_since_ms = NULL,
+        ledger_hold_micro = CASE WHEN start_hold_micro = 0 THEN ? ELSE ledger_hold_micro END,
+        start_hold_micro = CASE WHEN start_hold_micro = 0 THEN ? ELSE start_hold_micro END WHERE turn_id = ?`,
+      r.reservedMicro, r.reservedMicro, turnId)
 
     // The session (sync).
     const cs = this.chatState(t.chat_id)
@@ -496,6 +552,7 @@ export class AgentCore {
    */
   private requeue(t: TurnRow, counts: boolean, advanceNow = true) {
     this.d.tokens.revokeTurn(t.turn_id, 'requeued')
+    this.gate.stopWaiters(t.turn_id)
     if (counts && t.requeues >= MAX_REQUEUES) return this.failUnstarted(t, { outcome: 'failed', reason: 'session_crashed' })
     if (t.pool_queued === 1) this.d.ports.pool.dequeue(t.turn_id)
     this.sql.exec(
@@ -542,6 +599,7 @@ export class AgentCore {
     if (t.pool_queued === 1) this.d.ports.pool.dequeue(t.turn_id)
     this.storeFinal(t.turn_id, state, { outcome, failure, why }, now)
     this.d.scheduler.cancel(`turn-watch:${t.turn_id}`)
+    this.gate.stopWaiters(t.turn_id)
     if (t.reserved > 0) this.queueSettle(t.turn_id, false)
     this.advance(t.run_id)
   }
@@ -586,6 +644,7 @@ export class AgentCore {
       now + GRACE_MS, now, 'cancel' in end ? 'cancelled' : end.outcome, 'reason' in end ? end.reason : null,
       'cancel' in end ? end.cancel : null, t.turn_id)
     this.d.tokens.closeRoutes(t.turn_id, FIRST_ROUTES, 'fenced')
+    this.gate.stopWaiters(t.turn_id)
     this.watchTask(t.turn_id, now + GRACE_MS)
     if (t.runner !== null) {
       const runner = t.runner
@@ -610,33 +669,48 @@ export class AgentCore {
     this.d.tokens.prune(now)
     if (t.runner !== null) this.d.ports.pool.turnEnded(t.runner, t.turn_id)
     this.d.scheduler.cancel(`turn-watch:${t.turn_id}`)
+    this.gate.stopWaiters(t.turn_id)
     if (t.reserved > 0) this.queueSettle(t.turn_id, false)
     this.sql.exec('UPDATE chat_state SET last_at_ms = MAX(last_at_ms, ?) WHERE chat_id = ?', now, t.chat_id)
     this.advance(t.run_id)
   }
 
   private damage(t: TurnRow) {
-    this.sql.exec("UPDATE chat_state SET session = 'damaged', waiting_json = NULL WHERE chat_id = ?", t.chat_id)
+    this.sql.exec("UPDATE chat_state SET session = 'damaged', waiting_json = NULL, damaged_at_ms = ? WHERE chat_id = ?", this.d.now(), t.chat_id)
     this.emit(t.run_id, null, { type: 'notice', code: 'session_damaged' })
   }
 
   /**
-   * The turn's hold goes back through the `call-lease:<turnId>` task (retried until answered). `again`: a reservation
-   * that may have landed after an earlier return; send it once more.
+   * The turn's hold goes back through its ledger queue (gate.ts: settle once every call closed and every close was
+   * answered; retried until answered). `again`: a reservation that may have landed after an earlier return; send it
+   * once more.
    */
   private queueSettle(turnId: string, again: boolean) {
-    if (again) this.sql.exec('UPDATE turns SET settled = 0 WHERE turn_id = ?', turnId)
-    this.d.scheduler.schedule({ id: `call-lease:${turnId}`, kind: 'call-lease', dueAtMs: this.d.now() })
+    if (again) this.gate.settleAgain(turnId)
+    else this.gate.maybeSettle(turnId)
   }
 
-  /** The `call-lease` task (PR 2 part: no model calls yet, so the hold goes back with `release`, the tally being 0). */
-  async leaseTask(turnId: string): Promise<TaskResult> {
-    const t = this.turn(turnId)
-    if (!t || t.settled === 1 || t.reserved === 0) return { done: true }
-    if (t.state !== 'ended' && t.state !== 'cancelled') return { done: true }
-    await this.d.ports.usage.release(turnId, this.d.now())
-    this.sql.exec('UPDATE turns SET settled = 1 WHERE turn_id = ?', turnId)
-    return { done: true }
+  /** The `call-lease:<turnId>` task: leases, confirm deadlines, 5-minute waits, the ledger queue (gate.ts). */
+  leaseTask(turnId: string): Promise<TaskResult> {
+    return this.gate.leaseTask(turnId)
+  }
+
+  // ---------- reads (routes 32, 33; the runs signal; runs-read.ts) ----------
+
+  activeRuns(scope: RunScope): ActiveRun[] { return activeRuns(this.sql, scope) }
+  readTrace(id: string, scope: RunScope): Trace | null { return traceOf(this.sql, id, scope, this.d.now()) }
+  runsHealth(quarantined: number): RunsHealth { return runsHealth(this.sql, this.d.now(), quarantined) }
+
+  // ---------- the model gate (8.2; the egress's calls) ----------
+
+  admitModelCall(turnId: string, callId: string, worst: ModelCallWorst): Promise<AdmitAnswer> {
+    return this.gate.admit(turnId, callId, worst)
+  }
+  renewModelCall(turnId: string, callId: string, usage: ModelCallUsage): LeaseAnswer {
+    return this.gate.renew(turnId, callId, usage)
+  }
+  releaseModelCall(turnId: string, callId: string, end: { usage: ModelCallUsage; cut: boolean }): LeaseAnswer {
+    return this.gate.release(turnId, callId, end)
   }
 
   // ---------- ingest (4.5, 4.2.6, 4.2.7) ----------
@@ -714,6 +788,8 @@ export class AgentCore {
         return false
       case 'finished':
       case 'failed':
+        // The runner's own cost estimate, beside the tally at settle (design 9: logged, never booked).
+        if (ev.type === 'finished') this.sql.exec('UPDATE turns SET runner_cost_micro = ? WHERE turn_id = ?', Math.round(ev.costUsd * 1_000_000), t.turn_id)
         this.terminal(t, ev)
         return false
       case 'released': {
@@ -781,6 +857,7 @@ export class AgentCore {
     this.sql.exec("UPDATE turns SET state = 'ending', ending_since_ms = ?, outcome = ?, failure = ? WHERE turn_id = ?",
       now, o.outcome, 'reason' in o ? o.reason : null, t.turn_id)
     this.d.tokens.closeRoutes(t.turn_id, FIRST_ROUTES, 'terminal')
+    this.gate.stopWaiters(t.turn_id)
     this.emit(t.run_id, t.turn_id, { type: 'turn.finished', turnId: t.turn_id, ...o })
     this.watchTask(t.turn_id, now + RELEASE_WAIT_MS)
   }
@@ -993,6 +1070,7 @@ export class AgentCore {
    */
   private askInterrupt(t: TurnRow) {
     this.sql.exec('UPDATE turns SET interrupt_asked = 1 WHERE turn_id = ?', t.turn_id)
+    this.gate.stopWaiters(t.turn_id)
     const runner = t.runner
     if (runner === null) return
     const gen = t.gen
@@ -1158,7 +1236,8 @@ export class AgentCore {
   /**
    * Re-arms what a reset left: every `starting` turn is past its deadline at once (its awaited start died with the old
    * instance), every unfinished turn gets its `turn-watch` now, every live run its `run-advance`, every ended turn whose
-   * hold wasn't given back its `call-lease`.
+   * hold wasn't given back its `call-lease`; the gate frees calls whose caller died with the old instance and gives
+   * every turn with an open call or an unanswered ledger row its `call-lease` now (gate.ts `seeds`).
    */
   ensureSeeds() {
     const now = this.d.now()
@@ -1172,6 +1251,9 @@ export class AgentCore {
     for (const r of this.sql.exec<{ turn_id: string }>("SELECT turn_id FROM turns WHERE state IN ('ended', 'cancelled') AND reserved > 0 AND settled = 0").toArray()) {
       this.d.scheduler.ensure({ id: `call-lease:${r.turn_id}`, kind: 'call-lease', dueAtMs: now })
     }
+    this.gate.seeds()
+    // W4's usage tasks: the hourly sweep and today's audit copy (ensure: never moves one that exists).
+    ensureUsageTasks(this.d.scheduler, now)
   }
 }
 

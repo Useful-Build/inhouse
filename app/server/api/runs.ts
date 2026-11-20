@@ -1,5 +1,4 @@
-// Turns, runs and traces (P3, p3-design sections 3, 4.3 and 4.9): routes 29 to 33. Owner: W1 (p3-w1.md). Routes 32 and
-// 33 are PR 2b's (still PR0's 503 `not_built` stubs here).
+// Turns, runs and traces (P3, p3-design sections 3, 4.3 and 4.9): routes 29 to 33. Owner: W1 (p3-w1.md).
 //
 // Route 29 resolves the turn first (4.9): the owner check (another person's chat is 404 before `requireObject`, a
 // deleted one too), the model from the picker's id and the brand's technical settings (unknown → 400, off or unpriced →
@@ -7,7 +6,9 @@
 // and answers at once, never waiting for placement. Attachments are checked by the BrandAgent against the stored input
 // rows (`files.inputsOf`), never taken from the client's names.
 import { ChatIdSchema } from '../../shared/contract/chat-ids.ts'
+import { RunIdSchema } from '../../shared/contract/chat-ids.ts'
 import { SendTurnInputSchema, TurnIdSchema } from '../../shared/contract/runs.ts'
+import type { ActiveRuns } from '../../shared/contract/runs.ts'
 import { MAX_TURNS, parseHostlist } from '../../shared/contract/settings-table.ts'
 import { apiError, apiJson } from '../http.ts'
 import { readCapped, storesOf } from '../db/handler-kit.ts'
@@ -15,9 +16,8 @@ import { BRAND_OWNER } from '../db/settings.ts'
 import { CATALOG, resolveModel } from '../model/catalog.ts'
 import type { CatalogModel, SettingsView } from '../model/catalog.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
-import type { Actor } from '../do/brand-agent/ports.ts'
+import type { Actor, RunScope } from '../do/brand-agent/ports.ts'
 import type { Principal } from '../auth/index.ts'
-import { notBuilt } from './not-built.ts'
 import type { Handler, HandlerContext } from '../routes.ts'
 
 /** Route 29's body cap (p3-design section 3). */
@@ -99,7 +99,36 @@ function turnAction(act: 'interrupt' | 'stop'): Handler {
 export const interruptTurn: Handler = turnAction('interrupt')
 /** Route 31, `POST /api/turns/:turnId/stop`: the hard stop of that turn only. */
 export const stopTurn: Handler = turnAction('stop')
-/** Route 32, `GET /api/runs/active`. PR 2b. */
-export const activeRuns: Handler = notBuilt
-/** Route 33, `GET /api/traces/:id`. PR 2b. */
-export const getTrace: Handler = notBuilt
+/**
+ * Whose runs a read covers (routes 32 and 33): a person's or the smoke member's own; every chat's for Inhouse, only under
+ * a live grant (the matrix already refuses Inhouse without one; refused here too, fail closed).
+ */
+function scopeOf(c: HandlerContext): RunScope | Response {
+  const p = c.principal
+  if (p.kind === 'inhouse') return p.grant && p.grant.endsAtMs > c.nowMs ? { all: true } : apiError('forbidden', { reason: 'grant_required' })
+  const by = actorOf(p)
+  return by ? { owner: by.memberId } : apiError('forbidden')
+}
+
+/** Route 32, `GET /api/runs/active`: `{ runs }`, the live runs and the ended ones not yet in D1, in the caller's scope. */
+export const activeRuns: Handler = async (c: HandlerContext) => {
+  const scope = scopeOf(c)
+  if (scope instanceof Response) return scope
+  const runs = await brandAgent(c.env).activeRuns(scope)
+  // A list filtered by owner checks the caller's own object (section 3).
+  if ('owner' in scope) c.access.requireObject({ ownerId: scope.owner })
+  const body: ActiveRuns = { runs }
+  return apiJson(body)
+}
+
+/** Route 33, `GET /api/traces/:id` (a run or a turn id): another person's is 404 before the object check. */
+export const getTrace: Handler = async (c: HandlerContext) => {
+  const scope = scopeOf(c)
+  if (scope instanceof Response) return scope
+  const id = c.params.id
+  if (!RunIdSchema.safeParse(id).success && !TurnIdSchema.safeParse(id).success) return apiError('not_found')
+  const trace = await brandAgent(c.env).getTrace(id, scope)
+  if (!trace) return apiError('not_found')
+  if ('owner' in scope) c.access.requireObject({ ownerId: scope.owner })
+  return apiJson(trace)
+}

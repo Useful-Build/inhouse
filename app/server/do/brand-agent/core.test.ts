@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest'
 import { GRACE_MS, INACTIVITY_MS, PUSH_SILENT_MS } from './core.ts'
 import type { Refusal } from './ports.ts'
 import { hashRunToken } from './tokens.ts'
+import { StoreUnavailableError } from '../../db/sql.ts'
 import { MEMBER, MIN, OTHER, SEC, deferred, ev, fullAnswer, inAgent, settle, typesOf } from '../../testing/brand-agent/core-harness.ts'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 
@@ -113,7 +114,11 @@ describe('claim before await (4.2.1, 4.4)', () => {
     await h.tick(0)
     expect(h.placed()).toEqual([])
     expect(h.turn(a.turnId).state).toBe('cancelled')
-    expect(h.usage.calls.map(c => c.method)).toEqual(['reserve', 'release'])
+    // PR 2b: the ledger queue gives the hold back at once (no task wait), so a release goes out while the reserve is
+    // still in flight, and once more after it lands (both idempotent; W4's release of a turn it doesn't know is a
+    // no-op). What matters: the last word is a release, after the reserve, and the fake holds nothing for the turn.
+    expect(h.usage.calls.map(c => c.method)).toEqual(['release', 'reserve', 'release'])
+    expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
   }))
 
   it('a stop while the token is minted: the new token is revoked and nothing is placed (obligation 2)', () => inAgent(async h => {
@@ -687,11 +692,14 @@ describe('budget_busy (4.4 step 2)', () => {
 describe('the start hold goes back (H2 of #153: call-lease)', () => {
   const releases = (h: Parameters<Parameters<typeof inAgent>[0]>[0]) => h.usage.calls.filter(c => c.method === 'release').map(c => c.args[0])
 
-  it('after a full answer: one release at the next tick, none before', () => inAgent(async h => {
+  // PR 2b: the hold goes back through the turn's ledger queue at the end itself (no task wait), once.
+  it('after a full answer: one release at the end, none after', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-h2a01'))
     await settle()
-    h.push(a.turnId, ...fullAnswer('a', 2))
     expect(releases(h)).toEqual([])
+    h.push(a.turnId, ...fullAnswer('a', 2))
+    await settle()
+    expect(releases(h)).toEqual([a.turnId])
     await h.tick(0)
     expect(releases(h)).toEqual([a.turnId])
   }))
@@ -723,14 +731,19 @@ describe('the start hold goes back (H2 of #153: call-lease)', () => {
     expect(releases(h)).toEqual([a.turnId])
   }))
 
+  // PR 2b: only storage being down is retried (`StoreUnavailableError`, what W4's ledger throws for a D1 failure); any
+  // other error is the ledger refusing for good and is dropped (gate.test.ts, #154's review).
   it('a release that fails is retried until answered', () => inAgent(async h => {
     let fail = true
     const real = h.usage.release.bind(h.usage)
-    h.usage.release = async (t, n) => { if (fail) { fail = false; h.usage.calls.push({ method: 'release', args: [t, n] }); throw new Error('D1 down') } return real(t, n) }
+    h.usage.release = async (t, n) => { if (fail) { fail = false; h.usage.calls.push({ method: 'release', args: [t, n] }); throw new StoreUnavailableError('usage ledger', new Error('D1 down')) } return real(t, n) }
     const a = ok(await h.submit('c1', 'key-h2a05'))
     await settle()
     h.push(a.turnId, ...fullAnswer('a', 2))
+    // The failed release is answered (with its retry time) before the clock moves.
+    await settle()
     await h.tick(0)
+    expect(releases(h)).toEqual([a.turnId])
     await h.tick(30 * SEC)
     expect(releases(h)).toEqual([a.turnId, a.turnId])
     expect(h.turn(a.turnId).settled).toBe(1)
