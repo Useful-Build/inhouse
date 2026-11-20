@@ -152,10 +152,10 @@ test.describe('desktop', () => {
     await expect(stop(page)).toHaveCount(0)
     await expect(msg(page, REFUNDS_A)).toHaveCount(0)
 
-    // The sent-now answer has steps of its own: the run's second turn (`<run id>-t2`) holds the query's steps, and its
-    // steps line and window show them (3 steps, "Last week by SKU"), not the refunds steps the run started with.
+    // The sent-now answer has steps of its own: its turn (a `t_` id from the agent, no longer `<run id>-t2`) holds the query's
+    // steps, and its steps line and window show them (3 steps, "Last week by SKU"), not the refunds steps the run started with.
     const turns = (await fx.saved()).runs
-    expect(turns.filter(([id, info]) => /-t2$/.test(id) && info.trace === 'query')).toHaveLength(1)
+    expect(turns.filter(([id, info]) => /^t_/.test(id) && info.trace === 'query')).toHaveLength(1)
     const mdAnswer = log(page).locator('[data-answer]').filter({ has: page.locator('[data-md-code]') })
     await expect(mdAnswer).toHaveCount(1)
     await expect(mdAnswer.getByRole('button', { name: /\d+ steps/ })).toContainText('3 steps')
@@ -444,9 +444,10 @@ test.describe('desktop', () => {
     await expect(stop(page)).toBeVisible()
     await page.keyboard.press('Enter')
     await expect(queued(page)).toHaveCount(1)
-    // Held from here: the answer stays running while the chip is checked, however long this takes.
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
-    await expect(chip(page, MD_Q)).toContainText('Queued')
+    // A question can't be edited while an answer is being written, so the page reloads: the answer stops, and the queued message
+    // waits above the box, paused, with nothing answering (Stop alone no longer does this: the queue carries on).
+    await page.reload()
+    await expect(chip(page, MD_Q)).toContainText('Paused')
     const edit = chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ })
     await expect(edit).toBeEnabled()
 
@@ -460,7 +461,6 @@ test.describe('desktop', () => {
     await page.keyboard.press('Escape')
     await expect(editing).toHaveCount(0)
     await expect(edit).toBeEnabled()
-    await page.clock.resume()
   })
 
   test('Conversation polish: Stop ends that answer only and the queue carries on, and Edit on a queued message asks before it replaces a draft', async ({ page }) => {
