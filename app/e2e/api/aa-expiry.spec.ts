@@ -25,6 +25,7 @@ test('the expired grant starts unlogged; the first Inhouse request writes its ex
 })
 
 test('after that the Admin reads find grant.expired written once, by the system, dated at the grant\'s end', async ({ request }) => {
+  test.skip(!!process.env.E2E_TEST_BUILD_REMOTE, 'needs the expired grant only the local prepare step seeds; proven by the local test-build suite')
   for (let i = 0; i < 2; i++) {
     const list = await call(request, admin, 'GET', '/api/grants')
     expect(list.status, list.text).toBe(200)
