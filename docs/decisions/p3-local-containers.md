@@ -7,8 +7,9 @@ the scripted model, and the check `app/runner/harness/s6-check.mjs` (PR #102). N
 
 ## Verdicts
 
-1. **The sandbox can't start under `wrangler dev` on any leg we can run.** On the Mac the amd64 image runs under qemu
-   user-mode emulation, which has no namespaces and no AVX (blocked on Rosetta 2). On a GitHub runner, rootful Docker
+1. **The sandbox can't start under `wrangler dev` on any leg we can run.** On the Mac, with Rosetta 2 (re-run 2026-11-20), the
+   CLI runs and a chat with no tool finishes, but bwrap can't `pivot_root`: Docker's default seccomp profile denies it
+   and `wrangler dev` offers no way to change that. On a GitHub runner, rootful Docker
    gives the container no privileges, so bwrap can't make a user namespace. Rootless Docker gets the Mac's privileges,
    but bwrap still can't `pivot_root`, and the runner's egress breaks too.
 2. **Everything except the sandbox works.** The image builds and starts under `wrangler dev`. Each chat runs as its own
@@ -34,6 +35,20 @@ arm64 image isn't an option without patching wrangler.
 
 Verdict: blocked on Rosetta 2 (or an arm64 runner image). Not a code bug. Rosetta 2 translates user code only, so
 pipes and namespaces reach the real kernel; then the same `s6-check.mjs` can run unchanged under the heavy lock.
+
+### Leg 1 re-run with Rosetta 2 (2026-11-20, runs mac-5 and mac-6)
+
+Evidence: `verify/backend-impl/s6/mac-5/`, `mac-6/` and `mac-6-diagnosis.md` (private verify folder).
+
+| Fact | Result |
+|---|---|
+| Emulation | Rosetta handles x86_64 in the Colima VM (`qemu-x86_64` disabled); session processes run as `/mnt/lima-rosetta/rosetta node ...`. The CLI starts (the AVX crash is gone) |
+| mac-5 | every chat refused at the sandbox: the VM is Ubuntu and `apparmor_restrict_unprivileged_userns` stops bwrap. The CLI refused rather than run Bash unsandboxed (the guard held) |
+| mac-6 (VM-only `sysctl kernel.apparmor_restrict_unprivileged_userns=0`, as `ci.yml` does on its runner) | the `hello` chat (no tool) finishes end to end under the sandbox; the `write-output` chat's Bash runs inside bwrap and fails with `bwrap: pivot_root: Operation not permitted`, as the session user and as root |
+| Cause | Docker's default seccomp profile has no `pivot_root` entry, so the call gets the profile's default `EPERM` even with `SYS_ADMIN` (moby `default.json`; Docker's seccomp docs list "Deny pivot_root"). miniflare grants `SYS_ADMIN`, `/dev/fuse` and `apparmor:unconfined` on macOS but has no seccomp or systempaths option; `ci.yml`'s probes pass `seccomp`, `apparmor` and `systempaths=unconfined` |
+| A fix that keeps every guard | none documented for `wrangler dev`. A daemon-wide seccomp profile would clear `pivot_root` only; masked `/proc` paths come next and have no daemon-wide setting. The rest means patching miniflare or swapping the OCI runtime |
+
+Verdict: Q2 stands for the Mac too. The Mac is a local path for everything except sandboxed tool calls.
 
 ## Leg 2: a GitHub runner (native amd64)
 
