@@ -12,6 +12,8 @@ import type { RunContext } from '../../src/session/seam.ts'
 import { PROBE_MODEL } from './lib.ts'
 
 export type DirectVariant =
+  /** The guarded options as production builds them: an agent run without the root (run.ts's fallback path). */
+  | 'plain'
   /** canUseTool and a stub inhouse MCP server (one tool, one resource): which of the four tools register. */
   | 'four-tools'
   /** The audit transport refuses every entry: the call must be blocked. */

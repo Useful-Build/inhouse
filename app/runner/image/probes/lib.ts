@@ -124,9 +124,10 @@ function resultText(content: unknown): string {
 export async function answerModel(state: ScriptState, request: Request): Promise<Response> {
   const body = (await request.clone().json()) as MessagesRequest
   state.requests.push(body)
-  const last = Array.isArray(body.messages) ? body.messages.at(-1) : undefined
-  if (last?.role === 'user' && Array.isArray(last.content)) {
-    for (const b of last.content as { type?: string; tool_use_id?: string; content?: unknown; is_error?: boolean }[]) {
+  // Every tool result in the conversation (the CLI may put a message of its own after the one that carries them).
+  for (const m of Array.isArray(body.messages) ? body.messages : []) {
+    if (m.role !== 'user' || !Array.isArray(m.content)) continue
+    for (const b of m.content as { type?: string; tool_use_id?: string; content?: unknown; is_error?: boolean }[]) {
       if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string') state.results.set(b.tool_use_id, { text: resultText(b.content), isError: b.is_error === true })
     }
   }

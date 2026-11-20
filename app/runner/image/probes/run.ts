@@ -128,22 +128,54 @@ async function startRoot() {
   await waitUntil(() => root.exitCode === null && health(), 'the root to answer /health', 30_000, 100)
 }
 
-type Run = { chatId: string; state: ScriptState; events: RunEvent[]; status: number; body: string; token: string }
+/**
+ * How agent runs go: through the root's API (the production path), or, while sessions can't start through the root,
+ * as direct sessions (direct.ts, variant `plain`): the same guards, sandbox, CLI wrapper, pool user and host-prepared
+ * folder, without the root's channel, proxy and token. `root.session-starts` says which, and fails while it's direct.
+ */
+let VIA: 'root' | 'direct' = 'root'
+
+type Run = {
+  chatId: string
+  via: 'root' | 'direct'
+  state: ScriptState
+  events: RunEvent[]
+  status: number
+  body: string
+  token: string
+  /** A direct session's own lines (init, result, error), and what its release (kill, park, wipe) threw. */
+  lines: Record<string, unknown>[]
+  cleanup: string
+}
 
 function sdkMessages(events: RunEvent[]): Record<string, unknown>[] {
   return events.filter((e) => e.type === 'sdk').map((e) => (e as { message: Record<string, unknown> }).message)
 }
-const initOf = (r: Run) => sdkMessages(r.events).find((m) => m.type === 'system' && m.subtype === 'init') as
-  | { tools: string[]; skills: string[]; plugins: { name: string }[]; slash_commands: string[] }
-  | undefined
-const terminalOf = (r: Run) => r.events.findLast((e) => e.type === 'finished' || e.type === 'failed')
+type Init = { tools: string[]; skills: string[]; plugins: { name: string }[]; slash_commands: string[] }
+const initOf = (r: Run): Init | undefined => {
+  if (r.via === 'root') return sdkMessages(r.events).find((m) => m.type === 'system' && m.subtype === 'init') as Init | undefined
+  const l = r.lines.find((x) => x.type === 'init') as (Omit<Init, 'plugins'> & { plugins: string[] }) | undefined
+  return l && { ...l, plugins: l.plugins.map((name) => ({ name })) }
+}
+const terminalOf = (r: Run): { type: string; reason?: string } | undefined => {
+  if (r.via === 'root') return r.events.findLast((e) => e.type === 'finished' || e.type === 'failed')
+  const res = r.lines.find((x) => x.type === 'result')
+  return res ? { type: 'finished' } : { type: 'failed', reason: 'session_crashed', ...(r.lines.find((x) => x.type === 'error') ?? {}) }
+}
 
 /** Starts one run through the root's API; `done` settles once its stream has ended. */
 function startRun(opts: { chatId: string; script: Script; prompt?: string; webFetchDomains?: string[] }): { run: Run; done: Promise<Run> } {
   const state = newScript(opts.script)
   const token = `probe_${randomBytes(24).toString('hex')}`
+  const run: Run = { chatId: opts.chatId, via: VIA, state, events: [], status: 0, body: '', token, lines: [], cleanup: '' }
+  if (VIA === 'direct') {
+    const done = spawnDirect(opts.chatId, agentUser(opts.chatId), 'plain', { prompt: opts.prompt ?? 'Run the probe.', webFetchDomains: opts.webFetchDomains ?? [] }, state).then((d) => {
+      Object.assign(run, { status: 200, lines: d.lines, body: d.raw, cleanup: d.cleanup })
+      return run
+    })
+    return { run, done }
+  }
   egress.byToken.set(token, state)
-  const run: Run = { chatId: opts.chatId, state, events: [], status: 0, body: '', token }
   const done = (async () => {
     const res = await fetch('http://127.0.0.1:8080/runs', {
       method: 'POST',
@@ -189,10 +221,10 @@ async function diagnoseSession() {
 function checkRun(name: string, r: Run, bashSteps: number[]) {
   const t = terminalOf(r)
   const audited = new Set(r.events.filter((e) => e.type === 'audit').map((e) => (e as { entry: { toolUseId: string } }).entry.toolUseId))
-  const missing = bashSteps.map((i) => r.state.ids[i]!).filter((id) => !audited.has(id))
+  // A direct session has no stream: its audit hook is proven by the audit probe instead.
+  const missing = r.via === 'direct' ? [] : bashSteps.map((i) => r.state.ids[i]!).filter((id) => !audited.has(id))
   const ok = r.status === 200 && t?.type === 'finished' && r.state.misses.length === 0 && missing.length === 0
-  if (t?.type === 'failed' && t.reason === 'session_crashed') void diagnoseSession()
-  record(`${name}.run`, ok, `status ${r.status}, end ${JSON.stringify(t)?.slice(0, 200)}, misses ${JSON.stringify(r.state.misses)}, Bash calls without an audit entry ${JSON.stringify(missing)}`)
+  record(`${name}.run`, ok, `via ${r.via}, status ${r.status}, end ${JSON.stringify(t)?.slice(0, 200)}, misses ${JSON.stringify(r.state.misses)}, Bash calls without an audit entry ${JSON.stringify(missing)}`)
 }
 
 /** Init's name for a tool `tools:` names otherwise: the engine still reports the Agent tool under its old name. */
@@ -466,11 +498,11 @@ async function probeIsolation() {
     if (aEnded) throw new Error(`A's run ended before its holder started: ${JSON.stringify(terminalOf(a.run))}`)
     return procs().find((p) => p.cmdline.includes('canary-A-cmdline-holder') && p.uid !== 0)
   }, "A's holder process", 60_000)
-  const aSession = procs().find((p) => p.cwd === wa && p.cmdline.includes('session/main.mjs'))
+  const aSession = procs().find((p) => p.cwd === wa && /session\/main\.mjs|probes\/direct\.mjs/.test(p.cmdline))
   fact('isolation.a', `holder pid ${holder.pid} uid ${holder.uid}, session pid ${aSession?.pid}`)
 
   let bSession: Proc | undefined
-  const findB = () => (bSession ??= procs().find((p) => p.cwd === sessionPaths('p-iso-b').workDir && p.cmdline.includes('session/main.mjs')))
+  const findB = () => (bSession ??= procs().find((p) => p.cwd === sessionPaths('p-iso-b').workDir && /session\/main\.mjs|probes\/direct\.mjs/.test(p.cmdline)))
   const split = (t: string) => [t.slice(0, 20), t.slice(20)]
   const filesProbes = (): ShellProbe[] => [
     { name: 'ls-work', cmd: 'ls -la /work' },
@@ -561,6 +593,12 @@ async function probeIsolation() {
   })
 
   const tok = parseShell(result(rb, 9)?.text ?? '')
+  if (rb.via === 'direct') {
+    record('token.not-reachable', false, 'needs the root path (the token lives only in the root): sessions through the root crash, see root.session-starts')
+    record('channel.not-reachable', false, "needs the root path (the session's stdin and stdout channel): see root.session-starts")
+    fact('token.direct-view', tok.get('token')?.out ?? 'no output')
+    return
+  }
   mkdirSync('/tmp/probe-tok-cwd', { recursive: true })
   const tokenText = tok.get('token')?.out ?? ''
   const tokenLeak = (t: string) => t.split('\n').some((l) => l !== 'searched' && l.trim() !== '')
@@ -602,11 +640,12 @@ for _ in range(n): os.wait()
   // The release after the bomb: no uid quarantined, and the chat runs again.
   const again = await startRun({ chatId: 'p-nproc', script: { steps: [] } }).done
   const after = (await health())?.quarantinedUsers ?? -1
-  record('process-limit.release-still-passes', before === after && terminalOf(again)?.type === 'finished', `quarantined before ${before}, after ${after}; next run ${JSON.stringify(terminalOf(again))?.slice(0, 120)}`)
+  record('process-limit.release-still-passes', before === after && r.cleanup === '' && terminalOf(again)?.type === 'finished', `release ${r.cleanup || 'passed'}; quarantined before ${before}, after ${after}; next run ${JSON.stringify(terminalOf(again))?.slice(0, 120)}`)
 }
 
 /** A direct session as a pool user, with one test-only variant of the guarded options (direct.ts). */
 const directUsers: Record<DirectVariant, string> = {
+  plain: 's38',
   'four-tools': 's40',
   'audit-refused': 's41',
   'audit-hook-removed': 's42',
@@ -616,13 +655,25 @@ const directUsers: Record<DirectVariant, string> = {
   'strict-off': 's46',
   'skills-not-off': 's47',
 }
+/** Agent runs' pool users while they go direct: one per chat, from s20 up (the root hands out s00 up). */
+const agentUsers = new Map<string, PoolUser>()
+const agentUser = (chatId: string) => {
+  if (!agentUsers.has(chatId)) agentUsers.set(chatId, userNamed(`s${20 + agentUsers.size}`))
+  return agentUsers.get(chatId)!
+}
+
 async function direct(variant: DirectVariant, input: Omit<DirectInput, 'variant'>, script: Script) {
-  const user = userNamed(directUsers[variant])
-  const key = `p-direct-${variant}`
+  const state = newScript(script)
+  const d = await spawnDirect(`p-direct-${variant}`, userNamed(directUsers[variant]), variant, input, state)
+  return { ...d, state }
+}
+
+/** One direct session in a host-prepared folder; afterwards its uid is killed, its folder parked and its files wiped. */
+async function spawnDirect(key: string, user: PoolUser, variant: DirectVariant, input: Omit<DirectInput, 'variant'>, state: ScriptState) {
+  const script = state.script
   await host.killAll(user)
   await host.wipeUserFiles(user)
   const { workDir, home } = await host.prepareFolder(key, user)
-  const state = newScript(script)
   egress.byDirect.set(key, state)
   const env = { ...sessionEnv({ uid: user.uid, gid: user.gid, user: user.user, home, workDir }, 8081), ANTHROPIC_BASE_URL: `http://127.0.0.1:${egress.port}/direct/${key}/model`, PROBE_DIRECT: JSON.stringify({ variant, ...input }) }
   const out = await runCommand('node', ['--disable-sigusr1', `${PROBES}/direct.mjs`], { uid: user.uid, gid: user.gid, cwd: workDir, env, timeoutMs: 180_000 })
@@ -630,13 +681,18 @@ async function direct(variant: DirectVariant, input: Omit<DirectInput, 'variant'
     .split('\n')
     .filter((l) => l.startsWith('{'))
     .map((l) => JSON.parse(l) as Record<string, unknown>)
-  await host.killAll(user)
-  await host.parkFolder(key)
-  await host.wipeUserFiles(user)
+  let cleanup = ''
+  try {
+    await host.killAll(user)
+    await host.parkFolder(key)
+    await host.wipeUserFiles(user)
+  } catch (e) {
+    cleanup = String(e instanceof Error ? e.message : e)
+  }
   if (!lines.some((l) => l.type === 'result') || script.steps.some((_, i) => !state.results.has(state.ids[i]!))) {
     fact(`direct.${variant}.output`, `exit ${out.code}, model requests ${state.requests.length}, misses ${JSON.stringify(state.misses)}: ${out.out.slice(-1500)}`)
   }
-  return { state, lines, raw: out.out, workDir }
+  return { lines, raw: out.out, workDir, cleanup }
 }
 
 async function probeDirect() {
@@ -782,6 +838,16 @@ fact('platform', `own ${OWN}, gateway ${GW}, kernel ${readFileSync('/proc/sys/ke
 appendFileSync('/etc/hosts', `\n${GW} ${NAMES.gw}\n${OWN} ${NAMES.own}\n127.0.0.1 ${NAMES.loop}\n169.254.169.254 ${NAMES.meta}\n`)
 await step('shared-writable', probeSharedWritable)
 await startRoot()
+await step('root-session', async () => {
+  const r = await startRun({ chatId: 'p-canary', script: { steps: [bash('echo canary')] } }).done
+  const t = terminalOf(r)
+  if (t?.type === 'failed' && t.reason === 'session_crashed') await diagnoseSession()
+  record('root.session-starts', t?.type === 'finished', `a session through the root's API: ${JSON.stringify(t)?.slice(0, 200)}`)
+  if (t?.type !== 'finished') {
+    VIA = 'direct'
+    fact('agent-runs-via', 'direct sessions (same guards, sandbox, wrapper, pool user and folder layout; no root channel, proxy or token)')
+  }
+})
 await step('egress', probeEgress)
 await step('no-unsandboxed-retry', probeNoUnsandboxedRetry)
 await step('claude-dir', probeClaudeDir)
