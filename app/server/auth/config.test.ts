@@ -36,7 +36,9 @@ describe('AccessConfigSchema', () => {
     const [brand, inhouse] = valid.apps
     for (const apps of [[], [brand], [brand, inhouse, brand], [brand, { ...brand, origin: 'https://other.example.test', aud: B }],
       [brand, { ...inhouse, origin: brand.origin }], [brand, { ...inhouse, aud: A }], [brand, { ...inhouse, origin: 'not a url' }],
-      [brand, { ...inhouse, origin: 'https://inhouse.example.test/path' }]]) {
+      [brand, { ...inhouse, origin: 'https://inhouse.example.test/path' }],
+      // Port only: the same hostname shares Access's cookie.
+      [{ ...brand, origin: 'https://x.example.test:8443' }, { ...inhouse, origin: 'https://x.example.test:9443' }]]) {
       expect(AccessConfigSchema.safeParse({ ...valid, apps }).success).toBe(false)
     }
   })

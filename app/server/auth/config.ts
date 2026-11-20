@@ -35,7 +35,7 @@ export type AccessApp = z.infer<typeof AccessAppSchema>
 export const AccessConfigSchema = z.strictObject({
   /** The JWT issuer and the JWKS's home (`<teamDomain>/cdn-cgi/access/certs`); a bare https origin. */
   teamDomain: OriginSchema.refine(s => s.startsWith('https://'), { message: 'teamDomain must be https' }),
-  /** Exactly one `brand` and one `inhouse` app, on different hosts with different `aud` tags. */
+  /** Exactly one `brand` and one `inhouse` app, on different hostnames with different `aud` tags. */
   apps: z.array(AccessAppSchema),
   /**
    * Service token `common_name` (its client id, `<id>.access`) → which service it is; unknown ones are 401. A `Map`,
@@ -49,16 +49,18 @@ export const AccessConfigSchema = z.strictObject({
   }
   const [a, b] = c.apps
   // Field checks may have failed already (zod still runs this): read the origins without trusting them.
+  // Hostname, not host: Access's CF_Authorization cookie is scoped per hostname, so two apps that differ only by port
+  // would share it.
   const host = (origin: unknown) => {
     try {
-      return new URL(String(origin)).host
+      return new URL(String(origin)).hostname
     } catch {
       return null
     }
   }
   if (a?.name === b?.name) ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps must be one brand and one inhouse' })
   const [ha, hb] = [host(a?.origin), host(b?.origin)]
-  if (ha !== null && ha === hb) ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps share a host' })
+  if (ha !== null && ha === hb) ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps share a hostname' })
   if (a?.aud === b?.aud) ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps share an aud' })
 })
 export type AccessConfig = z.infer<typeof AccessConfigSchema>

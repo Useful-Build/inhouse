@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { accessMatrix } from '../access-matrix.ts'
 import { routes } from '../routes.ts'
 import type { Principal } from './principal.ts'
-import { ADMIN_WRITE_OBJECT, AccessRefusedError, canFor, checkAccess, objectGate, rowFor } from './matrix.ts'
+import { ADMIN_WRITE_OBJECT, AccessRefusedError, canFor, canRowsProblems, checkAccess, objectGate, rowFor } from './matrix.ts'
 import type { AccessObject, AccessRow, CanRows } from './matrix.ts'
 import { CanKeySchema } from '../../shared/contract/me.ts'
 import { DESIGN_CAN_ROWS, DESIGN_ROWS, principals } from '../testing/auth-fixtures.ts'
@@ -155,10 +155,8 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
     })
     if (canRows) {
       it('every CanKey maps to exactly one existing row', () => {
-        for (const key of CanKeySchema.options) {
-          const want = canRows[key]
-          expect(rows.filter(x => x.method === want.method && x.pattern === want.pattern)).toHaveLength(1)
-        }
+        expect(Object.keys(canRows).sort()).toEqual([...CanKeySchema.options].sort())
+        expect(canRowsProblems(rows, canRows)).toEqual([])
       })
     }
   })
@@ -167,3 +165,13 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
 invariants('the design rows (p2-design section 3)', DESIGN_ROWS, DESIGN_CAN_ROWS)
 // The committed rows: empty until PR0b, then the real check. PR0b adds its canRows export here.
 invariants('server/access-matrix.ts', accessMatrix, null)
+
+describe('canRowsProblems', () => {
+  it('fails on a missing row', () => {
+    expect(canRowsProblems(DESIGN_ROWS.filter(r => !(r.method === 'POST' && r.pattern === '/api/grants')), DESIGN_CAN_ROWS)).toEqual(['grantSupport → POST /api/grants matches 0 rows'])
+  })
+  it('fails on a doubled row', () => {
+    const invite = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
+    expect(canRowsProblems([...DESIGN_ROWS, invite], DESIGN_CAN_ROWS)).toEqual(['invite → POST /api/members/invites matches 2 rows'])
+  })
+})

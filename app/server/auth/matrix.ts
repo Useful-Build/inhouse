@@ -50,8 +50,9 @@ export type ForbiddenReason = 'grant_required' | 'admin_read_only' | 'not_owner'
  * - `audit: 'support.access'`: set by `checkAccess` exactly for Inhouse on `brand_data`; api.ts writes that line from
  *   the decision before the handler runs (never re-derives it).
  * - `objectCheck: 'required'`: the row's rule needs the object (a `personal` row, an Admin on an `adminWrite` row) and
- *   none was given; api.ts hands the handler `requireObject`, and a 2xx from a handler that never called it becomes
- *   500 and one log line.
+ *   none was given; api.ts hands the handler `requireObject` and records each call's outcome: any refusal answers 403
+ *   whatever the handler returned (a swallowed `AccessRefused` can't write anyway), and a 2xx needs at least one
+ *   passing call (none: 500 and one log line).
  */
 export type AccessDecision =
   | { ok: true; audit?: 'support.access'; objectCheck?: 'required' }
@@ -81,8 +82,25 @@ export interface AccessRefused extends Error {
  */
 export type CanRows = Record<CanKey, { readonly method: Method; readonly pattern: string; readonly as?: 'adminWrite' }>
 
-/** `me().can`: each `CanKey` evaluated through `checkAccess` on its row. */
+/**
+ * `me().can`: each `CanKey` evaluated through `checkAccess` on its row. A decision still marked
+ * `objectCheck: 'required'` counts as **false**: only `as: 'adminWrite'` supplies an object, so an Admin gets
+ * `editTechnical` false and `switchModelOff` true on row 12, as the server answers.
+ */
 export type CanFor = (principal: Principal, rows: readonly AccessRow[], canRows: CanRows, nowMs: number) => Record<CanKey, boolean>
+
+/**
+ * What's wrong with a `CanRows` map against the rows: each `CanKey` must map to exactly one row. Empty when sound.
+ * The matrix-invariant tests run it on the committed rows.
+ */
+export function canRowsProblems(rows: readonly AccessRow[], canRows: CanRows): string[] {
+  const problems: string[] = []
+  for (const [key, want] of Object.entries(canRows)) {
+    const n = rows.filter(r => r.method === want.method && r.pattern === want.pattern).length
+    if (n !== 1) problems.push(`${key} → ${want.method} ${want.pattern} matches ${n} rows`)
+  }
+  return problems
+}
 
 const OK: AccessDecision = { ok: true }
 const NO: AccessDecision = { refused: 'forbidden' }

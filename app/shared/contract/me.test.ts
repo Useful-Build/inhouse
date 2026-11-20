@@ -60,4 +60,3 @@ describe('MeSchema', () => {
     expect(MeSchema.safeParse({ ...valid, isAdmin: true }).success).toBe(false)
   })
 })
-
