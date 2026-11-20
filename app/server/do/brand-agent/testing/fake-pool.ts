@@ -14,11 +14,15 @@ export class FakeRunnerPool implements RunnerPoolPort {
   /** Each runner's turns, as `containerExited` reports them; a generation reported twice answers null. */
   runnerTurns = new Map<string, string[]>()
   private exited = new Set<string>()
+  /** The placement queue: a `place` answered `{ queued: true }` adds the turn, in order. */
+  queue: string[] = []
   healthAnswer: PoolHealth = { protocol: { ok: true }, restarts: { ok: true }, shortfall: { ok: true } }
 
   async place(rs: RunStart, gen: number): Promise<PlaceAnswer> {
     this.calls.push({ method: 'place', args: [rs, gen] })
-    return typeof this.placeAnswer === 'function' ? this.placeAnswer(rs, gen) : this.placeAnswer
+    const answer = typeof this.placeAnswer === 'function' ? await this.placeAnswer(rs, gen) : this.placeAnswer
+    if ('queued' in answer && !this.queue.includes(rs.runId)) this.queue.push(rs.runId)
+    return answer
   }
   async interrupt(runner: string, turnId: string) { this.calls.push({ method: 'interrupt', args: [runner, turnId] }) }
   async stop(runner: string, turnId: string) { this.calls.push({ method: 'stop', args: [runner, turnId] }) }
@@ -37,5 +41,16 @@ export class FakeRunnerPool implements RunnerPoolPort {
     if (this.exited.has(key)) return null
     this.exited.add(key)
     return this.runnerTurns.get(runner) ?? []
+  }
+  async retryQueue() { this.calls.push({ method: 'retryQueue', args: [] }) }
+  dequeue(turnId: string) {
+    this.calls.push({ method: 'dequeue', args: [turnId] })
+    this.queue = this.queue.filter(t => t !== turnId)
+  }
+  clearQueue() {
+    this.calls.push({ method: 'clearQueue', args: [] })
+    const held = this.queue
+    this.queue = []
+    return held
   }
 }

@@ -7,7 +7,8 @@ import type { Method } from '../routes.ts'
 
 /**
  * - `brand_data`: persons per `allow`; Inhouse only on GET with a live grant, after a `support.access` audit line.
- * - `baseline`: Inhouse may GET without a grant; writes per `allow`, never Inhouse.
+ * - `baseline`: per `allow`, Inhouse included, reads and writes, never needing a grant (decision 19: the Inhouse team
+ *   holds every Admin control). A brand's chats, memory and audit log are `brand_data`, never `baseline`.
  * - `technical`: Inhouse reads and writes; Member and Admin GET only; an Admin write only on an `adminWrite` row whose
  *   object check passes.
  * - `personal`: only the owner (`object.ownerId === principal.memberId`), never Inhouse.
@@ -33,7 +34,7 @@ export interface AccessRow {
    */
   readonly services?: readonly ('monitor' | 'smoke' | 'release')[]
   /**
-   * A `technical` row an Admin may write, but only through the object rule (`tm:<id>:on` set to `'off'`). Such a row
+   * A `technical` row an Admin may write, but only through the object rule (`tm:<id>:on` set to `'on'` or `'off'`). Such a row
    * lists `admin` in `allow` too (row 12: `allow: ['inhouse', 'admin'], adminWrite: true`); `allow` alone never lets
    * an Admin write it.
    */
@@ -94,14 +95,14 @@ export interface AccessRefused extends Error {
 
 /**
  * Each `CanKey`'s row (the values live beside the rows in server/access-matrix.ts). `as: 'adminWrite'` evaluates the
- * row with the object an Admin's allowed write has (`{ settingKey: 'tm:<id>:on', value: 'off' }`).
+ * row with an object an Admin's allowed write has (`{ settingKey: 'tm:<id>:on', value: 'off' }`).
  */
 export type CanRows = Record<CanKey, { readonly method: Method; readonly pattern: string; readonly as?: 'adminWrite' }>
 
 /**
  * `me().can`: each `CanKey` evaluated through `checkAccess` on its row. A decision still marked
  * `objectCheck: 'required'` counts as **false**: only `as: 'adminWrite'` supplies an object, so an Admin gets
- * `editTechnical` false and `switchModelOff` true on row 12, as the server answers.
+ * `editTechnical` false and `switchModel` true on row 12, as the server answers.
  */
 export type CanFor = (principal: Principal, rows: readonly AccessRow[], canRows: CanRows, nowMs: number) => Record<CanKey, boolean>
 
@@ -122,10 +123,13 @@ const OK: AccessDecision = { ok: true }
 const NO: AccessDecision = { refused: 'forbidden' }
 const OBJECT_REQUIRED: AccessDecision = { ok: true, objectCheck: 'required' }
 
-/** The only technical write an Admin may make (decision log: admins may switch a model off). Call 4 may add `'on'`. */
+/** The only technical write an Admin may make: switching a model off or back on (decision 27a). */
 const ADMIN_WRITE_KEY = /^tm:[^:]+:on$/
 
-/** The object an Admin's allowed `adminWrite` write has, for `canFor` (`as: 'adminWrite'`). */
+/** The values an Admin may write to an `ADMIN_WRITE_KEY` key. */
+const ADMIN_WRITE_VALUES: readonly unknown[] = ['on', 'off']
+
+/** An object an Admin's allowed `adminWrite` write has, for `canFor` (`as: 'adminWrite'`). */
 export const ADMIN_WRITE_OBJECT: AccessObject = { settingKey: 'tm:any:on', value: 'off' }
 
 /** A row whose object belongs to one member: `personal`, or a `brand_data` row flagged `ownerObject`. */
@@ -158,7 +162,7 @@ export const checkAccess: CheckAccess = (principal, row, object, nowMs) => {
         const g = principal.grant
         return g && g.endsAtMs > nowMs ? { ok: true, audit: 'support.access' } : { refused: 'forbidden', reason: 'grant_required' }
       }
-      case 'baseline': return read ? OK : NO
+      case 'baseline': return OK
       case 'technical': return OK
       case 'personal': return NO
     }
@@ -171,7 +175,7 @@ export const checkAccess: CheckAccess = (principal, row, object, nowMs) => {
     if (role !== 'admin') return NO
     if (!row.adminWrite) return { refused: 'forbidden', reason: 'admin_read_only' }
     if (object === undefined) return OBJECT_REQUIRED
-    return typeof object.settingKey === 'string' && ADMIN_WRITE_KEY.test(object.settingKey) && object.value === 'off'
+    return typeof object.settingKey === 'string' && ADMIN_WRITE_KEY.test(object.settingKey) && ADMIN_WRITE_VALUES.includes(object.value)
       ? OK
       : { refused: 'forbidden', reason: 'admin_read_only' }
   }

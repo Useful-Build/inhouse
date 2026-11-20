@@ -33,9 +33,8 @@ function verdict(row: Row, who: Principal): Verdict {
       case 'brand_data':
         if (!read) return { allowed: false }
         return who === 'inhouseGrant' ? { allowed: true } : { allowed: false, reason: 'grant_required' }
-      // A baseline write listing Inhouse (pause, resume: item 19) is refused by today's rule; flips to OK with
-      // feat/inhouse-admin-controls.
-      case 'baseline': return { allowed: read }
+      // Decision 19: the Inhouse team holds every Admin control, so a baseline row it is listed on lets it read and write.
+      case 'baseline': return { allowed: true }
       case 'technical': return { allowed: true }
       case 'report': return { allowed: true }
       default: return { allowed: false } // personal: never Inhouse
@@ -115,22 +114,24 @@ test.describe('what the rows alone do not say', () => {
     expect(aimed.status).toBe(404)
   })
 
-  // `stage` and `tm:fable:on` are literals on purpose: the spec is about them (a technical key, and the one an Admin may switch off).
-  test('an Admin can\'t write a technical key, except switching a model off', async ({ request }) => {
+  // `stage` and `tm:fable:on` are literals on purpose: the spec is about them (a technical key, and the one an Admin may switch).
+  test('an Admin can\'t write a technical key, except switching a model off and back on', async ({ request }) => {
     const admin = actor('admin')
     const tech = async () => Object.fromEntries((await call(request, admin, 'GET', '/api/settings/technical')).json.items.map((i: { key: string; value: unknown; rev: number }) => [i.key, i])) as Record<string, { value: unknown; rev: number }>
     const before = await tech()
     const stage = await call(request, admin, 'PUT', '/api/settings/technical/stage', { json: { value: 'Act', ifRev: before.stage?.rev ?? 0 } })
     expectError(stage, 403, 'forbidden', 'admin_read_only')
-    const on = await call(request, admin, 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'on', ifRev: before['tm:fable:on']?.rev ?? 0 } })
-    expectError(on, 403, 'forbidden', 'admin_read_only')
+    // Clearing the key is neither 'on' nor 'off': refused.
+    const cleared = await call(request, admin, 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: null, ifRev: before['tm:fable:on']?.rev ?? 0 } })
+    expectError(cleared, 403, 'forbidden', 'admin_read_only')
     expect((await tech()).stage?.value, 'a refused write changes nothing').toBe(before.stage?.value)
     const off = await call(request, admin, 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'off', ifRev: before['tm:fable:on']?.rev ?? 0 } })
     expect(off.status, off.text).toBe(200)
     expect(off.json.value).toBe('off')
-    // The Inhouse team switches it back on (an Admin can't).
-    const back = await call(request, actor('inhouse'), 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'on', ifRev: off.json.rev } })
+    // The Admin switches it back on (decision 27a).
+    const back = await call(request, admin, 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'on', ifRev: off.json.rev } })
     expect(back.status, back.text).toBe(200)
+    expect(back.json.value).toBe('on')
     // A member can't write a technical key at all, not even switching off.
     expectError(await call(request, actor('memberA'), 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'off', ifRev: back.json.rev } }), 403, 'forbidden')
   })

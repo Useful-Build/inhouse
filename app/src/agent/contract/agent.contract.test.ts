@@ -986,7 +986,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await t.client.setMemberRole(fx.me.memberId, 'member')
       const member = parse(MeSchema, t.client.me(), 'me() after the role change')
       expect(member.role).toBe('member')
-      for (const k of ['invite', 'changeRole', 'remove', 'editBrandSettings', 'editTechnical', 'switchModelOff', 'grantSupport'] as const) expect(member.can[k], `a Member can't ${k}`).toBe(false)
+      for (const k of ['invite', 'changeRole', 'remove', 'editBrandSettings', 'editTechnical', 'switchModel', 'grantSupport'] as const) expect(member.can[k], `a Member can't ${k}`).toBe(false)
       for (const k of ['viewMembers', 'viewAudit', 'exportAudit'] as const) expect(member.can[k], `a Member can ${k}`).toBe(true)
     })
 
