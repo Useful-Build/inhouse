@@ -81,6 +81,8 @@ export interface ContractTarget {
   /** The client in use now. `reset()` replaces it, so read it fresh in each test, and subscribe again after a reset. */
   readonly client: AgentClient
   fixtures: Fixtures
+  /** The most runs a property test makes on this target (the env's count when smaller). A target over HTTP sets it: each run is several round trips. The mock leaves it unset. */
+  propertyRuns?: number
   /** Before each test: take control of time. The mock uses vitest's fake timers; a real target starts its dev clock. */
   setup(): Promise<void>
   /** After each test: give time back. */

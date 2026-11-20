@@ -51,7 +51,9 @@ function realTarget(origin: string): ContractTarget {
   const wire: typeof fetch = async (input, init) => {
     const url = new URL(String(input), origin)
     const method = (init?.method ?? 'GET').toUpperCase()
-    if (method !== 'GET' && (failAllSaves || forced !== null)) return refusal(forced ?? 'unavailable')
+    if (method !== 'GET' && failAllSaves) return refusal('unavailable')
+    // An armed refusal answers the one write that was started with it (the next request), so a write made meanwhile isn't refused.
+    if (method !== 'GET' && forced !== null) { const code = forced; forced = null; return refusal(code) }
     if (method === 'GET') {
       for (const resource of armedReads) {
         if (READ_PATH[resource] === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
@@ -131,6 +133,8 @@ function realTarget(origin: string): ContractTarget {
       unknownChatId: 'no-such-chat',
       unknownTraceId: 'no-such-trace',
     },
+    // Each property run resets the brand and makes several HTTP round trips; 20 runs keep a property inside the 25 s timeout.
+    propertyRuns: 20,
     failedSaveNotice: 'error',
     capabilities: { agentWritesSaveInClient: false, pagesLists: true },
     async setup() { /* a server's clock isn't ours to take: `advance` moves the client's own */ },

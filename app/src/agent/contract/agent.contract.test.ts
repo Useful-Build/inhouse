@@ -27,10 +27,17 @@ import {
   AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, ErrorReasonSchema, InstantSchema,
   LibraryFileSchema, MeSchema, MemberRecordSchema, RoutineRunSchema, RunEventSchema, SettingRecordSchema, SupportGrantSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
-import type { AgentNotice, RunEvent, Scenario, SendPriority, Stage } from '../types'
+import type { AgentClient, AgentNotice, RunEvent, Scenario, SendPriority, Stage } from '../types'
 import { AgentError, SCENARIOS, STAGES } from '../types'
 import type { ContractTarget, WriteMethod } from './targets'
 import { targets } from './targets'
+
+/** The server's access rows, as far as the Admin's `can` check reads them. */
+interface AccessRows {
+  accessMatrix: { method: string; pattern: string; class: string; allow: string[]; adminWrite?: boolean }[]
+  canRows: Record<string, { method: string; pattern: string; as?: string }>
+}
+const ACCESS_ROWS = '../../../server/access-matrix.ts'
 
 const numRuns = Number(import.meta.env.VITE_PROP_RUNS) || 100
 const seedText = import.meta.env.VITE_PROP_SEED
@@ -52,6 +59,17 @@ type Started = Extract<RunEvent, { type: 'run.started' }>
 
 describe.each(targets)('contract: $name', (t: ContractTarget) => {
   const fx = t.fixtures
+  /**
+   * A case that needs a client method runs only on a target that serves it (`serves`): the real target serves the P2 methods
+   * and nothing else until its phase, so what needs a run, an approval, a routine, the library or a stage's sample data
+   * belongs to the targets that have them.
+   */
+  const lacks = (...methods: (keyof AgentClient)[]) => !methods.every(m => t.serves(m))
+  /** `only('ask')('title', fn)` and `only('ask').each(rows)('title', fn)`: the test, or a skipped one by that name. */
+  const only = (...methods: (keyof AgentClient)[]) => (lacks(...methods) ? test.skip : test)
+  const describeIf = (...methods: (keyof AgentClient)[]) => (lacks(...methods) ? describe.skip : describe)
+  /** Property runs: the env's count, capped by the target's own (a real target makes several HTTP round trips per run). */
+  const runParams: fc.Parameters<unknown> = { ...params, numRuns: Math.min(numRuns, t.propertyRuns ?? numRuns) }
   let notices: AgentNotice[]
   let unsubscribe: () => void
   /** Every `subscribe` listener a test adds: the mock is one shared instance, so each comes off after the test, pass or fail. */
@@ -180,7 +198,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
   // ---------- reads ----------
   describe('reads parse through their schema', () => {
-    test.each(stageAndScenario)('every read in %s, %s', async (stage, scenario) => {
+    only('ask').each(stageAndScenario)('every read in %s, %s', async (stage, scenario) => {
       await t.seed({ stage, scenario })
       const c = t.client
       const data = parse(AgentDataSchema, c.read(), 'read()')
@@ -231,7 +249,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       }
     })
 
-    test('a tool whose login failed reads as disconnected since an instant; with every login working, none does', async () => {
+    only('ask')('a tool whose login failed reads as disconnected since an instant; with every login working, none does', async () => {
       await fresh('Act', 'Normal')
       expect(t.client.read().tools.connection).toEqual({})
       await fresh('Act', 'Tool disconnected')
@@ -241,7 +259,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       parse(InstantSchema, lost[0].since, 'tools.connection[].since')
     })
 
-    test('before the first tool is live the setup list names tools being connected; once tools read, it is empty', async () => {
+    only('ask')('before the first tool is live the setup list names tools being connected; once tools read, it is empty', async () => {
       await fresh('Act', 'First day')
       const first = t.client.read().tools
       expect(first.connected).toEqual([])
@@ -256,7 +274,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   })
 
   // ---------- run events ----------
-  describe('ask() streams events that parse', () => {
+  describeIf('ask')('ask() streams events that parse', () => {
     test.each(STAGES)('every suggested question, in %s', async stage => {
       await fresh(stage)
       const questions = t.client.read().chat.suggestions
@@ -427,7 +445,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
   // ---------- writes ----------
   describe('write results parse and change state', () => {
-    test('approve a held draft: the result parses, the hold ends in a sent notice', async () => {
+    only('approve')('approve a held draft: the result parses, the hold ends in a sent notice', async () => {
       const id = heldProblem()
       const result = parse(ApproveResultSchema, await t.client.approve(id), 'approve()')
       expect(result.held).toBe(true)
@@ -439,14 +457,14 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       checkWorld('after a hold ended')
     })
 
-    test('approve twice returns the first record, parsed, and still holds', async () => {
+    only('approve')('approve twice returns the first record, parsed, and still holds', async () => {
       const id = heldProblem()
       const first = await t.client.approve(id)
       const second = parse(ApproveResultSchema, await t.client.approve(id), 'the second approve()')
       expect(second).toEqual({ ...first, held: true })
     })
 
-    test('undo inside the hold stops the send; undo after it went out rejects with conflict and a notice', async () => {
+    only('approve', 'undo')('undo inside the hold stops the send; undo after it went out rejects with conflict and a notice', async () => {
       const id = heldProblem()
       await t.client.approve(id)
       await t.client.undo(id)
@@ -463,20 +481,20 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot(), 'a refused undo changes nothing').toBe(snap)
     })
 
-    test('a reversible draft finishes at once, and its result parses', async () => {
+    only('approve')('a reversible draft finishes at once, and its result parses', async () => {
       const id = reversibleProblem()
       expect(id, 'the Act scenario has a reversible draft').toBeDefined()
       const result = parse(ApproveResultSchema, await t.client.approve(id!), 'approve() of a reversible draft')
       expect(result.held).toBe(false)
     })
 
-    test('edit a draft', async () => {
+    only('approve', 'editDraft')('edit a draft', async () => {
       const id = heldProblem()
       await t.client.editDraft(id, 'New wording')
       expect(t.client.getSnapshot().edits[id]).toBe('New wording')
     })
 
-    test('run a routine now: the result parses and heads the list of runs', async () => {
+    only('runRoutine')('run a routine now: the result parses and heads the list of runs', async () => {
       await fresh('Run')
       const routines = t.client.read().routines
       expect(routines.length).toBeGreaterThan(0)
@@ -487,7 +505,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       }
     })
 
-    test('delete a routine and restore it', async () => {
+    only('deleteRoutine')('delete a routine and restore it', async () => {
       const id = firstRoutine()
       await t.client.deleteRoutine(id)
       expect(t.client.getSnapshot().routinesDeleted[id]).toBe(true)
@@ -495,7 +513,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().routinesDeleted[id]).toBeUndefined()
     })
 
-    test.each(['snoozed', 'dismissed', 'declined'] as const)('set a problem aside as %s, then bring it back', async reason => {
+    only('approve', 'setAside').each(['snoozed', 'dismissed', 'declined'] as const)('set a problem aside as %s, then bring it back', async reason => {
       const id = heldProblem()
       await t.client.setAside(id, reason)
       expect(t.client.getSnapshot().setAside[id]).toMatchObject({ reason })
@@ -503,14 +521,14 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().setAside[id]).toBeUndefined()
     })
 
-    test('approving a problem that was set aside clears it', async () => {
+    only('approve', 'setAside')('approving a problem that was set aside clears it', async () => {
       const id = heldProblem()
       await t.client.setAside(id, 'snoozed')
       await t.client.approve(id)
       expect(t.client.getSnapshot().setAside[id]).toBeUndefined()
     })
 
-    test('pause resolves to when, resume clears it', async () => {
+    only('pause')('pause resolves to when, resume clears it', async () => {
       const at = parse(InstantSchema, await t.client.pause(), 'pause()')
       expect(parse(AgentStateSchema, t.client.getSnapshot(), 'getSnapshot()').paused).toEqual(at)
       expect(Date.parse(at.iso), 'iso and ms name one moment').toBe(at.ms)
@@ -518,7 +536,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().paused).toBeNull()
     })
 
-    test('undo what the agent handled, then redo it', async () => {
+    only('undoHandled')('undo what the agent handled, then redo it', async () => {
       await fresh('Run')
       const id = heldProblem()
       const toast = parse(z.string(), await t.client.undoHandled(id), 'undoHandled()')
@@ -528,12 +546,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().undone[id]).toBeUndefined()
     })
 
-    test('send a team request', async () => {
+    only('sendTeamRequest')('send a team request', async () => {
       await t.client.sendTeamRequest(fx.teamRequest)
       expect(t.client.getSnapshot().teamRequests[0]).toEqual(fx.teamRequest)
     })
 
-    test('toggles, requests, pauses, memory, settings and photos', async () => {
+    only('requestTool', 'requestSkill', 'setToolPaused', 'forgetMemory')('toggles, requests, pauses, memory, settings and photos', async () => {
       const c = t.client
       await c.setToggle(fx.toggleKey, false)
       expect(c.getSnapshot().toggles[fx.toggleKey]).toBe(false)
@@ -564,7 +582,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       checkWorld('after the plain writes')
     })
 
-    test('mark notifications read: only the new ones change state', async () => {
+    only('markNoticesRead')('mark notifications read: only the new ones change state', async () => {
       const ids = t.client.listNotifications().map(n => n.id)
       expect(ids.length).toBeGreaterThan(0)
       await t.client.markNoticesRead(ids)
@@ -575,7 +593,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.listNotifications().every(n => !n.unread)).toBe(true)
     })
 
-    test('delete library files and restore them', async () => {
+    only('deleteFiles')('delete library files and restore them', async () => {
       const files = t.client.listFiles()
       expect(files.length).toBeGreaterThan(1)
       const ids = files.slice(0, 2).map(f => f.id)
@@ -586,13 +604,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.listFiles().map(f => f.id)).toEqual(files.map(f => f.id))
     })
 
-    test('createChat changes the snapshot (a write changes identity, so React sees the new chat)', async () => {
+    only('createChat')('createChat changes the snapshot (a write changes identity, so React sees the new chat)', async () => {
       const before = t.client.getSnapshot()
       await t.client.createChat(fx.newChat)
       expect(t.client.getSnapshot()).not.toBe(before)
     })
 
-    test('chats: create, rename, pin, delete, restore', async () => {
+    only('createChat')('chats: create, rename, pin, delete, restore', async () => {
       const c = t.client
       const { id, title } = fx.newChat
       await c.createChat({ id, title })
@@ -616,7 +634,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices[0].type).toBe('error')
     })
 
-    test('a question asked in a chat made with createChat is answered', async () => {
+    only('ask')('a question asked in a chat made with createChat is answered', async () => {
       await t.client.createChat(fx.newChat)
       checkRun(await drain(fx.questions.table, { chatId: fx.newChat.id }))
     })
@@ -633,7 +651,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(c.listNotifications()).toBe(c.listNotifications())
     })
 
-    test('a write gives a new state object and leaves read() alone', async () => {
+    only('pause')('a write gives a new state object and leaves read() alone', async () => {
       const before = t.client.getSnapshot()
       const data = t.client.read()
       await t.client.pause()
@@ -644,7 +662,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot(), 'reading changes nothing').toBe(after)
     })
 
-    test('files are a new array after a delete, notifications after a read mark, data after a scenario change', async () => {
+    only('deleteFiles', 'markNoticesRead')('files are a new array after a delete, notifications after a read mark, data after a scenario change', async () => {
       const files = t.client.listFiles()
       await t.client.deleteFiles([firstFile()])
       expect(t.client.listFiles()).not.toBe(files)
@@ -658,7 +676,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.read()).not.toBe(data)
     })
 
-    test('subscribe tells listeners of every change, and stops after unsubscribe', async () => {
+    only('pause')('subscribe tells listeners of every change, and stops after unsubscribe', async () => {
       // `seed` resolves only once the client shows the new world, so a listener has heard it by the time it returns.
       const calls = vi.fn(() => t.client.getSnapshot())
       const off = subscribe(calls)
@@ -696,7 +714,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     const endLiveGrant = async (c: ContractTarget['client']) => { const g = c.read().people.supportGrant; if (g?.live) await c.endSupportGrant(g.id) }
     const ensureLiveGrant = async (c: ContractTarget['client']) => { if (!c.read().people.supportGrant?.live) await c.grantSupport(4) }
     let deletedFile = ''
-    const cases: WriteCase[] = [
+    const allCases: WriteCase[] = [
       { label: 'approve', method: 'approve', run: c => c.approve(heldProblem()) },
       { label: 'undo', method: 'undo', prepare: c => c.approve(heldProblem()), run: c => c.undo(heldProblem()) },
       { label: 'editDraft', method: 'editDraft', run: c => c.editDraft(heldProblem(), 'x') },
@@ -731,6 +749,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       { label: 'deleteChats', method: 'deleteChats', run: c => c.deleteChats([chatId()]) },
       { label: 'restoreChats', method: 'restoreChats', prepare: c => c.deleteChats([chatId()]), run: c => c.restoreChats([chatId()]) },
     ]
+    /** Only the writes this target serves. */
+    const cases = allCases.filter(w => t.serves(w.method))
     const observe = (w: WriteCase) => (w.observe ?? ((c: ContractTarget['client']) => c.getSnapshot()))(t.client)
 
     /** The client in the scenario, the write's prerequisite done, listeners and notices fresh. */
@@ -804,14 +824,14 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       })
     })
 
-    test('a write that is not awaited still tells the person when the server refuses it', async () => {
+    only('pause')('a write that is not awaited still tells the person when the server refuses it', async () => {
       await t.injectError('pause', 'forbidden')
       void t.client.pause()
       await until(() => notices.length > 0, 'the notice')
       expect(notices).toEqual([{ type: 'error', code: 'forbidden', text: expect.any(String) }])
     })
 
-    test('a refused write takes back only itself: a write made while it was in flight stays', async () => {
+    only('pause')('a refused write takes back only itself: a write made while it was in flight stays', async () => {
       await t.injectError('pause', 'forbidden')
       const refused = errorOf(t.client.pause())
       await t.client.setToggle(fx.toggleKey, false) // lands before the refusal does
@@ -823,7 +843,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices[0]).toMatchObject({ type: 'error', code: 'forbidden' })
     })
 
-    test('a refused pause leaves the hold of an approve made while it was in flight: it still sends', async () => {
+    only('approve', 'pause')('a refused pause leaves the hold of an approve made while it was in flight: it still sends', async () => {
       const id = heldProblem()
       await t.injectError('pause', 'forbidden')
       const refused = errorOf(t.client.pause())
@@ -848,7 +868,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(settings[fx.otherSetting.key], 'the setting saved meanwhile stays').toBe(fx.otherSetting.value)
     })
 
-    test('a refusal on one method leaves the others working', async () => {
+    only('pause')('a refusal on one method leaves the others working', async () => {
       await t.injectError('pause', 'forbidden')
       await expect(t.client.pause()).rejects.toBeInstanceOf(AgentError)
       await t.client.setToggle(fx.toggleKey, false)
@@ -858,7 +878,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().paused).not.toBeNull()
     })
 
-    test('the Cap reached scenario reads at the cap, and the agent still answers and writes there', async () => {
+    only('ask')('the Cap reached scenario reads at the cap, and the agent still answers and writes there', async () => {
       const normal = parse(AgentDataSchema, t.client.read(), 'read()').usage
       expect(normal.total.currency, 'spend and cap share a currency').toBe(normal.cap.currency)
       expect(normal.total.minor, 'a normal month is under the cap').toBeLessThan(normal.cap.minor)
@@ -873,7 +893,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices).toEqual([])
     })
 
-    test('a write that fails does not raise an unhandled rejection when nobody awaits it', async () => {
+    only('pause')('a write that fails does not raise an unhandled rejection when nobody awaits it', async () => {
       await t.failSaves(true)
       void t.client.pause()
       await until(() => notices.some(n => n.type === t.failedSaveNotice), 'the failed-save notice')
@@ -928,7 +948,17 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test.skipIf(skipUnless('me', 'setMemberRole'))('can follows the role: an Admin may do what a Member may not, and every person may read', async () => {
       const admin = parse(MeSchema, t.client.me(), 'me()')
-      expect(Object.values(admin.can).every(Boolean), 'the demo Admin can do everything').toBe(true)
+      if (t.name === 'mock') expect(Object.values(admin.can).every(Boolean), 'the demo Admin can do everything').toBe(true)
+      // The product's Admin can what the access rows let an Admin do: no technical write but a model's switch (`adminWrite`).
+      else {
+        // The rows are the server's (read at run time: the client program has no Workers types to compile them with).
+        const rows = (await import(/* @vite-ignore */ ACCESS_ROWS)) as AccessRows
+        for (const [k, row] of Object.entries(rows.canRows)) {
+          const r = rows.accessMatrix.find(x => x.method === row.method && x.pattern === row.pattern)!
+          const expected = r.class === 'technical' ? row.as === 'adminWrite' && !!r.adminWrite && r.allow.includes('admin') : r.allow.includes('admin')
+          expect(admin.can[k as keyof typeof admin.can], `an Admin's can.${k}`).toBe(expected)
+        }
+      }
       await t.client.setMemberRole(fx.otherMemberId, 'admin')
       await t.client.setMemberRole(fx.me.memberId, 'member')
       const member = parse(MeSchema, t.client.me(), 'me() after the role change')
@@ -951,7 +981,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       for (const r of approvalRules) expect(r.approver === 'anyone' || ids.has(r.approver), `${r.what}: ${r.approver}`).toBe(true)
     })
 
-    test('records of the people name member ids: an approval, an undo and a set aside', async () => {
+    only('approve', 'setAside')('records of the people name member ids: an approval, an undo and a set aside', async () => {
       const id = heldProblem()
       await t.client.approve(id)
       const other = t.client.read().problems.map(p => p.id).find(x => x !== id)
@@ -1047,7 +1077,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       await t.client.setSetting(fx.otherSetting.key, fx.otherSetting.value) // another record: not stale
     })
 
-    test('a memory line, a routine and a file changed behind the client: forget, delete and restore reject with conflict', async () => {
+    only('forgetMemory', 'deleteRoutine', 'deleteFiles')('a memory line, a routine and a file changed behind the client: forget, delete and restore reject with conflict', async () => {
       const line = t.client.read().memory.team.flatMap(g => g.lines)[0]
       const routine = t.client.read().routines[0]
       const file = t.client.listFiles()[0]
@@ -1061,7 +1091,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.read().routines.find(r => r.id === routine.id)!.rev, 'the rev reads').toBeGreaterThan(routine.rev)
     })
 
-    test('every editable record carries a rev that a write bumps', async () => {
+    only('deleteRoutine')('every editable record carries a rev that a write bumps', async () => {
       const d = t.client.read()
       d.routines.forEach(r => expect(r.rev).toBeGreaterThanOrEqual(1))
       d.memory.team.flatMap(g => g.lines).concat(d.memory.personal).forEach(l => expect(l.rev).toBeGreaterThanOrEqual(1))
@@ -1222,7 +1252,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(rev(), 'the name bumps it').toBeGreaterThan(r1)
     })
 
-    test('a routine made in a chat carries a rev that delete, restore, regenerate and take-back move', async () => {
+    only('ask', 'deleteRoutine')('a routine made in a chat carries a rev that delete, restore, regenerate and take-back move', async () => {
       const cards = () => t.client.getSnapshot().routinesExtra
       const events = await drain(fx.questions.routineRequest)
       const runId = (events[0] as Started).runId
@@ -1268,7 +1298,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     const step = (name: string, run: Op): Step => ({ name, run })
 
     /** Writes: each one saves, so with saves failing each one must reject. */
-    const writeOps: fc.Arbitrary<Step>[] = [
+    const earlierWriteOps: fc.Arbitrary<Step>[] = [
       fc.tuple(pick(50), fc.boolean()).map(([n, hold]) => step(`approve#${n}`, (c, i, forSave) => on(i.problems, n, id => (hold ? (c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.approve(id)) : forSave && !c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.undo(id))))),
       fc.tuple(pick(50), fc.string()).map(([n, s]) => step('editDraft', (c, i) => on(i.problems, n, id => c.editDraft(id, s)))),
       fc.tuple(pick(50), fc.boolean()).map(([n, undo]) => step('undoHandled', (c, i) => on(i.problems, n, id => (undo ? c.undoHandled(id) : c.redoHandled(id))))),
@@ -1279,8 +1309,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       key.map(k => step('requestSkill', c => c.requestSkill(k))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('setToolPaused', c => c.setToolPaused(k, b))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('forgetMemory', c => c.forgetMemory(k, b))),
+    ]
+    /** The writes the P2 methods serve: what a target without runs, approvals or a library still runs. */
+    const p2WriteOps: fc.Arbitrary<Step>[] = [
       fc.tuple(fc.constantFrom(fx.settingKey, fx.otherSetting.key, fx.choices.key), fc.boolean()).map(([k, reset]) => step('setSetting', c => c.setSetting(k, reset ? null : k === fx.choices.key ? fx.choices.values[0] : k === fx.settingKey ? fx.settingValue : fx.otherSetting.value))),
-      fc.tuple(pick(50), fc.option(fc.string(), { nil: null })).map(([n, v]) => step('setPhoto', (c, i) => on(i.members, n, id => c.setPhoto(id, v)))),
+      // `forSave` takes an active member: a removed member's photo is refused (`not_found`) before any save, and that is not a save failure.
+      fc.tuple(pick(50), fc.option(fc.string(), { nil: null })).map(([n, v]) => step('setPhoto', (c, i, forSave) => on(forSave ? c.read().people.members.filter(m => m.status !== 'removed').map(m => m.id) : i.members, n, id => c.setPhoto(id, v)))),
       // `forSave` skips what the client refuses for its own reason (the last Admin, a live grant, an email already invited), so a save failure is the only way it can reject.
       fc.tuple(pick(50), fc.constantFrom('admin', 'member', 'remove', 'invite', 'grant', 'end')).map(([n, a]) => step(`member-${a}`, (c, i, forSave) => {
         const live = c.read().people.supportGrant?.live
@@ -1291,6 +1325,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         if (forSave && a !== 'admin') return Promise.resolve(SKIP)
         return on(forSave ? active : i.members, n, id => (a === 'remove' ? c.removeMember(id) : c.setMemberRole(id, a)))
       })),
+    ]
+    const laterWriteOps: fc.Arbitrary<Step>[] = [
       fc.tuple(fc.string(), fc.string(), fc.string(), instant, fc.string(), fc.option(instant, { nil: undefined })).map(([icon, title, sub, at, status, statusAt]) => step('sendTeamRequest', c => c.sendTeamRequest({ icon, title, sub, at, status, ...(statusAt ? { statusAt } : {}) }))),
       fc.boolean().map(all => step('markNoticesRead', c => {
         const fresh = c.listNotifications().filter(n => n.unread).map(n => n.id)
@@ -1306,6 +1342,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       fc.tuple(pick(50), fc.constantFrom('rename', 'clear', 'pin', 'unpin', 'delete', 'restore'), fc.string()).map(([n, a, s]) => step(`chat-${a}`,
         (c, i) => on(i.chats, n, id => (a === 'rename' ? c.renameChat(id, s) : a === 'clear' ? c.renameChat(id, null) : a === 'pin' ? c.pinChat(id, true) : a === 'unpin' ? c.pinChat(id, false) : a === 'delete' ? c.deleteChats([id]) : c.restoreChats([id]))))),
     ]
+    const writeOps = [...earlierWriteOps, ...p2WriteOps, ...laterWriteOps]
     /** Answers: asked, interrupted, stopped, or sent into, each read to its end. */
     const runOps: fc.Arbitrary<Step>[] = [
       question.map(q => step('ask', async () => { checkRun(await drain(q)) })),
@@ -1329,8 +1366,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       })),
     ]
     const seedOp: fc.Arbitrary<Step> = fc.tuple(fc.constantFrom(...STAGES), fc.constantFrom(...SCENARIOS)).map(([stage, scenario]) => step(`seed ${stage}/${scenario}`, async () => t.seed({ stage, scenario })))
-    const op = fc.oneof(...writeOps, ...runOps, seedOp)
-    const writeOp = fc.oneof(...writeOps)
+    // A target that serves no runs (the real one, in P2) takes the P2 writes only: a seed there is a client that never heard back.
+    const op = lacks('ask') ? fc.oneof(...p2WriteOps) : fc.oneof(...writeOps, ...runOps, seedOp)
+    const writeOp = fc.oneof(...(lacks('ask') ? p2WriteOps : writeOps))
 
     test('any sequence of writes and answers keeps every read parseable', async () => {
       await fc.assert(fc.asyncProperty(fc.array(op, { maxLength: 25 }), async steps => {
@@ -1349,7 +1387,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
           c.listNotifications().forEach(n => parse(AgentNotificationSchema, n, `listNotifications() ${where}`))
         }
         notices.forEach(n => parse(AgentNoticeSchema, n, `a notice after ${log.join(', ')}`))
-      }), params)
+      }), runParams)
     })
 
     test('any sequence of fresh and stale writes: a stale one never applies and always returns the current record; a fresh one always lands', async () => {
@@ -1377,7 +1415,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
             lastRev += 1
           }
         }
-      }), params)
+      }), runParams)
       expect(stale, 'the property reached stale writes').toBeGreaterThan(0)
     })
 
@@ -1400,7 +1438,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         expect(notices.some(n => n.type === t.failedSaveNotice), `${failing.name} sends the failed-save notice`).toBe(true)
         expect(t.client.getSnapshot(), `after ${failing.name} failed to save`).toBe(snap)
         rejected++
-      }), params)
+      }), runParams)
       expect(rejected, 'the property reached failing writes').toBeGreaterThan(0)
     })
   })

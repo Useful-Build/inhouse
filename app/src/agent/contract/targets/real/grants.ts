@@ -13,9 +13,9 @@ export async function endLiveGrant(s: Signer, as: 'admin' | 'dana' | 'leo' = 'ad
 }
 
 /**
- * A grant's `rev` moves only when it ends, so nothing a second session does makes a live grant's rev stale. The target
- * therefore makes the client's own end request stale on the wire (the rev it sent, plus a thousand): the server sees what
- * it would see from a client that last read an older record, and answers `conflict` with the grant as it is.
+ * A live grant's `rev` moves only when it ends, so no second session can make it stale: a real stale rev can't exist for a
+ * live grant. The target therefore adds a thousand to the `ifRev` of the client's own end request. This tests the path a
+ * stale write takes (the server answers 409 `conflict` with `current`, the client takes `current` in), not staleness itself.
  */
 export const staleRev = (body: unknown): unknown => {
   const b = body as { ifRev?: number }
