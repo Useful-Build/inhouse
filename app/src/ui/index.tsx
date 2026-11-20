@@ -115,7 +115,7 @@ export function Avatar({ who, size = 24, fontSize = Math.round(size * 0.42) }: {
   const st = useAgentState()
   const me = userName({ agent: st, data })
   const m = memberFor(data, who, me)
-  const photo = m ? photoOf(data, st, m.id) : null
+  const photo = m ? photoOf(data, m.id) : null
   const name = m ? (m.id === data.meta.currentUser.id ? me : m.name) : who
   return (
     <UiAvatar aria-hidden="true" className={cn(photo && 'after:absolute after:inset-0 after:rounded-full after:inset-ring after:inset-ring-input')}

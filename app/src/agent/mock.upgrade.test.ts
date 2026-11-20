@@ -80,13 +80,13 @@ describe('an old value that cannot convert is dropped and reported (failure 2), 
 describe('each old shape converts to the right value (failure 1)', () => {
   test.prop([minute, fc.boolean()])('undone: a shown time and its minute become that minute on the demo\'s Monday', (min, nbsp) => {
     const s = load({ undone: { oversell: { at: shown(min, nbsp), atMin: min, by: 'Sam Mercer' } } }).getSnapshot()
-    expect(s.undone).toEqual({ oversell: { at: monday(min), by: 'Sam Mercer' } })
+    expect(s.undone).toEqual({ oversell: { at: monday(min), by: 'm_sam' } }) // C2: a saved name loads as the member's id
     expect(demoDayAt(min)).toEqual(monday(min))
   })
 
   test.prop([minute, fc.integer({ min: 1, max: 4e12 }), fc.constantFrom('snoozed', 'dismissed', 'declined')])('setAside: the stamp on the demo\'s Monday, the real time from `ms`', (min, ms, reason) => {
     const s = load({ setAside: { po: { reason, at: shown(min), atMin: min, by: 'Sam Mercer', ms } } }).getSnapshot()
-    expect(s.setAside).toEqual({ po: { reason, at: monday(min), by: 'Sam Mercer', loggedAt: instantOf(ms) } })
+    expect(s.setAside).toEqual({ po: { reason, at: monday(min), by: 'm_sam', loggedAt: instantOf(ms) } }) // C2: a saved name loads as the member's id
   })
 
   test.prop([minute, fc.boolean()])('paused: a shown time becomes that time on the demo\'s Monday', (min, nbsp) => {
@@ -108,9 +108,9 @@ describe('each old shape converts to the right value (failure 1)', () => {
 
   test('a value already in the new shape loads as it was saved', () => {
     const at = monday(483)
-    const s = load({ paused: at, undone: { oversell: { at, by: 'Sam Mercer' } } }).getSnapshot()
+    const s = load({ paused: at, undone: { oversell: { at, by: 'm_sam' } } }).getSnapshot()
     expect(s.paused).toEqual(at)
-    expect(s.undone.oversell).toEqual({ at, by: 'Sam Mercer' })
+    expect(s.undone.oversell).toEqual({ at, by: 'm_sam' })
   })
 })
 
@@ -140,5 +140,51 @@ describe('loading an old shape does not write it back (failure 5)', () => {
     await agent.resume()
     expect(writes).toEqual([STATE_KEY])
     expect(JSON.parse(store.get(STATE_KEY)!).approved.stock.at).toEqual(agent.getSnapshot().approved.stock.at)
+  })
+})
+
+// A demo saved before C2 and C9 (P2): people by name, roles, photos and the support switch as settings. Ways it can fail:
+//  1. a role, a photo or the support switch saved as a setting stays in `settings` (so a privilege is a setting) or is lost;
+//  2. an approver saved by name stops naming a member, or a name nobody has is kept as an approver;
+//  3. a name in a record (`by`) is kept as text, so the UI can't find the member;
+//  4. the stored-demo fixture (before the seam) stops loading.
+describe('a demo saved before C2 and C9 loads with ids, roles, photos and the grant on the server', () => {
+  test('roles, photos and the support switch leave the settings and land where the server keeps them', () => {
+    const photo = 'data:image/png;base64,AAAA'
+    const agent = load({ settings: { 'p:dana': 'Admin', 'p:priya': 'Approver', 'photo:sam': photo, 'photo:leo': '', 'g:tz': 'America/Chicago' }, toggles: { 'd:support': false, 'r:Morning check': false } })
+    const state = agent.getSnapshot()
+    expect(state.settings, 'only real settings stay').toEqual({ 'g:tz': 'America/Chicago' })
+    expect(state.toggles).toEqual({ 'r:Morning check': false })
+    const members = agent.read().people.members
+    const by = (id: string) => members.find(m => m.id === id)!
+    expect([by('m_dana').role, by('m_priya').role, by('m_sam').role], 'Approver is not a role').toEqual(['admin', 'member', 'admin'])
+    expect(by('m_sam').photo).toBe(photo)
+    expect(by('m_leo').photo, 'a removed photo stays removed').toBeNull()
+    expect(agent.read().people.supportGrant?.live, 'the switch was off').toBe(false)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  test('an approver saved by name becomes a member id or anyone; a name nobody has is dropped and named', () => {
+    const agent = load({ settings: { 'a:0': 'Leo Park', 'a:1': 'Anyone who approves', 'a:2': 'Nobody Known' } })
+    expect(agent.getSnapshot().settings).toEqual({ 'a:0': 'm_leo', 'a:1': 'anyone' })
+    expect(agent.read().people.approvalRules.slice(0, 3).map(r => r.approver)).toEqual(['m_leo', 'anyone', 'anyone'])
+    expect(warned()).toContain('settings.a:2')
+  })
+
+  test('the pre-seam fixture loads: its approval names the signed-in member, the grant is live and nothing is dropped', () => {
+    const agent = load({})
+    expect(agent.getSnapshot().approved.stock.by).toBe('m_sam')
+    expect(agent.read().people.supportGrant?.live).toBe(true)
+    expect(agent.me()?.memberId).toBe('m_sam')
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  test('what the server keeps is saved with the state and loads again as it was', () => {
+    const agent = load({})
+    return agent.setMemberRole('m_dana', 'admin').then(() => agent.inviteMember({ name: 'Robin Example', email: 'robin@example.test', role: 'member' })).then(() => {
+      const again = new MockAgent()
+      expect(again.read().people.members.find(m => m.id === 'm_dana')?.role).toBe('admin')
+      expect(again.read().people.members.some(m => m.email === 'robin@example.test' && m.status === 'invited')).toBe(true)
+    })
   })
 })

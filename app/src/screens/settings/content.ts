@@ -1,5 +1,5 @@
 // Settings content. Pure data: the screen renders it.
-import type { AgentData, AgentState, AuditEntry, MemoryLine, Money, StageIndex } from '../../agent/types'
+import type { AgentData, AgentState, AuditLine, MemberRecord, MemberRole, MemoryLine, Money, StageIndex } from '../../agent/types'
 import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
@@ -38,6 +38,11 @@ export interface Row {
   avatar?: { who: string; at: 'row' | 'control' }
   /** A `text` row's kind of value: checked when the field loses focus, and not saved while it is wrong. */
   type?: FieldType
+  /** A `select` row saved some way other than a setting (a member's role is its own call): runs instead of `setSetting(key, value)`. */
+  save?: (value: string) => void
+  /** A `toggle` row that isn't a switch setting (the support grant): whether it is on, and what flipping it does. */
+  on?: boolean
+  toggle?: (on: boolean) => void
   /** A `select` row: the question to ask before saving this value, or null to save it straight away. */
   confirm?: (value: string) => { title: string; text: string; action: string } | null
 }
@@ -100,6 +105,10 @@ export interface Env {
   forget: (key: string) => void
   /** Hands the browser a file to save. */
   download: (file: string, text: string, type: string) => void
+  /** Changes a member's role (`setMemberRole`). */
+  setRole: (id: string, role: MemberRole) => void
+  /** Turns Inhouse team access on (a 24 hour grant) or off (ends the live grant `id`). */
+  setSupport: (on: boolean, grantId?: string) => void
 }
 
 const withAvatar = (row: Row, who: string, at: 'row' | 'control' = 'row'): Row => ({ ...row, avatar: { who, at } })
@@ -138,9 +147,9 @@ export function settingsPage(tab: string, env: Env): Page {
   // A saved choice that isn't an option now (another channel, or none) shows and counts as the default.
   const savedTo = agent.settings['n:channel']
   const alertsTo = savedTo && alertOptions.includes(savedTo) ? savedTo : (channel ?? 'Email')
-  const auditRow = (e: AuditEntry) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${fmtWhen(e.at, now, d0)}`, 'value'), e.who)
+  const auditRow = (e: AuditLine) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${fmtWhen(e.at, now, d0)}`, 'value'), e.who)
   /** The audit log's two groups: changes made today, and earlier ones. */
-  const auditDay = (e: AuditEntry) => fmtAuditDay(e.at, now, d0)
+  const auditDay = (e: AuditLine) => fmtAuditDay(e.at, now, d0)
   const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Routines and jobs stopped · ${fmtTime(agent.paused, d0)}`, 'value'), me.id)] : []
   const nextStage = S < 2
     ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...(channel ? [channel] : [])])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
@@ -158,23 +167,28 @@ export function settingsPage(tab: string, env: Env): Page {
     title: m.label, desc: `${m.model} · ${m.sub}${m.label === defaultMode ? ' · stays on as the default' : ''}`, kind: 'mode', need: 0, key: modeEffortKey(m.id), value: EFFORTS.find(([e]) => e === m.effort)![1], options: EFFORTS.map(([, label]) => label),
     switchKey: modeOnKey(m.id), switchOn: m.on, switchTip: m.label === defaultMode ? 'This is the default model. Pick another default to turn it off.' : undefined, keywords: 'effort how hard it thinks',
   }))
-  const approvers = [...people.members.filter(m => (saved[`p:${m.id}`] ?? m.role) !== 'Member').map(m => m.name), 'Anyone who approves']
-  const ruleApprover = (r: { approver: string }, i: number) => saved[`a:${i}`] ?? r.approver
-  // Demoting an approver leaves the rules that name them as they are, so say so.
-  const demoted = (m: { id: string; name: string; role: string }, role: string) => {
-    if (role !== 'Member' || (saved[`p:${m.id}`] ?? m.role) === 'Member') return
-    const n = people.approvalRules.filter((r, i) => ruleApprover(r, i) === m.name).length
+  // Approving is a job per rule, by member id (not a role): a member named on a rule shows as "Approver".
+  const team = people.members.filter(m => m.status !== 'removed')
+  const namedOnRules = (id: string) => people.approvalRules.filter(r => r.approver === id).length
+  const roleLabel = (m: MemberRecord) => (m.role === 'admin' ? 'Admin' : namedOnRules(m.id) > 0 ? 'Approver' : 'Member')
+  const approverIds = [...team.map(m => m.id), 'anyone']
+  const approverLabels: Record<string, string> = { anyone: 'Anyone who approves', ...Object.fromEntries(people.members.map(m => [m.id, m.name])) }
+  // Moving a named approver to Member leaves the rules that name them as they are, so say so.
+  const demoted = (m: MemberRecord, label: string) => {
+    if (label !== 'Member' || roleLabel(m) === 'Member') return
+    const n = namedOnRules(m.id)
     if (n > 0) env.toast(`${m.name.split(' ')[0]} is still named on ${n} approval ${n === 1 ? 'rule' : 'rules'}.`, 7000)
   }
 
   // Taking Admin away asks first, and says so plainly when it's your own.
-  const removesAdmin = (m: { id: string; name: string; role: string }, role: string) => {
-    if (role === 'Admin' || (saved[`p:${m.id}`] ?? m.role) !== 'Admin') return null
+  const removesAdmin = (m: MemberRecord, label: string) => {
+    if (label === 'Admin' || m.role !== 'admin') return null
     const first = m.name.split(' ')[0]
     return m.id === me.id
       ? { title: 'Remove your admin role?', text: "You won't be able to change team settings any more. Another admin has to give it back.", action: 'Remove admin' }
       : { title: `Remove ${first}'s admin role?`, text: `${first} won't be able to change team settings any more.`, action: 'Remove admin' }
   }
+  const grant = people.supportGrant
 
   const pages: Record<string, Page> = {
     'you-general': { title: 'General', sections: [
@@ -206,10 +220,10 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'Your Inhouse agent shows the rule in the chat and an approver confirms it.', 'toggle', '', 1, 'm:ask', true), teach] },
     ] },
     'team-members': { title: 'Members', sections: [
-      { label: `${people.members.length} people`, rows: [...people.members.map(m => withAvatar({ ...sel(m.name, `${m.email} · ${m.title}`, `p:${m.id}`, m.role, ['Admin', 'Approver', 'Member']), onChange: v => demoted(m, v), confirm: v => removesAdmin(m, v) }, m.id)), R('Invite someone', 'They log in with their work email.', 'button', 'Invite', 0, undefined, undefined, () => env.openTeam('change', 'Please invite this person to Inhouse. Name, work email and role: '))] },
+      { label: `${team.length} people`, rows: [...team.map(m => withAvatar({ ...SEL(m.name, [m.email, m.title].filter(Boolean).join(' · '), `p:${m.id}`, roleLabel(m), ['Admin', 'Approver', 'Member']), save: v => env.setRole(m.id, v === 'Admin' ? 'admin' : 'member'), onChange: v => demoted(m, v), confirm: v => removesAdmin(m, v) }, m.id)), R('Invite someone', 'They log in with their work email.', 'button', 'Invite', 0, undefined, undefined, () => env.openTeam('change', 'Please invite this person to Inhouse. Name, work email and role: '))] },
     ] },
     'team-approvals': { title: 'Who approves what', sections: [
-      { label: 'Rules', rows: people.approvalRules.map((r, i) => withAvatar({ ...sel(r.what, r.detail, `a:${i}`, r.approver, approvers, 1), tag: approvers.includes(ruleApprover(r, i)) ? undefined : 'Not an approver' }, ruleApprover(r, i), 'control')) },
+      { label: 'Rules', rows: people.approvalRules.map((r, i) => withAvatar({ ...SEL(r.what, r.detail, `a:${i}`, r.approver, approverIds, 1), labels: approverLabels, tag: people.members.find(m => m.id === r.approver)?.status === 'removed' ? 'Not an approver' : undefined }, r.approver, 'control')) },
     ] },
     'team-limits': { title: 'Run limits', sections: [
       { label: 'Jobs your Inhouse agent may finish by itself', rows: lim.jobsAgentMayFinish.map(({ id, name, desc }) => R(name, desc, 'toggle', '', 2, `l:${id}`, true)) },
@@ -223,7 +237,7 @@ export function settingsPage(tab: string, env: Env): Page {
     'team-data': { title: 'Data and access', sections: [
       { label: 'Where your data stays', rows: [R('Your tools', 'Orders, customers and money stay in your own tools. Your Inhouse agent reads what a job needs.', 'value', 'Stays in each tool'), R('Inhouse agent', 'Chats, memory, routines and logs are stored on your own Cloudflare account.', 'value', 'Your Cloudflare'), R('AI models', 'Questions go to Anthropic through your own account.', 'value', 'Your Anthropic')] },
       { label: 'How long things are kept', rows: [sel('Chats', 'Older chats are deleted automatically.', 'd:chats', '12 months', RETENTION), sel('Activity and steps', 'Every step it took, kept for checking later.', 'd:steps', '12 months', RETENTION), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
-      { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', `${people.members.length} members`), R('Inhouse team access', 'Alex and the team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', 'toggle', '', 0, 'd:support', true), R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
+      { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', `${team.length} members`), { ...R('Inhouse team access', 'Alex and the team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', 'toggle', '', 0, 'd:support', true), on: !!grant?.live, toggle: next => env.setSupport(next, grant?.id) }, R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
       { label: 'Take it with you', rows: [R('Export everything', 'Chats, memory, routines, skills and logs as one download.', 'button', 'Export', 0, undefined, undefined, () => env.toast("Export isn't connected in this demo.", 4000, 'info')), R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
     ] },
     'team-audit': { title: 'Audit log', sections: [

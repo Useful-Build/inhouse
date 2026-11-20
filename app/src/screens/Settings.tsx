@@ -62,7 +62,17 @@ const fieldProps = (row: Row, disabled: boolean): ComponentProps<typeof Input> =
 function TextField({ row, disabled }: { row: Row; disabled: boolean }) {
   return row.type
     ? <TypedField key={row.key} row={row} type={row.type} disabled={disabled} />
-    : <Input {...fieldProps(row, disabled)} value={row.value} onChange={e => { agent.setSetting(row.key!, e.target.value); toastSaved() }} />
+    : <PlainField row={row} disabled={disabled} />
+}
+
+/** A plain field saves as you type, but never an empty value (the server refuses one): it waits for text, and goes back to what was saved on blur. */
+function PlainField({ row, disabled }: { row: Row; disabled: boolean }) {
+  const [draft, setDraft] = useState(row.value)
+  const [saved, setSaved] = useState(row.value)
+  if (saved !== row.value) { setSaved(row.value); setDraft(row.value) }
+  return <Input {...fieldProps(row, disabled)} value={draft}
+    onChange={e => { setDraft(e.target.value); if (e.target.value.trim()) { agent.setSetting(row.key!, e.target.value); toastSaved() } }}
+    onBlur={() => setDraft(row.value)} />
 }
 
 function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabled: boolean }) {
@@ -114,7 +124,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row:
   if (readOnly && row.kind !== 'button' && row.kind !== 'photo') return null
   switch (row.kind) {
     case 'select': {
-      const save = (v: string) => { agent.setSetting(row.key!, v); row.onChange?.(v) }
+      const save = (v: string) => { if (row.save) row.save(v); else agent.setSetting(row.key!, v); row.onChange?.(v) }
       // A row with labels shows them and saves the value behind the one picked (an unknown saved value shows as it is).
       const shown = (v: string) => row.labels?.[v] ?? v
       const valueOf = (label: string) => Object.keys(row.labels ?? {}).find(k => row.labels![k] === label) ?? label
@@ -212,6 +222,8 @@ export function Settings() {
       ui.showToast('Forgotten. Your Inhouse agent will no longer use this.', { undo: () => { agent.forgetMemory(key, false); ui.clearToast() } })
     },
     download,
+    setRole: (id, role) => { agent.setMemberRole(id, role).catch(() => undefined) },
+    setSupport: (on, grantId) => { (on ? agent.grantSupport(24) : agent.endSupportGrant(grantId ?? '')).catch(() => undefined) },
   }
   const page = settingsPage(setTab, env)
   const readOnly = phone && setTab.startsWith('team-')
@@ -292,7 +304,7 @@ export function Settings() {
                 {readOnly && sec.caption && <div className="pt-4 text-xs text-muted-foreground">{sec.caption}</div>}
                 {sec.rows.map((row, i) => {
                   const locked = S < row.need
-                  const on = !locked && (st.toggles[row.key ?? ''] ?? row.def ?? false)
+                  const on = !locked && (row.on ?? st.toggles[row.key ?? ''] ?? row.def ?? false)
                   // A value shown as text (a team page on a phone) sits under the description, in the title's column.
                   const asText = readOnly && row.kind !== 'button' && row.kind !== 'photo'
                   return (
@@ -306,7 +318,7 @@ export function Settings() {
                         </div>
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
-                      <Control readOnly={readOnly} row={row} locked={locked} on={on} onToggle={() => agent.setToggle(row.key!, !on)} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
+                      <Control readOnly={readOnly} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : agent.setToggle(row.key!, !on))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
                     </div>
                   )
                 })}

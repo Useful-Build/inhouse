@@ -24,7 +24,7 @@ function allRows(): Row[] {
   const env: Env = {
     S: 2, stage: 'Run', agent: agent.getSnapshot(), data, spent: data.usage.total, phone: false,
     openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
-    theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop,
+    theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
   }
   return MENU.flatMap(g => g.items).flatMap(([tab]) => settingsPage(tab, env).sections.flatMap(s => s.rows))
 }
@@ -37,7 +37,7 @@ describe('the page and the registry (failures 1 to 3)', () => {
   const keys = new Set(rows.flatMap(r => [r.key, r.switchKey]).filter((k): k is string => !!k))
 
   it('sees every kind of key, so the checks below are not empty', () => {
-    for (const k of ['g:name', 'g:tz', 'n:slack', 'tm:fable:effort', 'tm:fable:on', 'l:returns', 'l:daily', 'a:0', 'd:2fa', 'd:support', 'p:sam']) expect(keys).toContain(k)
+    for (const k of ['g:name', 'g:tz', 'n:slack', 'tm:fable:effort', 'tm:fable:on', 'l:returns', 'l:daily', 'a:0', 'd:2fa', 'd:support', 'p:m_sam']) expect(keys).toContain(k)
   })
 
   it('has a spec for every key the page saves, and none for a role or a grant', () => {
@@ -47,9 +47,7 @@ describe('the page and the registry (failures 1 to 3)', () => {
   it('parses every option, default and switch value the page offers', () => {
     for (const r of rows) {
       if (r.switchKey) for (const v of ['off', 'on']) expect(parses(r.switchKey, v), `${r.switchKey} ${v}`).toBe(true)
-      // `a:` holds a member id or `anyone` (p2-design.md section 6); the page offers names until P6 rebuilds it.
-      // W3 moves the approver options to member ids in P2; remove this skip there.
-      if (!r.key || refused(r.key) || r.key.startsWith('a:')) continue
+      if (!r.key || refused(r.key)) continue
       if (r.kind === 'toggle') for (const v of [true, false]) expect(parses(r.key, v), `${r.key} ${v}`).toBe(true)
       if (r.kind === 'select' || r.kind === 'mode') for (const o of r.options ?? []) expect(parses(r.key, o), `${r.key} ${o}`).toBe(true)
       if (r.kind === 'select' || r.kind === 'mode' || r.kind === 'text') expect(parses(r.key, r.value), `${r.key} ${r.value}`).toBe(true)

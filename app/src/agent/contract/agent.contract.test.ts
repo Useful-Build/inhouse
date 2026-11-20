@@ -11,7 +11,11 @@
 //  - a write that doesn't show at once (optimistic), or doesn't tell its listeners;
 //  - a failed write that stays applied, resolves, rejects with something other than an AgentError (or the wrong code),
 //    tells nobody, tells twice, tells with the wrong kind of notice, or still sends what it was taken back from;
-//  - a listener that fires after it unsubscribed.
+//  - a listener that fires after it unsubscribed;
+//  - (P2) a write to a record changed behind the client that applies anyway, or rejects without the record as it is now
+//    (`conflict` with `current`); a setting key or value outside the registry, or a role, photo or grant sent through a
+//    setting, that is taken; `me()` that doesn't parse or whose `can` disagrees with the role; a team left with no Admin;
+//    an email invited twice; two live support grants; a failed read that `retry` doesn't bring back.
 // The properties at the end cover the first and third at once (any sequence of writes and runs keeps everything parseable)
 // and the failure case at once (a write that fails never changes the snapshot).
 //
@@ -20,11 +24,11 @@ import { fc } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import {
-  AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, InstantSchema, LibraryFileSchema,
-  RoutineRunSchema, RunEventSchema, ToolSetupSchema, TraceSchema,
+  AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, ErrorReasonSchema, InstantSchema,
+  LibraryFileSchema, MeSchema, MemberRecordSchema, RoutineRunSchema, RunEventSchema, SettingRecordSchema, SupportGrantSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
 import type { AgentNotice, RunEvent, Scenario, SendPriority, Stage } from '../types'
-import { AgentError, photoKey, SCENARIOS, STAGES } from '../types'
+import { AgentError, SCENARIOS, STAGES } from '../types'
 import type { ContractTarget, WriteMethod } from './targets'
 import { targets } from './targets'
 
@@ -551,10 +555,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(c.getSnapshot().settings[fx.settingKey]).toBe(fx.settingValue)
       await c.setSetting(fx.settingKey, null)
       expect(c.getSnapshot().settings[fx.settingKey]).toBeUndefined()
+      const photoOf = () => c.read().people.members.find(m => m.id === fx.personId)?.photo
       await c.setPhoto(fx.personId, fx.photoDataUrl)
-      expect(c.getSnapshot().settings[photoKey(fx.personId)]).toBe(fx.photoDataUrl)
+      expect(photoOf()).toBe(fx.photoDataUrl)
       await c.setPhoto(fx.personId, null)
-      expect(c.getSnapshot().settings[photoKey(fx.personId)], 'a removed photo no longer reads as the photo').not.toBe(fx.photoDataUrl)
+      expect(photoOf(), 'a removed photo no longer reads as the photo').toBeNull()
+      expect(Object.keys(c.getSnapshot().settings).filter(k => k.startsWith('photo:')), 'a photo is not a setting').toEqual([])
       checkWorld('after the plain writes')
     })
 
@@ -687,6 +693,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       saves?: boolean
     }
     const noop = async () => undefined
+    const endLiveGrant = async (c: ContractTarget['client']) => { const g = c.read().people.supportGrant; if (g?.live) await c.endSupportGrant(g.id) }
+    const ensureLiveGrant = async (c: ContractTarget['client']) => { if (!c.read().people.supportGrant?.live) await c.grantSupport(4) }
     let deletedFile = ''
     const cases: WriteCase[] = [
       { label: 'approve', method: 'approve', run: c => c.approve(heldProblem()) },
@@ -703,7 +711,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       { label: 'setToolPaused', method: 'setToolPaused', run: c => c.setToolPaused(fx.toolKey, true) },
       { label: 'forgetMemory', method: 'forgetMemory', run: c => c.forgetMemory(fx.memoryKey, true) },
       { label: 'setSetting', method: 'setSetting', run: c => c.setSetting(fx.settingKey, fx.settingValue) },
-      { label: 'setPhoto', method: 'setPhoto', run: c => c.setPhoto(fx.personId, fx.photoDataUrl) },
+      { label: 'setPhoto', method: 'setPhoto', run: c => c.setPhoto(fx.personId, fx.photoDataUrl), observe: c => c.read().people.members },
+      { label: 'inviteMember', method: 'inviteMember', run: c => c.inviteMember(fx.invite), observe: c => c.read().people.members },
+      { label: 'setMemberRole', method: 'setMemberRole', run: c => c.setMemberRole(fx.otherMemberId, 'admin'), observe: c => c.read().people.members },
+      { label: 'removeMember', method: 'removeMember', run: c => c.removeMember(fx.otherMemberId), observe: c => c.read().people.members },
+      { label: 'grantSupport', method: 'grantSupport', prepare: endLiveGrant, run: c => c.grantSupport(4), observe: c => c.read().people.supportGrant },
+      { label: 'endSupportGrant', method: 'endSupportGrant', prepare: ensureLiveGrant, run: c => c.endSupportGrant(c.read().people.supportGrant!.id), observe: c => c.read().people.supportGrant },
       { label: 'sendTeamRequest', method: 'sendTeamRequest', run: c => c.sendTeamRequest(fx.teamRequest) },
       { label: 'markNoticesRead', method: 'markNoticesRead', run: c => c.markNoticesRead(c.listNotifications().map(n => n.id)) },
       { label: 'deleteFiles', method: 'deleteFiles', run: c => c.deleteFiles([firstFile()]) },
@@ -822,14 +835,15 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices.some(n => n.type === 'approval.sent' && n.id === id)).toBe(true)
     })
 
-    test('a refused setting takes back only its own entry: a photo saved while it was in flight stays', async () => {
+    test('a refused setting takes back only its own entry: a setting saved while it was in flight stays', async () => {
       await t.injectError('setSetting', 'forbidden')
       const refused = errorOf(t.client.setSetting(fx.settingKey, fx.settingValue))
-      await t.client.setPhoto(fx.personId, fx.photoDataUrl) // replaces the same settings record before the refusal lands
+      await t.client.setPhoto(fx.personId, fx.photoDataUrl) // a photo is the member's own record, not a setting
       expect(await refused).toBeInstanceOf(AgentError)
-      const settings = t.client.getSnapshot().settings
-      expect(settings[fx.settingKey], 'the refused setting is gone').toBeUndefined()
-      expect(settings[photoKey(fx.personId)], 'the photo stays').toBe(fx.photoDataUrl)
+      expect(t.client.getSnapshot().settings[fx.settingKey], 'the refused setting is gone').toBeUndefined()
+      expect(t.client.read().people.members.find(m => m.id === fx.personId)?.photo, 'the photo stays').toBe(fx.photoDataUrl)
+      await t.injectError('setSetting', null)
+      await t.client.setSetting(fx.otherSetting.key, fx.otherSetting.value)
     })
 
     test('a refusal on one method leaves the others working', async () => {
@@ -887,12 +901,302 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
   })
 
+  // ---------- P2: who is signed in, the team, revisions, settings, support access, paging and retry ----------
+  describe('P2: members, revisions, settings and support access', () => {
+    const members = () => t.client.read().people.members
+    const member = (id: string) => members().find(m => m.id === id)
+    /** The rejection a call makes, which must be an AgentError. */
+    const refusal = async (p: Promise<unknown>): Promise<AgentError> => {
+      const e = await errorOf(p)
+      expect(e, 'rejects with an AgentError').toBeInstanceOf(AgentError)
+      parse(AgentErrorCodeSchema, (e as AgentError).code, 'the error code')
+      return e as AgentError
+    }
+    const skipUnless = (...methods: (keyof ContractTarget['client'])[]) => !methods.every(m => t.serves(m))
+
+    test.skipIf(skipUnless('me'))('me() parses, names the signed-in person and is null while loading', async () => {
+      const me = parse(MeSchema, t.client.me(), 'me()')
+      expect(me.memberId).toBe(fx.me.memberId)
+      expect(me.role).toBe(fx.me.role)
+      expect(member(me.memberId), 'the signed-in person is on the team list').toBeDefined()
+      expect(t.client.me(), 'a snapshot keeps its identity until something changes').toBe(t.client.me())
+      await fresh('Act', 'Loading')
+      expect(t.client.me()).toBeNull()
+    })
+
+    test.skipIf(skipUnless('me', 'setMemberRole'))('can follows the role: an Admin may do what a Member may not, and every person may read', async () => {
+      const admin = parse(MeSchema, t.client.me(), 'me()')
+      expect(Object.values(admin.can).every(Boolean), 'the demo Admin can do everything').toBe(true)
+      await t.client.setMemberRole(fx.otherMemberId, 'admin')
+      await t.client.setMemberRole(fx.me.memberId, 'member')
+      const member = parse(MeSchema, t.client.me(), 'me() after the role change')
+      expect(member.role).toBe('member')
+      for (const k of ['invite', 'changeRole', 'remove', 'editBrandSettings', 'editTechnical', 'switchModelOff', 'grantSupport'] as const) expect(member.can[k], `a Member can't ${k}`).toBe(false)
+      for (const k of ['viewMembers', 'viewAudit', 'exportAudit'] as const) expect(member.can[k], `a Member can ${k}`).toBe(true)
+    })
+
+    test('the team lists members by member id with a role of member or admin, and no role called Approver', async () => {
+      const list = members()
+      expect(list.length).toBeGreaterThan(0)
+      list.forEach(m => parse(MemberRecordSchema, m, `member ${m.id}`))
+      expect(new Set(list.map(m => m.id)).size, 'ids are unique').toBe(list.length)
+      expect(list.filter(m => m.role === 'admin').length, 'there is an Admin').toBeGreaterThanOrEqual(1)
+    })
+
+    test('an approval rule names its approver by member id, or anyone', async () => {
+      const { approvalRules } = t.client.read().people
+      const ids = new Set(members().map(m => m.id))
+      for (const r of approvalRules) expect(r.approver === 'anyone' || ids.has(r.approver), `${r.what}: ${r.approver}`).toBe(true)
+    })
+
+    test('records of the people name member ids: an approval, an undo and a set aside', async () => {
+      const id = heldProblem()
+      await t.client.approve(id)
+      await t.client.setAside(reversibleProblem() ?? id, 'dismissed')
+      const ids = new Set(members().map(m => m.id))
+      const snap = t.client.getSnapshot()
+      expect(ids.has(snap.approved[id].by), 'approved.by is a member id').toBe(true)
+      for (const rec of Object.values(snap.setAside)) expect(ids.has(rec.by), 'setAside.by is a member id').toBe(true)
+      t.client.read().auditLog.forEach(l => expect(l.actorId).toMatch(/^m_/))
+    })
+
+    test.skipIf(skipUnless('inviteMember', 'removeMember'))('invite, then remove, then invite again; an email already on the team is refused', async () => {
+      await t.client.inviteMember(fx.invite)
+      const invited = members().find(m => m.email === fx.invite.email)
+      expect(invited, 'the invited person is on the list').toBeDefined()
+      expect(invited).toMatchObject({ name: fx.invite.name, title: fx.invite.title, role: fx.invite.role, status: 'invited', photo: null })
+      const again = await refusal(t.client.inviteMember({ ...fx.invite, email: fx.invite.email.toUpperCase() }))
+      expect(again.code).toBe('conflict')
+      expect(again.reason).toBe('already_member')
+      await t.client.removeMember(invited!.id)
+      expect(member(invited!.id)?.status ?? 'gone', 'a removed person is no longer active').toMatch(/removed|gone/)
+      await t.client.inviteMember(fx.invite)
+      expect(members().filter(m => m.email === fx.invite.email && m.status !== 'removed'), 'one open invitation').toHaveLength(1)
+      checkWorld('after invite and remove')
+    })
+
+    test.skipIf(skipUnless('inviteMember'))('an invitation that fails its schema is invalid, and changes nothing', async () => {
+      const before = t.client.read()
+      for (const bad of [{ ...fx.invite, email: 'not-an-email' }, { ...fx.invite, name: '   ' }, { ...fx.invite, role: 'inhouse' as never }]) {
+        const e = await refusal(t.client.inviteMember(bad))
+        expect(e.code).toBe('invalid')
+      }
+      expect(t.client.read()).toBe(before)
+    })
+
+    test.skipIf(skipUnless('setMemberRole', 'removeMember'))('the last Admin can be neither demoted nor removed', async () => {
+      const admins = members().filter(m => m.status === 'active' && m.role === 'admin')
+      expect(admins, 'a first-run team has one Admin').toHaveLength(1)
+      const [last] = admins
+      for (const run of [() => t.client.setMemberRole(last.id, 'member'), () => t.client.removeMember(last.id)]) {
+        const e = await refusal(run())
+        expect(e.code).toBe('conflict')
+        expect(e.reason).toBe('last_admin')
+      }
+      expect(member(last.id)).toMatchObject({ role: 'admin', status: 'active' })
+      await t.client.setMemberRole(fx.otherMemberId, 'admin')
+      await t.client.setMemberRole(last.id, 'member') // another Admin now stands
+      expect(member(last.id)?.role).toBe('member')
+    })
+
+    test.skipIf(skipUnless('setMemberRole'))('a role change bumps the member rev, and an unknown member is not found', async () => {
+      const before = member(fx.otherMemberId)!
+      await t.client.setMemberRole(fx.otherMemberId, 'admin')
+      expect(member(fx.otherMemberId)).toMatchObject({ role: 'admin' })
+      expect(member(fx.otherMemberId)!.rev).toBeGreaterThan(before.rev)
+      expect((await refusal(t.client.setMemberRole('m_nobody', 'admin'))).code).toBe('not_found')
+      expect((await refusal(t.client.setMemberRole(fx.otherMemberId, 'inhouse' as never))).code).toBe('invalid')
+    })
+
+    test.skipIf(skipUnless('setMemberRole'))('a member changed behind the client: the next write rejects with conflict and the current record, and the snapshot shows it', async () => {
+      await t.writeElsewhere({ kind: 'member', id: fx.otherMemberId }, 'admin')
+      const e = await refusal(t.client.setMemberRole(fx.otherMemberId, 'member'))
+      expect(e.code).toBe('conflict')
+      expect(parse(MemberRecordSchema, e.current, 'current')).toMatchObject({ id: fx.otherMemberId, role: 'admin' })
+      expect(member(fx.otherMemberId)?.role, 'the snapshot already holds the current value').toBe('admin')
+      expect(notices.at(-1)).toMatchObject({ type: 'error', code: 'conflict' })
+      await t.client.setMemberRole(fx.otherMemberId, 'member') // the client has seen it now, so this one lands
+      expect(member(fx.otherMemberId)?.role).toBe('member')
+    })
+
+    test.skipIf(skipUnless('removeMember'))('removing a member changed behind the client is a conflict too, and removes nothing', async () => {
+      await t.writeElsewhere({ kind: 'member', id: fx.otherMemberId }, 'admin')
+      const e = await refusal(t.client.removeMember(fx.otherMemberId))
+      expect(e.code).toBe('conflict')
+      expect(member(fx.otherMemberId)?.status).toBe('active')
+    })
+
+    test('a setting changed behind the client: the next write rejects with conflict and the current setting, and the snapshot takes it', async () => {
+      await t.writeElsewhere({ kind: 'setting', key: fx.settingKey }, 'Changed Elsewhere')
+      const e = await refusal(t.client.setSetting(fx.settingKey, fx.settingValue))
+      expect(e.code).toBe('conflict')
+      expect(parse(SettingRecordSchema, e.current, 'current')).toMatchObject({ key: fx.settingKey, value: 'Changed Elsewhere' })
+      expect(t.client.getSnapshot().settings[fx.settingKey]).toBe('Changed Elsewhere')
+      await t.client.setSetting(fx.settingKey, fx.settingValue)
+      expect(t.client.getSnapshot().settings[fx.settingKey]).toBe(fx.settingValue)
+    })
+
+    test('a switch changed behind the client is a conflict too, and a record of another kind stays writable', async () => {
+      await t.writeElsewhere({ kind: 'setting', key: fx.toggleKey }, true)
+      expect((await refusal(t.client.setToggle(fx.toggleKey, false))).code).toBe('conflict')
+      expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(true)
+      await t.client.setSetting(fx.otherSetting.key, fx.otherSetting.value) // another record: not stale
+    })
+
+    test('a memory line, a routine and a file changed behind the client: forget, delete and restore reject with conflict', async () => {
+      const line = t.client.read().memory.team.flatMap(g => g.lines)[0]
+      const routine = t.client.read().routines[0]
+      const file = t.client.listFiles()[0]
+      await t.writeElsewhere({ kind: 'memory', id: line.key })
+      expect((await refusal(t.client.forgetMemory(line.key, true))).code).toBe('conflict')
+      await t.writeElsewhere({ kind: 'routine', id: routine.id })
+      expect((await refusal(t.client.deleteRoutine(routine.id))).code).toBe('conflict')
+      await t.writeElsewhere({ kind: 'file', id: file.id })
+      expect((await refusal(t.client.deleteFiles([file.id]))).code).toBe('conflict')
+      expect(t.client.getSnapshot().forgot[line.key], 'nothing applied').toBeUndefined()
+      expect(t.client.read().routines.find(r => r.id === routine.id)!.rev, 'the rev reads').toBeGreaterThan(routine.rev)
+    })
+
+    test('every editable record carries a rev that a write bumps', async () => {
+      const d = t.client.read()
+      d.routines.forEach(r => expect(r.rev).toBeGreaterThanOrEqual(1))
+      d.memory.team.flatMap(g => g.lines).concat(d.memory.personal).forEach(l => expect(l.rev).toBeGreaterThanOrEqual(1))
+      t.client.listFiles().forEach(f => expect(f.rev).toBeGreaterThanOrEqual(1))
+      const id = d.routines[0].id
+      await t.client.deleteRoutine(id)
+      expect(t.client.read().routines.find(r => r.id === id)!.rev).toBeGreaterThan(d.routines[0].rev)
+    })
+
+    test('a setting outside the registry, or with a value it refuses, is invalid and changes nothing', async () => {
+      const snap = t.client.getSnapshot()
+      for (const [key, value] of [['no:such-key', 'x'], [fx.settingKey, ''], ['g:theme', 'Neon'], ['g:tz', 'Mars/Olympus'], ['s:cap', 'lots'], ['g:name', 'x'.repeat(81)]] as const) {
+        const e = await refusal(t.client.setSetting(key, value))
+        expect(e.code, `${key} = ${value}`).toBe('invalid')
+      }
+      expect((await refusal(t.client.setToggle('no:such-key', true))).code).toBe('invalid')
+      expect((await refusal(t.client.setToggle(fx.settingKey, true))).code, 'a text setting is not a switch').toBe('invalid')
+      expect((await refusal(t.client.setSetting('n:slack', 'yes'))).code, 'a switch is not text').toBe('invalid')
+      expect(t.client.getSnapshot(), 'nothing was written').toBe(snap)
+      expect(notices.every(n => n.type === 'error' && n.code === 'invalid')).toBe(true)
+    })
+
+    test('a role, a photo and a grant can no longer be written as a setting', async () => {
+      const snap = t.client.getSnapshot()
+      for (const run of [
+        () => t.client.setSetting(`p:${fx.personId}`, 'Admin'), () => t.client.setSetting(`photo:${fx.personId}`, fx.photoDataUrl),
+        () => t.client.setSetting('d:support', 'on'), () => t.client.setToggle('d:support', true), () => t.client.setToggle(`p:${fx.personId}`, true),
+      ]) expect((await refusal(run())).code).toBe('invalid')
+      expect(t.client.getSnapshot()).toBe(snap)
+      expect(member(fx.personId)?.role).toBe('admin')
+    })
+
+    test('the settings a person saves keep working: each accepted key and value, then the reset', async () => {
+      for (const [key, value] of [[fx.settingKey, fx.settingValue], [fx.otherSetting.key, fx.otherSetting.value], [fx.choices.key, fx.choices.values[1]]] as const) {
+        await t.client.setSetting(key, value)
+        expect(t.client.getSnapshot().settings[key]).toBe(value)
+        await t.client.setSetting(key, null)
+        expect(t.client.getSnapshot().settings[key]).toBeUndefined()
+      }
+      await t.client.setToggle('n:slack', true)
+      expect(t.client.getSnapshot().toggles['n:slack']).toBe(true)
+    })
+
+    test('setPhoto for a member that does not exist is not found', async () => {
+      expect((await refusal(t.client.setPhoto('m_nobody', fx.photoDataUrl))).code).toBe('not_found')
+    })
+
+    test.skipIf(skipUnless('grantSupport', 'endSupportGrant'))('support access: one live grant at a time, of 1, 4, 24 or 72 hours, that an Admin can end', async () => {
+      const grant = () => t.client.read().people.supportGrant
+      const live = grant()
+      if (live?.live) await t.client.endSupportGrant(live.id)
+      expect(grant()?.live ?? false).toBe(false)
+      for (const bad of [0, 2, 100]) expect((await refusal(t.client.grantSupport(bad))).code).toBe('invalid')
+      await t.client.grantSupport(4)
+      const g = parse(SupportGrantSchema, grant(), 'the grant')
+      expect(g.live).toBe(true)
+      expect(g.endsAt.ms - g.createdAt.ms).toBe(4 * 3_600_000)
+      const second = await refusal(t.client.grantSupport(1))
+      expect([second.code, second.reason]).toEqual(['conflict', 'grant_live'])
+      await t.client.endSupportGrant(g.id)
+      expect(grant()).toMatchObject({ id: g.id, live: false })
+      expect(grant()!.endedAt).not.toBeNull()
+      expect((await refusal(t.client.endSupportGrant(g.id))).code, 'an ended grant is not there to end').toBe('not_found')
+      await t.client.grantSupport(1)
+      expect(grant()?.live).toBe(true)
+    })
+
+    test.skipIf(skipUnless('grantSupport'))('a grant ends by itself when its hours pass', async () => {
+      const live = t.client.read().people.supportGrant
+      if (live?.live) await t.client.endSupportGrant(live.id)
+      await t.client.grantSupport(1)
+      expect(t.client.read().people.supportGrant?.live).toBe(true)
+      await t.advance(3_600_000 + STEP_MS)
+      expect(t.client.read().people.supportGrant?.live, 'one hour later it is over').toBe(false)
+    })
+
+    test.skipIf(skipUnless('endSupportGrant'))('ending a grant changed behind the client is a conflict', async () => {
+      const g = t.client.read().people.supportGrant
+      if (!g?.live) return
+      await t.writeElsewhere({ kind: 'grant', id: g.id })
+      const e = await refusal(t.client.endSupportGrant(g.id))
+      expect(e.code).toBe('not_found') // the other session ended it: there is nothing live left to end
+    })
+
+    test.skipIf(skipUnless('retry'))('a resource whose read failed says so, with the error; retry reads it again; the rest stays ready', async () => {
+      const ready = t.client.read()
+      for (const k of Object.keys(ready.resources)) expect(ready.resources[k as keyof typeof ready.resources].status).toBe('ready')
+      await t.failRead('members')
+      const failed = t.client.read()
+      expect(failed.resources.members.status).toBe('error')
+      expect(parse(AgentErrorCodeSchema, failed.resources.members.error, 'the error code')).toBeDefined()
+      expect(failed.resources.audit.status, 'only that resource failed').toBe('ready')
+      expect(failed.status, 'the top-level status is the Loading scenario only').toBe('ready')
+      let heard = 0
+      subscribe(() => { heard++ })
+      await t.client.retry('members')
+      expect(t.client.read().resources.members).toEqual({ status: 'ready' })
+      expect(members().length, 'the list is back').toBeGreaterThan(0)
+      expect(heard, 'listeners were told').toBeGreaterThanOrEqual(1)
+      parse(AgentDataSchema, t.client.read(), 'read() after retry')
+    })
+
+    test('Loading reports every resource loading, and the rest report ready', async () => {
+      await fresh('Act', 'Loading')
+      for (const r of Object.values(t.client.read().resources)) expect(r.status).toBe('loading')
+      await fresh('Act', 'First day')
+      for (const r of Object.values(t.client.read().resources)) expect(r.status).toBe('ready')
+    })
+
+    test('a list that does not page says there is no more, and loadMore does nothing', async () => {
+      const before = t.client.read()
+      expect(before.more).toEqual({ audit: false, members: false })
+      await t.client.loadMore('audit')
+      await t.client.loadMore('members')
+      expect(t.client.read()).toBe(before)
+    })
+
+    test('the audit log names each line by its actor member id and orders it newest first', async () => {
+      const log = t.client.read().auditLog
+      log.forEach(l => expect(l.actorId).toMatch(/^m_[A-Za-z0-9_-]+$/))
+      expect(log.map(l => l.id)).toEqual([...log.map(l => l.id)].sort((a, b) => b - a))
+    })
+
+    test('the export and sign out links are a path or null', async () => {
+      for (const url of [t.client.auditExportUrl(), t.client.signOutUrl()]) expect(url === null || url.startsWith('/')).toBe(true)
+    })
+
+    test('an error carries its reason, parsed', async () => {
+      const e = await refusal(t.client.setSetting('no:such-key', 'x'))
+      if (e.reason !== undefined) parse(ErrorReasonSchema, e.reason, 'reason')
+    })
+  })
+
   // ---------- properties ----------
   describe('properties', () => {
     // Ids come from the client, so the sequence acts on things that exist and the failure it finds is the client's.
     const ids = () => {
       const d = t.client.read()
-      return { problems: d.problems.map(p => p.id), routines: d.routines.map(r => r.id), files: t.client.listFiles().map(f => f.id), chats: t.client.allChatIds() }
+      return { problems: d.problems.map(p => p.id), routines: d.routines.map(r => r.id), files: t.client.listFiles().map(f => f.id), chats: t.client.allChatIds(), members: d.people.members.map(m => m.id) }
     }
     const key = fc.string({ unit: 'grapheme-ascii', minLength: 1, maxLength: 8 })
     const pick = (n: number) => fc.nat(n === 0 ? 0 : n - 1)
@@ -915,13 +1219,24 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       fc.tuple(pick(50), fc.string()).map(([n, s]) => step('editDraft', (c, i) => on(i.problems, n, id => c.editDraft(id, s)))),
       fc.tuple(pick(50), fc.boolean()).map(([n, undo]) => step('undoHandled', (c, i) => on(i.problems, n, id => (undo ? c.undoHandled(id) : c.redoHandled(id))))),
       fc.boolean().map(p => step('pause', c => (p ? c.pause() : c.resume()))),
-      fc.tuple(key, fc.boolean()).map(([k, b]) => step('setToggle', c => c.setToggle(k, b))),
+      // A switch is a routine or skill switch (`r:`, `s:`) or a registry switch; any other key is `invalid` (the tests below), not a save failure.
+      fc.tuple(key, fc.boolean()).map(([k, b]) => step('setToggle', c => c.setToggle(`r:${k}`, b))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('requestTool', c => c.requestTool(k, b))),
       key.map(k => step('requestSkill', c => c.requestSkill(k))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('setToolPaused', c => c.setToolPaused(k, b))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('forgetMemory', c => c.forgetMemory(k, b))),
-      fc.tuple(key, fc.option(fc.string(), { nil: null })).map(([k, v]) => step('setSetting', c => c.setSetting(k, v))),
-      fc.tuple(key, fc.option(fc.string(), { nil: null })).map(([k, v]) => step('setPhoto', c => c.setPhoto(k, v))),
+      fc.tuple(fc.constantFrom(fx.settingKey, fx.otherSetting.key, fx.choices.key), fc.boolean()).map(([k, reset]) => step('setSetting', c => c.setSetting(k, reset ? null : k === fx.choices.key ? fx.choices.values[0] : k === fx.settingKey ? fx.settingValue : fx.otherSetting.value))),
+      fc.tuple(pick(50), fc.option(fc.string(), { nil: null })).map(([n, v]) => step('setPhoto', (c, i) => on(i.members, n, id => c.setPhoto(id, v)))),
+      // `forSave` skips what the client refuses for its own reason (the last Admin, a live grant, an email already invited), so a save failure is the only way it can reject.
+      fc.tuple(pick(50), fc.constantFrom('admin', 'member', 'remove', 'invite', 'grant', 'end')).map(([n, a]) => step(`member-${a}`, (c, i, forSave) => {
+        const live = c.read().people.supportGrant?.live
+        const active = c.read().people.members.filter(m => m.status !== 'removed').map(m => m.id)
+        if (a === 'invite') return c.inviteMember({ ...fx.invite, email: forSave ? 'save-fails@example.test' : `person${n}@example.test` })
+        if (a === 'grant') return forSave && live ? Promise.resolve(SKIP) : c.grantSupport(1)
+        if (a === 'end') { const g = c.read().people.supportGrant; return g?.live ? c.endSupportGrant(g.id) : Promise.resolve(SKIP) }
+        if (forSave && a !== 'admin') return Promise.resolve(SKIP)
+        return on(forSave ? active : i.members, n, id => (a === 'remove' ? c.removeMember(id) : c.setMemberRole(id, a)))
+      })),
       fc.tuple(fc.string(), fc.string(), fc.string(), instant, fc.string(), fc.option(instant, { nil: undefined })).map(([icon, title, sub, at, status, statusAt]) => step('sendTeamRequest', c => c.sendTeamRequest({ icon, title, sub, at, status, ...(statusAt ? { statusAt } : {}) }))),
       fc.boolean().map(all => step('markNoticesRead', c => {
         const fresh = c.listNotifications().filter(n => n.unread).map(n => n.id)
@@ -981,6 +1296,35 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         }
         notices.forEach(n => parse(AgentNoticeSchema, n, `a notice after ${log.join(', ')}`))
       }), params)
+    })
+
+    test('any sequence of fresh and stale writes: a stale one never applies and always returns the current record; a fresh one always lands', async () => {
+      const { key, values } = fx.choices
+      let stale = 0
+      await fc.assert(fc.asyncProperty(fc.array(fc.tuple(fc.boolean(), fc.constantFrom(...values), fc.constantFrom(...values)), { minLength: 1, maxLength: 12 }), async steps => {
+        await fresh()
+        let lastRev = 0
+        for (const [isStale, elsewhere, mine] of steps) {
+          const snap = () => t.client.getSnapshot().settings[key]
+          if (isStale) {
+            await t.writeElsewhere({ kind: 'setting', key }, elsewhere)
+            const e = await errorOf(t.client.setSetting(key, mine))
+            expect(e, 'a stale write rejects').toBeInstanceOf(AgentError)
+            expect((e as AgentError).code).toBe('conflict')
+            const current = parse(SettingRecordSchema, (e as AgentError).current, 'current')
+            expect(current.value, 'it returns the record as it is now').toBe(elsewhere)
+            expect(current.rev, 'revisions only go up').toBeGreaterThan(lastRev)
+            lastRev = current.rev
+            expect(snap(), 'it never applied: the snapshot holds the current value').toBe(elsewhere)
+            stale++
+          } else {
+            await t.client.setSetting(key, mine)
+            expect(snap(), 'a fresh write lands').toBe(mine)
+            lastRev += 1
+          }
+        }
+      }), params)
+      expect(stale, 'the property reached stale writes').toBeGreaterThan(0)
     })
 
     test('a write that fails to save rejects with an AgentError, tells the person, and never changes the snapshot', async () => {

@@ -3,9 +3,10 @@
 // its target goes through it: time (`advance`), seeding, resets, forced failures, injected errors and every id, name and
 // scripted question (`fixtures`). Every method that touches the client's world is async: a real target talks over HTTP.
 import { inject, vi } from 'vitest'
-import type { AgentClient, AgentErrorCode, AgentNotice, AgentState, DemoContext, TeamRequest } from '../types'
+import type { AgentClient, AgentErrorCode, AgentNotice, AgentState, DemoContext, InviteInput, ResourceKey, TeamRequest } from '../types'
 import { AgentError } from '../types'
 import type { MockAgent } from '../mock'
+import { ME_ID, memberIdOf } from '../mock'
 import { realTargets } from './targets/real/index'
 
 /** Every client method that writes and returns a promise: the ones `injectError` can fail. */
@@ -14,6 +15,14 @@ export type WriteMethod =
   | 'requestTool' | 'requestSkill' | 'setToolPaused' | 'forgetMemory' | 'setSetting' | 'setPhoto' | 'sendTeamRequest'
   | 'markNoticesRead' | 'deleteFiles' | 'restoreFiles' | 'setAside' | 'runRoutine' | 'deleteRoutine' | 'restoreRoutine'
   | 'renameChat' | 'pinChat' | 'deleteChats' | 'restoreChats'
+  | 'inviteMember' | 'setMemberRole' | 'removeMember' | 'grantSupport' | 'endSupportGrant'
+
+/** A record a test changes behind the client (`writeElsewhere`), so the client's next write to it is stale. */
+export type RecordRef =
+  | { kind: 'setting'; key: string }
+  | { kind: 'member'; id: string }
+  | { kind: 'grant'; id: string }
+  | { kind: 'routine' | 'memory' | 'file'; id: string }
 
 /** What the suite uses from the world it runs in. A target supplies values that exist there; the tests name none themselves. */
 export interface Fixtures {
@@ -43,7 +52,18 @@ export interface Fixtures {
   memoryKey: string
   settingKey: string
   settingValue: string
+  /** A member's id: the signed-in Admin. `setPhoto` takes it. */
   personId: string
+  /** The signed-in person (`me()`): the Admin, who the first-run team has as its only Admin. */
+  me: { memberId: string; role: 'member' | 'admin' }
+  /** Another active member who isn't an Admin: the one a role is changed on. */
+  otherMemberId: string
+  /** An invitation for someone not on the team. */
+  invite: InviteInput
+  /** A second setting, so two writes can be told apart (`settingKey` is the first). */
+  otherSetting: { key: string; value: string }
+  /** One setting key with three valid values, for the stale-write property. */
+  choices: { key: string; values: [string, string, string] }
   photoDataUrl: string
   teamRequest: TeamRequest
   newChat: { id: string; title: string }
@@ -97,6 +117,12 @@ export interface ContractTarget {
    * path, not the mock itself; they become real checks of a server with P2's target.
    */
   injectError(method: WriteMethod, code: AgentErrorCode | null): Promise<void>
+  /** Whether this target serves a client method. The suite skips (by name) the tests of a method a target doesn't serve; the mock serves all of them. */
+  serves(method: keyof AgentClient): boolean
+  /** Change a record behind the client, as another session would, so the client's next write to it is stale and rejects with `conflict` carrying the current record. `value` is the new value (a role, a setting's value; a grant is ended). */
+  writeElsewhere(record: RecordRef, value?: string | boolean): Promise<void>
+  /** Make the next read of a resource fail (`read().resources[resource].status` is `error` until `client.retry(resource)`). */
+  failRead(resource: ResourceKey): Promise<void>
 }
 
 // The mock saves to the browser's storage. Vitest runs in node, so a Map stands in, with a switch that makes a write throw.
@@ -127,11 +153,14 @@ const WRITE_METHODS: ReadonlySet<string> = new Set<WriteMethod>([
   'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool',
   'requestSkill', 'setToolPaused', 'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles',
   'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine', 'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats',
+  'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
 ])
 
 /** The parts of the mock an injected failure has to undo. Test-only access: the mock has no hook for a server's refusal. */
 interface MockInternals {
   state: AgentState
+  /** The server's side of the mock (members, photos, the grant, every rev), taken back with the state. */
+  server: unknown
   /** What the mock saves under its storage key: the state with the demo's start. */
   saved(): string
   listeners: Set<() => void>
@@ -155,10 +184,12 @@ function injecting(mock: MockAgent, armed: Map<string, AgentErrorCode>): AgentCl
         const code = armed.get(prop)
         if (!code) return method(...args)
         const before = inner.state
+        const serverBefore = inner.server
         const created = new Set(inner.created)
         const timers = new Set(Object.keys(inner.holdTimers))
         const applied = method(...args) as Promise<unknown>
         const optimistic = inner.state
+        const serverOptimistic = inner.server
         // What this call itself added: a write made later (an approve's hold timer, say) isn't in these and survives the refusal.
         const addedCreated = [...inner.created].filter(id => !created.has(id))
         const addedTimers = Object.keys(inner.holdTimers).filter(id => !timers.has(id))
@@ -182,6 +213,8 @@ function injecting(mock: MockAgent, armed: Map<string, AgentErrorCode>): AgentCl
           }
           // Nothing else changed meanwhile: the old state object itself comes back, so its identity does too.
           inner.state = now === optimistic ? before : (kept as unknown as AgentState)
+          // The server's side goes back too, unless something else wrote to it meanwhile.
+          if (inner.server === serverOptimistic) inner.server = serverBefore
           storage.set(MOCK_STORAGE_KEY, inner.saved())
           for (const id of addedCreated) inner.created.delete(id)
           for (const id of addedTimers) if (id in inner.holdTimers) { clearTimeout(inner.holdTimers[id]); delete inner.holdTimers[id] }
@@ -221,7 +254,12 @@ function mockTarget(): ContractTarget {
       memoryKey: 'some-line',
       settingKey: 'g:name',
       settingValue: 'Sam Example',
-      personId: 'person-1',
+      personId: ME_ID,
+      me: { memberId: ME_ID, role: 'admin' },
+      otherMemberId: memberIdOf('priya'),
+      invite: { name: 'Robin Example', email: 'robin@example.test', title: 'Operations', role: 'member' },
+      otherSetting: { key: 'g:lang', value: 'Français' },
+      choices: { key: 'g:tz', values: ['Europe/London', 'America/Chicago', 'Australia/Sydney'] },
       photoDataUrl: 'data:image/png;base64,AAAA',
       teamRequest: { icon: 'build', title: 'Connect Klaviyo', sub: 'From Settings', at: { iso: '2026-11-19T14:04:00.000Z', ms: Date.UTC(2026, 10, 19, 14, 4) }, status: 'Requested' },
       newChat: { id: 'contract-chat-1', title: 'A new chat' },
@@ -245,6 +283,9 @@ function mockTarget(): ContractTarget {
     async seed(state) { demo!.setDemo(state) },
     async failSaves(on) { savesFail = on },
     async injectError(method, code) { if (code) armed.set(method, code); else armed.delete(method) },
+    serves: () => true,
+    async writeElsewhere(record, value) { mockAgent.changeElsewhere(record, value) },
+    async failRead(resource) { mockAgent.failRead(resource) },
   }
 }
 
