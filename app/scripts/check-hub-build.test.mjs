@@ -25,6 +25,8 @@ const EXPECTED = {
   'deploy-upstreams': [1, /module test\/upstreams\/shopify\/recorded\.ts/],
   'deploy-malformed-meta': [2, /isn't JSON/],
   'deploy-outputs-elsewhere': [2, /outputs aren't in .*\.\.\/dist-hub\/index\.js/],
+  // Its output, from app/, lands outside app/; from app/hub/ it would be this folder's stale index.js.
+  'deploy-stale-output': [2, /outputs aren't in .*deploy-stale-output\/index\.js/],
 }
 
 const run = (...args) => {

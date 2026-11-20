@@ -10,7 +10,7 @@
 //      Fails when any input sits in a `testing/` folder anywhere under app/hub/ (app/hub/testing/, and later ones such
 //      as app/hub/registry/testing/), under app/test/upstreams/, or is a test module (`*.test.ts`). A string scan alone
 //      can't prove a renamed or tree-shaken import is gone.
-// The metafile's `outputs` must all be files in the scanned folder: wrangler 4.158.0 resolves `deploy --outdir`
+// The metafile's `outputs`, resolved from app/ only, must all be files in the scanned folder: wrangler 4.158.0 resolves `deploy --outdir`
 // against the config's folder (esbuild's absWorkingDir) but writes the README and the metafile against the shell's,
 // so a relative --outdir once put the script one level away from the folder scanned. hub/package.json passes absolute
 // paths; this rule catches the split if it comes back.
@@ -63,11 +63,14 @@ const walk = dir => {
   }
 }
 const under = (p, dir) => p === dir || p.startsWith(dir + sep)
-/** esbuild writes metafile paths relative to its working directory, which may be app/ or app/hub/. */
+const bare = id => id.replace(/^[a-z-]+:/, '').split('?')[0]
+/** esbuild writes metafile input paths relative to its working directory, which may be app/ or app/hub/. */
 const candidates = id => {
-  const path = id.replace(/^[a-z-]+:/, '').split('?')[0]
+  const path = bare(id)
   return isAbsolute(path) ? [path] : [resolve(root, path), resolve(hubDir, path)]
 }
+/** An output path, from app/ (the config's folder, esbuild's absWorkingDir) only. */
+const outputPath = id => resolve(root, bare(id))
 
 function open(dir, label) {
   if (!existsSync(dir)) fail(`${label} bundle folder ${dir} doesn't exist. Run its bundle script in app/hub/ first.`)
@@ -84,7 +87,12 @@ function open(dir, label) {
   if (inputs.length === 0) fail(`${label}: ${relative(root, meta)} lists no inputs.`)
   const outputs = Object.keys(parsed.outputs ?? {})
   if (outputs.length === 0) fail(`${label}: ${relative(root, meta)} lists no outputs.`)
-  const away = outputs.filter(id => !candidates(id).some(c => under(c, dir) && existsSync(c)))
+  // Outputs resolve against app/ only (esbuild's working directory is the config's folder): a second base would let a
+  // stale same-named file in the scanned folder stand in for an output that landed elsewhere.
+  const away = outputs.filter(id => {
+    const out = outputPath(id)
+    return !(under(out, dir) && existsSync(out))
+  })
   if (away.length) fail(`${label}: the metafile's outputs aren't in ${dir}, so this folder isn't what was built: ${away.join(', ')}`)
   const files = walk(dir).filter(f => f !== meta)
   if (!files.some(f => /\.[cm]?js$/.test(f))) fail(`${label}: no .js file in ${dir}; the bundle didn't run or changed shape.`)

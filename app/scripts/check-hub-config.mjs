@@ -8,10 +8,12 @@
 //   - serves another public surface: `assets` or `site` (static files on the Worker's URL);
 //   - has an `env` key at all (routes, workers_dev and triggers inherit into env blocks, and an env block can
 //     override every rule here, so the hub has one environment: this file);
-//   - puts HUB_TOKEN_KEYS or SHOPIFY_CLIENT_SECRET under `vars` or `define` (they're Worker secrets, set through secret
-//     cards), or doesn't list both in `secrets.required`;
+//   - puts HUB_TOKEN_KEYS or SHOPIFY_CLIENT_SECRET under `vars`, or in any `define` key (`process.env.HUB_TOKEN_KEYS`
+//     too: they're Worker secrets, set through secret cards), or doesn't list both in `secrets.required`;
+//   - sets `alias`, `no_bundle` or `build` (each swaps a module or skips the esbuild bundle the bundle scan reads);
 //   - lacks the SIGNIN binding to the hub's own SignIn class, or the migration that creates SignIn on SQLite;
 //   - has a `main` other than hub/index/index.ts.
+// Not checked: `compatibility_flags` (allowed; a flag changes runtime behaviour, not the route, secret or bundle rules).
 // It passes on wrangler.hub.jsonc and must FAIL on wrangler.hub.test.jsonc (CI asserts both). No dependencies: the
 // hub's CI job doesn't install app/. scripts/check-hub-config.test.mjs runs it on one fixture per rule
 // (scripts/check-hub-config-fixtures/).
@@ -76,6 +78,7 @@ function removeTrailingCommas(json) {
 const has = (obj, key) => obj !== null && typeof obj === 'object' && Object.hasOwn(obj, key)
 const SECRET_NAMES = ['HUB_TOKEN_KEYS', 'SHOPIFY_CLIENT_SECRET']
 const PUBLIC_SURFACES = ['assets', 'site']
+const BUNDLER_SWAPS = ['alias', 'no_bundle', 'build']
 
 /** Every rule the config breaks, as `<rule>: <why>` lines. Empty means it passes. */
 export function checkHubConfig(config) {
@@ -92,6 +95,9 @@ export function checkHubConfig(config) {
   for (const key of PUBLIC_SURFACES) {
     if (has(config, key)) fail('public-surface', `\`${key}\` is set; the hub serves nothing on a URL`)
   }
+  for (const key of BUNDLER_SWAPS) {
+    if (has(config, key)) fail('bundler', `\`${key}\` is set; it swaps a module or skips the bundle the scan reads`)
+  }
   if (has(config, 'env')) fail('env', '`env` is set; env blocks inherit routes and triggers and can override every rule here')
 
   const define = has(config, 'define') && config.define && typeof config.define === 'object' ? config.define : {}
@@ -102,7 +108,9 @@ export function checkHubConfig(config) {
   if (has(vars, 'INHOUSE_TEST_BUILD')) fail('test-build-var', '`vars.INHOUSE_TEST_BUILD` is set; it turns on the test build')
   for (const name of SECRET_NAMES) {
     if (has(vars, name)) fail('secret-in-vars', `\`vars.${name}\` is set; it's a Worker secret, set through a secret card`)
-    if (has(define, name)) fail('secret-in-define', `\`define.${name}\` is set; it's a Worker secret, set through a secret card`)
+  }
+  for (const key of Object.keys(define).filter(k => SECRET_NAMES.some(name => k.includes(name)))) {
+    fail('secret-in-define', `\`define["${key}"]\` is set; it names a Worker secret, set through a secret card`)
   }
   const required = Array.isArray(config.secrets?.required) ? config.secrets.required : []
   const missing = SECRET_NAMES.filter(name => !required.includes(name))
