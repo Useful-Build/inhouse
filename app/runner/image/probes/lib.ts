@@ -99,7 +99,8 @@ export function runCommand(cmd: string, args: string[], opts: { uid?: number; gi
 
 export type Step = { tool: string; input: Record<string, unknown> }
 /** A run's script: each step is a tool call (built when its turn is asked for), then one closing answer. */
-export type Script = { steps: (() => Step)[]; finalText?: string }
+/** `mcp20`: the run's `inhouse` server (through the root's proxy, as production wires it) serves the 20 tools. */
+export type Script = { steps: (() => Step)[]; finalText?: string; mcp20?: boolean }
 export type ToolResult = { text: string; isError: boolean }
 
 export type ScriptState = {
@@ -110,12 +111,20 @@ export type ScriptState = {
   /** Every model request body that came in, for checks on what the CLI sent. */
   requests: MessagesRequest[]
   misses: string[]
+  /** Protocol v2: the run's events as the root pushed them to `/events/` (deduped by seq), and audit posts taken. */
+  pushed: { seq: number; type: string; [k: string]: unknown }[]
+  audits: number
+  /** Resolves once the run's `released` came in. */
+  released: Promise<void>
+  onReleased: () => void
 }
 
 let scriptCount = 0
 export function newScript(script: Script): ScriptState {
   const n = scriptCount++
-  return { script, ids: script.steps.map((_, i) => `toolu_probe${n}x${i}`), results: new Map(), requests: [], misses: [] }
+  let onReleased!: () => void
+  const released = new Promise<void>((r) => (onReleased = r))
+  return { script, ids: script.steps.map((_, i) => `toolu_probe${n}x${i}`), results: new Map(), requests: [], misses: [], pushed: [], audits: 0, released, onReleased }
 }
 
 function resultText(content: unknown): string {
@@ -204,6 +213,31 @@ function mcp(calls: string[], message: { jsonrpc?: string; id?: unknown; method?
   }
 }
 
+/** The 20 `inhouse` tools (docs/product/agent-tools.md): the six always loaded, then the fourteen found on demand. */
+export const INHOUSE_ALWAYS = ['memory_search', 'memory_save', 'approval_request', 'question_ask', 'history_search', 'notification_send'] as const
+export const INHOUSE_ON_DEMAND = [
+  'memory_update', 'memory_forget', 'memory_list',
+  'approval_get', 'approval_list', 'approval_withdraw',
+  'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
+  'history_read', 'team_request_create', 'team_request_list',
+] as const
+
+/**
+ * The stub with the 20 tools, the six marked always-load the way the MCP docs say a remote server marks one
+ * (`_meta: { "anthropic/alwaysLoad": true }`).
+ */
+function mcp20(calls: string[], message: { jsonrpc?: string; id?: unknown; method?: string; params?: { protocolVersion?: string } }): unknown {
+  if (message.method !== 'tools/list') return mcp(calls, message as never)
+  calls.push('tools/list')
+  const tool = (name: string, always: boolean) => ({
+    name,
+    description: `Probe stand-in for ${name}.`,
+    inputSchema: { type: 'object', properties: {} },
+    ...(always ? { _meta: { 'anthropic/alwaysLoad': true } } : {}),
+  })
+  return { jsonrpc: '2.0', id: message.id, result: { tools: [...INHOUSE_ALWAYS.map((n) => tool(n, true)), ...INHOUSE_ON_DEMAND.map((n) => tool(n, false))] } }
+}
+
 export function startEgress(): Promise<Egress> {
   const byToken = new Map<string, ScriptState>()
   const byDirect = new Map<string, ScriptState>()
@@ -234,12 +268,24 @@ export function startEgress(): Promise<Egress> {
         res.writeHead(answer.status, Object.fromEntries(answer.headers))
         return res.end(Buffer.from(await answer.arrayBuffer()))
       }
-      if (route === 'mcp') {
+      if (route === 'mcp' || route === 'mcp20') {
         if (req.method !== 'POST') return sendJson(res, 405, { error: 'POST only' })
         const parsed = JSON.parse(body.toString('utf8')) as unknown
-        const answers = (Array.isArray(parsed) ? parsed : [parsed]).map((m) => mcp(mcpCalls, m as never)).filter((a) => a !== null)
+        const answer = route === 'mcp20' || state?.script.mcp20 === true ? mcp20 : mcp
+        const answers = (Array.isArray(parsed) ? parsed : [parsed]).map((m) => answer(mcpCalls, m as never)).filter((a) => a !== null)
         if (answers.length === 0) return res.writeHead(202).end()
         return sendJson(res, 200, Array.isArray(parsed) ? answers : answers[0])
+      }
+      // Protocol v2: the root pushes the run's events here and posts each audit entry before it acks the hook.
+      if (route === 'events' && state && req.method === 'POST') {
+        const batch = JSON.parse(body.toString('utf8')) as { events: { seq: number; type: string }[] }
+        for (const e of batch.events) if (e.seq === state.pushed.length) state.pushed.push(e)
+        if (state.pushed.at(-1)?.type === 'released') state.onReleased()
+        return sendJson(res, 200, { ackSeq: state.pushed.length - 1, stop: false })
+      }
+      if (route === 'audit' && state && req.method === 'POST') {
+        state.audits++
+        return res.writeHead(204).end()
       }
       if (route === 'store') {
         if (path === '/store/load') return sendJson(res, 200, { entries: null })

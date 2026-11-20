@@ -9,8 +9,8 @@
 // The real CLI against it is in test/store/eager.test.ts.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import { createScriptedModel, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
-import { HARNESS_MODEL, SCENARIOS } from '../../../test/scripted-model/scenarios.ts'
+import { createScriptedModel, type ScriptedBranch, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
+import { HARNESS_MODEL, SCENARIOS, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
 
 type Msg = { role: 'user' | 'assistant'; content: unknown }
 const req = (messages: Msg[], stream = false, extra: Record<string, unknown> = {}) =>
@@ -93,5 +93,129 @@ describe('the scripted model', () => {
     const res = await model.handle(mainReq([{ role: 'user', content: 'q' }, asked, toolResult('toolu_scripted_ask')]), 'ask')
     expect(res.status).toBe(200)
     expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe('Noted, thanks.')
+  })
+})
+
+// count_tokens (P3 R3), as the token counting docs describe it (read 2026-11-20). Ways it could fail: a body the real
+// endpoint refuses gets a count (so the Worker's fallback never runs in tests); a refusal isn't the documented
+// invalid_request_error 400; a countable body is refused, or the count isn't `{ input_tokens }`.
+describe('count_tokens', () => {
+  const count = (body: Record<string, unknown>) =>
+    new Request('http://proxy/model/v1/messages/count_tokens', { method: 'POST', body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], ...body }) })
+  const img = (source: Record<string, unknown>) => ({ messages: [{ role: 'user', content: [{ type: 'image', source }, { type: 'text', text: 'what is it?' }] }] })
+  const doc = (source: Record<string, unknown>) => ({ messages: [{ role: 'user', content: [{ type: 'document', source }] }] })
+
+  it("answers a scenario's scripted count, and a default for others", async () => {
+    const model = createScriptedModel({ s: { turns: [], countTokens: 1234 } })
+    const r = await model.handle(count({}), 's')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ input_tokens: 1234 })
+    const d = await (await createScriptedModel({ t: { turns: [] } }).handle(count({}), 't')).json()
+    expect(d).toEqual({ input_tokens: expect.any(Number) })
+    expect(model.misses).toEqual([])
+  })
+
+  it.each([
+    ['a web search server tool', { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }] }],
+    ['a code execution server tool', { tools: [{ name: 'Bash' }, { type: 'code_execution_20250825', name: 'code_execution' }] }],
+    ['the MCP connector', { mcp_servers: [{ type: 'url', url: 'https://mcp.example.com', name: 'x' }] }],
+    ['an image with a url source', img({ type: 'url', url: 'https://example.com/a.png' })],
+    ['a document with a file source', doc({ type: 'file', file_id: 'file_01' })],
+    ['a document with a url source inside a tool result', { messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'document', source: { type: 'url', url: 'https://example.com/a.pdf' } }] }] }] }],
+  ])('%s: the documented invalid_request_error 400', async (_, body) => {
+    const r = await createScriptedModel({ s: { turns: [], countTokens: 1 } }).handle(count(body), 's')
+    expect(r.status).toBe(400)
+    expect(await r.json()).toMatchObject({ type: 'error', error: { type: 'invalid_request_error' } })
+  })
+
+  it.each([
+    ['client tools (with and without type custom)', { tools: [{ name: 'Bash', input_schema: { type: 'object' } }, { type: 'custom', name: 'x', input_schema: { type: 'object' } }] }],
+    ['an advisor tool', { tools: [{ type: 'advisor_20260301', name: 'advisor' }] }],
+    ['a base64 image', img({ type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' })],
+    ['a base64 PDF', doc({ type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' })],
+  ])('%s: counted', async (_, body) => {
+    const r = await createScriptedModel({ s: { turns: [], countTokens: 7 } }).handle(count(body), 's')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ input_tokens: 7 })
+  })
+})
+
+// Branches (revision 5, item 6d): parallel subagents each start their own conversation at turn 0. Ways it could fail:
+// a subagent's request takes the main thread's turn (or another subagent's); a request two branches match gets an
+// answer; a branch's own `match` that throws is a 500; today's scenarios (no branches) change; the four held answers
+// aren't all asked for at once, or one goes before the hold opens.
+describe('branches', () => {
+  const sub = (i: number, assistants = 0) => [{ role: 'user' as const, content: `${subagentMarker(i)} Check part ${i} and report.` }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
+  const text = async (r: Response) => ((await r.json()) as { content: { type: string; text?: string; id?: string }[] }).content
+
+  it('a request a branch matches takes that branch, by its own position; others are the main thread', async () => {
+    const model = createScriptedModel({
+      s: {
+        turns: [turn(0), turn(1)],
+        branches: {
+          a: { match: (r) => JSON.stringify(r.messages[0]).includes('[A]'), turns: [{ content: [{ type: 'text', text: 'a0' }] }, { content: [{ type: 'text', text: 'a1' }] }] },
+          b: { match: (r) => JSON.stringify(r.messages[0]).includes('[B]'), turns: [{ content: [{ type: 'text', text: 'b0' }] }] },
+        },
+      },
+    })
+    expect((await text(await model.handle(req([{ role: 'user', content: '[A] go' }]), 's')))[0]!.text).toBe('a0')
+    expect((await text(await model.handle(req([{ role: 'user', content: '[B] go' }]), 's')))[0]!.text).toBe('b0')
+    expect((await text(await model.handle(req(convo(0)), 's')))[0]!.text).toBe('turn 0')
+    expect((await text(await model.handle(req([{ role: 'user', content: '[A] go' }, { role: 'assistant', content: 'x' }, { role: 'user', content: 'y' }]), 's')))[0]!.text).toBe('a1')
+    expect((await text(await model.handle(req(convo(1)), 's')))[0]!.text).toBe('turn 1')
+    expect(model.misses).toEqual([])
+    expect(model.log.map((l) => l.branch ?? 'main')).toEqual(['a', 'b', 'main', 'a', 'main'])
+  })
+
+  it.each<[string, Record<string, ScriptedBranch>]>([
+    ['two branches match', { x: { match: () => true, turns: [turn(0)] }, y: { match: () => true, turns: [turn(0)] } }],
+    ['a match throws', { x: { match: (): boolean => { throw new Error('boom') }, turns: [turn(0)] } }],
+  ])('%s: a miss (a 400 the CLI does not retry), recorded', async (_, branches) => {
+    const model = createScriptedModel({ s: { turns: [turn(0)], branches } })
+    const r = await model.handle(req(convo(0)), 's')
+    expect(r.status).toBe(400)
+    expect(await r.json()).toMatchObject({ error: { type: 'invalid_request_error' } })
+    expect(model.misses).toHaveLength(1)
+  })
+
+  it('a branch past its own turns is a miss that names the branch', async () => {
+    const model = createScriptedModel({ s: { turns: [turn(0)], branches: { a: { match: (r) => JSON.stringify(r.messages[0]).includes('[A]'), turns: [turn(0)] } } } })
+    const r = await model.handle(req([{ role: 'user', content: '[A]' }, { role: 'assistant', content: 'x' }, { role: 'user', content: 'y' }]), 's')
+    expect(r.status).toBe(400)
+    expect(model.misses[0]!.reason).toContain('branch "a"')
+  })
+
+  it('parallel-4: four Agent calls in one turn; the four subagent answers are all asked for and held together, then go', async () => {
+    let open!: () => void
+    const held = new Promise<void>((r) => (open = r))
+    const model = createScriptedModel({ p: parallelSubagents(() => held) })
+    const first = await text(await model.handle(mainReq(convo(0)), 'p'))
+    expect(first.map((b) => [b.type, b.id])).toEqual([0, 1, 2, 3].map((i) => ['tool_use', `toolu_scripted_sub_${i}`]))
+    let answered = 0
+    const pending = [0, 1, 2, 3].map((i) => model.handle(mainReq(sub(i)), 'p').then(async (r) => (answered++, text(r))))
+    // All four asked for (logged) while none has answered: four calls in flight at once.
+    for (let k = 0; k < 50 && model.log.length < 5; k++) await new Promise((r) => setImmediate(r))
+    expect(model.log.slice(1).map((l) => l.branch).sort()).toEqual(['subagent-0', 'subagent-1', 'subagent-2', 'subagent-3'])
+    expect(answered).toBe(0)
+    open()
+    const answers = await Promise.all(pending)
+    expect(answers.map((a) => a[0]!.text)).toEqual([0, 1, 2, 3].map((i) => `Subagent ${i} found nothing to add.`))
+    // The main thread's next turn needs all four results.
+    const results = [0, 1, 2, 3].map((i) => ({ type: 'tool_result', tool_use_id: `toolu_scripted_sub_${i}`, content: 'ok' }))
+    const partial = await model.handle(mainReq([{ role: 'user', content: 'q' }, { role: 'assistant', content: first }, { role: 'user', content: results.slice(0, 3) }]), 'p')
+    expect(partial.status).toBe(400)
+    const done = await text(await model.handle(mainReq([{ role: 'user', content: 'q' }, { role: 'assistant', content: first }, { role: 'user', content: results }]), 'p'))
+    expect(done[0]!.text).toBe('All four parts checked.')
+  })
+
+  it('the harness copy of parallel-4 holds until openParallelHold()', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    let answered = false
+    const p = model.handle(mainReq(sub(2)), 'parallel-4').then(() => (answered = true))
+    for (let k = 0; k < 20; k++) await new Promise((r) => setImmediate(r))
+    expect(answered).toBe(false)
+    openParallelHold()
+    await p
+    expect(answered).toBe(true)
   })
 })

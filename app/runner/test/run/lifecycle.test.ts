@@ -1,8 +1,8 @@
-// The root's run lifecycle around the session process: start, stop, hang-up, shutdown, and what each leaves behind.
+// The root's run lifecycle around the session process: start, stop, the Worker's end, shutdown, and what each leaves behind.
 // Ways it could fail, written first:
 // - a stop or interrupt that lands while the run is still starting (allocating, or spawned but not ready) is lost, and
 //   the run carries on;
-// - the Worker hangs up at some stage and the run keeps going, or keeps its chat, uid or token;
+// - the Worker ends the run (a 410, or an ack with stop) and the run keeps going, or keeps its chat, uid or token;
 // - a spawn that throws leaves the run listed, the chat taken (409 forever) or the token mapped;
 // - the chat frees before release() settles, so the next run's allocate races the last run's release;
 // - a timeout racing the session's finish gives two ends;
@@ -15,7 +15,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import type { RunEvent } from '../../../shared/protocol/index.ts'
+import { RunStatus, type RunEvent } from '../../../shared/protocol/index.ts'
 import { pickToken } from '../../src/server/app.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
 import { gate, spawnFixture, testSessionUsers } from './support/test-seams.ts'
@@ -111,58 +111,41 @@ describe('a stop or interrupt while the run is starting', () => {
   })
 })
 
-describe('the Worker hangs up', () => {
-  it('during allocate: nothing is spawned, the user is released and the chat frees', async () => {
-    const allocating = gate()
-    const spawned: ChildProcess[] = []
-    const users = testSessionUsers({ onAllocate: () => allocating.promise })
-    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users }), async (root) => {
-      const start = runStart({ prompt: 'echo:m:3' })
-      const run = openRun(root, start)
-      await waitFor(() => users.allocated.length === 1)
-      run.hangUp()
-      await expect(run.done).rejects.toThrow()
-      await waitFor(() => root.logs.some((l) => l.type === 'worker_hung_up'), 'the root saw the hang-up')
-      allocating.open()
-      await waitFor(() => root.liveCount() === 0)
-      expect(spawned).toHaveLength(0)
-      expect(users.released).toEqual([start.chatId])
-      expect(root.logs).toContainEqual(expect.objectContaining({ type: 'run_abandoned', runId: start.runId }))
-    })
-  })
-
+describe('the Worker ends the run (protocol v2: a hang-up no longer exists; a 410 or a fence does it)', () => {
   it.each([
     ['before ready', 'hold-ready'],
     ['mid-run', null],
-  ])('%s: the session is stopped and the run, chat and token are gone', async (_, marker) => {
+  ])('a 410 %s: the session is stopped, nothing more is pushed, and the run, chat and token are gone', async (_, marker) => {
     const spawned: ChildProcess[] = []
     const users = testSessionUsers({ onAllocate: (_k, dir) => (marker ? writeFileSync(join(dir, marker), '') : undefined) })
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users, stopGraceMs: 50 }), async (root) => {
       const start = runStart({ prompt: 'hang' })
+      root.egress.onPush = (b) => (b.turnId === start.runId ? new Response('ended', { status: 410 }) : null)
       const run = openRun(root, start)
-      await waitFor(() => spawned.length === 1 && run.events.length >= 1)
-      run.hangUp()
-      await expect(run.done).rejects.toThrow()
-      await waitFor(() => root.liveCount() === 0)
+      await run.admitted
+      await waitFor(() => spawned.length === 1 && root.logs.some((l) => l.type === 'push_gone'), 'the 410')
+      await waitFor(() => root.liveCount() === 0, 'the run to end')
       expect(spawned[0]!.exitCode !== null || spawned[0]!.signalCode !== null).toBe(true)
       expect(users.released).toEqual([start.chatId])
       expect(root.tokenForUid(users.uids.get(start.chatId)!)).toBeNull()
+      // One batch went, and nothing after its 410.
+      expect(root.egress.pushes.filter((p) => p.runId === start.runId)).toHaveLength(1)
     })
   })
-})
 
-describe('a hang-up at admission', () => {
-  // The Worker's connection is gone as the body ends, before the run's own close listener is attached.
-  it('a hang-up as the body ends is seen at admission: nothing is spawned and the user is released', async () => {
+  it('an ack with stop: true stops the run; its terminal event and released still reach the Worker', async () => {
     const spawned: ChildProcess[] = []
-    const users = testSessionUsers()
-    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { users }), async (root) => {
-      root.server.prependListener('request', (req) => req.once('end', () => req.socket.destroy()))
-      const start = runStart({ prompt: 'echo:m:3' })
-      await expect(openRun(root, start).done).rejects.toThrow()
-      await waitFor(() => root.logs.some((l) => l.type === 'run_abandoned') && root.liveCount() === 0, 'the run was abandoned')
-      expect(spawned).toHaveLength(0)
-      expect(users.released).toEqual([start.chatId])
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts', { onSpawn: (c) => spawned.push(c) }), { stopGraceMs: 2000 }), async (root) => {
+      const start = runStart({ prompt: 'hang' })
+      root.egress.stopRuns.add(start.runId)
+      const run = openRun(root, start)
+      const events = await run.done
+      // The first push (`started`, on the flush timer) is acked with stop: the run ends stopped, whatever stage it was at.
+      expect(events[0]?.type).toBe('started')
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'stopped' })
+      expect(await run.released).toMatchObject({ type: 'released', checkpoint: null, queryRan: false })
+      expect(root.logs).toContainEqual({ type: 'worker_fenced', runId: start.runId })
+      expect(root.egress.violations).toEqual([])
     })
   })
 })
@@ -324,12 +307,17 @@ describe('the chat slot and the token', () => {
     await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
       const first = runStart({ prompt: 'echo:m:1', runToken: 'tok_first_run_000000000001' })
       const run = openRun(root, first)
-      await run.done
+      await waitFor(() => run.events.some((e) => e.type === 'finished'), 'the terminal event')
       await waitFor(() => root.liveCount() === 1 && root.tokenForUid(users.uids.get(first.chatId)!) === null)
       const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: protocolHeaders, body: JSON.stringify(runStart({ chatId: first.chatId })) })
       expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'chat_live' })
+      // `released` waits for release() too: the Worker starts the chat's next turn only after it.
+      for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r))
+      expect(run.events.some((e) => e.type === 'released')).toBe(false)
       releasing.open()
-      await waitFor(() => root.liveCount() === 0)
+      await run.released
+      expect(root.liveCount()).toBe(0)
       const again = await postRun(root, runStart({ chatId: first.chatId }))
       expect(again.at(-1)?.type).toBe('finished')
     })
@@ -371,4 +359,176 @@ describe('the chat slot and the token', () => {
       expect(pickToken(runs, uid)).toBe(on.length === 1 ? on[0]!.token : null)
     },
   )
+})
+
+describe('released (protocol v2): the last event of every run, with the checkpoint result on every exit path', () => {
+  const CP = { mainEntries: 5, lastUuid: 'u-4', lastUuidIndex: 4 }
+  const cases: [string, Partial<Parameters<typeof runStart>[0]>, (root: TestRoot, runId: string) => Promise<void>, Record<string, unknown>, string][] = [
+    ['finish', { prompt: 'cp:finish' }, async () => {}, { checkpoint: CP, queryRan: true }, 'finished'],
+    [
+      'interrupt',
+      { prompt: 'cp:wait' },
+      async (root, runId) => {
+        await waitFor(() => (root.egress.events.get(runId) ?? []).some((e) => e.type === 'sdk'), 'the query ran')
+        expect(await post(root, `/runs/${runId}/interrupt`)).toBe(202)
+      },
+      { checkpoint: CP, queryRan: true },
+      'failed',
+    ],
+    [
+      'a stop before the query (the session never started it)',
+      { prompt: 'obey-stop' },
+      async (root, runId) => {
+        await waitFor(() => (root.egress.events.get(runId) ?? []).length > 0, 'started')
+        expect(await post(root, `/runs/${runId}/stop`)).toBe(202)
+      },
+      { checkpoint: null, queryRan: false },
+      'failed',
+    ],
+  ]
+  it.each(cases)('%s', async (_, over, act, expected, terminal) => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { stopGraceMs: 2000 }), async (root) => {
+      const start = runStart(over)
+      const run = openRun(root, start)
+      await run.admitted
+      await act(root, start.runId)
+      const events = await run.done
+      expectOneEnd(events)
+      expect(events.at(-1)?.type).toBe(terminal)
+      const released = await run.released
+      expect(released).toEqual({ runId: start.runId, seq: events.length, type: 'released', ...expected })
+      expect(root.egress.violations).toEqual([])
+    })
+  })
+
+  it("a root timeout: the session's later checkpoint still rides in released", async () => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { stopGraceMs: 2000, runTimeoutMs: 300 }), async (root) => {
+      const start = runStart({ prompt: 'cp:wait' })
+      const run = openRun(root, start)
+      const events = await run.done
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'timeout' })
+      // The checkpoint came after the terminal event: not on the stream (one end), but in released.
+      expect(events.some((e) => e.type === 'checkpoint')).toBe(false)
+      expect(await run.released).toMatchObject({ type: 'released', checkpoint: CP, queryRan: true })
+    })
+  })
+
+  it('a stop during allocate (before the session exists): released says no query and no checkpoint', async () => {
+    const allocating = gate()
+    const users = testSessionUsers({ onAllocate: () => allocating.promise })
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
+      const start = runStart({ prompt: 'cp:finish' })
+      const run = openRun(root, start)
+      await waitFor(() => users.allocated.length === 1)
+      expect(await post(root, `/runs/${start.runId}/stop`)).toBe(202)
+      allocating.open()
+      const events = await run.done
+      expect(events.map((e) => e.type)).toEqual(['started', 'failed'])
+      expect(await run.released).toMatchObject({ checkpoint: null, queryRan: false })
+    })
+  })
+})
+
+describe('GET /runs/:id', () => {
+  const status = async (root: TestRoot, runId: string) => {
+    const res = await fetch(`${root.url}/runs/${runId}`, { headers: protocolHeaders })
+    expect(res.status).toBe(200)
+    return RunStatus.parse(await res.json())
+  }
+
+  it('admitted while allocating, running, ending, released; a run never seen is unknown', async () => {
+    const allocating = gate()
+    const releasing = gate()
+    const users = testSessionUsers({ onAllocate: () => allocating.promise, onRelease: () => releasing.promise })
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
+      expect(await status(root, 'run-never-seen')).toEqual({ state: 'unknown', lastSeq: null, ackedSeq: null })
+      const start = runStart({ prompt: 'cp:wait' })
+      const run = openRun(root, start)
+      await waitFor(() => users.allocated.length === 1)
+      expect(await status(root, start.runId)).toEqual({ state: 'admitted', lastSeq: null, ackedSeq: null })
+      allocating.open()
+      await waitFor(() => (root.egress.events.get(start.runId) ?? []).some((e) => e.type === 'sdk'), 'the query ran')
+      expect(await status(root, start.runId)).toMatchObject({ state: 'running' })
+      await post(root, `/runs/${start.runId}/stop`)
+      await waitFor(() => (root.egress.events.get(start.runId) ?? []).some((e) => e.type === 'failed'), 'the terminal event')
+      expect(await status(root, start.runId)).toMatchObject({ state: 'ending' })
+      releasing.open()
+      const released = await run.released
+      expect(await status(root, start.runId)).toEqual({ state: 'released', lastSeq: released.seq, ackedSeq: released.seq })
+    })
+  })
+
+  it('a POST for a run id it already released is refused run_live (never run twice)', async () => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
+      const start = runStart({ prompt: 'cp:finish' })
+      await postRun(root, start)
+      const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: protocolHeaders, body: JSON.stringify({ ...start, chatId: 'chat-other' }) })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'run_live' })
+    })
+  })
+})
+
+// #137 review round 1 (high): the real session core under the root (fixtures/core-session.ts). A resume that ends
+// before the SDK's first store call leaves the transcript untouched: its own terminal, no checkpoint, no mirror error,
+// and released { checkpoint: null, queryRan: false }, so the Worker keeps the chat's last good state.
+describe('released from the real core: a resume that ends before the SDK touched the store', () => {
+  const resume = (prompt: string) =>
+    runStart({ prompt, resume: true, chatId: `chat-core-${prompt}`, expect: { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }, fileCaps: { maxFileBytes: 10, maxFilesPerTurn: 1, maxRestoreBytes: 10, allowedTypes: ['text/plain'] } })
+  const cases: [string, string, 'stop' | 'interrupt' | null, Record<string, unknown>, Record<string, unknown>][] = [
+    ['stopped before the first load', 'stop-before-load', 'stop', { type: 'failed', reason: 'stopped' }, { checkpoint: null, queryRan: false }],
+    ['interrupted before the first load', 'interrupt-before-load', 'interrupt', { type: 'failed', reason: 'interrupted' }, { checkpoint: null, queryRan: false }],
+    ['an SDK error before the first load', 'error-before-load', null, { type: 'failed', reason: 'sdk_error' }, { checkpoint: null, queryRan: false }],
+    ['stopped during the file restore', 'restore-stop', 'stop', { type: 'failed', reason: 'stopped' }, { checkpoint: null, queryRan: false }],
+    // Round 2: a first load that fails can't have changed the transcript (failed at b3f5503: queryRan true, damaged).
+    ['a first load that fails (503)', 'load-fails', null, { type: 'failed', reason: 'sdk_error' }, { checkpoint: null, queryRan: false }],
+    // The control: once the SDK has loaded the transcript, the run did touch the store, and its checkpoint is the store's.
+    ['stopped after the first load', 'load-then-stop', 'stop', { type: 'failed', reason: 'stopped' }, { checkpoint: { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }, queryRan: true }],
+  ]
+  it.each(cases)('%s', async (_, prompt, act, terminal, released) => {
+    await withRoot(await startTestRoot(spawnFixture('core-session.ts'), { stopGraceMs: 5000 }), async (root) => {
+      const start = resume(prompt)
+      const run = openRun(root, start)
+      await run.admitted
+      if (act !== null) {
+        // The core has reached its wait (the fixture writes `waiting` in its folder there).
+        await waitFor(() => existsSync(join(root.users.dirs.get(start.chatId)!, 'waiting')), 'the core waiting')
+        expect(await post(root, `/runs/${start.runId}/${act}`)).toBe(202)
+      }
+      const events = await run.done
+      expect(events.at(-1)).toMatchObject(terminal)
+      expect(events.filter((e) => e.type === 'checkpoint' || e.type === 'mirror_error').map((e) => e.type)).toEqual(released.queryRan ? ['checkpoint'] : [])
+      expect(await run.released).toEqual({ runId: start.runId, seq: events.length, type: 'released', ...released })
+    })
+  })
+})
+
+describe('#137 review round 1 (lows): status and late messages', () => {
+  it('GET /runs/:id: a run stopped before its session was spawned reads ending (not admitted) once its terminal is out', async () => {
+    const allocating = gate()
+    const releasing = gate()
+    const users = testSessionUsers({ onAllocate: () => allocating.promise, onRelease: () => releasing.promise })
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts'), { users }), async (root) => {
+      const start = runStart({ prompt: 'cp:finish' })
+      const run = openRun(root, start)
+      await waitFor(() => users.allocated.length === 1)
+      expect(await post(root, `/runs/${start.runId}/stop`)).toBe(202)
+      allocating.open()
+      await waitFor(() => run.events.some((e) => e.type === 'failed'), 'the terminal event')
+      const res = await fetch(`${root.url}/runs/${start.runId}`, { headers: protocolHeaders })
+      expect(RunStatus.parse(await res.json()).state).toBe('ending')
+      releasing.open()
+      await run.released
+    })
+  })
+
+  // Round 2: a root timeout can race the session's first append, so a late query_started counts (as a late checkpoint
+  // does): released must not say the query never ran when the transcript may have changed.
+  it('a query_started after the terminal event still counts: released says queryRan true', async () => {
+    await withRoot(await startTestRoot(spawnFixture('fake-session.ts')), async (root) => {
+      const run = openRun(root, runStart({ prompt: 'late-query-started' }))
+      expect((await run.done).at(-1)?.type).toBe('finished')
+      expect(await run.released).toMatchObject({ checkpoint: null, queryRan: true })
+    })
+  })
 })

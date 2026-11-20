@@ -55,7 +55,7 @@ function workDir() {
   return d
 }
 
-function harness(query: QueryFn, guards: QueryGuards = testQueryGuards, opts: { egress?: FakeEgress; auditTimeoutMs?: number; cwd?: string } = {}) {
+function harness(query: QueryFn, guards: QueryGuards = testQueryGuards, opts: { egress?: FakeEgress; auditTimeoutMs?: number; cwd?: string; env?: Record<string, string> } = {}) {
   const sent: any[] = []
   let handler: (line: LineResult) => void = () => {}
   let onClose: () => void = () => {}
@@ -67,7 +67,7 @@ function harness(query: QueryFn, guards: QueryGuards = testQueryGuards, opts: { 
     query,
     guards,
     cwd,
-    env: { PATH: '/bin', NODE_CHANNEL_FD: '3', NODE_CHANNEL_SERIALIZATION_MODE: 'json' },
+    env: { PATH: '/bin', NODE_CHANNEL_FD: '3', NODE_CHANNEL_SERIALIZATION_MODE: 'json', ...opts.env },
     io: { fetch: egress.fetch, proxyUrl: PROXY_URL },
     log: (e) => logs.push(e),
     auditTimeoutMs: opts.auditTimeoutMs,
@@ -152,10 +152,35 @@ describe('runSession', () => {
       tools: ['Read'],
     })
     expect(options.resume).toBeUndefined()
-    expect(options.env).toEqual({ PATH: '/bin' })
+    // The model settings (Claude Code's env-vars page): every alias on a model the egress allows, subagents forced onto
+    // the turn's model, compaction at 600,000 (the 1M window kept). The session env comes first, merged, not replaced.
+    expect(options.env).toEqual({
+      PATH: '/bin',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-5-5',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-5-5',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-sonnet-5-5',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-sonnet-5-5',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5',
+      CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '600000',
+    })
+    expect(options.env).not.toHaveProperty('CLAUDE_CODE_DISABLE_1M_CONTEXT')
+    expect(options.systemPrompt).toBe(c.systemPrompt)
+    // No proxy in this env: no inhouse server (production's sessionEnv always sets it; the next test).
+    expect(options.mcpServers).toBeUndefined()
     expect(options.sessionStore).toBeDefined()
     expect(h.events().map((e) => e.type)).toEqual(['sdk', 'sdk', 'checkpoint', 'finished'])
     expect(h.events().at(-1)).toEqual({ type: 'finished', subtype: 'success', isError: false, numTurns: 2, costUsd: 0.01, usage: { input_tokens: 5 } })
+  })
+
+  it("the inhouse server goes through the proxy, and the system prompt is the run's own", async () => {
+    const q = fakeQuery([assistant, result])
+    const h = harness(q.query, testQueryGuards, { env: { INHOUSE_PROXY_URL: 'http://127.0.0.1:8081' } })
+    h.deliver({ type: 'run', config: config({ systemPrompt: 'You answer for the brand.' }) })
+    await h.done
+    const { options } = q.calls[0]!
+    expect(options.mcpServers).toEqual({ inhouse: { type: 'http', url: 'http://127.0.0.1:8081/mcp/' } })
+    expect(options.systemPrompt).toBe('You answer for the brand.')
   })
 
   it('resume: true passes resume, not sessionId; "" is passed as the prompt', async () => {
@@ -387,6 +412,74 @@ function scriptedQuery(body: (p: Parameters<QueryFn>[0]) => AsyncGenerator<SDKMe
   return { query, calls }
 }
 
+describe('resume verification (protocol v2 expect)', () => {
+  const SID = '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11'
+  const MAIN = { projectKey: 'k', sessionId: SID }
+  /** A store holding `main` as the main transcript and `subs` subagent transcripts, written as one part each. */
+  function seeded(main: unknown[], subs: Record<string, unknown[]> = {}) {
+    const egress = fakeEgress()
+    egress.parts.set(JSON.stringify(['k', SID, null]), new Map([['000000000000001-000001', main]]))
+    for (const [sub, entries] of Object.entries(subs)) egress.parts.set(JSON.stringify(['k', SID, sub]), new Map([['000000000000001-000001', entries]]))
+    return egress
+  }
+  /** A query that loads the main transcript first (as the SDK does on a resume), then calls the model. */
+  function resumingQuery() {
+    const seen = { modelCalled: false }
+    const q = scriptedQuery(async function* ({ options }) {
+      await options.sessionStore!.load(MAIN)
+      seen.modelCalled = true
+      yield { type: 'assistant', parent_tool_use_id: null, message: { content: [] } } as unknown as SDKMessage
+      yield result
+    })
+    return { ...q, seen }
+  }
+  const resume = (expect: { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null }) => config({ resume: true, prompt: 'go on', expect })
+  const three = [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'u2' }, { type: 'user', uuid: 'u3' }]
+
+  it.each([
+    ['a store missing early entries', [three[2]], { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }],
+    ['a store one entry short (uuids not checked)', three.slice(0, 2), { mainEntries: 3, lastUuid: null, lastUuidIndex: null }],
+    ['a different uuid at mainEntries - 1', [three[0], three[1], { type: 'user', uuid: 'other' }], { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }],
+    ['an empty store', [], { mainEntries: 1, lastUuid: null, lastUuidIndex: null }],
+  ])('%s: failed store, and the model is never called', async (_, main, expect_) => {
+    const q = resumingQuery()
+    const h = harness(q.query, testQueryGuards, { egress: seeded(main as unknown[]) })
+    h.deliver({ type: 'run', config: resume(expect_) })
+    await h.done
+    expect(q.seen.modelCalled).toBe(false)
+    expect(h.events().at(-1)).toMatchObject({ type: 'failed', reason: 'store' })
+    expect(h.events().filter((e: { type: string }) => e.type === 'finished' || e.type === 'failed')).toHaveLength(1)
+  })
+
+  it("a subagent-heavy turn's resume passes: subagent transcripts don't count toward mainEntries", async () => {
+    const q = resumingQuery()
+    const subs = { 'subagents/agent-1': Array.from({ length: 12 }, (_, i) => ({ type: 'user', uuid: `s${i}` })) }
+    const h = harness(q.query, testQueryGuards, { egress: seeded(three, subs) })
+    h.deliver({ type: 'run', config: resume({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }) })
+    await h.done
+    expect(q.seen.modelCalled).toBe(true)
+    expect(types(h.events())).toEqual(['sdk', 'sdk', 'checkpoint', 'finished'])
+    // Nothing new written: the checkpoint is the store's main transcript as it stands.
+    expect(h.events()[2]).toEqual({ type: 'checkpoint', mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2, runEntries: 0 })
+  })
+
+  it('a store holding more than expected (a flush after the last checkpoint) passes', async () => {
+    const q = resumingQuery()
+    const h = harness(q.query, testQueryGuards, { egress: seeded([...three, { type: 'assistant', uuid: 'u4' }]) })
+    h.deliver({ type: 'run', config: resume({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }) })
+    await h.done
+    expect(h.events().at(-1)).toMatchObject({ type: 'finished' })
+  })
+
+  it('a resume whose query never loads the transcript ends failed store (nothing proved the transcript)', async () => {
+    const q = fakeQuery([result])
+    const h = harness(q.query, testQueryGuards, { egress: seeded(three) })
+    h.deliver({ type: 'run', config: resume({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }) })
+    await h.done
+    expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' })
+  })
+})
+
 const toolUse = (...ids: string[]) => ({ type: 'assistant', parent_tool_use_id: null, message: { content: ids.map((id) => ({ type: 'tool_use', id, name: 'mcp__inhouse__question_ask', input: {} })) } }) as unknown as SDKMessage
 const toolResult = (id: string) => ({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } }) as unknown as SDKMessage
 const deferredResult = (id: string) => ({ ...(result as object), stop_reason: 'tool_deferred', deferred_tool_use: { id, name: 'mcp__inhouse__question_ask', input: { q: 'which?' } } }) as unknown as SDKMessage
@@ -482,13 +575,18 @@ describe('the run lifecycle', () => {
     expect(h.events()[1]).toEqual({ type: 'checkpoint', mainEntries: 0, lastUuid: null, lastUuidIndex: null, runEntries: 0 })
   })
 
-  it('the store: a resume that wrote no main transcript is a mirror_error, not a checkpoint', async () => {
+  // #132's interim rule (a resume that wrote nothing was always a mirror_error) is replaced by the real load: a resume
+  // that loaded its transcript and wrote nothing checkpoints the store's state (the resume verification tests below).
+  // One whose query got a result without ever calling the store fails `store` (nothing proved the transcript), but the
+  // store is untouched: no checkpoint and no mirror error, so the chat keeps its last good state.
+  it('the store: a resume that got a result without touching the store fails store, with no checkpoint or mirror error', async () => {
     const q = fakeQuery([result])
     const h = harness(q.query)
     h.deliver({ type: 'run', config: config({ resume: true, expect: { mainEntries: 4, lastUuid: 'u', lastUuidIndex: 3 } }) })
     await h.done
-    expect(types(h.events())).toEqual(['sdk', 'mirror_error', 'finished'])
-    expect(h.events()[1]).toEqual({ type: 'mirror_error', message: 'a resume that wrote no main transcript' })
+    expect(types(h.events())).toEqual(['sdk', 'failed'])
+    expect(h.events()[1]).toEqual({ type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' })
+    expect(h.sent).not.toContainEqual({ type: 'query_started' })
   })
 
   it('the store: when the repair fails too, mirror_error and no checkpoint; the run still finishes with its cost', async () => {
@@ -621,6 +719,132 @@ describe('the run lifecycle', () => {
     await h.done
     expect(q.calls).toHaveLength(0)
     expect(h.events()).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped before the query started' }])
+    // No query: the root's `released` says so (queryRan: false), and the Worker keeps the chat's last good state.
+    expect(h.sent).not.toContainEqual({ type: 'query_started' })
+  })
+
+  it("query_started goes to the root on the SDK's first store call, not when the query is called", async () => {
+    let sentAtQuery: unknown[] = []
+    let sentAfterLoad: unknown[] = []
+    const holder: { h?: ReturnType<typeof harness> } = {}
+    const q = scriptedQuery(async function* ({ options }) {
+      sentAtQuery = [...holder.h!.sent]
+      await options.sessionStore!.load({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' })
+      sentAfterLoad = [...holder.h!.sent]
+      yield result
+    })
+    holder.h = harness(q.query)
+    holder.h.deliver({ type: 'run', config: config() })
+    await holder.h.done
+    expect(sentAtQuery).not.toContainEqual({ type: 'query_started' })
+    expect(sentAfterLoad.filter((m) => JSON.stringify(m) === '{"type":"query_started"}')).toHaveLength(1)
+    expect(holder.h.sent.filter((m) => JSON.stringify(m) === '{"type":"query_started"}')).toHaveLength(1)
+  })
+
+  // #137 review round 1 (high): a resume that ends before the SDK's first store call keeps its own terminal, sends no
+  // query_started, and emits no checkpoint or mirror error (the root's released is then { checkpoint: null,
+  // queryRan: false }: lifecycle.test.ts proves that end to end with this core). Each failed on 52bd866.
+  describe('a resume that ends before the SDK touched the store', () => {
+    const resumeConfig = () => config({ resume: true, prompt: 'go on', expect: { mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 } })
+    /** A query that waits (before any store call) until interrupted or aborted. */
+    function waitingQuery(opts: { interruptThrows: boolean }) {
+      let wake!: () => void
+      const woken = new Promise<void>((r) => (wake = r))
+      const calls: unknown[] = []
+      const query: QueryFn = (params) => {
+        calls.push(params)
+        const signal = params.options.abortController!.signal
+        signal.addEventListener('abort', () => wake(), { once: true })
+        return Object.assign(
+          (async function* () {
+            await woken
+            if (signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+          })(),
+          {
+            interrupt: async () => {
+              if (opts.interruptThrows) throw new Error('needs streaming input')
+              wake()
+            },
+          },
+        ) as unknown as ReturnType<QueryFn>
+      }
+      return { query, calls }
+    }
+    const noStoreTrace = (h: ReturnType<typeof harness>) => {
+      expect(h.events().filter((e: { type: string }) => e.type === 'checkpoint' || e.type === 'mirror_error')).toEqual([])
+      expect(h.sent).not.toContainEqual({ type: 'query_started' })
+    }
+
+    it('a stop: failed stopped', async () => {
+      const q = waitingQuery({ interruptThrows: false })
+      const h = harness(q.query)
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await waitForTicks(() => q.calls.length === 1)
+      h.deliver({ type: 'stop', endWithinMs: 60_000 })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'stopped', message: 'stopped' })
+      noStoreTrace(h)
+    })
+
+    it('an interrupt (falling back to the abort signal): failed interrupted', async () => {
+      const q = waitingQuery({ interruptThrows: true })
+      const h = harness(q.query)
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await waitForTicks(() => q.calls.length === 1)
+      h.deliver({ type: 'interrupt' })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'interrupted', message: 'interrupted' })
+      noStoreTrace(h)
+    })
+
+    it('a stop after the SDK wrote but before it loaded: stopped (failed store is only for an unstopped query)', async () => {
+      let wake!: () => void
+      const woken = new Promise<void>((r) => (wake = r))
+      const q = scriptedQuery(async function* ({ options }) {
+        options.abortController!.signal.addEventListener('abort', () => wake(), { once: true })
+        await options.sessionStore!.append({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' }, [{ type: 'user', uuid: 'w1' }])
+        await woken
+      })
+      const real = q.query
+      const query: QueryFn = (params) => Object.assign(real(params), { interrupt: async () => wake() })
+      // The store holds the three entries the resume expects.
+      const egress = fakeEgress()
+      egress.parts.set(JSON.stringify(['k', '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11', null]), new Map([['000000000000001-000001', [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'u2' }, { type: 'user', uuid: 'u3' }]]]))
+      const h = harness(query, testQueryGuards, { egress })
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await waitForTicks(() => h.sent.some((m) => JSON.stringify(m) === '{"type":"query_started"}'))
+      h.deliver({ type: 'stop', endWithinMs: 60_000 })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'stopped', message: 'stopped' })
+      // It touched the store: its checkpoint reports what the store holds (the three, then its own).
+      expect(h.events().filter((e: { type: string }) => e.type === 'checkpoint')).toEqual([{ type: 'checkpoint', mainEntries: 4, lastUuid: 'w1', lastUuidIndex: 3, runEntries: 1 }])
+    })
+
+    // Round 2: a failed read can't change the transcript. Opus's probe: the store holds u1..u3, the first load answers
+    // 503 and the query (awaiting the load) fails with it. Failed at b3f5503 (touched before the POST).
+    it('a first load that fails (503): sdk_error, no query_started, no checkpoint or mirror error', async () => {
+      const egress = fakeEgress()
+      egress.parts.set(JSON.stringify(['k', '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11', null]), new Map([['000000000000001-000001', [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'u2' }, { type: 'user', uuid: 'u3' }]]]))
+      let loads = 0
+      egress.fail = (_m, p) => (p === '/store/load' && loads++ === 0 ? 503 : null)
+      const q = scriptedQuery(async function* ({ options }) {
+        await options.sessionStore!.load({ projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' })
+        yield result
+      })
+      const h = harness(q.query, testQueryGuards, { egress })
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'sdk_error', message: 'store load: 503' })
+      noStoreTrace(h)
+    })
+
+    it('an SDK error: failed sdk_error', async () => {
+      const h = harness(fakeQuery([result], { throwAt: 0 }).query)
+      h.deliver({ type: 'run', config: resumeConfig() })
+      await h.done
+      expect(h.events().at(-1)).toEqual({ type: 'failed', reason: 'sdk_error', message: 'the CLI exited' })
+      noStoreTrace(h)
+    })
   })
 
   it(`past ${LEFT_OUT_MAX} left-out files, the note still counts every one (the event's "and N more" is not a name)`, async () => {

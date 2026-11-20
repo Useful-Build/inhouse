@@ -30,18 +30,22 @@ export const RootMessage = z.discriminatedUnion('type', [
 export type RootMessage = z.infer<typeof RootMessage>
 
 /**
- * The event bodies a session may send. `started` is the root's own; `audit` comes only as an `audit` message (acked).
- * An `sdk` event's message isn't capped yet (the wire's cap would refuse a big one): the root caps it.
+ * The event bodies a session may send. `started`, `heartbeat` and `released` are the root's own; `audit` comes only as
+ * an `audit` message (acked). An `sdk` event's message isn't capped yet (the wire's cap would refuse a big one): the
+ * root caps it.
  */
+const ROOT_ONLY = new Set(['started', 'audit', 'heartbeat', 'released'])
 export const SessionEventBody = z.union([
   SdkEventUncapped,
-  RunEventBody.refine((e) => e.type !== 'started' && e.type !== 'audit', { message: 'a session never sends started or audit as an event' }),
+  RunEventBody.refine((e) => !ROOT_ONLY.has(e.type), { message: 'a session never sends started, audit, heartbeat or released as an event' }),
 ])
 
 /** Session -> root. */
 export const SessionMessage = z.discriminatedUnion('type', [
   /** The session listens on the channel; the root sends `run` only after this. */
   z.strictObject({ type: z.literal('ready') }),
+  /** The session is about to call `query()`: from here the run may change the transcript (`released.queryRan`). */
+  z.strictObject({ type: z.literal('query_started') }),
   z.strictObject({ type: z.literal('event'), event: z.unknown() }),
   /**
    * A blocking audit entry: the root writes it to the stream, then answers `audit_ack` or `audit_nack` with this id.
@@ -61,14 +65,15 @@ export type SessionMessage = z.infer<typeof SessionMessage>
  */
 export const monotonicMs = (): number => Number(process.hrtime.bigint() / 1_000_000n)
 
-export type SessionEvent = Exclude<RunEventBody, { type: 'started' | 'audit' }>
-export type ParsedSessionMessage = { type: 'ready' } | { type: 'event'; event: SessionEvent } | { type: 'audit'; id: number; expiresAt: number; entry: AuditEntry }
+export type SessionEvent = Exclude<RunEventBody, { type: 'started' | 'audit' | 'heartbeat' | 'released' }>
+export type ParsedSessionMessage = { type: 'ready' } | { type: 'query_started' } | { type: 'event'; event: SessionEvent } | { type: 'audit'; id: number; expiresAt: number; entry: AuditEntry }
 
 /** Parses a message from a session, event body included. Returns the zod error's text on failure, never throws. */
 export function parseSessionMessage(raw: unknown): { ok: true; message: ParsedSessionMessage } | { ok: false; error: string } {
   const outer = SessionMessage.safeParse(raw)
   if (!outer.success) return { ok: false, error: z.prettifyError(outer.error) }
   if (outer.data.type === 'ready') return { ok: true, message: { type: 'ready' } }
+  if (outer.data.type === 'query_started') return { ok: true, message: { type: 'query_started' } }
   if (outer.data.type === 'audit') return { ok: true, message: { type: 'audit', id: outer.data.id, expiresAt: outer.data.expiresAt, entry: outer.data.entry } }
   const body = SessionEventBody.safeParse(outer.data.event)
   if (!body.success) return { ok: false, error: z.prettifyError(body.error) }
