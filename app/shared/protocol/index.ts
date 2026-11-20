@@ -95,10 +95,12 @@ export type RunStart = z.infer<typeof RunStart>
 /** The largest SDK message passed through whole in an `sdk` event; a bigger one arrives as a stub with `truncated`. */
 export const SDK_MESSAGE_MAX_BYTES = 256 * 1024
 
-export const FailureReason = z.enum(['session_crashed', 'protocol', 'store', 'interrupted', 'stopped', 'timeout', 'sdk_error'])
+/** `files`: the chat's files couldn't be brought into the work folder, so the run didn't start its query. */
+export const FailureReason = z.enum(['session_crashed', 'protocol', 'store', 'files', 'interrupted', 'stopped', 'timeout', 'sdk_error'])
 export type FailureReason = z.infer<typeof FailureReason>
 
-export const FileRefusalReason = z.enum(['too_large', 'too_many', 'type_not_allowed', 'save_failed'])
+/** `bad_name`: a name the files route can't carry (a `#` or `\`, a `.` or `..` segment, an unpaired surrogate). */
+export const FileRefusalReason = z.enum(['too_large', 'too_many', 'type_not_allowed', 'save_failed', 'bad_name'])
 
 /** Caps on the open shapes a session sends, as JSON bytes. An event over one fails the parse (`protocol`). */
 export const DEFERRED_INPUT_MAX_BYTES = 64 * 1024
@@ -116,6 +118,26 @@ export function jsonBytes(value: unknown): number {
   }
 }
 
+/** The cap on an audit entry's `input`, as JSON bytes. */
+export const AUDIT_INPUT_MAX_BYTES = 16 * 1024
+
+/**
+ * One entry of the blocking audit log (R2's hook builds them). The session sends it to the root, which writes it as an
+ * `audit` run event on the Worker's open stream before it acks; the hook's call goes ahead only on that ack.
+ */
+export const AuditEntry = z.strictObject({
+  /** The hook event, e.g. `PreToolUse`. */
+  hook: z.string().regex(/^[A-Za-z]{1,64}$/),
+  toolName: z.string().max(256),
+  toolUseId: z.string().max(256).optional(),
+  /** What the hook decided, e.g. `allow`, `deny`, `defer`. */
+  decision: z.string().max(64),
+  input: z.unknown().refine((i) => jsonBytes(i) <= AUDIT_INPUT_MAX_BYTES, { message: `input over ${AUDIT_INPUT_MAX_BYTES} bytes` }),
+})
+export type AuditEntry = z.infer<typeof AuditEntry>
+
+const FilePath = z.string().max(1024)
+
 const Usage = z.record(z.string(), z.unknown()).refine((u) => jsonBytes(u) <= USAGE_MAX_BYTES, { message: `usage over ${USAGE_MAX_BYTES} bytes` })
 
 /** A run event without its envelope. The root runner stamps `runId` and `seq`. */
@@ -127,15 +149,38 @@ export const RunEventBody = z.discriminatedUnion('type', [
     message: z.record(z.string(), z.unknown()),
     truncated: z.boolean(),
   }),
-  z.strictObject({ type: z.literal('file_saved'), path: z.string().max(1024), bytes: z.int().nonnegative(), contentType: z.string().max(128) }),
-  z.strictObject({ type: z.literal('file_refused'), path: z.string().max(1024), reason: FileRefusalReason, bytes: z.int().nonnegative().optional() }),
+  z.strictObject({ type: z.literal('file_saved'), path: FilePath, bytes: z.int().nonnegative(), contentType: z.string().max(128) }),
+  z.strictObject({ type: z.literal('file_refused'), path: FilePath, reason: FileRefusalReason, bytes: z.int().nonnegative().optional() }),
+  /** The refusals past the first 50 of a run, counted rather than sent one by one. */
+  z.strictObject({ type: z.literal('file_refused_more'), count: z.int().positive() }),
+  /**
+   * The chat's files, brought into the work folder at the run's start (`inputs/` and `outputs/`), up to
+   * `maxRestoreBytes`; `leftOut` names the ones over the cap (the agent is told too, when the run has a prompt).
+   */
+  z.strictObject({ type: z.literal('files_restored'), restored: z.int().nonnegative(), bytes: z.int().nonnegative(), leftOut: z.array(FilePath).max(1000) }),
+  /** A blocking audit entry. Written before the session's hook is acked, so it's on the stream before the call runs. */
+  z.strictObject({ type: z.literal('audit'), entry: AuditEntry }),
+  /**
+   * The store couldn't be brought to hold every entry of this run (the repair failed). No `checkpoint` follows: the
+   * Worker must not mark the chat waiting on this run's transcript.
+   */
+  z.strictObject({ type: z.literal('mirror_error'), message: z.string().max(2000) }),
+  /**
+   * The run's lone call was deferred (it waits for an answer). Sent before the run's files are saved and before its
+   * `checkpoint`, so it says nothing about the transcript: the Worker marks the chat waiting on the call only once the
+   * run's `checkpoint` has come too, never on `deferred` alone (W1 and W3 rely on this). With `mirror_error` instead of
+   * `checkpoint`, the chat is not marked waiting.
+   */
   z.strictObject({
     type: z.literal('deferred'),
     toolUseId: z.string().max(256),
     toolName: z.string().max(256),
     input: z.unknown().refine((i) => jsonBytes(i) <= DEFERRED_INPUT_MAX_BYTES, { message: `input over ${DEFERRED_INPUT_MAX_BYTES} bytes` }),
   }),
-  /** The store confirmed every batch of this run (`entries` uuids checked with `load()`). */
+  /**
+   * The store confirmed every batch of this run (`entries` uuids checked with `load()`). The only event the Worker marks
+   * a chat waiting on (with an earlier `deferred`): never `deferred` by itself.
+   */
   z.strictObject({ type: z.literal('checkpoint'), entries: z.int().nonnegative() }),
   z.strictObject({
     type: z.literal('finished'),
@@ -171,6 +216,39 @@ export function parseRunEventLine(line: string): RunEvent {
 export function encodeRunEvent(event: RunEvent): string {
   return `${JSON.stringify(event)}\n`
 }
+
+// ---- The loopback proxy's store and files routes (the session calls them; the Worker's egress serves them, scoped to
+// the run's chat by its token). Paths are relative to the proxy's `/store/` and `/files/`.
+
+/** The SDK's session key. `subpath` is set for subagent transcripts and is opaque to the store. */
+export const StoreKey = z.strictObject({
+  projectKey: z.string().min(1).max(512),
+  sessionId: SessionId,
+  subpath: z.string().min(1).max(512).optional(),
+})
+export type StoreKey = z.infer<typeof StoreKey>
+/** A transcript line, passed through as data. */
+export const StoreEntry = z.looseObject({ type: z.string(), uuid: z.string().optional() })
+
+/**
+ * `POST /store/append`. One stored part per batch: `part` sorts in append order, and a batch sent again (the SDK's
+ * retry, or the runner's repair) carries the same `part`, so the store overwrites it rather than adding a copy.
+ */
+export const StoreAppend = z.strictObject({ key: StoreKey, entries: z.array(StoreEntry), part: z.string().regex(/^[0-9]{15}-[0-9]{6}$/) })
+/** `POST /store/load` -> `StoreLoadResult` (`entries: null` for a key never written). */
+export const StoreLoad = z.strictObject({ key: StoreKey })
+export const StoreLoadResult = z.strictObject({ entries: z.array(StoreEntry).nullable() })
+/** `POST /store/list-subkeys` -> `StoreSubkeys`. */
+export const StoreListSubkeys = z.strictObject({ key: StoreKey.omit({ subpath: true }) })
+export const StoreSubkeys = z.strictObject({ subkeys: z.array(z.string().min(1).max(512)) })
+
+/**
+ * `GET /files/` -> the chat's files (attachments under `inputs/`, saved outputs under `outputs/`), restore order first.
+ * `GET /files/<path>` gives one file's bytes; `PUT /files/<path>` saves one (`content-type` as detected from its magic
+ * bytes). `<path>` is the file's path with every segment `encodeURIComponent`-encoded.
+ */
+export const FileListing = z.strictObject({ files: z.array(z.strictObject({ path: FilePath, bytes: z.int().nonnegative() })).max(10_000) })
+export type FileListing = z.infer<typeof FileListing>
 
 /** `GET /health`. Memory comes from `/proc/meminfo` and `process.memoryUsage()`, not the cgroup files. */
 export const Health = z.strictObject({
