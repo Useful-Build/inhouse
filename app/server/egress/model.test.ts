@@ -47,7 +47,7 @@ describe('the gateway request (failure 1)', () => {
     }) as unknown as typeof fetch
     const h = await harness()
     h.deps.upstream = gatewayUpstream({ AI: ai, AI_GATEWAY_ID: 'gw-test', AI_GATEWAY_TOKEN: 'gw-token-test' }, fetcher)
-    const res = await call(h, { ...small, max_tokens: 99_999 }, { headers: { 'anthropic-version': '2023-06-01', 'anthropic-beta': 'b1', 'x-api-key': 'sk-x', cookie: 'c=1', 'x-forwarded-for': '10.0.0.1' } })
+    const res = await call(h, { ...small, max_tokens: 99_999 }, { headers: { 'anthropic-version': '2023-06-01', 'anthropic-beta': 'claude-code-20250219, interleaved-thinking-2025-05-14', 'x-api-key': 'sk-x', cookie: 'c=1', 'x-forwarded-for': '10.0.0.1' } })
     expect(res.status).toBe(200)
     expect(seen.map(x => x.url)).toEqual([
       'https://gateway.ai.cloudflare.com/v1/acct-test/gw-test/anthropic/v1/messages/count_tokens',
@@ -56,7 +56,7 @@ describe('the gateway request (failure 1)', () => {
     const r = seen[1]!
     expect(r.url).toBe('https://gateway.ai.cloudflare.com/v1/acct-test/gw-test/anthropic/v1/messages')
     expect([...r.headers].sort()).toEqual([
-      ['anthropic-beta', 'b1'], ['anthropic-version', '2023-06-01'], ['cf-aig-authorization', 'Bearer gw-token-test'],
+      ['anthropic-beta', 'claude-code-20250219,interleaved-thinking-2025-05-14'], ['anthropic-version', '2023-06-01'], ['cf-aig-authorization', 'Bearer gw-token-test'],
       ['cf-aig-collect-log-payload', 'false'], ['cf-aig-max-attempts', '1'], ['cf-aig-skip-cache', 'true'], ['content-type', 'application/json'],
     ])
     const sent = await r.text()

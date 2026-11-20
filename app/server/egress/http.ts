@@ -45,6 +45,8 @@ const FIXED_MESSAGE: Record<MessagesErrorType, string> = {
 }
 /** ...except an `invalid_request_error`'s message, which the CLI reads (a prompt too long), capped and single-line. */
 const PASSED_MESSAGE_MAX = 500
+/** A message that reveals the account's state (credit, billing, keys, limits) gets the fixed text instead. */
+const ACCOUNT_STATE = /\b(credits?|balance|billing|payments?|invoices?|plans?|quotas?|spend(ing)?|organi[sz]ations?|workspaces?|accounts?|api[ _-]?keys?|usage limits?)\b/i
 
 /**
  * An upstream error answer mapped to the Messages API's error shape (8.1): its status, a documented type (its own when
@@ -58,19 +60,64 @@ export async function mapUpstreamError(res: Response, headers: Headers): Promise
     const t = body?.error?.type
     if (body?.type === 'error' && typeof t === 'string' && (ERROR_TYPES as readonly string[]).includes(t)) type = t as MessagesErrorType
     const m = body?.error?.message
-    message = type === 'invalid_request_error' && typeof m === 'string' ? m.replace(/\s+/g, ' ').slice(0, PASSED_MESSAGE_MAX) : FIXED_MESSAGE[type]
+    message = type === 'invalid_request_error' && typeof m === 'string' && !ACCOUNT_STATE.test(m) ? m.replace(/\s+/g, ' ').slice(0, PASSED_MESSAGE_MAX) : FIXED_MESSAGE[type]
   } catch {
     message = FIXED_MESSAGE[type]
   }
   return messagesError(res.status, type, message, headers)
 }
 
-/** Request headers the model route forwards upstream (the Messages API's own, 8.1). */
-const MODEL_REQUEST_HEADERS = new Set(['anthropic-version', 'anthropic-beta', 'accept'])
+/** Request headers the model route forwards upstream (the Messages API's own, 8.1); `anthropic-beta` by value below. */
+const MODEL_REQUEST_HEADERS = new Set(['anthropic-version', 'accept'])
 
-export function modelRequestHeaders(incoming: Headers): Headers {
+/**
+ * The `anthropic-beta` values the gate lets through: a beta can turn on billed behaviour the gate doesn't inspect, so an
+ * unknown one is refused (400). Source of every value: the beta table in the pinned CLI (claude-agent-sdk 0.3.328, its
+ * native binary's `D("<name>", "<value>")` entries, read 2026-11-20). None has been seen on the wire yet: the Q2 live run
+ * records which the CLI really sends through our proxy, and this list is narrowed or widened from that.
+ * Allowed: behaviour, display and counting betas, and the features the gate prices or refuses by body field.
+ * Left out (refused): fast mode (speed), the MCP connector, files, environments and the cloud runner (ccr), the advisor
+ * tool, server-side fallback and fallback credit (another model's price), cache keep-alive and eviction, AFK and auto
+ * mode classifiers, dangerous tool use, message threads, the system clear-at, resumption, program use-case ids,
+ * results-only search, OAuth, server-side compaction (`compact-*`) and the CLI's internal `x-cc-internal-*` latches.
+ */
+export const ALLOWED_BETAS: ReadonlySet<string> = new Set([
+  'claude-code-20250219', // the CLI identifies itself
+  'interleaved-thinking-2025-05-14', // thinking between tool calls
+  'context-1m-2025-08-07', // the 1M window (no premium on these models; the 650,000 bound applies)
+  'context-management-2025-06-27', // clear_* edits only: compact_* edits are refused by body
+  'structured-outputs-2025-12-15',
+  'web-search-2025-03-05', // the web_search server tool, priced
+  'advanced-tool-use-2025-11-20', // deferred tools; a tool_search server tool is still refused by body
+  'tool-search-tool-2025-10-19',
+  'effort-2025-11-24', // output_config.effort
+  'per-turn-control-2026-07-01',
+  'task-budgets-2026-03-13',
+  'prompt-caching-scope-2026-01-05',
+  'extended-cache-ttl-2025-04-11', // 1-hour cache writes, priced
+  'redact-thinking-2026-02-12',
+  'thinking-token-count-2026-05-13',
+  'thinking-display-updates-2026-08-18',
+  'thinking-binding-controls-2026-08-01',
+  'token-counting-2024-11-01',
+  'timing-2026-09-09',
+  'mid-conversation-tool-changes-2026-07-01',
+  'inline-tools-2026-09-15',
+  'context-hint-2026-04-09',
+  'claude-code-side-query-2026-09-29',
+])
+
+/** The forwarded headers, or the first `anthropic-beta` value the gate doesn't allow. */
+export function modelRequestHeaders(incoming: Headers): Headers | { refusedBeta: string } {
   const out = new Headers()
   for (const [k, v] of incoming) if (MODEL_REQUEST_HEADERS.has(k.toLowerCase())) out.set(k, v)
+  const beta = incoming.get('anthropic-beta')
+  if (beta !== null) {
+    const values = beta.split(',').map(b => b.trim()).filter(b => b !== '')
+    const bad = values.find(b => !ALLOWED_BETAS.has(b))
+    if (bad !== undefined) return { refusedBeta: bad }
+    if (values.length > 0) out.set('anthropic-beta', values.join(','))
+  }
   out.set('content-type', 'application/json')
   return out
 }

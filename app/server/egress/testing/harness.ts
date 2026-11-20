@@ -8,21 +8,21 @@ import type { EgressDeps, McpHandler } from '../deps.ts'
 import type { ModelPath } from '../gateway.ts'
 import { RUN_TOKEN_HEADER } from '../http.ts'
 
-/** W1's fake plus `noteCountTokens` (the orchestrator's RPC addition), counting per turn against `countLimit`. */
+/** W1's fake, with a filter over its call log. */
 export class FakeEgressRpc extends FakeBrandAgentRpc {
-  counts = new Map<string, number>()
-  countLimit = 50
   constructor(tokens?: RunTokens, now?: () => number) {
     super(tokens, now)
-  }
-  async noteCountTokens(turnId: string): Promise<boolean> {
-    const n = (this.counts.get(turnId) ?? 0) + 1
-    this.counts.set(turnId, n)
-    return n <= this.countLimit
   }
   callsOf(method: string) {
     return this.calls.filter(c => c.method === method)
   }
+}
+
+/** A captured timeout: a test fires it by hand (no real wait). */
+export interface FakeTimeout {
+  fn: () => void
+  ms: number
+  cleared: boolean
 }
 
 export interface UpstreamCall {
@@ -47,6 +47,7 @@ export interface Harness {
   settings: Record<string, string>
   waits: Promise<unknown>[]
   intervals: (() => void)[]
+  timeouts: FakeTimeout[]
   logs: Record<string, unknown>[]
   touched: string[]
   mcpCalls: { request: Request; scope: unknown }[]
@@ -57,7 +58,7 @@ export async function harness(over: Partial<EgressDeps> = {}, grant: RunGrant = 
   rpc.grants.set(await hashRunToken(TOKEN), grant)
   let n = 0
   const h: Harness = {
-    rpc, upstreamCalls: [], settings: {}, waits: [], intervals: [], logs: [], touched: [], mcpCalls: [],
+    rpc, upstreamCalls: [], settings: {}, waits: [], intervals: [], timeouts: [], logs: [], touched: [], mcpCalls: [],
     answer: async () => Response.json({ type: 'message', usage: { input_tokens: 10, output_tokens: 5 } }),
     deps: undefined as unknown as EgressDeps,
   }
@@ -84,6 +85,11 @@ export async function harness(over: Partial<EgressDeps> = {}, grant: RunGrant = 
       return h.intervals.length as unknown as ReturnType<typeof setInterval>
     },
     clearInterval: () => undefined,
+    setTimeout: (fn, ms) => {
+      h.timeouts.push({ fn, ms, cleared: false })
+      return h.timeouts.length as unknown as ReturnType<typeof setTimeout>
+    },
+    clearTimeout: t => void (h.timeouts[(t as unknown as number) - 1]!.cleared = true),
     newCallId: () => `c_${++n}`,
     now: () => 1_800_000_000_000,
     log: e => void h.logs.push(e),

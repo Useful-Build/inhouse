@@ -91,6 +91,14 @@ describe('the byte bound (failure 4)', () => {
     expect(r.byteBound).toBe(len('{"messages":[{"role":"user","content":[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":""}}]}]}') + 2 * 5000)
     expect(r.mustCount).toBe(false)
   })
+  it('a decoy page count never lowers the size floor: one visible page in 30,000 bytes counts 10', () => {
+    const decoy = `%PDF-1.5\n% /Type /Page\n${'x'.repeat(30_000 - 23)}`
+    expect(decoy.length).toBe(30_000)
+    expect(pdfPages(new TextEncoder().encode(decoy))).toBe(1)
+    const r = ok({ ...base, messages: [user([{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64(decoy) } }])] })
+    expect(r.byteBound).toBe(len('{"messages":[{"role":"user","content":[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":""}}]}]}') + 10 * 5000)
+    expect(r.mustCount).toBe(false)
+  })
   it('a PDF whose pages are not visible is guessed at 3,000 bytes a page and always counted', () => {
     const packed = `%PDF-1.5\n${'x'.repeat(9001)}`
     expect(pdfPages(new TextEncoder().encode(packed))).toBeNull()
@@ -98,6 +106,15 @@ describe('the byte bound (failure 4)', () => {
     expect(r.mustCount).toBe(true)
     expect(r.byteBound % 5000).toBe(len('{"messages":[{"role":"user","content":[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":""}}]}]}') % 5000)
     expect(Math.floor(r.byteBound / 5000)).toBe(4)
+  })
+})
+
+describe('server-side compaction (fix round 1, the high)', () => {
+  it('refuses the compaction field and any compact_* edit; keeps clear_* edits', () => {
+    expect(refused({ ...base, compaction: {} })).toBe('compaction is not allowed')
+    expect(refused({ ...base, context_management: { edits: [{ type: 'clear_thinking_20251015' }, { type: 'compact_20260112' }] } })).toBe('context_management edit compact_20260112 is not allowed')
+    expect(refused({ ...base, context_management: { edits: [{ type: 'clear_tool_uses_20250919' }] } })).toBeNull()
+    expect(refused({ ...base, context_management: { edits: 'compact' } })).not.toBeNull()
   })
 })
 

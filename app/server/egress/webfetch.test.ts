@@ -37,6 +37,7 @@ const PUBLIC_DNS: Dns = {
   'v6private.example.com': { AAAA: ['fd00:ec2::254'] },
   'mapped.example.com': { AAAA: ['::ffff:127.0.0.1'] },
   'meta.example.com': { A: ['169.254.169.254'] },
+  'dual.example.com': { A: ['93.184.216.34'], AAAA: ['fd00:ec2::254'] },
 }
 const page = (body = 'hello') => () => new Response(body, { headers: { 'content-type': 'text/html', 'set-cookie': 'tracker=1', server: 'x' } })
 
@@ -70,8 +71,8 @@ describe('an empty list: any public host (6.2, decision 20)', () => {
     expect([...res.headers]).toEqual([['content-type', 'text/html']])
     expect([...fetched[0]!.headers]).toEqual([['accept', 'text/html']])
   })
-  it('refuses a private answer, one private answer among public ones, IPv6 unique-local, mapped and metadata', async () => {
-    for (const host of ['sneaky.example.com', 'v6private.example.com', 'mapped.example.com', 'meta.example.com', 'missing.example.com']) {
+  it('refuses a private answer, one private answer among public ones, a public A with a private AAAA, IPv6 unique-local, mapped and metadata', async () => {
+    for (const host of ['dual.example.com', 'sneaky.example.com', 'v6private.example.com', 'mapped.example.com', 'meta.example.com', 'missing.example.com']) {
       const { res, fetched } = await run(`https://${host}/x`)
       expect(res.status, host).toBe(403)
       expect(fetched, host).toEqual([])

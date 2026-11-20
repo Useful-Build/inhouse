@@ -34,7 +34,7 @@ const tallyOf = (text: string, splitAt: number[] = []) => {
 
 describe('literal priced vectors (failures 1-3)', () => {
   it('a JSON response: Sonnet 5.5, 1,000 in and 500 out = $0.002 + $0.005', () => {
-    const u = usageOfMessage({ type: 'message', usage: { input_tokens: 1000, output_tokens: 500 } })
+    const u = usageOfMessage({ type: 'message', usage: { input_tokens: 1000, output_tokens: 500 } })!
     expect(priceUsage(SONNET, STANDARD, u)).toBe(7_000)
   })
 
@@ -61,18 +61,18 @@ describe('literal priced vectors (failures 1-3)', () => {
   })
 
   it('1-hour cache writes at the 1-hour rate: Sonnet 5.5, 50,000 written for 1 h', () => {
-    const u = usageOfMessage({ usage: { input_tokens: 100, output_tokens: 200, cache_creation_input_tokens: 50000, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 50000 } } })
+    const u = usageOfMessage({ usage: { input_tokens: 100, output_tokens: 200, cache_creation_input_tokens: 50000, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 50000 } } })!
     // 100 × $2 + 50,000 × $4 + 200 × $10 per MTok.
     expect(priceUsage(SONNET, STANDARD, u)).toBe(202_200)
   })
 
   it('cache writes with no split are priced at the 1-hour rate (never under-priced)', () => {
-    const u = usageOfMessage({ usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 1000 } })
+    const u = usageOfMessage({ usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 1000 } })!
     expect(priceUsage(SONNET, STANDARD, u)).toBe(4_000)
   })
 
   it('a web search call: two searches at $10 per 1,000 on top of the tokens', () => {
-    const u = usageOfMessage({ usage: { input_tokens: 12000, output_tokens: 800, server_tool_use: { web_search_requests: 2 } } })
+    const u = usageOfMessage({ usage: { input_tokens: 12000, output_tokens: 800, server_tool_use: { web_search_requests: 2 } } })!
     // 12,000 × $2 + 800 × $10 per MTok + 2 × $0.01.
     expect(priceUsage(SONNET, STANDARD, u)).toBe(52_000)
   })

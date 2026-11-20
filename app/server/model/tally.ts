@@ -37,6 +37,22 @@ function take(into: Fields, usage: unknown): void {
   }
   const st = u.server_tool_use as Record<string, unknown> | null | undefined
   if (typeof st === 'object' && st !== null) set('web_search_requests', st.web_search_requests)
+  // Defence for server-side compaction (refused at the gate): the top-level counts leave a compaction iteration out, so
+  // when `iterations` is there each token field is its sum over the iterations (or the top-level value, if higher).
+  // Compaction docs (read 2026-11-20): "sum across all entries in the usage.iterations array".
+  const iterations: unknown = u.iterations
+  if (Array.isArray(iterations)) {
+    const sum = (pick: (it: Record<string, unknown>) => unknown) =>
+      iterations.reduce((acc: number, it: unknown) => acc + (typeof it === 'object' && it !== null ? (count(pick(it as Record<string, unknown>)) ?? 0) : 0), 0)
+    const cc = (it: Record<string, unknown>) => (typeof it.cache_creation === 'object' && it.cache_creation !== null ? it.cache_creation as Record<string, unknown> : {})
+    const atLeast = (k: keyof Fields, v: number) => void (into[k] = Math.max(into[k] ?? 0, v))
+    atLeast('input_tokens', sum(it => it.input_tokens))
+    atLeast('output_tokens', sum(it => it.output_tokens))
+    atLeast('cache_creation_input_tokens', sum(it => it.cache_creation_input_tokens))
+    atLeast('cache_read_input_tokens', sum(it => it.cache_read_input_tokens))
+    atLeast('ephemeral_5m_input_tokens', sum(it => cc(it).ephemeral_5m_input_tokens))
+    atLeast('ephemeral_1h_input_tokens', sum(it => cc(it).ephemeral_1h_input_tokens))
+  }
 }
 
 /**
@@ -57,10 +73,14 @@ function toUsage(f: Fields): TokenUsage {
   }
 }
 
-/** A whole JSON response's usage (a `message` object). */
-export function usageOfMessage(body: unknown): TokenUsage {
+const isUsage = (u: unknown) => typeof u === 'object' && u !== null && !Array.isArray(u)
+
+/** A whole JSON response's usage (a `message` object), or null when it carries none (the caller prices it as cut). */
+export function usageOfMessage(body: unknown): TokenUsage | null {
+  const usage = typeof body === 'object' && body !== null ? (body as { usage?: unknown }).usage : undefined
+  if (!isUsage(usage)) return null
   const f: Fields = {}
-  if (typeof body === 'object' && body !== null) take(f, (body as { usage?: unknown }).usage)
+  take(f, usage)
   return toUsage(f)
 }
 
@@ -71,6 +91,8 @@ export interface SseTally {
   usage(): TokenUsage
   /** True once `message_stop` arrived: the final `message_delta` (and its output count) came before it. */
   readonly complete: boolean
+  /** True once any event carried a usage object (a stream that never did is priced as cut). */
+  readonly sawUsage: boolean
 }
 
 /** A tally over a Messages API event stream (`text/event-stream`). */
@@ -79,6 +101,7 @@ export function createSseTally(): SseTally {
   const fields: Fields = {}
   let buffer = ''
   let complete = false
+  let sawUsage = false
 
   const onEvent = (block: string) => {
     const data = block.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n')
@@ -89,9 +112,13 @@ export function createSseTally(): SseTally {
     } catch {
       return
     }
-    if (event.type === 'message_start') take(fields, event.message?.usage)
-    else if (event.type === 'message_delta') take(fields, event.usage)
-    else if (event.type === 'message_stop') complete = true
+    const usage = event.type === 'message_start' ? event.message?.usage : event.type === 'message_delta' ? event.usage : undefined
+    if (isUsage(usage)) {
+      sawUsage = true
+      take(fields, usage)
+    }
+    if (event.type === 'message_start' || event.type === 'message_delta') return
+    if (event.type === 'message_stop') complete = true
     else if (event.type === 'error') complete = false
   }
 
@@ -108,6 +135,9 @@ export function createSseTally(): SseTally {
     usage: () => toUsage(fields),
     get complete() {
       return complete
+    },
+    get sawUsage() {
+      return sawUsage
     },
   }
 }
