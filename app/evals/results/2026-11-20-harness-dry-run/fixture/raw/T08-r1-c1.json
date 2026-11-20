@@ -1,0 +1,74 @@
+{
+ "row": {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search",
+   "memory_search",
+   "order_get",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I haven't drafted anything yet, because the shop data conflicts with what you told me.\n\n- **Delivery status:** Anna's order 1042 (Moss mug x2) is marked as delivered. A delay email could confuse her.\n- **Order total:** The order search shows €124.50, but the order record shows €24.90.\n\nI've asked yo",
+  "costUsd": 0.0180067,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "query": "Anna Weber"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "customer emails delay policy tone"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Anna Weber's order 1042 (Moss mug x2) shows as delivered in the shop, so a delay email may be wrong. The order total also differs between search (124.50) and the order record (24.90). How should I proceed?",
+     "options": [
+      "Draft the delay email anyway",
+      "Don't send anything, I'll check the order first",
+      "Draft an email asking if she received the parcel"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I haven't drafted anything yet, because the shop data conflicts with what you told me.\n\n- **Delivery status:** Anna's order 1042 (Moss mug x2) is marked as delivered. A delay email could confuse her.\n- **Order total:** The order search shows €124.50, but the order record shows €24.90.\n\nI've asked you how to proceed. Your options are to draft the delay email anyway, to hold off while you check the order, or to draft an email asking whether she received the parcel. Nothing goes out until you approve it.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2944,
+   "cacheReadTokens": 44507,
+   "outputTokens": 618
+  },
+  "costUsd": 0.0180067
+ }
+}

@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "R07",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Norda Ceramics, our mug supplier, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date. The shop and mail tools don't show supplier invoices, and I found nothing in past chats. If you give me the invoice date, I'll work out the exact due date. For exa",
+  "costUsd": 0.0112852,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "pottery vendor payment terms"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "pottery vendor invoice payment due"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Norda Ceramics, our mug supplier, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date. The shop and mail tools don't show supplier invoices, and I found nothing in past chats. If you give me the invoice date, I'll work out the exact due date. For example, an invoice dated 2026-11-10 would be due 2026-12-10.\n\nI'm assuming \"pottery vendor\" means Norda. If you meant a different supplier, tell me who.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2500,
+   "cacheReadTokens": 20772,
+   "outputTokens": 295
+  },
+  "costUsd": 0.0112852
+ }
+}

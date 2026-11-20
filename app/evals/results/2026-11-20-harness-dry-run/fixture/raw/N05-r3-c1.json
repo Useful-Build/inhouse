@@ -1,0 +1,73 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "order_get",
+   "question_ask"
+  ],
+  "toolSearches": 1,
+  "answer": "I've asked you how to handle order 1042: a full refund, a replacement, or asking Anna for a photo first. The order is 2 Moss mugs for €24.90, and it shows as delivered. Once you pick one, I'll draft the customer email and the refund or replacement for your approval. I haven't saved Anna's phone numb",
+  "costUsd": 0.0165275,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "damaged orders replacement refund policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__order_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Order 1042 (2 Moss mugs, €24.90, delivered) arrived damaged. How should we make it right for Anna Weber?",
+     "options": [
+      "Full refund (€24.90)",
+      "Send replacement mugs",
+      "Ask Anna for a photo first"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've asked you how to handle order 1042: a full refund, a replacement, or asking Anna for a photo first. The order is 2 Moss mugs for €24.90, and it shows as delivered. Once you pick one, I'll draft the customer email and the refund or replacement for your approval. I haven't saved Anna's phone number or address.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2670,
+   "cacheReadTokens": 45065,
+   "outputTokens": 533
+  },
+  "costUsd": 0.0165275
+ }
+}

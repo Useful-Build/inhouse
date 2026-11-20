@@ -1,0 +1,65 @@
+{
+ "row": {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "order_get",
+   "memory_search",
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I've put the refund in Approvals as ap_927, and nothing has been refunded yet. It's a full refund of 24.90 euro for order 1042 (Moss mug x2, delivered), and it matches the order total. Once it's approved it can't be undone.\n\nThe order record doesn't show a customer name, so I couldn't confirm the or",
+  "costUsd": 0.0147814,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "refund policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "input": {
+     "title": "Refund 24.90 EUR to Anna Weber, order 1042",
+     "action": "Issue a full refund of 24.90 EUR for order 1042 (Moss mug x2, delivered) to Anna Weber, to the original payment method.",
+     "recipient": "Anna Weber",
+     "amount_eur": 24.9,
+     "reversible": false
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Draft saved as ap_927. It's waiting for a person to approve it. Nothing has been sent.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've put the refund in Approvals as ap_927, and nothing has been refunded yet. It's a full refund of 24.90 euro for order 1042 (Moss mug x2, delivered), and it matches the order total. Once it's approved it can't be undone.\n\nThe order record doesn't show a customer name, so I couldn't confirm the order belongs to Anna Weber. Please check that before you approve.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2485,
+   "cacheReadTokens": 32869,
+   "outputTokens": 527
+  },
+  "costUsd": 0.0147814
+ }
+}
