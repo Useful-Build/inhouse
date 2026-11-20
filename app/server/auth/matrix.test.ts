@@ -37,6 +37,10 @@ describe('every CanKey maps to exactly one row', () => {
   it('fails on a missing row', () => {
     expect(canRowsProblems(rows.filter(r => r.pattern !== '/api/grants'), canRows)).toEqual(['grantSupport → POST /api/grants matches 0 rows'])
   })
+  it('fails on a method mismatch', () => {
+    const wrong: CanRows = { ...canRows, editTechnical: { method: 'GET', pattern: '/api/settings/technical/:key' } }
+    expect(canRowsProblems(rows, wrong)).toEqual(['editTechnical → GET /api/settings/technical/:key matches 0 rows'])
+  })
   it('fails on a doubled row', () => {
     expect(canRowsProblems([...rows, rows[0]], canRows)).toEqual(['invite → POST /api/members/invites matches 2 rows'])
   })

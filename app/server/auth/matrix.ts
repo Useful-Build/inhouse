@@ -51,8 +51,9 @@ export type ForbiddenReason = 'grant_required' | 'admin_read_only' | 'not_owner'
  *   the decision before the handler runs (never re-derives it).
  * - `objectCheck: 'required'`: the row's rule needs the object (a `personal` row, an Admin on an `adminWrite` row) and
  *   none was given; api.ts hands the handler `requireObject` and records each call's outcome: any refusal answers 403
- *   whatever the handler returned (a swallowed `AccessRefused` can't write anyway), and a 2xx needs at least one
- *   passing call (none: 500 and one log line).
+ *   whatever the handler returned, and a 2xx needs at least one passing call (none: 500 and one log line). The 403
+ *   only fixes the answer: it can't undo a write the handler committed after swallowing a refusal, so a handler must
+ *   never catch `AccessRefused`.
  */
 export type AccessDecision =
   | { ok: true; audit?: 'support.access'; objectCheck?: 'required' }
