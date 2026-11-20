@@ -1,6 +1,10 @@
-// The production wiring of the guards seam. The real implementations are R2's (src/guards/). Until they exist this
-// refuses, so a production runner can't start without its guards. `requireProduction` also refuses any implementation
-// not marked production, so the test implementation (test/run/support/) can never be wired in here.
+// The production wiring of the guards seam: R2's implementations (src/guards/). `requireProduction` refuses any
+// implementation not marked production, so the test implementation (test/run/support/) can never be wired in here.
+import { readFileSync } from 'node:fs'
+import { createSessionHost, parkAllFolders, type HostDeps } from '../guards/host.ts'
+import { createQueryGuards } from '../guards/options.ts'
+import { createSessionPool, readPool, type PoolUser } from '../guards/users.ts'
+import { hostAddresses } from '../proxy/proc-net.ts'
 import type { QueryGuards, SessionUsers } from '../session/seam.ts'
 
 export class GuardsMissingError extends Error {}
@@ -11,12 +15,26 @@ export function requireProduction<T extends { kind: string }>(impl: T | undefine
   return impl
 }
 
-/** The root's seam: one OS user per session. R2 replaces `undefined` with the real `SessionUsers`. */
-export function productionSessionUsers(): SessionUsers {
-  return requireProduction<SessionUsers>(undefined, 'SessionUsers')
+/** The production host's deps: the pool's uids and nothing else, so every OS step is the real one. */
+export function productionHostDeps(pool: readonly PoolUser[]): HostDeps {
+  return { poolUids: new Set(pool.map((u) => u.uid)) }
 }
 
-/** The session process's seam: the guards around `query()`. R2 replaces `undefined` with the real `QueryGuards`. */
+/**
+ * The root's seam: one OS user per session, from the image's pool. Every folder a run before a restart left is parked
+ * first. Throws (the root doesn't start) on a broken pool or a work root someone else wrote in.
+ */
+export function productionSessionUsers(): SessionUsers {
+  const pool = readPool(readFileSync('/etc/passwd', 'utf8'))
+  parkAllFolders()
+  const host = createSessionHost(productionHostDeps(pool))
+  return requireProduction<SessionUsers>(createSessionPool(pool, host), 'SessionUsers')
+}
+
+/**
+ * The session process's seam: the guards around `query()`. The audit hook records each tool call through the run's own
+ * transport (`RunContext.audit`, R1's channel to the root), and the call is blocked unless the root acked it.
+ */
 export function productionQueryGuards(): QueryGuards {
-  return requireProduction<QueryGuards>(undefined, 'QueryGuards')
+  return requireProduction<QueryGuards>(createQueryGuards({ hostAddresses }), 'QueryGuards')
 }

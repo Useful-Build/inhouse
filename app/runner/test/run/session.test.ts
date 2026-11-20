@@ -5,6 +5,8 @@
 // - an interrupt that falls back to abort is reported as an SDK error;
 // - a run ends twice, or not at all, when the query throws, is stopped, or the root sends garbage;
 // - sessionEnv() grows a variable that isn't on its list (where a token could hide);
+// - the session process keeps the inherited umask (022), so what it writes in /tmp is readable by other sessions;
+// - production can start unguarded: no guards, injected host deps, or an audit hook that lets a call through.
 // - a subagent's tool call counts against the main turn's lone deferred call, or a deferral whose id isn't the turn's
 //   one call is taken;
 // - after a stop, a slow files save runs out the root's grace before the checkpoint (the run loses it, its cost and a
@@ -27,7 +29,12 @@ import { AUDIT_ACK_MARGIN_MS, LEFT_OUT_NOTE_MAX_CHARS, SDK_MESSAGE_MAX_DEPTH, le
 import { monotonicMs, parseSessionMessage } from '../../src/protocol/local.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards, RunContext } from '../../src/session/seam.ts'
-import { GuardsMissingError, productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
+import { AuditRefusedError } from '../../src/guards/audit.ts'
+import { sessionPaths } from '../../src/guards/paths.ts'
+import { poolUserName } from '../../src/guards/users.ts'
+import { RunConfig } from '../../src/protocol/local.ts'
+import { baseOptions, cliEnv } from '../../src/session/core.ts'
+import { GuardsMissingError, productionHostDeps, productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
 import { runStart } from './support/root-client.ts'
 import { PROXY_URL, fakeEgress, type FakeEgress } from './support/fake-egress.ts'
 import { gate, testQueryGuards, testSessionUsers } from './support/test-seams.ts'
@@ -721,7 +728,7 @@ describe('sessionEnv', () => {
     const env = sessionEnv(u, port)
     expect(Object.keys(env).sort()).toEqual(
       [
-        'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'INHOUSE_PROXY_URL',
+        'PATH', 'HOME', 'TMPDIR', 'USER', 'LOGNAME', 'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'INHOUSE_PROXY_URL',
         'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER',
       ].sort(),
     )
@@ -731,13 +738,15 @@ describe('sessionEnv', () => {
 })
 
 describe('the production wiring', () => {
-  it('refuses to start without the real guards', () => {
-    expect(() => productionSessionUsers()).toThrow(GuardsMissingError)
-    expect(() => productionQueryGuards()).toThrow(GuardsMissingError)
+  // R2 wired the real guards: the session's guards are production ones, and the root refuses to start on a host whose
+  // /etc/passwd lacks the image's session user pool (any test host).
+  it('wires the real guards, and the root refuses a host without the session user pool', () => {
+    expect(productionQueryGuards().kind).toBe('production')
+    expect(() => productionSessionUsers()).toThrow(/pool user s00 is missing/)
   })
 
   // The bundle the image runs, built by the package's own build script into a temp folder.
-  it('the bundled root and session entries refuse to start without the guards, and zod is bundled as ESM', () => {
+  it('the bundled root refuses to start without the session user pool, the session entry gets past its guards, and zod is bundled as ESM', () => {
     const runner = fileURLToPath(new URL('../../', import.meta.url))
     const pkg = JSON.parse(readFileSync(join(runner, 'package.json'), 'utf8')) as { scripts: { build: string } }
     const [bin, ...args] = pkg.scripts.build.split(' ')
@@ -754,14 +763,74 @@ describe('the production wiring', () => {
       expect(zod.filter((i) => i.endsWith('.cjs'))).toEqual([])
       expect(inputs.some((i) => i.includes('claude-agent-sdk'))).toBe(false)
 
-      for (const entry of ['main.mjs', 'session/main.mjs']) {
-        const run = spawnSync(process.execPath, [join(out, entry)], { env: { PATH: process.env.PATH, EGRESS_URL: 'http://127.0.0.1:9' }, encoding: 'utf8', timeout: 30_000 })
-        expect(run.status, entry).not.toBe(0)
-        expect(run.stderr, entry).toMatch(/refusing to start without the guards/)
-      }
+      // Reports the umask the process ends with, however it ends.
+      const preload = join(out, 'umask.cjs')
+      writeFileSync(preload, "process.on('exit', () => process.stderr.write('umask=' + process.umask().toString(8) + '\\n'))")
+      const start = (entry: string) =>
+        spawnSync(process.execPath, ['--require', preload, join(out, entry)], {
+          env: { PATH: process.env.PATH, EGRESS_URL: 'http://127.0.0.1:9' },
+          encoding: 'utf8',
+          timeout: 30_000,
+        })
+      const root = start('main.mjs')
+      expect(root.status).not.toBe(0)
+      expect(root.stderr).toMatch(/pool user s00 is missing/)
+      // Outside the package the SDK can't load: the session ends there, after its guards were built.
+      const session = start('session/main.mjs')
+      expect(session.status).not.toBe(0)
+      expect(session.stderr).not.toMatch(/refusing to start without the guards/)
+      expect(session.stderr).toMatch(/claude-agent-sdk/)
+      // The session entry sets umask 077 first thing: what it (and the CLI and Bash under it) writes is its own.
+      expect(session.stderr).toMatch(/^umask=77$/m)
     } finally {
       rmSync(out, { recursive: true, force: true })
     }
+  })
+
+  it('production cannot run a tool call unrecorded (blocked on the transport\'s nack), takes no injected host deps, and refuses a missing guard', async () => {
+    const config = RunConfig.parse({
+      runId: 'r1', chatId: 'chat1', sessionId: '00000000-0000-4000-8000-000000000000', resume: false, prompt: 'hi',
+      model: 'claude-sonnet-5-5', effort: 'low', maxTurns: 1, maxBudgetUsd: 1, webFetchDomains: [],
+      fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 0, allowedTypes: [] },
+    })
+    // The run's real audit transport (R1's, src/session/core.ts), on a channel this test answers for the root.
+    let run: RunContext | undefined
+    const q = fakeQuery([assistant], { holdUntilInterrupt: true })
+    const h = harness(q.query, { kind: 'test', apply: (o, _c, r) => ((run = r), o) })
+    h.deliver({ type: 'run', config: config })
+    await waitForTicks(() => run !== undefined)
+
+    const p = sessionPaths(config.chatId)
+    const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: p.home, workDir: p.workDir }, 8081)
+    const o = productionQueryGuards().apply(baseOptions(config, p.workDir, cliEnv(env), new AbortController()), config, run!)
+    const audit = o.hooks!.PreToolUse!.filter((m) => m.matcher === undefined)
+    expect(audit).toHaveLength(1)
+    const m = audit[0]!
+    expect(m.onFailure).toBe('block')
+    const call = (id: string) =>
+      m.hooks[0]!({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: id, session_id: 's', transcript_path: '', cwd: p.workDir } as never, id, {
+        signal: new AbortController().signal,
+      })
+    const sentAudits = () => h.sent.filter((x) => x.type === 'audit')
+
+    // The root nacks: the call is blocked.
+    const refused = call('u1')
+    await waitForTicks(() => sentAudits().length === 1)
+    expect(sentAudits()[0]).toMatchObject({ type: 'audit', id: 0, entry: { hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', input: { cut: false, value: { command: 'ls' } } } })
+    h.deliver({ type: 'audit_nack', id: 0, error: 'the Worker has gone' })
+    await expect(refused).rejects.toThrow(AuditRefusedError)
+    await expect(refused).rejects.toThrow(/the Worker has gone/)
+    // The root acks: only then does the call go.
+    const allowed = call('u2')
+    await waitForTicks(() => sentAudits().length === 2)
+    h.deliver({ type: 'audit_ack', id: 1 })
+    await expect(allowed).resolves.toEqual({})
+    q.release()
+    await h.done
+
+    const pool = Array.from({ length: 2 }, (_, i) => ({ user: poolUserName(i), uid: 30000 + i, gid: 30000 + i }))
+    expect(Object.keys(productionHostDeps(pool))).toEqual(['poolUids'])
+    expect(() => requireProduction(undefined, 'QueryGuards')).toThrow(GuardsMissingError)
   })
 
   it('refuses the test implementation even when it is handed over', () => {

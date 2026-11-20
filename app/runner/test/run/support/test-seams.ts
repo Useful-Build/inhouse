@@ -30,6 +30,7 @@ export function testSessionUsers(opts: TestUsersOpts = {}): TestUsers {
   const released: string[] = []
   return {
     kind: 'test',
+    quarantined: () => 0,
     dirs,
     uids,
     allocated,

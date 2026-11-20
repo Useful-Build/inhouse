@@ -7,6 +7,7 @@
 // - an oversized SDK message is passed through whole;
 // - a stop never ends a session that ignores it;
 // - a run raced by a stop or a crash ends twice, or with a seq gap;
+// - /health doesn't show how many session users the guards took out of the pool (a draining pool goes unseen).
 // - after a timeout ends the stream, the session's files pass still uploads files the stream never names.
 import type { ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -14,9 +15,9 @@ import http from 'node:http'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
-import { ACCEPTED_VERSIONS, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
+import { ACCEPTED_VERSIONS, Health, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
 import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
-import { spawnFixture } from './support/test-seams.ts'
+import { spawnFixture, testSessionUsers } from './support/test-seams.ts'
 import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
 import { API_MAX_CONNECTIONS } from '../../src/server/app.ts'
 import { stopEndWithinMs } from '../../src/server/session-host.ts'
@@ -42,6 +43,21 @@ async function stillServes() {
   expect(res.status).toBe(200)
   expect(((await res.json()) as { ok: boolean }).ok).toBe(true)
 }
+
+describe('health', () => {
+  it("shows the guards' count of quarantined session users, as it stands at each call", async () => {
+    let quarantined = 0
+    const counting = await startTestRoot(spawnFixture('fake-session.ts'), { users: { ...testSessionUsers(), quarantined: () => quarantined } })
+    try {
+      const health = async () => Health.parse(await (await fetch(`${counting.url}/health`)).json())
+      expect((await health()).quarantinedUsers).toBe(0)
+      quarantined = 3
+      expect(await health()).toMatchObject({ ok: true, quarantinedUsers: 3 })
+    } finally {
+      await counting.close()
+    }
+  })
+})
 
 describe('a session that misbehaves', () => {
   it.each([

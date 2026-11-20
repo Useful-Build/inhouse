@@ -4,12 +4,14 @@
 // - a version outside ACCEPTED_VERSIONS is accepted, or a non-canonical spelling (`01`) of one is;
 // - an empty prompt passes without resume; the body cap can't hold a RunStart at its field caps;
 // - a deferred input or a usage over its cap passes;
-// - negotiation picks a version one side doesn't speak.
+// - negotiation picks a version one side doesn't speak;
+// - /health from a runner that doesn't count quarantined users yet fails the parse, or a bad count passes.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import {
   ACCEPTED_VERSIONS,
   DEFERRED_INPUT_MAX_BYTES,
+  Health,
   PROMPT_MAX_CHARS,
   PROTOCOL_VERSION,
   RUN_START_MAX_BYTES,
@@ -51,7 +53,8 @@ const runStartArb: fc.Arbitrary<RunStart> = fc
 const reason = fc.constantFrom('session_crashed', 'protocol', 'store', 'files', 'interrupted', 'stopped', 'timeout', 'sdk_error' as const)
 const bodyArb: fc.Arbitrary<RunEventBody> = fc.oneof(
   fc.record({ type: fc.constant('started' as const), sessionId: fc.uuid({ version: 4 }), resume: fc.boolean() }),
-  fc.record({ type: fc.constant('sdk' as const), message: fc.dictionary(fc.string(), fc.jsonValue()), truncated: fc.boolean() }),
+  // z.record drops an own `__proto__` key (safe, and intended), so the round trip leaves it out of the generators.
+  fc.record({ type: fc.constant('sdk' as const), message: fc.dictionary(fc.string().filter((k) => k !== '__proto__'), fc.jsonValue()), truncated: fc.boolean() }),
   fc.record({ type: fc.constant('file_saved' as const), path: fc.string({ maxLength: 50 }), bytes: fc.nat(), contentType: fc.constant('application/pdf') }),
   fc.record({ type: fc.constant('file_refused' as const), path: fc.string({ maxLength: 50 }), reason: fc.constantFrom('too_large', 'too_many', 'type_not_allowed', 'save_failed', 'bad_name' as const) }),
   fc.record({ type: fc.constant('files_restored' as const), restored: fc.nat(), bytes: fc.nat(), leftOut: fc.array(fc.string({ maxLength: 50 }), { maxLength: 5 }) }),
@@ -68,7 +71,7 @@ const bodyArb: fc.Arbitrary<RunEventBody> = fc.oneof(
     isError: fc.boolean(),
     numTurns: fc.nat(),
     costUsd: fc.double({ min: 0, max: 100, noNaN: true }),
-    usage: fc.dictionary(fc.string(), fc.nat()),
+    usage: fc.dictionary(fc.string().filter((k) => k !== '__proto__'), fc.nat()),
   }),
   fc.record({ type: fc.constant('failed' as const), reason, message: fc.string({ maxLength: 100 }) }),
 )
@@ -181,6 +184,21 @@ describe('versions', () => {
       expect(v).toBe(shared.length ? Math.max(...shared) : null)
     },
   )
+})
+
+describe('health', () => {
+  const memory = { totalBytes: null, availableBytes: 1, rssBytes: 1, heapUsedBytes: 1 }
+  const health = { ok: true, protocol: PROTOCOL_VERSION, live: 0, memory }
+
+  it("an older runner's answer, without the quarantined count, still parses; with it, the count comes through", () => {
+    expect(Health.parse(health).quarantinedUsers).toBeUndefined()
+    expect(Health.parse({ ...health, quarantinedUsers: 3 }).quarantinedUsers).toBe(3)
+  })
+
+  it('refuses a count that is not a whole number from 0 up, and an unknown field', () => {
+    for (const bad of [-1, 1.5, '3', null]) expect(Health.safeParse({ ...health, quarantinedUsers: bad }).success, String(bad)).toBe(false)
+    expect(Health.safeParse({ ...health, quarantined: 1 }).success).toBe(false)
+  })
 })
 
 describe('caps on the open shapes', () => {
