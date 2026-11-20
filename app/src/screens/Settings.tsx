@@ -3,7 +3,6 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 import { agent, demo } from '../agent'
-import { STAGES } from '../agent/types'
 import type { SupportGrant } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
@@ -234,8 +233,7 @@ export function Settings() {
   const { S, agent: st, data } = ctx
   const { usage } = data
   const ui = useUi()
-  const { setTab, phone } = ui
-  const stage = STAGES[S]
+  const { setTab, phone, stage } = ui
   const me = useSyncExternalStore(agent.subscribe, agent.me)
   const [inviting, setInviting] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
