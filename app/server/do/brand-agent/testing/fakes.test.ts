@@ -23,11 +23,12 @@ describe('FakeUsageLedger (failure 1)', () => {
   })
   it('a refused extend may be tried again, and is granted once there is room', async () => {
     const usage = new FakeUsageLedger()
+    await usage.reserve({ turnId: 't', runId: 'r', chatId: 'c', memberId: 'm_a', model: 'x', nowMs: 0 })
     usage.extendRefusal = 'held'
-    expect(await usage.extend('t', 'call-1', 100)).toEqual({ refused: 'held', ledgerHold: 0 })
+    expect(await usage.extend('t', 'call-1', 100)).toEqual({ refused: 'held', ledgerHold: 250_000 })
     usage.extendRefusal = null
-    expect(await usage.extend('t', 'call-1', 100)).toEqual({ ok: true, ledgerHold: 100 })
-    expect(await usage.extend('t', 'call-1', 100)).toEqual({ ok: true, ledgerHold: 100 })
+    expect(await usage.extend('t', 'call-1', 100)).toEqual({ ok: true, ledgerHold: 250_100 })
+    expect(await usage.extend('t', 'call-1', 100)).toEqual({ ok: true, ledgerHold: 250_100 })
   })
   // PR 2b: the fake now keeps W4's rules (a close only lowers the hold, once per call; a final turn answers 0).
   it('a close only lowers the hold, once per call; after settle or release it changes nothing', async () => {
