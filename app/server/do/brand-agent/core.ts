@@ -1150,17 +1150,10 @@ export class AgentCore {
   // ---------- chats: history and delete (routes 24, 27; 4.8) ----------
 
   /**
-   * The runs of these chats a reload attaches to (route 24): the live one, and every ended run with a final turn whose
-   * rows aren't in D1 yet (its events replay what the history doesn't have). In start order.
+   * The runs of these chats a reload attaches to (route 24): route 32's read narrowed to them (the live run, and every
+   * ended run with a turn whose rows aren't in D1 yet). The route has checked the reader's access to each chat.
    */
-  chatRuns(chatIds: string[]): ActiveRun[] {
-    if (chatIds.length === 0) return []
-    const rows = this.sql.exec<{ run_id: string; chat_id: string; last_seq: number; state: string }>(
-      `SELECT r.run_id, r.chat_id, r.last_seq, r.state FROM runs r WHERE r.chat_id IN (${chatIds.map(() => '?').join(', ')})
-        AND (r.state = 'live' OR EXISTS (SELECT 1 FROM turns t WHERE t.run_id = r.run_id AND t.state IN ('ended', 'cancelled') AND t.d1_flushed = 0))
-        ORDER BY r.started_at_ms, r.run_id`, ...chatIds).toArray()
-    return rows.map(r => ({ runId: r.run_id, chatId: r.chat_id, lastSeq: r.last_seq, live: r.state === 'live' }))
-  }
+  chatRuns(chatIds: string[]): ActiveRun[] { return activeRuns(this.sql, { all: true }, chatIds) }
 
   /**
    * Route 27 (4.6): the chats were deleted. They join `deleted_chats` (sends refused until a restore), their queued

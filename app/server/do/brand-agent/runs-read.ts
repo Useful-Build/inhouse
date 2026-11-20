@@ -3,8 +3,8 @@
 // a live grant; the API checks the grant before asking).
 //
 // CHOICES (the design names the sources, not the shapes):
-// - Route 32 lists live runs and ended runs with a turn not yet in D1 (`d1_flushed = 0`; PR 3 flushes them), oldest
-//   first. Until PR 3 lands every ended run counts as unflushed.
+// - Route 32 lists live runs and ended runs with a turn not yet in D1 (`d1_flushed = 0`; PR 3's projection flushes
+//   them), oldest first. Route 24's `runs` (and every chat summary's `running`) is the same read narrowed to its chats.
 // - Route 33's trace: the root (the run's or the turn's span), one `tool` step per tool call (from `turn_trace`'s step
 //   records), a `fail` step for a hook that denied a call (an `approval` step for one deferred to a person; an allowed
 //   hook adds nothing beside its step), one `model` step per model call that was granted (its grant to its close).
@@ -41,11 +41,14 @@ interface TurnRead {
 
 const inScope = (owner: string, scope: RunScope) => ('all' in scope ? scope.all === true : owner === scope.owner)
 
-export function activeRuns(sql: SqlStorage, scope: RunScope): ActiveRun[] {
+/** `chatIds`: only these chats' runs (route 24); omitted, every chat's. */
+export function activeRuns(sql: SqlStorage, scope: RunScope, chatIds?: string[]): ActiveRun[] {
+  if (chatIds?.length === 0) return []
+  const chats = chatIds === undefined ? '' : `r.chat_id IN (${chatIds.map(() => '?').join(', ')}) AND `
   const rows = sql.exec<RunRow>(
-    `SELECT * FROM runs r WHERE r.state = 'live'
-      OR EXISTS (SELECT 1 FROM turns t WHERE t.run_id = r.run_id AND t.d1_flushed = 0)
-      ORDER BY r.started_at_ms, r.rowid`).toArray()
+    `SELECT * FROM runs r WHERE ${chats}(r.state = 'live'
+      OR EXISTS (SELECT 1 FROM turns t WHERE t.run_id = r.run_id AND t.d1_flushed = 0))
+      ORDER BY r.started_at_ms, r.rowid`, ...(chatIds ?? [])).toArray()
   return rows.filter(r => inScope(r.owner_id, scope)).map(r => ({ runId: r.run_id, chatId: r.chat_id, lastSeq: r.last_seq, live: r.state === 'live' }))
 }
 
