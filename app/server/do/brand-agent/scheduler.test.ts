@@ -256,10 +256,10 @@ describe('a crash between a handler\'s success and its delete (failure 6)', () =
     }
     const h = await harness({ handlers: { a: handler }, afterHandler: () => { if (crash) { crash = false; throw new Error('crashed') } } })
     await inObject(h.stub, async () => { h.sched.schedule({ id: 'c', kind: 'a', dueAtMs: T }); await h.sched.settled() })
-    // The pass fails after the handler: the task stays, and the alarm is left at it.
+    // The pass fails after the handler: the task stays, and the alarm is left no sooner than the fallback delay.
     expect(await runDurableObjectAlarm(h.stub)).toBe(true)
     expect(await rows(h.stub)).toHaveLength(1)
-    expect(await alarmAt(h.stub)).toBe(T)
+    expect(await alarmAt(h.stub)).toBe(T + 30_000)
     // After a restart the new scheduler sets the alarm again from the table.
     const again = await h.restart({ afterHandler: undefined })
     await inObject(h.stub, () => again.syncAlarm())
@@ -411,6 +411,46 @@ describe('ensure (failure 3)', () => {
     await inObject(h.stub, async () => { h.sched.ensure({ id: 'seed', kind: 'usage-sweep', dueAtMs: T + 9 }); await h.sched.settled() })
     expect(await rows(h.stub)).toEqual([{ id: 'seed', kind: 'usage-sweep', due_at_ms: T + 9, attempts: 0, state: 'ready' }])
     expect(await alarmAt(h.stub)).toBe(T + 9)
+  })
+})
+
+describe('a pass that keeps failing (failure 4)', () => {
+  it('moves the alarm forward by the fallback delay each time, never to a past time', async () => {
+    let calls = 0
+    const h = await harness({ handlers: { a: async () => { calls++; return { done: true } } }, afterHandler: () => { throw new Error('crashed') } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'p', kind: 'a', dueAtMs: T - 1_000 }); await h.sched.settled() })
+    for (let i = 1; i <= 3; i++) {
+      expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+      expect(await alarmAt(h.stub), `pass ${i}`).toBe(h.clock.now + 30_000)
+      h.clock.now += 30_000
+    }
+    expect(calls).toBe(3)
+  })
+})
+
+describe('ensure and quarantine (failure 3)', () => {
+  it('never revives a task quarantined after 10 failures', async () => {
+    const h = await harness({ handlers: { a: async (_t, ctx) => ({ retryAtMs: ctx.nowMs, error: 'poison' }) } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'poison', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    for (let i = 0; i < 10; i++) { expect(await runDurableObjectAlarm(h.stub)).toBe(true); h.clock.now += 1 }
+    const quarantined = [{ id: 'poison', kind: 'a', due_at_ms: h.clock.now - 1, attempts: 10, state: 'quarantined' }]
+    expect(await rows(h.stub)).toEqual(quarantined)
+    await inObject(h.stub, async () => { h.sched.ensure({ id: 'poison', kind: 'a', dueAtMs: T + 99 }); await h.sched.settled() })
+    expect(await rows(h.stub)).toEqual(quarantined)
+    expect(await inObject(h.stub, () => h.sched.quarantinedCount())).toBe(1)
+    expect(await alarmAt(h.stub)).toBeNull()
+  })
+  it('revives an unknown-kind task with its attempts reset', async () => {
+    const h = await harness({ handlers: { a: async (_t, ctx) => ({ retryAtMs: ctx.nowMs, error: 'not yet' }) } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'late', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    for (let i = 0; i < 3; i++) { expect(await runDurableObjectAlarm(h.stub)).toBe(true); h.clock.now += 1 }
+    // A start without the handler (it isn't built yet): the task is quarantined as an unknown kind, attempts kept.
+    await h.restart({ handlers: {} })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    expect(await rows(h.stub)).toEqual([{ id: 'late', kind: 'a', due_at_ms: h.clock.now - 1, attempts: 3, state: 'quarantined' }])
+    const again = await h.restart({ handlers: { a: async () => ({ done: true }) } })
+    await inObject(h.stub, async () => { again.ensure({ id: 'late', kind: 'a', dueAtMs: T + 50 }); await again.settled() })
+    expect(await rows(h.stub)).toEqual([{ id: 'late', kind: 'a', due_at_ms: T + 50, attempts: 0, state: 'ready' }])
   })
 })
 

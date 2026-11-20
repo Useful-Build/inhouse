@@ -20,6 +20,14 @@ describe('FakeUsageLedger (failure 1)', () => {
     expect(await usage.extend('t', 'call-2', 50)).toEqual({ ok: true, ledgerHold: 250_150 })
     expect(usage.holds.get('t')).toBe(250_150)
   })
+  it('a refused extend may be tried again, and is granted once there is room', async () => {
+    const usage = new FakeUsageLedger()
+    usage.extendRefusal = 'held'
+    expect(await usage.extend('t', 'call-1', 100)).toEqual({ refused: 'held', ledgerHold: 0 })
+    usage.extendRefusal = null
+    expect(await usage.extend('t', 'call-1', 100)).toEqual({ ok: true, ledgerHold: 100 })
+    expect(await usage.extend('t', 'call-1', 100)).toEqual({ ok: true, ledgerHold: 100 })
+  })
   it('a close after settle or release changes nothing', async () => {
     const usage = new FakeUsageLedger()
     await usage.reserve({ turnId: 't', runId: 'r', chatId: 'c', memberId: 'm_a', model: 'x', nowMs: 0 })

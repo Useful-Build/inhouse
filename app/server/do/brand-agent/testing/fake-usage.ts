@@ -1,7 +1,7 @@
 // A fake UsageLedgerPort (p3-design section 12) until W4's real ledger lands, and the usage anchor's answer in
 // compose.ts until then. Records every call; `reserve` and `extend` answer what a test sets, and the hold it reports
-// is the sum the fake was told (no month, no cap: W4's tests own those). Like the real one, `extend` is idempotent by
-// `(turnId, callId)` (a retry answers the first answer again) and `close` is a no-op once `settle` or `release` made
+// is the sum the fake was told (no month, no cap: W4's tests own those). Like the real one, a granted `extend` is idempotent by
+// `(turnId, callId)` (a retry answers it again; a refused one may be tried again) and `close` is a no-op once `settle` or `release` made
 // the turn final.
 import type { ReserveInput, UsageLedgerPort } from '../ports.ts'
 
@@ -32,8 +32,11 @@ export class FakeUsageLedger implements UsageLedgerPort {
     const answer = this.extendRefusal
       ? { refused: this.extendRefusal, ledgerHold: hold }
       : { ok: true as const, ledgerHold: hold + needMicro }
-    if (!this.extendRefusal) this.holds.set(turnId, hold + needMicro)
-    this.extends.set(key, answer)
+    // Only a granted extend is remembered: a refused call may be extended again once a sibling closes.
+    if (!this.extendRefusal) {
+      this.holds.set(turnId, hold + needMicro)
+      this.extends.set(key, answer)
+    }
     return answer
   }
   async close(turnId: string, callId: string, actualMicro: number, holdMicro: number) {
