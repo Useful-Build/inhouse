@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have anything saved about your invoice format. Tell me what you prefer and I'll save it.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoice format"
+    },
+    "result": "No matching facts. Try other keywords, or this isn't saved."
+   }
+  ],
+  "answer": "I don't have anything saved about your invoice format. Tell me what you prefer and I'll save it.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

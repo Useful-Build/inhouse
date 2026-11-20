@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "C02",
+  "cat": "connector",
+  "pair": "order_get/orders_search",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Order 1042 is two Moss mugs, €24.90 in total. It has shipped and is marked as delivered.",
+  "costUsd": 0.0107138,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__order_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Order 1042 is two Moss mugs, €24.90 in total. It has shipped and is marked as delivered.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2249,
+   "cacheReadTokens": 32793,
+   "outputTokens": 180
+  },
+  "costUsd": 0.0107138
+ }
+}

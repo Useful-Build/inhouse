@@ -1,0 +1,30 @@
+{
+ "row": {
+  "caseId": "N01",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "You're welcome!",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [],
+  "answer": "You're welcome!",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

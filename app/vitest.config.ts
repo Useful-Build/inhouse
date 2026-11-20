@@ -49,7 +49,7 @@ export default defineConfig({
           name: 'node',
           include: [
             'src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts', 'e2e/support/**/*.test.ts',
-            'ops/**/*.test.ts', 'shared/**/*.test.ts', 'scripts/**/*.test.mjs',
+            'ops/**/*.test.ts', 'shared/**/*.test.ts', 'evals/**/*.test.ts', 'scripts/**/*.test.mjs',
           ],
           environment: 'node',
           // The contract suite's real target (src/agent/contract/targets.ts reads it with `inject`): the test build's

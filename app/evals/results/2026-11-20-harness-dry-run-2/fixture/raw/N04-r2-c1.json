@@ -1,0 +1,30 @@
+{
+ "row": {
+  "caseId": "N04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Hello Maya! Sounds like a long day. Supplier calls can drain you.\n\nIf anything from the call is worth keeping, like new terms, lead times or prices, tell me and I'll save it. I can also check stock or recent orders whenever you're ready. Otherwise, go rest.",
+  "costUsd": 0.006548099999999999,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [],
+  "answer": "Hello Maya! Sounds like a long day. Supplier calls can drain you.\n\nIf anything from the call is worth keeping, like new terms, lead times or prices, tell me and I'll save it. I can also check stock or recent orders whenever you're ready. Otherwise, go rest.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9616,
+   "outputTokens": 94
+  },
+  "costUsd": 0.006548099999999999
+ }
+}
