@@ -39,6 +39,7 @@ import {
   fact,
   runCommand,
   shellScript,
+  shq,
   startEgress,
   waitUntil,
   type Script,
@@ -134,8 +135,6 @@ async function startRoot() {
  * folder, without the root's channel, proxy and token. `root.session-starts` says which, and fails while it's direct.
  */
 let VIA: 'root' | 'direct' = 'root'
-/** The direct sessions' options: production's (`plain`), unless the sandbox step found only a test-only variant runs Bash. */
-let AGENT_VARIANT: DirectVariant = 'plain'
 
 type Run = {
   chatId: string
@@ -171,7 +170,7 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
   const token = `probe_${randomBytes(24).toString('hex')}`
   const run: Run = { chatId: opts.chatId, via: VIA, state, events: [], status: 0, body: '', token, lines: [], cleanup: '' }
   if (VIA === 'direct') {
-    const done = spawnDirect(opts.chatId, agentUser(opts.chatId), AGENT_VARIANT, { prompt: opts.prompt ?? 'Run the probe.', webFetchDomains: opts.webFetchDomains ?? [] }, state).then((d) => {
+    const done = spawnDirect(opts.chatId, agentUser(opts.chatId), 'plain', { prompt: opts.prompt ?? 'Run the probe.', webFetchDomains: opts.webFetchDomains ?? [] }, state).then((d) => {
       Object.assign(run, { status: 200, lines: d.lines, body: d.raw, cleanup: d.cleanup })
       return run
     })
@@ -260,6 +259,28 @@ function judge(group: string, real: Map<string, ShellResult>, off: Map<string, S
 const rootShell = (script: string, env: Record<string, string> = {}, cwd = '/') => runCommand('bash', ['-c', script], { cwd, env: { PATH: '/usr/local/bin:/usr/bin:/bin', ...env } }).then((r) => parseShell(r.out))
 const userShell = (u: PoolUser, script: string, cwd = '/tmp') => runCommand('bash', ['-c', script], { uid: u.uid, gid: u.gid, cwd }).then((r) => parseShell(r.out))
 
+/**
+ * `curl -sS -m <secs> <url>` without curl (the image has none): python's urllib prints the start of the body (an HTTP
+ * error's too), or one line for any other failure, so several calls fit one sub-probe's output.
+ * `env`: proxied as the environment says. urllib reads `no_proxy` as name suffixes, so an address in one of the private
+ * ranges the sandbox lists there still goes to the proxy. `direct`: never proxied (curl's `--noproxy '*'`). `proxy`:
+ * `no_proxy` dropped first, so every host goes to the proxy when one is set (curl's `--noproxy ''`).
+ */
+const GET = `import os, sys, urllib.request as u
+via, url, secs, most = sys.argv[1], sys.argv[2], float(sys.argv[3]), int(sys.argv[4])
+if via == "proxy":
+    os.environ.pop("no_proxy", None)
+    os.environ.pop("NO_PROXY", None)
+opener = u.build_opener(u.ProxyHandler({}) if via == "direct" else u.ProxyHandler())
+try:
+    r = opener.open(url, timeout=secs)
+except u.HTTPError as e:
+    r = e
+except Exception as e:
+    sys.exit("ERR " + type(e).__name__ + " " + str(e)[:80])
+print(r.read().decode(errors="replace")[:most])`
+const get = (url: string, via: 'env' | 'direct' | 'proxy' = 'env', secs = 8, most = 120) => `python3 -c ${shq(GET)} ${via} ${shq(url)} ${secs} ${most}`
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Probes
 
@@ -295,17 +316,23 @@ async function probeSharedWritable() {
 
 async function probeEgress() {
   const probes: ShellProbe[] = [
-    { name: 'allowlisted-name-to-private-address', cmd: `curl -sS -m 8 http://${NAMES.gw}:${GW_PORT}/probe.txt` },
-    { name: 'unlisted-public-name', cmd: 'curl -sS -m 8 http://example.com/' },
-    { name: 'ip-literal', cmd: `curl -sS -m 8 ${GW_URL}` },
-    { name: 'no-proxy', cmd: `curl -sS -m 8 --noproxy '*' ${GW_URL}` },
+    { name: 'allowlisted-name-to-private-address', cmd: get(`http://${NAMES.gw}:${GW_PORT}/probe.txt`) },
+    { name: 'unlisted-public-name', cmd: get('http://example.com/', 'env', 8, 400) },
+    { name: 'ip-literal', cmd: `${get(GW_URL)}; ${get(GW_URL, 'proxy')}` },
+    { name: 'no-proxy', cmd: get(GW_URL, 'direct') },
     { name: 'dev-tcp', cmd: `exec 3<>/dev/tcp/${GW}/${GW_PORT} && printf 'GET /probe.txt HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3` },
     { name: 'python', cmd: `python3 -c 'import urllib.request;print(urllib.request.urlopen("${GW_URL}",timeout=8).read().decode())'` },
-    { name: 'own-name-root-api', cmd: `curl -sS -m 8 http://${NAMES.own}:8080/health` },
-    { name: 'own-address-root-api', cmd: `curl -sS -m 8 http://${OWN}:8080/health; curl -sS -m 8 --noproxy '*' http://${OWN}:8080/health` },
-    { name: 'loopback-root-api', cmd: `curl -sS -m 8 http://127.0.0.1:8080/health; curl -sS -m 8 --noproxy '*' http://127.0.0.1:8080/health; curl -sS -m 8 http://localhost:8080/health; curl -sS -m 8 http://${NAMES.loop}:8080/health` },
-    { name: 'root-proxy-8081', cmd: `curl -sS -m 8 http://127.0.0.1:8081/nope; curl -sS -m 8 --noproxy '*' http://127.0.0.1:8081/nope; curl -sS -m 8 http://${NAMES.loop}:8081/nope; curl -sS -m 8 http://${OWN}:8081/nope` },
-    { name: 'metadata', cmd: `curl -sS -m 5 http://169.254.169.254/; curl -sS -m 5 http://${NAMES.meta}/` },
+    { name: 'own-name-root-api', cmd: get(`http://${NAMES.own}:8080/health`) },
+    { name: 'own-address-root-api', cmd: `${get(`http://${OWN}:8080/health`, 'proxy')}; ${get(`http://${OWN}:8080/health`, 'direct')}` },
+    {
+      name: 'loopback-root-api',
+      cmd: [get('http://127.0.0.1:8080/health', 'proxy'), get('http://127.0.0.1:8080/health', 'direct'), get('http://localhost:8080/health', 'proxy'), get(`http://${NAMES.loop}:8080/health`)].join('; '),
+    },
+    {
+      name: 'root-proxy-8081',
+      cmd: [get('http://127.0.0.1:8081/nope', 'proxy'), get('http://127.0.0.1:8081/nope', 'direct'), get(`http://${NAMES.loop}:8081/nope`), get(`http://${OWN}:8081/nope`, 'proxy')].join('; '),
+    },
+    { name: 'metadata', cmd: `${get('http://169.254.169.254/', 'proxy', 4)}; ${get(`http://${NAMES.meta}/`, 'env', 4)}` },
     { name: 'proxy-env', cmd: `env | grep -i proxy | sed 's/=.*//' | sort | tr '\\n' ' '` },
   ]
   const script = shellScript(probes)
@@ -385,15 +412,21 @@ async function probeClaudeDir() {
   ]
   const script = shellScript(probes)
   const wd = sessionPaths('p-claude').workDir
+  // Twice: as written, where the permission rules read the paths and refuse the call before it runs, and encoded, as a
+  // script that hides them would arrive: then only the sandbox and the folder's owners stand in the way.
+  const encoded = `echo ${Buffer.from(script).toString('base64')} | base64 -d | bash`
   const { done } = startRun({
     chatId: 'p-claude',
     script: {
-      steps: [bash(script), () => ({ tool: 'Write', input: { file_path: `${wd}/.claude/settings.json`, content: '{"x":1}' } }), () => ({ tool: 'Write', input: { file_path: `${wd}/.mcp.json`, content: '{"x":1}' } })],
+      steps: [bash(script), bash(encoded), () => ({ tool: 'Write', input: { file_path: `${wd}/.claude/settings.json`, content: '{"x":1}' } }), () => ({ tool: 'Write', input: { file_path: `${wd}/.mcp.json`, content: '{"x":1}' } })],
     },
   })
   const r = await done
-  checkRun('claude-dir', r, [0])
-  fact('claude-dir.write-tool', `${result(r, 1)?.text.slice(0, 200)} | ${result(r, 2)?.text.slice(0, 200)}`)
+  checkRun('claude-dir', r, [1])
+  fact('claude-dir.as-written', result(r, 0)?.text.replace(/\s+/g, ' ').slice(0, 200) ?? 'no result')
+  const real = parseShell(result(r, 1)?.text ?? '')
+  if (real.size === 0) fact('claude-dir.encoded', result(r, 1)?.text.replace(/\s+/g, ' ').slice(0, 300) ?? 'no result')
+  fact('claude-dir.write-tool', `${result(r, 2)?.text.slice(0, 200)} | ${result(r, 3)?.text.slice(0, 200)}`)
   const leaks = claudeDirLeaks(wd)
   // Guard off: the same script as root in a folder the real host laid out the same way (its HOME a scratch folder).
   const selfKey = 'p-claude-self'
@@ -403,7 +436,7 @@ async function probeClaudeDir() {
   // The home is the user's own, outside the session folder, and read-only to Bash: it can't plant a skill or a
   // settings file there for the CLI to load.
   const made = (x: ShellResult) => x.out.includes('made')
-  judge('claude-dir', parseShell(result(r, 0)?.text ?? ''), off, probes.map((p) => (p.name.startsWith('home-') ? { name: p.name, leak: made } : { name: p.name })))
+  judge('claude-dir', real, off, probes.map((p) => (p.name.startsWith('home-') ? { name: p.name, leak: made } : { name: p.name })))
   rmSync('/opt/inhouse/plugin/x', { force: true })
   rmSync('/opt/runner/x', { force: true })
   await host.parkFolder(selfKey)
@@ -507,7 +540,9 @@ async function probeIsolation() {
     if (aEnded) throw new Error(`A's run ended before its holder started: ${JSON.stringify(terminalOf(a.run))}`)
     return procs().find((p) => p.cmdline.includes('canary-A-cmdline-holder') && p.uid !== 0)
   }, "A's holder process", 60_000)
-  const aSession = procs().find((p) => p.cwd === wa && /session\/main\.mjs|probes\/direct\.mjs/.test(p.cmdline))
+  // By uid, not by working folder: root reads another uid's /proc/<pid>/cwd only with CAP_SYS_PTRACE, which Docker's
+  // default set lacks.
+  const aSession = procs().find((p) => p.uid === holder.uid && /session\/main\.mjs|probes\/direct\.mjs/.test(p.cmdline))
   fact('isolation.a', `holder pid ${holder.pid} uid ${holder.uid}, session pid ${aSession?.pid}`)
   // A's own home and temp folder. Bash can't write its home, so A's user puts the home canary there itself; the temp
   // canary is wherever A's `$TMPDIR` was (the folder, or one the CLI made in it).
@@ -522,7 +557,7 @@ async function probeIsolation() {
   const filesProbes = (): ShellProbe[] => [
     { name: 'ls-work', cmd: 'ls -la /work' },
     { name: 'ls-users', cmd: `ls -la ${USERS_ROOT} ${aOwn.dir}` },
-    { name: 'ls-a', cmd: `ls -la ${wa} ${wa}/inputs ${aOwn.tmp} ${aOwn.home}` },
+    { name: 'ls-a', cmd: `ls ${wa}/inputs ${aOwn.home} ${aOwn.tmp} ${wa}` },
     { name: 'cat-a-file', cmd: `cat ${wa}/inputs/secret.txt` },
     { name: 'cat-a-tmpdir', cmd: `cat ${aOwn.tmp}/secret ${aOwn.tmp}/*/secret` },
     { name: 'cat-a-home', cmd: `cat ${aOwn.home}/secret` },
@@ -666,7 +701,6 @@ for _ in range(n): os.wait()
 /** A direct session as a pool user, with one test-only variant of the guarded options (direct.ts). */
 const directUsers: Record<DirectVariant, string> = {
   plain: 's38',
-  'users-readable': 's37',
   'four-tools': 's40',
   'audit-refused': 's41',
   'audit-hook-removed': 's42',
@@ -734,9 +768,8 @@ async function probeDirect() {
   const marker = (wd: string) => existsSync(join(wd, 'outputs', 'audit-marker'))
   record('audit.refused-entry-blocks-the-call', !marker(refused.workDir) && marker(removed.workDir), `with the hook: ${marker(refused.workDir) ? 'RAN' : 'blocked'} (${refused.state.results.get(refused.state.ids[0]!)?.text.slice(0, 150)}) | hook removed: ${marker(removed.workDir) ? 'ran (leak seen)' : 'NOT RUN: the probe cannot detect this'}`)
 
-  // deniedDomains with an IP literal. The sandbox's NO_PROXY lists the private ranges, so curl would go round the proxy
-  // (and find no network): `--noproxy ''` sends it through, where the lists decide.
-  const curl = { steps: [bash(`curl -sS -m 8 --noproxy '' ${GW_URL}`)] }
+  // deniedDomains with an IP literal: sent through the proxy, where the lists decide.
+  const curl = { steps: [bash(get(GW_URL, 'proxy'))] }
   const allow = await direct('ip-allow', { prompt: 'Run the probe.', webFetchDomains: [], ip: GW }, curl)
   const deny = await direct('ip-deny', { prompt: 'Run the probe.', webFetchDomains: [], ip: GW }, curl)
   const got = (d: { state: ScriptState }) => d.state.results.get(d.state.ids[0]!)?.text ?? ''
@@ -847,7 +880,8 @@ async function probeZombieLeader() {
  * seccomp helper does exactly that, for its own PID and mount namespace, and every sandboxed command dies without it
  * (`apply-seccomp: write /proc/self/setgroups ... Permission denied`). A host whose AppArmor has a profile for
  * /usr/bin/bwrap that strips capabilities from what bwrap runs (Ubuntu's bwrap-userns-restrict) takes it away, in a
- * container too: the profile attaches by path. Then two Bash calls in a row, as production runs them.
+ * container too: the profile attaches by path, and the label below then reads `bwrap//&unpriv_bwrap`. Then two Bash
+ * calls in a row, as production runs them.
  */
 async function probeSandboxPlatform() {
   const u = userNamed('s36')
@@ -856,19 +890,10 @@ async function probeSandboxPlatform() {
   const inBwrap = await asUser(`bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid -- sh -c 'echo "label=$(cat /proc/self/attr/current 2>&1)"; unshare -Ur true && echo nested-ok' 2>&1`)
   record('platform.nested-userns-inside-bwrap', inBwrap.includes('nested-ok'), inBwrap)
 
-  const cmd = { steps: [bash(`echo bash-ran; echo "TMPDIR=$TMPDIR HOME=$HOME"; touch "$TMPDIR/p" && echo tmp-writable; ls "$HOME" > /dev/null && echo home-readable; touch "$HOME/p" 2>&1`), bash('echo second-call')] }
-  const ran: Partial<Record<DirectVariant, boolean>> = {}
-  for (const variant of ['plain', 'users-readable'] as const) {
-    const d = await direct(variant, { prompt: 'Run the probe.', webFetchDomains: [] }, cmd)
-    const out = [0, 1].map((i) => d.state.results.get(d.state.ids[i]!)?.text.replace(/\s+/g, ' ').slice(0, 300) ?? 'no result')
-    ran[variant] = out[0]!.includes('bash-ran') && out[1]!.includes('second-call')
-    fact(`sandbox.${variant}`, `first: ${out[0]} | second: ${out[1]}`)
-  }
-  record('sandbox.bash-runs-twice', ran.plain === true, `production options: ${ran.plain ? 'ran' : 'FAILED'}; users root left readable (test-only): ${ran['users-readable'] ? 'ran' : 'failed'}`)
-  if (!ran.plain && ran['users-readable']) {
-    AGENT_VARIANT = 'users-readable'
-    fact('agent-runs-with', 'the test-only users-readable options, so the other probes still say something: every result below is NOT production\'s')
-  }
+  // The markers are computed, so a refusal that quotes the command back doesn't read as a run.
+  const d = await direct('plain', { prompt: 'Run the probe.', webFetchDomains: [] }, { steps: [bash('echo first-$((40 + 2)); touch "$TMPDIR/p" && echo tmp-writable'), bash('echo second-$((40 + 2))')] })
+  const out = [0, 1].map((i) => d.state.results.get(d.state.ids[i]!)?.text.replace(/\s+/g, ' ').slice(0, 300) ?? 'no result')
+  record('sandbox.bash-runs-twice', out[0]!.includes('first-42') && out[0]!.includes('tmp-writable') && out[1]!.includes('second-42'), `first: ${out[0]} | second: ${out[1]}`)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
