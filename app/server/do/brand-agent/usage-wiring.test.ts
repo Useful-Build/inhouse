@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { DueTask, TaskContext } from './scheduler.ts'
 import type { Refusal } from './ports.ts'
-import { usageSweep } from '../../usage/sweep.ts'
+import { taskHandlers } from './tasks/index.ts'
 import { createUsageLedger } from '../../usage/ledger.ts'
 import { resetUsage, turnIn, turnRow } from '../../usage/test-fixtures.ts'
 import { MIN, T0, fullAnswer, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
@@ -39,7 +39,7 @@ describe("W4's usage tasks on the BrandAgent", () => {
     // Both turns' tokens ended long ago by then (a's revoked at its end; b's expired at 45 minutes); b is still live here.
     h.clock.now = T0 + 120 * MIN
     expect(h.turn(b.turnId).state).toBe('live')
-    await usageSweep(SWEEP, { nowMs: h.clock.now, env, sql: h.sql, scheduler: h.sched } as unknown as TaskContext)
+    await taskHandlers['usage-sweep'](SWEEP, { nowMs: h.clock.now, env, sql: h.sql, scheduler: h.sched } as unknown as TaskContext)
     expect(await turnRow(a.turnId)).toMatchObject({ final: 1, settled_micro: 40_000 })
     expect(await turnRow(b.turnId)).toMatchObject({ final: 0 })
   }))

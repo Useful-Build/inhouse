@@ -7,7 +7,6 @@ import type { DueTask, Scheduler, TaskContext, TaskHandler, TaskResult } from '.
 import { RUN_TOKEN_TTL_MS } from '../do/brand-agent/tokens.ts'
 import { createUsageLedger } from './ledger.ts'
 import type { UsageLedger } from './ledger.ts'
-import { turnCalls } from '../do/brand-agent/turn-calls.ts'
 
 /**
  * What the BrandAgent knows of a turn's model calls, in micro-USD: closed calls at their actual cost plus calls still
@@ -89,4 +88,4 @@ export function createUsageSweep(turnCalls: TurnCallsReader | null): TaskHandler
 }
 
 /** The registered handler (tasks/index.ts). W1 passes its `model_calls` reader here; null until then. */
-export const usageSweep: TaskHandler = createUsageSweep(turnCalls)
+export const usageSweep: TaskHandler = createUsageSweep(null)
