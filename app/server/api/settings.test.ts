@@ -44,7 +44,7 @@ const put = (scope: SettingScope, key: string, body: unknown, who = admin, role:
   return { res: PUT[scope](c), objects }
 }
 const inhousePut = (key: string, body: unknown, s: Stores = stores) => {
-  const { c, objects } = ctx(s, { kind: 'inhouse', memberId: inhouse, subject: 'sub-inhouse', grant: null, requestId: `r-${uniq()}` }, { method: 'PUT', path: `/api/settings/technical/${key}`, params: { key }, body })
+  const { c, objects } = ctx(s, { kind: 'inhouse', memberId: inhouse, subject: 'sub-inhouse', grant: null, requestId: `r-${uniq()}`, expMs: 4_102_444_800_000 }, { method: 'PUT', path: `/api/settings/technical/${key}`, params: { key }, body })
   return { res: putTechnicalSetting(c), objects }
 }
 const json = async (r: Response | Promise<Response>) => {

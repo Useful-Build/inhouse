@@ -30,6 +30,8 @@ const alias = {
   '@sample': fileURLToPath(new URL('./src/agent/sample-data', import.meta.url)),
   // W1's test issuer, as in the test build (vite.config.ts): its tests import the real one.
   '@test-issuer': fileURLToPath(new URL('./server/auth/test-issuer.ts', import.meta.url)),
+  // The scripted model (P3), as in the test build (vite.config.ts).
+  '@scripted-model': fileURLToPath(new URL('./test/scripted-model/index.ts', import.meta.url)),
   '@': fileURLToPath(new URL('./src', import.meta.url)),
 }
 

@@ -30,7 +30,9 @@ for (const row of writes) {
     })
   }
   test(`${rowKey(row)} with the right Origin and Sec-Fetch-Site: same-origin gets past the check`, async ({ request }) => {
-    const r = await call(request, admin, row.method, caseFor(row).path, { ...bodyOf(row), headers: { 'Sec-Fetch-Site': 'same-origin' } })
+    // P3's drain and warm-up are the release token's (open rows): it sends the brand Origin like any client.
+    const who = row.services.includes('release') ? actor('release') : admin
+    const r = await call(request, who, row.method, caseFor(row).path, { ...bodyOf(row), headers: { 'Sec-Fetch-Site': 'same-origin' } })
     expect(r.status, r.text).not.toBe(403)
   })
 }
