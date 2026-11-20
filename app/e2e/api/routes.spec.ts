@@ -2,6 +2,7 @@
 // route, row or case that doesn't line up fails here, before the matrix spec can quietly skip it.
 import { expect, test } from '@playwright/test'
 import { CASES } from './cases.ts'
+import { INHOUSE_BRAND_WRITES } from '../../server/testing/inhouse-brand-writes.ts'
 import { matrixRows, rowKey, routeList } from './kit.ts'
 
 test('every route has exactly one matrix row, and every row a route', () => {
@@ -39,8 +40,11 @@ test('the matrix keeps the design\'s invariants over every row', () => {
     const where = rowKey(row)
     if (row.class === 'technical') expect(row.allow, `${where}: Inhouse writes and reads technical`).toContain('inhouse')
     if (row.class === 'personal') expect(row.allow, `${where}: personal is never Inhouse`).not.toContain('inhouse')
-    // Decision 19: Inhouse may write baseline rows that list it; never brand data or personal, and never a grant.
-    if (row.method !== 'GET' && ['brand_data', 'personal'].includes(row.class)) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
+    // Decision 19: Inhouse may write baseline rows that list it; never personal, and never a grant.
+    // Changed for item 19 (2026-11-20): nor brand data, except the closed list INHOUSE_BRAND_WRITES (the one list the unit
+    // matrix tests read too), which takes Inhouse only under a live grant, audited.
+    const brandWriteListed = row.class === 'brand_data' && INHOUSE_BRAND_WRITES.includes(rowKey(row))
+    if (row.method !== 'GET' && ['brand_data', 'personal'].includes(row.class) && !brandWriteListed) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
     if (row.method !== 'GET' && row.pattern.startsWith('/api/grants')) expect(row.allow, `${where}: Inhouse never grants itself access`).not.toContain('inhouse')
     // Decision 19b: every role change makes or unmakes an Admin, so it is Admin-only.
     if (row.method === 'PUT' && row.pattern === '/api/members/:id/role') expect(row.allow, `${where}: Inhouse never changes a role`).not.toContain('inhouse')

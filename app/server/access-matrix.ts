@@ -52,7 +52,7 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 42 */ { method: 'GET', pattern: '/api/usage', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
   /* 43 */ { method: 'GET', pattern: '/api/memory', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 44 */ { method: 'PUT', pattern: '/api/memory/personal/:id/forgotten', class: 'personal', allow: ['member', 'admin'] },
-  /* 45 */ { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', class: 'brand_data', allow: ['admin'] },
+  /* 45 */ { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', class: 'brand_data', allow: ['admin', 'inhouse'] },
   /* 46 */ { method: 'POST', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
   /* 47 */ { method: 'GET', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
   /* 48 */ { method: 'POST', pattern: '/api/ops/warmup', class: 'open', allow: [], services: ['release'] },

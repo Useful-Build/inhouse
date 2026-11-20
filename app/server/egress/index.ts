@@ -9,12 +9,13 @@ import { newFileId } from '../files-io/bytes.ts'
 import { fileStore } from '../files-io/store.ts'
 import type { SettingsView } from '../model/catalog.ts'
 import { auditRoute } from './audit.ts'
-import type { EgressDeps, EgressRpc, McpHandler } from './deps.ts'
+import type { EgressDeps, EgressRpc } from './deps.ts'
 import { eventsRoute } from './events.ts'
 import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
 import type { AiGatewayBinding } from './gateway.ts'
 import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
+import { mcpHandler } from '../mcp/server/index.ts'
 import { modelRoute } from './model.ts'
 import { storeRoute } from './store.ts'
 
@@ -71,9 +72,6 @@ export async function handleEgress(request: Request, d: EgressDeps): Promise<Res
   }
 }
 
-/** W6's `handleMcp` replaces this (`app/server/mcp/server.ts`); until then the MCP route answers 503. */
-const mcpNotBuilt: McpHandler = async () => jsonAnswer({ error: 'not_built' }, 503)
-
 /** The brand's technical settings the egress reads (`tm:*` for the model gate). */
 export async function brandSettings(db: D1Database): Promise<SettingsView> {
   const rows = await db.prepare("SELECT key, value_json FROM settings WHERE owner = 'brand' AND key LIKE 'tm:%'").all<{ key: string; value_json: string }>()
@@ -101,7 +99,8 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     db: env.DB,
     files: fileStore({ db: env.DB, bucket: env.FILES }),
     newFileId,
-    mcp: mcpNotBuilt,
+    // W6's `inhouse` MCP server (server/mcp/server/index.ts), acting as the grant's member only.
+    mcp: mcpHandler({ db: env.DB }),
     waitUntil: p => ctx.waitUntil(p),
     setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: t => clearInterval(t),

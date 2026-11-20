@@ -60,6 +60,7 @@ const reads = (o: { me?: unknown; members?: unknown[]; settings?: Record<string,
   'GET /api/members': { body: { items: o.members ?? [member(ME_ID, { role: 'admin' }), member('m_dana')], nextCursor: null } },
   'GET /api/grants': { body: { items: [] } },
   'GET /api/audit': { body: { items: [line(2), line(1)], nextCursor: null } },
+  'GET /api/memory': { body: { team: [], personal: [] } },
 })
 const record = (key: string, value: unknown, rev: number) => ({ key, value, rev, updatedAt: null, updatedBy: null })
 
@@ -1099,7 +1100,7 @@ describe('the parts that stay the stub until their phase', () => {
   const STUBS: [string, (c: AgentClient) => Promise<unknown>][] = [
     ['approve', c => c.approve('p')], ['undo', c => c.undo('p')], ['editDraft', c => c.editDraft('p', 'x')],
     ['createChat', c => c.createChat({ id: 'c', title: 't' })], ['send', c => c.send('r', 'x')], ['pause', c => c.pause()],
-    ['requestTool', c => c.requestTool('k', true)], ['forgetMemory', c => c.forgetMemory('k', true)], ['setToggle (a routine)', c => c.setToggle('r:Morning', true)],
+    ['requestTool', c => c.requestTool('k', true)], ['setToggle (a routine)', c => c.setToggle('r:Morning', true)],
     ['markNoticesRead', c => c.markNoticesRead(['n'])], ['deleteFiles', c => c.deleteFiles(['f'])], ['runRoutine', c => c.runRoutine('r')],
     ['renameChat', c => c.renameChat('c', 't')], ['deleteChats', c => c.deleteChats(['c'])],
   ]
@@ -1200,5 +1201,54 @@ describe('the first read failing: the screen the shell shows (start-screen.ts)',
 
   test('before the first answer it is "Not connected yet"', () => {
     expect(startScreen(new HttpAgent({ fetch: server({}).fetch }).read())).toBe('not-connected')
+  })
+})
+
+describe('memory (P3 W6: routes 43 to 45)', () => {
+  const iso2 = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
+  const own = { key: 'mem_BBBBBBBBBBBBBBBBBBBBBB', text: 'Sort order tables by date', source: 'Sam told your Inhouse agent in a chat', at: iso2(2), rev: 1, scope: 'person' }
+  const team = { key: 'mem_AAAAAAAAAAAAAAAAAAAAAA', text: 'We restock on Fridays', source: 'Sam told your Inhouse agent in a chat', at: iso2(1), rev: 3, scope: 'brand' }
+  const page = { team: [{ group: 'Shared with the team', lines: [team] }], personal: [own] }
+
+  test('reads both lists on start; the Inhouse team only when asked', async () => {
+    const { agent } = await loaded({ ...reads(), 'GET /api/memory': { body: page } })
+    expect(agent.read().memory).toEqual(page)
+    expect(agent.read().resources.memory).toEqual({ status: 'ready' })
+    const staff = await loaded({ ...reads({ me: me({ role: 'inhouse', can: can(false) }) }), 'GET /api/memory': { body: page } })
+    expect(staff.calls.map(c => c.path)).not.toContain('/api/memory')
+    await staff.agent.retry('memory')
+    expect(staff.agent.read().memory).toEqual(page)
+  })
+
+  test('forget sends the line\'s rev to its route, marks it at once, and keeps the answer\'s rev; undo goes the same way', async () => {
+    const { agent, calls } = await loaded({
+      ...reads(), 'GET /api/memory': { body: page },
+      'PUT /api/memory/personal/mem_BBBBBBBBBBBBBBBBBBBBBB/forgotten': r => ({ body: { ...own, rev: JSON.parse(r.body!).ifRev + 1, ...(JSON.parse(r.body!).forgotten ? { forgotten: true } : {}) } }),
+    })
+    const p = agent.forgetMemory(own.key, true)
+    expect(agent.getSnapshot().forgot[own.key]).toBe(true)
+    await p
+    await agent.forgetMemory(own.key, false)
+    expect(agent.getSnapshot().forgot[own.key]).toBeUndefined()
+    expect(calls.filter(c => c.method === 'PUT').map(c => [c.path, JSON.parse(c.body!)])).toEqual([
+      ['/api/memory/personal/mem_BBBBBBBBBBBBBBBBBBBBBB/forgotten', { forgotten: true, ifRev: 1 }],
+      ['/api/memory/personal/mem_BBBBBBBBBBBBBBBBBBBBBB/forgotten', { forgotten: false, ifRev: 2 }],
+    ])
+    expect(agent.read().memory.personal[0].rev).toBe(3)
+  })
+
+  test('a team line goes to route 45; a conflict takes the line as it is now; an unknown key is refused locally', async () => {
+    const current = { ...team, rev: 5, forgotten: true }
+    const { agent, calls, heard } = await loaded({
+      ...reads(), 'GET /api/memory': { body: page },
+      'PUT /api/memory/brand/mem_AAAAAAAAAAAAAAAAAAAAAA/forgotten': { status: 409, body: { error: { code: 'conflict', current } } },
+    })
+    const e = await errorOf(agent.forgetMemory(team.key, true))
+    expect(e).toMatchObject({ code: 'conflict' })
+    expect(calls.filter(c => c.method === 'PUT').map(c => JSON.parse(c.body!))).toEqual([{ forgotten: true, ifRev: 3 }])
+    expect(agent.read().memory.team[0].lines[0].rev).toBe(5)
+    expect(agent.getSnapshot().forgot[team.key]).toBe(true)
+    expect(heard.filter(n => n.type === 'error')).toHaveLength(1)
+    expect(await errorOf(agent.forgetMemory('mem_CCCCCCCCCCCCCCCCCCCCCC', true))).toMatchObject({ code: 'not_found' })
   })
 })

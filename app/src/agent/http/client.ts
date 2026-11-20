@@ -11,16 +11,17 @@ import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError } from '../types'
 import type {
   AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AskOptions, AuditLine, ErrorReason, Instant, LibraryFile, Me,
-  MemberRecord, ResourceKey, ResourceStatus, RoutineRun, RunEvent, SupportGrant, Trace,
+  MemberRecord, MemoryData, MemoryLine, ResourceKey, ResourceStatus, RoutineRun, RunEvent, SupportGrant, Trace,
 } from '../types'
+import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
 
 const UNAVAILABLE = 'Not connected yet.'
 
 /** The resources this client reads. Every other key has nothing to read until its phase, so it reads as ready and empty. */
-type Loaded = 'meta' | 'members' | 'grants' | 'audit'
-const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit'] satisfies readonly Loaded[]
+type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory'
+const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory'] satisfies readonly Loaded[]
 
 export interface HttpAgentOptions extends TransportOptions {
   /** Epoch ms. The real clock by default; the contract target moves it on (`advance`). */
@@ -80,6 +81,8 @@ interface Slices {
   audit: AuditLine[]
   auditNext: string | null
   grant: SupportGrant | null
+  /** P3 (W6): the Memory and Team memory pages' lines (route 43); a forgotten line stays, marked in `state.forgot`. */
+  memory: MemoryData
   /** The record revision last read for each setting key (a key never set is absent: rev 0). */
   revs: Record<string, number>
   state: AgentState
@@ -107,7 +110,7 @@ export class HttpAgent implements AgentClient {
   private listeners = new Set<() => void>()
   private readonly http: Transport
   private readonly now: () => number
-  private s: Slices = { me: null, members: [], membersNext: null, audit: [], auditNext: null, grant: null, revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources }
+  private s: Slices = { me: null, members: [], membersNext: null, audit: [], auditNext: null, grant: null, memory: EMPTY_DATA.memory, revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources }
   /** The schemas, once the chunk has loaded (it starts loading with the client). */
   private k: Contract | null = null
   private dataCache = new WeakMap<Slices, { live: boolean; data: AgentData }>()
@@ -164,7 +167,7 @@ export class HttpAgent implements AgentClient {
     if (hit && hit.live === live) return hit.data
     // A change to what read() doesn't carry (a setting, a switch) leaves its object alone, so nothing re-renders for it.
     const last = this.lastBuilt
-    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'res'] as const).every(k => last.s[k] === this.s[k])
+    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'res'] as const).every(k => last.s[k] === this.s[k])
     const data = same ? last.data : this.build(live)
     this.dataCache.set(this.s, { live, data })
     this.lastBuilt = { s: this.s, live, data }
@@ -180,6 +183,7 @@ export class HttpAgent implements AgentClient {
       meta: { ...EMPTY_DATA.meta, brand: { ...EMPTY_DATA.meta.brand, staff: members.filter(m => m.status === 'active').length }, currentUser: person },
       people: { ...EMPTY_DATA.people, members, supportGrant: grant ? { ...grant, live } : null },
       auditLog: this.s.audit,
+      memory: this.s.memory,
       more: { audit: this.s.auditNext !== null, members: this.s.membersNext !== null },
       resources: this.s.res,
     }
@@ -205,7 +209,7 @@ export class HttpAgent implements AgentClient {
 
   private async loadAll() {
     if (!(await this.loadMeta())) return
-    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit()])
+    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory()])
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
@@ -281,11 +285,27 @@ export class HttpAgent implements AgentClient {
   }
 
   /**
+   * Route 43. The Inhouse team isn't asked on start: under a grant every read writes a `support.access` line, so it reads
+   * memory only when asked (`retry('memory')`, when its page opens). Without a live grant it's refused (a 403 that
+   * isn't "left the team"): nothing to show, not an error.
+   */
+  private async loadMemory(asked = false) {
+    if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('memory', { status: 'ready' })
+    try {
+      const memory = await readMemory(this.http)
+      this.patch({ memory, res: { ...this.s.res, memory: { status: 'ready' } } })
+    } catch (e) {
+      if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('memory', { status: 'ready' })
+      this.failStatus('memory', e)
+    }
+  }
+
+  /**
    * Reads a resource again after its read failed. The ones with nothing to read resolve at once. A retry while one for
    * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
    */
   retry = (resource: ResourceKey): Promise<void> => {
-    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit() }[resource as Loaded] as (() => Promise<unknown>) | undefined
+    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
     const running = this.retrying.get(resource)
     if (running) return running
@@ -295,7 +315,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private async reloadMeta() {
-    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit()])
+    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory()])
   }
 
   /** The next page of a list. A second call while one is in flight for the same list does nothing. */
@@ -660,6 +680,38 @@ export class HttpAgent implements AgentClient {
     })
   })
 
+  // ----- memory (P3 W6: routes 44 and 45) -----
+
+  private withForgot(s: Slices, key: string, forgotten: boolean): Slices {
+    const forgot = { ...s.state.forgot }
+    if (forgotten) forgot[key] = true; else delete forgot[key]
+    return { ...s, state: { ...s.state, forgot } }
+  }
+  /** The line as the server answered it (its rev for the next write), and its forgotten mark. */
+  private withLine(s: Slices, line: MemoryLine): Slices {
+    const swap = (l: MemoryLine) => (l.key === line.key ? line : l)
+    const memory = { team: s.memory.team.map(g => ({ ...g, lines: g.lines.map(swap) })), personal: s.memory.personal.map(swap) }
+    return this.withForgot({ ...s, memory }, line.key, line.forgotten === true)
+  }
+
+  /** Forgets a line (`true`) or undoes that, at the rev last read: a team line through route 45, a person's own through 44. */
+  forgetMemory = this.needs((k, key: string, forgotten: boolean): Promise<void> => {
+    const found = findMemoryLine(this.s.memory, key)
+    if (!found) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
+    return this.write({
+      lane: `memory:${key}`,
+      apply: s => this.withForgot(s, key, forgotten),
+      // The rev as it is when the write leaves (an earlier write on this line may have moved it).
+      send: () => forgetMemoryLine(this.http, k, findMemoryLine(this.s.memory, key)?.line ?? found.line, found.scope, forgotten),
+      done: (s, line, others) => (others ? s : this.withLine(s, line)),
+      undo: (s, before, others) => (others ? s : this.withForgot(s, key, before.state.forgot[key] === true)),
+      onConflict: (s, current, others) => {
+        const line = k.ANSWERS.memoryLine.safeParse(current)
+        return line.success && !others ? this.withLine(s, line.data) : s
+      },
+    })
+  })
+
   /** Where the audit log downloads from. A relative path: the browser sends it to its own origin, with its sign-in. */
   auditExportUrl = (): string | null => '/api/audit/export.csv'
   signOutUrl = (): string | null => '/cdn-cgi/access/logout'
@@ -692,7 +744,6 @@ export class HttpAgent implements AgentClient {
   requestTool = (_key: string, _on: boolean) => this.refuse()
   requestSkill = (_name: string) => this.refuse()
   setToolPaused = (_key: string, _paused: boolean) => this.refuse()
-  forgetMemory = (_key: string, _forgotten: boolean) => this.refuse()
   sendTeamRequest = (_req: Parameters<AgentClient['sendTeamRequest']>[0]) => this.refuse()
   listNotifications = () => NO_NOTIFICATIONS
   markNoticesRead = (_ids: string[]) => this.refuse()

@@ -132,7 +132,7 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/usage', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/memory', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'PUT', pattern: '/api/memory/personal/:id/forgotten', class: 'personal', allow: ['member', 'admin'] },
-  { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', class: 'brand_data', allow: ['admin'] },
+  { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', class: 'brand_data', allow: ['admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
   { method: 'GET', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
   { method: 'POST', pattern: '/api/ops/warmup', class: 'open', allow: [], services: ['release'] },
