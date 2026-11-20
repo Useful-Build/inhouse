@@ -162,9 +162,12 @@ describe('checkAccess cases', () => {
   })
 })
 
-/** Rows outside technical and report that list Inhouse on a non-GET method. */
+/**
+ * Rows outside technical and report that list Inhouse on a non-GET method. Changed for item 19 (2026-11-20): a
+ * `baseline` write may list Inhouse (pause and resume); brand_data and personal writes never do.
+ */
 const inhouseWriteProblems = (rows: readonly AccessRow[]) =>
-  rows.filter(x => x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report' && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
+  rows.filter(x => x.method !== 'GET' && (x.class === 'brand_data' || x.class === 'personal') && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
 
 /**
  * Pairs of routes with the same method where one concrete path matches both (equal length, every segment literal-equal
@@ -257,7 +260,7 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
         if (x.adminWrite) expect(x.allow).toContain('admin')
       }
     })
-    it('no non-GET row outside technical and report lists inhouse', () => {
+    it('no non-GET brand_data or personal row lists inhouse', () => {
       expect(inhouseWriteProblems(rows)).toEqual([])
     })
     it('the report rows are exactly POST /api/client-error (a closed list), naming no service', () => {
@@ -375,6 +378,18 @@ describe('P3 auth: release, smoke and ownerObject', () => {
     expect(gate.passed).toBe(true)
     expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW }), r, undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
     expect(checkAccess(principals.inhouse(null), r, undefined, NOW)).toEqual({ refused: 'forbidden', reason: 'grant_required' })
+  })
+
+  it('Inhouse on pause and resume: listed (item 19), refused by today\'s rule', () => {
+    for (const rows of [DESIGN_ROWS, accessMatrix]) {
+      for (const pattern of ['/api/pause', '/api/resume']) {
+        const r = rowFor(rows, 'POST', pattern)!
+        expect(r.allow).toEqual(['admin', 'inhouse'])
+        // flips to OK with feat/inhouse-admin-controls
+        expect(checkAccess(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), r, undefined, NOW)).toEqual({ refused: 'forbidden' })
+        expect(checkAccess(principals.admin(), r, undefined, NOW)).toEqual({ ok: true })
+      }
+    }
   })
 
   it('release and monitor reach nothing a person does; a person and Inhouse never reach drain or warm-up', () => {

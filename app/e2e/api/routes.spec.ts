@@ -39,7 +39,8 @@ test('the matrix keeps the design\'s invariants over every row', () => {
     const where = rowKey(row)
     if (row.class === 'technical') expect(row.allow, `${where}: Inhouse writes and reads technical`).toContain('inhouse')
     if (row.class === 'personal') expect(row.allow, `${where}: personal is never Inhouse`).not.toContain('inhouse')
-    if (row.method !== 'GET' && ['brand_data', 'baseline', 'personal'].includes(row.class)) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
+    // Changed for item 19 (2026-11-20): Inhouse may be listed on a baseline write (pause, resume); never brand_data or personal.
+    if (row.method !== 'GET' && ['brand_data', 'personal'].includes(row.class)) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
     if (row.services.includes('monitor')) expect(row.class, `${where}: monitor is for open rows`).toBe('open')
     // Changed in P3 (p3-design section 3): smoke is no longer GET-only; it's never on open or report rows.
     if (row.services.includes('smoke')) expect(['open', 'report'], `${where}: smoke never on open or report rows`).not.toContain(row.class)

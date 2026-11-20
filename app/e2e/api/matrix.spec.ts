@@ -33,6 +33,8 @@ function verdict(row: Row, who: Principal): Verdict {
       case 'brand_data':
         if (!read) return { allowed: false }
         return who === 'inhouseGrant' ? { allowed: true } : { allowed: false, reason: 'grant_required' }
+      // A baseline write listing Inhouse (pause, resume: item 19) is refused by today's rule; flips to OK with
+      // feat/inhouse-admin-controls.
       case 'baseline': return { allowed: read }
       case 'technical': return { allowed: true }
       case 'report': return { allowed: true }
