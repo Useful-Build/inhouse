@@ -660,6 +660,156 @@ describe('a refused write leaves a later queued write on the same field showing'
   })
 })
 
+// The photo is on screen twice (the account menu from `me`, the team list from the person's row), and the client may hold
+// no row for the person at all. Ways it could break, written down before the tests:
+//  - a refusal goes back to what the screen showed when the write was made, which may be an earlier unsaved photo;
+//  - "no photo", confirmed by the server, is treated as "nothing confirmed" and the screen's value is used instead;
+//  - the confirmed photo is only known when the team list holds the person's row (not for a person who may not read the
+//    team, or whose row is on a later page);
+//  - a read of who is signed in, made after a name save or a role change, puts the old photo back in the account menu
+//    while a new one is still being saved, or its answer isn't what a later refusal goes back to.
+describe('a refused photo goes back to what the server has, whatever the client loaded', () => {
+  const lost = refusal(503, 'unavailable')
+  const own = `/api/members/${ME_ID}/photo`
+  const PNG = 'data:image/png;base64,iVBORw0KGgo='
+  const PNG2 = 'data:image/png;base64,iVBORw0KGgoAAAA='
+  const NAME = 'PUT /api/settings/personal/g:name'
+  /** A Member who may not read the team: the list is never read, so the client holds no row for them. */
+  const alone = (photoUrl: string | null) => ({ ...reads({ me: me({ role: 'member', can: can(false), photoUrl }) }), 'GET /api/members': refusal(403, 'forbidden') })
+  /** A person whose row is on a later page of the team than the one read. */
+  const offPage = (photoUrl: string | null) => ({ ...reads({ me: me({ photoUrl }) }), 'GET /api/members': { body: { items: [member('m_dana')], nextCursor: 'm_dana' } } })
+  /** The team read after a save is refused for a person who may not read it, and the client says so on the console. */
+  async function quiet<T>(run: () => Promise<T>): Promise<T> {
+    const warn = console.warn
+    console.warn = () => undefined
+    try { return await run() } finally { console.warn = warn }
+  }
+
+  test('no photo loaded, two photos queued, both refused: no photo, in the account menu and in the team list', async () => {
+    const { agent } = await loaded({ ...reads(), 'PUT /api/photo': lost })
+    await Promise.all([errorOf(agent.setPhoto(ME_ID, PNG)), errorOf(agent.setPhoto(ME_ID, PNG2))])
+    expect(agent.me()?.photoUrl).toBeNull()
+    expect(agent.read().people.members.find(m => m.id === ME_ID)?.photo).toBeNull()
+  })
+
+  test.each([['a Member who may not read the team', alone], ['a person whose row is not on the page read', offPage]])(
+    '%s, a photo loaded, two photos queued, both refused: the loaded photo', async (_who, routes) => {
+      const { agent, calls } = await loaded({ ...routes(own), 'PUT /api/photo': lost })
+      await Promise.all([errorOf(agent.setPhoto(ME_ID, PNG)), errorOf(agent.setPhoto(ME_ID, PNG2))])
+      expect(agent.me()?.photoUrl).toBe(own)
+      expect(agent.read().people.members.some(m => m.id === ME_ID), 'the client holds no row for them').toBe(false)
+      expect(calls.filter(c => c.path === '/api/photo')).toHaveLength(2)
+    })
+
+  test.each([['a Member who may not read the team', alone], ['a person whose row is not on the page read', offPage]])(
+    '%s: the first photo saved and the second refused: the served picture, not the first one\'s data', async (_who, routes) => {
+      const answers: Answer[] = [{ body: { photoUrl: own } }, lost]
+      const { agent } = await loaded({ ...routes(null), 'PUT /api/photo': () => answers.shift()! })
+      await quiet(() => Promise.all([agent.setPhoto(ME_ID, PNG), errorOf(agent.setPhoto(ME_ID, PNG2))]))
+      expect(agent.me()?.photoUrl).toBe(own)
+    })
+
+  test('the first photo refused with the photo as it is now, the second refused with nothing to show: the photo the first refusal told of', async () => {
+    const answers: Answer[] = [refusal(409, 'conflict', { current: { photoUrl: own } }), lost]
+    const { agent } = await loaded({ ...offPage(null), 'PUT /api/photo': () => answers.shift()! })
+    await Promise.all([errorOf(agent.setPhoto(ME_ID, PNG)), errorOf(agent.setPhoto(ME_ID, PNG2))])
+    expect(agent.me()?.photoUrl).toBe(own)
+  })
+
+  test('the team read after a photo is saved says it has since gone (removed on another device), and the next photo is refused: no photo', async () => {
+    const answers: Answer[] = [{ body: { photoUrl: own } }, lost]
+    // The team's rows are served with no photo throughout: by the read after the save, the saved photo is gone again.
+    const { agent } = await loaded({ ...reads(), 'PUT /api/photo': () => answers.shift()! })
+    await Promise.all([agent.setPhoto(ME_ID, PNG), errorOf(agent.setPhoto(ME_ID, PNG2))])
+    expect(agent.me()?.photoUrl).toBeNull()
+    expect(agent.read().people.members.find(m => m.id === ME_ID)?.photo).toBeNull()
+  })
+
+  test.each<[string, (a: HttpAgent) => Promise<void>]>([
+    ['a name save', a => a.setSetting('g:name', 'Sam B')],
+    ['their own role change', a => a.setMemberRole(ME_ID, 'member')],
+  ])('%s with a photo waiting behind it: the account menu keeps the new photo, it never goes back to the old one', async (_what, first) => {
+    let photo: string | null = null
+    const { agent, heard } = await loaded({
+      ...reads({ settings: { personal: [record('g:name', 'Sam Mercer', 1)] } }),
+      'GET /api/me': () => ({ body: me({ photoUrl: photo }) }),
+      'GET /api/members': () => ({ body: { items: [member(ME_ID, { role: 'admin', photo }), member('m_dana')], nextCursor: null } }),
+      [NAME]: { body: record('g:name', 'Sam B', 2) },
+      [`PUT /api/members/${ME_ID}/role`]: { body: member(ME_ID, { rev: 2 }) },
+      'PUT /api/photo': () => { photo = own; return { body: { photoUrl: own } } },
+    })
+    const seen: unknown[] = []
+    const saved = [first(agent), agent.setPhoto(ME_ID, PNG)]
+    agent.subscribe(() => seen.push(agent.me()?.photoUrl))
+    await Promise.all(saved)
+    expect(heard).toEqual([])
+    expect(seen.filter(p => p !== PNG && p !== own), 'only the new photo, then the served one').toEqual([])
+    expect(seen.at(-1)).toBe(own)
+  })
+
+  test('who is signed in is read again while a photo waits, and the photo is then refused: what that read said, not what was loaded', async () => {
+    // Another device gave this person a photo after the first load; the read after the name save learns of it.
+    let asked = 0
+    const { agent } = await loaded({
+      ...alone(null),
+      'GET /api/me': () => ({ body: me({ role: 'member', can: can(false), photoUrl: asked++ === 0 ? null : own }) }),
+      [NAME]: { body: record('g:name', 'Sam B', 2) },
+      'PUT /api/photo': lost,
+    })
+    await quiet(() => Promise.all([agent.setSetting('g:name', 'Sam B'), errorOf(agent.setPhoto(ME_ID, PNG))]))
+    expect(agent.me()?.photoUrl).toBe(own)
+  })
+
+  type Step = { kind: 'photo'; to: string | null; answer: 'saved' | 'lost' | 'changed elsewhere' } | { kind: 'name'; answer: 'saved' | 'lost' }
+  const step: fc.Arbitrary<Step> = fc.oneof(
+    { weight: 3, arbitrary: fc.record({ kind: fc.constant('photo' as const), to: fc.constantFrom(PNG, PNG2, null), answer: fc.constantFrom('saved' as const, 'lost' as const, 'changed elsewhere' as const) }) },
+    { weight: 1, arbitrary: fc.record({ kind: fc.constant('name' as const), answer: fc.constantFrom('saved' as const, 'lost' as const) }) },
+  )
+
+  // Photo and name writes made together, each answered as drawn (saved, refused with nothing to show, or refused because
+  // another device changed the photo first), by a server that keeps the photo and tells of it as the real one does.
+  fcTest.prop([fc.constantFrom('mine' as const, 'not on the page' as const, 'not readable' as const), fc.boolean(), fc.array(step, { minLength: 1, maxLength: 6 })], { numRuns: 300 })(
+    'any photo and name writes made together: the account menu shows the last photo chosen until its write answers, then what the server has', async (team, had, steps) => {
+      let has = had
+      let rev = 1
+      const url = () => (has ? own : null)
+      const photos = steps.flatMap(s => (s.kind === 'photo' ? [s.answer] : []))
+      const names = steps.flatMap(s => (s.kind === 'name' ? [s.answer] : []))
+      const photo = (r: Req): Answer => {
+        const answer = photos.shift()!
+        if (answer === 'lost') return lost
+        rev++
+        if (answer === 'changed elsewhere') { has = !has; return refusal(409, 'conflict', { current: { photoUrl: url() } }) }
+        has = r.method === 'PUT'
+        return { body: { photoUrl: url() } }
+      }
+      const { agent } = await loaded({
+        ...reads(),
+        'GET /api/me': () => ({ body: me({ ...(team === 'not readable' ? { role: 'member', can: can(false) } : {}), photoUrl: url() }) }),
+        'GET /api/members': () => (team === 'not readable' ? refusal(403, 'forbidden') : {
+          body: team === 'mine' ? { items: [member(ME_ID, { role: 'admin', photo: url(), rev }), member('m_dana')], nextCursor: null } : { items: [member('m_dana')], nextCursor: 'm_dana' },
+        }),
+        'PUT /api/photo': photo,
+        'DELETE /api/photo': photo,
+        [NAME]: r => (names.shift() === 'lost' ? lost : { body: record('g:name', (JSON.parse(r.body!) as { value: string }).value, ++rev) }),
+      })
+      await quiet(async () => {
+        const settled = steps.map((s, i) => errorOf(s.kind === 'photo' ? agent.setPhoto(ME_ID, s.to) : agent.setSetting('g:name', `Sam ${i}`)))
+        // Read as a renderer does, once the client has finished the change it is making: a refusal that carries the
+        // record as it is now is two changes back to back (taken back, then the record put in).
+        const seen: unknown[] = []
+        agent.subscribe(() => queueMicrotask(() => seen.push(agent.me()?.photoUrl)))
+        await Promise.all(settled)
+        expect(agent.me()?.photoUrl, 'the account menu, once every write has answered').toBe(url())
+        if (team === 'mine') expect(agent.read().people.members.find(m => m.id === ME_ID)?.photo, 'the team list').toBe(url())
+        const last = steps.findLast(s => s.kind === 'photo')
+        if (!last) return
+        const moved = seen.findIndex(p => p !== last.to)
+        expect(moved === -1 ? [] : seen.slice(moved).filter(p => p !== url()), 'after the last photo chosen, only what the server has').toEqual([])
+      })
+    })
+})
+
 describe('one member row is one lane', () => {
   test('a name saved while a photo uploads: both save, no notice, the name carries the rev the photo left', async () => {
     let rev = 1

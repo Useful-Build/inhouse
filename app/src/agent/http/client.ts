@@ -115,7 +115,12 @@ export class HttpAgent implements AgentClient {
   private loading: Promise<void> | null = null
   private paging = new Set<'audit' | 'members'>()
   private expiry: ReturnType<typeof setTimeout> | undefined
-  /** The last value the server confirmed for a record (`setting:<key>`, `member:<id>`): what a refused write goes back to. */
+  /**
+   * The last value the server confirmed for a record: what a refused write goes back to. `setting:<key>`, `member:<id>`,
+   * `grant`, and `photo:<id>` for the signed-in person's photo (it is on `me` and on their row, and the client may hold no
+   * row for them). Filled only from what the server answered (`takeMe`, `confirmMember`, a write's answer or refusal), never
+   * from what the screen shows.
+   */
   private confirmed = new Map<string, unknown>()
   /** Writes in flight per record, and the end of the chain each record's next write waits for. */
   private lanes = new Map<string, Promise<void>>()
@@ -216,7 +221,7 @@ export class HttpAgent implements AgentClient {
   private async loadMeta(): Promise<boolean> {
     try {
       const me = await this.http.call({ method: 'GET', path: '/api/me', schema: 'me' })
-      this.patch({ me })
+      this.takeMe(me)
       // Personal settings belong to a member; the Inhouse team has none.
       const scopes = me.role === 'inhouse' ? ['brand', 'technical'] : ['personal', 'brand', 'technical']
       const lists = await Promise.all(scopes.map(scope => this.http.call({ method: 'GET', path: `/api/settings/${scope}`, schema: 'settings' })))
@@ -243,7 +248,7 @@ export class HttpAgent implements AgentClient {
     if (this.s.me && !this.s.me.can.viewMembers) return this.setStatus('members', { status: 'ready' })
     try {
       const page = await this.http.call({ method: 'GET', path: '/api/members', schema: 'members' })
-      page.items.forEach(m => this.confirmed.set(`member:${m.id}`, m))
+      page.items.forEach(this.confirmMember)
       this.patch({ members: page.items, membersNext: page.nextCursor, res: { ...this.s.res, members: { status: 'ready' } } })
     } catch (e) { this.failStatus('members', e) }
   }
@@ -295,7 +300,7 @@ export class HttpAgent implements AgentClient {
         this.patch({ audit: [...this.s.audit, ...page.items], auditNext: page.nextCursor })
       } else {
         const page = await this.http.call({ method: 'GET', path: `/api/members${q}`, schema: 'members' })
-        page.items.forEach(m => this.confirmed.set(`member:${m.id}`, m))
+        page.items.forEach(this.confirmMember)
         this.patch({ members: page.items.reduce(replaceById, this.s.members), membersNext: page.nextCursor })
       }
     } catch (e) {
@@ -311,7 +316,17 @@ export class HttpAgent implements AgentClient {
     } catch (e) { this.afterRefreshFailed(e, 'the team') }
   }
   private async refreshMe() {
-    try { this.patch({ me: await this.http.call({ method: 'GET', path: '/api/me', schema: 'me' }) }) } catch (e) { this.afterRefreshFailed(e, 'who is signed in') }
+    try { this.takeMe(await this.http.call({ method: 'GET', path: '/api/me', schema: 'me' })) } catch (e) { this.afterRefreshFailed(e, 'who is signed in') }
+  }
+  /**
+   * Who is signed in, as the server says. Its photo is confirmed here, so a refused photo write has the server's value to go
+   * back to whether or not the team list holds this person's row. A photo write on screen that isn't done yet keeps showing
+   * (as `takeMember` keeps it on the row); everything else comes from the server.
+   */
+  private takeMe(me: Me) {
+    this.confirmed.set(`photo:${me.memberId}`, me.photoUrl)
+    const cur = this.s.me
+    this.patch({ me: cur && cur.memberId === me.memberId && this.depthOf(`member:${me.memberId}:photo`) > 0 ? { ...me, photoUrl: cur.photoUrl } : me })
   }
 
   /** A read after a save failed: the save stands. A person who has left the team is told like any other request would tell them. */
@@ -472,22 +487,18 @@ export class HttpAgent implements AgentClient {
     const photoAs = (s: Slices, photo: string | null): Slices => ({
       ...s, me: s.me && { ...s.me, photoUrl: photo }, members: s.members.map(x => (x.id === memberId ? { ...x, photo } : x)),
     })
-    const was = this.s.members.find(x => x.id === memberId)?.photo ?? me.photoUrl
-    const confirmPhoto = (photo: string | null) => {
-      const c = this.confirmed.get(`member:${memberId}`) as MemberRecord | undefined
-      if (c) this.confirmed.set(`member:${memberId}`, { ...c, photo })
-    }
-    const confirmedPhoto = (): string | null => (this.confirmed.get(`member:${memberId}`) as MemberRecord | undefined)?.photo ?? was
+    // What the server last said of this photo: there since `me` arrived (`takeMe`), so a refusal never reads the screen.
+    const record = `photo:${memberId}`
     return this.write({
       lane: `member:${memberId}`,
       field: `member:${memberId}:photo`,
       apply: s => photoAs(s, dataUrl),
       send: () => this.http.call({ method: bytes ? 'PUT' : 'DELETE', path: '/api/photo', schema: 'photo', ...(bytes ? { bytes } : {}) }),
-      done: (s, r, others) => { confirmPhoto(r.photoUrl); return others ? s : photoAs(s, r.photoUrl) },
-      undo: (s, _before, others) => (others ? s : photoAs(s, confirmedPhoto())),
+      done: (s, r, others) => { this.confirmed.set(record, r.photoUrl); return others ? s : photoAs(s, r.photoUrl) },
+      undo: (s, _before, others) => (others ? s : photoAs(s, this.confirmed.get(record) as string | null)),
       onConflict: (s, current, others) => {
         const photo = typeof current.photoUrl === 'string' ? current.photoUrl : null
-        confirmPhoto(photo)
+        this.confirmed.set(record, photo)
         return others ? s : photoAs(s, photo)
       },
       after: () => this.refreshMembers(),
@@ -497,6 +508,11 @@ export class HttpAgent implements AgentClient {
   // ----- the team -----
 
   private serverMember = (id: string) => this.s.members.find(m => m.id === id)
+  /** A member's record as the server sent it. The signed-in person's row carries their photo, confirmed with it. */
+  private confirmMember = (m: MemberRecord) => {
+    this.confirmed.set(`member:${m.id}`, m)
+    if (m.id === this.s.me?.memberId) this.confirmed.set(`photo:${m.id}`, m.photo)
+  }
   private depthOf = (field: string) => this.depth.get(field) ?? 0
   /** A member's rev only ever goes up: a later answer (the photo's refresh, a name save) may already have moved it. */
   private bumpRev = (s: Slices, id: string, rev: number): Slices => ({ ...s, members: s.members.map(m => (m.id === id && m.rev < rev ? { ...m, rev } : m)) })
@@ -505,7 +521,7 @@ export class HttpAgent implements AgentClient {
    * in flight, `own` still counting itself) keeps what the screen shows; the rev and every other field come from the server.
    */
   private takeMember = (s: Slices, m: MemberRecord, own?: 'role' | 'status' | 'photo'): Slices => {
-    this.confirmed.set(`member:${m.id}`, m)
+    this.confirmMember(m)
     const cur = s.members.find(x => x.id === m.id)
     if (!cur) return { ...s, members: [...s.members, m] }
     const keep = (f: 'role' | 'status' | 'photo') => this.depthOf(`member:${m.id}:${f}`) > (own === f ? 1 : 0)
@@ -532,7 +548,7 @@ export class HttpAgent implements AgentClient {
       apply: s => ({ ...s, members: [...s.members, temp] }),
       send: () => this.http.call({ method: 'POST', path: '/api/members/invites', schema: 'member', json: body.data }),
       // A person invited again keeps their old row: the answer replaces it, and the placeholder goes.
-      done: (s, m) => { this.confirmed.set(`member:${m.id}`, m); return { ...s, members: replaceById(s.members.filter(x => x.id !== temp.id), m) } },
+      done: (s, m) => { this.confirmMember(m); return { ...s, members: replaceById(s.members.filter(x => x.id !== temp.id), m) } },
       undo: s => ({ ...s, members: s.members.filter(x => x.id !== temp.id) }),
     })
   })
