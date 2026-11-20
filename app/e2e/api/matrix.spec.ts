@@ -30,8 +30,9 @@ function verdict(row: Row, who: Principal): Verdict {
   if (who === 'inhouse' || who === 'inhouseGrant') {
     if (!design.allow.includes('inhouse')) return { allowed: false }
     switch (design.class) {
+      // Changed for item 19 (2026-11-20): a brand_data row that lists inhouse takes it for reads and writes alike, only
+      // under a live grant (`allow` above already refused every row that doesn't list it).
       case 'brand_data':
-        if (!read) return { allowed: false }
         return who === 'inhouseGrant' ? { allowed: true } : { allowed: false, reason: 'grant_required' }
       // Decision 19: the Inhouse team holds every Admin control, so a baseline row it is listed on lets it read and write.
       case 'baseline': return { allowed: true }

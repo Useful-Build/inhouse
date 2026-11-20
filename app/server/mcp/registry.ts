@@ -46,10 +46,10 @@ export const INHOUSE_TOOLS: readonly InhouseTool[] = [
   { name: 'routine_delete', category: 'routines', alwaysLoad: false, annotations: destructive, description: 'Delete a routine by `routine_id` when a person asks.' },
   { name: 'routine_run_now', category: 'routines', alwaysLoad: false, annotations: {}, description: 'Run a routine once now, to test it or catch up.' },
   // 5. History (2)
-  { name: 'history_search', category: 'history', alwaysLoad: true, annotations: read, description: 'Search past chats, routine runs and activity by keywords and date, such as "what did we decide about returns last month". Returns short matches with links.' },
-  { name: 'history_read', category: 'history', alwaysLoad: false, annotations: read, description: 'Read one past chat or run in full, by the id `history_search` returned.' },
+  { name: 'history_search', category: 'history', alwaysLoad: true, annotations: read, description: 'Search your own past chats by keywords and date, such as "what did we decide about returns last month". Returns short matches with each chat\'s `chat_id`.' },
+  { name: 'history_read', category: 'history', alwaysLoad: false, annotations: read, description: 'Read one of your past chats in full, by the `chat_id` `history_search` returned.' },
   // 6. Notifications (1)
-  { name: 'notification_send', category: 'notifications', alwaysLoad: true, annotations: {}, description: 'Send a message to people on the brand\'s team or a Slack channel of the brand, in the app, by email or in Slack, following each person\'s settings. `format: "message"` for a short note, `"report"` for a formatted report. Never to customers.' },
+  { name: 'notification_send', category: 'notifications', alwaysLoad: true, annotations: {}, description: 'Sends a notification: to the bell for members; to admin-listed Slack channels from the Act stage. `format: "message"` for a short note, `"report"` for a formatted report. Never to customers.' },
   // 7. Inhouse team (2)
   { name: 'team_request_create', category: 'inhouse_team', alwaysLoad: false, annotations: {}, description: "Ask the Inhouse team (the people who run this agent) for something you can't do: connect a new tool, fix a broken connection, build a skill." },
   { name: 'team_request_list', category: 'inhouse_team', alwaysLoad: false, annotations: read, description: 'List requests to the Inhouse team and their status.' },

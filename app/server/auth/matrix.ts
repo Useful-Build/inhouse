@@ -6,7 +6,9 @@ import type { Principal } from './principal.ts'
 import type { Method } from '../routes.ts'
 
 /**
- * - `brand_data`: persons per `allow`; Inhouse only on GET with a live grant, after a `support.access` audit line.
+ * - `brand_data`: persons per `allow`; Inhouse only with a live grant, after a `support.access` audit line: any GET row
+ *   that lists inhouse, and a write only on a row that lists inhouse (item 19, 2026-11-20: the Inhouse team holds every
+ *   Admin control, but touching brand data still needs a grant; P3's one such row is forgetting a team fact).
  * - `baseline`: per `allow`, Inhouse included, reads and writes, never needing a grant (decision 19: the Inhouse team
  *   holds every Admin control). A brand's chats, memory and audit log are `brand_data`, never `baseline`.
  * - `technical`: Inhouse reads and writes; Member and Admin GET only; an Admin write only on an `adminWrite` row whose
@@ -158,7 +160,7 @@ export const checkAccess: CheckAccess = (principal, row, object, nowMs) => {
     if (!row.allow.includes('inhouse')) return NO
     switch (row.class) {
       case 'brand_data': {
-        if (!read) return NO
+        // Reads and writes alike: `allow` (checked above) decides which rows; the live grant and the audit line, each one.
         const g = principal.grant
         return g && g.endsAtMs > nowMs ? { ok: true, audit: 'support.access' } : { refused: 'forbidden', reason: 'grant_required' }
       }
