@@ -26,11 +26,16 @@ const NOTE_KEYS = new Set(['fieldGuide', 'sampleFacts', 'rowShape', 'usedBy', 's
 const EDITOR_NOTES = new Set(['usage.json.capReached.note'])
 const MACHINE_KEYS = new Set(['iso', 'id', 'k', 'key', 'src', 'poster', 'photo', 'logo', 'icon', 'sev', 'kind', 'type', 'place', 'site', 'problemId', 'trace', 'match', 'ratio', 'media', 'opens', 'onlyInScenario', 'duration', 'tool'])
 /** Every string a person can read in the app, as [file, path, text]. */
+const TIME_DATA = /^(?:[+-]?\d+d )?\d{2}:\d{2}$/
+const machineTimes: [string, string, string][] = []
 function personText(): [string, string, string][] {
   const out: [string, string, string][] = []
   const walk = (file: string, v: unknown, path: string, key: string) => {
     if (NOTE_KEYS.has(key) || (key === 'note' && (path === `${file}.note` || EDITOR_NOTES.has(path)))) return
     if (typeof v === 'string') {
+      // C1 stores times as data the app parses, never shows: a day offset plus a local time ("-3d 16:00") or a clock
+      // time ("07:00"). Those whole values go to machineTimes (checked for validity below), not the text scan.
+      if (TIME_DATA.test(v)) { machineTimes.push([file, path, v]); return }
       if (!MACHINE_KEYS.has(key) && !(key === 'at' && /^\d{4}-\d\d-\d\dT/.test(v))) out.push([file, path, v])
       return
     }
@@ -363,6 +368,17 @@ test('Data: every "Mon, Nov 16" in the sample data has the right weekday on the 
   expect(wrong).toEqual([])
   // The demo's own day.
   expect(json('meta.json').fixedClock.label).toBe('Monday, November 16, 2026')
+})
+
+test('Data: every time stored as data is a valid day offset and local time, or a clock time', () => {
+  machineTimes.length = 0
+  personText()
+  expect(machineTimes.length).toBeGreaterThan(20)
+  const wrong = machineTimes.filter(([, , v]) => {
+    const m = /^(?:([+-]?\d+)d )?(\d{2}):(\d{2})$/.exec(v)
+    return !m || Number(m[2]) > 23 || Number(m[3]) > 59 || (m[1] !== undefined && Math.abs(Number(m[1])) > 60)
+  }).map(([f, p, v]) => `${f} ${p}: ${v}`)
+  expect(wrong).toEqual([])
 })
 
 test('Data: no text a person reads holds a 24-hour time, "2025", an old "17 Nov" date, UK spelling or the words sample, demo or mock', () => {
