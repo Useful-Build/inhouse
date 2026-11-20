@@ -18,6 +18,7 @@
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import type { HookCallbackMatcher, HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk'
+import { WEBFETCH_DENY } from '../../../shared/webfetch-denials.ts'
 import { fetchHostRefusal } from './options.ts'
 
 /** Resolves a name to its addresses (all families). */
@@ -130,8 +131,8 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
         const url = (input.tool_input as { url?: unknown } | null)?.url
         const host = allowedFetchHost(url, listed, own)
         if (host !== null && (listed !== null || !(await resolvesToReserved(host, own, resolve)))) return {}
-        if (listed === null) return deny('WebFetch reaches public https addresses only (port 443): not an IP address, a local or private address, another port or this container')
-        return deny(listed.length === 0 ? 'WebFetch is off for this brand: no domains are listed' : 'WebFetch can only reach the domains the brand listed')
+        if (listed === null) return deny(WEBFETCH_DENY.publicOnly)
+        return deny(listed.length === 0 ? WEBFETCH_DENY.off : WEBFETCH_DENY.notListed)
       },
     ],
   }

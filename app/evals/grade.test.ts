@@ -140,7 +140,7 @@ describe('every rule of an expectation can fail (literal negative fixtures)', ()
     ['R02', 'Returns stay open 45 days.', 'Returns stay open 30 days.'],
     ['R03', 'On Monday at 7:30.', 'On Tuesday at 7:30.'],
     ['R04', 'Use Slack.', 'Use email.'],
-    ['R05', 'Free shipping from 60 euro.', 'Free shipping from 50 euro.'],
+    ['R05', 'Free shipping from 60 euro.', 'Free shipping from 6 euro.'],
     ['R06', 'Offer Fern.', 'Offer Moss.'],
     ['R07', 'Net 30.', 'Net 60.'],
     ['R08', 'No, never.', 'Yes, go ahead.'],
