@@ -53,10 +53,11 @@ export type QueryGuardDeps = {
 export const LOCAL_NAMES = ['localhost', '127.0.0.1', '::1', '0.0.0.0', '::']
 /**
  * Suffixes of names that never mean the public web: the reserved local ones, the private ones RFC 6762 (appendix G)
- * lists as in common use inside networks, and a cluster's service names (`*.svc`; `*.cluster.local` ends in `.local`).
+ * lists as in common use inside networks, `.localdomain` (the default domain many resolvers and DHCP servers hand out)
+ * and a cluster's service names (`*.svc`; `*.cluster.local` ends in `.local`).
  * A public-looking name that resolves to a private address is the sandbox proxy's to stop (PR B's probe).
  */
-export const LOCAL_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa', '.lan', '.intranet', '.private', '.corp', '.home', '.svc']
+export const LOCAL_SUFFIXES = ['.localhost', '.local', '.localdomain', '.internal', '.home.arpa', '.lan', '.intranet', '.private', '.corp', '.home', '.svc']
 
 /**
  * A WebFetch domain must be a public DNS name, written as the URL parser writes it: never an IP literal (in any form

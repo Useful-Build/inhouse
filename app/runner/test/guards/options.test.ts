@@ -20,12 +20,12 @@ import { baseOptions, cliEnv } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { AuditChannel } from '../../src/guards/audit.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF } from '../../src/guards/lists.ts'
-import { GUARDED_OPTIONS, GuardConfigError, LOCAL_NAMES, LOCAL_SUFFIXES, createQueryGuards } from '../../src/guards/options.ts'
+import { GUARDED_OPTIONS, GuardConfigError, LOCAL_NAMES, LOCAL_SUFFIXES, assertFetchDomain, createQueryGuards } from '../../src/guards/options.ts'
 import { PLUGIN_DIR, sessionPaths } from '../../src/guards/paths.ts'
 
 const ack: AuditChannel = { send: async () => ({ ok: true }) }
 /** Names inside a company or a cluster, with no local suffix a resolver would know. */
-const INTERNAL_NAMES = ['db.svc', 'api.prod.svc', 'api.prod.svc.cluster.local', 'wiki.corp', 'hr.intranet', 'nas.home', 'git.private', 'xn--a.com']
+const INTERNAL_NAMES = ['db.svc', 'api.prod.svc', 'api.prod.svc.cluster.local', 'wiki.corp', 'hr.intranet', 'nas.home', 'git.private', 'router.localdomain', 'xn--a.com']
 const ADDRS = ['172.17.0.5', 'fe80::1', '127.0.0.1']
 const guards = createQueryGuards({ audit: ack, hostAddresses: () => ADDRS })
 
@@ -184,4 +184,8 @@ describe('the guarded options', () => {
       expect(() => guards.apply(base(c), { ...c, webFetchDomains: [...c.webFetchDomains, bad] })).toThrow(/webFetchDomains/)
     },
   )
+
+  it('refuses every internal name, each one checked', () => {
+    for (const name of INTERNAL_NAMES) expect(() => assertFetchDomain(name, ADDRS), name).toThrow(GuardConfigError)
+  })
 })

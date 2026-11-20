@@ -115,8 +115,11 @@ export function createSessionHost(deps: HostDeps): SessionHost {
   }
 
   async function wipeUserFiles(user: PoolUser) {
-    for (const dir of shared) await wipeOwned(dir, user, runAs, runRoot)
-    await wipeSysV(user, runAs, join(procDir, 'sysvipc'))
+    // Every place is tried before it throws: a uid that fails (and is quarantined) leaves as little behind as it can.
+    const failed: string[] = []
+    for (const dir of shared) await wipeOwned(dir, user, runAs, runRoot).catch((e: unknown) => void failed.push(String(e instanceof Error ? e.message : e)))
+    await wipeSysV(user, runAs, join(procDir, 'sysvipc')).catch((e: unknown) => void failed.push(String(e instanceof Error ? e.message : e)))
+    if (failed.length > 0) throw new Error(failed.join('; '))
   }
 
   async function prepareFolder(sessionKey: string, user: PoolUser) {
@@ -209,8 +212,11 @@ function existsOk(e: NodeJS.ErrnoException) {
  * Throws when anything of the uid is still there afterwards. A missing dir is fine.
  *
  * The look afterwards is root's, and it only reads: the uid can't see into a folder another uid closed, so its own
- * look would miss a file it left there. A file is owned by whoever made it and can't be given away, so a hit is always
- * something this uid made itself: no other session can plant one.
+ * look would miss a file it left there. Only root can give a file away, but another session can still put one of this
+ * uid's files in its own path: a hard link to it (anywhere on the same filesystem it can write), or a rename of it in a
+ * folder without the sticky bit. A hit is this uid's own doing only while `fs.protected_hardlinks` is 1 (no link to a
+ * file you don't own) and every shared writable folder is sticky (no rename of another uid's entry); PR B's image probe
+ * checks both.
  */
 export async function wipeOwned(dir: string, user: PoolUser, run: RunAsUser, runRoot: RunAsRoot): Promise<void> {
   const mine = [dir, '-xdev', '-mindepth', '1', '-user', String(user.uid)]

@@ -328,6 +328,24 @@ describe('the wipe', () => {
     await expect(h.wipeUserFiles({ ...user, uid: 30003 })).resolves.toBeUndefined()
   })
 
+  it('tries every shared folder and the SysV wipe before it throws, then throws every failure', async () => {
+    const k = sysvKernel([{ kind: 'shm', id: 7, uid: user.uid, cuid: user.uid }])
+    const looked: string[] = []
+    const h = createSessionHost({
+      workRoot: root,
+      poolUids: new Set(),
+      procDir: join(dir, 'proc'),
+      runAsUser: k.run,
+      // The first two places keep a leftover: the rest, and the SysV wipe, still run.
+      runAsRoot: async (_cmd, args) => (looked.push(args[0]!), { code: 0, stdout: looked.length <= 2 ? `${args[0]}/stuck\n` : '' }),
+    })
+    const err = await h.wipeUserFiles(user).then(() => null, (e: Error) => e)
+    expect(looked).toEqual(SHARED_WRITABLE)
+    expect(k.left.size).toBe(0)
+    expect(err?.message).toContain(`${SHARED_WRITABLE[0]}/stuck`)
+    expect(err?.message).toContain(`${SHARED_WRITABLE[1]}/stuck`)
+  })
+
   it("a row that only names the uid as owner never fails its wipe; a row it created does, whoever owns it now (the kernel's own text)", async () => {
     // 30002 made segment 7, named 30001 its owner (IPC_SET) and stays attached. Either uid's removal only marks it
     // (perms 1600, key 0): it lives until 30002 detaches.
