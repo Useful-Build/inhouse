@@ -203,6 +203,20 @@ describe('placement answers (obligations 6, 7, 9)', () => {
     expect(typesOf(h.events(a.runId)).filter(t => t === 'turn.started')).toHaveLength(1)
   }))
 
+  it('a late queued answer after a push made it live: the live token stays open, no pool_busy', () => inAgent(async h => {
+    const answer = deferred<{ queued: true }>()
+    h.pool.placeAnswer = () => answer.promise
+    const a = ok(await h.submit('c1', 'key-amb05'))
+    await settle()
+    h.push(a.turnId, ev.started())
+    answer.resolve({ queued: true })
+    await settle()
+    const hash = h.sql.exec<{ token_hash: string }>('SELECT token_hash FROM run_tokens WHERE turn_id = ?', a.turnId).one().token_hash
+    expect(h.core.checkRunToken(hash, 'model')).toMatchObject({ turnId: a.turnId })
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'live', pool_queued: 0 })
+    expect(h.events(a.runId).filter(e => e.type === 'notice')).toEqual([])
+  }))
+
   it('ambiguous, then unknown twice 30 s apart: stopped there and requeued, then placed again', () => inAgent(async h => {
     h.pool.placeAnswer = { ambiguous: 'runner-0' }
     h.pool.statusAnswer = { state: 'unknown', containerGone: false }
@@ -355,6 +369,24 @@ describe('handoff, interrupt and stop (4.3, 4.6)', () => {
     await settle()
     expect(h.placed()).toEqual([a.turnId, b.turnId])
     expect(b.runId).toBe(a.runId)
+  }))
+
+  it('queued turns start now first, then next, then later; FIFO within one priority', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-pri00'))
+    await settle()
+    const later = ok(await h.submit('c1', 'key-pri01', { priority: 'later' }))
+    const next1 = ok(await h.submit('c1', 'key-pri02'))
+    const next2 = ok(await h.submit('c1', 'key-pri03'))
+    const now = ok(await h.submit('c1', 'key-pri04', { priority: 'now' }))
+    let live = a.turnId
+    for (let i = 0; i < 5; i++) {
+      h.push(live, ev.started(), ev.checkpoint(2, null, null), ev.success(), ev.released({ mainEntries: 2, lastUuid: null, lastUuidIndex: null }))
+      await settle()
+      const row = h.turns().find(t => t.state === 'live')
+      if (!row) break
+      live = row.turn_id
+    }
+    expect(h.placed()).toEqual([a.turnId, now.turnId, next1.turnId, next2.turnId, later.turnId])
   }))
 
   it('stop ends that turn only: the queue carries on', () => inAgent(async h => {

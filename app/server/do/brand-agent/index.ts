@@ -12,7 +12,7 @@ import type { Trace } from '../../../shared/contract/trace.ts'
 import { composePorts } from './compose.ts'
 import { AgentCore } from './core.ts'
 import type {
-  Actor, AdmitAnswer, BrandAgentPorts, BrandAgentRpc, DrainState, LeaseAnswer, PoolHealth, Refusal, RunScope, RunsHealth, SubmitTurn,
+  Actor, AdmitAnswer, BrandAgentPorts, BrandAgentRpc, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PoolHealth, Refusal, RunScope, RunsHealth, SubmitTurn,
 } from './ports.ts'
 import { createAgentTables } from './schema.ts'
 import { alarmPort, createScheduler } from './scheduler.ts'
@@ -68,13 +68,13 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
     return this.core.noteCountTokens(turnId)
   }
   /** PR 2b builds the gate; until then no call is admitted (503 for that call). */
-  async admitModelCall(): Promise<AdmitAnswer> {
+  async admitModelCall(_turnId: string, _callId: string, _worst: ModelCallWorst): Promise<AdmitAnswer> {
     return { busy: true }
   }
-  async renewModelCall(): Promise<LeaseAnswer> {
+  async renewModelCall(_turnId: string, _callId: string, _usage: ModelCallUsage): Promise<LeaseAnswer> {
     return { gone: true }
   }
-  async releaseModelCall(): Promise<LeaseAnswer> {
+  async releaseModelCall(_turnId: string, _callId: string, _end: { usage: ModelCallUsage; cut: boolean }): Promise<LeaseAnswer> {
     return { gone: true }
   }
   async writeToolCall(turnId: string, n: number, entry: AuditEntry): Promise<void> {
