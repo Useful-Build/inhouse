@@ -22,6 +22,7 @@ import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { RunStart } from '../../../shared/protocol/index.ts'
 import type { Scheduler } from '../brand-agent/scheduler.ts'
+import { createAgentTables } from '../brand-agent/schema.ts'
 import type { PlacementHooks } from '../brand-agent/ports.ts'
 import { RunnerPool, type RunnerRpc } from './pool.ts'
 import type { AdmitResult, WarmResult } from './runner.ts'
@@ -52,10 +53,25 @@ const rs = (turnId: string): RunStart => ({ ...RS, runId: turnId })
  * (W1 PR 2, schema.ts); these tests replace them with the columns the pool reads, so their rows stay minimal.
  */
 function w1Tables(sql: SqlStorage) {
-  for (const t of ['turns', 'runs', 'flags']) sql.exec(`DROP TABLE IF EXISTS ${t}`)
-  sql.exec('CREATE TABLE turns (turn_id TEXT PRIMARY KEY, run_id TEXT, state TEXT NOT NULL, gen INTEGER NOT NULL DEFAULT 1, runner TEXT)')
-  sql.exec("CREATE TABLE runs (run_id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK (state IN ('live', 'ended')))")
-  sql.exec('CREATE TABLE flags (key TEXT PRIMARY KEY, value)')
+  // W1's real tables (the BrandAgent's own schema), fresh for each test: the object's constructor already made them.
+  for (const t of ['turns', 'runs', 'flags', 'events', 'chat_state', 'turn_effects', 'turn_trace', 'authority']) sql.exec(`DROP TABLE IF EXISTS ${t}`)
+  createAgentTables(sql)
+  // The pool reads only `turns(turn_id, run_id, state, gen, runner)` and `runs(run_id, state)`. These views take the
+  // tests' short inserts and fill the real tables' other required columns with placeholders.
+  sql.exec('DROP VIEW IF EXISTS seed_turns')
+  sql.exec('CREATE VIEW seed_turns AS SELECT turn_id, run_id, state, gen, runner FROM turns')
+  sql.exec(`CREATE TRIGGER seed_turns_insert INSTEAD OF INSERT ON seed_turns BEGIN
+    INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, gen, state, priority, text,
+      attachments_json, model, picker_id, side_model, effort, max_turns, answer_position, runner, created_at_ms)
+    VALUES (NEW.turn_id, COALESCE(NEW.run_id, 'r_' || NEW.turn_id), 'c_' || NEW.turn_id, 'm_test', 0, NEW.turn_id, 'h',
+      COALESCE(NEW.gen, 1), NEW.state, 'next', '', '[]', 'claude-sonnet-5-5', 'sonnet', 'claude-haiku-5-5', 'medium', 25,
+      'starting', NEW.runner, 0);
+  END`)
+  sql.exec('DROP VIEW IF EXISTS seed_runs')
+  sql.exec('CREATE VIEW seed_runs AS SELECT run_id, state FROM runs')
+  sql.exec(`CREATE TRIGGER seed_runs_insert INSTEAD OF INSERT ON seed_runs BEGIN
+    INSERT INTO runs (run_id, chat_id, owner_id, state, started_at_ms) VALUES (NEW.run_id, 'c_' || NEW.run_id, 'm_test', NEW.state, 0);
+  END`)
 }
 
 class FakeScheduler implements Scheduler {
@@ -302,7 +318,7 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
       const ids = op.bad.map(b => {
         const id = `t_${n++}`
         if (b) L.bad.add(id)
-        sql.exec("INSERT INTO turns (turn_id, run_id, state, gen) VALUES (?, ?, 'starting', 1)", id, `r_${id}`)
+        sql.exec("INSERT INTO seed_turns (turn_id, run_id, state, gen) VALUES (?, ?, 'starting', 1)", id, `r_${id}`)
         return id
       })
       await s.waitFor(Promise.all(ids.map(placeAndApply)))
@@ -388,8 +404,8 @@ describe('routing', () => {
   it('two placements racing for the 25th slot: the second goes to the next runner (barrier on the first admission)', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      for (let i = 0; i < 24; i++) sql.exec("INSERT INTO turns (turn_id, state, gen, runner) VALUES (?, 'live', 1, 'runner-0')", `t_live${i}`)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1)")
+      for (let i = 0; i < 24; i++) sql.exec("INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES (?, 'live', 1, 'runner-0')", `t_live${i}`)
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1)")
       let open!: () => void
       const barrier = new Promise<void>(r => (open = r))
       const admits: string[] = []
@@ -416,8 +432,8 @@ describe('routing', () => {
   it('a container exit while its start is being admitted: the turn in flight is not fenced, and moves on (barrier)', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
-      sql.exec("INSERT INTO turns (turn_id, state, gen, runner) VALUES ('t_old', 'live', 1, 'runner-0')")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES ('t_old', 'live', 1, 'runner-0')")
       let open!: () => void
       const barrier = new Promise<void>(r => (open = r))
       const runner = (name: string): RunnerRpc => ({
@@ -442,7 +458,7 @@ describe('routing', () => {
   it('one turn the runner rejects (typed 400) cools nothing: a good turn still places on runner-0 (H2)', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen, runner) VALUES ('t_live', 'live', 1, 'runner-0'), ('t_bad', 'starting', 1, NULL), ('t_good', 'starting', 1, NULL)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES ('t_live', 'live', 1, 'runner-0'), ('t_bad', 'starting', 1, NULL), ('t_good', 'starting', 1, NULL)")
       const admits: string[] = []
       const pool = poolWith(sql, name => async start => {
         admits.push(`${start.runId}@${name}`)
@@ -468,7 +484,7 @@ describe('routing', () => {
   ])('a typed 5xx (%s) moves the turn to the next runner; runner-0 cools 5 s, stays up with its protocol', async (_label, error) => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       const admits: string[] = []
       const pool = poolWith(sql, name => async start => {
         admits.push(`${start.runId}@${name}`)
@@ -484,7 +500,7 @@ describe('routing', () => {
   it('a typed 5xx from every runner: queued only when none is left', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       const admits: string[] = []
       const pool = poolWith(sql, name => async start => {
         admits.push(`${start.runId}@${name}`)
@@ -498,7 +514,7 @@ describe('routing', () => {
   it('a cold start is not a slow admission: turns during a wake join it instead of waking the next runner', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
       const clock = { now: T0 }
       let open!: () => void
       const booting = new Promise<void>(r => (open = r))
@@ -526,7 +542,7 @@ describe('routing', () => {
   it('a runner with an admission in flight over 3 s gets no new turns until it answers', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_hung', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_hung', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
       const clock = { now: T0 }
       let open!: () => void
       const barrier = new Promise<void>(r => (open = r))
@@ -549,7 +565,7 @@ describe('routing', () => {
     await inObject(async sql => {
       w1Tables(sql)
       const ids = ['t_1', 't_2', 't_3', 't_4']
-      for (const id of ids) sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES (?, 'starting', 1)", id)
+      for (const id of ids) sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES (?, 'starting', 1)", id)
       const clock = { now: T0 }
       const sched = new FakeScheduler()
       let live = true
@@ -570,7 +586,7 @@ describe('routing', () => {
   it('an ambiguous admission keeps the turn on the runner and makes it suspect for 60 s: new turns go elsewhere (H1)', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1), ('t_c', 'starting', 1)")
       const clock = { now: T0 }
       const pool = poolWith(sql, name => async () => (name === 'runner-0' ? { ambiguous: true, gen: 1 } : { accepted: true, gen: 1, protocol: 2 }), clock)
       expect(await pool.place(rs('t_a'), 1)).toEqual({ ambiguous: 'runner-0' })
@@ -584,7 +600,7 @@ describe('routing', () => {
   it('409 run_live: the turn is live there, so it keeps the runner and is ambiguous, never cleared or moved', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       const admits: string[] = []
       const pool = poolWith(sql, name => async start => {
         admits.push(`${start.runId}@${name}`)
@@ -600,7 +616,7 @@ describe('routing', () => {
   it('a second place() of a turn whose admission is in flight answers ambiguous and sends nothing', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       let open!: () => void
       const barrier = new Promise<void>(r => (open = r))
       let calls = 0
@@ -621,7 +637,7 @@ describe('routing', () => {
     await inObject(async sql => {
       w1Tables(sql)
       // The newer attempt (gen 2) already sits on runner-0.
-      sql.exec("INSERT INTO turns (turn_id, state, gen, runner) VALUES ('t_a', 'starting', 2, 'runner-0')")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES ('t_a', 'starting', 2, 'runner-0')")
       const pool = poolWith(sql, () => async () => ({ rejected: 400, gen: 1 }))
       sql.exec("UPDATE pool_runners SET state = 'up' WHERE runner = 'runner-0'")
       await pool.place(rs('t_a'), 1)
@@ -632,7 +648,7 @@ describe('routing', () => {
   it('a late exit of an older generation fences nothing on the newer container', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       const pool = poolWith(sql, () => async () => ({ accepted: true, gen: 3, protocol: 2 }))
       expect(await pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-0' })
       sql.exec("UPDATE turns SET state = 'live' WHERE turn_id = 't_a'")
@@ -645,7 +661,7 @@ describe('routing', () => {
   it('a stale attempt (the turn moved on to another gen) leaves no runner on the row after a refusal', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 2)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 2)")
       const runner = (): RunnerRpc => ({
         admit: async () => ({ refused: 'session_folder_parked', gen: 1 }),
         status: async () => ({ state: 'live', containerGone: false }),
@@ -700,7 +716,7 @@ describe('placement queue', () => {
   /** Turns queued in this order (a chat_live answer each), then the runners answer per `answer`. */
   async function queuedRig(sql: SqlStorage, ids: string[], answer: (turnId: string) => AdmitResult) {
     w1Tables(sql)
-    for (const id of ids) sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES (?, 'starting', 1)", id)
+    for (const id of ids) sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES (?, 'starting', 1)", id)
     const clock = { now: T0 }
     const sched = new FakeScheduler()
     let script: (turnId: string) => AdmitResult = () => ({ refused: 'chat_live', gen: 1 })
@@ -735,7 +751,7 @@ describe('placement queue', () => {
     await inObject(async sql => {
       const rig = await queuedRig(sql, ['t_a'], () => ({ refused: 'chat_live', gen: 1 }))
       rig.clock.now = T0 + 2_000
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_new', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_new', 'starting', 1)")
       expect(await rig.pool.place(rs('t_new'), 1)).toEqual({ queued: true })
       expect(rig.pool.queued()).toEqual(['t_a', 't_new'])
       expect(rig.sched.tasks.get('pool-retry')?.dueAtMs).toBe(T0 + 2_000)
@@ -784,7 +800,7 @@ describe('drain', () => {
   it('a placement racing the drain call: refused at the next step, never sent to another runner', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       let open!: () => void
       const barrier = new Promise<void>(r => (open = r))
       const admits: string[] = []
@@ -799,7 +815,7 @@ describe('drain', () => {
       expect(await placing).toEqual({ refused: 'draining' })
       expect(admits).toEqual(['t_a'])
       // And a placement after the drain step sends nothing.
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_b', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_b', 'starting', 1)")
       expect(await rig.pool.place(rs('t_b'), 1)).toEqual({ refused: 'draining' })
       expect(admits).toEqual(['t_a'])
     })
@@ -808,7 +824,7 @@ describe('drain', () => {
   it('reports live, starting, ending and queued, which reach 0 as turns end', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
-      sql.exec(`INSERT INTO turns (turn_id, state, gen, runner) VALUES
+      sql.exec(`INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES
         ('t_1', 'live', 1, 'runner-0'), ('t_2', 'live', 1, 'runner-1'), ('t_3', 'starting', 1, 'runner-0'),
         ('t_4', 'ending', 1, 'runner-0'), ('t_5', 'queued', 1, NULL), ('t_6', 'ended', 1, 'runner-0')`)
       expect(rig.pool.drain(rig.clock.now)).toEqual({ live: 2, starting: 1, ending: 1, queued: 1, drainingUntilMs: T0 + 1_800_000 })
@@ -823,14 +839,14 @@ describe('drain', () => {
   it('expires after 30 minutes: cleared, and every live run advances at the expiry', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
-      sql.exec("INSERT INTO runs (run_id, state) VALUES ('r_1', 'live'), ('r_2', 'live'), ('r_3', 'ended')")
+      sql.exec("INSERT INTO seed_runs (run_id, state) VALUES ('r_1', 'live'), ('r_2', 'live'), ('r_3', 'ended')")
       rig.pool.drain(rig.clock.now)
       expect([...rig.sched.tasks].filter(([id]) => id.startsWith('run-advance:'))).toEqual([
         ['run-advance:r_1', { kind: 'run-advance', dueAtMs: T0 + 1_800_000, payload: { runId: 'r_1' } }],
         ['run-advance:r_2', { kind: 'run-advance', dueAtMs: T0 + 1_800_000, payload: { runId: 'r_2' } }],
       ])
       rig.clock.now = T0 + 1_800_000 - 1
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       expect(await rig.pool.place(rs('t_a'), 1)).toEqual({ refused: 'draining' })
       rig.clock.now = T0 + 1_800_000
       expect(rig.pool.drainState().drainingUntilMs).toBeNull()
@@ -842,7 +858,7 @@ describe('drain', () => {
   it('hands the placement queue back to W1 (place answers draining, W1 requeues in the run)', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       rig.admit = async () => ({ refused: 'chat_live', gen: 1 })
       expect(await rig.pool.place(rs('t_a'), 1)).toEqual({ queued: true })
       rig.pool.drain(rig.clock.now)
@@ -859,7 +875,7 @@ describe('warm-up', () => {
       const rig = drainRig(sql)
       sql.exec("UPDATE pool_runners SET state = 'up', container_gen = 4 WHERE runner IN ('runner-0', 'runner-1')")
       // runner-0: a placement from before the drain whose admission is still in flight; runner-1: idle.
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       let open!: () => void
       const barrier = new Promise<void>(r => (open = r))
       rig.admit = async () => {
@@ -954,8 +970,8 @@ describe('warm-up', () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
       // r_1's live turn ended during the drain; its follow-up waits in the run (W1's queue), not in pool_queue.
-      sql.exec("INSERT INTO runs (run_id, state) VALUES ('r_1', 'live')")
-      sql.exec("INSERT INTO turns (turn_id, run_id, state, gen) VALUES ('t_1', 'r_1', 'ended', 1), ('t_2', 'r_1', 'queued', 1)")
+      sql.exec("INSERT INTO seed_runs (run_id, state) VALUES ('r_1', 'live')")
+      sql.exec("INSERT INTO seed_turns (turn_id, run_id, state, gen) VALUES ('t_1', 'r_1', 'ended', 1), ('t_2', 'r_1', 'queued', 1)")
       rig.pool.drain(rig.clock.now)
       rig.clock.now = T0 + 60_000
       expect(await rig.pool.warmup()).toEqual({ ok: true })
@@ -983,7 +999,7 @@ describe('signals', () => {
         admits.push(start.runId)
         return admits.length === 1 ? { protocol: 'none', gen: 1 } : { accepted: true, gen: 1, protocol: 2 }
       }
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1), ('t_b', 'starting', 1)")
       expect(await rig.pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-1' })
       expect(await rig.pool.place(rs('t_b'), 1)).toEqual({ admitted: 'runner-1' })
       expect(rig.pool.health().protocol.ok).toBe(false)
@@ -1009,7 +1025,7 @@ describe('signals', () => {
       const rig = drainRig(sql)
       let answer: AdmitResult = { refused: 'chat_live', gen: 1 }
       rig.admit = async () => answer
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       expect(await rig.pool.place(rs('t_a'), 1)).toEqual({ queued: true })
       rig.clock.now = T0 + 30_001
       answer = { accepted: true, gen: 1, protocol: 2 }
@@ -1026,7 +1042,7 @@ describe('signals', () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
       rig.admit = async () => ({ refused: 'chat_live', gen: 1 })
-      sql.exec("INSERT INTO turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen) VALUES ('t_a', 'starting', 1)")
       await rig.pool.place(rs('t_a'), 1)
       rig.clock.now = T0 + 30_000
       expect(rig.pool.health().shortfall.ok).toBe(true)

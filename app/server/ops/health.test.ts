@@ -4,7 +4,9 @@
 //  3. a detail carries brand data (an error message, a name, an email);
 //  4. the migration signal passes when a migration this build ships isn't applied (P3: every shipped one, in any order,
 //     not just the newest: latest.ts is retired), or fails when every shipped one is applied beside others;
-//  5. a release without the version metadata binding answers 200 healthy instead of failing the version signal (503).
+//  5. a release without the version metadata binding answers 200 healthy instead of failing the version signal (503);
+//  6. (P3, W2) the pool signals are missing from the list, or an idle pool (no container started, nothing queued) reads
+//     red.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { HandlerEnv } from '../routes.ts'
@@ -35,6 +37,14 @@ describe('the health route', () => {
         { name: 'usage_stranded', ok: true },
       ] },
     })
+  })
+
+  it('lists the three pool signals (p3-design 7), green on an idle pool (failure 6)', async () => {
+    expect(signals.map(s => s.name).filter(n => n.startsWith('pool_'))).toEqual(['pool_protocol', 'pool_restarts', 'pool_shortfall'])
+    const out = await call(health)
+    expect(out.body.signals.filter(s => s.name.startsWith('pool_'))).toEqual([
+      { name: 'pool_protocol', ok: true }, { name: 'pool_restarts', ok: true }, { name: 'pool_shortfall', ok: true },
+    ])
   })
   it('fails the version signal without the binding, except in the test build (failure 5)', async () => {
     const bare = { ...c, env: {} as HandlerEnv }
