@@ -1,4 +1,5 @@
 // The team, who approves what, and the limits on what the agent does by itself.
+import './jitless.ts'
 import { z } from 'zod'
 import { MemberIdSchema, MemberRecordSchema } from './members.ts'
 import { SupportGrantSchema } from './grants.ts'
@@ -19,7 +20,7 @@ export type ApprovalRule = z.infer<typeof ApprovalRuleSchema>
 export const PeopleDataSchema = z.object({
   members: z.array(MemberRecordSchema),
   approvalRules: z.array(ApprovalRuleSchema),
-  /** The latest support grant (live, ended or expired), or null when there never was one (p2-design.md section 9). */
+  /** The latest support grant (live, ended or expired). Null when there never was one, or when this person can't read grants (a failed `grants` read shows in `resources` and can be retried). p2-design.md section 9. */
   supportGrant: SupportGrantSchema.nullable(),
   runLimits: z.object({
     jobsAgentMayFinish: z.array(z.object({ id: z.string(), name: z.string(), desc: z.string() })),

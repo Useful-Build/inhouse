@@ -1,4 +1,5 @@
 // Skills the agent has, and the ones it suggests.
+import './jitless.ts'
 import { z } from 'zod'
 import { StageIndexSchema } from './common.ts'
 

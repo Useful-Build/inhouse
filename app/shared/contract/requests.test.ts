@@ -3,6 +3,7 @@
 //  2. an error body the Worker writes (a code, a reason, the current record) doesn't parse for the client, or one with an unknown code does;
 //  3. a missing required field (a chat id) parses.
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { AgentErrorCodeSchema, AskOptionsSchema, CreateChatInputSchema, DemoContextSchema, ErrorBodySchema, ErrorReasonSchema, ResourceKeySchema, SendOptionsSchema, SendPrioritySchema } from './index.ts'
 
 describe('request schemas', () => {
@@ -35,5 +36,12 @@ describe('the error body', () => {
   it('has the four codes P2 adds, and a resource key for each list', () => {
     expect(AgentErrorCodeSchema.options).toEqual(expect.arrayContaining(['unauthorized', 'rate_limited', 'cap_reached', 'invalid']))
     expect(ResourceKeySchema.options).toEqual(expect.arrayContaining(['members', 'audit']))
+  })
+})
+
+describe('zod code generation', () => {
+  // The product's CSP has no `unsafe-eval`: zod 4 probes `new Function` when an object schema is built unless jitless is set (jitless.ts).
+  it('is off once the contract is loaded', () => {
+    expect(z.config().jitless).toBe(true)
   })
 })

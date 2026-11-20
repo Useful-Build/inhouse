@@ -1,4 +1,5 @@
 // The models a team can pick for an answer.
+import './jitless.ts'
 import { z } from 'zod'
 import { EffortSchema } from './common.ts'
 

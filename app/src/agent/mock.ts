@@ -57,7 +57,14 @@ const SAMPLE_MEMBERS: MemberRecord[] = people.members.map(m => ({
 }))
 const ID_BY_NAME = new Map(SAMPLE_MEMBERS.map(m => [m.name, m.id]))
 /** A saved or sample name as a member id: an id stays, a known name converts, any other name was the signed-in person's own (what `stamp` always wrote). */
-const idOfBy = (by: string) => (by.startsWith('m_') ? by : ID_BY_NAME.get(by) ?? ME_ID)
+/** `known`: the ids of the members this demo has. A name or id nobody has is the signed-in person's own, and `unknown` hears it. */
+const idOfBy = (by: string, known: ReadonlySet<string>, unknown: (by: string) => void) => {
+  if (known.has(by)) return by
+  const id = ID_BY_NAME.get(by)
+  if (id) return id
+  unknown(by)
+  return ME_ID
+}
 /** The Inhouse team's people have member ids too (kind inhouse): the sample audit log names them. */
 const actorIdOf = (who: string) => ID_BY_NAME.get(who) ?? (/\(Inhouse team\)/.test(who) ? `m_${who.replace(/\s*\(.*\)/, '').toLowerCase().replace(/[^a-z0-9]+/g, '_')}` : 'm_inhouse-team')
 /** The brand's rules name an approver by member id, or `anyone`. */
@@ -341,7 +348,7 @@ const savedNext = (v: unknown): Instant | null => (isInstant(v) ? v : str(v) ? s
 const savedRoutine = (r: unknown): RoutineCard | null => {
   if (!hasStrs(r, ['id', 'name', 'freq', 'day', 'note', 'what'])) return null
   const time = savedClock(r.time), next = savedNext(r.next)
-  return time && next ? { id: r.id as string, name: r.name as string, freq: r.freq as string, day: r.day as string, time, next, note: r.note as string, what: r.what as string } : null
+  return time && next ? { id: r.id as string, name: r.name as string, freq: r.freq as string, day: r.day as string, time, next, note: r.note as string, what: r.what as string, ...(typeof r.rev === 'number' && Number.isInteger(r.rev) && r.rev >= 1 ? { rev: r.rev } : {}) } : null
 }
 /** A request to the Inhouse team, saved now or before C1 ("New tool · sent by Sam, just now", sent in that session: now). */
 const savedRequest = (r: unknown, now: Instant): TeamRequest | null => {
@@ -351,10 +358,10 @@ const savedRequest = (r: unknown, now: Instant): TeamRequest | null => {
   return { icon: r.icon as string, title: r.title as string, sub, at: isInstant(r.at) ? r.at : now, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}) }
 }
 /** A stamp (when and who), saved now or before C1. */
-const savedStamp = (x: unknown): StampRecord | null => {
+const savedStamp = (x: unknown, idOf: (by: string) => string): StampRecord | null => {
   if (!isRec(x) || !str(x.by) || !x.by.trim()) return null
   const at = savedAt(x)
-  return at ? { at, by: idOfBy(x.by) } : null
+  return at ? { at, by: idOf(x.by) } : null
 }
 /** The entries of a saved record that `conv` keeps; `onDrop` hears the key of each it can't. */
 const recConv = <T,>(v: unknown, conv: (x: unknown) => T | null, onDrop: (key: string) => void): Record<string, T> =>
@@ -436,11 +443,15 @@ const sanitize = (raw: unknown): Loaded => {
   /** The items of a saved list that `conv` keeps; the index of each it can't is dropped as `field[i]`. */
   const listConv = <T,>(field: string, v: unknown, conv: (x: unknown) => T | null): T[] =>
     (isArr(v) ? v : []).flatMap((x, i) => { const c = conv(x); if (c === null) drop(`${field}[${i}]`); return c === null ? [] : [c] })
+  const server = savedServer(raw.server, demoStartedAt)
+  const knownIds = new Set([...SAMPLE_MEMBERS.map(m => m.id), ...server.invited.map(m => m.id)])
+  const unknownBy = new Set<string>()
+  const byId = (by: string) => idOfBy(by, knownIds, n => unknownBy.add(n))
   const approved: AgentState['approved'] = {}
   for (const [id, r] of Object.entries(isRec(raw.approved) ? raw.approved : {})) {
     const at = isRec(r) ? savedAt(r) : null, loggedAt = isRec(r) ? savedLoggedAt(r) : null
     if (!hasStrs(r, ['by', 'title', 'doneText']) || !(r.by as string).trim() || !at || !loggedAt) { drop(`approved.${id}`); continue }
-    approved[id] = { at, by: idOfBy(r.by as string), loggedAt, title: r.title as string, doneText: r.doneText as string, partial: r.partial === true }
+    approved[id] = { at, by: byId(r.by as string), loggedAt, title: r.title as string, doneText: r.doneText as string, partial: r.partial === true }
   }
   const routinesExtra = listConv('routinesExtra', raw.routinesExtra, savedRoutine)
     // An id twice keeps the first.
@@ -451,7 +462,6 @@ const sanitize = (raw: unknown): Loaded => {
   const paused = savedPause(raw.paused)
   if (paused === null && raw.paused !== null && raw.paused !== undefined) drop('paused')
   // Before C9 a role (`p:<id>`), a photo (`photo:<id>`) and the support switch (`d:support`) were settings: they move to the server.
-  const server = savedServer(raw.server, demoStartedAt)
   const legacy = recOf(raw.settings, str)
   for (const [k, v] of Object.entries(legacy)) {
     const role = sampleIdOf(k, 'p:'), photo = sampleIdOf(k, 'photo:')
@@ -465,7 +475,7 @@ const sanitize = (raw: unknown): Loaded => {
   const settings: Record<string, string> = {}
   for (const [k, v] of Object.entries(legacy)) {
     if (k.startsWith('p:') || k.startsWith('photo:')) continue
-    if (/^a:\d+$/.test(k)) { const a = v === 'Anyone who approves' ? 'anyone' : v.startsWith('m_') ? v : ID_BY_NAME.get(v); if (a) settings[k] = a; else drop(`settings.${k}`); continue }
+    if (/^a:\d+$/.test(k)) { const a = v === 'Anyone who approves' ? 'anyone' : v.startsWith('m_') ? v : ID_BY_NAME.get(v); if (a && (a === 'anyone' || knownIds.has(a))) settings[k] = a; else drop(`settings.${k}`); continue }
     settings[k] = v
   }
   const toggles = recOf(raw.toggles, (x): x is boolean => typeof x === 'boolean')
@@ -473,7 +483,7 @@ const sanitize = (raw: unknown): Loaded => {
   const state: AgentState = {
     approved,
     sent: flagsOf(raw.sent),
-    undone: recConv(raw.undone, savedStamp, k => drop(`undone.${k}`)),
+    undone: recConv(raw.undone, x => savedStamp(x, byId), k => drop(`undone.${k}`)),
     edits: recOf(raw.edits, str),
     paused,
     toggles,
@@ -490,7 +500,7 @@ const sanitize = (raw: unknown): Loaded => {
     libraryDeleted: flagsOf(raw.libraryDeleted),
     setAside: recConv(raw.setAside, (x): SetAsideRecord | null => {
       if (!isRec(x) || !SET_ASIDE.includes(x.reason as SetAsideReason)) return null
-      const stamp = savedStamp(x), loggedAt = savedLoggedAt(x)
+      const stamp = savedStamp(x, byId), loggedAt = savedLoggedAt(x)
       return stamp && loggedAt ? { reason: x.reason as SetAsideReason, ...stamp, loggedAt } : null
     }, k => drop(`setAside.${k}`)),
     routinesDeleted: Object.fromEntries(Object.keys(flagsOf(raw.routinesDeleted)).filter(known).map(id => [id, true as const])),
@@ -506,6 +516,7 @@ const sanitize = (raw: unknown): Loaded => {
     chatPinned: flagsOf(raw.chatPinned),
     chatDeleted: flagsOf(raw.chatDeleted),
   }
+  for (const n of unknownBy) dropped.push(`a person named "${n}" (taken as the signed-in person)`)
   if (dropped.length) console.warn(`Inhouse demo: dropped saved entries it could not read: ${dropped.join(', ')}.`)
   // Only a request saved without its time gets `now` itself.
   const filledFromNow = state.teamRequests.some(r => r.at === now)
@@ -898,7 +909,10 @@ export class MockAgent implements AgentClient {
   /** The team as the server serves it: the sample people and the ones invited, with their role, photo, status and rev. */
   private members(): MemberRecord[] {
     const s = this.server
-    return [...SAMPLE_MEMBERS, ...s.invited].map(m => ({
+    // A sample member invited again is one record (the invited one), kept where they were in the list.
+    const again = new Map(s.invited.map(m => [m.id, m]))
+    const sampleIds = new Set(SAMPLE_MEMBERS.map(m => m.id))
+    return [...SAMPLE_MEMBERS.map(m => again.get(m.id) ?? m), ...s.invited.filter(m => !sampleIds.has(m.id))].map(m => ({
       ...m,
       name: m.id === ME_ID ? this.meName() : m.name,
       role: s.roles[m.id] ?? m.role,
@@ -923,7 +937,7 @@ export class MockAgent implements AgentClient {
         ...base.people,
         members: failed.members ? [] : this.members(),
         approvalRules: APPROVAL_RULES.map((r, i) => ({ ...r, approver: this.approverOf(i, r.approver), rev: revs[`setting:a:${i}`] ?? 0 })),
-        supportGrant: this.grantNow(),
+        supportGrant: failed.grants ? null : this.grantNow(),
       },
       routines: base.routines.map(r => ({ ...r, rev: revs[`routine:${r.id}`] ?? r.rev })),
       memory: {
@@ -1089,11 +1103,12 @@ export class MockAgent implements AgentClient {
     if (stale) return stale
     const settings = { ...this.state.settings }
     if (value === null) delete settings[key]; else settings[key] = value
-    return this.writeRecs([[rec, 0]], { settings })
+    // The signed-in person's name is on their member record, so changing it moves that record's rev too.
+    return this.writeRecs(key === 'g:name' ? [[rec, 0], [`member:${ME_ID}`, 1]] : [[rec, 0]], { settings })
   }
   setPhoto(memberId: string, dataUrl: string | null) {
     if (!this.members().some(m => m.id === memberId && m.status !== 'removed')) return this.rejected(NOT_FOUND, 'No such member.', true)
-    return this.write({}, { ...this.server, photos: { ...this.server.photos, [memberId]: dataUrl } })
+    return this.writeRecs([[`member:${memberId}`, 1]], {}, { photos: { ...this.server.photos, [memberId]: dataUrl } })
   }
 
   // ----- records with a rev (C6) -----
@@ -1113,6 +1128,18 @@ export class MockAgent implements AgentClient {
     if ((this.seen[rec] ?? now) >= now) return null
     this.seen[rec] = now
     return this.rejected('conflict', 'Someone changed this.', true, { current: current() })
+  }
+  /** A server with each record's rev bumped (`recs` are `[record, its first rev]`). */
+  private bumped(recs: [string, number][]): Server {
+    const revs = { ...this.server.revs }
+    for (const [rec, base] of recs) revs[rec] = (revs[rec] ?? base) + 1
+    return { ...this.server, revs }
+  }
+  /** A chat-made routine is a card in the state: its rev moves there too, so the snapshot shows it. */
+  private routineNext(ids: string[], next: Partial<AgentState>): Partial<AgentState> {
+    const extra = next.routinesExtra ?? this.state.routinesExtra
+    if (!extra.some(c => ids.includes(c.id))) return next
+    return { ...next, routinesExtra: extra.map(c => (ids.includes(c.id) ? { ...c, rev: this.rev(`routine:${c.id}`, 1) + 1 } : c)) }
   }
   /** A write that bumps each record's rev in the same commit as the change. `recs` are `[record, its first rev]`. */
   private writeRecs(recs: [string, number][], next: Partial<AgentState>, patch: Partial<Server> = {}): Promise<void> {
@@ -1136,9 +1163,9 @@ export class MockAgent implements AgentClient {
       if (typeof value === 'boolean') state = { ...state, toggles: { ...state.toggles, [ref.key]: value } }
       else if (typeof value === 'string') state = { ...state, settings: { ...state.settings, [ref.key]: value } }
     } else if (ref.kind === 'member' && isRole(value)) server = { ...server, roles: { ...server.roles, [ref.id]: value } }
-    else if (ref.kind === 'grant' && this.server.grant) server = { ...server, grant: { ...this.server.grant, endedAt: instantOf(demoNow(this.startedAt).getTime()), endedBy: ME_ID } }
+    else if (ref.kind === 'grant' && value === 'end' && this.server.grant) server = { ...server, grant: { ...this.server.grant, endedAt: instantOf(demoNow(this.startedAt).getTime()), endedBy: ME_ID } }
     this.state = state
-    this.commit({}, false, server)
+    this.commit(ref.kind === 'routine' ? this.routineNext([ref.id], {}) : {}, false, server)
   }
   /** Test hook (`failRead`): this resource's read fails with `code` until `retry`; null undoes it. */
   failRead(resource: ResourceKey, code: AgentErrorCode | null = 'unavailable') {
@@ -1256,14 +1283,14 @@ export class MockAgent implements AgentClient {
   deleteRoutine(id: string) {
     const stale = this.staleAmong('routine', [id])
     if (stale) return stale
-    return this.writeRecs([[`routine:${id}`, 1]], { routinesDeleted: { ...this.state.routinesDeleted, [id]: true } })
+    return this.writeRecs([[`routine:${id}`, 1]], this.routineNext([id], { routinesDeleted: { ...this.state.routinesDeleted, [id]: true } }))
   }
   restoreRoutine(id: string) {
     const stale = this.staleAmong('routine', [id])
     if (stale) return stale
     const routinesDeleted = { ...this.state.routinesDeleted }
     delete routinesDeleted[id]
-    return this.writeRecs([[`routine:${id}`, 1]], { routinesDeleted })
+    return this.writeRecs([[`routine:${id}`, 1]], this.routineNext([id], { routinesDeleted }))
   }
 
   // ----- who is signed in, the team, support access, paging and retry (P2) -----
@@ -1495,12 +1522,14 @@ export class MockAgent implements AgentClient {
     const was = replaces ? this.runInfo.get(replaces) : undefined
     const old = was?.routine ?? was?.kept
     const reuse = old !== undefined && this.state.routinesExtra.some(x => x.id === old) ? old : null
-    const routine = { ...part.routine, id: reuse ?? nextChatRoutineId(this.state.routinesExtra) }
+    const id = reuse ?? nextChatRoutineId(this.state.routinesExtra)
+    const routine = { ...part.routine, id, rev: reuse ? this.rev(`routine:${id}`, 1) + 1 : 1 }
     const routinesDeleted = { ...this.state.routinesDeleted }; delete routinesDeleted[routine.id]
     this.commit({
       routinesExtra: reuse ? this.state.routinesExtra.map(x => (x.id === reuse ? routine : x)) : [...this.state.routinesExtra, routine],
       routinesDeleted,
-    })
+    }, false, reuse ? this.bumped([[`routine:${id}`, 1]]) : undefined)
+    if (reuse) this.seen[`routine:${id}`] = routine.rev
     info.routine = routine.id
     return { ...part, routine }
   }
@@ -1511,7 +1540,10 @@ export class MockAgent implements AgentClient {
    */
   private takeBack(replaced: string, info: RunInfo) {
     const old = this.runInfo.get(replaced)
-    if (old?.routine && !info.routine) this.commit({ routinesDeleted: { ...this.state.routinesDeleted, [old.routine]: true } })
+    if (!old?.routine || info.routine) return
+    const rec = `routine:${old.routine}`
+    this.commit(this.routineNext([old.routine], { routinesDeleted: { ...this.state.routinesDeleted, [old.routine]: true } }), false, this.bumped([[rec, 1]]))
+    this.seen[rec] = this.rev(rec, 1)
   }
 
   private knownChat(id: string) { return this.created.has(id) || chats.some(c => c.id === id) }

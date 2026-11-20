@@ -65,14 +65,26 @@ function TextField({ row, disabled }: { row: Row; disabled: boolean }) {
     : <PlainField row={row} disabled={disabled} />
 }
 
-/** A plain field saves as you type, but never an empty value (the server refuses one): it waits for text, and goes back to what was saved on blur. */
+/**
+ * A plain field saves as you type. The registry refuses an empty value and one over 80 characters (the name and the
+ * sign-off), so those aren't saved: the field says why and keeps what was typed.
+ */
 function PlainField({ row, disabled }: { row: Row; disabled: boolean }) {
   const [draft, setDraft] = useState(row.value)
   const [saved, setSaved] = useState(row.value)
   if (saved !== row.value) { setSaved(row.value); setDraft(row.value) }
-  return <Input {...fieldProps(row, disabled)} value={draft}
-    onChange={e => { setDraft(e.target.value); if (e.target.value.trim()) { agent.setSetting(row.key!, e.target.value); toastSaved() } }}
-    onBlur={() => setDraft(row.value)} />
+  const error = !draft.trim() ? "This can't be empty." : draft.length > 80 ? 'Use 80 characters or fewer.' : null
+  const errorId = `field-error-${row.key}`
+  return (
+    <div className="flex max-w-full flex-col items-end gap-1.5">
+      <Input {...fieldProps(row, disabled)} value={draft} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
+        onChange={e => {
+          setDraft(e.target.value)
+          if (e.target.value.trim() && e.target.value.length <= 80) { agent.setSetting(row.key!, e.target.value); toastSaved() }
+        }} />
+      {error && <p id={errorId} className="m-0 w-55 max-w-full text-sm text-destructive-text">{error}</p>}
+    </div>
+  )
 }
 
 function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabled: boolean }) {

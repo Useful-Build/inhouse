@@ -1,5 +1,6 @@
 // Paging (p2-design.md section 5): the request's `?limit=` and `cursor`, and one page of a list (the items and the
 // opaque cursor of the next page, or null on the last). W2 owns this file in P2.
+import './jitless.ts'
 import { z } from 'zod'
 
 /** An opaque keyset cursor: base64url of the last key, no padding, bounded so a query can't carry a large blob. */

@@ -1,4 +1,5 @@
 // Who the brand, the agent and the signed-in person are.
+import './jitless.ts'
 import { z } from 'zod'
 
 export const AgentMetaSchema = z.object({

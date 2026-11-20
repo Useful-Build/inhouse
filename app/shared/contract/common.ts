@@ -1,4 +1,5 @@
 // Values every resource shares: the stages, the demo scenarios, a model's effort and the error codes.
+import './jitless.ts'
 import { z } from 'zod'
 
 export const StageSchema = z.enum(['Watch', 'Act', 'Run'])
@@ -41,7 +42,7 @@ export type ErrorBody = z.infer<typeof ErrorBodySchema>
 
 /** One entry per list in `AgentData`, so a failed read names what failed (C3). `members` and `audit` also page. */
 export const ResourceKeySchema = z.enum([
-  'meta', 'problems', 'tools', 'routines', 'skills', 'usage', 'members', 'rules', 'memory', 'audit', 'activity', 'notifications',
+  'meta', 'problems', 'tools', 'routines', 'skills', 'usage', 'members', 'rules', 'grants', 'memory', 'audit', 'activity', 'notifications',
   'models', 'chat', 'library',
 ])
 export type ResourceKey = z.infer<typeof ResourceKeySchema>

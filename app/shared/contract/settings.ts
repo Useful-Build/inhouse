@@ -1,6 +1,7 @@
 // The settings registry (p2-design.md section 6, C9): every key's scope, its value schema, and whether its value may be
 // stored in the audit log as it is. Values keep the strings the settings page saves (its option labels), and the
 // switches stay booleans, so a demo's saved state still parses. W2 owns this file in P2.
+import './jitless.ts'
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'

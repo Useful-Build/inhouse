@@ -1,10 +1,6 @@
 // A member of the team. W2 owns this file in P2.
+import './jitless.ts'
 import { z } from 'zod'
-
-export const MemberSchema = z.object({ id: z.string(), name: z.string(), photo: z.string().optional(), email: z.string(), title: z.string(), role: z.string() })
-export type Member = z.infer<typeof MemberSchema>
-
-// ---------- P2: the member record the product serves (p2-design.md sections 1 and 7). `MemberSchema` stays until W3 moves off it. ----------
 
 /**
  * A member id: 'm_' and a random or fixed suffix. No spaces or '@', so it can't carry an email or a name as typed, but

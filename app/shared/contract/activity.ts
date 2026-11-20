@@ -1,4 +1,5 @@
 // Activity's fixed lines. The audit log is in ./audit.ts.
+import './jitless.ts'
 import { z } from 'zod'
 import { InstantSchema, ProseSchema, StageSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'

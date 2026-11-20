@@ -1,4 +1,5 @@
 // Support grants (p2-design.md section 9, BD7): the time-boxed access an Admin gives the Inhouse team. W2 owns this file in P2.
+import './jitless.ts'
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'

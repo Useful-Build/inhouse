@@ -838,12 +838,14 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     test('a refused setting takes back only its own entry: a setting saved while it was in flight stays', async () => {
       await t.injectError('setSetting', 'forbidden')
       const refused = errorOf(t.client.setSetting(fx.settingKey, fx.settingValue))
-      await t.client.setPhoto(fx.personId, fx.photoDataUrl) // a photo is the member's own record, not a setting
+      const disarmed = t.injectError('setSetting', null) // not awaited: the second write must start before the refusal lands
+      const meanwhile = t.client.setSetting(fx.otherSetting.key, fx.otherSetting.value) // replaces the same settings record before the refusal lands
+      await disarmed
+      await meanwhile
       expect(await refused).toBeInstanceOf(AgentError)
-      expect(t.client.getSnapshot().settings[fx.settingKey], 'the refused setting is gone').toBeUndefined()
-      expect(t.client.read().people.members.find(m => m.id === fx.personId)?.photo, 'the photo stays').toBe(fx.photoDataUrl)
-      await t.injectError('setSetting', null)
-      await t.client.setSetting(fx.otherSetting.key, fx.otherSetting.value)
+      const settings = t.client.getSnapshot().settings
+      expect(settings[fx.settingKey], 'the refused setting is gone').toBeUndefined()
+      expect(settings[fx.otherSetting.key], 'the setting saved meanwhile stays').toBe(fx.otherSetting.value)
     })
 
     test('a refusal on one method leaves the others working', async () => {
@@ -952,7 +954,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     test('records of the people name member ids: an approval, an undo and a set aside', async () => {
       const id = heldProblem()
       await t.client.approve(id)
-      await t.client.setAside(reversibleProblem() ?? id, 'dismissed')
+      const other = t.client.read().problems.map(p => p.id).find(x => x !== id)
+      if (!other) throw new Error('a second problem to set aside')
+      await t.client.setAside(other, 'dismissed')
       const ids = new Set(members().map(m => m.id))
       const snap = t.client.getSnapshot()
       expect(ids.has(snap.approved[id].by), 'approved.by is a member id').toBe(true)
@@ -1134,12 +1138,18 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.read().people.supportGrant?.live, 'one hour later it is over').toBe(false)
     })
 
-    test.skipIf(skipUnless('endSupportGrant'))('ending a grant changed behind the client is a conflict', async () => {
-      const g = t.client.read().people.supportGrant
-      if (!g?.live) return
+    test.skipIf(skipUnless('grantSupport', 'endSupportGrant'))('ending a grant changed behind the client is a conflict with the current grant; one the other session ended is not found', async () => {
+      const grant = () => t.client.read().people.supportGrant
+      if (!grant()?.live) await t.client.grantSupport(4)
+      const g = grant()!
+      expect(g.live, 'a live grant to end').toBe(true)
       await t.writeElsewhere({ kind: 'grant', id: g.id })
       const e = await refusal(t.client.endSupportGrant(g.id))
-      expect(e.code).toBe('not_found') // the other session ended it: there is nothing live left to end
+      expect(e.code).toBe('conflict')
+      expect(parse(SupportGrantSchema, e.current, 'current')).toMatchObject({ id: g.id, live: true })
+      expect(grant()?.live, 'nothing was ended').toBe(true)
+      await t.writeElsewhere({ kind: 'grant', id: g.id }, 'end')
+      expect((await refusal(t.client.endSupportGrant(g.id))).code, 'the other session ended it: nothing live is left').toBe('not_found')
     })
 
     test.skipIf(skipUnless('retry'))('a resource whose read failed says so, with the error; retry reads it again; the rest stays ready', async () => {
@@ -1167,7 +1177,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       for (const r of Object.values(t.client.read().resources)) expect(r.status).toBe('ready')
     })
 
-    test('a list that does not page says there is no more, and loadMore does nothing', async () => {
+    test.skipIf(t.capabilities.pagesLists)('a list that does not page says there is no more, and loadMore does nothing', async () => {
       const before = t.client.read()
       expect(before.more).toEqual({ audit: false, members: false })
       await t.client.loadMore('audit')
@@ -1181,14 +1191,58 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(log.map(l => l.id)).toEqual([...log.map(l => l.id)].sort((a, b) => b - a))
     })
 
-    test('the export and sign out links are a path or null', async () => {
-      for (const url of [t.client.auditExportUrl(), t.client.signOutUrl()]) expect(url === null || url.startsWith('/')).toBe(true)
+    test('the export and sign out links are what the target names', async () => {
+      expect(t.client.auditExportUrl()).toBe(fx.links.auditExport)
+      expect(t.client.signOutUrl()).toBe(fx.links.signOut)
     })
 
-    test('an error carries its reason, parsed', async () => {
-      const e = await refusal(t.client.setSetting('no:such-key', 'x'))
-      if (e.reason !== undefined) parse(ErrorReasonSchema, e.reason, 'reason')
+    test.skipIf(skipUnless('inviteMember'))('a refusal carries its reason, and the reason parses', async () => {
+      await t.client.inviteMember(fx.invite)
+      const e = await refusal(t.client.inviteMember(fx.invite))
+      expect(parse(ErrorReasonSchema, e.reason, 'reason')).toBe('already_member')
     })
+
+    test.skipIf(skipUnless('inviteMember', 'removeMember'))('a member who was in the data at the start, removed and invited again, is one record, invited', async () => {
+      const before = member(fx.otherMemberId)!
+      await t.client.removeMember(fx.otherMemberId)
+      await t.client.inviteMember({ name: before.name, email: before.email!, role: 'member' })
+      const same = members().filter(m => m.id === fx.otherMemberId)
+      expect(same, 'exactly one record with that id').toHaveLength(1)
+      expect(same[0].status).toBe('invited')
+      expect(new Set(members().map(m => m.id)).size, 'ids stay unique').toBe(members().length)
+    })
+
+    test('a photo and a new name move the member rev', async () => {
+      const rev = () => member(fx.me.memberId)!.rev
+      const r0 = rev()
+      await t.client.setPhoto(fx.me.memberId, fx.photoDataUrl)
+      const r1 = rev()
+      expect(r1, 'a photo bumps it').toBeGreaterThan(r0)
+      await t.client.setSetting('g:name', fx.settingValue)
+      expect(rev(), 'the name bumps it').toBeGreaterThan(r1)
+    })
+
+    test('a routine made in a chat carries a rev that delete, restore, regenerate and take-back move', async () => {
+      const cards = () => t.client.getSnapshot().routinesExtra
+      const events = await drain(fx.questions.routineRequest)
+      const runId = (events[0] as Started).runId
+      const made = cards()[0]
+      expect(made, 'the answer made a routine').toBeDefined()
+      const r1 = made.rev ?? 1
+      await t.client.deleteRoutine(made.id)
+      const r2 = cards()[0].rev!
+      expect(r2, 'delete moves it').toBeGreaterThan(r1)
+      await t.client.restoreRoutine(made.id)
+      const r3 = cards()[0].rev!
+      expect(r3, 'restore moves it').toBeGreaterThan(r2)
+      const again = await drain(fx.questions.routineRequest, { replacesRun: runId })
+      expect(cards(), 'regenerate updates it in place').toHaveLength(1)
+      const r4 = cards()[0].rev!
+      expect(r4, 'regenerate moves it').toBeGreaterThan(r3)
+      await drain(fx.questions.offScript, { replacesRun: (again[0] as Started).runId })
+      expect(cards()[0].rev!, 'taking it back moves it').toBeGreaterThan(r4)
+    })
+
   })
 
   // ---------- properties ----------

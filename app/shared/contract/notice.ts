@@ -1,4 +1,5 @@
 // Notices (what a write or a hold tells the person) and the bell's notifications.
+import './jitless.ts'
 import { z } from 'zod'
 import { AgentErrorCodeSchema, InstantSchema } from './common.ts'
 

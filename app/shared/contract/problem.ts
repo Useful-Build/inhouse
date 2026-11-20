@@ -1,4 +1,5 @@
 // A problem the agent found, and the fix it drafted.
+import './jitless.ts'
 import { z } from 'zod'
 import { InstantSchema, MoneySchema, PairSchema, ProseSchema } from './common.ts'
 

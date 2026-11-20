@@ -54,6 +54,17 @@ describe('the page and the registry (failures 1 to 3)', () => {
     }
   })
 
+  it('never saves a role, a photo or the support switch as a setting: those rows run on their own calls', () => {
+    const support = rows.find(r => r.key === 'd:support')!
+    expect(support.kind).toBe('toggle')
+    expect(typeof support.toggle, 'flipping it grants or ends access, never setToggle').toBe('function')
+    const roles = rows.filter(r => r.key?.startsWith('p:'))
+    expect(roles.length).toBeGreaterThan(0)
+    for (const r of roles) expect(typeof r.save, `${r.key} saves through setMemberRole`).toBe('function')
+    const saved = agent.getSnapshot()
+    for (const k of [...Object.keys(saved.settings), ...Object.keys(saved.toggles)]) expect(refused(k), `${k} was saved`).toBe(false)
+  })
+
   it('puts each key in the scope section 6 names', () => {
     const scope = (k: string) => settingSpec(k)?.scope
     expect(['g:name', 'g:theme', 'n:channel', 'm:learn'].map(scope)).toEqual(['personal', 'personal', 'personal', 'personal'])

@@ -179,6 +179,21 @@ describe('a demo saved before C2 and C9 loads with ids, roles, photos and the gr
     expect(warn).not.toHaveBeenCalled()
   })
 
+  test('a name or id nobody has in a record becomes the signed-in member, with one warning each; an unknown approver id is dropped', () => {
+    const agent = load({
+      approved: { stock: { at: '8:00 AM', atMin: 480, ms: 1, by: 'Nobody Known', title: 't', doneText: 'd' } },
+      undone: { oversell: { at: '8:03 AM', atMin: 483, by: 'm_ghost' } },
+      settings: { 'a:0': 'm_ghost', 'a:1': 'm_dana' },
+    })
+    const s = agent.getSnapshot()
+    expect(s.approved.stock.by).toBe('m_sam')
+    expect(s.undone.oversell.by).toBe('m_sam')
+    expect(s.settings).toEqual({ 'a:1': 'm_dana' })
+    expect(warned()).toContain('"Nobody Known"')
+    expect(warned()).toContain('"m_ghost"')
+    expect(warned()).toContain('settings.a:0')
+  })
+
   test('what the server keeps is saved with the state and loads again as it was', () => {
     const agent = load({})
     return agent.setMemberRole('m_dana', 'admin').then(() => agent.inviteMember({ name: 'Robin Example', email: 'robin@example.test', role: 'member' })).then(() => {

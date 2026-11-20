@@ -62,6 +62,8 @@ export interface Fixtures {
   invite: InviteInput
   /** A second setting, so two writes can be told apart (`settingKey` is the first). */
   otherSetting: { key: string; value: string }
+  /** What `auditExportUrl()` and `signOutUrl()` return on this target: the demo builds the CSV itself and has no sign-in (null, null); the product names both paths. */
+  links: { auditExport: string | null; signOut: string | null }
   /** One setting key with three valid values, for the stale-write property. */
   choices: { key: string; values: [string, string, string] }
   photoDataUrl: string
@@ -91,6 +93,8 @@ export interface ContractTarget {
      * `failSaves` can fail them. True on the mock only: on a server they happen server-side, and P2 adds its own case.
      */
     agentWritesSaveInClient: boolean
+    /** True when a list can have a next page (the server pages the audit log and members); false on the mock, which returns every list whole: `more` is false and `loadMore` does nothing. */
+    pagesLists: boolean
   }
   /** Let what is in flight arrive without moving the clock: microtasks flushed (the mock), delivery awaited (a server). Called before each `advance`. */
   settle(): Promise<void>
@@ -259,6 +263,7 @@ function mockTarget(): ContractTarget {
       otherMemberId: memberIdOf('priya'),
       invite: { name: 'Robin Example', email: 'robin@example.test', title: 'Operations', role: 'member' },
       otherSetting: { key: 'g:lang', value: 'Français' },
+      links: { auditExport: null, signOut: null },
       choices: { key: 'g:tz', values: ['Europe/London', 'America/Chicago', 'Australia/Sydney'] },
       photoDataUrl: 'data:image/png;base64,AAAA',
       teamRequest: { icon: 'build', title: 'Connect Klaviyo', sub: 'From Settings', at: { iso: '2026-11-19T14:04:00.000Z', ms: Date.UTC(2026, 10, 19, 14, 4) }, status: 'Requested' },
@@ -269,7 +274,7 @@ function mockTarget(): ContractTarget {
       unknownTraceId: 'no-such-trace',
     },
     failedSaveNotice: 'save.failed',
-    capabilities: { agentWritesSaveInClient: true },
+    capabilities: { agentWritesSaveInClient: true, pagesLists: false },
     async setup() { vi.useFakeTimers() },
     async teardown() { vi.useRealTimers() },
     async settle() { await vi.advanceTimersByTimeAsync(0) },

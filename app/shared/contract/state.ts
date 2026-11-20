@@ -1,4 +1,5 @@
 // The agent's state a person changes (persisted, resettable), and what a write returns.
+import './jitless.ts'
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'
