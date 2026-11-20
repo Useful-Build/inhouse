@@ -24,7 +24,7 @@ import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from './tokens.ts
 import { hashRunToken } from './tokens.ts'
 import { mapSdkMessage, outcomeOf } from './map-events.ts'
 import type { TurnOutcome } from './map-events.ts'
-import { buildStart, newId, payloadHash } from './run-start.ts'
+import { buildStart, newId, submitPayloadHash } from './run-start.ts'
 import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
 
@@ -173,10 +173,8 @@ export class AgentCore {
   // ---------- submit (4.3) ----------
 
   async submitTurn(t: SubmitTurn): Promise<SendTurnResult | Refusal> {
-    const hash = payloadHash({
-      text: t.input.text, quote: t.input.quote ?? null, priority: t.input.priority, model: t.input.model,
-      replacesRun: t.input.replacesRun ?? null, attachments: t.input.attachments.map(a => [a.fileId, a.name]),
-    })
+    // Computed before the key check: it writes nothing, so the claim is still before any write's await (4.2.1).
+    const hash = await submitPayloadHash(t.input)
     // A retried POST answers what the first one did, before any other rule (4.3).
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
@@ -511,13 +509,28 @@ export class AgentCore {
     const now = this.d.now()
     this.d.tokens.revokeTurn(t.turn_id, state)
     if (t.pool_queued === 1) this.d.ports.pool.dequeue(t.turn_id)
-    this.sql.exec(
-      `UPDATE turns SET state = ?, gen = gen + 1, outcome = ?, failure = ?, cancel_why = ?, pool_queued = 0, ended_at_ms = ?
-        WHERE turn_id = ?`, state, outcome, failure, why, now, t.turn_id)
+    this.storeFinal(t.turn_id, state, { outcome, failure, why }, now)
     this.d.scheduler.cancel(`turn-watch:${t.turn_id}`)
     if (t.reserved > 0) this.queueSettle(t.turn_id, false)
     this.advance(t.run_id)
   }
+
+  /**
+   * THE one synchronous step that stores a turn as final (`ended` or `cancelled`), on every path: finished, failed,
+   * stopped, interrupted, cancelled while queued or starting (pause, stop, removal, delete), fence and watchdog
+   * deadlines. An outcome already fixed (by the terminal event or the fence) is kept. PR 5's `onEnd` task is ensured
+   * here, in the same step; `onFinal` is that seam (tests count it).
+   */
+  private storeFinal(turnId: string, state: 'ended' | 'cancelled', o: { outcome: string | null; failure: string | null; why: string | null }, now: number) {
+    this.sql.exec(
+      `UPDATE turns SET state = ?, gen = gen + 1, outcome = COALESCE(outcome, ?), failure = COALESCE(failure, ?),
+        cancel_why = COALESCE(cancel_why, ?), pool_queued = 0, ended_at_ms = ? WHERE turn_id = ?`,
+      state, o.outcome, o.failure, o.why, now, turnId)
+    this.onFinal?.(this.turn(turnId)!)
+  }
+
+  /** Testing seam (and PR 5's join point): called once per turn, inside `storeFinal`'s synchronous step. */
+  onFinal?: (t: TurnRow) => void
 
   /**
    * The fence (4.6): `gen++`, the outcome fixed now (terminal once), `model|mcp|files|audit` closed, the runner asked to
@@ -561,7 +574,7 @@ export class AgentCore {
       this.emit(t.run_id, t.turn_id, { type: 'turn.finished', turnId: t.turn_id, outcome: 'failed', reason: 'protocol' })
       this.sql.exec("UPDATE turns SET outcome = 'failed', failure = 'protocol' WHERE turn_id = ?", t.turn_id)
     }
-    this.sql.exec("UPDATE turns SET state = 'ended', gen = gen + 1, ended_at_ms = ? WHERE turn_id = ?", now, t.turn_id)
+    this.storeFinal(t.turn_id, 'ended', { outcome: null, failure: null, why: null }, now)
     this.d.tokens.closeRoutes(t.turn_id, [...FIRST_ROUTES, ...LAST_ROUTES], 'ended')
     this.d.tokens.prune(now)
     if (t.runner !== null) this.d.ports.pool.turnEnded(t.runner, t.turn_id)

@@ -80,12 +80,38 @@ const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).rep
 export const newId = (prefix: 'r_' | 't_'): string => prefix + base64url(crypto.getRandomValues(new Uint8Array(16)))
 
 /**
- * A send's payload fingerprint, synchronous (the claim can't await, 4.2.1): FNV-1a 64 over the canonical JSON of the
- * fields a retried POST must repeat. Two different payloads collide with probability about 2^-64.
+ * The fields of a send the payload hash covers (design 4.3; A2, 2026-11-20): the caller's input as sent. Not
+ * `clientTurnKey` (the key itself), the principal, or anything the server resolves or mints (route 29's model id,
+ * effort and settings, timestamps, ids), so a byte-for-byte re-submit after a settings change is still a dedupe.
+ * `effort`, `outputFormat` and `onEnd` are hashed when the caller sends them (PR 5 adds the last two to the input).
  */
-export function payloadHash(v: unknown): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(v))
-  let h = 0xcbf29ce484222325n
-  for (const b of bytes) h = BigInt.asUintN(64, (h ^ BigInt(b)) * 0x100000001b3n)
-  return h.toString(16).padStart(16, '0')
+export const PAYLOAD_FIELDS = ['text', 'quote', 'attachments (ids, in order)', 'model', 'effort', 'priority', 'outputFormat', 'onEnd'] as const
+
+export interface SubmitPayload {
+  text: string
+  quote?: string
+  attachments: readonly { fileId: string }[]
+  model: string
+  effort?: string
+  priority: string
+  outputFormat?: unknown
+  onEnd?: unknown
+}
+
+/** JSON with every object's keys sorted and `undefined` dropped (arrays keep their order). */
+export function canonicalJson(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v)
+  if (Array.isArray(v)) return `[${v.map(x => (x === undefined ? 'null' : canonicalJson(x))).join(',')}]`
+  const entries = Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(',')}}`
+}
+
+/** `payload_hash`: the SHA-256 (hex) of the canonical JSON of `PAYLOAD_FIELDS` as the caller sent them. */
+export async function submitPayloadHash(input: SubmitPayload): Promise<string> {
+  const payload = {
+    text: input.text, quote: input.quote, attachments: input.attachments.map(a => a.fileId), model: input.model,
+    effort: input.effort, priority: input.priority, outputFormat: input.outputFormat, onEnd: input.onEnd,
+  }
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalJson(payload)))
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('')
 }
