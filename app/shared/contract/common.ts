@@ -20,3 +20,27 @@ export type AgentErrorCode = z.infer<typeof AgentErrorCodeSchema>
 
 /** Two strings shown side by side: a label and its value, or a text and its source number. */
 export const PairSchema = z.tuple([z.string(), z.string()])
+
+/** One moment: an ISO 8601 date and time with its offset, and the same moment as epoch ms. Both always agree. */
+export const InstantSchema = z.object({ iso: z.iso.datetime({ offset: true }), ms: z.number().int() })
+  .refine(v => Date.parse(v.iso) === v.ms, { message: 'iso and ms name different moments' })
+export type Instant = z.infer<typeof InstantSchema>
+
+/** An amount in the currency's minor unit (cents for USD) and its ISO 4217 code. */
+export const MoneySchema = z.object({ minor: z.number().int(), currency: z.string().regex(/^[A-Z]{3}$/) })
+export type Money = z.infer<typeof MoneySchema>
+
+/** A wall-clock time in the brand's time zone, for a schedule ("6:00 AM" every weekday). */
+export const ClockTimeSchema = z.object({ hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59) })
+export type ClockTime = z.infer<typeof ClockTimeSchema>
+
+/**
+ * A sentence with times in it: `text` names each time as `{key:time}` ("6:04 AM") or `{key:weekday}` ("Thu, Nov 19"),
+ * and `times` holds each key's instant. The UI writes the sentence through format.ts (`fmtProse`), so every time in it
+ * shows in the same zone as the rest of the screen.
+ */
+export const ProseSchema = z.object({ text: z.string(), times: z.record(z.string(), InstantSchema) })
+export type Prose = z.infer<typeof ProseSchema>
+
+/** A length of time in ms. */
+export const DurationMsSchema = z.number().nonnegative()

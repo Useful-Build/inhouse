@@ -1,6 +1,6 @@
 // The tools the agent reads, the channels it posts to and the tool catalog.
 import { z } from 'zod'
-import { StageIndexSchema } from './common.ts'
+import { InstantSchema, StageIndexSchema } from './common.ts'
 import { AttachmentSchema } from './chat.ts'
 
 export const ToolDetailSchema = z.object({
@@ -13,7 +13,10 @@ export const ToolDetailSchema = z.object({
   run: z.string(),
   conn: z.string(),
   site: z.string(),
-  since: z.string(),
+  /** When the Inhouse team connected it. Missing while it is being connected. */
+  since: InstantSchema.optional(),
+  /** A tool being connected: when it goes live. */
+  liveBy: InstantSchema.optional(),
 })
 export type ToolDetail = z.infer<typeof ToolDetailSchema>
 
@@ -28,8 +31,8 @@ export const ToolChannelSchema = z.object({
   desc: z.string(),
   /** The stage it starts at: shown as included from that stage below it. */
   need: StageIndexSchema,
-  /** When it was connected, as shown ("Nov 2"). */
-  since: z.string(),
+  /** When it was connected. */
+  since: InstantSchema,
   site: z.string(),
   /** Where it reaches the team ("#ops"). */
   channel: z.string().optional(),
@@ -48,7 +51,8 @@ export const ToolsDataSchema = z.object({
   beingConnected: z.array(z.string()),
   /** Sample records the composer's "An order, product or customer" item attaches (the first one). None: the item is hidden. */
   attachExamples: z.array(AttachmentSchema.extend({ sources: z.array(z.string()), label: z.string().optional() })).optional(),
-  lastRead: z.intersection(z.record(z.string(), z.string()), z.object({ default: z.string() })),
+  /** When the agent last read each tool, by key; `default` for every tool not listed. */
+  lastRead: z.intersection(z.record(z.string(), InstantSchema), z.object({ default: InstantSchema })),
   catalog: z.array(CatalogToolSchema),
   details: z.record(z.string(), ToolDetailSchema),
 })

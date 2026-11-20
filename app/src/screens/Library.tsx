@@ -16,6 +16,8 @@ import { FilterSheet } from './library/FilterSheet'
 import { closeFile, leaveFile, pushFile, replaceFile, useOpenFileId, useWide } from './library/route'
 import { OPEN, openSource } from './library/source'
 import { Viewer } from './library/Viewer'
+import { fmtWhen } from '../lib/format'
+import { display, nowOf } from '../state/display'
 
 type Tab = 'all' | LibraryKind
 const TABS: [Tab, string, string][] = [['all', 'All', 'stacks'], ['images', 'Images', 'image'], ['documents', 'Documents', 'description'], ['code', 'Code', 'code'], ['media', 'Audio and video', 'play_circle'], ['other', 'Other', 'attach_file']]
@@ -31,8 +33,8 @@ const bytes = (size: string) => {
   return b
 }
 const SORT_BY: Record<Sort, (a: LibraryFile, b: LibraryFile) => number> = {
-  Newest: (a, b) => b.at.localeCompare(a.at),
-  Oldest: (a, b) => a.at.localeCompare(b.at),
+  Newest: (a, b) => b.at.ms - a.at.ms,
+  Oldest: (a, b) => a.at.ms - b.at.ms,
   Name: (a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base', numeric: true }),
   Size: (a, b) => bytes(b.size) - bytes(a.size),
 }
@@ -402,7 +404,7 @@ function Row({ file: f, phone, selecting, on, onClick, menu }: { file: LibraryFi
       <span className="hidden font-mono text-xs text-foreground-3 @2xl:block">{f.type}</span>
       <span className="hidden min-w-0 text-foreground-3 text-pretty wrap-anywhere @2xl:block">{f.from}</span>
       <span className="hidden text-right text-foreground-3 tabular-nums @2xl:block">{f.size}</span>
-      <span className="hidden text-foreground-3 tabular-nums @2xl:block">{f.date}</span>
+      <span className="hidden text-foreground-3 tabular-nums @2xl:block">{fmtWhen(f.at, nowOf(agent.getSnapshot()), display())}</span>
     </button>
     {menu ?? (!phone && <span aria-hidden="true" className="size-8 flex-none" />)}
     </div>

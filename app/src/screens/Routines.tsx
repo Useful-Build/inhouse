@@ -2,7 +2,10 @@ import { useRef, useState } from 'react'
 import { agent } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import type { RoutineDef } from '../agent'
-import { flags, routineRuns, STAGE_TAGS, whenOf } from '../state/derive'
+import { flags, lastRunLine, routineRuns, STAGE_TAGS, whenOf } from '../state/derive'
+import type { Instant } from '../agent/types'
+import { fmtWeekdayAt } from '../lib/format'
+import { display, nowOf } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -82,7 +85,7 @@ export function Routines() {
         {list.map(it => {
           const { r, locked, on } = it
           const mode = modeOf(r, S, locked)
-          const next = !locked && paused ? 'Paused' : String(r.next || '').replace(/^Next run /, '')
+          const next = !locked && paused ? 'Paused' : fmtWeekdayAt(r.next, display())
           return (
             <li key={it.id} className={cn('relative flex items-center rounded-2xl border border-border bg-card transition-colors hover:bg-accent', phone ? 'flex-wrap gap-x-3 px-4 py-4' : 'gap-4 px-5 py-4.5')}>
               <div className="min-w-0 flex-1">
@@ -98,7 +101,7 @@ export function Routines() {
                   </Badge>
                   {mode && <span>{mode}</span>}
                 </div>
-                {!phone && !locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r) || 'Not run yet')}</div>}
+                {!phone && !locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r, nowOf(st)) || 'Not run yet')}</div>}
               </div>
               <div className="relative flex flex-none flex-col items-end gap-2.5 text-right">
                 {!phone && <div className="text-xs text-muted-foreground">Next run<span className={`block text-sm font-medium ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
@@ -110,7 +113,7 @@ export function Routines() {
               {/* A phone has no room beside the switch: the last run and the next run take the row's full width under it. */}
               {phone && (
                 <div className="basis-full">
-                  {!locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r) || 'Not run yet')}</div>}
+                  {!locked && <div className="mt-2 text-sm text-pretty text-muted-foreground">{keepUnitsTogether(lastOf(st.routineRuns, r, nowOf(st)) || 'Not run yet')}</div>}
                   {next && <div className="mt-2 text-xs text-muted-foreground">Next run <span className={`text-sm font-medium whitespace-nowrap ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
                 </div>
               )}
@@ -128,10 +131,10 @@ export function Routines() {
   )
 }
 
-/** The routine's last-run line: the newest Run now from this session (the sheet's first line), else the sample data's note. */
-const lastOf = (runs: { routine: string; at: string; result?: string }[], r: RoutineDef) => {
-  const now = runs.find(x => x.routine === r.id)
-  return now ? `Last run today at ${now.at}${now.result ? ` · ${now.result}` : ''}` : r.last
+/** The routine's last-run line: the newest Run now from this session (the sheet's first line), else the agent's last run. */
+const lastOf = (runs: { routine: string; at: Instant; result?: string }[], r: RoutineDef, now: number) => {
+  const run = runs.find(x => x.routine === r.id) ?? r.last
+  return run ? lastRunLine(run, now) : undefined
 }
 
 const modeOf = (r: RoutineDef, S: number, locked: boolean) =>
@@ -207,7 +210,7 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
           <h3 className="mono-label mt-6">Schedule</h3>
           <DetailList variant="ruled" className="mt-1 text-sm" items={([
             ['When', whenOf(r)],
-            ['Next run', locked ? '' : paused ? 'Paused' : String(r.next || '').replace(/^Next run /, '')],
+            ['Next run', locked ? '' : paused ? 'Paused' : fmtWeekdayAt(r.next, display())],
             ['Status', status],
             ['How it works', modeOf(r, ctx.S, locked)],
           ] as [string, string][]).filter(([, v]) => v)} />

@@ -1,5 +1,6 @@
 // The agent's state a person changes (persisted, resettable), and what a write returns.
 import { z } from 'zod'
+import { InstantSchema } from './common.ts'
 import { RoutineCardSchema } from './chat.ts'
 import { RoutineRunSchema } from './routine.ts'
 import { SkillDefSchema } from './skill.ts'
@@ -7,14 +8,12 @@ import { SkillDefSchema } from './skill.ts'
 const flags = z.record(z.string(), z.literal(true))
 
 export const ApprovalRecordSchema = z.object({
-  /** Time of day shown to the user, on the demo clock ("8:03 AM"). */
-  at: z.string(),
-  /** The same time as minutes since midnight, for sorting. */
-  atMin: z.number(),
+  /** When it was approved, on the agent's clock (the demo clock in the demo). */
+  at: InstantSchema,
   /** Who approved it: the person's name at approval time. */
   by: z.string(),
-  /** Epoch ms, used to finish the 10 s hold across reloads. */
-  ms: z.number(),
+  /** When it was approved on the real clock: the 10 s hold counts from it across reloads. The same as `at` outside the demo. */
+  loggedAt: InstantSchema,
   /** Draft title at approval time (partial-aware). History keeps it even if the stage or undo state changes later. */
   title: z.string(),
   /** Final wording once done or sent, taken at approval time. */
@@ -33,28 +32,31 @@ export const ApproveResultSchema = z.object({
 })
 export type ApproveResult = z.infer<typeof ApproveResultSchema>
 
-export const TeamRequestSchema = z.object({ icon: z.string(), title: z.string(), sub: z.string(), status: z.string() })
+/**
+ * A request to the Inhouse team. `sub` is what and who ("New tool · asked by Priya"), `at` when it was asked; `status`
+ * is where it stands ("Live by", "Sent") and `statusAt` the date that goes with it. Shown as
+ * "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20".
+ */
+export const TeamRequestSchema = z.object({ icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(), statusAt: InstantSchema.optional() })
 export type TeamRequest = z.infer<typeof TeamRequestSchema>
 
-/** When and by whom something was done: `at` is shown ("8:03 AM"), `atMin` sorts, `by` is the person's name then. */
-export const StampRecordSchema = z.object({ at: z.string(), atMin: z.number(), by: z.string() })
+/** When and by whom something was done: `at` on the agent's clock, `by` the person's name then. */
+export const StampRecordSchema = z.object({ at: InstantSchema, by: z.string() })
 export type StampRecord = z.infer<typeof StampRecordSchema>
 
 /** Why a problem left Today and Approvals: snoozed until tomorrow, not a problem, or a draft not to send. */
 export const SetAsideReasonSchema = z.enum(['snoozed', 'dismissed', 'declined'])
 export type SetAsideReason = z.infer<typeof SetAsideReasonSchema>
 
-/** When and why a problem was set aside. A snooze lasts until the day after `ms`; the mock's date never moves, so it keeps it all demo. */
+/** When and why a problem was set aside. A snooze lasts until the day after `at`; the mock's date never moves, so it keeps it all demo. */
 export const SetAsideRecordSchema = z.object({
   reason: SetAsideReasonSchema,
-  /** Time of day shown to the user, on the demo clock ("8:03 AM"). */
-  at: z.string(),
-  /** The same time as minutes since midnight, for sorting. */
-  atMin: z.number(),
+  /** When, on the agent's clock (the demo clock in the demo). */
+  at: InstantSchema,
   /** Who set it aside: the person's name then. */
   by: z.string(),
-  /** Epoch ms, so a real client can end a snooze the next day. */
-  ms: z.number(),
+  /** When, on the real clock: orders two set asides at the same demo minute. The same as `at` outside the demo. */
+  loggedAt: InstantSchema,
 })
 export type SetAsideRecord = z.infer<typeof SetAsideRecordSchema>
 
@@ -66,8 +68,8 @@ export const AgentStateSchema = z.object({
   undone: z.record(z.string(), StampRecordSchema),
   /** Edited draft bodies. */
   edits: z.record(z.string(), z.string()),
-  /** When a person paused Inhouse agent ("8:03 AM" on the demo clock), or null. */
-  paused: z.string().nullable(),
+  /** When a person paused Inhouse agent, on the agent's clock, or null. */
+  paused: InstantSchema.nullable(),
   /** Switches: routines (r:<name>), settings (n:, m:, l:, d:). Missing = default. */
   toggles: z.record(z.string(), z.boolean()),
   routinesExtra: z.array(RoutineCardSchema),

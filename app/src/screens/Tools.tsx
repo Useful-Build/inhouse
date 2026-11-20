@@ -8,6 +8,8 @@ import { useCtx, useUi } from '../state/store'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ToolChannel } from '../agent/types'
+import { fmtDay } from '../lib/format'
+import { display } from '../state/display'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Button, CardGrid, DetailList, Dot, EmptyState, Icon, LogoTile, Page, PageHeader, SectionHeader, StageTag } from '../ui'
@@ -107,7 +109,7 @@ export function Tools() {
                 <span className={`block ${DESC}`}>{c.desc}</span>
               </span>
               <span className="flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
-                {locked ? `Included from ${STAGE_TAGS[c.need]}` : <><Dot className={INK_DOT} size={6} />Connected {c.since}</>}
+                {locked ? `Included from ${STAGE_TAGS[c.need]}` : <><Dot className={INK_DOT} size={6} />Connected {fmtDay(c.since, display())}</>}
               </span>
               <Icon name="chevron_right" size={18} className="text-faint" />
             </button>
@@ -188,7 +190,7 @@ function ChannelPage({ channel: c }: { channel: ToolChannel }) {
   const go = useUi(s => s.go)
   const openSettings = useUi(s => s.openSettings)
   const locked = S < c.need
-  const status = locked ? `Included from ${STAGE_TAGS[c.need]}` : `Connected · ${c.since}`
+  const status = locked ? `Included from ${STAGE_TAGS[c.need]}` : `Connected · ${fmtDay(c.since, display())}`
   // Before Act the channel isn't live, so only the website shows.
   const info: [string, ReactNode][] = []
   if (!locked && c.channel) info.push(['Channel', c.channel])

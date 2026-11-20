@@ -20,10 +20,7 @@
   },
   "fixedClock": {
     "label": "Monday, November 16, 2026",
-    "time": "8:00 AM",
-    "morningCheckAt": "6:00 AM",
-    "nextCheckAt": "12:00 PM",
     "timeZone": "America/New_York",
-    "rule": "One clock (decision D5): the demo opens at 8:00 AM on Monday, November 16, 2026, in the device's local time. The time zone in Settings is the one shown there; it doesn't move the clock. Shown times are 12-hour (\"6:00 AM\"); in a list, today shows a time, the six days before a weekday (\"Fri, Nov 13\"), older a date (\"Nov 2\"). Sortable values sit next to shown ones (ISO \"2026-11-16T06:08\" or minutes)."
+    "rule": "One clock (decision D5): the demo opens at 8:00 AM on Monday, November 16, 2026, in the device's local time. The time zone in Settings is the one shown there; it doesn't move the clock. Shown times are 12-hour (\"6:00 AM\"); in a list, today shows a time, the six days before a weekday (\"Fri, Nov 13\"), older a date (\"Nov 2\"). Sample times are written from the demo's Monday (\"-1d 16:40\") and the app shows them through src/lib/format.ts."
   }
 }

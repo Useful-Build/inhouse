@@ -1,5 +1,7 @@
 import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, userName, visibleProblems } from '../state/derive'
 import { sevClass } from '../ui/severity'
+import { fmtMoney, fmtTime } from '../lib/format'
+import { display } from '../state/display'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useCtx, useUi } from '../state/store'
@@ -26,10 +28,10 @@ export function Approvals() {
   // The copy describes Act, so it names the channel Act connects.
   const channel = channelFrom(ctx.data, 1)
   const where = channel ? `here or in ${channel.name}` : 'here'
-  // Sorted on the minute of the day, never on the shown "6:02 AM". Drafts made at the same minute keep the agent's
+  // Sorted on when the draft was made, never on the shown "6:02 AM". Drafts made at the same moment keep the agent's
   // order, whichever way time sorts.
-  const draftedMin = (id: string) => problemById(ctx.data, id).draftedMin
-  const byTime = (a: string, b: string) => draftedMin(a) - draftedMin(b)
+  const draftedAt = (id: string) => problemById(ctx.data, id).draftedAt.ms
+  const byTime = (a: string, b: string) => draftedAt(a) - draftedAt(b)
   const pending = pendingIds(ctx).sort(sort === 'stake'
     ? (a, b) => amountOf(draftView(ctx, b).problem) - amountOf(draftView(ctx, a).problem)
     : sort === 'newest' ? (a, b) => byTime(b, a) : byTime)
@@ -74,7 +76,7 @@ export function Approvals() {
                 <li key={p.id} className="flex min-h-9.75 items-center gap-2.5 border-b border-border text-sm">
                   <Icon name="edit_note" size={16} />
                   <span className="min-w-0 flex-1 text-foreground-2">{p.draft.title}</span>
-                  <span className="whitespace-nowrap text-muted-foreground tabular-nums">{p.cost}</span>
+                  <span className="whitespace-nowrap text-muted-foreground tabular-nums">{fmtMoney(p.cost, display())}</span>
                 </li>
               ))}
             </ul>}
@@ -114,7 +116,7 @@ export function Approvals() {
                     <Dot className={sevClass(dv.problem.sev)} />
                     <h2 className="min-w-40 flex-1 text-base font-semibold">{dv.draftTitle}</h2>
                     <Badge variant={low ? 'muted' : 'warning'}>{low ? 'Low risk' : dv.waitsLabel ?? 'Needs review'}</Badge>
-                    <span className="text-xs text-muted-foreground">{dv.problem.area} · {dv.problem.draftedAt}</span>
+                    <span className="text-xs text-muted-foreground">{dv.problem.area} · {fmtTime(dv.problem.draftedAt, display())}</span>
                   </div>
                   <DetailList variant="ruled" strong items={dv.lines} className="px-4.5 py-1 text-sm" />
                   {dv.body && (

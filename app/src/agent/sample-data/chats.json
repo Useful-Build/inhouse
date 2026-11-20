@@ -1,21 +1,17 @@
 {
-  "note": "Every chat in the sidebar and in See all, newest first by \"iso\" (the mock checks it). \"at\" is shown: today a time, the six days before a weekday, older a date. The first four are the Recent chats. The stuck-orders chat plays the seed thread in chat-script.json, which changes with the stage; an agent turn with a \"stage\" shows only in that stage. Every agent turn names its own trace in traces.json. All invented. Numbers match problems.json, tools.json, library.json and usage.json.",
+  "note": "Every chat in the sidebar and in See all, newest first by \"at\" (the mock checks it): days from the demo's Monday and a local time (\"-1d 16:40\" is Sunday at 4:40 PM). The app shows today a time, the six days before a weekday, older a date. The first four are the Recent chats. The stuck-orders chat plays the seed thread in chat-script.json, which changes with the stage; an agent turn with a \"stage\" shows only in that stage. Every agent turn names its own trace in traces.json. All invented. Numbers match problems.json, tools.json, library.json and usage.json.",
   "recent": 4,
   "chats": [
     {
       "id": "stuck",
       "title": "Stuck orders over 3 days",
-      "day": "Today",
-      "at": "7:42 AM",
-      "iso": "2026-11-16T07:42",
+      "at": "0d 07:42",
       "turns": "seedThread"
     },
     {
       "id": "refunds",
       "title": "Why did refunds jump?",
-      "day": "Today",
-      "at": "7:15 AM",
-      "iso": "2026-11-16T07:15",
+      "at": "0d 07:15",
       "turns": [
         {
           "user": "Why did refunds jump this week?"
@@ -116,9 +112,7 @@
     {
       "id": "friday",
       "title": "What to feature in Friday's email",
-      "day": "Yesterday",
-      "at": "Sun, Nov 15",
-      "iso": "2026-11-15T16:40",
+      "at": "-1d 16:40",
       "turns": [
         {
           "user": "What should we feature in Friday's email?"
@@ -151,9 +145,7 @@
     {
       "id": "payout",
       "title": "Amazon payout gap",
-      "day": "Last 7 days",
-      "at": "Fri, Nov 13",
-      "iso": "2026-11-13T16:20",
+      "at": "-3d 16:20",
       "turns": [
         {
           "user": "Why was the last Amazon payout lower than Xero expected?"
@@ -186,9 +178,7 @@
     {
       "id": "numbers",
       "title": "Weekly numbers, Nov 7 to 13",
-      "day": "Last 7 days",
-      "at": "Fri, Nov 13",
-      "iso": "2026-11-13T16:00",
+      "at": "-3d 16:00",
       "turns": [
         {
           "user": "Summarize this week's numbers"
@@ -208,9 +198,7 @@
     {
       "id": "meta",
       "title": "Meta Ads on low-stock products",
-      "day": "Last 7 days",
-      "at": "Fri, Nov 13",
-      "iso": "2026-11-13T15:10",
+      "at": "-3d 15:10",
       "turns": [
         {
           "user": "Which ads are spending on low-stock products?"
@@ -230,9 +218,7 @@
     {
       "id": "ridge",
       "title": "Ridge 30L reorder quantity",
-      "day": "Last 7 days",
-      "at": "Wed, Nov 11",
-      "iso": "2026-11-11T12:05",
+      "at": "-5d 12:05",
       "turns": [
         {
           "user": "How many Ridge 30L Packs should we reorder?"
@@ -252,9 +238,7 @@
     {
       "id": "kestrel",
       "title": "Kestrel delivery times",
-      "day": "Earlier",
-      "at": "Nov 2",
-      "iso": "2026-11-02T10:29",
+      "at": "-14d 10:29",
       "turns": [
         {
           "user": "How long does Kestrel really take to deliver?"

@@ -21,8 +21,9 @@
 // Run count: 100 by default. For a long run: VITE_PROP_RUNS=1000 npm run test:unit
 import { fc } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Attachment, ChatMessage, MessagePart } from '../agent/types'
+import type { Attachment, ChatMessage, Instant, MessagePart } from '../agent/types'
 import { CHAT_TITLE_MAX } from '../agent/types'
+import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
 import type { ChatEntry, ComposerDraft, LibraryView, QueuedMsg } from './store'
 
@@ -121,6 +122,9 @@ const optional = <T>(a: fc.Arbitrary<T>) => fc.option(a, { nil: undefined })
 const attachment: fc.Arbitrary<Attachment> = fc.record({ name: str, meta: str, icon: str })
 
 const row = fc.record({ order: str, age: str, why: str, value: str })
+/** An instant: any moment from 1970 to 2096, its `iso` and `ms` agreeing. */
+const instant = fc.integer({ min: 0, max: 4e12 }).map(instantOf)
+const clockTime = fc.record({ hour: fc.integer({ min: 0, max: 23 }), minute: fc.integer({ min: 0, max: 59 }) })
 const part: fc.Arbitrary<MessagePart> = fc.oneof(
   fc.record({ type: fc.constant('text' as const), text: str }),
   fc.record({
@@ -131,10 +135,10 @@ const part: fc.Arbitrary<MessagePart> = fc.oneof(
   fc.record({ type: fc.constant('approval' as const), problemId: str }),
   fc.record({
     type: fc.constant('routine' as const),
-    routine: fc.record({ id: str, name: str, freq: str, day: str, time: str, next: str, note: str }),
+    routine: fc.record({ id: str, name: str, freq: str, day: str, time: clockTime, next: instant, note: str }),
   }),
   fc.record({ type: fc.constant('skill' as const), skill: fc.record({ name: str, desc: str, tools: str, mode: str }) }),
-  fc.record({ type: fc.constant('workRow' as const), text: str, time: str }),
+  fc.record({ type: fc.constant('workRow' as const), text: str, at: instant }),
   fc.record({ type: fc.constant('notInThisStage' as const), text: str }),
   fc.record({ type: fc.constant('error' as const), text: str, retryQuestion: str }),
   fc.record({ type: fc.constant('suggestions' as const), questions: fc.array(str, { maxLength: 4 }) }),
@@ -143,12 +147,12 @@ const part: fc.Arbitrary<MessagePart> = fc.oneof(
 const message: fc.Arbitrary<ChatMessage> = fc.oneof(
   fc.record({ id: str, role: fc.constant('user' as const), text: str, quote: optional(str), atts: optional(fc.array(attachment, { maxLength: 3 })) }, { requiredKeys: ['id', 'role', 'text'] }),
   fc.record({ id: str, role: fc.constant('event' as const), text: str }),
-  fc.record({ id: str, role: fc.constant('agent' as const), part, trace: str, model: optional(str), at: optional(fc.integer({ min: 0, max: 4e12 })) }, { requiredKeys: ['id', 'role', 'part', 'trace'] }),
+  fc.record({ id: str, role: fc.constant('agent' as const), part, trace: str, model: optional(str), at: optional(instant) }, { requiredKeys: ['id', 'role', 'part', 'trace'] }),
 )
 
 const startedId = str.map(s => STARTED_CHAT_PREFIX + s)
 // `pinned` is a real ChatEntry field, but the session doesn't keep it (the agent does): load drops it, by design.
-const started: fc.Arbitrary<ChatEntry> = fc.record({ id: startedId, title, day: str, at: str, pinned: optional(fc.boolean()) }, { requiredKeys: ['id', 'title', 'day', 'at'] })
+const started: fc.Arbitrary<ChatEntry> = fc.record({ id: startedId, title, at: instant, pinned: optional(fc.boolean()) }, { requiredKeys: ['id', 'title', 'at'] })
 
 const hidden = fc.dictionary(str, fc.constant(true as const), { maxKeys: 4 })
 const adds = fc.record({ extras: fc.array(message, { maxLength: 4 }), hidden })
@@ -223,7 +227,7 @@ async function validSession(): Promise<fc.Arbitrary<Session>> {
  *  `pinned` is dropped, a queued message waits paused, and a chat that was answering gets the reload note. */
 function expectLoaded(session: Session, store: Store) {
   const s = store.useUi.getState()
-  expect(s.started).toEqual(session.started.map(({ id, title, day, at }) => ({ id, title, day, at })))
+  expect(s.started).toEqual(session.started.map(({ id, title, at }) => ({ id, title, at })))
   expect(s.todayDraft).toBe(session.todayDraft)
   expect(s.libraryView).toBe(session.libraryView)
   expect(s.feedback).toEqual(session.feedback)
@@ -258,15 +262,17 @@ const strs = (o: object, keys: string[]) => keys.every(k => typeof (o as Record<
 function validAtts(list: unknown): boolean {
   return Array.isArray(list) && list.every(a => typeof a === 'object' && a !== null && strs(a, ['name', 'meta', 'icon']))
 }
+/** An instant whose `iso` and `ms` name the same moment. */
+const validInstant = (x: unknown): boolean => typeof x === 'object' && x !== null && typeof (x as Instant).iso === 'string' && Date.parse((x as Instant).iso) === (x as Instant).ms
 function validPart(p: MessagePart): boolean {
   switch (p.type) {
     case 'text': case 'notInThisStage': return strs(p, ['text'])
     case 'table': return strs(p.table, ['title', 'summary']) && (p.table.icon === undefined || typeof p.table.icon === 'string')
       && p.table.rows.every(r => strs(r, ['order', 'age', 'why', 'value'])) && p.table.sources.every(x => typeof x === 'string')
     case 'approval': return strs(p, ['problemId'])
-    case 'routine': return strs(p.routine, ['id', 'name', 'freq', 'day', 'time', 'next', 'note'])
+    case 'routine': return strs(p.routine, ['id', 'name', 'freq', 'day', 'note']) && Number.isInteger(p.routine.time.hour) && Number.isInteger(p.routine.time.minute) && validInstant(p.routine.next)
     case 'skill': return strs(p.skill, ['name', 'desc', 'tools', 'mode'])
-    case 'workRow': return strs(p, ['text', 'time'])
+    case 'workRow': return strs(p, ['text']) && validInstant(p.at)
     case 'error': return strs(p, ['text', 'retryQuestion'])
     case 'suggestions': return p.questions.every(x => typeof x === 'string')
     default: return false
@@ -276,7 +282,7 @@ function validMsg(m: ChatMessage): boolean {
   if (typeof m.id !== 'string') return false
   if (m.role === 'user') return strs(m, ['text']) && (m.quote === undefined || typeof m.quote === 'string') && (m.atts === undefined || validAtts(m.atts))
   if (m.role === 'event') return strs(m, ['text'])
-  if (m.role === 'agent') return typeof m.trace === 'string' && validPart(m.part) && (m.model === undefined || typeof m.model === 'string') && (m.at === undefined || typeof m.at === 'number')
+  if (m.role === 'agent') return typeof m.trace === 'string' && validPart(m.part) && (m.model === undefined || typeof m.model === 'string') && (m.at === undefined || validInstant(m.at))
   return false
 }
 
@@ -288,7 +294,8 @@ async function expectUsable(store: Store) {
   expect(Array.isArray(s.started)).toBe(true)
   for (const c of s.started) {
     expect(c.id.startsWith(STARTED_CHAT_PREFIX)).toBe(true)
-    expect([c.title, c.day, c.at].every(v => typeof v === 'string')).toBe(true)
+    expect(typeof c.title).toBe('string')
+    expect(Date.parse(c.at.iso)).toBe(c.at.ms)
   }
   const known = new Set([...chatIds, ...s.started.map(c => c.id)])
   expect(typeof s.todayDraft).toBe('string')

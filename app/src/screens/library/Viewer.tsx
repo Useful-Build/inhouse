@@ -2,7 +2,8 @@
 import type { ReactNode } from 'react'
 import type { LibraryFile, LibraryLink, LibraryPlace } from '../../agent'
 import { memberFor, userName } from '../../state/derive'
-import { fmtTime, fmtWeekday, parseLocal } from '../../agent/clock'
+import { fmtMediaLength, fmtWeekdayTime } from '../../lib/format'
+import { display } from '../../state/display'
 import { useAgentData, useAgentState, useUi } from '../../state/store'
 import { Avatar, Button, DetailList, Icon, IconButton, Window } from '../../ui'
 import { TAP } from '../../ui/fields'
@@ -25,7 +26,7 @@ function Preview({ file, phone }: { file: LibraryFile; phone: boolean }) {
         <div className="preview-dim"><MediaFace file={file} big /></div>
         <div className="flex items-center gap-3 px-3.5 py-2.5">
           <span aria-hidden="true" className="flex size-8 flex-none items-center justify-center rounded-full bg-primary text-primary-foreground"><Icon name="play_arrow" size={19} fill /></span>
-          <span className="text-xs text-foreground-3 tabular-nums">0:00 / {file.duration}</span>
+          <span className="text-xs text-foreground-3 tabular-nums">0:00 / {file.durationMs === undefined ? undefined : fmtMediaLength(file.durationMs, display())}</span>
           <span aria-hidden="true" className="h-1 flex-1 rounded-2xs bg-fill-hover"><i className="block h-full w-0 rounded-2xs bg-primary" /></span>
           <Icon name="volume_up" size={19} className="text-foreground-3" />
         </div>
@@ -71,7 +72,7 @@ export function Viewer({ file, place, onClose, onLeave, onDownload, onPrev, onNe
   const open = () => { if (!file.link) return; if (openSource(file)) onLeave(file.link) }
   const rows: [string, string][] = [
     ['Type', TYPE_LABEL[file.type] ?? file.type], ['Size', file.size], // A details field gives the day too, today's included (a list shows today's as a time only).
-    ['Date', `${fmtWeekday(parseLocal(file.at))}, ${fmtTime(parseLocal(file.at))}`],
+    ['Date', fmtWeekdayTime(file.at, display())],
     [file.madeByAgent ? 'Made by' : 'Uploaded by', file.by],
   ]
   return (
