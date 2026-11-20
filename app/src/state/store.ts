@@ -735,6 +735,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     const showError = (text: string) => addTo(cid, { id: msgId(), role: 'agent', trace: turn === 1 || !runId ? runId : `${runId}-t${turn}`, at: at(), part: { type: 'error', text, retryQuestion: q } })
     try {
       const mode = activeMode(agent.read(), agent.getSnapshot().settings, o.model)
+      if (!mode) throw new Error('The agent has no model to answer with.')
       const events = agent.ask(q, { chatId: cid, quote: o.quote, replacesRun: o.replacesRun, attachments: o.atts, mode: mode.id, effort: mode.effort })
       for await (const ev of events) {
         if (ev.type === 'run.started') {
