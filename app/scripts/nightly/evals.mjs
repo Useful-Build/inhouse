@@ -20,8 +20,9 @@ const { values: v } = parseArgs({
 
 let reportPath = v['from-report']
 if (!reportPath) {
-  if (!v['max-usd']) {
-    console.error('refusing: a live run needs --max-usd <usd> (the hard budget)')
+  const max = Number(v['max-usd'])
+  if (v['max-usd'] === undefined || !Number.isFinite(max) || !(max > 0)) {
+    console.error('refusing: a live run needs --max-usd <usd>, a finite number above zero (the hard budget)')
     process.exit(2)
   }
   const out = path.resolve(v.out ?? path.join(appDir, 'evals/results', `${new Date().toISOString().slice(0, 10)}-nightly`))
