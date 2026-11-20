@@ -170,6 +170,10 @@ describe('canRowsProblems', () => {
   it('fails on a missing row', () => {
     expect(canRowsProblems(DESIGN_ROWS.filter(r => !(r.method === 'POST' && r.pattern === '/api/grants')), DESIGN_CAN_ROWS)).toEqual(['grantSupport → POST /api/grants matches 0 rows'])
   })
+  it('fails on a method mismatch', () => {
+    const wrong: CanRows = { ...DESIGN_CAN_ROWS, editTechnical: { method: 'GET', pattern: '/api/settings/technical/:key' } }
+    expect(canRowsProblems(DESIGN_ROWS, wrong)).toEqual(['editTechnical → GET /api/settings/technical/:key matches 0 rows'])
+  })
   it('fails on a doubled row', () => {
     const invite = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
     expect(canRowsProblems([...DESIGN_ROWS, invite], DESIGN_CAN_ROWS)).toEqual(['invite → POST /api/members/invites matches 2 rows'])
