@@ -85,6 +85,17 @@ skill before any UI change. Repo specifics:
   ship spec). Wasim approves that head SHA, then it squash-merges with `--match-head-commit <sha>` and a squash
   message ending in a `Verified:` trailer. A push after approval voids it. Plan:
   `docs/plans/2026-11-19-setup-gaps.md`.
+- **Escalation (Wasim, 2026-11-20), for every task in this repo:** no problem loops. A round is one fix and one
+  re-check, whether the problem came from a review, the QA gate, a live check or CI. Any problem, failing check or bug
+  still open after two rounds goes to Claude Fable 5.2 at xhigh (the `fable-solver` role, its brief naming the files
+  and every attempt so far with its result) for one round. If that fails, it goes to GPT 6.2 Sol at xhigh, headless
+  through T3's Pi instance (never Codex), for one round, with Fable's attempt added. The orchestrator runs the
+  escalation; a reviewer or delegate reports back instead. An escalated fix gets the normal review for its piece and
+  the round count doesn't restart. If GPT's round fails too, stop on that item and keep working on everything that
+  doesn't depend on it. Send Wasim a report, headed "Stuck after escalation", that says in plain language: what the
+  problem is; what was tried (each round and model, and its result); why it still isn't fixed; whether it's a
+  must-have or a nice-to-have for the task or the app; whether it's an edge case or the main case. Wasim decides. This
+  replaces the change loop's three-round limit in this repo.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.

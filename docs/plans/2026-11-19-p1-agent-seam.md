@@ -1,6 +1,6 @@
 # P1: the agent seam (`fleet/agent-seam`)
 
-Status: locked and approved by Wasim, 2026-11-19. Built; closing pieces in review (#77). Phase plan under the backend plan
+Status: locked and approved by Wasim, 2026-11-19. Built; every piece merged, the final PR into `main` next. Phase plan under the backend plan
 (`docs/plans/2026-11-19-backend.md`, "Phases" and "Phase schedule (waves)"). Common rules for every phase (landing,
 reviews, seats, scrub) are in that schedule section and aren't repeated here.
 
