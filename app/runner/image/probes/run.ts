@@ -819,8 +819,9 @@ async function isolation() {
     bash(`ln -s ${aOpen} link-a && ls -l link-a`),
     () => ({ tool: 'Read', input: { file_path: join(wd, 'link-a') } }),
   ]
-  // `glob: 'status'` (a basename, matched at any depth): '*/status' found nothing with the rule out in CI.
   const procGrep = () => ({ tool: 'Grep', input: { pattern: 'CANARY.A|^Uid:', path: '/proc', glob: 'status', output_mode: 'files_with_matches' } })
+  // The same Grep on an ordinary folder: the control session's Grep works, so an empty /proc is the tool's own.
+  const etcGrep = () => ({ tool: 'Grep', input: { pattern: '^root:', path: '/etc', glob: 'passwd', output_mode: 'files_with_matches' } })
   const [a1, a2] = split(a.run.token)
   const tokenProbes = (b: string): ShellProbe[] => {
     const [b1, b2] = split(b)
@@ -902,7 +903,7 @@ async function isolation() {
     return steps.map((_, i) => d.state.results.get(d.state.ids[i]!)?.text ?? `no result (${d.cleanup || d.raw.slice(-200)})`)
   }
   const [tmpRead, tmpGrep] = await ruleOff('tmp-rule-off', [readStep('/tmp/iso-a-secret'), grepStep('/tmp')])
-  const [procCmd, procEnv, procGrepOff] = await ruleOff('proc-rule-off', [readStep(`/proc/${holder.pid}/cmdline`), readStep(`/proc/${holder.pid}/environ`), procGrep])
+  const [procCmd, procEnv, procGrepOff, etcGrepOff] = await ruleOff('proc-rule-off', [readStep(`/proc/${holder.pid}/cmdline`), readStep(`/proc/${holder.pid}/environ`), procGrep, etcGrep])
   const [usersRead, usersGrep, usersHome, usersTmpdir, ...usersWalk] = await ruleOff('users-rule-off', [
     readStep(aOpen),
     grepStep(aOwn.tmp),
@@ -1034,6 +1035,12 @@ async function isolation() {
   ] as const) {
     const t = result(rb, step)
     const seenOff = leakOf(control)
+    // Grep finds nothing under /proc even with the rule out (CI, 04b4528 and 0b44c16), while the same Grep finds
+    // /etc/passwd: the rule has nothing to stop there, and no control can show one. Unproven; a leak still fails.
+    if (n === 'grep-proc-root' && t !== undefined && !leakOf(t.text) && control.trim() === 'No files found' && etcGrepOff!.includes('/etc/passwd')) {
+      markUnproven(`isolation.tool.${n}`, `Grep finds nothing under /proc even with Read(//proc/**) out, and finds /etc/passwd the same way; agent: ${t.text.replace(/\s+/g, ' ').slice(0, 120)}`)
+      continue
+    }
     record(
       `isolation.tool.${n}`,
       t !== undefined && !leakOf(t.text) && seenOff,
@@ -1379,7 +1386,7 @@ await egress.close()
 
 // The probes whose control can't be made on this CLI, each with its why in its FACT line. Any other UNPROVEN (a control
 // that vanished, a new probe without one) fails the job.
-const EXPECTED_UNPROVEN = ['isolation.tool.read-a-holder-cmdline', 'isolation.tool.read-a-holder-environ']
+const EXPECTED_UNPROVEN = ['isolation.tool.read-a-holder-cmdline', 'isolation.tool.read-a-holder-environ', 'isolation.tool.grep-proc-root']
 const unproven = facts.filter((f) => f.value.startsWith('UNPROVEN'))
 const unexpected = unproven.filter((f) => !EXPECTED_UNPROVEN.includes(f.name))
 record('probes.unproven-only-the-expected', unexpected.length === 0, `unexpected: ${JSON.stringify(unexpected.map((f) => f.name))}, expected: ${JSON.stringify(EXPECTED_UNPROVEN)}`)
