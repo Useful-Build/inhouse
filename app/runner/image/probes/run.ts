@@ -172,14 +172,31 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
   return { run, done }
 }
 
+let diagnosed = false
+/** The first crashed session: the entry started as the root starts it, and its whole stderr printed. */
+async function diagnoseSession() {
+  if (diagnosed) return
+  diagnosed = true
+  const u = userNamed('s39')
+  const { workDir, home } = await host.prepareFolder('p-diag', u)
+  const r = await runCommand('node', ['--disable-sigusr1', '/opt/runner/dist/session/main.mjs'], { uid: u.uid, gid: u.gid, cwd: workDir, env: sessionEnv({ uid: u.uid, gid: u.gid, user: u.user, home, workDir }, 8081), timeoutMs: 10_000 })
+  fact('session-entry.diagnosis', `exit ${r.code}: ${r.out.slice(0, 1500)}`)
+  await host.killAll(u)
+  await host.parkFolder('p-diag')
+}
+
 /** A run must end `finished` with no model misses, and every Bash call in it must have its audit entry on the stream. */
 function checkRun(name: string, r: Run, bashSteps: number[]) {
   const t = terminalOf(r)
   const audited = new Set(r.events.filter((e) => e.type === 'audit').map((e) => (e as { entry: { toolUseId: string } }).entry.toolUseId))
   const missing = bashSteps.map((i) => r.state.ids[i]!).filter((id) => !audited.has(id))
   const ok = r.status === 200 && t?.type === 'finished' && r.state.misses.length === 0 && missing.length === 0
+  if (t?.type === 'failed' && t.reason === 'session_crashed') void diagnoseSession()
   record(`${name}.run`, ok, `status ${r.status}, end ${JSON.stringify(t)?.slice(0, 200)}, misses ${JSON.stringify(r.state.misses)}, Bash calls without an audit entry ${JSON.stringify(missing)}`)
 }
+
+/** Init's name for a tool `tools:` names otherwise: the engine still reports the Agent tool under its old name. */
+const TOOL_ALIASES: Record<string, string> = { Task: 'Agent' }
 
 const result = (r: Run, step: number) => r.state.results.get(r.state.ids[step]!)
 const bash = (command: string, extra: Record<string, unknown> = {}) => () => ({ tool: 'Bash', input: { command, description: 'Probe', timeout: 120_000, ...extra } })
@@ -389,7 +406,7 @@ async function probeFacts() {
   fact('net-namespace', theirs.includes(mine[2]!) ? 'shared with the container' : 'own')
   const init = initOf(r)
   if (init) {
-    const tools = init.tools
+    const tools = init.tools.map((t) => TOOL_ALIASES[t] ?? t)
     const outside = tools.filter((t) => !(BUILT_IN_TOOLS as readonly string[]).includes(t) && !t.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`))
     fact('init.tools', JSON.stringify(tools))
     fact('init.tools-missing-of-the-20', JSON.stringify(BUILT_IN_TOOLS.filter((t) => !tools.includes(t))))
@@ -443,7 +460,12 @@ async function probeIsolation() {
       ],
     },
   })
-  const holder = await waitUntil(() => procs().find((p) => p.cmdline.includes('canary-A-cmdline-holder') && p.uid !== 0), "A's holder process", 60_000)
+  let aEnded = false
+  void a.done.then(() => (aEnded = true))
+  const holder = await waitUntil(() => {
+    if (aEnded) throw new Error(`A's run ended before its holder started: ${JSON.stringify(terminalOf(a.run))}`)
+    return procs().find((p) => p.cmdline.includes('canary-A-cmdline-holder') && p.uid !== 0)
+  }, "A's holder process", 60_000)
   const aSession = procs().find((p) => p.cwd === wa && p.cmdline.includes('session/main.mjs'))
   fact('isolation.a', `holder pid ${holder.pid} uid ${holder.uid}, session pid ${aSession?.pid}`)
 
@@ -611,6 +633,9 @@ async function direct(variant: DirectVariant, input: Omit<DirectInput, 'variant'
   await host.killAll(user)
   await host.parkFolder(key)
   await host.wipeUserFiles(user)
+  if (!lines.some((l) => l.type === 'result') || script.steps.some((_, i) => !state.results.has(state.ids[i]!))) {
+    fact(`direct.${variant}.output`, `exit ${out.code}, model requests ${state.requests.length}, misses ${JSON.stringify(state.misses)}: ${out.out.slice(-1500)}`)
+  }
   return { state, lines, raw: out.out, workDir }
 }
 
@@ -619,7 +644,7 @@ async function probeDirect() {
   const four = await direct('four-tools', { prompt: 'Say hi.', webFetchDomains: [], mcpUrl: `http://127.0.0.1:${egress.port}/mcp` }, { steps: [] })
   const init = four.lines.find((l) => l.type === 'init') as { tools: string[]; mcp_servers: unknown } | undefined
   if (init) {
-    const outside = init.tools.filter((t) => !(BUILT_IN_TOOLS as readonly string[]).includes(t) && !t.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`))
+    const outside = init.tools.map((t) => TOOL_ALIASES[t] ?? t).filter((t) => !(BUILT_IN_TOOLS as readonly string[]).includes(t) && !t.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`))
     for (const t of ['AskUserQuestion', 'ListMcpResourcesTool', 'ReadMcpResourceTool', 'WaitForMcpServers']) fact(`four-tools.${t}`, init.tools.includes(t) ? 'registers' : 'does not register')
     fact('four-tools.all', `${JSON.stringify(init.tools)} servers ${JSON.stringify(init.mcp_servers)} mcp calls ${JSON.stringify(egress.mcpCalls)}`)
     record('four-tools.nothing-outside-the-20', outside.length === 0, `outside: ${JSON.stringify(outside)}`)
@@ -698,12 +723,13 @@ async function probeSysV() {
   record('sysv.after-the-other-detaches', (await wipe(x)) === 'passed' && (await wipe(z)) === 'passed', 'X and Z wiped')
 
   // d: two sessions and one fixed key.
+  // shmget(key, 0, 0) asks for no permission, so it finds any key: attaching is what sharing takes.
   const closed = await sysv(x, 'create', '0x5150', '600')
-  const otherClosed = await sysv(y, 'get', '0x5150')
+  const otherClosed = await sysv(y, 'attach', '0x5150')
   const open = await sysv(x, 'create', '0x5151', '666')
-  const otherOpen = await sysv(y, 'get', '0x5151')
-  fact('sysv.fixed-key', `0600 segment: the other uid gets ${otherClosed}; 0666 segment: the other uid gets ${otherOpen} (creator's id ${open})`)
-  record('sysv.fixed-key-closed-not-shared', closed !== otherClosed && otherClosed.startsWith('ERR'), `creator ${closed}, other ${otherClosed}`)
+  const otherOpen = await sysv(y, 'attach', '0x5151')
+  fact('sysv.fixed-key', `0600 segment (id ${closed}): the other uid's attach ${otherClosed}; 0666 segment (id ${open}): the other uid's attach ${otherOpen}`)
+  record('sysv.fixed-key-closed-not-shared', otherClosed.startsWith('ERR') && otherOpen.startsWith('ATTACHED'), `0600: ${otherClosed}; 0666 (shared by its creator's choice): ${otherOpen}`)
   record('sysv.cleanup', (await wipe(x)) === 'passed' && (await wipe(y)) === 'passed', 'X and Y wiped')
 }
 

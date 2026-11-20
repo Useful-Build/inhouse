@@ -1,7 +1,8 @@
 """SysV shared memory and thread helpers for the container probes (run.ts runs this as a pool user).
 
   create KEY MODE   shmget(KEY, 4096, IPC_CREAT | MODE) and print the id (KEY 0 is IPC_PRIVATE; MODE in octal)
-  get KEY           shmget(KEY, 0, 0): print the id, or ERR <errno name>
+  get KEY           shmget(KEY, 0, 0): print the id, or ERR <errno name> (asks for no permission: finds any key)
+  attach KEY        shmget(KEY, 0, 0), then attach it: ATTACHED <id>, or ERR <errno name>
   give ID UID       IPC_SET: name UID the segment's owner (any creator may, without privilege)
   hold ID           attach the segment, print ATTACHED, and stay attached until stdin closes
   pthread-exit      start a thread that waits on stdin, print READY, then end the main thread with pthread_exit: the
@@ -42,6 +43,13 @@ def main():
         if i < 0:
             fail("shmget")
         print(i, flush=True)
+    elif cmd == "attach":
+        i = libc.shmget(int(args[0], 0), 0, 0)
+        if i < 0:
+            fail("shmget")
+        if libc.shmat(i, None, 0) in (None, ctypes.c_void_p(-1).value):
+            fail("shmat")
+        print(f"ATTACHED {i}", flush=True)
     elif cmd == "give":
         # struct shmid_ds starts with struct ipc_perm { key_t key; uid_t uid; ... } on glibc (x86_64 and arm64):
         # read it whole, change the owner, write it back.
