@@ -6,7 +6,7 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
-import { expect } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 
 const persist = fileURLToPath(new URL('../../.wrangler/test-build/v3/d1', import.meta.url))
 // Looked up on every call: a reset may recreate the persist folder, so a path kept from before could be gone.
@@ -24,6 +24,9 @@ function dbFile(): string {
 }
 
 function open(readOnly: boolean): DatabaseSync {
+  // A test build deployed elsewhere (E2E_TEST_BUILD_REMOTE, playwright.config.ts) has no local D1: a test that reads or
+  // writes it is skipped there, at this call. The local test build (CI's test-build job) runs every one of them.
+  test.skip(!!process.env.E2E_TEST_BUILD_REMOTE, 'reads the local D1, which a deployed test build has no copy of')
   const db = new DatabaseSync(dbFile(), { readOnly })
   db.exec('PRAGMA busy_timeout = 10000')
   return db
