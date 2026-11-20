@@ -1,6 +1,6 @@
 // Page actions: a routine's details and actions, a skill's on switch, Library sort, row menu and
 // viewer stepping, and Settings' Admin confirm and field checks. Each flow reloads to prove what was saved.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
 

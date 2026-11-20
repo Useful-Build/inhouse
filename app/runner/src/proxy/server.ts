@@ -11,10 +11,11 @@ export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files'] as const
 
 /**
  * The request headers forwarded, an allowlist: what the Messages API takes (`anthropic-*`), what the MCP streamable
- * HTTP transport needs (`mcp-session-id`, `mcp-protocol-version`, `last-event-id`, `accept`, `content-type`), and the
- * body's framing. Nothing else: no caller credentials (the egress adds the real key) and no token but the proxy's own.
+ * HTTP transport needs (`mcp-session-id`, `mcp-protocol-version`, `last-event-id`, `accept`, `content-type`), the
+ * body's framing, and a saved file's hash (`x-inhouse-sha256`, src/files/files.ts). Nothing else: no caller
+ * credentials (the egress adds the real key) and no token but the proxy's own.
  */
-const REQUEST_HEADERS = new Set(['content-type', 'content-length', 'accept', 'user-agent', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'])
+const REQUEST_HEADERS = new Set(['content-type', 'content-length', 'accept', 'user-agent', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id', 'x-inhouse-sha256'])
 const forwardsRequestHeader = (name: string) => REQUEST_HEADERS.has(name) || name.startsWith('anthropic-')
 
 /**

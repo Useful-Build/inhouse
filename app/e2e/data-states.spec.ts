@@ -2,7 +2,7 @@
 // Act and Run without a crash, a console error or another state's data; pausing and disconnecting a tool change the
 // Tools count, the tool page and the composer alike; a $50 cap shows the banner without changing what was spent; Slack
 // is a connected channel from Act. Screenshots of each state go to the report.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, stage: string, scenario: string, hash: string) {

@@ -9,7 +9,9 @@
 //      unavailable), and an interrupt there falls back to the abort signal;
 //   3. at the end: the deferred call, if the run deferred one (with the runner's own one-call check), then the new and
 //      changed files under `outputs/`, then the store's checkpoint and repair (`checkpoint`, or `mirror_error`), then
-//      exactly one terminal event (`finished` or `failed`).
+//      exactly one terminal event (`finished` or `failed`). After a stop the checkpoint goes first and the files after
+//      it, if time allows: the stop's `endWithinMs` is the end phase's deadline, so the run keeps its checkpoint, cost
+//      and a deferred call's waiting state before the root's grace runs out.
 // It also carries R2's blocking audit hook: `audit(entry)` resolves once the root has the entry on the Worker's stream.
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
@@ -44,6 +46,8 @@ export const STORE_FLUSH: NonNullable<Options['sessionStoreFlush']> = 'eager'
 
 /** How long an audit entry may wait for the root's ack before the hook's call is refused. */
 export const AUDIT_TIMEOUT_MS = 10_000
+/** The part of the audit timeout kept for the ack's way back: the root takes an entry only before the rest has passed. */
+export const AUDIT_ACK_MARGIN_MS = 2_000
 
 /** Env names the session process must not hand to the CLI. There's no Node IPC channel any more; the filter stays. */
 const NOT_FOR_THE_CLI = /^NODE_CHANNEL_/
@@ -79,9 +83,21 @@ export function streamingPrompt(text: string, done: Promise<void>): AsyncIterabl
   })()
 }
 
-/** What the agent is told about the chat's files that weren't brought in. */
+/** The most characters of file names in the note on what was left out; past it the note says how many more. */
+export const LEFT_OUT_NOTE_MAX_CHARS = 2000
+
+/** What the agent is told about the chat's files that weren't brought in (names up to a length cap). */
 export function leftOutNote(leftOut: string[]): string {
-  return `[The chat's files over the restore size cap were not brought into the work folder: ${leftOut.join(', ')}]`
+  const shown: string[] = []
+  let chars = 0
+  for (const name of leftOut) {
+    if (chars + name.length > LEFT_OUT_NOTE_MAX_CHARS) break
+    shown.push(name)
+    chars += name.length + 2
+  }
+  const more = leftOut.length - shown.length
+  const names = more === 0 ? shown.join(', ') : `${shown.join(', ')}${shown.length > 0 ? ', ' : ''}and ${more} more`
+  return `[The chat's files over the restore size cap were not brought into the work folder: ${names}]`
 }
 
 /**
@@ -95,13 +111,15 @@ const message = (e: unknown) => String(e instanceof Error ? e.message : e).slice
 type Result = Extract<SDKMessage, { type: 'result' }>
 
 /**
- * Tool calls the model made in its current turn (since the last tool results came back), by id. A deferral the CLI
- * honoured with more than one call in the turn (P0 S1 saw it, though the docs say it can't happen) leaves the others'
- * results unknown, so the runner refuses it rather than resume into that state.
+ * Tool calls the model made in its current turn (since the last tool results came back), by id: the main thread's
+ * only (`parent_tool_use_id === null`), not a subagent's. A deferral the CLI honoured with more than one call in the
+ * turn (P0 S1 saw it, though the docs say it can't happen) leaves the others' results unknown, so the runner defers only
+ * when the turn's calls are exactly the deferred one.
  */
 class TurnToolUses {
   #ids = new Set<string>()
   see(m: SDKMessage) {
+    if ((m as { parent_tool_use_id?: unknown }).parent_tool_use_id !== null) return
     const content = (m as { message?: { content?: unknown } }).message?.content
     if (!Array.isArray(content)) return
     if (m.type === 'user' && content.some((b) => (b as { type?: unknown })?.type === 'tool_result')) this.#ids.clear()
@@ -110,6 +128,23 @@ class TurnToolUses {
   get count() {
     return this.#ids.size
   }
+  /** The turn's calls are this one call and nothing else. */
+  only(id: string) {
+    return this.#ids.size === 1 && this.#ids.has(id)
+  }
+}
+
+/** Resolves with `p`'s outcome, or with null once `signal` aborts (whichever comes first). Never rejects. */
+function settleOrCut<T>(p: Promise<T>, signal: AbortSignal): Promise<{ value: T } | null> {
+  if (signal.aborted) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    const onAbort = () => resolve(null)
+    signal.addEventListener('abort', onAbort, { once: true })
+    p.then(
+      (value) => (signal.removeEventListener('abort', onAbort), resolve({ value })),
+      () => (signal.removeEventListener('abort', onAbort), resolve(null)),
+    )
+  })
 }
 
 export async function runSession(deps: {
@@ -159,10 +194,12 @@ export async function runSession(deps: {
     if (!parsed.success) return Promise.reject(new Error(`audit refused: ${z.prettifyError(parsed.error)}`))
     if (ended || channelClosed) return Promise.reject(new Error('audit refused: the run has ended'))
     const id = nextAudit++
+    const timeout = deps.auditTimeoutMs ?? AUDIT_TIMEOUT_MS
+    const expiresAt = Date.now() + timeout - Math.min(AUDIT_ACK_MARGIN_MS, Math.floor(timeout / 2))
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => settleAudit(id, 'no answer from the root in time'), deps.auditTimeoutMs ?? AUDIT_TIMEOUT_MS)
+      const timer = setTimeout(() => settleAudit(id, 'no answer from the root in time'), timeout)
       audits.set(id, { resolve, reject, timer })
-      void channel.send({ type: 'audit', id, entry: parsed.data })
+      void channel.send({ type: 'audit', id, expiresAt, entry: parsed.data })
     })
   }
   channel.onClose?.(() => {
@@ -172,6 +209,11 @@ export async function runSession(deps: {
 
   let q: ReturnType<QueryFn> | null = null
   let stopping = false
+  /** Aborts when a stop arrives: a files save in the normal order gives way to the checkpoint. */
+  const stopCut = new AbortController()
+  /** Aborts `endWithinMs` after the stop arrived: the end phase's deadline. */
+  const deadlineCut = new AbortController()
+  let deadlineTimer: NodeJS.Timeout | undefined
   /** An interrupt that came before the query existed: applied as soon as it does. */
   let interruptPending = false
   const abort = new AbortController()
@@ -225,6 +267,11 @@ export async function runSession(deps: {
       settleAudit(m.id, m.error)
     } else {
       stopping = true
+      if (deadlineTimer === undefined) {
+        deadlineTimer = setTimeout(() => deadlineCut.abort(), m.endWithinMs)
+        deadlineTimer.unref()
+      }
+      stopCut.abort()
       // A stop before the run: nothing has started, so the run ends here and no query ever runs.
       if (!gotRun) {
         emit({ type: 'failed', reason: 'stopped', message: 'stopped before the run started' })
@@ -257,7 +304,7 @@ export async function runSession(deps: {
   }
   if (ended) return
   if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
-  const before = await snapshotOutputs(deps.cwd)
+  const before = await snapshotOutputs(deps.cwd, log)
 
   // 2. The query.
   const store = createStoreAdapter({ fetch: deps.io.fetch, proxyUrl: deps.io.proxyUrl })
@@ -302,19 +349,27 @@ export async function runSession(deps: {
     const deferred = result.subtype === 'success' ? result.deferred_tool_use : undefined
     if (deferred) {
       if (jsonBytes(deferred.input) > DEFERRED_INPUT_MAX_BYTES) terminal = { type: 'failed', reason: 'sdk_error', message: 'a deferred call whose input is over the cap' }
-      else if (turn.count === 1) await emit({ type: 'deferred', toolUseId: deferred.id, toolName: deferred.name, input: deferred.input })
-      else terminal = { type: 'failed', reason: 'sdk_error', message: `a deferred call in a turn with ${turn.count} tool calls; the runner defers only a lone call` }
+      else if (turn.only(deferred.id)) await emit({ type: 'deferred', toolUseId: deferred.id, toolName: deferred.name, input: deferred.input })
+      else terminal = { type: 'failed', reason: 'sdk_error', message: `a deferred call in a turn with ${turn.count} tool calls; the runner defers only a lone call, and only that one` }
     }
   } else if (stopping) terminal = { type: 'failed', reason: 'stopped', message: 'stopped' }
   // An interrupt that fell back to the abort signal makes the SDK throw an AbortError: that's an interrupt, not an SDK fault.
   else if (abort.signal.aborted) terminal = { type: 'failed', reason: 'interrupted', message: 'interrupted' }
   else terminal = { type: 'failed', reason: 'sdk_error', message: threw ? message(thrown) : 'the query ended without a result' }
 
-  await files.save(before, emit)
-  const cp = await store.checkpoint()
-  if (cp.repaired > 0) log({ type: 'store_repaired', batches: cp.repaired })
-  if (cp.ok) await emit({ type: 'checkpoint', entries: cp.entries })
-  else await emit({ type: 'mirror_error', message: cp.error })
+  // Without a stop: files, then the checkpoint. A stop (before or during the save) cuts the save; the checkpoint goes
+  // first, then the rest of the files, both within the stop's deadline.
+  let filesDone = stopping ? false : await files.save(before, emit, stopCut.signal)
+  const cp = await settleOrCut(store.checkpoint(), deadlineCut.signal)
+  if (cp === null) await emit({ type: 'mirror_error', message: "the store's checkpoint did not finish before the stop's deadline" })
+  else {
+    if (cp.value.repaired > 0) log({ type: 'store_repaired', batches: cp.value.repaired })
+    if (cp.value.ok) await emit({ type: 'checkpoint', entries: cp.value.entries })
+    else await emit({ type: 'mirror_error', message: cp.value.error })
+  }
+  if (!filesDone && !deadlineCut.signal.aborted) filesDone = await files.save(before, emit, deadlineCut.signal)
+  if (!filesDone) log({ type: 'files_save_cut', why: "the stop's deadline" })
+  clearTimeout(deadlineTimer)
   await emit(terminal)
 }
 

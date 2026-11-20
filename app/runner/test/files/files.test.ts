@@ -6,14 +6,20 @@
 // - an unchanged file (or one just restored) is saved again;
 // - a restore writes outside `inputs/` and `outputs/` (`..`, absolute), goes past its size cap, or takes a body longer
 //   than its listing said;
-// - a failed upload throws out of save instead of becoming a refusal.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+// - a failed upload throws out of save instead of becoming a refusal;
+// - a symlink the agent planted leads a save to read, or a restore to write, outside `inputs/` and `outputs/`: the
+//   folder itself, a folder under it, the restore's temp name, the target (and a symlink there passes the skip check);
+// - a hard link to a file elsewhere is saved, or the read isn't checked against what lstat saw;
+// - thousands of refusals or left-out names flood the stream or break the schema;
+// - HTML or SVG behind a comment, a processing instruction or another tag sniffs as text.
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
-import type { FileCaps, RunEventBody } from '../../../shared/protocol/index.ts'
-import { createFiles, filesPath, localPath, snapshotOutputs } from '../../src/files/files.ts'
+import { RunEventBody, type FileCaps } from '../../../shared/protocol/index.ts'
+import { LEFT_OUT_MAX, REFUSALS_MAX, capLeftOut, createFiles, filesPath, localPath, snapshotOutputs } from '../../src/files/files.ts'
+import { closeDir, openDir, readFileIn } from '../../src/files/safe-dir.ts'
 import { sniffType } from '../../src/files/sniff.ts'
 import { badProxyPath } from '../../src/proxy/server.ts'
 import { PROXY_URL, fakeEgress, type FakeEgress } from '../run/support/fake-egress.ts'
@@ -29,12 +35,18 @@ const caps = (over: Partial<FileCaps> = {}): FileCaps => ({
 })
 
 let cwd: string
+/** A folder outside the work folder, as anything else the session's user can read or write. */
+let elsewhere: string
 let egress: FakeEgress
 beforeEach(() => {
   cwd = mkdtempSync(join(tmpdir(), 'runner-files-'))
+  elsewhere = mkdtempSync(join(tmpdir(), 'runner-elsewhere-'))
   egress = fakeEgress()
 })
-afterEach(() => rmSync(cwd, { recursive: true, force: true }))
+afterEach(() => {
+  rmSync(cwd, { recursive: true, force: true })
+  rmSync(elsewhere, { recursive: true, force: true })
+})
 
 function files(c: FileCaps = caps()) {
   const logs: Record<string, unknown>[] = []
@@ -128,6 +140,80 @@ describe('saving outputs/', () => {
   })
 })
 
+describe('symlinks and links the agent planted (saving)', () => {
+  it('a symlinked outputs/ saves nothing from where it points', async () => {
+    writeFileSync(join(elsewhere, 'secret.pdf'), PDF)
+    symlinkSync(elsewhere, join(cwd, 'outputs'))
+    const { f, logs } = files()
+    const events: RunEventBody[] = []
+    expect(await f.save(new Map(), (e) => void events.push(e))).toBe(true)
+    expect(events).toEqual([])
+    expect(egress.calls.filter((c) => c.startsWith('PUT'))).toEqual([])
+    expect(logs).toContainEqual(expect.objectContaining({ type: 'outputs_not_a_folder' }))
+    expect(await snapshotOutputs(cwd)).toEqual(new Map())
+  })
+
+  it('a symlinked folder under outputs/ is refused, never walked', async () => {
+    writeFileSync(join(elsewhere, 'secret.pdf'), PDF)
+    out('real.pdf', PDF)
+    symlinkSync(elsewhere, join(cwd, 'outputs', 'sub'))
+    const events = await saveAll()
+    expect(events).toEqual([
+      { type: 'file_refused', path: 'outputs/sub', reason: 'type_not_allowed' },
+      { type: 'file_saved', path: 'outputs/real.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+    ])
+    expect(egress.files.has('outputs/sub/secret.pdf')).toBe(false)
+  })
+
+  it('a folder under outputs/ swapped for a symlink after the walk is refused, not followed', async () => {
+    out('a.pdf', PDF)
+    out('sub/secret.pdf', PDF)
+    writeFileSync(join(elsewhere, 'secret.pdf'), Buffer.concat([PDF, Buffer.from('elsewhere')]))
+    const events: RunEventBody[] = []
+    // The files are saved in order: while a.pdf's event is out, the agent swaps sub/ for a symlink to elsewhere.
+    await files().f.save(new Map(), (e) => {
+      events.push(e)
+      if (e.type === 'file_saved' && e.path === 'outputs/a.pdf') {
+        renameSync(join(cwd, 'outputs', 'sub'), join(cwd, 'outputs', 'sub-moved'))
+        symlinkSync(elsewhere, join(cwd, 'outputs', 'sub'))
+      }
+    })
+    expect(events).toEqual([
+      { type: 'file_saved', path: 'outputs/a.pdf', bytes: PDF.length, contentType: 'application/pdf' },
+      { type: 'file_refused', path: 'outputs/sub/secret.pdf', reason: 'save_failed' },
+    ])
+    expect(egress.files.has('outputs/sub/secret.pdf')).toBe(false)
+  })
+
+  it('a hard link to a file elsewhere is refused', async () => {
+    writeFileSync(join(elsewhere, 'secret.pdf'), PDF)
+    mkdirSync(join(cwd, 'outputs'))
+    linkSync(join(elsewhere, 'secret.pdf'), join(cwd, 'outputs', 'linked.pdf'))
+    expect(await saveAll()).toEqual([{ type: 'file_refused', path: 'outputs/linked.pdf', reason: 'type_not_allowed', bytes: PDF.length }])
+    expect(egress.files.size).toBe(0)
+  })
+
+  it('the read is refused when the open file is not the one lstat saw', async () => {
+    out('a.pdf', PDF)
+    out('b.pdf', PDF)
+    const dir = await openDir(join(cwd, 'outputs'))
+    try {
+      await expect(readFileIn(dir, 'a.pdf', lstatSync(join(cwd, 'outputs', 'b.pdf')))).rejects.toThrow(/not the file/)
+      expect(Buffer.from(await readFileIn(dir, 'a.pdf', lstatSync(join(cwd, 'outputs', 'a.pdf'))))).toEqual(PDF)
+    } finally {
+      await closeDir(dir)
+    }
+  })
+
+  it(`past ${REFUSALS_MAX} refusals, the rest are counted in one file_refused_more`, async () => {
+    for (let i = 0; i < REFUSALS_MAX + 10; i++) out(`x-${String(i).padStart(3, '0')}.exe`, Buffer.from([0x4d, 0x5a, 0, 0]))
+    const events = await saveAll()
+    expect(events).toHaveLength(REFUSALS_MAX + 1)
+    expect(events.at(-1)).toEqual({ type: 'file_refused_more', count: 10 })
+    for (const e of events) expect(RunEventBody.safeParse(e).success).toBe(true)
+  })
+})
+
 describe('restoring the chat files', () => {
   it('brings in what is missing, in listing order, up to the cap; names the rest; skips what is already here', async () => {
     egress.files.set('inputs/brief one.pdf', { body: new Uint8Array(PDF) })
@@ -158,6 +244,50 @@ describe('restoring the chat files', () => {
     expect(localPath(cwd, bad)).toBeNull()
   })
 
+  it('a symlinked inputs/ fails the restore; nothing is written where it points', async () => {
+    symlinkSync(elsewhere, join(cwd, 'inputs'))
+    egress.files.set('inputs/a.pdf', { body: new Uint8Array(PDF) })
+    await expect(files().f.restore()).rejects.toThrow(/not followed/)
+    expect(existsSync(join(elsewhere, 'a.pdf'))).toBe(false)
+  })
+
+  it('a symlinked folder under inputs/ is skipped; nothing is written where it points', async () => {
+    mkdirSync(join(cwd, 'inputs'))
+    symlinkSync(elsewhere, join(cwd, 'inputs', 'sub'))
+    egress.files.set('inputs/sub/a.pdf', { body: new Uint8Array(PDF) })
+    const { f, logs } = files()
+    expect(await f.restore()).toMatchObject({ restored: 0 })
+    expect(existsSync(join(elsewhere, 'a.pdf'))).toBe(false)
+    expect(logs).toContainEqual(expect.objectContaining({ type: 'file_restore_skipped', reason: 'symlink on the way' }))
+  })
+
+  it('a symlink planted at the old temp name or at the target is never written through', async () => {
+    mkdirSync(join(cwd, 'outputs'))
+    writeFileSync(join(elsewhere, 'victim'), 'untouched')
+    // The temp name the restore used to use, and the target itself, both pointing elsewhere; the target's link points
+    // at a file of the listed size, which a following stat would take as "already here".
+    symlinkSync(join(elsewhere, 'victim'), join(cwd, 'outputs', 'a.pdf.restoring'))
+    writeFileSync(join(elsewhere, 'same-size'), Buffer.alloc(PDF.length))
+    symlinkSync(join(elsewhere, 'same-size'), join(cwd, 'outputs', 'a.pdf'))
+    egress.files.set('outputs/a.pdf', { body: new Uint8Array(PDF) })
+    expect(await files().f.restore()).toMatchObject({ restored: 1 })
+    expect(readFileSync(join(elsewhere, 'victim'), 'utf8')).toBe('untouched')
+    expect(readFileSync(join(elsewhere, 'same-size'))).toEqual(Buffer.alloc(PDF.length))
+    expect(lstatSync(join(cwd, 'outputs', 'a.pdf')).isFile()).toBe(true)
+    expect(readFileSync(join(cwd, 'outputs', 'a.pdf'))).toEqual(PDF)
+    expect(readlinkSync(join(cwd, 'outputs', 'a.pdf.restoring'))).toBe(join(elsewhere, 'victim'))
+    expect(statSync(join(elsewhere, 'victim')).size).toBe('untouched'.length)
+  })
+
+  it(`left-out names are capped at ${LEFT_OUT_MAX}, the last saying how many more`, () => {
+    const names = Array.from({ length: 1200 }, (_, i) => `inputs/f-${i}.pdf`)
+    const capped = capLeftOut(names)
+    expect(capped).toHaveLength(LEFT_OUT_MAX)
+    expect(capped.at(-1)).toBe('and 201 more')
+    expect(RunEventBody.safeParse({ type: 'files_restored', restored: 0, bytes: 0, leftOut: capped }).success).toBe(true)
+    expect(capLeftOut(names.slice(0, 3))).toEqual(names.slice(0, 3))
+  })
+
   it('a body longer than its listing fails the restore', async () => {
     egress.files.set('inputs/a.pdf', { body: new Uint8Array(PDF) })
     const real = egress.fetch
@@ -178,6 +308,21 @@ describe('sniffType', () => {
     expect(sniffType(Buffer.from('<!DOCTYPE html><p>'), 'x.txt')).toBe('text/html')
     expect(sniffType(Buffer.from('{"a":1}'), 'x.json')).toBe('application/json')
     expect(sniffType(Buffer.from([0xff, 0xfe, 0x00]), 'x.txt')).toBe('application/octet-stream')
+  })
+
+  it.each([
+    ['<!-- a note --><html><body>x</body></html>', 'text/html'],
+    ['<script>alert(1)</script>', 'text/html'],
+    ['  \n<body onload="x()">', 'text/html'],
+    ['\ufeff<!DOCTYPE html>', 'text/html'],
+    ['<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "x"><svg/>', 'image/svg+xml'],
+    ['<!-- one --> <!-- two --><svg xmlns="http://www.w3.org/2000/svg"/>', 'image/svg+xml'],
+    ['<!-- never closed <svg', 'text/html'],
+    ['<p>', 'text/html'],
+    ['<pre>not a marker</pre>', 'text/plain'],
+    ['a < b and <b> later', 'text/plain'],
+  ])('sniffs markup behind comments, instructions and other tags: %s', (text, type) => {
+    expect(sniffType(Buffer.from(text), 'x.txt')).toBe(type)
   })
 
   it('tells an xlsx from a plain zip by its parts', () => {

@@ -31,6 +31,10 @@
 //   audit-on-stop      sends one sdk event {type: 'waiting'} and waits for stop; then sends one audit entry and writes the root's answer to `audit-reply.json` in
 //                      its cwd before it ends with failed/stopped
 //   audit-bad          sends an audit entry that fails the schema
+//   audit-after-end    sends finished, then one audit entry; writes the root's answer to `audit-reply.json` in its cwd
+//   audit-expired      sends one audit entry whose expiresAt has passed; then one sdk event {type: 'audits', replies}
+//                      with the answer, then finished
+// Every stop message it gets is written to `stop-message.json` in its cwd, as sent.
 // A stop before any run message ends it with failed/stopped ("stopped before the run started"), as the real session does.
 // A file named `hold-ready` in its cwd holds `ready` back until SIGUSR2 (it writes `waiting-for-usr2` once it listens).
 import { spawn } from 'node:child_process'
@@ -47,11 +51,11 @@ const finished = () => event({ type: 'finished', subtype: 'success', isError: fa
 const auditEntry = (i: number) => ({ hook: 'PreToolUse', toolName: 'Bash', toolUseId: `toolu_${i}`, decision: 'allow', input: { command: `echo ${i}` } })
 const auditWaiters = new Map<number, (reply: unknown) => void>()
 let nextAudit = 0
-const sendAudit = (entry: unknown) =>
+const sendAudit = (entry: unknown, expiresAt = Date.now() + 10_000) =>
   new Promise<unknown>((resolve) => {
     const id = nextAudit++
     auditWaiters.set(id, resolve)
-    send({ type: 'audit', id, entry })
+    send({ type: 'audit', id, expiresAt, entry })
   })
 
 let mode = ''
@@ -66,6 +70,8 @@ channel.onMessage((line) => {
     auditWaiters.delete(raw.id)
     return
   }
+  // Every stop message as the root sent it, for the test to read.
+  if (raw?.type === 'stop') writeFileSync('stop-message.json', JSON.stringify(raw))
   if (raw?.type === 'stop' && mode === 'audit-on-stop' && !ended) {
     ended = true
     void sendAudit(auditEntry(0)).then((reply) => {
@@ -270,10 +276,24 @@ channel.onMessage((line) => {
       })()
       break
     case 'audit-bad':
-      send({ type: 'audit', id: 0, entry: { hook: 'PreToolUse', toolName: 'Bash', decision: 'allow', input: 'x'.repeat(20_000) } })
+      send({ type: 'audit', id: 0, expiresAt: Date.now() + 10_000, entry: { hook: 'PreToolUse', toolName: 'Bash', decision: 'allow', input: 'x'.repeat(20_000) } })
       break
     case 'audit-on-stop':
       event({ type: 'sdk', message: { type: 'waiting' }, truncated: false })
+      break
+    case 'audit-after-end':
+      finished()
+      void sendAudit(auditEntry(0)).then((reply) => {
+        writeFileSync('audit-reply.json', JSON.stringify(reply))
+        end()
+      })
+      break
+    case 'audit-expired':
+      void sendAudit(auditEntry(0), Date.now() - 1).then((reply) => {
+        event({ type: 'sdk', message: { type: 'audits', replies: [reply] }, truncated: false })
+        finished()
+        end()
+      })
       break
     case 'hang':
     case 'obey-stop':

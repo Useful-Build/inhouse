@@ -1,7 +1,7 @@
 // Ship spec for the setup project: the feature-map coverage it added (Notifications, Memory, Inhouse agent, Data and
 // access, Audit log, Help). Recorded at 1440x900 and 390x844. Every page is opened through the UI, as a person would.
 // On a phone the team pages read as text (their selects and fields are hidden) and Settings opens through a menu.
-import { expect, test } from '@playwright/test'
+import { expect, test } from '../csp.js'
 import type { Page } from '@playwright/test'
 
 const phone = () => test.info().project.name === 'ship-phone'

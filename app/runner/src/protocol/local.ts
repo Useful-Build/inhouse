@@ -16,8 +16,12 @@ export type RunConfig = z.infer<typeof RunConfig>
 export const RootMessage = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('run'), config: RunConfig }),
   z.strictObject({ type: z.literal('interrupt') }),
-  /** The SIGTERM path: `interrupt()`, flush, then end the run with a `failed` event (reason `stopped`). */
-  z.strictObject({ type: z.literal('stop') }),
+  /**
+   * The SIGTERM path: `interrupt()`, flush, then end the run with a `failed` event (reason `stopped`). `endWithinMs`
+   * is the session's deadline for its end phase (the checkpoint first, then files if time allows), counted from when
+   * the stop arrives; it is below the root's grace period, after which the root kills the session.
+   */
+  z.strictObject({ type: z.literal('stop'), endWithinMs: z.int().positive() }),
   /** The audit entry `id` is on the Worker's stream. */
   z.strictObject({ type: z.literal('audit_ack'), id: z.int().nonnegative() }),
   /** It isn't, and won't be (the run has ended, or the Worker has gone): the hook must not let the call run. */
@@ -33,20 +37,25 @@ export const SessionMessage = z.discriminatedUnion('type', [
   /** The session listens on the channel; the root sends `run` only after this. */
   z.strictObject({ type: z.literal('ready') }),
   z.strictObject({ type: z.literal('event'), event: z.unknown() }),
-  /** A blocking audit entry: the root writes it to the stream, then answers `audit_ack` or `audit_nack` with this id. */
-  z.strictObject({ type: z.literal('audit'), id: z.int().nonnegative(), entry: AuditEntry }),
+  /**
+   * A blocking audit entry: the root writes it to the stream, then answers `audit_ack` or `audit_nack` with this id.
+   * `expiresAt` (epoch ms, the same clock on both ends) is when the session stops waiting, less a margin for the ack to
+   * travel: an entry the root reads at or after it (it sat in the pipe while the root wasn't reading) is nacked and
+   * never written, so the stream never says `allow` for a call that the hook refused on its timeout.
+   */
+  z.strictObject({ type: z.literal('audit'), id: z.int().nonnegative(), expiresAt: z.number().nonnegative(), entry: AuditEntry }),
 ])
 export type SessionMessage = z.infer<typeof SessionMessage>
 
 export type SessionEvent = Exclude<RunEventBody, { type: 'started' | 'audit' }>
-export type ParsedSessionMessage = { type: 'ready' } | { type: 'event'; event: SessionEvent } | { type: 'audit'; id: number; entry: AuditEntry }
+export type ParsedSessionMessage = { type: 'ready' } | { type: 'event'; event: SessionEvent } | { type: 'audit'; id: number; expiresAt: number; entry: AuditEntry }
 
 /** Parses a message from a session, event body included. Returns the zod error's text on failure, never throws. */
 export function parseSessionMessage(raw: unknown): { ok: true; message: ParsedSessionMessage } | { ok: false; error: string } {
   const outer = SessionMessage.safeParse(raw)
   if (!outer.success) return { ok: false, error: z.prettifyError(outer.error) }
   if (outer.data.type === 'ready') return { ok: true, message: { type: 'ready' } }
-  if (outer.data.type === 'audit') return { ok: true, message: { type: 'audit', id: outer.data.id, entry: outer.data.entry } }
+  if (outer.data.type === 'audit') return { ok: true, message: { type: 'audit', id: outer.data.id, expiresAt: outer.data.expiresAt, entry: outer.data.entry } }
   const body = SessionEventBody.safeParse(outer.data.event)
   if (!body.success) return { ok: false, error: z.prettifyError(body.error) }
   return { ok: true, message: { type: 'event', event: body.data as SessionEvent } }

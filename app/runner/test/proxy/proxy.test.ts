@@ -299,6 +299,12 @@ describe('headers', () => {
     for (const dropped of ['x-custom', 'cookie', 'x-forwarded-for', 'accept-encoding']) expect(h[dropped], dropped).toBeUndefined()
     expect(h[RUN_TOKEN_HEADER]).toBe('tok_live_run_1001_aaaaaaaa')
   })
+
+  it("forwards a saved file's hash header (the egress checks the body against it)", async () => {
+    const res = await call('/files/outputs/a.pdf', { method: 'PUT', headers: { 'content-type': 'application/pdf', 'x-inhouse-sha256': 'ab'.repeat(32) }, body: '%PDF-' })
+    expect(res.status).toBe(200)
+    expect(seen[0]!.headers['x-inhouse-sha256']).toBe('ab'.repeat(32))
+  })
 })
 
 describe('the uid lookup', () => {

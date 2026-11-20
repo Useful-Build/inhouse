@@ -4,7 +4,13 @@
 //   sneaks back in (the SDK's default spawn keeps the session's stdio from the CLI);
 // - an interrupt that falls back to abort is reported as an SDK error;
 // - a run ends twice, or not at all, when the query throws, is stopped, or the root sends garbage;
-// - sessionEnv() grows a variable that isn't on its list (where a token could hide).
+// - sessionEnv() grows a variable that isn't on its list (where a token could hide);
+// - a subagent's tool call counts against the main turn's lone deferred call, or a deferral whose id isn't the turn's
+//   one call is taken;
+// - after a stop, a slow files save runs out the root's grace before the checkpoint (the run loses it, its cost and a
+//   deferred call's waiting state);
+// - an audit entry carries no expiry, so the root writes one the hook already refused on its timeout;
+// - the note on left-out files grows with the number of files.
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,14 +20,14 @@ import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { fc, it } from '@fast-check/vitest'
 import { afterAll, describe, expect } from 'vitest'
 import { LOCAL_MAX_DEPTH, LineReader, encodeLine, type LineResult } from '../../src/protocol/ndjson.ts'
-import { SDK_MESSAGE_MAX_DEPTH, leftOutNote, runSession, type QueryFn } from '../../src/session/core.ts'
+import { AUDIT_ACK_MARGIN_MS, LEFT_OUT_NOTE_MAX_CHARS, SDK_MESSAGE_MAX_DEPTH, leftOutNote, runSession, type QueryFn } from '../../src/session/core.ts'
 import { parseSessionMessage } from '../../src/protocol/local.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards, RunContext } from '../../src/session/seam.ts'
 import { GuardsMissingError, productionQueryGuards, productionSessionUsers, requireProduction } from '../../src/server/production.ts'
 import { runStart } from './support/root-client.ts'
 import { PROXY_URL, fakeEgress, type FakeEgress } from './support/fake-egress.ts'
-import { testQueryGuards, testSessionUsers } from './support/test-seams.ts'
+import { gate, testQueryGuards, testSessionUsers } from './support/test-seams.ts'
 
 const result = { type: 'result', subtype: 'success', is_error: false, num_turns: 2, total_cost_usd: 0.01, usage: { input_tokens: 5 } } as unknown as SDKMessage
 const assistant = { type: 'assistant', message: { content: [] } } as unknown as SDKMessage
@@ -163,7 +169,7 @@ describe('runSession', () => {
     const h = harness(q.query)
     h.deliver({ type: 'run', config: config() })
     await waitForTicks(() => q.calls.length === 1)
-    h.deliver({ type: 'stop' })
+    h.deliver({ type: 'stop', endWithinMs: 5_000 })
     await h.done
     expect(q.interrupts()).toBe(1)
     expect(h.events().filter((e) => e.type === 'failed' || e.type === 'finished')).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped' }])
@@ -207,7 +213,7 @@ describe('runSession', () => {
     const q = fakeQuery([assistant, result])
     const h = harness(q.query)
     h.deliver({ type: 'run', config: config() })
-    h.deliver({ type: 'stop' })
+    h.deliver({ type: 'stop', endWithinMs: 5_000 })
     await h.done
     expect(q.calls).toHaveLength(0)
     expect(h.events()).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped before the query started' }])
@@ -216,7 +222,7 @@ describe('runSession', () => {
   it('a stop with no run ends the session as stopped; no query runs', async () => {
     const q = fakeQuery([result])
     const h = harness(q.query)
-    h.deliver({ type: 'stop' })
+    h.deliver({ type: 'stop', endWithinMs: 5_000 })
     await h.done
     expect(q.calls).toHaveLength(0)
     expect(h.events()).toEqual([{ type: 'failed', reason: 'stopped', message: 'stopped before the run started' }])
@@ -228,7 +234,7 @@ describe('runSession', () => {
     h.deliver({ type: 'run', config: config() })
     // Once the result is out, the stop comes in.
     while (!h.events().some((e) => e.type === 'sdk' && e.message.type === 'result')) await new Promise((r) => setImmediate(r))
-    h.deliver({ type: 'stop' })
+    h.deliver({ type: 'stop', endWithinMs: 5_000 })
     await h.done
     expect(h.events().filter((e) => e.type === 'failed' || e.type === 'finished')).toEqual([
       { type: 'finished', subtype: 'success', isError: false, numTurns: 2, costUsd: 0.01, usage: { input_tokens: 5 } },
@@ -368,8 +374,8 @@ function scriptedQuery(body: (p: Parameters<QueryFn>[0]) => AsyncGenerator<SDKMe
   return { query, calls }
 }
 
-const toolUse = (...ids: string[]) => ({ type: 'assistant', message: { content: ids.map((id) => ({ type: 'tool_use', id, name: 'mcp__inhouse__question_ask', input: {} })) } }) as unknown as SDKMessage
-const toolResult = (id: string) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } }) as unknown as SDKMessage
+const toolUse = (...ids: string[]) => ({ type: 'assistant', parent_tool_use_id: null, message: { content: ids.map((id) => ({ type: 'tool_use', id, name: 'mcp__inhouse__question_ask', input: {} })) } }) as unknown as SDKMessage
+const toolResult = (id: string) => ({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } }) as unknown as SDKMessage
 const deferredResult = (id: string) => ({ ...(result as object), stop_reason: 'tool_deferred', deferred_tool_use: { id, name: 'mcp__inhouse__question_ask', input: { q: 'which?' } } }) as unknown as SDKMessage
 const types = (events: any[]) => events.map((e) => e.type)
 
@@ -395,6 +401,23 @@ describe('the run lifecycle', () => {
     h.deliver({ type: 'run', config: config() })
     await h.done
     expect(h.events().find((e) => e.type === 'deferred')).toMatchObject({ toolUseId: 't2' })
+  })
+
+  it("a subagent's tool calls don't count against the main turn's lone call", async () => {
+    const sub = { type: 'assistant', parent_tool_use_id: 't1', message: { content: [{ type: 'tool_use', id: 's1', name: 'Read', input: {} }] } } as unknown as SDKMessage
+    const h = harness(fakeQuery([toolUse('t1'), sub, deferredResult('t1')]).query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(h.events().find((e) => e.type === 'deferred')).toMatchObject({ toolUseId: 't1' })
+    expect(h.events().at(-1)?.type).toBe('finished')
+  })
+
+  it("a deferral whose id isn't the turn's one call is refused", async () => {
+    const h = harness(fakeQuery([toolUse('t1'), deferredResult('t9')]).query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'sdk', 'checkpoint', 'failed'])
+    expect(h.events().at(-1)).toMatchObject({ reason: 'sdk_error' })
   })
 
   it('the prompt stream stays open until the result, then ends (so the SDK ends the run)', async () => {
@@ -470,6 +493,54 @@ describe('the run lifecycle', () => {
     expect(egress.files.get('outputs/answer.txt')?.contentType).toBe('text/plain')
   })
 
+  it('after a stop, the checkpoint comes before the files', async () => {
+    const g = gate()
+    const q = scriptedQuery(async function* ({ options }) {
+      writeFileSync(join(options.cwd!, 'outputs', 'answer.txt'), 'forty-two')
+      yield assistant
+      await g.promise
+    })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config({ fileCaps: { maxFileBytes: 1000, maxFilesPerTurn: 5, maxRestoreBytes: 1000, allowedTypes: ['text/plain'] } }) })
+    await waitForTicks(() => h.events().length > 0)
+    h.deliver({ type: 'stop', endWithinMs: 5_000 })
+    g.open()
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'checkpoint', 'file_saved', 'failed'])
+    expect(h.events().at(-1)).toMatchObject({ reason: 'stopped' })
+  })
+
+  it("a stop during a slow files save: the save gives way, the checkpoint goes first, and the run ends by the stop's deadline", async () => {
+    const egress = fakeEgress()
+    const real = egress.fetch
+    let puts = 0
+    // Every upload hangs: only the stop's deadline ends the save.
+    egress.fetch = (url, init) => (init.method === 'PUT' ? (puts++, new Promise<Response>(() => {})) : real(url, init))
+    const key = { projectKey: 'k', sessionId: '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11' }
+    const q = scriptedQuery(async function* ({ options }) {
+      await options.sessionStore!.append(key, [{ type: 'user', uuid: 'u1' }])
+      writeFileSync(join(options.cwd!, 'outputs', 'answer.txt'), 'forty-two')
+      yield result
+    })
+    const h = harness(q.query, testQueryGuards, { egress })
+    h.deliver({ type: 'run', config: config({ fileCaps: { maxFileBytes: 1000, maxFilesPerTurn: 5, maxRestoreBytes: 1000, allowedTypes: ['text/plain'] } }) })
+    await waitForTicks(() => puts === 1)
+    h.deliver({ type: 'stop', endWithinMs: 200 })
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'checkpoint', 'finished'])
+    expect(h.events().at(-1)).toMatchObject({ costUsd: 0.01 })
+    expect(puts).toBe(2)
+    expect(h.logs).toContainEqual({ type: 'files_save_cut', why: "the stop's deadline" })
+  })
+
+  it('the note on left-out files stays under its cap, saying how many more', () => {
+    const names = Array.from({ length: 5000 }, (_, i) => `inputs/file-${i}.pdf`)
+    const note = leftOutNote(names)
+    expect(note.length).toBeLessThan(LEFT_OUT_NOTE_MAX_CHARS + 200)
+    expect(note).toMatch(/and \d+ more\]$/)
+    expect(leftOutNote(['inputs/a.pdf'])).toBe("[The chat's files over the restore size cap were not brought into the work folder: inputs/a.pdf]")
+  })
+
   it('the "" resume prompt stays a plain empty string, even with files left out', async () => {
     const egress = fakeEgress()
     egress.files.set('inputs/huge.txt', { body: new Uint8Array(5000) })
@@ -510,11 +581,25 @@ describe('the audit transport (session side)', () => {
     await waitForTicks(() => audit() !== undefined)
     const a = audit()(entry)
     const b = audit()({ ...entry, toolName: 'Read' })
-    expect(audits(h.sent)).toEqual([{ type: 'audit', id: 0, entry }, { type: 'audit', id: 1, entry: { ...entry, toolName: 'Read' } }])
+    const expiresAt = expect.any(Number)
+    expect(audits(h.sent)).toEqual([{ type: 'audit', id: 0, expiresAt, entry }, { type: 'audit', id: 1, expiresAt, entry: { ...entry, toolName: 'Read' } }])
     h.deliver({ type: 'audit_nack', id: 1, error: 'the Worker has gone' })
     h.deliver({ type: 'audit_ack', id: 0 })
     await expect(a).resolves.toBeUndefined()
     await expect(b).rejects.toThrow(/the Worker has gone/)
+    q.release()
+    await h.done
+  })
+
+  it('each entry says when the hook stops waiting for it, less the margin for the ack', async () => {
+    const { h, q, audit } = held()
+    await waitForTicks(() => audit() !== undefined)
+    const t0 = Date.now()
+    void audit()(entry).catch(() => undefined)
+    const t1 = Date.now()
+    const sent = audits(h.sent)[0]
+    expect(sent.expiresAt).toBeGreaterThanOrEqual(t0 + 10_000 - AUDIT_ACK_MARGIN_MS)
+    expect(sent.expiresAt).toBeLessThanOrEqual(t1 + 10_000 - AUDIT_ACK_MARGIN_MS)
     q.release()
     await h.done
   })
@@ -542,7 +627,7 @@ describe('the audit transport (session side)', () => {
 
   it('a session may not send audit as a plain event (it would skip the ack)', () => {
     expect(parseSessionMessage({ type: 'event', event: { type: 'audit', entry } })).toMatchObject({ ok: false })
-    expect(parseSessionMessage({ type: 'audit', id: 3, entry })).toEqual({ ok: true, message: { type: 'audit', id: 3, entry } })
+    expect(parseSessionMessage({ type: 'audit', id: 3, expiresAt: 1, entry })).toEqual({ ok: true, message: { type: 'audit', id: 3, expiresAt: 1, entry } })
   })
 })
 

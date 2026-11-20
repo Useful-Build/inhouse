@@ -1,5 +1,5 @@
 // State that has to survive or reverse: the 10 s send hold across a reload, Undo, Reset, and the Run Undo and Pause paths.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { everything } from './page-text.js'
 

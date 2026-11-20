@@ -4,7 +4,7 @@
 //
 // Dictation: the model for it is connected later. When it lands this check changes: the button then records, and the
 // "isn't connected" test is replaced by one that drives the real thing.
-import { expect, test } from '@playwright/test'
+import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash: string, ready: (page: Page) => Promise<void>) {
