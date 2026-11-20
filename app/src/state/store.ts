@@ -575,7 +575,9 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
 })
 
 export const useUi = create<UiState & UiActions>()((set, get) => {
-  const demo = loadDemo()
+  // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: its stage comes
+  // from the client in P2, so `stage` and `scenario` here are placeholders there.
+  const demo = demoControls ? loadDemo() : DEFAULT_DEMO
   demoControls?.setDemo({ stage: demo.stage, scenario: demo.scenario })
   const session = restoreSession(loadSession())
   // The reload note goes into the saved session once, not again on every reload until something else saves.
@@ -1014,7 +1016,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set(p)
       const { stage, scenario, ambient, animateMark } = get()
       demoControls?.setDemo({ stage, scenario })
-      saveDemo({ stage, scenario, ambient, animateMark })
+      if (demoControls) saveDemo({ stage, scenario, ambient, animateMark })
       const now = openChatKey(get(), agent.read())
       if (now !== was) {
         set(s => {
@@ -1033,7 +1035,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const { ambient, animateMark } = get()
       const d = { ...DEFAULT_DEMO, ambient, animateMark }
       demoControls?.setDemo({ stage: d.stage, scenario: d.scenario })
-      saveDemo(d)
+      if (demoControls) saveDemo(d)
       set({ ...initialUi(), ...d, phone: get().phone, demoOpen: get().demoOpen })
       // The brand and channels came from the override at load, so a reload is what drops them.
       if (demoControls?.dataOverrideActive) location.reload()

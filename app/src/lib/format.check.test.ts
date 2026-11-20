@@ -46,4 +46,8 @@ describe('the allowances', () => {
     expect(check('src/agent/clock.ts', probe('hand-built.ts'))).toEqual([])
     expect(linesHit('src/agent/clock.ts', probe('comment-before-paren.ts'))).toEqual([2])
   })
+  test('demo-clock.ts may use the getters; another file in src/agent/ may not', () => {
+    expect(check('src/agent/demo-clock.ts', probe('hand-built.ts'))).toEqual([])
+    expect(linesHit('src/agent/other.ts', probe('hand-built.ts'))).toEqual([3, 4, 5, 6, 7, 8])
+  })
 })

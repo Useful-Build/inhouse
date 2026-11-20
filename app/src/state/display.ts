@@ -6,14 +6,17 @@
 // DEMO_START, `demoNow`, the sample times `demoAt` reads) and a routine's next run (`nextLocalRun` there, which the mock's
 // `nextRun` calls). In the demo the display zone is the device's too, so the two agree; with a brand zone they wouldn't.
 import { deviceTimeZone, type Display } from '../lib/format'
-import { now } from '../agent'
 
 let demoDisplay: Display | undefined
 /** The `Display` every formatter takes. */
 export const display = (): Display => (demoDisplay ??= { timeZone: deviceTimeZone(), locale: 'en-US' })
 
-/**
- * Now, as epoch ms, for relative labels ("Today", "Yesterday", "just now"): the client entry's clock (the demo clock in the
- * demo, the real clock in the product). The state argument is kept so callers needn't change; it isn't read.
- */
-export const nowOf = (_st?: unknown): number => now()
+let clock: (() => number) | undefined
+/** The client entry's clock (the demo clock in the demo, the real clock in the product), set once by src/agent/index.ts. */
+export const setNow = (fn: () => number): void => { clock = fn }
+
+/** Now, as epoch ms, for relative labels ("Today", "Yesterday", "just now"). Throws when no entry has set the clock. */
+export const nowOf = (): number => {
+  if (!clock) throw new Error('nowOf: no clock set. src/agent/index.ts sets it when it loads; import the agent first.')
+  return clock()
+}

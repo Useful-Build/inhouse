@@ -155,7 +155,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
   onClick: () => void
 }) {
   const phone = useUi(s => s.phone)
-  const st = useAgentState()
+  useAgentState() // re-renders the row when the agent state changes (its time label reads the clock)
   const renameChat = useUi(s => s.renameChat)
   const [editing, setEditing] = useState(false)
   const [tip, setTip] = useState(false)
@@ -227,7 +227,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
               {/* On the selected fill muted text falls under 4.5:1, so a picked or open row's time steps up a level. */}
               {/* Where the "···" trigger shows over it (hover, focus, an open menu; not on a phone or touch screen), the time fades. */}
               {place === 'list' && <span className={cn('flex-none text-sm tabular-nums transition-opacity duration-120', open || picked ? 'text-foreground-3' : 'text-muted-foreground',
-                !phone && !selecting && 'pointer-fine:group-hover/chat:opacity-0 pointer-fine:group-focus-within/chat:opacity-0 pointer-fine:group-has-[[aria-expanded=true]]/chat:opacity-0')}>{fmtWhen(chat.at, nowOf(st), display())}</span>}
+                !phone && !selecting && 'pointer-fine:group-hover/chat:opacity-0 pointer-fine:group-focus-within/chat:opacity-0 pointer-fine:group-has-[[aria-expanded=true]]/chat:opacity-0')}>{fmtWhen(chat.at, nowOf(), display())}</span>}
             </button>
           </TooltipTrigger>
           <TooltipContent side={place === 'sidebar' ? 'right' : 'top'} className="max-w-72">{chat.title}</TooltipContent>

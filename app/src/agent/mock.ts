@@ -1106,6 +1106,8 @@ export class MockAgent implements AgentClient {
   createChat(chat: { id: string; title: string }): Promise<void> {
     if (!chat.id.trim()) return this.rejected('unknown', "Couldn't start the chat.", true)
     this.created.add(chat.id)
+    // A write changes the snapshot's identity (the contract), so a React reader of `getSnapshot` sees the new chat.
+    this.state = { ...this.state }
     // `allChatIds` changed, so `subscribe` listeners are told. On the next microtask, not in this call: the store makes the
     // chats it restored at load while it is still being created, and a listener must not run into it half made.
     queueMicrotask(() => this.listeners.forEach(l => l()))
