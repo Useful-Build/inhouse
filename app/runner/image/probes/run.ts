@@ -18,7 +18,7 @@
 // outside the container that the sandbox's allowlist can name.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, lstatSync, mkdirSync, renameSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, chownSync, existsSync, lstatSync, mkdirSync, renameSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { PROTOCOL_HEADER, PROTOCOL_VERSION, type RunEvent } from '../../../shared/protocol/index.ts'
@@ -839,8 +839,11 @@ async function probeSandboxMatrix() {
     for (const variant of ['plain', 'home-outside'] as const) {
       let home: string | undefined
       if (variant === 'home-outside') {
-        home = `/tmp/probe-home-${helper ? 'h' : 'n'}`
-        await runCommand('mkdir', ['-m', '0700', home], { uid: userNamed(directUsers[variant]).uid, gid: userNamed(directUsers[variant]).gid })
+        // Outside every shared folder, so the wipe before the run leaves it alone.
+        const owner = userNamed(directUsers[variant])
+        home = `/var/lib/probe-home-${helper ? 'h' : 'n'}`
+        mkdirSync(home, { mode: 0o700 })
+        chownSync(home, owner.uid, owner.gid)
       }
       const d = await direct(variant, { prompt: 'Run the probe.', webFetchDomains: [], home }, cmd)
       const out = [0, 1].map((i) => d.state.results.get(d.state.ids[i]!)?.text.replace(/\s+/g, ' ').slice(0, 300) ?? 'no result')
