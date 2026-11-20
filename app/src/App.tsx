@@ -8,6 +8,7 @@ import { Sidebar } from './shell/Sidebar'
 import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
 import { NotConnected } from './shell/NotConnected'
+import { notOnTeam } from './shell/not-on-team'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -21,7 +22,7 @@ import { Routines } from './screens/Routines'
 import { Activity } from './screens/Activity'
 import { Tools, ToolPage } from './screens/Tools'
 import { Skills } from './screens/Skills'
-import { MENU } from './screens/settings/content'
+import { MENU } from './screens/settings/menu'
 import { ProblemPanel } from './overlays/ProblemPanel'
 import { TeamWindow } from './overlays/TeamWindow'
 import { HelpWindow } from './overlays/HelpWindow'
@@ -45,6 +46,7 @@ function lazyRoute<M, C extends ComponentType>(load: () => Promise<M>, pick: (m:
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
+const NotOnTeam = lazyRoute(() => import('./shell/NotOnTeam'), m => m.NotOnTeam)
 const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.TraceWindow)
 
 /** A trace window whose chunk can't load closes and says so, instead of taking the app down. */
@@ -374,7 +376,9 @@ function Shell() {
  * screen in place of the pages. The demo has `demo` set and never shows it.
  */
 export default function App() {
-  const status = useAgentData().status
-  if (demo === null && status === 'loading') return <NotConnected />
+  const data = useAgentData()
+  // The Worker refused the person as not invited, or removed: they aren't on this team (the product only).
+  if (demo === null && notOnTeam(data)) return <Suspense fallback={null}><NotOnTeam /></Suspense>
+  if (demo === null && data.status === 'loading') return <NotConnected />
   return <Shell />
 }

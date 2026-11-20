@@ -10,6 +10,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Switch as UiSwitch, switchRootClass, switchThumbClass } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { agent } from '../agent'
 import { initials, memberFor, photoOf, userName } from '../state/derive'
 import { openRun, useAgentData, useAgentState, useUi } from '../state/store'
 import { Icon as BaseIcon } from '@/components/ui/icon'
@@ -115,7 +116,8 @@ export function Avatar({ who, size = 24, fontSize = Math.round(size * 0.42) }: {
   const st = useAgentState()
   const me = userName({ agent: st, data })
   const m = memberFor(data, who, me)
-  const photo = m ? photoOf(data, m.id) : null
+  // A Member may not list the team (can.viewMembers), so the signed-in person's own photo also comes from `me()`.
+  const photo = (m ? photoOf(data, m.id) : null) || (m && m.id === data.meta.currentUser.id ? agent.me()?.photoUrl ?? null : null)
   const name = m ? (m.id === data.meta.currentUser.id ? me : m.name) : who
   return (
     <UiAvatar aria-hidden="true" className={cn(photo && 'after:absolute after:inset-0 after:rounded-full after:inset-ring after:inset-ring-input')}

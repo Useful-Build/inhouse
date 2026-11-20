@@ -113,6 +113,43 @@ test('A removed approver stays on the rules that name them, with a tag', async (
   await expect(page.getByText('Not an approver')).toHaveCount(0)
 })
 
+test('Members: Invite adds a person, Remove asks first and names them, and a removed approver is told about', async ({ page }) => {
+  await start(page, '#/settings/team-members')
+  await main(page).getByRole('button', { name: 'Invite', exact: true }).click()
+  const invite = page.getByRole('dialog', { name: 'Invite someone' })
+  await invite.getByRole('textbox', { name: 'Name' }).fill('Robin Lee')
+  await invite.getByRole('textbox', { name: 'Work email' }).fill('robin@example.test')
+  await invite.getByRole('button', { name: 'Invite', exact: true }).click()
+  await expect(invite).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: 'Robin Lee: Member' })).toBeVisible()
+  // The same email again is refused, with a plain line.
+  await main(page).getByRole('button', { name: 'Invite', exact: true }).click()
+  await invite.getByRole('textbox', { name: 'Name' }).fill('Robin Again')
+  await invite.getByRole('textbox', { name: 'Work email' }).fill('Robin@Example.test')
+  await invite.getByRole('button', { name: 'Invite', exact: true }).click()
+  await expect(invite.getByRole('alert')).toHaveText('That email is already on the team.')
+  await invite.getByRole('button', { name: 'Cancel' }).click()
+  await expect(invite).toHaveCount(0)
+
+  // Remove names the person; Cancel keeps them.
+  await main(page).getByRole('button', { name: 'Remove Robin Lee' }).click()
+  const ask = page.getByRole('dialog', { name: 'Remove Robin Lee?' })
+  await expect(ask).toBeVisible()
+  await ask.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByRole('combobox', { name: 'Robin Lee: Member' })).toBeVisible()
+  await main(page).getByRole('button', { name: 'Remove Robin Lee' }).click()
+  await ask.getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: 'Robin Lee: Member' })).toHaveCount(0)
+
+  // Dana is named on an approval rule: removing her says so, and the rule keeps her name with a tag.
+  await main(page).getByRole('button', { name: 'Remove Dana Kim' }).click()
+  await expect(page.getByRole('dialog', { name: 'Remove Dana Kim?' })).toContainText('stays named on 1 approval rule')
+  await page.getByRole('dialog', { name: 'Remove Dana Kim?' }).getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Dana is still named on 1 approval rule.' })).toBeVisible()
+  await page.goto('/?demo#/settings/team-approvals')
+  await expect(page.getByText('Not an approver')).toHaveCount(1)
+})
+
 test("Usage: a saved cap below this month's spend shows the capped state, and there's no month picker", async ({ page }) => {
   await start(page, '#/settings/team-spend')
   await page.getByRole('textbox', { name: 'Monthly cap' }).fill('$50')

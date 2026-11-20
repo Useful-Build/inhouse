@@ -1,14 +1,20 @@
 // Settings: menu on the left, content on the right.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
+import type { ResourceKey, SupportGrant } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
 import { Avatar, Button, EmptyState, Icon, IconButton, InhouseMark, NavItem, PageHeader, SectionHeader, StageTag, Switch, SwitchLook } from '../ui'
 import { Confirm, SearchBox, Select, TAP } from '../ui/fields'
 import { Badge } from '@/components/ui/badge'
+import { GRANT_HOURS } from '../../shared/contract/keys'
+import { LoadError } from '../ui/retry'
+import { InviteDialog } from './settings/InviteDialog'
+import { allowance } from './settings/allowance'
+import { tell } from './settings/write'
 import { Input } from '@/components/ui/input'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
 import { MENU, checkField, settingsPage } from './settings/content'
@@ -23,7 +29,7 @@ function PhotoControl({ personId, locked }: { personId: string; locked: boolean 
     if (!file) return
     if (!PHOTO_TYPES.includes(file.type)) return showToast('Use a PNG, JPG or WebP image.', { icon: 'info' })
     if (file.size > PHOTO_MAX_BYTES) return showToast('That image is over 5 MB. Choose a smaller one.', { icon: 'info' })
-    try { agent.setPhoto(personId, await squarePhoto(file)) }
+    try { tell(agent.setPhoto(personId, await squarePhoto(file))) }
     catch (e) {
       if (e instanceof PhotoDecodeError) return showToast("That file isn't a readable image.", { icon: 'info' })
       console.error('Inhouse: could not add the photo.', e)
@@ -35,9 +41,18 @@ function PhotoControl({ personId, locked }: { personId: string; locked: boolean 
       <input ref={input} type="file" accept={PHOTO_TYPES.join(',')} aria-label="Photo file" hidden
         onChange={e => { void pick(e.target.files?.[0]); e.target.value = '' }} />
       <Button variant="outline" disabled={locked} onClick={() => input.current?.click()} size="lg">Upload</Button>
-      <Button variant="outline" disabled={locked} onClick={() => agent.setPhoto(personId, null)} size="lg">Remove</Button>
+      <Button variant="outline" disabled={locked} onClick={() => tell(agent.setPhoto(personId, null))} size="lg">Remove</Button>
     </div>
   )
+}
+
+/** The lists each page reads, so a failed read says what couldn't load and offers Retry (C3). */
+const PAGE_RESOURCES: Record<string, ResourceKey[]> = {
+  'team-members': ['members'], 'team-approvals': ['rules', 'members'], 'team-audit': ['audit'], 'team-data': ['grants', 'members'],
+  'you-memory': ['memory'], 'team-memory': ['memory'],
+}
+const RESOURCE_NAMES: Record<string, string> = {
+  members: 'the team', rules: 'the approval rules', audit: 'the audit log', grants: 'who can get in', memory: 'what your Inhouse agent remembers',
 }
 
 /** A question waiting before a setting is saved. */
@@ -80,7 +95,7 @@ function PlainField({ row, disabled }: { row: Row; disabled: boolean }) {
       <Input {...fieldProps(row, disabled)} value={draft} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
         onChange={e => {
           setDraft(e.target.value)
-          if (e.target.value.trim() && e.target.value.length <= 80) { agent.setSetting(row.key!, e.target.value); toastSaved() }
+          if (e.target.value.trim() && e.target.value.length <= 80) { tell(agent.setSetting(row.key!, e.target.value)); toastSaved() }
         }} />
       {error && <p id={errorId} className="m-0 w-55 max-w-full text-sm text-destructive-text">{error}</p>}
     </div>
@@ -101,7 +116,7 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
     if ('error' in r) { setError(r.error); return }
     setError(null)
     if (r.value === row.value) { setDraft(r.value); return }
-    agent.setSetting(row.key!, r.value)
+    tell(agent.setSetting(row.key!, r.value))
     // Saved once, not while typing, so it says so straight away.
     useUi.getState().showToast('Saved', { icon: 'check', ms: 2000, key: 'saved' })
   }
@@ -131,16 +146,37 @@ function descNode(desc: string) {
   return keepUnitsTogether(desc).replaceAll(' \u00b7 ', '\u00a0\u00b7 ')
 }
 
-function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean; caption?: string }) {
+/** Gives, and ends, the Inhouse team's access (BD7): none, live until a time, or ended; Grant for 1, 4, 24 or 72 hours; End now. */
+function GrantControl({ row, grant }: { row: Row; grant: SupportGrant | null }) {
+  const [hours, setHours] = useState('24 hours')
+  const label = (h: number) => `${h} ${h === 1 ? 'hour' : 'hours'}`
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2.5">
+      <span className="text-base text-foreground-2">{row.value}</span>
+      {grant?.live
+        ? <Button variant="outline" size="lg" onClick={() => tell(agent.endSupportGrant(grant.id))}>End now</Button>
+        : (
+          <>
+            <Select label="Give access for" value={hours} options={GRANT_HOURS.map(label)} onChange={setHours} minWidth={110} />
+            <Button variant="outline" size="lg" onClick={() => tell(agent.grantSupport(GRANT_HOURS.find(h => label(h) === hours)!))}>Grant</Button>
+          </>
+        )}
+    </div>
+  )
+}
+
+function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk, switchOk, grant, caption }: { row: Row; locked: boolean; on: boolean; onToggle: () => void; onAsk: (a: Ask) => void; readOnly: boolean; denied: boolean; effortOk: boolean; switchOk: boolean; grant: SupportGrant | null; caption?: string }) {
+  // A button or action the person's role doesn't allow isn't offered (S5).
+  if (denied && (row.kind === 'button' || row.kind === 'grant')) return null
   // A team setting on a phone is read, not changed (D4): its value shows as text under the description (see ReadValue).
   if (readOnly && row.kind !== 'button' && row.kind !== 'photo') return null
   switch (row.kind) {
     case 'select': {
-      const save = (v: string) => { if (row.save) row.save(v); else agent.setSetting(row.key!, v); row.onChange?.(v) }
+      const save = (v: string) => { if (row.save) row.save(v); else tell(agent.setSetting(row.key!, v)); row.onChange?.(v) }
       // A row with labels shows them and saves the value behind the one picked (an unknown saved value shows as it is).
       const shown = (v: string) => row.labels?.[v] ?? v
       const valueOf = (label: string) => Object.keys(row.labels ?? {}).find(k => row.labels![k] === label) ?? label
-      const select = <Select label={row.title} value={shown(row.value)} options={(row.options ?? []).map(shown)} disabled={locked || !row.key} onChange={l => {
+      const select = <Select label={row.title} value={shown(row.value)} options={(row.options ?? []).map(shown)} disabled={locked || !row.key} display={row.display} onChange={l => {
         const v = valueOf(l)
         const q = row.confirm?.(v)
         if (q) onAsk({ ...q, go: () => save(v) })
@@ -165,15 +201,17 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, caption }: { row:
           <div className="flex flex-col gap-1.5">
             {/* Below the card's @xl width the rows wrap and the section's top caption is hidden, so the first picker carries it. */}
             {caption && <span className="text-xs text-muted-foreground @xl:hidden">{caption}</span>}
-            <Select label={`How hard it thinks: ${row.title}`} value={row.value} options={row.options ?? []} onChange={v => agent.setSetting(row.key!, v)} />
+            <Select label={`How hard it thinks: ${row.title}`} value={row.value} options={row.options ?? []} onChange={v => tell(agent.setSetting(row.key!, v))} disabled={!effortOk} />
           </div>
           {/* The switch's visible label: whether the team can use this model. */}
           <span className="inline-flex h-9.5 items-center gap-2">
-            <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={() => agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null)} />
+            <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={switchOk ? () => tell(agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null)) : undefined} />
             <span aria-hidden="true" className="w-6 text-sm text-foreground-3">{row.switchOn ? 'On' : 'Off'}</span>
           </span>
         </div>
       )
+    case 'grant':
+      return <GrantControl row={row} grant={grant} />
     case 'photo':
       return <PhotoControl personId={row.avatar!.who} locked={locked} />
   }
@@ -198,6 +236,8 @@ export function Settings() {
   const { usage } = data
   const ui = useUi()
   const { setTab, phone, stage } = ui
+  const me = useSyncExternalStore(agent.subscribe, agent.me)
+  const [inviting, setInviting] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const [ask, setAsk] = useState<Ask | null>(null)
   // A "Saved" still waiting for typing to stop doesn't follow the person off the page.
@@ -234,8 +274,22 @@ export function Settings() {
       ui.showToast('Forgotten. Your Inhouse agent will no longer use this.', { undo: () => { agent.forgetMemory(key, false); ui.clearToast() } })
     },
     download,
-    setRole: (id, role) => { agent.setMemberRole(id, role).catch(() => undefined) },
-    setSupport: (on, grantId) => { (on ? agent.grantSupport(24) : agent.endSupportGrant(grantId ?? '')).catch(() => undefined) },
+    setRole: (id, role) => { tell(agent.setMemberRole(id, role)) },
+    setSupport: (on, grantId) => { tell(on ? agent.grantSupport(24) : agent.endSupportGrant(grantId ?? '')) },
+    me,
+    invite: () => setInviting(true),
+    removeMember: id => {
+      const m = data.people.members.find(x => x.id === id)
+      const named = data.people.approvalRules.filter(r => r.approver === id).length
+      agent.removeMember(id).then(() => {
+        // A removed person stays named on the rules that chose them (tagged "Not an approver"), so say so.
+        if (m && named > 0) ui.showToast(`${m.name.split(' ')[0]} is still named on ${named} approval ${named === 1 ? 'rule' : 'rules'}.`, { ms: 7000 })
+      }, (e: unknown) => { tell(Promise.reject(e)) })
+    },
+    // The demo keeps its one switch for Inhouse team access (Data and access looks as it always did); the product shows the grant.
+    grantUi: demo === null,
+    loadMore: list => { agent.loadMore(list).catch(() => undefined) },
+    exportFromServer: agent.auditExportUrl() ? () => { window.location.assign(agent.auditExportUrl()!) } : null,
   }
   const page = settingsPage(setTab, env)
   const readOnly = phone && setTab.startsWith('team-')
@@ -295,6 +349,9 @@ export function Settings() {
               </div>
             )
             : <PageHeader title={page.title} className="mb-1" />}
+          {(PAGE_RESOURCES[setTab] ?? []).filter(k => data.resources[k].status === 'error').map(k => (
+            <LoadError key={k} what={RESOURCE_NAMES[k] ?? k} error={data.resources[k].error} onRetry={() => { agent.retry(k).catch(() => undefined) }} />
+          ))}
           {hidesControls && (
             <p role="note" className="mt-3 flex items-center gap-2 text-sm text-foreground-3">
               <Icon name="desktop_windows" size={16} className="flex-none" />Change these on a computer.
@@ -318,7 +375,9 @@ export function Settings() {
                   const locked = S < row.need
                   const on = !locked && (row.on ?? st.toggles[row.key ?? ''] ?? row.def ?? false)
                   // A value shown as text (a team page on a phone) sits under the description, in the title's column.
-                  const asText = readOnly && row.kind !== 'button' && row.kind !== 'photo'
+                  const al = allowance(row, me?.can)
+                  const denied = !al.control
+                  const asText = (readOnly || denied) && row.kind !== 'button' && row.kind !== 'photo'
                   return (
                     <div key={`${row.title}|${i}`} className={cn('flex gap-x-6 gap-y-3 py-4', asText ? 'items-start' : 'flex-wrap items-center', row.kind === 'mode' && '@xl:flex-nowrap', i > 0 && 'border-t border-divider')}>
                       <div className={cn('flex min-w-0 grow items-center gap-3.5', asText ? 'basis-0' : 'basis-65')}>
@@ -330,7 +389,8 @@ export function Settings() {
                         </div>
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
-                      <Control readOnly={readOnly} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : agent.setToggle(row.key!, !on))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
+                      <Control readOnly={readOnly || denied} denied={denied} effortOk={al.effort} switchOk={al.switch} grant={data.people.supportGrant} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : tell(agent.setToggle(row.key!, !on)))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
+                      {row.remove && me?.can.remove !== false && !readOnly && <Button variant="outline" size="lg" aria-label={row.remove.label} onClick={() => setAsk({ title: row.remove!.title, text: row.remove!.text, action: row.remove!.action, go: row.remove!.go })}>Remove</Button>}
                     </div>
                   )
                 })}
@@ -341,6 +401,7 @@ export function Settings() {
         </div>
       </div>
       )}
+      {inviting && <InviteDialog onClose={() => setInviting(false)} />}
       {ask && (
         <Confirm label={ask.title} title={ask.title} action={ask.action} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
           {ask.text}

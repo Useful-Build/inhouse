@@ -12,6 +12,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { PHONE_QUERY } from '../components/Composer'
 
 type Notice = AgentNotification & { go: () => void }
+/** A role as the menu names it. */
+const ROLE_NAMES = { admin: 'Admin', member: 'Member', inhouse: 'Inhouse team' } as const
 
 /** The bell's notifications, newest first, as the agent sends them. Opening one marks it read; Mark all as read marks every one listed now. */
 // oxlint-disable-next-line react/only-export-components -- the top bar reads the unread count for the bell's name.
@@ -70,8 +72,13 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   const openPop = useUi(s => s.openPop)
   const showToast = useUi(s => s.showToast)
   const data = useAgentData()
-  const me = data.meta.currentUser
+  const meta = data.meta.currentUser
+  // Who is signed in comes from `me()`; before it loads (and in tests of the shell) the data's own current user stands in.
+  const me = useSyncExternalStore(agent.subscribe, agent.me)
+  const id = me?.memberId ?? meta.id
   const name = userName({ agent: useAgentState(), data })
+  const role = me ? ROLE_NAMES[me.role] : meta.role
+  const email = me ? me.email ?? '' : meta.email
   const items: [string, string, () => void][] = [
     ['person', 'Your settings', () => openSettings('you-general')],
     ['admin_panel_settings', 'Team settings', () => openSettings('team-plan')],
@@ -82,7 +89,12 @@ export function AccountMenu({ children }: { children: ReactNode }) {
     }],
     ['bug_report', 'Report a bug', () => openTeam('bug')],
     ['campaign', 'Send feedback', () => openTeam('feedback')],
-    ['logout', 'Sign out', () => { patch({ pop: null, sideOpen: false }); showToast("Sign out isn't connected in this demo.", { icon: 'info', ms: 4000 }) }],
+    // The product signs out through Access (`signOutUrl()`); the demo has no sign-in.
+    ['logout', 'Sign out', () => {
+      const url = agent.signOutUrl()
+      if (url) { window.location.assign(url); return }
+      patch({ pop: null, sideOpen: false }); showToast("Sign out isn't connected in this demo.", { icon: 'info', ms: 4000 })
+    }],
   ]
   // The pop only clears if it is still 'me': an item may have opened another one (Help, the team window) already.
   // Where the menu opened: an item that moves to another page leaves focus there (the page focuses its heading).
@@ -117,8 +129,8 @@ export function AccountMenu({ children }: { children: ReactNode }) {
         // Only while it's open: a closing menu still hears keys during its exit animation, and the window an item opened needs this Escape.
         onEscapeKeyDown={e => { if (useUi.getState().pop === 'me') e.stopPropagation() }}>
         <DropdownMenuLabel className="flex items-center gap-3 px-2.5 pt-2.5 pb-3 text-foreground">
-          <Avatar who={me.id} size={38} fontSize={13} />
-          <div><div className="text-base font-semibold">{name}</div><div className="text-xs font-normal text-muted-foreground">{me.email} · {me.role}</div></div>
+          <Avatar who={id} size={38} fontSize={13} />
+          <div><div className="text-base font-semibold">{name}</div><div className="text-xs font-normal text-muted-foreground">{email} · {role}</div></div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="mx-1.5 mt-0" />
         {items.map(([icon, t, fn]) => (
