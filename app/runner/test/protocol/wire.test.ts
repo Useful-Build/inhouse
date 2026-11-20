@@ -24,6 +24,8 @@ import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import {
   ACCEPTED_VERSIONS,
+  OUTPUT_SCHEMA_MAX_BYTES,
+  STRUCTURED_OUTPUT_MAX_BYTES,
   ATTACHMENTS_MAX,
   AuditPost,
   PUSH_BATCH_MAX_BYTES,
@@ -135,7 +137,8 @@ describe('RunStart', () => {
     },
   )
 
-  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape))])('refuses a missing field', (start, key) => {
+  // outputFormat is the one optional field (v2, additive: structured output).
+  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => k !== 'outputFormat'))])('refuses a missing field', (start, key) => {
     const copy: Record<string, unknown> = { ...start }
     delete copy[key]
     expect(RunStart.safeParse(copy).success).toBe(false)
@@ -309,7 +312,7 @@ const parserFor = (name: string): ((raw: unknown) => unknown) => {
 describe('v2 wire fixtures (written by hand)', () => {
   const v2 = fixtures('v2')
   it('every v2 fixture parses to exactly what its bytes say', () => {
-    expect(v2.length).toBeGreaterThanOrEqual(22)
+    expect(v2.length).toBeGreaterThanOrEqual(25)
     for (const f of v2) expect(parserFor(f.name)(JSON.parse(f.text)), f.name).toEqual(JSON.parse(f.text))
   })
 
@@ -513,5 +516,39 @@ describe('push, audit, status and admission', () => {
     expect(RunAdmission.safeParse({ ok: true }).success).toBe(false)
     expect(RUN_REFUSAL_STATUS).toEqual({ session_pool_exhausted: 503, session_folder_parked: 503, chat_live: 409, run_live: 409 })
     expect(RunRefusal.safeParse({ error: 'the runner is stopping' }).success).toBe(false)
+  })
+})
+
+// Structured output (R3 follow-up). Ways it could fail: a schema or an output over its cap passes; an outputFormat with
+// another type, or an extra key, passes; a structuredOutput key with no value passes; the failure code is missing.
+describe('structured output on the wire', () => {
+  const first = fixture('run-start.first.json')
+  const ok = (v: Record<string, unknown>) => RunStart.safeParse(v).success
+  const sized = (bytes: number) => ({ a: 'x'.repeat(bytes - 8) })
+
+  it('outputFormat: json_schema with a schema object up to 16 KB; optional', () => {
+    expect(ok(first)).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: { type: 'object' } } })).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: sized(OUTPUT_SCHEMA_MAX_BYTES) } })).toBe(true)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: sized(OUTPUT_SCHEMA_MAX_BYTES + 1) } })).toBe(false)
+    expect(ok({ ...first, outputFormat: { type: 'text', schema: {} } })).toBe(false)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema' } })).toBe(false)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: [] } })).toBe(false)
+    expect(ok({ ...first, outputFormat: { type: 'json_schema', schema: {}, strict: true } })).toBe(false)
+    expect(ok({ ...first, outputFormat: null })).toBe(false)
+  })
+
+  it('finished.structuredOutput: any JSON value up to 64 KB; optional', () => {
+    const f = { type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} }
+    const body = (v: Record<string, unknown>) => RunEventBody.safeParse(v).success
+    expect(body(f)).toBe(true)
+    for (const v of [{ a: 1 }, [1, 2], 'text', 0, false, null]) expect(body({ ...f, structuredOutput: v }), JSON.stringify(v)).toBe(true)
+    expect(body({ ...f, structuredOutput: sized(STRUCTURED_OUTPUT_MAX_BYTES) })).toBe(true)
+    expect(body({ ...f, structuredOutput: sized(STRUCTURED_OUTPUT_MAX_BYTES + 1) })).toBe(false)
+  })
+
+  it('a failed run can say structured_output', () => {
+    expect(RunEventBody.safeParse({ type: 'failed', reason: 'structured_output', message: 'x' }).success).toBe(true)
+    expect(RunEventBody.safeParse({ type: 'failed', reason: 'structured', message: 'x' }).success).toBe(false)
   })
 })

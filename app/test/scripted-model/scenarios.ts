@@ -81,7 +81,38 @@ export function openParallelHold() {
   parallelGate = newGate()
 }
 
+/**
+ * The schema the structured scenarios answer to (the run's `outputFormat.schema`): a count and a summary, both required.
+ * `structured` answers it on the first try; `structured-retries` never does, so the SDK runs out of retries.
+ */
+export const STRUCTURED_SCHEMA = {
+  type: 'object',
+  properties: { late_orders: { type: 'integer' }, summary: { type: 'string' } },
+  required: ['late_orders', 'summary'],
+  additionalProperties: false,
+}
+export const STRUCTURED_ANSWER = { late_orders: 3, summary: 'Three orders shipped late.' }
+/** How many invalid answers `structured-retries` gives: more than the SDK's retries, so it gives up first. */
+export const STRUCTURED_BAD_TURNS = 12
+
 export const SCENARIOS: Record<string, Scenario> = {
+  /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
+  structured: {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_structured', name: 'StructuredOutput', input: STRUCTURED_ANSWER }], expect: mainLoop('StructuredOutput') },
+      // Should the CLI ask once more after the tool's result (the docs say the turn ends on it), a plain close.
+      { content: [{ type: 'text', text: 'Done.' }], expect: both(mainLoop('StructuredOutput'), resultOf('toolu_scripted_structured')) },
+    ],
+  },
+
+  /** Answers StructuredOutput with input that never matches STRUCTURED_SCHEMA: the SDK runs out of retries. */
+  'structured-retries': {
+    turns: Array.from({ length: STRUCTURED_BAD_TURNS }, (_, i) => ({
+      content: [{ type: 'tool_use' as const, id: `toolu_scripted_bad_${i}`, name: 'StructuredOutput', input: { late_orders: 'many' } }],
+      expect: mainLoop('StructuredOutput'),
+    })),
+  },
+
   /** Four subagents in flight at once, each answer held until `openParallelHold()`. */
   'parallel-4': parallelSubagents(() => parallelGate.promise),
 
