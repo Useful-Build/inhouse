@@ -2,10 +2,10 @@
 // never reads brand_data without a live grant (a grant ending exactly at nowMs included) and always with the audit
 // duty; nobody but the owner reaches `personal`; an Admin never writes technical except `tm:<id>:on` = 'off' through
 // requireObject; canFor agrees with checkAccess. Then the matrix invariants, on the design's rows now and on the
-// committed rows (server/access-matrix.ts) once PR0b fills them.
+// committed rows (server/access-matrix.ts), which must equal the design's.
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
-import { accessMatrix } from '../access-matrix.ts'
+import { accessMatrix, canRows as committedCanRows } from '../access-matrix.ts'
 import { routes } from '../routes.ts'
 import type { Principal } from './principal.ts'
 import { ADMIN_WRITE_OBJECT, AccessRefusedError, canFor, canRowsProblems, checkAccess, objectGate, rowFor } from './matrix.ts'
@@ -153,13 +153,35 @@ describe('checkAccess cases', () => {
 const inhouseWriteProblems = (rows: readonly AccessRow[]) =>
   rows.filter(x => x.method !== 'GET' && x.class !== 'technical' && x.class !== 'report' && x.allow.includes('inhouse')).map(x => `${x.method} ${x.pattern}`)
 
+/**
+ * Pairs of routes with the same method where one concrete path matches both (equal length, every segment literal-equal
+ * or a `:param` on either side). api.ts takes the access row from the pattern matchRoute found first, so a shadowed
+ * route would be served under the other route's row.
+ */
+const shadowProblems = (table: readonly { method: string; pattern: string }[]) => {
+  const problems: string[] = []
+  table.forEach((a, i) => table.slice(i + 1).forEach(b => {
+    if (a.method !== b.method) return
+    const x = a.pattern.split('/'), y = b.pattern.split('/')
+    if (x.length === y.length && x.every((seg, k) => seg === y[k] || seg.startsWith(':') || y[k].startsWith(':'))) problems.push(`${a.method} ${a.pattern} / ${b.pattern}`)
+  }))
+  return problems
+}
+
+/** The closed list of `open` rows (matrix.ts): only the health check. */
+const OPEN_ROWS = ['GET /api/health']
+const openProblems = (rows: readonly AccessRow[]) => {
+  const keys = rows.filter(x => x.class === 'open').map(x => `${x.method} ${x.pattern}`)
+  return [...keys.filter(k => !OPEN_ROWS.includes(k)).map(k => `${k} is open`), ...OPEN_ROWS.filter(k => !keys.includes(k)).map(k => `${k} is not open`)]
+}
+
 /** The closed list of `report` rows (matrix.ts): only the error reporter's POST. */
 const REPORT_ROWS = ['POST /api/client-error']
 const reportProblems = (rows: readonly AccessRow[]) => {
   const report = rows.filter(x => x.class === 'report')
   const keys = report.map(x => `${x.method} ${x.pattern}`)
   const problems = keys.filter(k => !REPORT_ROWS.includes(k)).map(k => `${k} is report`)
-  // An empty table (access-matrix.ts until PR0b) has no routes yet; a filled one needs every listed row as report.
+  // An empty table needs no report row; a filled one needs every listed row as report.
   if (rows.length) for (const k of REPORT_ROWS) if (!keys.includes(k)) problems.push(`${k} is not report`)
   for (const x of report) if ((x.services ?? []).length) problems.push(`${x.method} ${x.pattern} names a service`)
   return problems
@@ -176,6 +198,16 @@ describe('the invariant checks catch a bad row', () => {
     expect(reportProblems(demoted)).toEqual(['POST /api/client-error is not report'])
     expect(reportProblems(DESIGN_ROWS)).toEqual([])
   })
+  it('open on GET /api/members, or health not open', () => {
+    const members = rowFor(DESIGN_ROWS, 'GET', '/api/members')!
+    expect(openProblems(DESIGN_ROWS.map(r => (r === members ? { ...r, class: 'open' as const } : r)))).toEqual(['GET /api/members is open'])
+    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open'])
+    expect(openProblems(DESIGN_ROWS)).toEqual([])
+  })
+  it('a route that shadows another: GET /api/members/:id beside GET /api/members/invites', () => {
+    expect(shadowProblems([{ method: 'GET', pattern: '/api/members/invites' }, { method: 'GET', pattern: '/api/members/:id' }])).toEqual(['GET /api/members/invites / /api/members/:id'])
+    expect(shadowProblems([{ method: 'POST', pattern: '/api/members/invites' }, { method: 'GET', pattern: '/api/members/:id' }])).toEqual([])
+  })
   it('a non-GET brand_data, baseline or personal row listing inhouse', () => {
     const invites = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
     const bad = DESIGN_ROWS.map(r => (r === invites ? { ...r, allow: [...r.allow, 'inhouse' as const] } : r))
@@ -187,10 +219,16 @@ describe('the invariant checks catch a bad row', () => {
 /** The section 3 invariants, run on a set of rows and its CanRows. */
 function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows | null) {
   describe(`matrix invariants: ${name}`, () => {
-    it('every route has exactly one row (routes.ts, once PR0b fills it)', () => {
+    it('every route has exactly one row (routes.ts)', () => {
       for (const route of routes) expect(rows.filter(x => x.method === route.method && x.pattern === route.pattern)).toHaveLength(1)
       const keys = rows.map(x => `${x.method} ${x.pattern}`)
       expect(new Set(keys).size).toBe(keys.length)
+    })
+    it('every row has exactly one route (routes.ts)', () => {
+      for (const x of rows) expect(routes.filter(r => r.method === x.method && r.pattern === x.pattern), `${x.method} ${x.pattern}`).toHaveLength(1)
+    })
+    it('the open rows are exactly GET /api/health (a closed list)', () => {
+      expect(openProblems(rows)).toEqual([])
     })
     it('no row lets Inhouse write brand_data, baseline or personal, and no personal row allows Inhouse', () => {
       const ih = principals.inhouse({ id: 'g', endsAtMs: Number.MAX_SAFE_INTEGER })
@@ -228,8 +266,20 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
 }
 
 invariants('the design rows (p2-design section 3)', DESIGN_ROWS, DESIGN_CAN_ROWS)
-// The committed rows: empty until PR0b, then the real check. PR0b adds its canRows export here.
-invariants('server/access-matrix.ts', accessMatrix, null)
+invariants('server/access-matrix.ts', accessMatrix, committedCanRows)
+
+describe('the committed routes', () => {
+  it('no two routes with the same method match one concrete path (api.ts reads the row of the matched pattern)', () => {
+    expect(shadowProblems(routes)).toEqual([])
+  })
+})
+
+describe('the committed rows are the design', () => {
+  it('server/access-matrix.ts equals DESIGN_ROWS and DESIGN_CAN_ROWS (the fixture is the independent copy)', () => {
+    expect(accessMatrix).toStrictEqual(DESIGN_ROWS)
+    expect(committedCanRows).toStrictEqual(DESIGN_CAN_ROWS)
+  })
+})
 
 describe('canRowsProblems', () => {
   it('fails on a missing row', () => {

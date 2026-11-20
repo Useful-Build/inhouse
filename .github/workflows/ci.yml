@@ -131,7 +131,8 @@ jobs:
     # The same image as e2e (keep the tag and digest in step with it).
     container:
       image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
-      options: --user 1001 --ipc=host
+      # --add-host: Node's resolver doesn't always resolve *.localhost on a runner (ENOTFOUND brand.localhost), so pin the test build's hosts.
+      options: --user 1001 --ipc=host --add-host=brand.localhost:127.0.0.1 --add-host=inhouse.localhost:127.0.0.1
     defaults:
       run:
         working-directory: app
