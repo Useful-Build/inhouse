@@ -6,12 +6,17 @@
 // the run's end `checkpoint()` waits for appends still in flight, re-sends each batch the store never confirmed under its
 // own part id (so it lands in its place, and a copy that did land is overwritten, not doubled), then loads every key the
 // run wrote and checks each uuid the run sent is there. Only then does the run emit `checkpoint`.
+//
+// The SDK's last flush (and its retries) ends before the query's iteration does (sdk.mjs awaits its mirror batcher's
+// flush before it ends the stream), and the session checkpoints only after that. An SDK retry that still comes after a
+// repair reuses the batch's part (by its uuids), so it overwrites the copy rather than doubling it.
 import type { SessionKey, SessionStore, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
 import { StoreLoadResult, StoreSubkeys, type StoreKey } from '../../../shared/protocol/index.ts'
 
-export type Fetch = (url: string, init: { method: string; headers?: Record<string, string>; body?: string | Uint8Array }) => Promise<Response>
+export type Fetch = (url: string, init: { method: string; headers?: Record<string, string>; body?: string | Uint8Array; signal?: AbortSignal }) => Promise<Response>
 
-type Batch = { key: SessionKey; entries: SessionStoreEntry[]; part: string; confirmed: boolean }
+/** One batch of the run. Once the store confirms it, its entries are dropped: only its uuids are kept, for the check. */
+type Batch = { key: SessionKey; entries: SessionStoreEntry[] | null; uuids: string[]; part: string; confirmed: boolean }
 
 export type CheckpointResult = { ok: true; entries: number; repaired: number } | { ok: false; error: string; repaired: number }
 
@@ -36,6 +41,8 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
   const batches: Batch[] = []
   /** Unconfirmed batches by their content: the SDK retries a batch with the same key and entries; it keeps its part. */
   const unconfirmed = new Map<string, Batch>()
+  /** Confirmed batches by their key and uuids: a retry that comes after a repair confirmed it keeps its part too. */
+  const confirmedByUuids = new Map<string, Batch>()
   const inFlight = new Set<Promise<unknown>>()
   let counter = 0
 
@@ -44,10 +51,14 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
     if (!res.ok) throw new Error(`store ${op}: ${res.status}`)
     return res.json()
   }
-  const send = async (b: Batch, id: string) => {
-    await post('append', { key: wireKey(b.key), entries: b.entries, part: b.part })
+  const uuidKey = (b: { key: SessionKey; uuids: string[] }) => (b.uuids.length === 0 ? null : JSON.stringify([keyId(b.key), b.uuids]))
+  const send = async (b: Batch, id: string, entries: SessionStoreEntry[]) => {
+    await post('append', { key: wireKey(b.key), entries, part: b.part })
     b.confirmed = true
+    b.entries = null
     if (unconfirmed.get(id) === b) unconfirmed.delete(id)
+    const u = uuidKey(b)
+    if (u !== null) confirmedByUuids.set(u, b)
   }
   const track = <T>(p: Promise<T>): Promise<T> => {
     inFlight.add(p)
@@ -58,16 +69,22 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
 
   const store: SessionStore = {
     append(key, entries) {
-      // The SDK re-sends a batch only after a rejection, so the same content while unconfirmed is that retry. The same
-      // content after it was confirmed is a new batch (two identical lines with no uuid, say): its own part.
+      // The SDK re-sends a batch only after a rejection, so the same content while unconfirmed is that retry, and the
+      // same uuids after it was confirmed (by a repair) is that retry too. The same content without uuids after it was
+      // confirmed is a new batch (two identical lines with no uuid, say): its own part.
       const id = JSON.stringify([keyId(key), entries])
+      const uuids = entries.map((e) => e.uuid).filter((u): u is string => typeof u === 'string')
       let b = unconfirmed.get(id)
       if (b === undefined) {
-        b = { key, entries, part: partId(now(), ++counter), confirmed: false }
+        const u = uuidKey({ key, uuids })
+        b = u === null ? undefined : confirmedByUuids.get(u)
+      }
+      if (b === undefined) {
+        b = { key, entries, uuids, part: partId(now(), ++counter), confirmed: false }
         batches.push(b)
         unconfirmed.set(id, b)
       }
-      return track(send(b, id))
+      return track(send(b, id, entries))
     },
     async load(key) {
       const r = StoreLoadResult.parse(await post('load', { key: wireKey(key) }))
@@ -79,12 +96,12 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
   }
 
   async function checkpoint(): Promise<CheckpointResult> {
-    // An append still in flight may yet land: wait for it before deciding what to re-send.
-    await Promise.allSettled([...inFlight])
+    // An append still in flight may yet land: wait for it (and any started meanwhile) before deciding what to re-send.
+    while (inFlight.size > 0) await Promise.allSettled([...inFlight])
     let repaired = 0
     for (const [id, b] of [...unconfirmed]) {
       try {
-        await send(b, id)
+        await send(b, id, b.entries!)
         repaired++
       } catch (e) {
         return { ok: false, error: `repair of part ${b.part} failed: ${errorText(e)}`, repaired }
@@ -93,7 +110,7 @@ export function createStoreAdapter(deps: { fetch: Fetch; proxyUrl: string; now?:
     const byKey = new Map<string, { key: SessionKey; uuids: Set<string> }>()
     for (const b of batches) {
       const k = byKey.get(keyId(b.key)) ?? { key: b.key, uuids: new Set<string>() }
-      for (const e of b.entries) if (typeof e.uuid === 'string') k.uuids.add(e.uuid)
+      for (const u of b.uuids) k.uuids.add(u)
       byKey.set(keyId(b.key), k)
     }
     let checked = 0

@@ -4,7 +4,8 @@
 // - an SDK retry of a batch gets a new part (a duplicate once both land);
 // - two identical batches (no uuid) collapse into one part;
 // - `checkpoint` passes while an append is still in flight, or while the store is missing an entry it said it took;
-// - a repair or a load that fails throws out of `checkpoint` instead of reporting it.
+// - a repair or a load that fails throws out of `checkpoint` instead of reporting it;
+// - an SDK retry that comes after the repair confirmed its batch lands as a second copy.
 import type { SessionKey, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
@@ -67,6 +68,20 @@ describe('checkpoint and repair', () => {
     await sdkAppend(a, key, title)
     expect(egress.entries(key)).toEqual([...title, ...title])
     expect(await a.checkpoint()).toMatchObject({ ok: true })
+  })
+
+  it('an SDK retry that comes after the repair reuses its part: the store holds the batch once', async () => {
+    const egress = fakeEgress()
+    egress.fail = (_m, p) => (p === '/store/append' ? 503 : null)
+    const a = createStoreAdapter({ fetch: egress.fetch, proxyUrl: PROXY_URL })
+    const batch = [{ type: 'user', uuid: 'r1' }]
+    await expect(a.store.append(key, batch)).rejects.toThrow()
+    egress.fail = () => null
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 1, repaired: 1 })
+    // The SDK's own retry of the batch, landing after the repair confirmed it.
+    await a.store.append(key, batch)
+    expect(egress.entries(key)).toEqual(batch)
+    expect(await a.checkpoint()).toEqual({ ok: true, entries: 1, repaired: 0 })
   })
 
   it('a dropped batch is re-sent under its own part, so it lands in its place, not at the end', async () => {

@@ -51,9 +51,8 @@ function textType(bytes: Uint8Array, name: string): string {
   } catch {
     return 'application/octet-stream'
   }
-  const head = text.slice(0, 1024).trimStart().toLowerCase()
-  if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) return 'image/svg+xml'
-  if (head.startsWith('<!doctype html') || head.startsWith('<html')) return 'text/html'
+  const markup = markupType(text)
+  if (markup !== null) return markup
   const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase()
   if (ext === 'json') {
     try {
@@ -66,4 +65,29 @@ function textType(bytes: Uint8Array, name: string): string {
   if (ext === 'csv') return 'text/csv'
   if (ext === 'md' || ext === 'markdown') return 'text/markdown'
   return 'text/plain'
+}
+
+/** Tags that make a browser take a text as HTML when one opens it (as in the WHATWG sniffing table), lower case. */
+const HTML_TAGS = ['!doctype html', 'html', 'head', 'script', 'iframe', 'h1', 'div', 'font', 'table', 'a', 'style', 'title', 'b', 'body', 'br', 'p']
+
+/**
+ * SVG or HTML, by the first tag after any whitespace, comments, processing instructions (`<?xml ...?>`) and byte order
+ * mark: `<svg` or `<!DOCTYPE svg` is SVG, an HTML tag is HTML. A comment or instruction that never closes is HTML too
+ * (what follows it can't be told). Looks at the first 4 KiB.
+ */
+function markupType(text: string): string | null {
+  const head = text.slice(0, 4096).toLowerCase()
+  let at = 0
+  for (;;) {
+    while (at < head.length && (/\s/.test(head[at]!) || head[at] === '\ufeff')) at++
+    const closeAt = head.startsWith('<!--', at) ? head.indexOf('-->', at + 4) : head.startsWith('<?', at) ? head.indexOf('?>', at + 2) : null
+    if (closeAt === null) break
+    if (closeAt === -1) return 'text/html'
+    at = closeAt + (head.startsWith('<!--', at) ? 3 : 2)
+  }
+  const rest = head.slice(at)
+  const tagEnds = (tag: string) => rest.startsWith(`<${tag}`) && /^[\s>/]|^$/.test(rest.slice(tag.length + 1))
+  if (tagEnds('svg') || tagEnds('!doctype svg')) return 'image/svg+xml'
+  if (HTML_TAGS.some(tagEnds)) return 'text/html'
+  return null
 }

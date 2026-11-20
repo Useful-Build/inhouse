@@ -8,7 +8,9 @@
 // - a stop never ends a session that ignores it;
 // - a run raced by a stop or a crash ends twice, or with a seq gap.
 import type { ChildProcess } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import http from 'node:http'
+import { join } from 'node:path'
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
 import { ACCEPTED_VERSIONS, PROMPT_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_VERSION, ProtocolInfo, parseRunEventLine, type RunEvent } from '../../../shared/protocol/index.ts'
@@ -16,6 +18,7 @@ import { openRun, post, postRun, protocolHeaders, runStart, startTestRoot, waitF
 import { spawnFixture } from './support/test-seams.ts'
 import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
 import { API_MAX_CONNECTIONS } from '../../src/server/app.ts'
+import { stopEndWithinMs } from '../../src/server/session-host.ts'
 
 let root: TestRoot
 beforeEach(async () => {
@@ -95,6 +98,14 @@ describe('a session that misbehaves', () => {
     const events = await pending
     expectOneEnd(events)
     expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'stopped' })
+    // The stop carries the session's end-phase deadline, below the root's grace (2000 ms here).
+    expect(JSON.parse(readFileSync(join(root.users.dirs.get(start.chatId)!, 'stop-message.json'), 'utf8'))).toEqual({ type: 'stop', endWithinMs: stopEndWithinMs(2000) })
+  })
+
+  it.prop([fc.integer({ min: 2, max: 600_000 })])("the session's end-phase deadline is below the grace, and at least a millisecond", (grace) => {
+    const within = stopEndWithinMs(grace)
+    expect(within).toBeGreaterThanOrEqual(1)
+    expect(within).toBeLessThan(grace)
   })
 
   it('a run over its time limit ends with timeout', async () => {

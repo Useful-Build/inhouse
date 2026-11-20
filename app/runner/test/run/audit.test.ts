@@ -2,7 +2,9 @@
 // - an entry is acked before it is on the Worker's stream, or acked when it never will be (the Worker gone, the run over);
 // - two entries' acks cross, or one goes unanswered and the session's hook waits forever;
 // - an entry over the cap, or one that fails the schema, reaches the stream (or crashes the root);
-// - a session sends audit as a plain event, skipping the ack.
+// - a session sends audit as a plain event, skipping the ack;
+// - an entry sent after the run ended goes unanswered, so the hook waits out its timeout while the root's grace runs;
+// - an entry read after the session stopped waiting for it (it sat in the pipe) is written as if its call ran.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -42,6 +44,23 @@ describe('audit entries', () => {
     await waitFor(() => root.liveCount() === 0, 'the run to end')
     const reply = JSON.parse(readFileSync(join(root.users.dirs.get(start.chatId)!, 'audit-reply.json'), 'utf8'))
     expect(reply).toMatchObject({ type: 'audit_nack', id: 0 })
+  })
+
+  it('an entry sent after the run ended gets a nack at once (the session needs no timeout, and ends in time)', async () => {
+    const start = runStart({ prompt: 'audit-after-end' })
+    const events = await postRun(root, start)
+    expect(events.some((e) => e.type === 'audit')).toBe(false)
+    await waitFor(() => root.liveCount() === 0, 'the run to end')
+    const reply = JSON.parse(readFileSync(join(root.users.dirs.get(start.chatId)!, 'audit-reply.json'), 'utf8'))
+    expect(reply).toEqual({ type: 'audit_nack', id: 0, error: 'the run has ended' })
+  })
+
+  it('an entry read after its expiresAt is nacked and never written', async () => {
+    const events = await postRun(root, runStart({ prompt: 'audit-expired' }))
+    expect(events.some((e) => e.type === 'audit')).toBe(false)
+    const report = events.find((e) => e.type === 'sdk' && e.message.type === 'audits')
+    expect(report!.type === 'sdk' && report!.message.replies).toEqual([{ type: 'audit_nack', id: 0, error: 'the entry expired before the root read it' }])
+    expect(ends(events)).toEqual([expect.objectContaining({ type: 'finished' })])
   })
 
   it('an entry that fails the schema (input over the cap) ends the session as protocol; nothing of it reaches the stream', async () => {

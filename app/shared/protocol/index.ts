@@ -151,6 +151,8 @@ export const RunEventBody = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('file_saved'), path: FilePath, bytes: z.int().nonnegative(), contentType: z.string().max(128) }),
   z.strictObject({ type: z.literal('file_refused'), path: FilePath, reason: FileRefusalReason, bytes: z.int().nonnegative().optional() }),
+  /** The refusals past the first 50 of a run, counted rather than sent one by one. */
+  z.strictObject({ type: z.literal('file_refused_more'), count: z.int().positive() }),
   /**
    * The chat's files, brought into the work folder at the run's start (`inputs/` and `outputs/`), up to
    * `maxRestoreBytes`; `leftOut` names the ones over the cap (the agent is told too, when the run has a prompt).
@@ -163,13 +165,22 @@ export const RunEventBody = z.discriminatedUnion('type', [
    * Worker must not mark the chat waiting on this run's transcript.
    */
   z.strictObject({ type: z.literal('mirror_error'), message: z.string().max(2000) }),
+  /**
+   * The run's lone call was deferred (it waits for an answer). Sent before the run's files are saved and before its
+   * `checkpoint`, so it says nothing about the transcript: the Worker marks the chat waiting on the call only once the
+   * run's `checkpoint` has come too, never on `deferred` alone (W1 and W3 rely on this). With `mirror_error` instead of
+   * `checkpoint`, the chat is not marked waiting.
+   */
   z.strictObject({
     type: z.literal('deferred'),
     toolUseId: z.string().max(256),
     toolName: z.string().max(256),
     input: z.unknown().refine((i) => jsonBytes(i) <= DEFERRED_INPUT_MAX_BYTES, { message: `input over ${DEFERRED_INPUT_MAX_BYTES} bytes` }),
   }),
-  /** The store confirmed every batch of this run (`entries` uuids checked with `load()`). */
+  /**
+   * The store confirmed every batch of this run (`entries` uuids checked with `load()`). The only event the Worker marks
+   * a chat waiting on (with an earlier `deferred`): never `deferred` by itself.
+   */
   z.strictObject({ type: z.literal('checkpoint'), entries: z.int().nonnegative() }),
   z.strictObject({
     type: z.literal('finished'),
