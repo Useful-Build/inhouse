@@ -11,9 +11,7 @@ import { meetsRule, settingRow } from './settings-table.ts'
 import { settingSpec } from './settings.ts'
 
 const saves = (v: unknown) => settingSpec('t:webfetch')!.value.safeParse(v).success
-const protocolHost = RunStartFields.shape.webFetchDomains.element
-/** An IPv4 literal: four dotted numbers (the test's own pattern, not the code's). */
-const ipv4 = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h)
+const protocolHost = RunStartFields.shape.webFetchDomains.unwrap().element
 
 describe('t:webfetch (failures 1-3)', () => {
   it('saves these lists', () => {
@@ -41,11 +39,17 @@ describe('t:webfetch (failures 1-3)', () => {
     expect(saves(list(1))).toBe(true)
     expect(saves(list(2))).toBe(false)
   })
-  test.prop([fc.array(fc.oneof(
-    fc.domain(), fc.constantFrom('10.0.0.1', 'example.com.', 'EXAMPLE.com', 'a..b', '', 'x'.repeat(64) + '.com', '1.2.3.4'),
-  ), { minLength: 1, maxLength: 6 })])('a list saves exactly when the protocol takes each host and none is an IP literal', hosts => {
+  it('refuses names a URL parser reads as an IP address, literally listed', () => {
+    const cases: [string, boolean][] = [
+      ['10.0.0.1', false], ['1.2.3.4', false], ['0x7f.0x1', false], ['1.0x7f', false], ['a.0x', false], ['a.0XFF', false],
+      ['a.123', false], ['a.b.example', true], ['0x7f.example', true], ['123.example', true], ['a.x0', true], ['a.0xg', true],
+    ]
+    for (const [v, ok] of cases) expect(saves(v), v).toBe(ok)
+  })
+  // Real domain names (an alphabetic top label): the list saves exactly when the protocol takes each host.
+  test.prop([fc.array(fc.domain(), { minLength: 1, maxLength: 6 })])('a list of domains saves exactly when the protocol takes each one', hosts => {
     const v = hosts.join('\n')
-    const expected = v === '' || hosts.every(h => protocolHost.safeParse(h).success && !ipv4(h) && !/\.\d+$/.test(h))
+    const expected = hosts.every(h => protocolHost.safeParse(h).success)
     expect(saves(v), JSON.stringify(v)).toBe(expected)
     expect(meetsRule(settingRow('t:webfetch')!.rule, v), JSON.stringify(v)).toBe(expected)
   })

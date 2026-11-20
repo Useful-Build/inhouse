@@ -67,6 +67,8 @@ const send = (m: unknown) => channel.send(m)
 const end = () => void channel.close().then(() => process.exit(0))
 const event = (e: unknown) => send({ type: 'event', event: e })
 const finished = () => event({ type: 'finished', subtype: 'success', isError: false, numTurns: 1, costUsd: 0, usage: {} })
+/** The checkpoint every `cp:*` run reports (a literal: the tests expect it back in `released`). */
+const CP = { type: 'checkpoint', mainEntries: 5, lastUuid: 'u-4', lastUuidIndex: 4, runEntries: 3 }
 
 // The audit expiry's clock (src/protocol/local.ts monotonicMs; that module loads zod, which this fixture keeps out).
 const mono = () => Number(process.hrtime.bigint() / 1_000_000n)
@@ -133,6 +135,14 @@ channel.onMessage((line) => {
     end()
     return
   }
+  // `cp:*`: a run with a query and a checkpoint, as the real session ends one (its checkpoint before its terminal event).
+  if ((raw?.type === 'interrupt' || raw?.type === 'stop') && mode === 'cp' && !ended) {
+    ended = true
+    event(CP)
+    event(raw.type === 'interrupt' ? { type: 'failed', reason: 'interrupted', message: 'interrupted' } : { type: 'failed', reason: 'stopped', message: 'stopped' })
+    end()
+    return
+  }
   if (raw?.type === 'interrupt' && mode === 'await-interrupt') {
     event({ type: 'failed', reason: 'interrupted', message: 'interrupted' })
     end()
@@ -155,6 +165,22 @@ channel.onMessage((line) => {
     tick()
   }
   switch (mode) {
+    case 'late-query-started':
+      // A query_started after the run's terminal event: the root still counts it (released.queryRan true).
+      finished()
+      send({ type: 'query_started' })
+      end()
+      break
+    case 'cp':
+      send({ type: 'query_started' })
+      event({ type: 'sdk', message: { type: 'assistant', i: 0 }, truncated: false })
+      if (a === 'finish') {
+        ended = true
+        event(CP)
+        finished()
+        end()
+      }
+      break
     case 'echo':
       ticks(Number(b), a, () => {
         finished()
