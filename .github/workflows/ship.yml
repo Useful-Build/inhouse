@@ -117,7 +117,9 @@ jobs:
     # apt here, so stitching is the next job.
     container:
       image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
-      options: --user 1001 --ipc=host
+      # --add-host: the test build's origins (brand.localhost, inhouse.localhost) must also resolve for Node-side
+      # requests in a spec (Chromium maps *.localhost to loopback itself; glibc in this image doesn't). Harmless in demo.
+      options: --user 1001 --ipc=host --add-host brand.localhost:127.0.0.1 --add-host inhouse.localhost:127.0.0.1
     defaults:
       run:
         working-directory: app
@@ -161,13 +163,18 @@ jobs:
               console.log(`::error::This commit has no test build: package.json lacks ${missing.join(", ")}. They land in P2 PR0; dispatch with build=demo for an earlier PR.`)
               process.exit(1)
             }'
+          [ -f "e2e/ship/$SPEC" ] || { echo "::error::e2e/ship/$SPEC doesn't exist at this commit"; exit 1; }
+        env:
+          SPEC: ${{ inputs.spec }}
+        shell: bash
       - name: Build the test build
         if: inputs.build == 'test'
         run: npm run build:product-test
       # One step, so the server lives exactly as long as the spec run. The key pair is this run's own test issuer key:
       # the Worker gets only the public JWKS (TEST_ISSUER_JWKS), the spec gets the private JWK's file to sign members in.
       # Readiness is a condition: /api/health answers 401 to a request without a JWT (every /api/* route authenticates
-      # first), on the brand origin. The server's log is printed when it doesn't come up.
+      # first), on the brand origin. Until the deadline it waits through refused connections and 5xx (a Worker or binding
+      # still loading); any other status fails at once. The server's log is printed when it doesn't come up.
       - name: Record ${{ inputs.spec }} on the test build
         if: inputs.build == 'test'
         env:
@@ -182,7 +189,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ -f "e2e/ship/$SPEC" ] || { echo "::error::e2e/ship/$SPEC doesn't exist at this commit"; exit 1; }
           shopt -s nullglob
           configs=(dist-product-test/*/wrangler.json)
           [ "${#configs[@]}" -eq 1 ] || { echo "::error::Expected one Worker config in dist-product-test/, found ${#configs[@]}"; exit 1; }
@@ -215,6 +221,7 @@ jobs:
             const http = require("node:http")
             const [pid, port] = process.argv.slice(1).map(Number)
             const deadline = Date.now() + 120_000
+            let last = 0
             const probe = () => new Promise(resolve => {
               const req = http.get({ host: "127.0.0.1", port, path: "/api/health", headers: { host: `brand.localhost:${port}` } }, res => { res.resume(); resolve(res.statusCode) })
               req.on("error", () => resolve(0))
@@ -226,8 +233,9 @@ jobs:
                 if (!alive()) { console.log("::error::wrangler dev exited before it answered"); process.exit(1) }
                 const status = await probe()
                 if (status === 401) { console.log("The test build is up: /api/health answers 401 without a JWT"); return }
-                if (status !== 0) { console.log(`::error::/api/health answered ${status} without a JWT, expected 401`); process.exit(1) }
-                if (Date.now() > deadline) { console.log("::error::The test build did not answer within 120 s"); process.exit(1) }
+                if (status !== 0 && status < 500) { console.log(`::error::/api/health answered ${status} without a JWT, expected 401`); process.exit(1) }
+                last = status
+                if (Date.now() > deadline) { console.log(`::error::The test build did not answer 401 within 120 s (last status: ${last || "no answer"})`); process.exit(1) }
                 await new Promise(r => setTimeout(r, 500))
               }
             }
