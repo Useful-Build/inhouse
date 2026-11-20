@@ -33,9 +33,19 @@ export type DirectVariant =
   | 'skills-not-off'
   /** The same, and the `skills` allowlist taken out too (test-only): nothing of ours stands between /code-review and the CLI. */
   | 'skills-open'
-  /** Seed a user skill before query(), with the production skill guards or with just those guards off. */
+  /**
+   * Seed a user skill before query(): with the production skill guards; with both layers off (`open`); or with one
+   * layer off and the other kept: `sources-open` reads user settings (`settingSources: ['user']`) with the `skills`
+   * allowlist kept, `skills-open` takes the allowlist out with `settingSources: []` kept.
+   */
   | 'home-skill-guarded'
   | 'home-skill-open'
+  | 'home-skill-sources-open'
+  | 'home-skill-skills-open'
+  /** One permission rule (or one family of them) taken out of the deny list (test-only): the Read tool's other walls alone. */
+  | 'tmp-rule-off'
+  | 'proc-rule-off'
+  | 'users-rule-off'
   /** The built-in plugins not turned off, and a plugin we don't ship added (test-only): init must list more than ours. */
   | 'plugins-not-off'
 
@@ -104,17 +114,27 @@ switch (input.variant) {
     delete (options.settings as { skillOverrides?: unknown }).skillOverrides
     delete options.skills
     break
+  case 'tmp-rule-off':
+  case 'proc-rule-off':
+  case 'users-rule-off': {
+    const drop = { 'tmp-rule-off': 'Read(//tmp/**)', 'proc-rule-off': 'Read(//proc/**)', 'users-rule-off': 'Read(//users/' }[input.variant]
+    const permissions = (options.settings as { permissions: { deny: string[] } }).permissions
+    const kept = permissions.deny.filter((r) => !r.startsWith(drop))
+    if (kept.length === permissions.deny.length) throw new Error(`no deny rule starts with ${drop}`)
+    permissions.deny = kept
+    break
+  }
   case 'home-skill-guarded':
-  case 'home-skill-open': {
+  case 'home-skill-open':
+  case 'home-skill-sources-open':
+  case 'home-skill-skills-open': {
     // Both runs start with the same discoverable fixture in their own HOME. The positive control changes only
     // skill discovery/filtering. In particular the sandbox stays on.
     const skill = join(env.HOME!, '.claude', 'skills', HOME_SKILL)
     mkdirSync(skill, { recursive: true })
     writeFileSync(join(skill, 'SKILL.md'), `---\nname: ${HOME_SKILL}\ndescription: A probe-only skill.\n---\nSay hello.\n`, { flag: 'wx' })
-    if (input.variant === 'home-skill-open') {
-      options.settingSources = ['user']
-      options.skills = 'all'
-    }
+    if (input.variant === 'home-skill-open' || input.variant === 'home-skill-sources-open') options.settingSources = ['user']
+    if (input.variant === 'home-skill-open' || input.variant === 'home-skill-skills-open') options.skills = 'all'
     break
   }
   case 'plugins-not-off': {

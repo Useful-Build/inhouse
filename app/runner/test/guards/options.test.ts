@@ -12,6 +12,8 @@
 // - reads of other sessions, other users' homes and temp folders, /home, the runner's code or /root are open to Bash,
 //   or its own home and temp folder aren't given back (the temp folder to write: the sandbox's sockets sit in it);
 // - the in-process Read, Glob and Grep (unsandboxed, as the session uid) reach /proc or the shared tmp folders;
+// - they reach another pool user's home or temp folder once its owner opens the modes (a chmod is the owner's), or the
+//   rules shut the session's own folders too;
 // - webFetchDomains lets in an IP literal, a local name, an internal name (`*.svc`, `*.corp`) or this container's own
 //   address;
 // - a cwd that only looks like a session folder (`/work/a/`) passes; `agents` or a non-http `inhouse` server gets in;
@@ -29,6 +31,7 @@ import type { RunContext } from '../../src/session/seam.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF } from '../../src/guards/lists.ts'
 import { GUARDED_OPTIONS, GuardConfigError, LOCAL_NAMES, LOCAL_SUFFIXES, assertFetchDomain, createQueryGuards } from '../../src/guards/options.ts'
 import { PLUGIN_DIR, sessionPaths, userPaths } from '../../src/guards/paths.ts'
+import { POOL_SIZE, poolUserName } from '../../src/guards/users.ts'
 
 const run: RunContext = { audit: async () => {} }
 /** Names inside a company or a cluster, with no local suffix a resolver would know. */
@@ -133,6 +136,16 @@ describe('the guarded options', () => {
     ]) {
       expect(deny).toContain(rule)
     }
+  })
+
+  it.prop([config, fc.integer({ min: 0, max: POOL_SIZE - 1 })])("Read, Glob and Grep: every other pool user's folders denied by name, the session's own not", (c, i) => {
+    const user = poolUserName(i)
+    const mine = userPaths(user)
+    const b = base(c)
+    const opts = guards.apply({ ...b, env: { ...b.env, USER: user, HOME: mine.home, TMPDIR: mine.tmp } }, c, run)
+    const deny = (opts.settings as { permissions: { deny: string[] } }).permissions.deny.filter((r) => r.startsWith('Read(//users'))
+    const others = Array.from({ length: POOL_SIZE }, (_, j) => poolUserName(j)).filter((u) => u !== user)
+    expect(deny.sort()).toEqual(others.map((u) => `Read(/${userPaths(u).dir}/**)`).sort())
   })
 
   it.prop([config])('the network: only the listed domains, never this container', (c) => {

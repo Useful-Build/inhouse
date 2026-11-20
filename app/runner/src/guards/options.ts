@@ -9,6 +9,7 @@ import type { QueryGuards, RunContext } from '../session/seam.ts'
 import { auditHook } from './audit.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER } from './lists.ts'
 import { CLI_WRAPPER, PLUGIN_DIR, RUNNER_DIR, USERS_ROOT, WORK_ROOT, userPaths, validSessionKey, type UserPaths } from './paths.ts'
+import { POOL_SIZE, poolUserName } from './users.ts'
 import { webFetchAllowRules, webFetchHook } from './webfetch.ts'
 
 type Settings = Exclude<Options['settings'], string | undefined>
@@ -157,6 +158,12 @@ export function guardedOptions(
         'Read(//var/tmp/**)',
         'Read(//dev/shm/**)',
         'Read(//dev/mqueue/**)',
+        // Every other pool user's home and temp folder, by name: their modes are the owner's to change (a session can
+        // chmod its own temp folder open), so the walls between sessions can't rest on modes alone. Its own stay
+        // readable.
+        ...Array.from({ length: POOL_SIZE }, (_, i) => poolUserName(i))
+          .filter((u) => u !== base.env?.USER)
+          .map((u) => `Read(${abs(join(deps.usersRoot, u))}/**)`),
       ],
     },
     skillOverrides: Object.fromEntries(BUNDLED_SKILLS_OFF.map((s) => [s, 'off' as const])),
