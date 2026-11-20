@@ -2,8 +2,8 @@
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { activeChannel, capStatus, usageSummary } from '../state/derive'
-import { DEMO_START } from '../agent/clock'
-import { fmtCount, fmtMoney, majorOf, moneyOf } from '../lib/format'
+import { DEMO_YEAR } from '../agent/clock'
+import { fmtCount, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
@@ -32,7 +32,7 @@ export function Usage() {
   const status = capStatus(ctx)
   const usage = thisMonth ? { ...month, cap: status.cap, alertAt: status.alertAt } : month
   // Every month listed is in the demo's year.
-  const monthLabels = usageMonths.map(m => `${m.month} ${DEMO_START.getFullYear()}`)
+  const monthLabels = usageMonths.map(m => `${m.month} ${DEMO_YEAR}`)
   const mon = usage.month.slice(0, 3)
   const cap = thisMonth && status.reached
   const tab = useUi(s => s.usageTab)
@@ -45,7 +45,7 @@ export function Usage() {
   const d0 = display()
   const currency = usage.total.currency
   /** An amount here always shows its cents ("$182.43"). */
-  const money = (major: number) => fmtMoney(moneyOf(major, currency), d0, { cents: 'always' })
+  const money = (major: number) => fmtUsageMoney(major, currency, d0)
   const count = (n: number) => fmtCount(n, d0)
   // The arithmetic below is on dollars; every amount is shown through `money`.
   const days = usage.daily.map(majorOf)
@@ -97,7 +97,7 @@ export function Usage() {
           <div className="mt-1.5 text-sm text-muted-foreground">{hint}</div>
           <div className="mt-5.5 flex justify-between gap-3 text-sm">
             <span className="font-strong whitespace-nowrap">Spending cap</span>
-            <span className="whitespace-nowrap text-muted-foreground">{money(total)} of {fmtMoney(usage.cap, d0)}</span>
+            <span className="whitespace-nowrap text-muted-foreground">{fmtSpentOfCap(usage.total, usage.cap, d0)}</span>
           </div>
           <div role="progressbar" aria-label="Spending cap used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={parseInt(pct)} className="mt-2 h-2 overflow-hidden rounded-full bg-fill">
             <i className={`block h-full rounded-full ${cap || over ? 'bg-destructive' : 'bg-chart-2'}`} style={{ width: pct }} />

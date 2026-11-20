@@ -3,7 +3,7 @@ import { useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
 import { draftView, memberFor, userName } from '../state/derive'
-import { fmtMoney, fmtTime } from '../lib/format'
+import { fmtMoney, fmtProse, fmtTime } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Avatar, Button, Icon, IconButton, IconTile, LogoTile } from '../ui'
@@ -151,7 +151,7 @@ export function ProblemPanel() {
               <Icon name="check_circle" size={20} weight={400} />
               <span className="flex-1">
                 <b className="font-semibold">Handled by Inhouse agent</b>
-                <span className="block text-sm text-brand-text/85">{p.done}. Within your Run limits · logged in Activity.</span>
+                <span className="block text-sm text-brand-text/85">{p.done && fmtProse(p.done, display())}. Within your Run limits · logged in Activity.</span>
               </span>
               <Button variant="surface" size="sm" onClick={() => undoHandled(openId)}>Undo</Button>
             </div>

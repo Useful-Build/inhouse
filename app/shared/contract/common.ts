@@ -34,5 +34,13 @@ export type Money = z.infer<typeof MoneySchema>
 export const ClockTimeSchema = z.object({ hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59) })
 export type ClockTime = z.infer<typeof ClockTimeSchema>
 
+/**
+ * A sentence with times in it: `text` names each time as `{key:time}` ("6:04 AM") or `{key:weekday}` ("Thu, Nov 19"),
+ * and `times` holds each key's instant. The UI writes the sentence through format.ts (`fmtProse`), so every time in it
+ * shows in the same zone as the rest of the screen.
+ */
+export const ProseSchema = z.object({ text: z.string(), times: z.record(z.string(), InstantSchema) })
+export type Prose = z.infer<typeof ProseSchema>
+
 /** A length of time in ms. */
 export const DurationMsSchema = z.number().nonnegative()

@@ -2,9 +2,9 @@
 // takes a `Display` (`{ timeZone, locale }`), read from one selector (src/state/display.ts): the demo passes the device's
 // zone and en-US, so nothing changes on screen; the product passes the brand's zone from P2. The patterns are US
 // ("8:03 AM", "Nov 16", "Mon, Nov 16", "$1,190") until Wasim decides the format for UK brands (Q9); the locale picks
-// the month and weekday names and the number separators. `scripts/check-format.mjs` fails on `toLocale*`,
-// `Intl.DateTimeFormat` or `Intl.NumberFormat` anywhere else in `src/`.
-import type { ClockTime, Instant, Money } from '../../shared/contract/common'
+// the month and weekday names and the number separators. `scripts/check-format.mjs` fails on `Intl`, `toLocale*` or
+// the local getters (`getHours` and the rest) anywhere else in `src/` or `shared/` (the getters are allowed in the demo clock).
+import type { ClockTime, Instant, Money, Prose } from '../../shared/contract/common'
 
 export interface Display {
   /** An IANA time zone ("America/New_York"): the calendar day and time of day an instant shows as. */
@@ -101,6 +101,8 @@ export const fmtDay = (at: At, d: Display): string => {
 export const fmtWeekday = (at: At, d: Display): string => `${namesOf(d.locale).weekdays[calendarOf(at, d).weekday]}, ${fmtDay(at, d)}`
 /** "Tue, Nov 17 at 7:00 AM": a routine's next run. */
 export const fmtWeekdayAt = (at: At, d: Display): string => `${fmtWeekday(at, d)} at ${fmtTime(at, d)}`
+/** "Next run Tue, Nov 17 at 7:00 AM": under a routine card in a chat. */
+export const fmtNextRun = (at: At, d: Display): string => `Next run ${fmtWeekdayAt(at, d)}`
 /** "Mon, Nov 16, 7:43 AM": a file's full date. */
 export const fmtWeekdayTime = (at: At, d: Display): string => `${fmtWeekday(at, d)}, ${fmtTime(at, d)}`
 
@@ -115,11 +117,23 @@ export const fmtDayGroup = (at: At, now: At, d: Display): string => {
   const n = daysBefore(at, now, d)
   return n === 0 ? 'Today' : n === 1 ? 'Yesterday' : n >= 2 && n <= 6 ? 'Last 7 days' : 'Earlier'
 }
+/** The audit log's group in Settings: "Today" for today's changes, else "Earlier". */
+export const fmtAuditDay = (at: At, now: At, d: Display): 'Today' | 'Earlier' => (daysBefore(at, now, d) === 0 ? 'Today' : 'Earlier')
 /** How long ago something was sent: "just now" within the hour, else as `fmtWhen`. */
 export const fmtAgo = (at: At, now: At, d: Display): string => {
   const ago = msOf(now) - msOf(at)
   return ago >= -60_000 && ago < 3_600_000 ? 'just now' : fmtWhen(at, now, d)
 }
+
+/**
+ * A sentence with times in it (`Prose`): each `{key:time}` becomes `fmtTime` of `times[key]` ("6:04 AM"), each
+ * `{key:weekday}` `fmtWeekday` ("Thu, Nov 19"). Throws on a key with no time, so a sentence never shows a raw token.
+ */
+export const fmtProse = (p: Prose, d: Display): string => p.text.replace(/\{(\w+)(?::(\w+))?\}/g, (token, key: string, form?: string) => {
+  const at = Object.hasOwn(p.times, key) ? p.times[key] : undefined
+  if (!at || (form !== 'time' && form !== 'weekday')) throw new Error(`"${p.text}": ${token} needs a time in times.${key} and a form, time or weekday`)
+  return form === 'time' ? fmtTime(at, d) : fmtWeekday(at, d)
+})
 
 // ---------- schedule times ----------
 
@@ -150,16 +164,41 @@ export const fmtMoney = (m: Money, d: Display, o: MoneyOptions = {}): string => 
   const frac = o.cents === 'always' || !whole ? digits : 0
   return nf(d.locale, { style: 'currency', currency: m.currency, minimumFractionDigits: frac, maximumFractionDigits: frac, useGrouping: o.grouping ?? true }).format(majorOf(m))
 }
+/** An amount on the Usage page, from a figure in the major unit (the page's sums and averages are in dollars): cents always show ("$182.43"). */
+export const fmtUsageMoney = (major: number, currency: string, d: Display): string => fmtMoney(moneyOf(major, currency), d, { cents: 'always' })
+/** Usage's spending cap line: "$182.43 of $500". */
+export const fmtSpentOfCap = (spent: Money, cap: Money, d: Display): string => `${fmtUsageMoney(majorOf(spent), spent.currency, d)} of ${fmtMoney(cap, d)}`
+/** Settings' "Monthly cap", a money field's value: no thousands separator ("$1200"). */
+export const fmtCapSetting = (cap: Money, d: Display): string => fmtMoney(cap, d, { grouping: false })
+/** Settings' "Spent so far": cents always, no thousands separator ("$1190.00"). */
+export const fmtSpentSetting = (spent: Money, d: Display): string => fmtMoney(spent, d, { cents: 'always', grouping: false })
 
 // ---------- durations ----------
 
 /** How long a step or a run took: "820ms", "11.6s", "1m 5s". */
 export const fmtDuration = (ms: number, d: Display): string => {
   const s = ms / 1000
-  if (s < 1) return fmtCount(Math.round(ms), d) + 'ms'
+  // Never grouped: 999.6 ms is "1000ms", not "1,000ms".
+  if (s < 1) return nf(d.locale, { useGrouping: false, maximumFractionDigits: 0 }).format(Math.round(ms)) + 'ms'
   if (s < 60) return nf(d.locale, { maximumFractionDigits: 1 }).format(Math.round(s * 10) / 10) + 's'
   return Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's'
 }
+/** A step on the trace window's time axis: its offset in ms from the start of the run, and its label ("0s", "5s", "1m 0s"). */
+export interface TraceTick { ms: number; label: string }
+/** The axis steps, in seconds: the first that gives at most about three steps over the run. */
+const TICK_CANDIDATES = [0.5, 1, 2, 5, 10, 15, 20, 30, 50, 60, 100, 120]
+/** The trace window's time axis over a run of `durationMs`: a tick at 0 and every step after, up to the run's end. */
+export const traceTicks = (durationMs: number, d: Display): TraceTick[] => {
+  const step = (TICK_CANDIDATES.find(c => durationMs / 1000 / c <= 3.2) ?? 120) * 1000
+  const ticks: TraceTick[] = []
+  for (let v = 0; v <= durationMs; v += step) ticks.push({ ms: v, label: v === 0 ? '0s' : fmtDuration(v, d) })
+  return ticks
+}
+
+/** The line under an answer: mode, steps, time taken and when it answered, as far as they're known ("Balanced · 6 steps · 11.6s · 8:03 AM"). */
+export const fmtAnswerBar = (a: { model?: string; steps: number; durationMs: number; at?: At }, d: Display): string =>
+  [a.model, `${a.steps} steps`, fmtDuration(a.durationMs, d), a.at === undefined ? undefined : fmtTime(a.at, d)].filter(Boolean).join(' · ')
+
 /** A recording's length: "1:36", "8:14". */
 export const fmtMediaLength = (ms: number, _d: Display): string => {
   const s = Math.round(ms / 1000)

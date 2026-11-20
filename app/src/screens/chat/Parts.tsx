@@ -3,7 +3,7 @@
 // line and suggested questions. The card itself is the thread's (Chats.tsx): a part draws no card of its own.
 import type { MessagePart } from '../../agent/types'
 import { draftView, whenOf } from '../../state/derive'
-import { fmtTime, fmtWeekdayAt } from '../../lib/format'
+import { fmtNextRun, fmtTime } from '../../lib/format'
 import { display } from '../../state/display'
 import { useCtx, useUi } from '../../state/store'
 import { Button, Icon, LogoTile } from '../../ui'
@@ -149,7 +149,7 @@ export function AgentPart({ part, trace }: { part: MessagePart; trace: string })
               <Icon name="schedule" size={16} />{whenOf(part.routine)}
             </span>
           </div>
-          <div className="mt-3 text-sm text-muted-foreground">Next run {fmtWeekdayAt(part.routine.next, display())}</div>
+          <div className="mt-3 text-sm text-muted-foreground">{fmtNextRun(part.routine.next, display())}</div>
           <div className="mt-0.5 text-sm text-muted-foreground">{part.routine.note}</div>
         </div>
       )

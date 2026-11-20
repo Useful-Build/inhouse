@@ -1,10 +1,9 @@
 import { agent } from '../agent'
 import type { RequestType } from '../state/store'
 import { useCtx, useUi } from '../state/store'
-import { goingLive, userName } from '../state/derive'
-import { fmtAgo, fmtWeekday, instantOf } from '../lib/format'
-import { display, nowOf } from '../state/display'
-import type { TeamRequest } from '../agent/types'
+import { goingLive, teamRequestLine, userName } from '../state/derive'
+import { instantOf } from '../lib/format'
+import { nowOf } from '../state/display'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -47,21 +46,19 @@ export function TeamWindow() {
   const isBug = team.type === 'bug'
   // The tool being connected takes its date from tools.json; on First day (nothing live yet) its request isn't listed.
   const live = goingLive(ctx)
-  // A request as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20" ("just now" for one sent this hour).
-  const d0 = display()
+  // A request as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20" ("just now" for one the person sent).
   const now = nowOf(st)
-  const shown = (q: Omit<TeamRequest, 'icon'>) => ({ sub: `${q.sub}, ${fmtAgo(q.at, now, d0)}`, status: q.statusAt ? `${q.status} ${fmtWeekday(q.statusAt, d0)}` : q.status })
   const seeded = data.notifications.teamRequests.flatMap((q, i) => {
     const tool = /^Connect (.+)$/.exec(q.title)?.[1]
     if (tool && live?.name !== tool) return []
-    const line = shown(q)
+    const line = teamRequestLine(q, now, false)
     return [{
       icon: q.sub.startsWith('New job') ? 'work' : 'add_link', title: q.title, sub: line.sub, status: tool && live ? `Live by ${live.by}` : line.status,
       ...(SEEDED_STYLE[i] ?? SEEDED_STYLE[1]),
     }]
   })
   const requests = [
-    ...st.teamRequests.map(q => ({ icon: q.icon, title: q.title, ...shown(q), ...SEEDED_STYLE[1] })),
+    ...st.teamRequests.map(q => ({ icon: q.icon, title: q.title, ...teamRequestLine(q, now, true), ...SEEDED_STYLE[1] })),
     ...seeded,
   ]
   // The sender is the signed-in person, by the name in Settings.

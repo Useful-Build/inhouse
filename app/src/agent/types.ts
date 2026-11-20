@@ -13,7 +13,7 @@ import type { ApproveResult, TeamRequest, SetAsideReason, AgentState } from '../
 import type { AgentNotice, AgentNotification } from '../../shared/contract/notice'
 import type { AgentData } from '../../shared/contract/data'
 
-export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, Instant, Money, ClockTime } from '../../shared/contract/common'
+export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
 export type { ProblemSource, Draft, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolsData } from '../../shared/contract/tools'

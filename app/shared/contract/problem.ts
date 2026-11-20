@@ -1,6 +1,6 @@
 // A problem the agent found, and the fix it drafted.
 import { z } from 'zod'
-import { InstantSchema, MoneySchema, PairSchema } from './common.ts'
+import { InstantSchema, MoneySchema, PairSchema, ProseSchema } from './common.ts'
 
 export const ProblemSourceSchema = z.object({ n: z.string(), logo: z.string().optional(), icon: z.string().optional(), name: z.string(), text: z.string() })
 export type ProblemSource = z.infer<typeof ProblemSourceSchema>
@@ -20,7 +20,8 @@ export const DraftSchema = z.object({
   ask: z.string().optional(),
   runTitle: z.string().optional(),
   runLines: z.array(PairSchema).optional(),
-  doneNote: z.string().optional(),
+  /** Run, a partial draft: what the agent already did ("…paused the variant at {at:time}…"). */
+  doneNote: ProseSchema.optional(),
 })
 export type Draft = z.infer<typeof DraftSchema>
 
@@ -36,10 +37,11 @@ export const ProblemSchema = z.object({
   costNote: z.string(),
   next: z.string(),
   review: z.string().optional(),
-  /** Run: what Inhouse agent did by itself. Present means handled in Run. */
-  done: z.string().optional(),
-  /** When it did it: the time `done` tells. Present with `done`. */
-  doneAt: InstantSchema.optional(),
+  /**
+   * Run: what Inhouse agent did by itself ("Paused the variant at {at:time}. Customer emails wait in Approvals"). Present
+   * means handled in Run. `times.at` is when it did it: what Activity lists it by.
+   */
+  done: ProseSchema.refine(p => Object.hasOwn(p.times, 'at'), { message: 'done needs times.at, when the agent did it' }).optional(),
   doneText: z.string(),
   /** What waits for a person in Run. */
   wait: z.string().optional(),

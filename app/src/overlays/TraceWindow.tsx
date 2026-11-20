@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
 import type { Trace, TraceStep, TraceStepKind } from '../agent/types'
-import { fmtDuration, fmtMoney } from '../lib/format'
+import { fmtDuration, fmtMoney, traceTicks } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Button, Icon, IconButton, Segmented, Window } from '../ui'
@@ -39,7 +39,6 @@ const KIND_LABEL: Record<TraceStepKind, string> = {
   answer: 'Answer', fail: 'Failed', approval: 'Waits for approval',
 }
 const COL = 'grid-cols-trace'
-const TICK_CANDIDATES = [0.5, 1, 2, 5, 10, 15, 20, 30, 50, 60, 100, 120]
 const NEXT_SPEED: Record<number, number> = { 1: 2, 2: 5, 5: 1 }
 const cap1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
@@ -104,10 +103,7 @@ function TraceSteps({ trace }: { trace: Trace }) {
   const started = (s: { startMs: number }) => t == null || s.startMs <= t
   const d0 = display()
   const fmtDur = (ms: number) => fmtDuration(ms, d0)
-  // The candidates are in seconds; the ticks step in ms.
-  const stepT = (TICK_CANDIDATES.find(c => D / 1000 / c <= 3.2) ?? 120) * 1000
-  const ticks: { label: string; left: string }[] = []
-  for (let v = 0; v <= D; v += stepT) ticks.push({ label: v === 0 ? '0s' : fmtDur(v), left: `${(v / M) * 100}%` })
+  const ticks = traceTicks(D, d0).map(k => ({ label: k.label, left: `${(k.ms / M) * 100}%` }))
   // The slowest model, tool or agent step. A run that failed before any (a tool that couldn't sign in) has none.
   const slow = steps.filter(s => s.kind === 'model' || s.kind === 'tool' || s.kind === 'agent')
     .reduce<TraceStep | null>((a, s) => (!a || s.endMs - s.startMs > a.endMs - a.startMs ? s : a), null)

@@ -12,6 +12,8 @@ import { instantOf } from '../lib/format'
 export const DEMO_START = new Date(2026, 10, 16, 8, 0, 0, 0)
 /** The latest the demo clock reads: 11:59 AM the same morning. */
 export const DEMO_LATEST = new Date(2026, 10, 16, 11, 59, 0, 0)
+/** The demo's year: every month Usage lists is in it. */
+export const DEMO_YEAR = DEMO_START.getFullYear()
 
 /** The demo's time now: DEMO_START plus the real time since `startedAt` (epoch ms), capped at DEMO_LATEST. */
 export const demoNow = (startedAt: number, now: number = Date.now()): Date =>
@@ -50,6 +52,17 @@ export const demoAt = (rel: string): Instant => {
 /** The demo's Monday at a minute since midnight: how a time stored before C1 ("8:03 AM", minute 483) becomes an instant. */
 export const demoDayAt = (minute: number): Instant =>
   instantOf(new Date(DEMO_START.getFullYear(), DEMO_START.getMonth(), DEMO_START.getDate(), 0, minute).getTime())
+
+/**
+ * A routine's next run after `now`: the first day from `now` on whose weekday (0 Sunday to 6 Saturday) `runsOn` takes, at
+ * `hour`:`minute` in the device's local time. Local like the rest of the demo clock until P2 moves it onto the brand's zone.
+ */
+export const nextLocalRun = (hour: number, minute: number, now: Date, runsOn: (weekday: number) => boolean): Instant => {
+  const d = new Date(now)
+  d.setHours(hour, minute, 0, 0)
+  while (!(d > now && runsOn(d.getDay()))) d.setDate(d.getDate() + 1)
+  return instantOf(d.getTime())
+}
 
 // ---------- times saved as they showed, before C1 ----------
 

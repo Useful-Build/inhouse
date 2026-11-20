@@ -11,10 +11,10 @@
     "draft.cta": "label of the approve button",
     "draft.approver / draft.ask": "usual approver note and the ask-them action",
     "draft.memory": "team-memory note shown on the draft",
-    "done": "Run: what your Inhouse agent did by itself (present = handled in Run)",
+    "done": "Run: what your Inhouse agent did by itself (present = handled in Run), as { text, times }: each {key:time} or {key:weekday} in text is times[key], a sample time like \"0d 06:04\"; times.at is when it did it",
     "wait": "what waits for a person",
     "partial": "Run: your Inhouse agent did part (done) and the rest waits (wait)",
-    "draft.runTitle / runLines / doneNote": "Run version of a partial draft",
+    "draft.runTitle / runLines / doneNote": "Run version of a partial draft (doneNote as { text, times }, like done)",
     "doneText": "confirmation text after approval",
     "runDoneText": "confirmation text in Run for a partial draft"
   },
@@ -33,7 +33,7 @@
       "costNote": "in orders at risk",
       "next": "pause the variant, then email 5 customers",
       "review": "Customers involved",
-      "done": "Paused the variant at 6:04 AM. Customer emails wait in Approvals",
+      "done": { "text": "Paused the variant at {at:time}. Customer emails wait in Approvals", "times": { "at": "0d 06:04" } },
       "doneText": "Variant paused, 5 customers emailed",
       "wait": "5 customer emails",
       "partial": true,
@@ -101,7 +101,7 @@
             "Thu, Dec 3 from Kestrel"
           ]
         ],
-        "doneNote": "Your Inhouse agent already paused the variant at 6:04 AM, inside your Run limits. The customer emails wait for a person."
+        "doneNote": { "text": "Your Inhouse agent already paused the variant at {at:time}, inside your Run limits. The customer emails wait for a person.", "times": { "at": "0d 06:04" } }
       }
     },
     {
@@ -270,7 +270,7 @@
       "costNote": "of stock on order",
       "next": "ask Kestrel for a new ship date",
       "isDraft": true,
-      "done": "Chased Kestrel at 6:08 AM. New date: Thu, Nov 19",
+      "done": { "text": "Chased Kestrel at {at:time}. New date: {newDate:weekday}", "times": { "at": "0d 06:08", "newDate": "+3d 12:00" } },
       "doneText": "Chase sent to Mei at Kestrel",
       "found": [
         [
@@ -342,7 +342,7 @@
       "costNote": "of stock you can't sell",
       "next": "restock the 11 units on Shopify",
       "isDraft": true,
-      "done": "Restocked 11 units at 6:10 AM",
+      "done": { "text": "Restocked 11 units at {at:time}", "times": { "at": "0d 06:10" } },
       "doneText": "11 units restocked on Shopify",
       "found": [
         [
@@ -407,7 +407,7 @@
       "costNote": "order value",
       "next": "ask ShipBob why it hasn't shipped",
       "isDraft": true,
-      "done": "Asked ShipBob at 6:06 AM. Picked at 7:40 AM",
+      "done": { "text": "Asked ShipBob at {at:time}. Picked at {picked:time}", "times": { "at": "0d 06:06", "picked": "0d 07:40" } },
       "doneText": "Message sent to ShipBob about #4821",
       "found": [
         [

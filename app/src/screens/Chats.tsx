@@ -5,7 +5,7 @@ import { agent } from '../agent'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'
-import { fmtDuration, fmtTime } from '../lib/format'
+import { fmtAnswerBar } from '../lib/format'
 import { display } from '../state/display'
 import { cn } from '@/lib/utils'
 import { isStoppedNote, openChatKey, openRun, useCtx, useUi } from '../state/store'
@@ -278,7 +278,7 @@ function Thread() {
     const failed = m.part.type === 'error'
     // Mode, step count, time taken and when it answered, as far as they're known.
     const modelLabel = m.model ? ctx.data.models.find(x => x.id === m.model)?.label : undefined
-    const stepsLine = tr ? [modelLabel, `${tr.steps.length - 1} steps`, fmtDuration(tr.durationMs, display()), m.at === undefined ? undefined : fmtTime(m.at, display())].filter(Boolean).join(' · ') : ''
+    const stepsLine = tr ? fmtAnswerBar({ model: modelLabel, steps: tr.steps.length - 1, durationMs: tr.durationMs, at: m.at }, display()) : ''
     const steps = tr && (
       <Tooltip>
         <TooltipTrigger asChild>

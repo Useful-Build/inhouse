@@ -4,8 +4,8 @@ import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
 import type { Theme } from '../../lib/theme'
-import { DEMO_START, plainSpaces } from '../../agent/clock'
-import { daysBefore, fmtDayWord, fmtMoney, fmtNearDay, fmtTime, fmtWhen, moneyOf } from '../../lib/format'
+import { DEMO_YEAR, plainSpaces } from '../../agent/clock'
+import { fmtAuditDay, fmtCapSetting, fmtDayWord, fmtMoney, fmtNearDay, fmtSpentSetting, fmtTime, fmtWhen, moneyOf } from '../../lib/format'
 import { display, nowOf } from '../../state/display'
 
 export type RowKind = 'select' | 'text' | 'value' | 'button' | 'toggle' | 'mode' | 'photo'
@@ -140,7 +140,7 @@ export function settingsPage(tab: string, env: Env): Page {
   const alertsTo = savedTo && alertOptions.includes(savedTo) ? savedTo : (channel ?? 'Email')
   const auditRow = (e: AuditEntry) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${fmtWhen(e.at, now, d0)}`, 'value'), e.who)
   /** The audit log's two groups: changes made today, and earlier ones. */
-  const auditDay = (e: AuditEntry) => (daysBefore(e.at, now, d0) === 0 ? 'Today' : 'Earlier')
+  const auditDay = (e: AuditEntry) => fmtAuditDay(e.at, now, d0)
   const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Routines and jobs stopped · ${fmtTime(agent.paused, d0)}`, 'value'), me.id)] : []
   const nextStage = S < 2
     ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...(channel ? [channel] : [])])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
@@ -217,7 +217,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always'), R('Pause Inhouse agent', 'Stops every routine and job at once. Asking questions still works.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause)] },
     ] },
     'team-spend': { title: 'Spending cap', sections: [
-      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Jobs pause when the cap is reached.', 's:cap', fmtMoney(usage.cap, d0, { grouping: false })), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${DEMO_START.getFullYear()}.`, 'value', fmtMoney(env.spent, d0, { cents: 'always', grouping: false }))] },
+      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${DEMO_YEAR}.`, 'value', fmtSpentSetting(env.spent, d0))] },
       { label: 'Accounts', rows: [R('AI', 'Your Anthropic account, billed at cost.', 'value', 'Anthropic'), R('Hosting', 'Your Cloudflare account, billed at cost.', 'value', 'Cloudflare')] },
     ] },
     'team-data': { title: 'Data and access', sections: [

@@ -29,20 +29,10 @@ const d = display()
 
 /** Now on the demo clock: what relative labels ("Today", "Yesterday") are measured from. */
 const now = () => nowOf(agent.getSnapshot())
-/** src/screens/Usage.tsx: every amount on the Usage page shows its cents. */
-const usageMoney = (major: number, currency = 'USD') => F.fmtMoney(F.moneyOf(major, currency), d, { cents: 'always' })
-/** src/screens/chat/Parts.tsx and Routines.tsx: a routine card says "Next run Tue, Nov 17 at 7:00 AM". */
-const nextRun = (at: Instant) => `Next run ${F.fmtWeekdayAt(at, d)}`
-/** src/screens/settings/content.ts: the audit log's group, today's changes or earlier ones. */
-const auditDay = (at: Instant) => (F.daysBefore(at, now(), d) === 0 ? 'Today' : 'Earlier')
-/** src/overlays/TraceWindow.tsx, the time axis over the steps (candidates in seconds, ticks in ms). */
-const TICK_CANDIDATES = [0.5, 1, 2, 5, 10, 15, 20, 30, 50, 60, 100, 120]
-const traceTicks = (D: number) => {
-  const stepT = (TICK_CANDIDATES.find(c => D / 1000 / c <= 3.2) ?? 120) * 1000
-  const ticks: string[] = []
-  for (let v = 0; v <= D; v += stepT) ticks.push(v === 0 ? '0s' : F.fmtDuration(v, d))
-  return ticks
-}
+// Each call site's own helper from format.ts, so this checks the code the screen runs: fmtUsageMoney and fmtSpentOfCap
+// (src/screens/Usage.tsx), fmtNextRun (src/screens/chat/Parts.tsx), fmtAuditDay, fmtCapSetting and fmtSpentSetting
+// (src/screens/settings/content.ts), traceTicks (src/overlays/TraceWindow.tsx) and fmtAnswerBar (src/screens/Chats.tsx).
+const usageMoney = (major: number) => F.fmtUsageMoney(major, 'USD', d)
 
 const agent = new MockAgent()
 const SCENARIO_KEY: Record<Scenario, string> = { Normal: 'normal', 'First day': 'firstDay', Loading: 'loading', 'Tool disconnected': 'toolDisconnected', 'Cap reached': 'capReached' }
@@ -81,7 +71,7 @@ function stageSections(stage: Stage, scenario: Scenario): Record<string, string>
         if (p.type === 'routine') {
           put(`${k}.routine.time`, F.fmtClock(p.routine.time, d))
           put(`${k}.routine.when`, whenOf(p.routine))
-          put(`${k}.routine.next`, nextRun(p.routine.next))
+          put(`${k}.routine.next`, F.fmtNextRun(p.routine.next, d))
         }
       })
     })
@@ -101,7 +91,7 @@ function stageSections(stage: Stage, scenario: Scenario): Record<string, string>
     put(`activity.earlier.${i}.t`, F.fmtTime(l.at, d))
   })
   data.auditLog.forEach((e, i) => {
-    put(`audit.${i}.day`, auditDay(e.at))
+    put(`audit.${i}.day`, F.fmtAuditDay(e.at, now(), d))
     put(`audit.${i}.at`, F.fmtWhen(e.at, now(), d))
   })
 
@@ -136,8 +126,8 @@ function stageSections(stage: Stage, scenario: Scenario): Record<string, string>
 
 /** The answer bar under an answer given in this session (src/screens/Chats.tsx): mode, steps, time taken and when. */
 const answerBar = (data: AgentData, trace: Trace, at: Instant) => {
-  const modelLabel = data.models.find(x => x.id === defaultModeId(data, agent.getSnapshot().settings))?.label
-  return [modelLabel, `${trace.steps.length - 1} steps`, F.fmtDuration(trace.durationMs, d), F.fmtTime(at, d)].filter(Boolean).join(' · ')
+  const model = data.models.find(x => x.id === defaultModeId(data, agent.getSnapshot().settings))?.label
+  return F.fmtAnswerBar({ model, steps: trace.steps.length - 1, durationMs: trace.durationMs, at }, d)
 }
 
 /** Asks for a routine in a chat and returns the card it made, with the answer bar's text as the store stamps it. */
@@ -209,7 +199,7 @@ async function capture(): Promise<Record<string, string>> {
     t.steps.forEach((s, i) => put(`${prefix}.steps.${i}`, F.fmtDuration(s.endMs - s.startMs, d)))
     // The trace window (src/overlays/TraceWindow.tsx): the axis, a failed step on a phone and on a computer, and the top
     // row with the run's cost.
-    put(`${prefix}.ticks`, traceTicks(t.durationMs).join(' | '))
+    put(`${prefix}.ticks`, F.traceTicks(t.durationMs, d).map(k => k.label).join(' | '))
     t.steps.forEach((s, i) => {
       if (s.kind === 'fail') {
         put(`${prefix}.steps.${i}.phone`, 'Failed after ' + F.fmtDuration(Math.max(0, s.endMs - s.startMs), d))
@@ -235,8 +225,8 @@ async function capture(): Promise<Record<string, string>> {
     const s = SCENARIO_KEY[sc]
     put(`usage.${s}.capBanner`, status.bannerText)
     // src/screens/settings/content.ts: the Settings rows "Monthly cap" (a field's value) and "Spent so far".
-    put(`usage.${s}.settings.cap`, F.fmtMoney(u.data.usage.cap, d, { grouping: false }))
-    put(`usage.${s}.settings.spent`, F.fmtMoney(status.spent, d, { cents: 'always', grouping: false }))
+    put(`usage.${s}.settings.cap`, F.fmtCapSetting(u.data.usage.cap, d))
+    put(`usage.${s}.settings.spent`, F.fmtSpentSetting(status.spent, d))
     for (const m of u.data.usageMonths) {
       const k = `usage.${s}.${m.month}`
       const thisMonth = m === u.data.usageMonths[0]
@@ -244,7 +234,7 @@ async function capture(): Promise<Record<string, string>> {
       const total = F.majorOf(m.total), daily = m.daily.map(F.majorOf)
       put(`${k}.hint`, head.hint)
       put(`${k}.capNote`, head.capNote)
-      put(`${k}.card`, `${usageMoney(total)} of ${F.fmtMoney(m.cap, d)}`)
+      put(`${k}.card`, F.fmtSpentOfCap(m.total, m.cap, d))
       put(`${k}.capHint`, F.fmtMoney(m.cap, d))
       put(`${k}.projection`, F.fmtMoney(F.moneyOf(Math.round(total / daily.length * 30), m.total.currency), d))
       put(`${k}.peak`, usageMoney(Math.max(...daily)))
@@ -270,14 +260,14 @@ async function capture(): Promise<Record<string, string>> {
     put(`${k}.ask`, q)
     put(`${k}.card.time`, F.fmtClock(routine.time, d))
     put(`${k}.card.when`, whenOf(routine))
-    put(`${k}.card.next`, nextRun(routine.next))
+    put(`${k}.card.next`, F.fmtNextRun(routine.next, d))
     put(`${k}.answerBar`, bar)
     // The Routines page lists a routine made in a chat from the agent's state (src/screens/Routines.tsx:29).
     const row = agent.getSnapshot().routinesExtra.find(r => r.id === routine.id)
     if (!row) throw new Error(`Routine ${routine.id} isn't on the Routines page`)
     put(`${k}.routines.time`, F.fmtClock(row.time, d))
     put(`${k}.routines.when`, whenOf(row))
-    put(`${k}.routines.next`, nextRun(row.next))
+    put(`${k}.routines.next`, F.fmtNextRun(row.next, d))
   }
   // The chat the person starts, stamped on the demo clock (store.ts) and listed by src/ui/chat.tsx.
   put('created.chatListAt', F.fmtWhen(instantOf(now()), now(), d))

@@ -6,7 +6,7 @@ import {
   problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
-import { sampleAt } from './data'
+import { clockTimeOf, sampleAt } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
   AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, AskOptions, Attachment, ChatThread, ClockTime, DemoContext,
@@ -14,7 +14,7 @@ import type {
   SkillCard, SkillDef, Stage, StampRecord, TablePart, TeamRequest, Trace, UsageData,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, photoKey, stageIndex } from './types'
-import { DEMO_START, demoDayAt, demoNow, shownClock, shownDateTimeIn, shownTimeOn } from './clock'
+import { DEMO_START, demoDayAt, demoNow, nextLocalRun, shownClock, shownDateTimeIn, shownTimeOn } from './clock'
 import { instantOf } from '../lib/format'
 import { listNames, pendingIds, visibleProblems } from '../state/derive'
 
@@ -288,9 +288,9 @@ const savedRoutine = (r: unknown): RoutineCard | null => {
 /** A request to the Inhouse team, saved now or before C1 ("New tool · sent by Sam, just now", sent in that session: now). */
 const savedRequest = (r: unknown, now: Instant): TeamRequest | null => {
   if (!hasStrs(r, ['icon', 'title', 'sub', 'status'])) return null
-  const base = { icon: r.icon as string, title: r.title as string, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}) }
-  if (isInstant(r.at)) return { ...base, sub: r.sub as string, at: r.at }
-  return { ...base, sub: (r.sub as string).replace(/, just now$/, ''), at: now }
+  // In the order `sendTeamRequest` writes them, so a state saved now loads as it was saved.
+  const sub = isInstant(r.at) ? r.sub as string : (r.sub as string).replace(/, just now$/, '')
+  return { icon: r.icon as string, title: r.title as string, sub, at: isInstant(r.at) ? r.at : now, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}) }
 }
 /** A stamp (when and who), saved now or before C1. */
 const savedStamp = (x: unknown): StampRecord | null => {
@@ -344,10 +344,11 @@ const sanitize = (raw: unknown): AgentState => {
       return stamp && loggedAt ? { reason: x.reason as SetAsideReason, ...stamp, loggedAt } : null
     }),
     routinesDeleted: Object.fromEntries(Object.keys(flagsOf(raw.routinesDeleted)).filter(known).map(id => [id, true as const])),
+    // In the order `runRoutine` writes a run, so a state saved now loads as it was saved.
     routineRuns: (isArr(raw.routineRuns) ? raw.routineRuns : []).flatMap((r): RoutineRun[] => {
       if (!hasStrs(r, ['routine']) || !known(r.routine as string) || !(r.trace === undefined || str(r.trace)) || !(r.result === undefined || str(r.result))) return []
       const at = savedAt(r)
-      return at ? [{ routine: r.routine as string, at, ...(r.trace !== undefined ? { trace: r.trace as string } : {}), ...(r.result !== undefined ? { result: r.result as string } : {}) }] : []
+      return at ? [{ routine: r.routine as string, at, ...(r.result !== undefined ? { result: r.result as string } : {}), ...(r.trace !== undefined ? { trace: r.trace as string } : {}) }] : []
     }),
     // managing chats. A started chat's title, pin and delete are kept until Reset demo: its id is unique per page load
     // (chatIds.ts), so it can't be taken by a newer chat, and the app keeps the chat itself across a reload.
@@ -438,13 +439,8 @@ const timeIn = (q: string): Clock | null => {
 }
 
 /** The next run on the demo clock, after now. */
-const nextRun = (freq: string, day: string, at: Clock, now: Date): Instant => {
-  const d = new Date(now)
-  d.setHours(at.h, at.m, 0, 0)
-  const ok = (x: Date) => x > now && (freq === 'Weekly' ? WEEKDAYS[(x.getDay() + 6) % 7] === day : day !== 'Weekdays' || (x.getDay() > 0 && x.getDay() < 6))
-  while (!ok(d)) d.setDate(d.getDate() + 1)
-  return instantOf(d.getTime())
-}
+const nextRun = (freq: string, day: string, at: Clock, now: Date): Instant =>
+  nextLocalRun(at.h, at.m, now, wd => (freq === 'Weekly' ? WEEKDAYS[(wd + 6) % 7] === day : day !== 'Weekdays' || (wd > 0 && wd < 6)))
 
 /** A name from a request's first words, with the person's own capitals (product and tool names stay as typed). */
 const shortName = (clause: string, fallback: string) => {
@@ -481,9 +477,8 @@ function routineFromRequest(q: string, stage: number, id: string, now: Date): Ro
   if (q.trim().toLowerCase() === script.example.ask.toLowerCase()) {
     let time: string
     ;({ name, freq, day, time } = script.example.routine)
-    const tm = /^(\d{1,2}):(\d\d)[ \u00a0](AM|PM)$/.exec(time)
-    if (!tm) throw new Error(`chat-script.json: the routine time "${time}" isn't like "7:00 AM".`)
-    at = { h: Number(tm[1]) % 12 + (tm[3] === 'PM' ? 12 : 0), m: Number(tm[2]) }
+    const t = clockTimeOf('the example routine in chat-script.json', time)
+    at = { h: t.hour, m: t.minute }
   } else {
     // Only the days the schedule names: "every Monday at 9 send the Friday numbers" runs on Monday.
     const named = [...q.matchAll(SCHEDULE_DAYS)].map(x => x[0]).join(' ')
@@ -615,11 +610,13 @@ export class MockAgent implements AgentClient {
   private demo: DemoContext = { stage: 'Act', scenario: 'Normal' }
 
   constructor() {
-    const { state, started } = this.loadSaved()
+    const { state, started, converted } = this.loadSaved()
     this.state = state
     // The demo clock counts from the first load: save that moment now, so a reload before any other write doesn't
-    // start the clock again at 8:00 AM while the app already shows later times.
-    if (!started) this.commit({})
+    // start the clock again at 8:00 AM while the app already shows later times. A state saved in an older shape (before
+    // C1) is saved back as converted, so what the upgrade filled in (a team request's `at`: now) is fixed by the upgrade,
+    // not set again at every load until the next write.
+    if (!started || converted) this.commit({})
     this.resumeHolds()
     // Another tab changed the saved state: take it, so two open tabs don't overwrite each other.
     if (typeof window !== 'undefined') {
@@ -630,14 +627,19 @@ export class MockAgent implements AgentClient {
   // ----- state plumbing -----
 
   private load(): AgentState { return this.loadSaved().state }
-  /** The saved state, and whether it carried its own `demoStartedAt` (false: the clock starts now and isn't saved yet). */
-  private loadSaved(): { state: AgentState; started: boolean } {
+  /**
+   * The saved state, whether it carried its own `demoStartedAt` (false: the clock starts now and isn't saved yet), and
+   * whether loading changed it (an older shape converted, or entries dropped): then it isn't saved as it now is.
+   */
+  private loadSaved(): { state: AgentState; started: boolean; converted: boolean } {
     try {
-      const raw: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')
-      return { state: sanitize(raw), started: isRec(raw) && typeof raw.demoStartedAt === 'number' && Number.isFinite(raw.demoStartedAt) }
+      const text = localStorage.getItem(STORAGE_KEY)
+      const raw: unknown = JSON.parse(text ?? 'null')
+      const state = sanitize(raw)
+      return { state, started: isRec(raw) && typeof raw.demoStartedAt === 'number' && Number.isFinite(raw.demoStartedAt), converted: text !== null && JSON.stringify(state) !== text }
     } catch (e) {
       console.warn('Inhouse demo: could not read saved state, starting fresh.', e)
-      return { state: initialState(), started: false }
+      return { state: initialState(), started: false, converted: false }
     }
   }
 

@@ -19,10 +19,10 @@ import notificationsRaw from '@sample/notifications.json'
 import scenariosRaw from '@sample/scenarios.json'
 import modelsRaw from '@sample/models.json'
 import libraryRaw from '@sample/library.json'
-import { demoAt, demoDayAt, keepTimesTogether, minuteOfTime } from './clock'
+import { demoAt, keepTimesTogether } from './clock'
 import { moneyOf } from '../lib/format'
 import type {
-  ActivityLine, AuditEntry, CatalogTool, ClockTime, Effort, Instant, LibraryFile, LibraryKind, LibraryPlace, MemoryLine, ModelMode, Money, Problem, RoutineDef, SkillDef,
+  ActivityLine, AuditEntry, CatalogTool, ClockTime, Draft, Effort, Instant, LibraryFile, LibraryKind, LibraryPlace, MemoryLine, ModelMode, Money, Problem, Prose, RoutineDef, SkillDef,
   SkillSuggestion, StageIndex, Attachment, TablePart, TeamRequest, ToolChannel, ToolDetail, Trace, TraceStep, TraceStepKind, UsageData, UsageRow,
 } from './types'
 
@@ -52,8 +52,26 @@ export const sampleAt = (what: string, v: unknown): Instant => {
   if (typeof v !== 'string') throw new Error(`Sample data: ${what} has no time like "-1d 16:40".`)
   return demoAt(v)
 }
+/**
+ * A sentence with times in it as the sample data writes it (`{ "text": "Paused it at {at:time}", "times": { "at": "0d 06:04" } }`),
+ * checked: every `{key:time}` or `{key:weekday}` has its time, and every time is used. `need` names keys it must have.
+ */
+const proseIn = (what: string, v: unknown, need: string[] = []): Prose => {
+  const p = v as { text?: unknown; times?: unknown }
+  if (typeof p !== 'object' || p === null || typeof p.text !== 'string' || typeof p.times !== 'object' || p.times === null) throw new Error(`Sample data: ${what} needs { "text": ..., "times": { ... } }.`)
+  const text = p.text
+  const raw = p.times as Record<string, unknown>
+  const used = [...text.matchAll(/\{(\w+)(?::(\w+))?\}/g)]
+  for (const [token, key, form] of used) {
+    if (!Object.hasOwn(raw, key) || (form !== 'time' && form !== 'weekday')) throw new Error(`Sample data: ${what} has ${token} with no time in "times" or no form (time or weekday).`)
+  }
+  for (const key of [...Object.keys(raw), ...need]) {
+    if (!used.some(m => m[1] === key)) throw new Error(`Sample data: ${what} needs {${key}:time} in its text.`)
+  }
+  return { text, times: Object.fromEntries(Object.entries(raw).map(([k, t]) => [k, sampleAt(what, t)])) }
+}
 /** A schedule's time of day as the sample data writes it ("06:00", 24-hour), checked. */
-const clockTimeOf = (what: string, v: unknown): ClockTime => {
+export const clockTimeOf = (what: string, v: unknown): ClockTime => {
   const m = typeof v === 'string' ? /^(\d\d):(\d\d)$/.exec(v) : null
   if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) throw new Error(`Sample data: ${what} has no time of day like "06:00".`)
   return { hour: Number(m[1]), minute: Number(m[2]) }
@@ -77,13 +95,19 @@ const needOf = (what: string, need: unknown): StageIndex => {
 export const meta = { brand: metaJson.brand, agent: metaJson.agent, currentUser: metaJson.currentUser }
 /** A problem as the sample data has it: the mock adds the draft time from the Library (see `DATA` in mock.ts). */
 export type ProblemSeed = Omit<Problem, 'draftedAt'>
-type RawProblem = Omit<ProblemSeed, 'cost' | 'doneAt'> & { cost: unknown }
-/** Each problem with its amount checked and, when the agent did it by itself in Run, the time `done` tells ("at 6:04 AM"). */
-export const problems: ProblemSeed[] = (problemsJson.problems as unknown as RawProblem[]).map(p => ({
-  ...p,
-  cost: moneyIn(`the problem "${p.id}"`, p.cost),
-  ...(p.done ? { doneAt: demoDayAt(minuteOfTime(p.done)) } : {}),
-}))
+type RawProblem = Omit<ProblemSeed, 'cost' | 'done' | 'draft'> & { cost: unknown; done?: unknown; draft: Omit<Draft, 'doneNote'> & { doneNote?: unknown } }
+/** Each problem with its amount checked and, when the agent did it by itself in Run, what it did and when (`done.times.at`). */
+export const problems: ProblemSeed[] = (problemsJson.problems as unknown as RawProblem[]).map(p => {
+  const what = `the problem "${p.id}"`
+  const { done, draft, ...rest } = p
+  const { doneNote, ...dr } = draft
+  return {
+    ...rest,
+    cost: moneyIn(what, p.cost),
+    ...(done !== undefined ? { done: proseIn(`${what}'s done`, done, ['at']) } : {}),
+    draft: { ...dr, ...(doneNote !== undefined ? { doneNote: proseIn(`${what}'s doneNote`, doneNote) } : {}) },
+  }
+})
 export const problemById = (id: string): ProblemSeed => {
   const p = problems.find(x => x.id === id)
   if (!p) throw new Error(`Unknown problem id: ${id}`)
@@ -284,11 +308,12 @@ export const memory = {
 
 export const auditLog: AuditEntry[] = auditJson.entries.map(e => ({ ...e, at: sampleAt(`the audit line "${e.what}"`, e.at) }))
 /** Activity's fixed lines, each with its instant (a stage or time the app doesn't know stops it). */
-type RawActivityLine = Omit<ActivityLine, 'at' | 'minStage'> & { at: string; minStage?: string }
+type RawActivityLine = Omit<ActivityLine, 'at' | 'minStage' | 'by'> & { at: string; minStage?: string; by: unknown }
 const STAGE_NAMES = ['Watch', 'Act', 'Run']
 const activityLine = (l: RawActivityLine): ActivityLine => {
   if (l.minStage !== undefined && !STAGE_NAMES.includes(l.minStage)) throw new Error(`Activity data: "${l.text}" has an unknown stage "${l.minStage}".`)
-  return { ...l, at: sampleAt(`the Activity line "${l.text}"`, l.at) } as ActivityLine
+  const what = `the Activity line "${l.text}"`
+  return { ...l, at: sampleAt(what, l.at), by: proseIn(what, l.by) } as ActivityLine
 }
 export const activityFixed = {
   today: (activityJson.today as RawActivityLine[]).map(activityLine),

@@ -1,8 +1,7 @@
 // Pure selectors: stage + scenario + agent state -> what the screens show.
 import { photoKey } from '../agent/types'
-import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Scenario, StageIndex, ThinkingMode, ToolDetail } from '../agent/types'
-import { TIME_RE } from '../agent/clock'
-import { calendarOf, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtTime, fmtWeekday, majorOf, moneyOf, type Display } from '../lib/format'
+import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Prose, Scenario, StageIndex, TeamRequest, ThinkingMode, ToolDetail } from '../agent/types'
+import { calendarOf, fmtAgo, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtProse, fmtTime, fmtWeekday, majorOf, moneyOf, type Display } from '../lib/format'
 import { display, nowOf } from './display'
 
 export const STAGE_TAGS = ['Watch', 'Act', 'Run'] as const
@@ -50,6 +49,14 @@ export const goingLive = (ctx: Ctx): { name: string; by: string } | null => {
     if (d.liveBy && toolState(ctx, key) === 'connecting') return { name: d.name, by: fmtWeekday(d.liveBy, display()) }
   }
   return null
+}
+/**
+ * A request to the Inhouse team as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20". One the person
+ * sent (`sentHere`) says "just now" however long ago it went, as it did before C1; P2 shows `fmtAgo` from its instant.
+ */
+export const teamRequestLine = (q: Omit<TeamRequest, 'icon'>, now: number, sentHere: boolean): { sub: string; status: string } => {
+  const d0 = display()
+  return { sub: `${q.sub}, ${sentHere ? 'just now' : fmtAgo(q.at, now, d0)}`, status: q.statusAt ? `${q.status} ${fmtWeekday(q.statusAt, d0)}` : q.status }
 }
 /** The connected tools the agent can read right now, in display order: not paused, not disconnected. */
 export const readingTools = (ctx: Ctx): string[] => ctx.data.tools.connected.filter(k => toolState(ctx, k) === 'connected')
@@ -230,15 +237,15 @@ export function pendingIds(ctx: Ctx): string[] {
     .map(p => p.id)
 }
 
-/** What the agent did by itself, without its time: "Paused the variant at 6:04 AM. Customer emails wait" is "Paused the variant". */
-const doneLine = (p: Problem) => p.done!.split('. ')[0].replace(new RegExp(' at ' + TIME_RE.source), '')
+/** What the agent did by itself, without its time: "Paused the variant at {at:time}. Customer emails wait" is "Paused the variant". */
+const doneLine = (done: Prose) => fmtProse({ text: done.text.split('. ')[0].replace(' at {at:time}', ''), times: done.times }, display())
 
 export function handled(ctx: Ctx) {
   const list = ctx.data.problems.filter(p => ranByAgent(ctx, p))
   return {
     count: list.length,
     // A no-break space after a number keeps "11 units" from splitting across lines.
-    summary: list.map(p => doneLine(p)).join(' · ').replace(/(\d) (?=[a-z])/g, '$1\u00a0'),
+    summary: list.map(p => doneLine(p.done!)).join(' · ').replace(/(\d) (?=[a-z])/g, '$1\u00a0'),
   }
 }
 
@@ -382,7 +389,7 @@ export function draftView(ctx: Ctx, id: string): DraftView {
     waitsLabel: dr.money ? 'Spends money' : dr.customer ? 'Goes to customers' : null,
     cta: dr.cta || 'Approve',
     memory: S >= 1 && dr.memory ? dr.memory : null,
-    doneNote: part && dr.doneNote ? dr.doneNote : null,
+    doneNote: part && dr.doneNote ? fmtProse(dr.doneNote, display()) : null,
     approverNote: S >= 1 && dr.approver ? dr.approver : null,
     askApprover: S >= 1 && dr.ask ? dr.ask : null,
     footNote: dr.approver ? dr.approver.split('. ')[0] + '.' : `From ${srcLine}`,
@@ -460,10 +467,10 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
   }
   if (S === 2) {
     for (const p of ctx.data.problems.filter(x => ranByAgent(ctx, x)).reverse()) {
-      if (!p.doneAt) throw new Error(`Problem "${p.id}" says what the agent did with no time ("${p.done}").`)
-      rows.push({ ...base, ...when(p.doneAt), icon: 'bolt', text: doneLine(p), who: 'Inhouse agent, inside your limits', kind: 'change', trace: p.trace,
+      const done = p.done!
+      rows.push({ ...base, ...when(done.times.at), icon: 'bolt', text: doneLine(done), who: 'Inhouse agent, inside your limits', kind: 'change', trace: p.trace,
         iconTone: 'bg-brand-tint text-brand', undo: { type: 'handled', id: p.id },
-        why: `${p.title}.`, result: `${p.done}.`, by: 'Inhouse agent, by itself. This job is switched on in Run limits.' })
+        why: `${p.title}.`, result: `${fmtProse(done, d0)}.`, by: 'Inhouse agent, by itself. This job is switched on in Run limits.' })
     }
   }
   for (const id of pendingIds(ctx)) {
@@ -502,12 +509,12 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
     // With no tool connected yet (day one), the morning check read nothing, so it has no line.
     if (read.length) {
       const fill = fillActivity(ctx)
-      rows.push({ ...base, ...when(morning.at), icon: 'visibility', kind: 'read', trace: morning.trace, who: morning.who, why: morning.why, by: morning.by,
+      rows.push({ ...base, ...when(morning.at), icon: 'visibility', kind: 'read', trace: morning.trace, who: morning.who, why: morning.why, by: fmtProse(morning.by, d0),
         text: fill(morning.text), result: fill(morning.result) })
       // The routines that ran today, after the morning check (none on day one: nothing was connected to read).
       for (const e of today.slice(1)) {
         if (e.minStage === 'Act' && S < 1) continue
-        rows.push({ ...base, ...when(e.at), icon: 'visibility', kind: e.kind, trace: e.trace, who: e.who, why: e.why, by: e.by, text: e.text, result: e.result })
+        rows.push({ ...base, ...when(e.at), icon: 'visibility', kind: e.kind, trace: e.trace, who: e.who, why: e.why, by: fmtProse(e.by, d0), text: e.text, result: e.result })
       }
     }
   }
@@ -515,7 +522,7 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
     if (e.minStage === 'Act' && S < 1) continue
     const change = e.kind === 'change'
     rows.push({ day: fmtWeekday(e.at, d0), ...when(e.at), icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : 'visibility', text: e.text, who: e.who,
-      kind: e.kind, trace: e.trace, iconTone: change ? 'bg-background text-foreground' : 'bg-background text-foreground-3', why: e.why, result: e.result, by: e.by })
+      kind: e.kind, trace: e.trace, iconTone: change ? 'bg-background text-foreground' : 'bg-background text-foreground-3', why: e.why, result: e.result, by: fmtProse(e.by, d0) })
   }
   return rows.map(r => ({ ...r, key: `${r.day}|${r.t}|${r.text}` }))
 }
