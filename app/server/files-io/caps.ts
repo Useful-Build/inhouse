@@ -16,3 +16,34 @@ export const FILE_CAPS: FileCaps = {
 }
 
 export const typeAllowed = (type: string): boolean => FILE_CAPS.allowedTypes.includes(type)
+
+/**
+ * Each allowed type's file extensions, the canonical one first. A download's name must end in one of its type's own
+ * (`downloadName`): a text body named `page.html` must never land on a disk as `page.html`.
+ */
+export const TYPE_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
+  'application/pdf': ['pdf'],
+  'image/png': ['png'],
+  'image/jpeg': ['jpg', 'jpeg'],
+  'image/webp': ['webp'],
+  'text/csv': ['csv'],
+  'text/plain': ['txt'],
+  'text/markdown': ['md', 'markdown'],
+  'application/json': ['json'],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['docx'],
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['pptx'],
+}
+
+/**
+ * The name a file downloads under: its own name when its last extension is one of its stored type's, else that name
+ * with the type's canonical extension added (`page.html` stored as text/plain downloads as `page.html.txt`). The stored
+ * path never changes (the agent's own path stays stable in the container); only the download's name does.
+ */
+export function downloadName(name: string, contentType: string): string {
+  const exts = TYPE_EXTENSIONS[contentType]
+  if (!exts) throw new Error(`downloadName: ${contentType} is not an allowed type`)
+  const dot = name.lastIndexOf('.')
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+  return exts.includes(ext) ? name : `${name}.${exts[0]}`
+}

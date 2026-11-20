@@ -104,6 +104,8 @@ export function egressRequest(path: string, init: { method?: string; body?: unkn
   const headers = new Headers(init.headers)
   if (init.token !== null) headers.set(RUN_TOKEN_HEADER, init.token ?? TOKEN)
   const body = init.body === undefined ? undefined : typeof init.body === 'string' ? init.body : JSON.stringify(init.body)
+  // As the runner's fetch sends it (a buffered body declares its length); a test that omits it sets the header itself.
+  if (body !== undefined && !headers.has('content-length')) headers.set('content-length', String(new TextEncoder().encode(body).length))
   return new Request(`http://egress.internal${path}`, { method: init.method ?? 'POST', headers, body, signal: init.signal })
 }
 

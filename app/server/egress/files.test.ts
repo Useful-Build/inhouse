@@ -56,6 +56,27 @@ describe('PUT (failure 1)', () => {
   })
 })
 
+describe('an R2 write that fails (failure 1)', () => {
+  it('answers 502 save_failed and frees the slot', async () => {
+    const { grant, h } = await setup()
+    h.deps.files = { ...files, putBytes: async () => { throw new Error('r2 down') } }
+    const res = await putFile(h, 'outputs/z.csv', 'z,1\n')
+    expect(res.status).toBe(502)
+    expect(await res.json()).toEqual({ error: 'save_failed' })
+    expect(await outputsOf(grant.turnId)).toBe(0)
+  })
+  it('a body without its declared length, or a length that lies, is refused and frees the slot', async () => {
+    const { grant, h } = await setup()
+    const sha1 = await sha('a,1\n')
+    for (const headers of [{ 'content-length': '3' }, { 'content-length': '9' }]) {
+      const res = await handleEgress(egressRequest('/files/outputs/l.csv', { method: 'PUT', body: 'a,1\n', headers: { 'x-inhouse-sha256': sha1, ...headers } }), h.deps)
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'length_mismatch' })
+    }
+    expect(await outputsOf(grant.turnId)).toBe(0)
+  })
+})
+
 describe('pending until confirm (failure 2)', () => {
   it('a saved output is listed and served only after confirm', async () => {
     const { grant, h } = await setup()

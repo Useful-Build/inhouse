@@ -4,12 +4,14 @@
 //  2. a person lists another's chat files; Inhouse under a grant can't;
 //  3. an input downloads to someone who isn't its chat's owner (or Inhouse); an output doesn't download to a colleague;
 //  4. a download goes out without `attachment`, the sandbox CSP or private caching, or with a sniffed type.
+import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
 import { ctx, personPrincipal } from '../db/test-support.ts'
 import { newFileId } from '../files-io/bytes.ts'
+import { downloadName } from '../files-io/caps.ts'
 import { fileStore } from '../files-io/store.ts'
 import { getFile, listChatFiles, uploadAttachment } from './attachments.ts'
 
@@ -35,13 +37,15 @@ const newChat = async (owner = OWNER) => {
 }
 
 /** A handler call with a raw body and headers (ctx's JSON body doesn't fit an upload). */
-const call = async (handler: typeof getFile, principal: Principal, init: { method: string; path: string; params: Record<string, string>; bytes?: string; name?: string }) => {
-  const { c } = ctx(stores, principal, { method: init.method, path: init.path, params: init.params })
+const call = async (handler: typeof getFile, principal: Principal, init: { method: string; path: string; params: Record<string, string>; bytes?: string; name?: string }, s: typeof stores = stores) => {
+  const { c } = ctx(s, principal, { method: init.method, path: init.path, params: init.params })
   // ctx's gate applies the owner rule to everyone; the matrix passes Inhouse under a grant (its own tests prove that).
   if (principal.kind === 'inhouse') c.access = { requireObject: () => undefined }
   const headers = new Headers()
   if (init.name !== undefined) headers.set('X-File-Name', init.name)
-  const request = new Request(`https://brand.example.test${init.path}`, { method: init.method, headers, body: init.bytes === undefined ? undefined : enc.encode(init.bytes) })
+  const body = init.bytes === undefined ? undefined : enc.encode(init.bytes)
+  if (body !== undefined) headers.set('Content-Length', String(body.length))
+  const request = new Request(`https://brand.example.test${init.path}`, { method: init.method, headers, body })
   return handler({ ...c, request } as never)
 }
 const upload = (chatId: string, bytes: string, name: string, who = OWNER) =>
@@ -113,5 +117,72 @@ describe('route 41 (failures 3, 4)', () => {
     expect(colleague.status).toBe(200)
     expect(await colleague.text()).toBe('r,1\n')
     expect((await get(personPrincipal(OWNER, 'member'), 'f_not_a_real_id')).status).toBe(404)
+  })
+})
+
+/** Saves an output named by `path` with these bytes as `type` (bypassing the sniffer: what a stored row could hold). */
+async function savedOutput(chatId: string, path: string, body: string, type: string): Promise<string> {
+  const turnId = `t_${uniq()}`
+  const id = newFileId()
+  const bytes = enc.encode(body) as Uint8Array<ArrayBuffer>
+  const h = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(x => x.toString(16).padStart(2, '0')).join('')
+  await files.reserveOutput({ id, chatId, turnId, path, name: path.split('/').pop()!, r2Key: `files/${chatId}/${id}`, nowMs: 1 }, 20)
+  await files.putBytes(`files/${chatId}/${id}`, bytes, h, type)
+  await files.completeOutput(id, { contentType: type, bytes: bytes.length, sha256: h })
+  await files.confirm(chatId, turnId, path, h, 2)
+  return id
+}
+const get = (p: Principal, fileId: string) => call(getFile, p, { method: 'GET', path: `/api/files/${fileId}`, params: { fileId } })
+
+describe('route 41: the download name (round 1, the high)', () => {
+  it('a text body named as markup or a program downloads with .txt added; its stored path is unchanged', async () => {
+    const chatId = await newChat()
+    const cases: [string, string][] = [
+      ['page.html', 'page.html.txt'], ['pic.svg', 'pic.svg.txt'], ['run.js', 'run.js.txt'], ['a.hta', 'a.hta.txt'], ['b.bat', 'b.bat.txt'],
+      ['notes.txt', 'notes.txt'], ['README', 'README.txt'],
+    ]
+    for (const [name, expected] of cases) {
+      const id = await savedOutput(chatId, `outputs/${name}`, 'plain text', 'text/plain')
+      const res = await get(personPrincipal(OWNER, 'member'), id)
+      expect(res.headers.get('content-disposition'), name).toBe(`attachment; filename="${expected}"; filename*=UTF-8''${expected}`)
+      expect((await db.prepare('SELECT path FROM chat_files WHERE id = ?').bind(id).first<string>('path')), name).toBe(`outputs/${name}`)
+    }
+  })
+  // The extension lists of design 8.5's types, written here apart from caps.ts.
+  const EXT: Record<string, string[]> = {
+    'application/pdf': ['pdf'], 'image/png': ['png'], 'image/jpeg': ['jpg', 'jpeg'], 'image/webp': ['webp'], 'text/csv': ['csv'],
+    'text/plain': ['txt'], 'text/markdown': ['md', 'markdown'], 'application/json': ['json'],
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx'],
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['docx'],
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['pptx'],
+  }
+  test.prop([fc.constantFrom(...Object.keys(EXT)), fc.string({ minLength: 1, maxLength: 40 })])('every allowed type: the download name ends in one of its own extensions', (type, name) => {
+    const out = downloadName(name, type)
+    const ext = out.slice(out.lastIndexOf('.') + 1).toLowerCase()
+    expect(out.lastIndexOf('.')).toBeGreaterThan(0)
+    expect(EXT[type]).toContain(ext)
+    expect(out.startsWith(name)).toBe(true)
+  })
+})
+
+describe('route 41: refusals (round 1)', () => {
+  it('a file in a deleted chat, a stored type off the allowed list, and a service principal are 404', async () => {
+    const chatId = await newChat()
+    const ok = await savedOutput(chatId, 'outputs/ok.csv', 'a,1\n', 'text/csv')
+    const html = await savedOutput(chatId, 'outputs/x.html', '<html>', 'text/html')
+    expect((await get(personPrincipal(OWNER, 'member'), ok)).status).toBe(200)
+    expect((await get(personPrincipal(OWNER, 'member'), html)).status).toBe(404)
+    expect((await get({ kind: 'service', name: 'smoke', memberId: 'm_smoke', requestId: 'r-s' }, ok)).status).toBe(404)
+    await db.prepare('UPDATE chats SET deleted_at_ms = 5 WHERE id = ?').bind(chatId).run()
+    expect((await get(personPrincipal(OWNER, 'member'), ok)).status).toBe(404)
+  })
+})
+
+describe('route 39: an R2 write that fails (round 1)', () => {
+  it('keeps no row', async () => {
+    const chatId = await newChat()
+    const failing = { ...stores, files: fileStore({ db, bucket: { put: async () => { throw new Error('r2 down') }, get: async () => null } as never }) }
+    await expect(call(uploadAttachment, personPrincipal(OWNER, 'member'), { method: 'POST', path: `/api/chats/${chatId}/attachments`, params: { id: chatId }, bytes: 'a,1\n', name: 'a.csv' }, failing)).rejects.toThrow('r2 down')
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM chat_files WHERE chat_id = ?').bind(chatId).first<number>('n')).toBe(0)
   })
 })

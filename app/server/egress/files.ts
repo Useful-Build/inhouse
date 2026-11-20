@@ -1,16 +1,16 @@
 // The files route (p3-design 8.5), the chat always the grant's: `GET /files/` lists the chat's current saved files
 // (attachments first), `GET /files/<path>` reads one, `PUT /files/<path>` saves one, only under `outputs/`. A PUT takes
-// one of the turn's 20 output slots with a conditional insert, reads the body with the size counted (20 MiB), checks the
+// one of the turn's 20 output slots with a conditional insert, reads the body into one buffer of its declared length (20 MiB at most), checks the
 // type by magic bytes and the `x-inhouse-sha256` against the bytes, writes R2 with that checksum (R2 verifies and keeps
 // it), and leaves the row `pending` until the runner's `file_saved` confirms it. Any refusal after the slot was taken
 // frees the slot in the same `finally`. `<path>` arrives with each segment `encodeURIComponent`-encoded.
 import { badFileName } from '../../shared/files/names.ts'
 import { chatFileKey } from '../db/r2-keys.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
-import { checkFile } from '../files-io/bytes.ts'
+import { checkFile, readFileBody } from '../files-io/bytes.ts'
 import { FILE_CAPS } from '../files-io/caps.ts'
 import type { EgressDeps } from './deps.ts'
-import { jsonAnswer, readCapped } from './http.ts'
+import { jsonAnswer } from './http.ts'
 
 const SHA256 = /^[0-9a-f]{64}$/
 
@@ -54,12 +54,17 @@ export async function filesRoute(request: Request, urlPath: string, grant: RunGr
   }
   let kept = false
   try {
-    const bytes = await readCapped(request, FILE_CAPS.maxFileBytes)
-    if (bytes === null) return jsonAnswer({ error: 'too_large' }, 413)
+    const bytes = await readFileBody(request, FILE_CAPS.maxFileBytes)
+    if ('refused' in bytes) return jsonAnswer({ error: bytes.refused }, bytes.refused === 'too_large' ? 413 : 400)
     const checked = await checkFile(bytes, name)
     if ('refused' in checked) return jsonAnswer({ error: 'type_not_allowed' }, 415)
     if (checked.sha256 !== claimed) return jsonAnswer({ error: 'hash' }, 400)
-    await d.files.putBytes(r2Key, bytes, checked.sha256, checked.contentType)
+    try {
+      await d.files.putBytes(r2Key, bytes, checked.sha256, checked.contentType)
+    } catch (e) {
+      d.log({ event: 'egress_file_save_failed', route: 'files', error: e instanceof Error ? e.name : 'unknown' })
+      return jsonAnswer({ error: 'save_failed' }, 502)
+    }
     await d.files.completeOutput(id, { contentType: checked.contentType, bytes: bytes.byteLength, sha256: checked.sha256 })
     kept = true
     return jsonAnswer({ path, bytes: bytes.byteLength, contentType: checked.contentType }, 201)

@@ -54,6 +54,8 @@ describe('byte fixtures (failure 4)', () => {
     ['xlsx', zip([['[Content_Types].xml', '<Types/>'], ['xl/workbook.xml', '<workbook/>']]), 'sheet.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
     ['bare zip', zip([['a.txt', 'hi']]), 'a.zip', null],
     ['CSV', bytesOf('sku,qty\nA1,3\n'), 'table.csv', 'text/csv'],
+    // Named .txt, HTML inside: kept as plain text (served with nosniff and the sandbox CSP, downloaded as notes.txt).
+    ['HTML named .txt', bytesOf('<!DOCTYPE html><script>alert(1)</script>'), 'notes.txt', 'text/plain'],
     ['binary', new Uint8Array([1, 2, 0, 4]), 'blob.csv', null],
   ]
   for (const [name, bytes, file, expected] of cases) {
@@ -111,6 +113,38 @@ describe('confirm (failures 2, 5)', () => {
   })
 })
 
+describe('confirm after a retried PUT (one saved row, the duplicate slot freed)', () => {
+  const put = async (chatId: string, turnId: string, path: string, body: string, nowMs: number) => {
+    const id = `f_r_${uniq()}`
+    expect(await files.reserveOutput({ id, chatId, turnId, path, name: path.split('/').pop()!, r2Key: `files/${chatId}/${id}`, nowMs }, 20)).toBe(true)
+    await files.completeOutput(id, { contentType: 'text/csv', bytes: body.length, sha256: await sha(bytesOf(body)) })
+    return id
+  }
+  const rows = async (chatId: string) => (await db.prepare('SELECT id, state FROM chat_files WHERE chat_id = ? ORDER BY created_at_ms').bind(chatId).all()).results
+  it('two PUTs of one file, then confirm: the newest is saved, the other dropped; a repeat changes nothing', async () => {
+    const chatId = await newChat()
+    const a = await put(chatId, 't_r', 'outputs/x.csv', 'x,1\n', 1)
+    const b = await put(chatId, 't_r', 'outputs/x.csv', 'x,1\n', 2)
+    const h = await sha(bytesOf('x,1\n'))
+    expect((await files.confirm(chatId, 't_r', 'outputs/x.csv', h, 3))?.id).toBe(b)
+    expect(await rows(chatId)).toEqual([{ id: b, state: 'saved' }])
+    expect((await files.confirm(chatId, 't_r', 'outputs/x.csv', h, 4))?.id).toBe(b)
+    expect(await rows(chatId)).toEqual([{ id: b, state: 'saved' }])
+    void a
+  })
+  it('a PUT retried after the confirm: confirm answers the saved row, drops the copy, frees its slot', async () => {
+    const chatId = await newChat()
+    const a = await put(chatId, 't_s', 'outputs/y.csv', 'y,1\n', 1)
+    const h = await sha(bytesOf('y,1\n'))
+    expect((await files.confirm(chatId, 't_s', 'outputs/y.csv', h, 2))?.id).toBe(a)
+    await put(chatId, 't_s', 'outputs/y.csv', 'y,1\n', 3)
+    expect((await files.confirm(chatId, 't_s', 'outputs/y.csv', h, 4))?.id).toBe(a)
+    expect(await rows(chatId)).toEqual([{ id: a, state: 'saved' }])
+    const replaced = await db.prepare('SELECT replaced_at_ms FROM chat_files WHERE id = ?').bind(a).first<number | null>('replaced_at_ms')
+    expect(replaced).toBeNull()
+  })
+})
+
 describe('uploads (failures 3, 5)', () => {
   it('two uploads with one name both survive; inputs list before outputs, newest first', async () => {
     const chatId = await newChat()
@@ -130,6 +164,11 @@ describe('uploads (failures 3, 5)', () => {
     expect((await env.FILES.head(a.r2Key))?.checksums.sha256).toBeDefined()
     expect(await files.inputsOf(chatId, [a.id, b.id])).toEqual({ ok: true })
     expect(await files.inputsOf(chatId, [a.id, out, 'f_missing'])).toEqual({ missing: [out, 'f_missing'] })
+    // Another chat's input is not this chat's.
+    const other = await newChat()
+    const c = await files.saveInput({ chatId: other, name: 'c.md', bytes: bytesOf('# c'), createdBy: 'm_files_owner', nowMs: 6 })
+    if ('refused' in c) throw new Error('refused')
+    expect(await files.inputsOf(chatId, [a.id, c.id])).toEqual({ missing: [c.id] })
     expect(await files.saveInput({ chatId, name: 'x.html', bytes: bytesOf('<html>'), createdBy: 'm_files_owner', nowMs: 5 })).toEqual({ refused: 'type_not_allowed' })
   })
 })

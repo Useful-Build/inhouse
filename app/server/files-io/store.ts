@@ -90,22 +90,33 @@ export function fileStore({ db, bucket }: { db: D1Database; bucket: Pick<KeyedBu
 
     /**
      * Flips the turn's pending output at `path` with this hash to saved and supersedes the older saved row of that path,
-     * in one batch (8.5). Idempotent: a repeat (or a retry after a lost reply) finds no pending row, changes nothing,
-     * and answers the saved row. Null when no output of the turn has that path and hash.
+     * in one batch (8.5). Idempotent: a repeat, or a retry after a lost reply, answers the same saved row. A retried PUT
+     * leaves a duplicate pending row with the same path and hash: the batch drops it (freeing its slot) whether it comes
+     * before or after the first confirm, and the turn keeps one saved row for that file. Null when no output of the turn
+     * has that path and hash.
      */
     async confirm(chatId: string, turnId: string, path: string, sha256: string, nowMs: number): Promise<StoredFile | null> {
       const match = `SELECT id FROM chat_files WHERE chat_id = ? AND turn_id = ? AND path = ? AND sha256 = ? AND kind = 'output' AND state = 'pending'`
+      const savedSame = `SELECT 1 FROM chat_files WHERE chat_id = ? AND turn_id = ? AND path = ? AND sha256 = ? AND kind = 'output' AND state = 'saved' AND replaced_at_ms IS NULL`
+      const same = [chatId, turnId, path, sha256] as const
       await runBatch(db, [
+        // The older current row of the path is superseded, unless it already is this turn's file with this hash.
         stmt(
           `UPDATE chat_files SET replaced_at_ms = ? WHERE chat_id = ? AND path = ? AND state = 'saved' AND replaced_at_ms IS NULL
-           AND EXISTS (${match})`,
-          nowMs, chatId, path, chatId, turnId, path, sha256,
+           AND NOT (turn_id IS ? AND sha256 = ?) AND EXISTS (${match})`,
+          nowMs, chatId, path, turnId, sha256, ...same,
         ),
-        stmt(`UPDATE chat_files SET state = 'saved' WHERE id = (${match} ORDER BY created_at_ms DESC, id DESC LIMIT 1)`, chatId, turnId, path, sha256),
+        // The newest matching pending row is saved, unless this file is saved already.
+        stmt(
+          `UPDATE chat_files SET state = 'saved' WHERE id = (${match} ORDER BY created_at_ms DESC, id DESC LIMIT 1) AND NOT EXISTS (${savedSame})`,
+          ...same, ...same,
+        ),
+        // Any other pending copy of the same file (a retried PUT) is dropped: its slot comes free.
+        stmt(`DELETE FROM chat_files WHERE id IN (${match}) AND EXISTS (${savedSame})`, ...same, ...same),
       ])
       const row = await first<Row>(db, stmt(
         "SELECT * FROM chat_files WHERE chat_id = ? AND turn_id = ? AND path = ? AND sha256 = ? AND kind = 'output' AND state = 'saved' ORDER BY created_at_ms DESC, id DESC LIMIT 1",
-        chatId, turnId, path, sha256,
+        ...same,
       ))
       return row ? file(row) : null
     },

@@ -8,9 +8,10 @@ import { ChatFileItemSchema, FILE_NAME_HEADER } from '../../shared/contract/atta
 import type { ChatFileItem } from '../../shared/contract/attachments.ts'
 import { ChatIdSchema, FileIdSchema } from '../../shared/contract/chat-ids.ts'
 import { badFileName } from '../../shared/files/names.ts'
-import { readCapped, storesOf, writer } from '../db/handler-kit.ts'
+import { storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
-import { FILE_CAPS, typeAllowed } from '../files-io/caps.ts'
+import { FILE_CAPS, downloadName, typeAllowed } from '../files-io/caps.ts'
+import { readFileBody } from '../files-io/bytes.ts'
 import type { StoredFile } from '../files-io/store.ts'
 import { PHOTO_RESPONSE_HEADERS, apiError, apiJson } from '../http.ts'
 import type { Handler } from '../routes.ts'
@@ -27,7 +28,9 @@ function fileName(header: string | null): string | null {
   } catch {
     return null
   }
-  if (name.length < 1 || name.length > 200 || name.includes('/') || badFileName(name)) return null
+  if (name.length < 1 || name.length > 200 || name.includes('/')) return null
+  // As it will be stored: `inputs/<fileId>-<name>`, so the segment's 255-byte limit counts the id too.
+  if (badFileName(name) || badFileName(`inputs/f_${'x'.repeat(22)}-${name}`)) return null
   return name
 }
 
@@ -44,9 +47,9 @@ export const uploadAttachment: Handler = async c => {
   a.access.requireObject({ ownerId: owner })
   const name = fileName(a.request.headers.get(FILE_NAME_HEADER))
   if (name === null) return apiError('invalid', { reason: 'bad_name' })
-  const bytes = await readCapped(a.request, FILE_CAPS.maxFileBytes)
-  if (bytes === null) return apiError('invalid', { reason: 'too_large' })
-  const saved = await stores.files.saveInput({ chatId: chatId.data, name, bytes: bytes as Uint8Array<ArrayBuffer>, createdBy: at.actorId, nowMs: a.nowMs })
+  const bytes = await readFileBody(a.request, FILE_CAPS.maxFileBytes)
+  if ('refused' in bytes) return apiError('invalid', { reason: bytes.refused })
+  const saved = await stores.files.saveInput({ chatId: chatId.data, name, bytes, createdBy: at.actorId, nowMs: a.nowMs })
   if ('refused' in saved) return apiError('invalid', { reason: 'type_not_allowed' })
   return apiJson(item(saved), 201)
 }
@@ -85,6 +88,6 @@ export const getFile: Handler = async c => {
   if (!body) return apiError('not_found')
   return new Response(body, {
     status: 200,
-    headers: { 'Content-Type': f.contentType, 'Content-Length': String(f.bytes), 'Content-Disposition': disposition(f.name), ...PHOTO_RESPONSE_HEADERS },
+    headers: { 'Content-Type': f.contentType, 'Content-Length': String(f.bytes), 'Content-Disposition': disposition(downloadName(f.name, f.contentType)), ...PHOTO_RESPONSE_HEADERS },
   })
 }
