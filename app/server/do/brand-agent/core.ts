@@ -18,7 +18,9 @@
 import type { ChatEvent, SendTurnResult, TurnFailure } from '../../../shared/contract/runs.ts'
 import type { AuditEntry, PushAck, RunEvent, RunEventBody } from '../../../shared/protocol/index.ts'
 import { RunStart as RunStartSchema } from '../../../shared/protocol/index.ts'
-import type { Actor, BrandAgentPorts, ChatFile, DrainState, Refusal, SubmitTurn } from './ports.ts'
+import type { Actor, BrandAgentPorts, ChatFile, DrainState, OnEnd, Refusal, SubmitTurn, TurnEndPayload } from './ports.ts'
+import type { OutputFormat } from '../../../shared/protocol/index.ts'
+import { SYSTEM_MEMBER_ID } from '../../db/ids.ts'
 import type { Scheduler, TaskResult } from './scheduler.ts'
 import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from './tokens.ts'
 import { hashRunToken } from './tokens.ts'
@@ -83,6 +85,7 @@ export interface TurnRow {
   mirror_error: number; deferred_json: string | null; start_json: string | null; settled: number; ledger_hold_micro: number
   start_hold_micro: number; ledger_fails: number; ledger_retry_at_ms: number | null; runner_cost_micro: number | null; parts_n: number
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
+  output_format_json: string | null; on_end_json: string | null; structured_output_json: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
@@ -113,12 +116,34 @@ export interface CoreDeps {
    * (it may have waited in the queue since route 29 resolved it). Throws when the settings can't be read.
    */
   modelUsable: (pickerId: string) => Promise<boolean>
+  /** The seed tasks the registry declares (`registrySeeds(taskHandlers)`), ensured by `ensureSeeds()` (PR 5, ask D). */
+  taskSeeds: readonly { id: string; kind: string }[]
   /** Every stored chat event, for the sockets (PR 4). */
   onEvent?: (e: { runId: string; seq: number; atMs: number; chatId: string; event: ChatEvent }) => void
 }
 
 const refuse = (code: Refusal['refused']['code'], reason?: Refusal['refused']['reason']): Refusal =>
   ({ refused: reason === undefined ? { code } : { code, reason } })
+
+/**
+ * Who may submit (G, and design 5: no Inhouse principal ever submits): a person, the smoke member, or the system member
+ * (`m_system`, P4's routine runs, only from inside the object: route 29's `actorOf` never names it). `m_system` only as
+ * a service actor, never as a person.
+ */
+function actorRefusal(by: Actor): Refusal | null {
+  if (by.kind === 'inhouse') return refuse('forbidden')
+  if (by.memberId === SYSTEM_MEMBER_ID && by.kind !== 'service') return refuse('forbidden')
+  return null
+}
+
+/** The `onEnd` task's payload (ask B), read from the turn row as stored final. */
+function endPayload(t: TurnRow): TurnEndPayload {
+  const outcome = (t.outcome ?? 'cancelled') as TurnEndPayload['outcome']
+  return {
+    turnId: t.turn_id, runId: t.run_id, chatId: t.chat_id, outcome, failure: t.failure ?? t.cancel_why ?? null,
+    structuredOutput: t.structured_output_json === null ? null : JSON.parse(t.structured_output_json),
+  }
+}
 
 const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : 'unknown').slice(0, 300)
 
@@ -204,9 +229,17 @@ export class AgentCore {
 
   // ---------- submit (4.3) ----------
 
-  async submitTurn(t: SubmitTurn): Promise<SendTurnResult | Refusal> {
+  /**
+   * `extra` comes only from inside the object (`TaskContext.runs.submit`, task-ops.ts): the structured-output format and
+   * the end task. On that path the caller chose the effort too, so the hash covers it (A2's field list, run-start.ts);
+   * route 29's effort is resolved from settings and isn't hashed.
+   */
+  async submitTurn(t: SubmitTurn, extra?: { outputFormat?: OutputFormat; onEnd?: OnEnd }): Promise<SendTurnResult | Refusal> {
+    const who = actorRefusal(t.by)
+    if (who) return who
     // Computed before the key check: it writes nothing, so the claim is still before any write's await (4.2.1).
-    const hash = await submitPayloadHash(t.input)
+    const hash = await submitPayloadHash(extra === undefined ? t.input
+      : { ...t.input, effort: t.effort, outputFormat: extra.outputFormat, onEnd: extra.onEnd })
     // A retried POST answers what the first one did, before any other rule (4.3).
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
@@ -220,7 +253,7 @@ export class AgentCore {
       if ('missing' in found) return refuse('invalid')
       files = found.files
     }
-    return this.admit(t, hash, files)
+    return this.admit(t, hash, files, extra)
   }
 
   private byKey(chatId: string, key: string): TurnRow | null {
@@ -234,7 +267,7 @@ export class AgentCore {
   }
 
   /** The admission and the claim, in one synchronous step. */
-  private admit(t: SubmitTurn, hash: string, files: ChatFile[]): SendTurnResult | Refusal {
+  private admit(t: SubmitTurn, hash: string, files: ChatFile[], extra?: { outputFormat?: OutputFormat; onEnd?: OnEnd }): SendTurnResult | Refusal {
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
     const member = t.by.memberId
@@ -268,11 +301,14 @@ export class AgentCore {
     const ord = this.sql.exec<{ o: number | null }>('SELECT MAX(ord) AS o FROM turns WHERE run_id = ?', runId).one().o ?? -1
     this.sql.exec(
       `INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, gen, state, priority, text, quote,
-        attachments_json, model, picker_id, side_model, effort, max_turns, web_fetch_json, answer_position, created_at_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        attachments_json, model, picker_id, side_model, effort, max_turns, web_fetch_json, answer_position, created_at_ms,
+        output_format_json, on_end_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
       turnId, runId, t.chatId, member, ord + 1, t.input.clientTurnKey, hash, t.input.priority, t.input.text,
       t.input.quote ?? null, JSON.stringify(atts), t.model, t.pickerId, t.sideModel, t.effort, t.maxTurns,
       t.webFetchDomains === null ? null : JSON.stringify(t.webFetchDomains), now,
+      extra?.outputFormat === undefined ? null : JSON.stringify(extra.outputFormat),
+      extra?.onEnd === undefined ? null : JSON.stringify({ kind: extra.onEnd.kind, id: extra.onEnd.id }),
     )
     this.emit(runId, turnId, {
       type: 'turn.queued', turnId, messageId: `${turnId}.u`, text: t.input.text,
@@ -422,6 +458,7 @@ export class AgentCore {
         turnId, chatId: t.chat_id, sessionId, expect, text: t.text, quote: t.quote, attachments: atts, model: t.model,
         sideModel: t.side_model, effort: t.effort as StartWithoutToken['effort'], maxTurns: t.max_turns,
         webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], systemPrompt: this.d.systemPrompt,
+        outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
       })
     } catch (err) {
       console.error({ event: 'turn_start_unbuildable', error: errorText(err) })
@@ -615,7 +652,14 @@ export class AgentCore {
       `UPDATE turns SET state = ?, gen = gen + 1, outcome = COALESCE(outcome, ?), failure = COALESCE(failure, ?),
         cancel_why = COALESCE(cancel_why, ?), pool_queued = 0, ended_at_ms = ? WHERE turn_id = ?`,
       state, o.outcome, o.failure, o.why, now, turnId)
-    this.onFinal?.(this.turn(turnId)!)
+    const t = this.turn(turnId)!
+    // PR 5, ask B: the turn's end task, in this same synchronous step (one implicit SQLite transaction), so no path can
+    // store a final turn without it. `ensure`: a second final write can't move or replace it.
+    if (t.on_end_json !== null) {
+      const onEnd = JSON.parse(t.on_end_json) as OnEnd
+      this.d.scheduler.ensure({ id: onEnd.id, kind: onEnd.kind, dueAtMs: now, payload: endPayload(t) })
+    }
+    this.onFinal?.(t)
   }
 
   /** Testing seam (and PR 5's join point): called once per turn, inside `storeFinal`'s synchronous step. */
@@ -747,6 +791,11 @@ export class AgentCore {
   /** One new event; true when it ended the turn. */
   private ingestOne(t: TurnRow, ev: RunEvent, now: number): boolean {
     const progress = () => this.sql.exec('UPDATE turns SET last_progress_ms = ? WHERE turn_id = ?', now, t.turn_id)
+    // The run's structured output (C; at most 64 KiB, the protocol's cap) is kept even in a fenced turn's grace: a result
+    // the SDK already gave wins over a stop that raced it (R3 #151). Only the value; the outcome stays the fence's.
+    if (ev.type === 'finished' && ev.structuredOutput !== undefined) {
+      this.sql.exec('UPDATE turns SET structured_output_json = ? WHERE turn_id = ? AND structured_output_json IS NULL', JSON.stringify(ev.structuredOutput), t.turn_id)
+    }
     // A fenced turn's grace keeps only what the session state needs (4.2.7).
     if (t.fenced === 1 && ev.type !== 'checkpoint' && ev.type !== 'mirror_error' && ev.type !== 'released') return false
     switch (ev.type) {
@@ -1254,6 +1303,8 @@ export class AgentCore {
     this.gate.seeds()
     // W4's usage tasks: the hourly sweep and today's audit copy (ensure: never moves one that exists).
     ensureUsageTasks(this.d.scheduler, now)
+    // Every seed a registry entry declares (PR 5, ask D), due now when absent; an existing one keeps its due time.
+    for (const seed of this.d.taskSeeds) this.d.scheduler.ensure({ id: seed.id, kind: seed.kind, dueAtMs: now })
   }
 }
 

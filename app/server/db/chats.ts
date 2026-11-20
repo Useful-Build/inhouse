@@ -26,3 +26,15 @@ export function chatStore(deps: { db: D1Database }): ChatStore {
     },
   }
 }
+
+/**
+ * Makes the chat if it isn't there (PR 5, ask G): idempotent by id, for any member owner, the system member (`m_system`,
+ * P4's routine chats) included. A chat that exists keeps its title and everything else. Throws when the id belongs to
+ * another owner (a routine's derived id colliding with a person's chat): never a silent share.
+ */
+export async function ensureChat(db: D1Database, c: { id: string; ownerId: string; title: string }, nowMs: number = Date.now()): Promise<void> {
+  await db.prepare('INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING')
+    .bind(c.id, c.ownerId, c.title, nowMs, nowMs).run()
+  const row = await db.prepare('SELECT owner_id FROM chats WHERE id = ?').bind(c.id).first<{ owner_id: string }>()
+  if (!row || row.owner_id !== c.ownerId) throw new Error('ensureChat: the chat id belongs to another owner')
+}

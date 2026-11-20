@@ -40,6 +40,8 @@ export const TurnFailureSchema = z.enum([
   'budget_busy', 'pool_full', 'unknown',
   // The turn's model was switched off (or lost its price) while the turn waited (W1 PR 2b rechecks at start).
   'model_off',
+  // The run was asked for structured output and has none it can give (R3 #151; W1 PR 5 maps the runner's reason).
+  'structured_output',
 ])
 export type TurnFailure = z.infer<typeof TurnFailureSchema>
 

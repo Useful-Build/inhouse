@@ -9,8 +9,9 @@ import { AgentCore } from '../../do/brand-agent/core.ts'
 import type { TurnRow } from '../../do/brand-agent/core.ts'
 import type { SubmitTurn } from '../../do/brand-agent/ports.ts'
 import { createAgentTables } from '../../do/brand-agent/schema.ts'
-import { createScheduler } from '../../do/brand-agent/scheduler.ts'
-import type { AlarmPort, SqlScheduler, TaskContext } from '../../do/brand-agent/scheduler.ts'
+import { createScheduler, registrySeeds } from '../../do/brand-agent/scheduler.ts'
+import { internalSubmit } from '../../do/brand-agent/task-ops.ts'
+import type { AlarmPort, SqlScheduler, TaskContext, TaskHandler } from '../../do/brand-agent/scheduler.ts'
 import { taskHandlers } from '../../do/brand-agent/tasks/index.ts'
 import { createRunTokens } from '../../do/brand-agent/tokens.ts'
 import type { RunTokens } from '../../do/brand-agent/tokens.ts'
@@ -59,6 +60,8 @@ export interface Harness {
   /** The `place` calls, as turn ids, in order. */
   placed(): string[]
   dueTasks(): { id: string; due_at_ms: number }[]
+  /** The registry this harness runs (the real one plus the test's `handlers`). */
+  registry: Readonly<Record<string, TaskHandler>>
   /** Picker ids the start's model check finds switched off (shared across a restart). */
   modelsOff: Set<string>
   /** The start's settings read throws while `throws` is set. */
@@ -69,7 +72,9 @@ let objects = 0
 export const MEMBER = 'm_owner'
 export const OTHER = 'm_other'
 
-export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> {
+/** `handlers`: kinds a test adds to the real registry (the scheduler runs them; `runs.submit` and the seeds see them). */
+export async function inAgent(fn: (h: Harness) => Promise<void>, opts: { handlers?: Readonly<Record<string, TaskHandler>> } = {}): Promise<void> {
+  const registry: Readonly<Record<string, TaskHandler>> = { ...taskHandlers, ...opts.handlers }
   const stub = env.BRAND_AGENT.getByName(`core-${++objects}-${Math.random()}`)
   await runInDurableObject(stub, async (_i, state) => {
     const sql = state.storage.sql
@@ -102,11 +107,15 @@ export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> 
       const tokens = createRunTokens(sql, now)
       let core!: AgentCore
       const sched: SqlScheduler = createScheduler<TaskContext>({
-        sql, alarm, now, handlers: taskHandlers,
-        context: (nowMs): TaskContext => ({ nowMs, env, sql, scheduler: sched, tokens, ports: { pool, usage, files }, agent: core }),
+        sql, alarm, now, handlers: registry,
+        context: (nowMs): TaskContext => ({
+          nowMs, env, sql, scheduler: sched, tokens, ports: { pool, usage, files }, agent: core,
+          runs: { submit: t => internalSubmit(core, registry, t) },
+        }),
       })
       core = new AgentCore({
         sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: env.DB,
+        taskSeeds: registrySeeds(registry),
         newSessionId: () => `00000000-0000-4000-8000-${String(++sessions).padStart(12, '0')}`,
         modelUsable: async id => {
           if (modelCheck.throws) throw new Error('settings read failed')
@@ -114,7 +123,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>): Promise<void> 
         },
       })
       const h: Harness = {
-        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck,
+        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck, registry,
         restart: () => { const n = build(); n.core.ensureSeeds(); return n },
         async tick(ms) {
           clock.now += ms

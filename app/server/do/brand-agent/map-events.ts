@@ -23,6 +23,8 @@ export const STEP_LABELS: Readonly<Record<string, string>> = {
   ToolSearch: 'Finding a tool',
 }
 const MCP_PREFIX = 'mcp__inhouse__'
+/** The tool the Agent SDK adds when a run asks for structured output (structured-outputs docs, read 2026-11-20). */
+export const STRUCTURED_OUTPUT_TOOL = 'StructuredOutput'
 const MCP_LABELS: Readonly<Record<string, string>> = {
   memory_search: 'Searching memory',
   memory_list: 'Reading memory',
@@ -54,7 +56,9 @@ export function mapSdkMessage(message: Record<string, unknown>, truncated: boole
   for (const block of inner.content) {
     if (!isRecord(block)) continue
     if (block.type === 'text' && typeof block.text === 'string' && block.text !== '' && !subagent) out.push({ kind: 'text', text: block.text })
-    if (block.type === 'tool_use' && typeof block.name === 'string') out.push({ kind: 'step', label: stepLabel(block.name), tool: block.name })
+    // The SDK's own `StructuredOutput` tool carries the run's answer (up to 256 KiB in this message), never a work row
+    // or a trace step (PR 5, ask C): the value is kept once, from the terminal event, capped at 64 KiB.
+    if (block.type === 'tool_use' && typeof block.name === 'string' && block.name !== STRUCTURED_OUTPUT_TOOL) out.push({ kind: 'step', label: stepLabel(block.name), tool: block.name })
   }
   return out
 }
@@ -67,22 +71,23 @@ type Terminal = Extract<RunEventBody, { type: 'finished' | 'failed' }>
 
 /**
  * 4.5: `success` → done (interrupted when the BrandAgent asked for the interrupt); `error_max_turns` → max_turns;
- * `error_max_budget_usd` → turn_budget; `error_during_execution` → interrupted when we asked, else sdk_error; any other
- * error → sdk_error. A `failed` keeps its reason; `interrupted` counts
- * only when the BrandAgent asked for it (else `unknown`), `stopped` is the stopped outcome.
+ * `error_max_budget_usd` → turn_budget; `error_max_structured_output_retries` → structured_output;
+ * `error_during_execution` → interrupted when we asked, else sdk_error; any other error → sdk_error. A `failed` keeps
+ * its reason; `interrupted` counts only when the BrandAgent asked for it (else `unknown`), `stopped` is the stopped
+ * outcome.
  */
 export function outcomeOf(ev: Terminal, interruptAsked: boolean): TurnOutcome {
   if (ev.type === 'finished') {
     if (!ev.isError && ev.subtype === 'success') return { outcome: interruptAsked ? 'interrupted' : 'done' }
     if (ev.subtype === 'error_max_turns') return { outcome: 'failed', reason: 'max_turns' }
     if (ev.subtype === 'error_max_budget_usd') return { outcome: 'failed', reason: 'turn_budget' }
+    // The runner maps it to `failed structured_output` (R3 #151); a `finished` that carries it means the same.
+    if (ev.subtype === 'error_max_structured_output_retries') return { outcome: 'failed', reason: 'structured_output' }
     // An interrupted query ends `error_during_execution` (the SDK's abort): ours when we asked for it.
     if (interruptAsked && ev.subtype === 'error_during_execution') return { outcome: 'interrupted' }
     return { outcome: 'failed', reason: 'sdk_error' }
   }
   if (ev.reason === 'interrupted') return interruptAsked ? { outcome: 'interrupted' } : { outcome: 'failed', reason: 'unknown' }
   if (ev.reason === 'stopped') return { outcome: 'stopped' }
-  // `structured_output` (R3 #151) has no TurnFailure value until PR 5 adds it: an SDK-side failure until then.
-  if (ev.reason === 'structured_output') return { outcome: 'failed', reason: 'sdk_error' }
   return { outcome: 'failed', reason: ev.reason }
 }

@@ -16,7 +16,8 @@ import type {
 import { createAgentTables } from './schema.ts'
 import { modelUsable } from './model-check.ts'
 import { openStores } from '../../db/stores.ts'
-import { alarmPort, createScheduler } from './scheduler.ts'
+import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
+import { internalSubmit, poke, revive } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
 import { createRunTokens } from './tokens.ts'
@@ -36,7 +37,10 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       const tokens = createRunTokens(sql, now)
       const sched: SqlScheduler = createScheduler<TaskContext>({
         sql, alarm: alarmPort(ctx.storage), now, handlers: taskHandlers,
-        context: (nowMs): TaskContext => ({ nowMs, env, sql, scheduler: sched, tokens, ports: this.ports, agent: this.core }),
+        context: (nowMs): TaskContext => ({
+          nowMs, env, sql, scheduler: sched, tokens, ports: this.ports, agent: this.core,
+          runs: { submit: t => internalSubmit(this.core, taskHandlers, t) },
+        }),
       })
       this.sched = sched
       this.ports = composePorts(env, {
@@ -45,7 +49,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       })
       this.core = new AgentCore({
         sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V1, db: env.DB,
-        modelUsable: modelUsable(openStores(env)),
+        modelUsable: modelUsable(openStores(env)), taskSeeds: registrySeeds(taskHandlers),
       })
       this.core.ensureSeeds()
       await sched.syncAlarm()
@@ -86,8 +90,10 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
 
   // ---------- the API (routes 29-31, 35-37, 49) ----------
+  /** Route 29's turn only: a structured-output format or an end task sent over RPC is dropped (`TaskContext.runs.submit` adds them). */
   async submitTurn(turn: SubmitTurn): Promise<SendTurnResult | Refusal> {
-    return this.core.submitTurn(turn)
+    const { chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains } = turn
+    return this.core.submitTurn({ chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains })
   }
   /** The member who owns a turn, or null: route 30 and 31 answer another person's turn 404 before acting. */
   async turnOwner(turnId: string): Promise<string | null> {
@@ -147,5 +153,13 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
   async warmup(): Promise<{ ok: true } | Refusal> {
     return this.core.warmup()
+  }
+
+  // ---------- due tasks (PR 5, asks D and E, `revive`) ----------
+  async poke(p: { kind: string; id: string; dueAtMs?: number }): Promise<void> {
+    poke(this.sched, this.ctx.storage.sql, taskHandlers, Date.now(), p)
+  }
+  async revive(p: { kind: string; id: string }): Promise<'revived' | 'not_quarantined' | 'not_found'> {
+    return revive(this.sched, taskHandlers, p)
   }
 }

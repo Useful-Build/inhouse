@@ -31,6 +31,7 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   drainAnswer: DrainState = { live: 0, starting: 0, ending: 0, queued: 0, drainingUntilMs: null }
   poolHealthAnswer: PoolHealth = { protocol: green, restarts: green, shortfall: green }
   runsHealthAnswer: RunsHealth = { failures: green, stuck: green, damaged: green, quarantined: green }
+  reviveAnswer: 'revived' | 'not_quarantined' | 'not_found' = 'revived'
 
   private readonly tokens: RunTokens | undefined
   private readonly now: () => number
@@ -96,4 +97,6 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   async drainState() { this.log('drainState'); return this.drainAnswer }
   async warmup() { this.log('warmup'); return ok }
   async writeToolCall(turnId: string, n: number, entry: AuditEntry) { this.log('writeToolCall', turnId, n, entry) }
+  async poke(p: { kind: string; id: string; dueAtMs?: number }) { this.log('poke', p) }
+  async revive(p: { kind: string; id: string }) { this.log('revive', p); return this.reviveAnswer }
 }
