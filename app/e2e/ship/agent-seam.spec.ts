@@ -116,10 +116,13 @@ test('S2: A suggested question streams its answer with the orders table, and tim
   await expect(log.getByText('Not picked at ShipBob')).toBeVisible()
   await expect(log.getByText('$312')).toBeVisible()
   // The answer's trace keeps its length.
-  // The answer bar reads steps, duration and the stamp from the demo clock (8:00 AM, give or take the run's seconds).
+  // The steps line reads the step count; opened, its meta reads the duration and the stamp from the demo clock (8:00 AM,
+  // give or take the run's seconds), and Details opens the trace.
   const bar = log.getByRole('button', { name: /6 steps/ }).last()
-  await expect(bar).toContainText(/6 steps · 9\.4s · 8:0\d\s*AM/)
+  await expect(bar).toContainText(/6 steps/)
   await bar.click()
+  await expect(log.locator('[data-steps-meta]').last()).toContainText(/9\.4s · 8:0\d\s*AM/)
+  await bar.locator('xpath=..').getByRole('button', { name: 'Details', exact: true }).click()
   await expect(page.getByRole('dialog', { name: /What your Inhouse agent did/ })).toContainText('9.4s')
 })
 
