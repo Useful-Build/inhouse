@@ -32,11 +32,9 @@ export type MemoryData = z.infer<typeof MemoryDataSchema>
 
 /** A saved fact: `mem_` + 128 random bits, base64url (22 characters). A `MemoryLine`'s `key` is this id. */
 export const MemoryIdSchema = z.string().regex(/^mem_[A-Za-z0-9_-]{22}$/)
-export type MemoryId = z.infer<typeof MemoryIdSchema>
 
 /**
  * `PUT /api/memory/personal/:id/forgotten` and `PUT /api/memory/brand/:id/forgotten`: forget a line (`true`) or undo
  * that (`false`), at the rev last read. An undone team line waits for an admin's OK again; a person's counts at once.
  */
 export const MemoryForgetInputSchema = z.object({ forgotten: z.boolean(), ifRev: z.number().int().min(1).max(999_999_999) }).strict()
-export type MemoryForgetInput = z.infer<typeof MemoryForgetInputSchema>

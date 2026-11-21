@@ -67,12 +67,9 @@ export type ChatPage = z.infer<typeof ChatPageSchema>
 
 /** `PUT /api/chats/:id/title`: a custom title, or null to go back to the first question's. */
 export const ChatRenameInputSchema = z.object({ title: ChatTitleSchema.nullable(), ifRev: IfRevSchema }).strict()
-export type ChatRenameInput = z.infer<typeof ChatRenameInputSchema>
 
 /** `PUT /api/chats/:id/pin`. */
 export const ChatPinInputSchema = z.object({ pinned: z.boolean(), ifRev: IfRevSchema }).strict()
-export type ChatPinInput = z.infer<typeof ChatPinInputSchema>
 
 /** `POST /api/chats/delete` and `/restore`: 1 to 50 of the caller's chats (D1's 100 bound parameters a statement). */
 export const ChatIdsInputSchema = z.object({ ids: z.array(ChatIdSchema).min(1).max(50) }).strict()
-export type ChatIdsInput = z.infer<typeof ChatIdsInputSchema>

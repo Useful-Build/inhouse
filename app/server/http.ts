@@ -10,7 +10,7 @@ export const SECURITY_HEADERS = parseHeaders(headersFile)
 /** Each error code's status (p2-design section 4). The codes are the contract's `AgentErrorCode`, the one list of them. */
 const STATUS: Record<AgentErrorCode, number> = {
   unauthorized: 401, forbidden: 403, not_found: 404, conflict: 409, invalid: 400, rate_limited: 429,
-  // P3 chooses cap_reached's status; until then it is the same as rate_limited.
+  // P3's choice: cap_reached is 429, the same as rate_limited (the client tells them apart by code, not status).
   cap_reached: 429, unavailable: 503, unknown: 500, offline: 503,
 }
 

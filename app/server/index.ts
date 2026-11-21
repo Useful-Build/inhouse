@@ -10,7 +10,7 @@ import { apiError } from './http.ts'
 import { routes } from './routes.ts'
 
 // P3's classes (p3-design section 1), each in its owner's file: the Durable Objects the Worker config binds, and the
-// egress entrypoints the Runner registers as intercepts. PR0's stubs until their owners replace them.
+// egress entrypoints the Runner registers as intercepts.
 export { BrandAgent } from './do/brand-agent/index.ts'
 export { Runner } from './do/runner/index.ts'
 export { Egress } from './egress/index.ts'

@@ -145,6 +145,3 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
 
 /** The files these turns saved, in the order they came. A block of the thread can hold more than one turn's parts. */
 export const filesOfTurns = (v: ChatView | undefined, turnIds: ReadonlySet<string>): ChatView['files'] => (v ? v.files.filter(f => turnIds.has(f.turnId)) : [])
-
-/** A whole stream through the reducer, from an empty view. */
-export const viewOf = (events: readonly ChatEvent[], at: Instant, runId = ''): ChatView => events.reduce((v, e) => reduce(v, e, at, runId), emptyView())
