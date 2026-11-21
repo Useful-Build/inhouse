@@ -13,6 +13,7 @@ import type { EgressDeps, EgressRpc } from './deps.ts'
 import { eventsRoute } from './events.ts'
 import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
+import { handleHub, hubRouteDeps, type ReadGatewayLike } from './hub.ts'
 import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
 import { modelRoute } from './model.ts'
@@ -43,8 +44,10 @@ export async function handleEgress(request: Request, d: EgressDeps): Promise<Res
   const url = new URL(request.url)
   if (url.hostname !== EGRESS_HOST) return jsonAnswer({ error: 'not_found' }, 404)
   const name = /^\/([a-z]+)\//.exec(url.pathname)?.[1]
-  if (!name || !(EGRESS_ROUTES as readonly string[]).includes(name)) return jsonAnswer({ error: 'not_found' }, 404)
-  const route = name as EgressRoute
+  // `/hub/` (P4 H1): the hub's read tools, the turn's second MCP server, on the grant's `mcp` route (it closes with `mcp`).
+  const hub = name === 'hub' ? d.hub : undefined
+  if (!name || !(hub !== undefined || (EGRESS_ROUTES as readonly string[]).includes(name))) return jsonAnswer({ error: 'not_found' }, 404)
+  const route = (hub !== undefined ? 'mcp' : name) as EgressRoute
 
   const token = request.headers.get(RUN_TOKEN_HEADER)
   const checked = token ? await d.rpc.checkRunToken(await hashRunToken(token), route) : { refused: 'unknown' as const }
@@ -53,6 +56,7 @@ export async function handleEgress(request: Request, d: EgressDeps): Promise<Res
     return refusal(route, route === 'events' && checked.refused === 'closed' ? 410 : 401)
   }
   const grant = checked
+  if (hub !== undefined) return handleHub(withoutToken(request), grant, hub)
   const path = url.pathname
   switch (route) {
     case 'model':
@@ -100,6 +104,8 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     newFileId,
     // W6's `inhouse` MCP server (server/mcp/server/index.ts), acting as the grant's member only.
     mcp: mcpHandler({ db: env.DB }),
+    // The hub's ReadGateway (P4 H1, OC 4: the only hub entrypoint the product Worker binds).
+    hub: hubRouteDeps(env.HUB as unknown as ReadGatewayLike, entry => console.log(entry)),
     waitUntil: p => ctx.waitUntil(p),
     setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: t => clearInterval(t),
