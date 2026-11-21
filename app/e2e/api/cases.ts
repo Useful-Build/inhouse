@@ -125,6 +125,11 @@ export const CASES: Record<string, RouteCase> = {
   // writes nothing (connect.test.ts proves both).
   'POST /api/connect/:accountId/start': { design: d('technical', ['inhouse']), path: '/api/connect/nothing:here/start', json: {}, passes: 404 },
   'GET /api/connect/callback': { design: d('technical', ['inhouse']), path: '/api/connect/callback', passes: 303 },
+  // P5 W3, routes 70 to 72. The read answers 200 from the hub's account list; the writes name an account no connector has, so
+  // they are 404 before any hub call and nothing is written (tools.test.ts proves it).
+  'GET /api/tools': { design: d('technical', ALL), path: '/api/tools', passes: 200 },
+  'PUT /api/tools/:accountId/paused': { design: d('technical', ['inhouse']), path: '/api/tools/nothing:here/paused', json: { paused: true }, passes: 404 },
+  'POST /api/tools/:accountId/disconnect': { design: d('technical', ['inhouse']), path: '/api/tools/nothing:here/disconnect', json: {}, passes: 404 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 

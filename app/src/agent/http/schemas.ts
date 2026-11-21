@@ -20,6 +20,7 @@ import { ModelModeSchema } from '../../../shared/contract/model'
 import { CreateChatInputSchema } from '../../../shared/contract/requests'
 import { ActiveRunsSchema, ChatEventSchema, PauseStateSchema, SendTurnInputSchema, SendTurnResultSchema, SocketServerMsgSchema, acceptsChatVersion } from '../../../shared/contract/runs'
 import { TraceSchema } from '../../../shared/contract/trace'
+import { ToolConnectResultSchema, ToolDisconnectResultSchema, ToolPausedInputSchema, ToolPausedResultSchema, ToolsDataSchema } from '../../../shared/contract/tools'
 
 /** What each route answers with. */
 export const ANSWERS = {
@@ -31,6 +32,8 @@ export const ANSWERS = {
   chatList: ChatListSchema, chatPage: ChatPageSchema, chat: ChatSummarySchema, chatItems: z.object({ items: z.array(ChatSummarySchema) }),
   chatFile: UploadResultSchema, sendTurn: SendTurnResultSchema, ack: z.looseObject({}), activeRuns: ActiveRunsSchema, trace: TraceSchema, pause: PauseStateSchema,
   models: z.object({ default: z.string().nullable(), modes: z.array(ModelModeSchema) }),
+  // P5 (W3): the Tools page, routes C to E and W1's connect start.
+  tools: ToolsDataSchema, toolPaused: ToolPausedResultSchema, toolDisconnect: ToolDisconnectResultSchema, toolConnect: ToolConnectResultSchema,
   // P4 (W4): Activity (route 59) and the bell (route 60; route 61 answers `ack`).
   activityPage: ActivityPageSchema, notifications: NotificationsListSchema,
 }
@@ -42,6 +45,7 @@ export const BODIES = {
   memoryForget: MemoryForgetInputSchema,
   notificationsRead: NotificationsReadInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
+  toolPaused: ToolPausedInputSchema,
 }
 
 /** What the socket sends the browser and the events inside its frames; `accepts` is whether this build reads a frame's version. */

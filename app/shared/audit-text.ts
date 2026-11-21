@@ -127,5 +127,9 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
       return args.outcome === 'ok'
         ? { what: 'connected a tool', detail: connectorName(args.accountId) }
         : { what: 'couldn’t connect a tool', detail: `${connectorName(args.accountId)}: ${CONNECT_FAILED[args.outcome] ?? args.outcome}` }
+    // P5 (p5-w3)
+    case 'tools.pause': return { what: args.paused ? 'paused a tool' : 'resumed a tool', detail: connectorName(args.accountId) }
+    case 'tools.disconnect':
+      return { what: 'disconnected a tool', detail: args.revoked ? connectorName(args.accountId) : `${connectorName(args.accountId)}: its access wasn’t removed on the tool’s side, so remove the app there too` }
   }
 }

@@ -30,6 +30,8 @@ export const AuditActionSchema = z.enum([
   'today.set_aside',
   // P5 (p5-w1): the Inhouse team starts connecting a tool, and how the connect ended.
   'tools.connect_start', 'tools.connect',
+  // P5 (p5-w3): the Inhouse team pauses, resumes or disconnects a tool.
+  'tools.pause', 'tools.disconnect',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -187,6 +189,9 @@ const otherLines = [
   // P5 (p5-w1): connect start (route A) and its end (route B), the account id and the outcome code only.
   line('tools.connect_start', { accountId: ConnectorAccountIdSchema }),
   line('tools.connect', { accountId: ConnectorAccountIdSchema, outcome: ConnectOutcomeSchema }),
+  // P5 (p5-w3): a pause or resume that changed something (route D), and a disconnect (route E) with whether the access was revoked.
+  line('tools.pause', { accountId: ConnectorAccountIdSchema, paused: z.boolean() }),
+  line('tools.disconnect', { accountId: ConnectorAccountIdSchema, revoked: z.boolean() }),
 ] as const
 
 /**

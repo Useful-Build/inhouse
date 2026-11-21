@@ -42,6 +42,9 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   // P5 (p5-w1)
   'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
   'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok' },
+  // P5 (p5-w3)
+  'tools.pause': { action: 'tools.pause', accountId: 'slack:workspace', paused: true },
+  'tools.disconnect': { action: 'tools.disconnect', accountId: 'slack:workspace', revoked: true },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -163,6 +166,17 @@ describe('support.access writes (P4 review fold): a write reads as a change, nev
       ['PUT', '/api/today/:id/aside', 'An item on Today'],
       ['POST', '/api/library/delete', 'The Library'], ['POST', '/api/library/restore', 'The Library'],
     ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method, route }, names), `${method} ${route}`).toEqual({ what: 'changed brand data', detail })
+  })
+})
+
+describe('P5 (p5-w3): pause and disconnect lines', () => {
+  it('name the tool, and say when the access was not revoked', () => {
+    expect(auditText({ action: 'tools.pause', accountId: 'slack:workspace', paused: true }, names)).toEqual({ what: 'paused a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.pause', accountId: 'slack:workspace', paused: false }, names)).toEqual({ what: 'resumed a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: true }, names)).toEqual({ what: 'disconnected a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: false }, names)).toEqual({
+      what: 'disconnected a tool', detail: 'Slack: its access wasn’t removed on the tool’s side, so remove the app there too',
+    })
   })
 })
 

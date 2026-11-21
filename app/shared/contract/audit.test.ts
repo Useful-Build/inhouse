@@ -51,6 +51,9 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   // P5 (p5-w1)
   'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
   'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'scope_mismatch' },
+  // P5 (p5-w3)
+  'tools.pause': { action: 'tools.pause', accountId: 'slack:workspace', paused: false },
+  'tools.disconnect': { action: 'tools.disconnect', accountId: 'shopify:store', revoked: false },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -324,7 +327,15 @@ describe('support.access write pairs (P4 review fold)', () => {
 describe('P5 (p5-w1): connect lines carry an account id and a closed outcome only', () => {
   it("appends its block after P4's, in this order", () => {
     const all = AuditActionSchema.options
-    expect(all.slice(all.indexOf('today.set_aside'))).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect'])
+    expect(all.slice(all.indexOf('today.set_aside'))).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect', 'tools.pause', 'tools.disconnect'])
+  })
+
+  it("refuses a pause or disconnect line with free text, a non-boolean or an extra field (P5 W3)", () => {
+    expect(ok({ action: 'tools.pause', accountId: 'slack:workspace', paused: true })).toBe(true)
+    expect(ok({ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: false })).toBe(true)
+    expect(ok({ action: 'tools.pause', accountId: 'slack:workspace', paused: 'yes' })).toBe(false)
+    expect(ok({ action: 'tools.disconnect', accountId: 'Slack Workspace', revoked: true })).toBe(false)
+    expect(ok({ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: true, reason: 'x' })).toBe(false)
   })
 
   it('refuses free text, an unknown outcome and an extra field', () => {
