@@ -175,7 +175,8 @@ jobs:
             echo "::error::check-product-config.mjs exited $rc on wrangler.eval.jsonc; it must refuse it with exit code 1 (0 = passed a config that must never deploy, 2 = usage or a crash)."
             exit 1
           fi
-          if ! grep -qF 'vars.INHOUSE_TEST_BUILD is set: the test issuer must never be on in a deployable config' <<< "$out"; then
+          # POSIX sh (the job's container runs steps under dash): a pipe, not a bash here-string.
+          if ! printf '%s\n' "$out" | grep -qF 'vars.INHOUSE_TEST_BUILD is set: the test issuer must never be on in a deployable config'; then
             echo "::error::check-product-config.mjs refused wrangler.eval.jsonc, but not on the test-issuer rule it must name."
             exit 1
           fi
