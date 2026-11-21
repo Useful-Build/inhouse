@@ -88,7 +88,7 @@ const resultIs =
   }
 
 /** How much of a mismatched result's text a miss quotes. */
-export const RESULT_EXCERPT_MAX = 200
+export const RESULT_EXCERPT_MAX = 400
 
 /** A tool_result's text: its string content, or its text blocks joined. */
 const resultText = (block: { content?: unknown }): string =>

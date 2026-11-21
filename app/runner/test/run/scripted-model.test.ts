@@ -407,10 +407,10 @@ describe("the real CLI's requests", () => {
     const sideMiss = 'API Error: 400 scripted model miss: scenario "hello", turn 0: the request does not match the turn: no tool list (a side request)'
     const model = createScriptedModel(SCENARIOS)
     expect((await answer(model, withResult(sideMiss), 'webfetch-allowed')).status).toBe(400)
-    expect((await answer(model, withResult([{ type: 'text', text: 'a'.repeat(250) }]), 'webfetch-allowed')).status).toBe(400)
+    expect((await answer(model, withResult([{ type: 'text', text: 'a'.repeat(450) }]), 'webfetch-allowed')).status).toBe(400)
     expect(model.misses.map((m) => m.reason)).toEqual([
       `the request does not match the turn: the result for toolu_scripted_fetch has is_error true, not false; it says: "${sideMiss}"`,
-      `the request does not match the turn: the result for toolu_scripted_fetch has is_error true, not false; it says: "${'a'.repeat(200)}"`,
+      `the request does not match the turn: the result for toolu_scripted_fetch has is_error true, not false; it says: "${'a'.repeat(400)}"`,
     ])
   })
 
