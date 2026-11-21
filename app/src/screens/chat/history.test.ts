@@ -112,7 +112,18 @@ describe('historyMessages: a stored end row in the live words', () => {
     expect(liveMessages.find(m => m.id === `${T1}.x`)).toEqual(historyMessages(page)[1])
   })
 
-  test('a live answer stopped by a pause shows the paused note live, and a reload shows the same one once', () => {
+  test('a live answer that had streamed part of itself before the pause reads "this answer stopped", live and after a reload, shown once', () => {
+    const part: ChatEvent = { type: 'part', turnId: T1, messageId: `${T1}.0`, part: { type: 'text', text: 'Waiting a while.' }, model: 'sonnet', at: AT }
+    const agentRow: StoredMessage = { id: `${T1}.0`, role: 'agent', part: { type: 'text', text: 'Waiting a while.' }, trace: T1, ...at(T1, 1) }
+    const page = [storedUser(T1, 0, 'a'), agentRow, end(T1, 'x', 2, { why: 'paused' })]
+    const shown = historyMessages(page)
+    expect(shown[2]).toEqual({ id: `${T1}.x`, role: 'event', text: 'Your Inhouse agent was paused, so this answer stopped.' })
+    const liveMessages = live(queued(T1, 'a'), { type: 'turn.started', turnId: T1, model: 'sonnet' }, part, { type: 'turn.cancelled', turnId: T1, why: 'paused' })
+    expect(liveMessages.find(m => m.id === `${T1}.x`)).toEqual(shown[2])
+    expect(ids(mergeHistory(shown, [], liveMessages))).toEqual([`${T1}.u`, `${T1}.0`, `${T1}.x`])
+  })
+
+  test('a live answer stopped by a pause shows the paused note, and a reload shows the same one once', () => {
     const page = [storedUser(T1, 0, 'a'), end(T1, 'x', 1, { why: 'paused' })]
     const shown = historyMessages(page)
     expect(shown[1]).toEqual({ id: `${T1}.x`, role: 'event', text: 'Your Inhouse agent was paused, so this question was not asked.' })

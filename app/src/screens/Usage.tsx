@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { activeChannel, capStatus, usageSummary } from '../state/derive'
-import { calendarOf, fmtCount, fmtShare, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
+import { calendarOf, fmtCapFill, fmtCount, fmtShare, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
 import { display, nowOf } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
@@ -69,7 +69,7 @@ export function Usage() {
     bars.current[t]?.focus()
   }
   const peakAt = days.indexOf(maxD) + 1
-  const pct = Math.min(100, Math.round(total / majorOf(usage.cap) * 100)) + '%'
+  const pct = fmtCapFill(total, majorOf(usage.cap), cap)
   const over = total > majorOf(usage.cap)
   const { hint, capNote } = usageSummary(usage, thisMonth, cap)
   // A channel counts only from its stage (Act) and once connected: before that, questions come from chats alone, so a

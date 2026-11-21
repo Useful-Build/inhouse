@@ -161,6 +161,12 @@ describe('a live turn cancelled (a pause stops the answer being written)', () =>
     expect(v.live).toBeNull()
     expect(v.thinking).toBeNull()
   })
+  test('one that had already streamed part of its answer says the answer stopped, not that the question was not asked', () => {
+    const part: ChatEvent = { type: 'part', turnId: T, messageId: `${T}.0`, part: { type: 'text', text: 'Waiting a while.' }, model: 'sonnet', at: AT }
+    const v = run(...live, part, { type: 'turn.cancelled', turnId: T, why: 'paused' })
+    expect(v.messages.at(-1)).toEqual({ id: `${T}.x`, role: 'event', text: 'Your Inhouse agent was paused, so this answer stopped.' })
+    expect(v.messages.some(m => m.role === 'agent' && m.part.type === 'text' && m.part.text === 'Waiting a while.')).toBe(true)
+  })
   test('a cancel with nothing to say (the person removed it) adds no note', () => {
     const v = run(...live, { type: 'turn.cancelled', turnId: T, why: 'removed' })
     expect(v.messages.map(m => m.id)).toEqual([`${T}.u`])
