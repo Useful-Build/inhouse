@@ -8,16 +8,18 @@ import { SYSTEM_PROMPT_V1 } from '../../prompt/system.ts'
 import type { AuditEntry, PushAck, RunEvent } from '../../../shared/protocol/index.ts'
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
-import { composePorts } from './compose.ts'
+import { composePorts, p6Hooks, wireP6 } from './compose.ts'
 import { AgentCore } from './core.ts'
 import type {
-  Actor, AdmitAnswer, BrandAgentPorts, BrandAgentRpc, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PoolHealth, Refusal, RunScope, RunsHealth, SubmitTurn,
+  Actor, AdmitAnswer, BrandAgentParts, BrandAgentPorts, BrandAgentRpc, DeferDecision, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer,
+  PoolHealth, Refusal, RunScope, RunsHealth, SubmitTurn,
 } from './ports.ts'
 import { createAgentTables } from './schema.ts'
 import { modelUsable } from './model-check.ts'
 import { openStores } from '../../db/stores.ts'
+import { chatStore } from '../../db/chats.ts'
 import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
-import { internalSubmit, poke, revive } from './task-ops.ts'
+import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
 import { createRunTokens } from './tokens.ts'
@@ -43,16 +45,14 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       const tokens = createRunTokens(sql, now)
       const sched: SqlScheduler = createScheduler<TaskContext>({
         sql, alarm: alarmPort(ctx.storage), now, handlers: taskHandlers,
-        context: (nowMs): TaskContext => ({
-          nowMs, env, sql, scheduler: sched, tokens, ports: this.ports, agent: this.core,
-          runs: { submit: t => internalSubmit(this.core, sql, taskHandlers, t) },
-        }),
+        context: (nowMs): TaskContext => taskContext({ nowMs, env, sql, scheduler: sched, tokens, ports: this.ports, core: this.core, registry: taskHandlers }),
       })
       this.sched = sched
-      this.ports = composePorts(env, {
+      const parts: BrandAgentParts = {
         sql, scheduler: sched, now,
         hooks: { retryPlacement: id => this.core.retryPlacement(id), placementExpired: id => this.core.placementExpired(id) },
-      })
+      }
+      this.ports = composePorts(env, parts)
       this.hub = new SocketHub({
         sql, now,
         sockets: () => ctx.getWebSockets() as HubSocket[],
@@ -64,7 +64,12 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         modelUsable: modelUsable(openStores(env)), taskSeeds: registrySeeds(taskHandlers),
         onEvent: e => this.hub.onEvent(e),
         sockets: this.hub,
+        chatGone: async chatId => {
+          const c = await chatStore({ db: env.DB }).ownerOf(chatId)
+          return c === null || c.deleted
+        },
       })
+      wireP6(this.core, p6Hooks(env, parts))
       this.core.ensureSeeds()
       await sched.syncAlarm()
     })
@@ -142,11 +147,12 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async stop(turnId: string, by: Actor): Promise<{ ok: true } | Refusal> {
     return this.core.stop(turnId, by)
   }
+  /** The flag and its fences, then P6's pause hooks in order (a throwing hook throws here with the flag kept). */
   async pause(by: Actor): Promise<PauseState> {
     return this.core.pause(by)
   }
-  async resume(_by: Actor): Promise<PauseState> {
-    return this.core.resume()
+  async resume(by: Actor): Promise<PauseState> {
+    return this.core.resume(by)
   }
   async getPause(): Promise<PauseState> {
     return this.core.pauseState()
@@ -216,6 +222,14 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
   async revive(p: { kind: string; id: string }): Promise<'revived' | 'not_quarantined' | 'not_found'> {
     return revive(this.sched, taskHandlers, p)
+  }
+
+  // ---------- PR 6: the P6 seams and P8 C1's person data ----------
+  async resumeDeferred(chatId: string, decision: DeferDecision, questionId: string): Promise<SendTurnResult | Refusal> {
+    return this.core.resumeDeferred(chatId, decision, questionId)
+  }
+  async personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> {
+    return this.core.personData(p.personId, p.mode)
   }
 }
 

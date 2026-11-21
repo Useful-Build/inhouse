@@ -15,18 +15,23 @@
 //   `ended` write (routes closed, the next turn's chance, the run's end) is one synchronous step.
 // - Nothing that must happen after a reset lives only in memory: the watchdog, the queue and the hold's return are due
 //   tasks; `ensureSeeds()` re-arms them on every start.
-import type { ChatEvent, SendTurnResult, TurnFailure } from '../../../shared/contract/runs.ts'
+import type { ChatEvent, PauseState, SendTurnResult, TurnFailure } from '../../../shared/contract/runs.ts'
 import type { AuditEntry, PushAck, RunEvent, RunEventBody } from '../../../shared/protocol/index.ts'
 import { RunStart as RunStartSchema } from '../../../shared/protocol/index.ts'
-import type { Actor, BrandAgentPorts, ChatFile, DrainState, OnEnd, Refusal, SubmitTurn, TurnEndPayload } from './ports.ts'
+import type {
+  Actor, BrandAgentPorts, ChatFile, ChatStatus, DeferDecision, DeferredQuestion, DrainState, OnDeferredHook, OnEnd, PauseHook,
+  PersonDataAnswer, PersonDataTable, Refusal, SubmitTurn, TurnEndPayload,
+} from './ports.ts'
+import { PERSON_DATA_TABLES } from './ports.ts'
 import type { OutputFormat } from '../../../shared/protocol/index.ts'
 import { SYSTEM_MEMBER_ID } from '../../db/ids.ts'
-import type { Scheduler, TaskResult } from './scheduler.ts'
+import type { DueTask, Scheduler, TaskContext, TaskResult } from './scheduler.ts'
 import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from './tokens.ts'
 import { hashRunToken } from './tokens.ts'
 import { mapSdkMessage, outcomeOf } from './map-events.ts'
 import type { TurnOutcome } from './map-events.ts'
 import { buildStart, newId, submitPayloadHash } from './run-start.ts'
+import { backoffMs } from './scheduler.ts'
 import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
 import { FLUSH_RETRY_MS, FLUSH_TURN_PREFIX, fixTurnRows, storedProjection, writeProjection } from './projection.ts'
@@ -66,6 +71,13 @@ export const QUEUE_MAX_CHAT = 10
 export const QUEUE_MAX_MEMBER = 20
 export const QUEUE_MAX_BRAND = 200
 const EFFECT_RETRY_MS = 30_000
+/** A resume refused for a wait (paused, draining, a full queue) is tried again this often, never counted (PR 6, A8). */
+export const RESUME_RETRY_MS = 60_000
+
+/** P6's question id for a turn's deferral (one per turn: a deferred run stops there): `q_` and the turn id's random part. */
+export const questionIdOf = (turnId: string): string => `q_${turnId.slice(2)}`
+/** The resume turn's client key, so a second `resumeDeferred` for the question finds the first one's turn. */
+export const resumeKeyOf = (questionId: string): string => `resume_${questionId}`
 
 const PRIORITY_ORDER = "CASE priority WHEN 'now' THEN 0 WHEN 'next' THEN 1 ELSE 2 END"
 const ACTIVE = "('starting', 'live', 'ending')"
@@ -90,6 +102,7 @@ export interface TurnRow {
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
   pos_from: number | null; pos_to: number | null; d1_flushed: number
   output_format_json: string | null; on_end_json: string | null; structured_output_json: string | null
+  resume_json: string | null; abandoned: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
@@ -97,8 +110,14 @@ interface ChatStateRow {
   [k: string]: SqlStorageValue
   chat_id: string; owner_id: string; live_run_id: string | null; session_id: string | null; provider: string | null
   session: 'none' | 'resumable' | 'waiting' | 'damaged'; checkpoint_main_entries: number | null
-  checkpoint_last_uuid: string | null; checkpoint_last_uuid_index: number | null
+  checkpoint_last_uuid: string | null; checkpoint_last_uuid_index: number | null; waiting_json: string | null
 }
+
+/** `chat_state.waiting_json` (PR 6): the question the chat waits on and the turn that parked it. */
+interface Waiting { questionId: string; turnId: string; toolUseId: string; toolName: string; input: unknown }
+
+/** The resume turn's decision (`turns.resume_json`), for protocol v3's `RunStart.deferred` (R3, P6 ask 6). */
+interface Resume { questionId: string; decision: DeferDecision; toolUseId: string }
 
 /** The watchdog's memory between two checks of one attempt (cleared by every push). */
 interface Watch { ambiguous?: true; stopped?: true; unknownAt?: number; unreachable?: number; silentSince?: number }
@@ -126,6 +145,11 @@ export interface CoreDeps {
   onEvent?: (e: { runId: string; seq: number; atMs: number; chatId: string; event: ChatEvent }) => void
   /** The sockets' side of authority (4.10, sockets.ts); absent where no socket can exist. */
   sockets?: SocketAuthority
+  /**
+   * Whether the chat is in the trash in D1 (`deleted_at_ms` set) or not there at all (PR 6, A7): an internal submit into a
+   * person's chat and every resume read it, since only route 29 reads D1. Throws when D1 can't answer.
+   */
+  chatGone: (chatId: string) => Promise<boolean>
 }
 
 const refuse = (code: Refusal['refused']['code'], reason?: Refusal['refused']['reason']): Refusal =>
@@ -148,6 +172,8 @@ function actorRefusal(by: Actor): Refusal | null {
  * still writes its own reason on the row (e.g. `done` then a pause), which must not read as a failure (#168 r1).
  */
 function endPayload(t: TurnRow): TurnEndPayload {
+  // A deferred turn whose wait was given up (PR 6 r1): its question was closed, so its result is never delivered.
+  if (t.abandoned !== null) return { turnId: t.turn_id, runId: t.run_id, chatId: t.chat_id, outcome: 'cancelled', failure: t.abandoned, structuredOutput: null }
   const outcome = (t.outcome ?? 'cancelled') as TurnEndPayload['outcome']
   const failure = outcome === 'failed' ? t.failure : outcome === 'cancelled' ? t.cancel_why : null
   return {
@@ -155,6 +181,18 @@ function endPayload(t: TurnRow): TurnEndPayload {
     structuredOutput: t.structured_output_json === null ? null : JSON.parse(t.structured_output_json),
   }
 }
+
+/** What an in-object submit adds to route 29's turn: PR 5's format and end task, PR 6's resume of a parked question. */
+interface Extra {
+  outputFormat?: OutputFormat
+  onEnd?: OnEnd
+  resume?: Resume & { parkedTurnId: string }
+}
+
+/** Refusals a resume waits out (A8): it's tried again by the `deferred-resume` task, never counted toward quarantine. */
+const waitRefusal = (r: Refusal) =>
+  (r.refused.code === 'forbidden' && r.refused.reason === 'paused') || (r.refused.code === 'unavailable' && r.refused.reason === 'draining')
+  || (r.refused.code === 'rate_limited' && r.refused.reason === 'queue_full')
 
 const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : 'unknown').slice(0, 300)
 
@@ -207,6 +245,8 @@ export class AgentCore {
     return row ? row.value : null
   }
   private paused(): boolean { return this.flag('paused_at_ms') !== null }
+  /** `TaskContext.paused` (P6 ask 3): the flag as stored now, read synchronously. */
+  isPaused(): boolean { return this.paused() }
   /**
    * A drain holds only while its expiry is ahead (obligation 1), read through the pool (`drainState`, synchronous, the
    * owner of the drain's flags: obligation 11), never from the flag's presence.
@@ -250,6 +290,9 @@ export class AgentCore {
   async submitTurn(t: SubmitTurn, extra?: { outputFormat?: OutputFormat; onEnd?: OnEnd }): Promise<SendTurnResult | Refusal> {
     const who = actorRefusal(t.by)
     if (who) return who
+    // An internal submit into a person's chat reads D1 first, as route 29 does (A7): the object's own state can say live
+    // after a failed restore while D1 says the chat is in the trash.
+    if (extra !== undefined && t.by.memberId !== SYSTEM_MEMBER_ID && await this.d.chatGone(t.chatId)) return refuse('not_found')
     // Computed before the key check: it writes nothing, so the claim is still before any write's await (4.2.1).
     const hash = await submitPayloadHash(extra === undefined ? t.input
       : { ...t.input, effort: t.effort, outputFormat: extra.outputFormat, onEnd: extra.onEnd })
@@ -280,7 +323,7 @@ export class AgentCore {
   }
 
   /** The admission and the claim, in one synchronous step. */
-  private admit(t: SubmitTurn, hash: string, files: ChatFile[], extra?: { outputFormat?: OutputFormat; onEnd?: OnEnd }): SendTurnResult | Refusal {
+  private admit(t: SubmitTurn, hash: string, files: ChatFile[], extra?: Extra): SendTurnResult | Refusal {
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
     const member = t.by.memberId
@@ -296,7 +339,14 @@ export class AgentCore {
     const cs = this.chatState(t.chatId)
     if (cs && cs.owner_id !== member) return refuse('not_found')
     if (cs?.session === 'damaged') return refuse('conflict', 'session_damaged')
-    if (cs?.session === 'waiting') return refuse('conflict', 'waiting_answer')
+    // Only the resume of the question the chat waits on passes a waiting chat (PR 6).
+    if (cs?.session === 'waiting' && !(extra?.resume !== undefined && this.waitingOf(cs)?.questionId === extra.resume.questionId)) {
+      return refuse('conflict', 'waiting_answer')
+    }
+    // A resume admitted but not yet running still answers the question first: a send (even `now`) waits for it (r1).
+    if (extra?.resume === undefined && this.count("chat_id = ? AND resume_json IS NOT NULL AND state IN ('queued', 'starting')", t.chatId) > 0) {
+      return refuse('conflict', 'waiting_answer')
+    }
     if (cs?.provider !== undefined && cs.provider !== null && cs.provider !== 'anthropic') return refuse('conflict', 'provider_changed')
     if (this.count("chat_id = ? AND state = 'queued'", t.chatId) >= QUEUE_MAX_CHAT
       || this.count("owner_id = ? AND state = 'queued'", member) >= QUEUE_MAX_MEMBER
@@ -321,14 +371,22 @@ export class AgentCore {
     this.sql.exec(
       `INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, gen, state, priority, text, quote,
         attachments_json, model, picker_id, side_model, effort, max_turns, web_fetch_json, answer_position, created_at_ms,
-        output_format_json, on_end_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+        output_format_json, on_end_json, resume_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
       turnId, runId, t.chatId, member, ord + 1, t.input.clientTurnKey, hash, t.input.priority, t.input.text,
       t.input.quote ?? null, JSON.stringify(atts), t.model, t.pickerId, t.sideModel, t.effort, t.maxTurns,
       t.webFetchDomains === null ? null : JSON.stringify(t.webFetchDomains), now,
       extra?.outputFormat === undefined ? null : JSON.stringify(extra.outputFormat),
       extra?.onEnd === undefined ? null : JSON.stringify({ kind: extra.onEnd.kind, id: extra.onEnd.id }),
+      extra?.resume === undefined ? null
+        : JSON.stringify({ questionId: extra.resume.questionId, decision: extra.resume.decision, toolUseId: extra.resume.toolUseId } satisfies Resume),
     )
+    if (extra?.resume !== undefined) {
+      // The resume takes the question over, in this same step (A8: the end fires exactly once): the chat leaves
+      // `waiting` (its checkpoint stays, so the resume starts from it) and the parked turn's end task moves to this turn.
+      this.sql.exec("UPDATE chat_state SET session = 'resumable', waiting_json = NULL WHERE chat_id = ?", t.chatId)
+      this.sql.exec('UPDATE turns SET on_end_json = NULL WHERE turn_id = ?', extra.resume.parkedTurnId)
+    }
     this.emit(runId, turnId, {
       type: 'turn.queued', turnId, messageId: `${turnId}.u`, text: t.input.text,
       ...(t.input.quote === undefined ? {} : { quote: t.input.quote }),
@@ -679,7 +737,10 @@ export class AgentCore {
     // A deferral is not the turn's end (#168 r1 item 5): when this turn's own `deferred` (turns.deferred_json) left the
     // chat `waiting` (its checkpoint, 4.5), the end task waits for the resume turn, which inherits `on_end_json` (PR 6).
     // A deferred turn that never reached `waiting` (stopped, crashed or damaged before its checkpoint) ends as any turn.
-    const deferredEnd = t.deferred_json !== null && this.chatState(t.chat_id)?.session === 'waiting'
+    // PR 6: parked only while the chat still waits on this turn's own question; a resume that took the question over
+    // cleared `on_end_json` here, and a path that abandons the wait fires the parked end itself (`fireParked`).
+    const cs = this.chatState(t.chat_id)
+    const deferredEnd = t.deferred_json !== null && cs?.session === 'waiting' && this.waitingOf(cs)?.turnId === t.turn_id
     if (t.on_end_json !== null && !deferredEnd) {
       const onEnd = JSON.parse(t.on_end_json) as OnEnd
       this.d.scheduler.ensure({ id: onEnd.id, kind: onEnd.kind, dueAtMs: now, payload: endPayload(t) })
@@ -770,6 +831,8 @@ export class AgentCore {
   }
 
   private damage(t: TurnRow) {
+    const cs = this.chatState(t.chat_id)
+    if (cs) this.fireParked(cs, 'session_damaged')
     this.sql.exec("UPDATE chat_state SET session = 'damaged', waiting_json = NULL, damaged_at_ms = ? WHERE chat_id = ?", this.d.now(), t.chat_id)
     this.emit(t.run_id, null, { type: 'notice', code: 'session_damaged' })
   }
@@ -935,17 +998,64 @@ export class AgentCore {
     this.sql.exec('UPDATE turns SET saw_checkpoint = 1 WHERE turn_id = ?', t.turn_id)
     const fresh = this.turn(t.turn_id)!
     if (fresh.mirror_error === 1) return
+    // A wait given up before this turn was final (r1): the chat state is what the abandonment left; nothing parks again.
+    if (fresh.abandoned !== null) return
     if (cp.mainEntries === 0) {
       this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
         checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, t.chat_id)
       return
     }
-    const waiting = fresh.deferred_json !== null
+    // A deferral the chat waits on, unless its resume was already admitted (the parked turn's late `released`).
+    const questionId = questionIdOf(t.turn_id)
+    const waiting = fresh.deferred_json !== null && this.byKey(t.chat_id, resumeKeyOf(questionId)) === null
+    const before = this.chatState(t.chat_id)
+    const waitingJson = waiting
+      ? JSON.stringify({ questionId, turnId: t.turn_id, ...(JSON.parse(fresh.deferred_json!) as Omit<Waiting, 'questionId' | 'turnId'>) } satisfies Waiting)
+      : null
     this.sql.exec(
       `UPDATE chat_state SET session = ?, session_id = ?, checkpoint_main_entries = ?, checkpoint_last_uuid = ?,
         checkpoint_last_uuid_index = ?, waiting_json = ? WHERE chat_id = ?`,
       waiting ? 'waiting' : 'resumable', fresh.session_id, cp.mainEntries, cp.lastUuid, cp.lastUuidIndex,
-      waiting ? fresh.deferred_json : null, t.chat_id)
+      waitingJson, t.chat_id)
+    // P6's `onDeferred`, once the checkpoint marks the chat waiting (P6 ask 4): never inline, always through the
+    // `deferred-hook:<questionId>` task (retried, quarantined after 10). Once per question: a second checkpoint of the
+    // same wait (the event, then `released`) schedules nothing.
+    if (waiting && !(before?.session === 'waiting' && before.waiting_json === waitingJson)) {
+      const w = JSON.parse(waitingJson!) as Waiting
+      const q: DeferredQuestion = {
+        questionId, chatId: t.chat_id, turnId: t.turn_id, runId: t.run_id, ownerId: t.owner_id, toolUseId: w.toolUseId,
+        toolName: w.toolName, input: w.input,
+      }
+      this.d.scheduler.ensure({ id: `deferred-hook:${questionId}`, kind: 'deferred-hook', dueAtMs: this.d.now(), payload: q })
+    }
+  }
+
+  private waitingOf(cs: ChatStateRow): Waiting | null {
+    return cs.waiting_json === null ? null : JSON.parse(cs.waiting_json) as Waiting
+  }
+
+  /**
+   * A path that abandons a chat's wait without a resume (a resume into a deleted chat, route 49's reset, damage) ends
+   * the parked turn's end task here, `cancelled` with `failure` (A8: exactly once; the caller clears `waiting_json` in
+   * the same synchronous step). A parked turn not yet final (still `ending`) is made unparkable in this same step: its
+   * `deferred_json` cleared and the reason kept in `abandoned`, so a late `released` checkpoint can't make the chat wait
+   * again and its own `storeFinal` fires its end once, `cancelled` with this reason (never its `done`: the question
+   * was closed, so its result is never delivered).
+   */
+  private fireParked(cs: ChatStateRow, failure: string) {
+    const w = cs.session === 'waiting' ? this.waitingOf(cs) : null
+    if (!w) return
+    const t = this.turn(w.turnId)
+    if (!t) return
+    if (t.state !== 'ended' && t.state !== 'cancelled') {
+      this.sql.exec('UPDATE turns SET deferred_json = NULL, abandoned = ? WHERE turn_id = ?', failure, t.turn_id)
+      return
+    }
+    if (t.on_end_json === null) return
+    const onEnd = JSON.parse(t.on_end_json) as OnEnd
+    const payload: TurnEndPayload = { turnId: t.turn_id, runId: t.run_id, chatId: t.chat_id, outcome: 'cancelled', failure, structuredOutput: null }
+    this.d.scheduler.ensure({ id: onEnd.id, kind: onEnd.kind, dueAtMs: this.d.now(), payload })
+    this.sql.exec('UPDATE turns SET on_end_json = NULL WHERE turn_id = ?', t.turn_id)
   }
 
   /** The terminal event (terminal once): the outcome, `ending`, the first routes closed, `turn.finished`. */
@@ -1212,6 +1322,7 @@ export class AgentCore {
     if (!cs) return { ok: true }
     if (cs.owner_id !== by.memberId) return refuse('not_found')
     if (this.count(`chat_id = ? AND state IN ('queued', ${ACTIVE.slice(1, -1)})`, chatId) > 0) return refuse('conflict')
+    this.fireParked(cs, 'session_reset')
     this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
       checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, chatId)
     return { ok: true }
@@ -1284,8 +1395,44 @@ export class AgentCore {
     return { paused: true, at: { iso: new Date(at).toISOString(), ms: at }, by: typeof by === 'string' ? by : null }
   }
 
+  // ---------- pause hooks (P6 ask 3) ----------
+
+  private readonly pauseHooks: PauseHook[] = []
+  /** Hooks run in the order registered, after `pause` set the flag (`onPause`) or `resume` cleared it (`onResume`). */
+  registerPauseHook(h: PauseHook): void { this.pauseHooks.push(h) }
+
+  /**
+   * Route 36's pause: the flag and its fences (one synchronous step), then every hook awaited in order. A hook that
+   * throws makes this throw with the flag kept (paused stays paused) and the later hooks not run; a retried pause runs
+   * every hook again, so hooks are idempotent.
+   */
+  pause(by: Actor): Promise<PauseState> {
+    return this.inOrder(() => this.pauseNow(by), h => h.onPause({ by, atMs: this.d.now() }))
+  }
+
+  /** Route 37's resume: the flag cleared (nothing starts), then every hook's `onResume` awaited in order, as `pause`. */
+  resume(by: Actor): Promise<PauseState> {
+    return this.inOrder(() => this.resumeNow(), h => h.onResume({ by, atMs: this.d.now() }))
+  }
+
+  /**
+   * The flag changes at call time, always in the caller's synchronous step, so a hook that never settles can't hold
+   * back a later pause (the emergency one included) (r2). Only the hook loops are chained, in call order, so the hooks'
+   * last word matches the last flag. A throwing hook rejects its own call (the flag kept) and never blocks the next.
+   */
+  private pauseTail: Promise<void> | null = null
+  private inOrder(step: () => PauseState, hook: (h: PauseHook) => Promise<void>): Promise<PauseState> {
+    const state = step()
+    const hooks = async () => { for (const h of this.pauseHooks) await hook(h) }
+    const p = (this.pauseTail === null ? hooks() : this.pauseTail.then(hooks)).then(() => state)
+    const tail = p.then(() => {}, () => {})
+    this.pauseTail = tail
+    void tail.then(() => { if (this.pauseTail === tail) this.pauseTail = null })
+    return p
+  }
+
   /** Flag; fence every turn on a runner; cancel every queued turn and the placement queue. Starts nothing on resume. */
-  pause(by: Actor) {
+  private pauseNow(by: Actor) {
     if (!this.paused()) {
       const now = this.d.now()
       this.sql.exec("INSERT INTO flags (key, value) VALUES ('paused_at_ms', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", now)
@@ -1312,7 +1459,7 @@ export class AgentCore {
     return this.pauseState()
   }
 
-  resume() {
+  private resumeNow() {
     this.sql.exec("DELETE FROM flags WHERE key IN ('paused_at_ms', 'paused_by')")
     return this.pauseState()
   }
@@ -1409,6 +1556,177 @@ export class AgentCore {
       `INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, tool_use_id, decision, input_bytes, input_sha256, at_ms)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (turn_id, n) DO NOTHING`,
     ).bind(turnId, n, t.chat_id, t.owner_id, entry.hook, entry.toolName, entry.toolUseId ?? null, entry.decision, input.byteLength, sha, this.d.now()).run()
+  }
+
+  // ---------- P6's deferral seams (P6 asks 4 and 5) ----------
+
+  private onDeferred: OnDeferredHook | null = null
+  /** P6's anchor (compose.ts) sets it; null until P6 W3 fills the anchor. */
+  setOnDeferred(h: OnDeferredHook | null): void { this.onDeferred = h }
+
+  /**
+   * The `deferred-hook:<questionId>` task: P6's `onDeferred` with the question, until it answers ok. No hook yet, a
+   * refusal or a throw: retried with the default backoff, quarantined after 10 (the runs signal's `scheduler` check);
+   * the recovery is route 51's revive, which keeps the payload, so the same call runs again.
+   */
+  async deferredHook(task: DueTask, ctx: TaskContext): Promise<TaskResult> {
+    const q = task.payload as DeferredQuestion
+    // Only while the chat still waits on this question (a revived or retried task after a resume, reset or expiry: r1).
+    const cs = this.chatState(q.chatId)
+    if (!cs || cs.session !== 'waiting' || this.waitingOf(cs)?.questionId !== q.questionId) return { done: true }
+    if (this.onDeferred === null) return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: 'no onDeferred hook' }
+    const answer = await this.onDeferred(q, ctx)
+    if ('ok' in answer) return { done: true }
+    return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: answer.retry.slice(0, 300) }
+  }
+
+  /**
+   * Answers the question the chat waits on (P6 ask 5): submits the resume turn (empty text, `next`, the parked turn's
+   * model, format and end task), idempotent by `questionId` (a second call answers the first's turn, whatever its
+   * decision). Refused `not_found` when the chat doesn't wait on this question. A chat in the trash (or gone) in D1:
+   * the wait is abandoned here, its parked end fired `cancelled`/`deleted`, and `not_found`. A refusal it should wait
+   * out (paused, draining, a full queue) is answered as it is and tried again by the `deferred-resume` task.
+   */
+  async resumeDeferred(chatId: string, decision: DeferDecision, questionId: string): Promise<SendTurnResult | Refusal> {
+    if (decision !== 'allow' && decision !== 'deny') return refuse('invalid')
+    const key = resumeKeyOf(questionId)
+    const prior = this.byKey(chatId, key)
+    if (prior) return this.answerOf(prior)
+    const before = this.chatState(chatId)
+    const w0 = before?.session === 'waiting' ? this.waitingOf(before) : null
+    if (!w0 || w0.questionId !== questionId) return refuse('not_found')
+    const parked0 = this.turn(w0.turnId)
+    if (!parked0) return refuse('not_found')
+    // `next`, never `now`: `now` would interrupt a parked turn still live (r1); the run's queue already waits for it to end.
+    const input = { clientTurnKey: key, text: '', priority: 'next' as const, model: parked0.picker_id, attachments: [] }
+    // The hash is stored like any turn's; a second call never compares it (it answers the first turn by key).
+    const hash = await submitPayloadHash({ ...input, effort: parked0.effort })
+    // Read for a routine's (`m_system`) chat too: P4 ensures the routine chat in D1 before its first submit.
+    const goneInD1 = await this.d.chatGone(chatId)
+    // Back from the awaits: the same checks again on what's stored now (claim before await, 4.2.1).
+    const again = this.byKey(chatId, key)
+    if (again) return this.answerOf(again)
+    const cs = this.chatState(chatId)
+    const w = cs?.session === 'waiting' ? this.waitingOf(cs) : null
+    if (!cs || !w || w.questionId !== questionId) return refuse('not_found')
+    // Gone in D1 (in the trash or not there) or marked deleted here by route 27 (A8: either one; the mark is read now,
+    // after the await, so a delete that landed meanwhile counts).
+    const gone = goneInD1 || this.sql.exec('SELECT 1 FROM chat_deletion WHERE chat_id = ? AND deleted = 1', chatId).toArray().length > 0
+    if (gone) {
+      this.abandonWait(cs, 'deleted')
+      return refuse('not_found')
+    }
+    const parked = this.turn(w.turnId)!
+    const owner = cs.owner_id
+    const turn: SubmitTurn = {
+      chatId, input,
+      by: owner === SYSTEM_MEMBER_ID ? { kind: 'service', memberId: owner } : { kind: 'person', memberId: owner },
+      model: parked.model, pickerId: parked.picker_id, effort: parked.effort as SubmitTurn['effort'], sideModel: parked.side_model,
+      maxTurns: parked.max_turns, webFetchDomains: parked.web_fetch_json === null ? null : JSON.parse(parked.web_fetch_json) as string[],
+    }
+    const answer = this.admit(turn, hash, [], {
+      ...(parked.output_format_json === null ? {} : { outputFormat: JSON.parse(parked.output_format_json) as OutputFormat }),
+      ...(parked.on_end_json === null ? {} : { onEnd: JSON.parse(parked.on_end_json) as OnEnd }),
+      resume: { questionId, decision, toolUseId: w.toolUseId, parkedTurnId: parked.turn_id },
+    })
+    if ('refused' in answer && waitRefusal(answer)) {
+      // `schedule`, not `ensure`: a fresh generation with attempts 0 each time, so a long pause never quarantines it.
+      this.d.scheduler.schedule({
+        id: `deferred-resume:${questionId}`, kind: 'deferred-resume', dueAtMs: this.d.now() + RESUME_RETRY_MS,
+        payload: { chatId, decision, questionId },
+      })
+    } else if ('refused' in answer) {
+      // Any other refusal (the owner removed, say) never passes by waiting: the wait is given up now, once (r1).
+      this.abandonWait(this.chatState(chatId)!, answer.refused.reason ?? answer.refused.code)
+    }
+    return answer
+  }
+
+  /** Gives up a chat's wait: the parked end fired (`fireParked`), the session fresh, in one synchronous step. */
+  private abandonWait(cs: ChatStateRow, failure: string) {
+    this.fireParked(cs, failure)
+    this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
+      checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, cs.chat_id)
+  }
+
+  /** The `deferred-resume:<questionId>` task: the resume again (a wait reschedules it from inside `resumeDeferred`). */
+  async deferredResume(task: DueTask): Promise<TaskResult> {
+    const p = task.payload as { chatId: string; decision: DeferDecision; questionId: string }
+    await this.resumeDeferred(p.chatId, p.decision, p.questionId)
+    return { done: true }
+  }
+
+  private answerOf(t: TurnRow): SendTurnResult {
+    return { runId: t.run_id, turnId: t.turn_id, messageId: `${t.turn_id}.u`, position: t.answer_position }
+  }
+
+  /** `TaskContext.chats.status` (P4, B2): read only; an unknown chat reads as not waiting with no live run. */
+  chatStatus(chatId: string): ChatStatus {
+    const cs = this.chatState(chatId)
+    return { waiting: cs?.session === 'waiting', liveRunId: cs?.live_run_id ?? null }
+  }
+
+  // ---------- person data (P8 C1, PR 6) ----------
+
+  /**
+   * A person's rows in this object's SQLite, per table (`PERSON_DATA_TABLES`, ports.ts): counted, or deleted in one
+   * synchronous step. `delete` refuses `busy` while any of the person's turns is queued, starting, running or ending,
+   * any of their chats waits on a question, or a turn's hold isn't given back yet (its ledger rows are still needed).
+   * A second delete counts zeros.
+   */
+  personData(personId: string, mode: 'count' | 'delete'): PersonDataAnswer {
+    if (mode !== 'count' && mode !== 'delete') throw new Error(`personData: unknown mode ${String(mode)}`)
+    // The system member's rows are every routine's, never one person's (r1).
+    if (personId === SYSTEM_MEMBER_ID) return refuse('invalid')
+    const live = this.count(`owner_id = ? AND state IN ('queued', ${ACTIVE.slice(1, -1)})`, personId)
+      + this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM chat_state WHERE owner_id = ? AND session = 'waiting'", personId).one().n
+      + this.count("owner_id = ? AND state IN ('ended', 'cancelled') AND reserved > 0 AND settled = 0", personId)
+      // A final turn whose rows aren't in D1 yet: its flush writes D1 after an await, so a delete now could let that
+      // batch land after C1's D1 delete (rows nothing would reach). Busy until flushed: once delete answers, no D1 write
+      // for this person follows from this object.
+      + this.count("owner_id = ? AND state IN ('ended', 'cancelled') AND d1_flushed = 0", personId)
+      // A pending file confirm: `drainEffects` may be inside `files.confirm` (D1 and R2 writes after an await) (r1).
+      + this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM turn_effects WHERE turn_id IN (SELECT turn_id FROM turns WHERE owner_id = ?)', personId).one().n
+    if (mode === 'delete' && live > 0) return { busy: true }
+    const turnsOf = "SELECT turn_id FROM turns WHERE owner_id = ?"
+    const byTurn = (table: string) => [`${table} WHERE turn_id IN (${turnsOf})`, [personId]] as const
+    const where: Record<Exclude<PersonDataTable, 'due_tasks'>, readonly [string, readonly SqlStorageValue[]]> = {
+      events: ['events WHERE run_id IN (SELECT run_id FROM runs WHERE owner_id = ?)', [personId]],
+      model_calls: byTurn('model_calls'),
+      ledger_queue: byTurn('ledger_queue'),
+      pool_queue: byTurn('pool_queue'),
+      turn_effects: byTurn('turn_effects'),
+      turn_trace: byTurn('turn_trace'),
+      turn_rows: byTurn('turn_rows'),
+      chat_deletion: ['chat_deletion WHERE chat_id IN (SELECT chat_id FROM chat_state WHERE owner_id = ? UNION SELECT chat_id FROM turns WHERE owner_id = ?)', [personId, personId]],
+      run_tokens: ['run_tokens WHERE member_id = ?', [personId]],
+      chat_state: ['chat_state WHERE owner_id = ?', [personId]],
+      turns: ['turns WHERE owner_id = ?', [personId]],
+      runs: ['runs WHERE owner_id = ?', [personId]],
+    }
+    // Due tasks naming the person's turns, runs, chats or questions: by id (`<kind>:<id>`, or the id itself) or as a
+    // JSON string value in the payload. Read before any row they're matched by is deleted.
+    const ids = new Set<string>()
+    for (const r of this.sql.exec<{ turn_id: string; run_id: string; chat_id: string }>('SELECT turn_id, run_id, chat_id FROM turns WHERE owner_id = ?', personId)) {
+      ids.add(r.turn_id); ids.add(r.run_id); ids.add(r.chat_id); ids.add(questionIdOf(r.turn_id))
+    }
+    for (const r of this.sql.exec<{ chat_id: string }>('SELECT chat_id FROM chat_state WHERE owner_id = ?', personId)) ids.add(r.chat_id)
+    for (const r of this.sql.exec<{ run_id: string; chat_id: string }>('SELECT run_id, chat_id FROM runs WHERE owner_id = ?', personId)) { ids.add(r.run_id); ids.add(r.chat_id) }
+    const tasks = this.sql.exec<{ id: string; payload_json: string | null }>('SELECT id, payload_json FROM due_tasks').toArray()
+      .filter(t => [...ids].some(x => t.id === x || t.id.endsWith(`:${x}`) || (t.payload_json?.includes(JSON.stringify(x)) ?? false)))
+    const exists = (table: string) => this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", table).toArray().length > 0
+    const counts = Object.fromEntries(PERSON_DATA_TABLES.map(k => [k, 0])) as Record<PersonDataTable, number>
+    counts.due_tasks = tasks.length
+    for (const [table, [w, args]] of Object.entries(where) as [Exclude<PersonDataTable, 'due_tasks'>, readonly [string, readonly SqlStorageValue[]]][]) {
+      if (!exists(table)) continue
+      counts[table] = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${w}`, ...args).one().n
+    }
+    if (mode === 'delete') {
+      for (const t of tasks) this.sql.exec('DELETE FROM due_tasks WHERE id = ?', t.id)
+      // Children first: `events` and the per-turn tables select through `runs` and `turns`.
+      for (const [table, [w, args]] of Object.entries(where)) if (exists(table)) this.sql.exec(`DELETE FROM ${w}`, ...args)
+    }
+    return { counts }
   }
 
   // ---------- seeds (4.11) ----------

@@ -4,8 +4,9 @@
 import { OutputFormat } from '../../../shared/protocol/index.ts'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { AgentCore } from './core.ts'
-import type { InternalSubmit, Refusal } from './ports.ts'
-import type { SqlScheduler, TaskHandler } from './scheduler.ts'
+import type { BrandAgentPorts, InternalSubmit, Refusal } from './ports.ts'
+import type { Scheduler, SqlScheduler, TaskContext, TaskHandler } from './scheduler.ts'
+import type { RunTokens } from './tokens.ts'
 
 type Registry = Readonly<Record<string, TaskHandler<never>>>
 
@@ -42,4 +43,22 @@ export async function internalSubmit(core: AgentCore, sql: SqlStorage, registry:
     if (held && held.kind !== onEnd.kind) return { refused: { code: 'invalid' } }
   }
   return core.submitTurn(turn, { outputFormat, onEnd })
+}
+
+/**
+ * What a task handler gets (index.ts and the test harness build it here, so tests run the shipped context): the
+ * object's parts, `runs.submit`, `paused` (a getter: the stored flag at each access, never a value from when the
+ * context was built), `resumeDeferred` and `chats.status`.
+ */
+export function taskContext(p: {
+  nowMs: number; env: Env; sql: SqlStorage; scheduler: Scheduler; tokens: RunTokens; ports: BrandAgentPorts; core: AgentCore; registry: Registry
+}): TaskContext {
+  const { core, sql, registry } = p
+  return {
+    nowMs: p.nowMs, env: p.env, sql, scheduler: p.scheduler, tokens: p.tokens, ports: p.ports, agent: core,
+    runs: { submit: t => internalSubmit(core, sql, registry, t) },
+    get paused() { return core.isPaused() },
+    resumeDeferred: (chatId, decision, questionId) => core.resumeDeferred(chatId, decision, questionId),
+    chats: { status: chatId => core.chatStatus(chatId) },
+  }
 }

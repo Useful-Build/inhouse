@@ -23,6 +23,7 @@ import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
 import { drainState, startDrain, undrain } from './ops/drain.ts'
 import { warmup } from './ops/warmup.ts'
+import { reviveTask } from './ops/revive.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -146,6 +147,7 @@ export const routes: readonly Route[] = [
   /* 50 */ { method: 'DELETE', pattern: '/api/ops/drain', handler: undrain }, // the test build's undrain (404 elsewhere), after 47 so the sweep's DELETE follows its POST
   /* 48 */ { method: 'POST', pattern: '/api/ops/warmup', handler: warmup },
   /* 49 */ { method: 'POST', pattern: '/api/chats/:id/session/reset', handler: resetSession },
+  /* 51 */ { method: 'POST', pattern: '/api/ops/tasks/revive', handler: reviveTask },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

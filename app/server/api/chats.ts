@@ -175,7 +175,9 @@ export const pinChat: Handler = async c => {
  *   changed in between, none is flipped: 409. So a chat that is live in D1 is always live in the BrandAgent.
  * A restore that fails or answers 409 after its BrandAgent call leaves its chats deleted in D1 and restored in the
  * BrandAgent (hidden; route 29 still refuses sends from D1). The next delete or restore of them that answers 200 puts
- * the two back in step (#163's escalation round).
+ * the two back in step (#163's escalation round). A send already past route 29's D1 read can be admitted in a
+ * restore's gap; if the restore's D1 write then fails or 409s, the turn runs in a chat deleted in D1 until the next
+ * delete fences it (accepted: three overlapping requests). Internal submits and resumes read D1 themselves (PR 6).
  */
 function deleteOrRestore(deleted: boolean): Handler {
   return async c => {

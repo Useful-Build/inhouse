@@ -10,7 +10,7 @@ import type { TurnRow } from '../../do/brand-agent/core.ts'
 import type { SubmitTurn } from '../../do/brand-agent/ports.ts'
 import { createAgentTables } from '../../do/brand-agent/schema.ts'
 import { createScheduler, registrySeeds } from '../../do/brand-agent/scheduler.ts'
-import { internalSubmit } from '../../do/brand-agent/task-ops.ts'
+import { taskContext } from '../../do/brand-agent/task-ops.ts'
 import type { AlarmPort, SqlScheduler, TaskContext, TaskHandler } from '../../do/brand-agent/scheduler.ts'
 import { taskHandlers } from '../../do/brand-agent/tasks/index.ts'
 import { createRunTokens } from '../../do/brand-agent/tokens.ts'
@@ -22,6 +22,7 @@ import { FakeSocket } from '../../do/brand-agent/testing/fake-socket.ts'
 import { SocketHub } from '../../do/brand-agent/sockets.ts'
 import type { OpenAnswer, SocketPrincipal } from '../../do/brand-agent/sockets.ts'
 import { SWEEP_EVERY_MS, sweepBy } from '../../do/brand-agent/authority.ts'
+import { chatStore } from '../../db/chats.ts'
 
 /** Far past the wall clock, so the runtime never fires an alarm itself. */
 export const T0 = 4_102_444_800_000
@@ -70,6 +71,8 @@ export interface Harness {
   modelsOff: Set<string>
   /** The start's settings read throws while `throws` is set. */
   modelCheck: { throws: boolean }
+  /** D1's chat read (`chatGone`) waits for `gate` when set: a barrier inside a resume's await. */
+  chatCheck: { gate: Promise<void> | null }
   /** The socket hub (PR 4), its sockets (kept across a restart, as hibernated sockets are) and its audit write. */
   hub: SocketHub
   sockets: FakeSocket[]
@@ -117,6 +120,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
     let sessions = 0
     const modelsOff = new Set<string>()
     const modelCheck = { throws: false }
+    const chatCheck: Harness['chatCheck'] = { gate: null }
     const sockets: FakeSocket[] = []
     const attachAudit: Harness['attachAudit'] = { lines: [], gate: null, fails: false }
     const build = (): Harness => {
@@ -127,10 +131,8 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
       let hub!: SocketHub
       const sched: SqlScheduler = createScheduler<TaskContext>({
         sql, alarm, now, handlers: registry,
-        context: (nowMs): TaskContext => ({
-          nowMs, env, sql, scheduler: sched, tokens, ports: { pool, usage, files }, agent: core,
-          runs: { submit: t => internalSubmit(core, sql, registry, t) },
-        }),
+        // The shipped context (task-ops.ts `taskContext`, as index.ts builds it).
+        context: (nowMs): TaskContext => taskContext({ nowMs, env, sql, scheduler: sched, tokens, ports: { pool, usage, files }, core, registry }),
       })
       hub = new SocketHub({
         sql, now, burst: o.burst,
@@ -146,6 +148,12 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
         onEvent: e => hub.onEvent(e), sockets: hub,
         sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: o.db ?? env.DB,
         taskSeeds: registrySeeds(registry),
+        // D1's `chats` as the real object reads it (index.ts): gone or in the trash.
+        chatGone: async chatId => {
+          if (chatCheck.gate) await chatCheck.gate
+          const c = await chatStore({ db: env.DB }).ownerOf(chatId)
+          return c === null || c.deleted
+        },
         newSessionId: () => `00000000-0000-4000-8000-${String(++sessions).padStart(12, '0')}`,
         modelUsable: async id => {
           if (modelCheck.throws) throw new Error('settings read failed')
@@ -153,7 +161,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
         },
       })
       const h: Harness = {
-        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck, registry, hub, sockets, attachAudit,
+        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck, chatCheck, registry, hub, sockets, attachAudit,
         connect(p, v = '1') {
           const answer = hub.open(JSON.stringify(p), v)
           if (!('accept' in answer)) return { ws: null, answer }
@@ -197,6 +205,18 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
     }
     await fn(build())
   })
+}
+
+/**
+ * A chat row in D1 as route 23 (or `ensureChat`) leaves it, its owner a person member (made if absent); `deletedAtMs`
+ * puts it in the trash. What an internal submit into a person's chat and every resume read first (PR 6, A7).
+ */
+export async function d1Chat(chatId: string, ownerId: string, deletedAtMs: number | null = null): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO members (id, kind, role, status, created_at_ms) VALUES (?, 'person', 'member', 'active', 0)").bind(ownerId),
+    env.DB.prepare('INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES (?, ?, ?, 0, 0, ?) ON CONFLICT(id) DO UPDATE SET deleted_at_ms = excluded.deleted_at_ms')
+      .bind(chatId, ownerId, 'A chat', deletedAtMs),
+  ])
 }
 
 // ---------- literal runner events (protocol v2) ----------
