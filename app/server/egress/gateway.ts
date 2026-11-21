@@ -67,9 +67,18 @@ export function gatewayUpstream(env: { AI?: AiGatewayBinding; AI_GATEWAY_ID?: st
 export const DEFAULT_SCENARIO = 'hello'
 const SCENARIO_MARKER = /\bscenario:([A-Za-z0-9_-]{1,64})\b/
 
+/**
+ * A user message's marker, read from its text only: a message carrying a tool result is never a prompt (a tool's output
+ * may quote a marker), so it has none.
+ */
 const markerOf = (m: MessagesRequest['messages'][number]): string | undefined => {
   if (m.role !== 'user') return undefined
-  return SCENARIO_MARKER.exec(typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''))?.[1]
+  if (typeof m.content === 'string') return SCENARIO_MARKER.exec(m.content)?.[1]
+  if (!Array.isArray(m.content)) return undefined
+  const blocks = m.content as { type?: unknown; text?: unknown }[]
+  if (blocks.some(b => b?.type === 'tool_result')) return undefined
+  const text = blocks.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
+  return SCENARIO_MARKER.exec(text)?.[1]
 }
 
 /**

@@ -434,5 +434,9 @@ describe('the test build hook', () => {
     expect(await send(firstRun.slice(0, 3))).toEqual({ status: 200, content: [{ type: 'text', text: 'Noted, thanks.' }] })
     const write = { role: 'assistant' as const, content: [{ type: 'text', text: 'Writing the table.' }, { type: 'tool_use', id: 'toolu_scripted_write', name: 'Bash', input: {} }] }
     expect(await send([...firstRun, ask('scenario:write-output'), write, result('toolu_scripted_write')])).toEqual({ status: 200, content: [{ type: 'text', text: 'Saved outputs/table.csv.' }] })
+    // A tool's output that quotes a marker is not a prompt: the loop stays on write-output.
+    const quoting = { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'toolu_scripted_write', content: 'file says scenario:hello' }] }
+    expect(scenarioOf({ model: 'm', messages: [ask('scenario:write-output go'), write, quoting] })).toBe('write-output')
+    expect(await send([ask('scenario:write-output go'), write, quoting])).toEqual({ status: 200, content: [{ type: 'text', text: 'Saved outputs/table.csv.' }] })
   })
 })
