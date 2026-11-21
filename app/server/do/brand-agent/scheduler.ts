@@ -48,6 +48,10 @@ export interface AgentTasks {
   leaseTask(turnId: string): Promise<TaskResult>
   /** The turn's fixed rows into D1; true once they're in. */
   flushTurn(turnId: string): Promise<boolean>
+  /** The `authority-sweep` task (authority.ts). */
+  authoritySweep(): Promise<TaskResult>
+  /** A `grant-expiry:<grantId>` task, by its task id (authority.ts). */
+  grantExpiry(taskId: string): Promise<TaskResult>
 }
 
 /** What a handler gets: the BrandAgent's parts. */

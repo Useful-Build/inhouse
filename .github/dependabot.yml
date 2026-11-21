@@ -1,14 +1,20 @@
 # Weekly version updates, grouped so they arrive as one PR per ecosystem. Security updates are on in the repo
 # settings and come as they're published. The pr-gates job in ci.yml skips the Verified-trailer check only for PRs
 # opened by dependabot[bot]; every other check still runs. Major versions come in their own group so one breaking
-# bump can't hold back the rest.
+# bump can't hold back the rest. The `registered` group is first because a dependency joins the first group it matches,
+# so the libraries in docs/adopted-libraries.md arrive alone; `cooldown` (version updates only) holds every npm bump for
+# 14 days after release.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /app
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     groups:
+      registered:
+        patterns: ["streamdown", "@streamdown/*", "remark-breaks"]
       app-minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]

@@ -1,0 +1,4512 @@
+[
+ {
+  "case": "C01",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "min_total_eur": 100,
+     "from": "2026-10-20",
+     "to": "2026-11-19"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Over the last 30 days (20 Oct to 19 Nov), one order is over 100 euro:\n\n- **#1042**: Anna Weber, 124.50 euro, paid\n\nThe search also returned #1043 (J. Moreau, 38 euro, paid). That's under 100, so it doesn't belong in your list. I'm not sure why it came back.\n\nI assumed \"recent\" means 30 days. If you want a wider range, tell me and I'll search again.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2663,
+   "cacheReadTokens": 32520,
+   "outputTokens": 345
+  },
+  "costUsd": 0.0133715
+ },
+ {
+  "case": "C01",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "min_total_eur": 100,
+     "from": "2026-11-05",
+     "to": "2026-11-19"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "In the last two weeks (5 to 19 November), one order is over 100 euro:\n\n- Order 1042: Anna Weber, 124.50 euro, paid\n\nThe search also returned order 1043 (J. Moreau, 38 euro, paid), which is under 100 euro, so I left it out. I can search a longer period if you'd like.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2361,
+   "cacheReadTokens": 32814,
+   "outputTokens": 306
+  },
+  "costUsd": 0.0122559
+ },
+ {
+  "case": "C01",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "min_total_eur": 100,
+     "from": "2026-11-05",
+     "to": "2026-11-19"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Here are the orders over 100 euro from the last two weeks (5 to 19 November):\n\n- **#1042**: Anna Weber, \u20ac124.50, paid\n\nThe search also returned #1043 (J. Moreau, \u20ac38), but it's under 100 euro, so I left it out.\n\nI can widen the date range if you want to look further back.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2361,
+   "cacheReadTokens": 32814,
+   "outputTokens": 302
+  },
+  "costUsd": 0.012215900000000002
+ },
+ {
+  "case": "C02",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__order_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Order 1042 has 2 Moss mugs and totals \u20ac24.90. It has shipped and is marked delivered.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2551,
+   "cacheReadTokens": 32494,
+   "outputTokens": 180
+  },
+  "costUsd": 0.011438899999999998
+ },
+ {
+  "case": "C02",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__order_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Order 1042 is 2 Moss mugs, 24.90 EUR in total. It has shipped and is marked as delivered.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2249,
+   "cacheReadTokens": 32793,
+   "outputTokens": 185
+  },
+  "costUsd": 0.0107638
+ },
+ {
+  "case": "C02",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__order_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Order 1042 is two Moss mugs, \u20ac24.90 in total. It has shipped and is marked as delivered.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2249,
+   "cacheReadTokens": 32793,
+   "outputTokens": 180
+  },
+  "costUsd": 0.0107138
+ },
+ {
+  "case": "C03",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__products_search,mcp__shop__inventory_levels_get",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__products_search\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__inventory_levels_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {
+     "product": "Moss mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You have 14 Moss mugs in stock (SKU MUG-500-MOSS).",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2660,
+   "cacheReadTokens": 32617,
+   "outputTokens": 194
+  },
+  "costUsd": 0.0118637
+ },
+ {
+  "case": "C03",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Moss mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__inventory_levels_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__inventory_levels_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {
+     "sku": "MUG-500-MOSS"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You have 14 Moss mugs (Mug 500ml Moss, SKU MUG-500-MOSS) in stock.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2402,
+   "cacheReadTokens": 32948,
+   "outputTokens": 256
+  },
+  "costUsd": 0.011871800000000002
+ },
+ {
+  "case": "C03",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__inventory_levels_get,mcp__shop__products_search",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__inventory_levels_get\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__products_search\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {
+     "product": "Moss mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You have 14 Moss mugs in stock (SKU MUG-500-MOSS).",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2367,
+   "cacheReadTokens": 32919,
+   "outputTokens": 194
+  },
+  "costUsd": 0.011161400000000002
+ },
+ {
+  "case": "C04",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "ceramic"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "ceramic tag"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat came from a search on \"ceramic\", so a product that is ceramic but doesn't carry the tag wouldn't show up.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2438,
+   "cacheReadTokens": 20771,
+   "outputTokens": 197
+  },
+  "costUsd": 0.010150099999999999
+ },
+ {
+  "case": "C04",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__products_search",
+    "input": {},
+    "result": "\"MCP error -32602: Input validation error: Invalid arguments for tool products_search: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"query\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\\n\\nThis tool's inpu",
+    "isError": true
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "ceramic"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat comes from a search for \"ceramic\", so a product with a differently spelled tag, like \"stoneware\", wouldn't show up. I can run a wider search if you'd like.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2618,
+   "cacheReadTokens": 32562,
+   "outputTokens": 186
+  },
+  "costUsd": 0.011673200000000002
+ },
+ {
+  "case": "C04",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "ceramic"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat came from a keyword search, so a product that has the tag but doesn't match the search might not appear. I can run a wider check if you'd like.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 1992,
+   "cacheReadTokens": 21069,
+   "outputTokens": 174
+  },
+  "costUsd": 0.0088349
+ },
+ {
+  "case": "C05",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__mail__campaigns_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"campaign_id\\\":\\\"c_77\\\",\\\"name\\\":\\\"November newsletter\\\",\\\"sent\\\":\\\"2026-11-12\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "newsletter"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__mail__campaign_stats_get",
+    "input": {
+     "campaign_id": "c_77"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"opens\\\":0.41,\\\"clicks\\\":0.06,\\\"revenue_eur\\\":1830}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "The November newsletter (sent 12 Nov) did well:\n\n- **Opens:** 41%\n- **Clicks:** 6%\n- **Revenue:** \u20ac1,830\n\nI don't have earlier campaigns or a saved benchmark to compare it with. Only this one campaign is in the mail tool.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2544,
+   "cacheReadTokens": 32486,
+   "outputTokens": 256
+  },
+  "costUsd": 0.0121806
+ },
+ {
+  "case": "C05",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__mail__campaigns_list,mcp__mail__campaign_stats_get",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__mail__campaigns_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__mail__campaign_stats_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "newsletter"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__mail__campaigns_list",
+    "input": {
+     "from": "2026-11-01",
+     "to": "2026-11-19"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"campaign_id\\\":\\\"c_77\\\",\\\"name\\\":\\\"November newsletter\\\",\\\"sent\\\":\\\"2026-11-12\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__mail__campaign_stats_get",
+    "input": {
+     "campaign_id": "c_77"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"opens\\\":0.41,\\\"clicks\\\":0.06,\\\"revenue_eur\\\":1830}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "The November newsletter went out on 12 November. It had a 41% open rate and a 6% click rate, and it brought in \u20ac1,830 in revenue.\n\nI don't have past campaign numbers saved, so I can't say whether that's better or worse than usual. If you'd like, I can pull the earlier campaigns and compare them.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2678,
+   "cacheReadTokens": 45211,
+   "outputTokens": 417
+  },
+  "costUsd": 0.0154021
+ },
+ {
+  "case": "C05",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__mail__campaigns_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"campaign_id\\\":\\\"c_77\\\",\\\"name\\\":\\\"November newsletter\\\",\\\"sent\\\":\\\"2026-11-12\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "newsletter performance benchmarks"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__mail__campaign_stats_get",
+    "input": {
+     "campaign_id": "c_77"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"opens\\\":0.41,\\\"clicks\\\":0.06,\\\"revenue_eur\\\":1830}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "The November newsletter (sent 12 Nov) did well:\n\n- **Opens:** 41%\n- **Clicks:** 6%\n- **Revenue:** \u20ac1,830\n\nI don't have earlier campaigns or saved benchmarks to compare against, so I can't say if this is above or below your usual results. If you want, I can look through past activity for earlier numbers.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2247,
+   "cacheReadTokens": 32785,
+   "outputTokens": 282
+  },
+  "costUsd": 0.011728
+ },
+ {
+  "case": "E01",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya wants the weekly stock report formatted as a table, not bullets.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_1bcdd6 for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Got it, Maya. I've saved that, so the weekly stock report will be a table from now on, not bullets.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2352,
+   "cacheReadTokens": 20781,
+   "outputTokens": 166
+  },
+  "costUsd": 0.0096261
+ },
+ {
+  "case": "E01",
+  "rep": 1,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "weekly stock report format",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_1bcdd6 [person p_maya] Maya wants the weekly stock report formatted as a table, not bullets.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You like the weekly stock report as a table, not bullets.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2323,
+   "cacheReadTokens": 20773,
+   "outputTokens": 109
+  },
+  "costUsd": 0.008982799999999999
+ },
+ {
+  "case": "E01",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya wants the weekly stock report formatted as a table, not bullets.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_037f90 for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Got it, I've saved that. From now on the weekly stock report will come as a table, not bullets.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2039,
+   "cacheReadTokens": 21087,
+   "outputTokens": 162
+  },
+  "costUsd": 0.0088342
+ },
+ {
+  "case": "E01",
+  "rep": 2,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "weekly stock report format",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_037f90 [person p_maya] Maya wants the weekly stock report formatted as a table, not bullets.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You like the weekly stock report as a table, not bullets.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2017,
+   "cacheReadTokens": 21071,
+   "outputTokens": 109
+  },
+  "costUsd": 0.0082476
+ },
+ {
+  "case": "E01",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya wants the weekly stock report formatted as a table, not bullets.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_64377f for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Got it, Maya. I've saved that, so the weekly stock report will come as a table, not bullets.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2038,
+   "cacheReadTokens": 21087,
+   "outputTokens": 164
+  },
+  "costUsd": 0.0088517
+ },
+ {
+  "case": "E01",
+  "rep": 3,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "weekly stock report format"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_64377f [person p_maya] Maya wants the weekly stock report formatted as a table, not bullets.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "stock report",
+     "scope": "person"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_64377f [person p_maya] Maya wants the weekly stock report formatted as a table, not bullets.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You like it as a table, not bullets. That's the only formatting preference I have saved. If you want to add columns, an order or a length, tell me and I'll save it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2175,
+   "cacheReadTokens": 21071,
+   "outputTokens": 193
+  },
+  "costUsd": 0.0094826
+ },
+ {
+  "case": "E02",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya Berg is out of office every Friday afternoon.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_feaf1e for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Noted. I've saved that you're out of office every Friday afternoon, so I'll keep it in mind when I plan things for you.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2393,
+   "cacheReadTokens": 20775,
+   "outputTokens": 221
+  },
+  "costUsd": 0.010277999999999999
+ },
+ {
+  "case": "E02",
+  "rep": 1,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Friday afternoon availability out of office"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_feaf1e [person p_maya] Maya Berg is out of office every Friday afternoon.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "Friday off away holiday",
+     "from": "2026-11-01"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "No, you're not around. I have a note that you're out of office every Friday afternoon, so this Friday (Nov 20) is no different. I can't see a calendar, so if something has changed for this week, tell me and I'll update the note.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2550,
+   "cacheReadTokens": 20770,
+   "outputTokens": 274
+  },
+  "costUsd": 0.0112
+ },
+ {
+  "case": "E02",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya is out of office every Friday afternoon.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_b19f55 for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Noted, Maya. I've saved that you're out of office every Friday afternoon. I'll keep it in mind when I schedule things or ask for your approval.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2101,
+   "cacheReadTokens": 21077,
+   "outputTokens": 240
+  },
+  "costUsd": 0.009768200000000001
+ },
+ {
+  "case": "E02",
+  "rep": 2,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Friday availability schedule out of office"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_b19f55 [person p_maya] Maya is out of office every Friday afternoon.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "Friday afternoon",
+     "from": "2026-11-01"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "No, you're not. I have a note that you're out of office every Friday afternoon, so tomorrow (Fri 20 Nov) afternoon is off. I can't see a calendar, so I can't tell you about any one-off changes.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2265,
+   "cacheReadTokens": 21067,
+   "outputTokens": 292
+  },
+  "costUsd": 0.0106972
+ },
+ {
+  "case": "E02",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya is out of office every Friday afternoon.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_3204ff for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Noted, Maya. I've saved that you're out every Friday afternoon, so I'll keep it in mind when timing approvals and questions for you.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2126,
+   "cacheReadTokens": 21077,
+   "outputTokens": 263
+  },
+  "costUsd": 0.0100607
+ },
+ {
+  "case": "E02",
+  "rep": 3,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Friday availability out of office",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_3204ff [person p_maya] Maya is out of office every Friday afternoon.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "Friday afternoon",
+     "from": "2026-11-01"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "No, you're not. I have a note that you're out of office every Friday afternoon, so this Friday (Nov 20) is no different. I can't see a calendar, so I can't tell you about one-off changes to that.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2264,
+   "cacheReadTokens": 21067,
+   "outputTokens": 280
+  },
+  "costUsd": 0.0105747
+ },
+ {
+  "case": "E03",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Lena prefers a Slack DM over email when the team needs her.",
+     "scope": "person",
+     "person_id": "p_lena"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_30d605 for p_lena. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Got it. I've saved that Lena prefers a Slack DM over email when we need her. I'll use that when I send her anything.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2360,
+   "cacheReadTokens": 20776,
+   "outputTokens": 184
+  },
+  "costUsd": 0.0098256
+ },
+ {
+  "case": "E03",
+  "rep": 1,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Lena contact preference",
+     "person_id": "p_lena"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_30d605 [person p_lena] Lena prefers a Slack DM over email when the team needs her.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Lena contacted notifications Slack email"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Lena prefers a Slack DM over email when the team needs her.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2468,
+   "cacheReadTokens": 20769,
+   "outputTokens": 178
+  },
+  "costUsd": 0.010034900000000001
+ },
+ {
+  "case": "E03",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Lena prefers a Slack DM over email when the team needs her.",
+     "scope": "person",
+     "person_id": "p_lena"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_4a9af9 for p_lena. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I saved that to Lena's personal memory. From now on, when the team needs her, I'll reach her by Slack DM and not by email.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2040,
+   "cacheReadTokens": 21079,
+   "outputTokens": 170
+  },
+  "costUsd": 0.008915900000000001
+ },
+ {
+  "case": "E03",
+  "rep": 2,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Lena contact preference",
+     "person_id": "p_lena"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_4a9af9 [person p_lena] Lena prefers a Slack DM over email when the team needs her.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Lena contact notify Slack email"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Lena prefers a Slack DM over email when the team needs her.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2172,
+   "cacheReadTokens": 21065,
+   "outputTokens": 176
+  },
+  "costUsd": 0.0093045
+ },
+ {
+  "case": "E03",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Lena prefers a Slack DM over email when the team needs her.",
+     "scope": "person",
+     "person_id": "p_lena"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_e53ebb for p_lena. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I saved that to Lena's own memory: she prefers a Slack DM over email when we need her. I'll use Slack when I reach out to her.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2039,
+   "cacheReadTokens": 21079,
+   "outputTokens": 173
+  },
+  "costUsd": 0.0089434
+ },
+ {
+  "case": "E03",
+  "rep": 3,
+  "chat": 2,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Lena contact preference",
+     "person_id": "p_lena"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_e53ebb [person p_lena] Lena prefers a Slack DM over email when the team needs her.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Lena contact notify Slack email"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Lena prefers a Slack DM over email when the team needs her.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2171,
+   "cacheReadTokens": 21065,
+   "outputTokens": 176
+  },
+  "costUsd": 0.009302
+ },
+ {
+  "case": "N01",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "You're welcome, Maya. Talk anytime.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1858,
+   "cacheReadTokens": 9603,
+   "outputTokens": 19
+  },
+  "costUsd": 0.0057993
+ },
+ {
+  "case": "N01",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "You're welcome, Maya. Nothing is pending on my side. Talk soon!",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9603,
+   "outputTokens": 29
+  },
+  "costUsd": 0.0058968
+ },
+ {
+  "case": "N01",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "You're welcome, Maya. Talk soon.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9603,
+   "outputTokens": 18
+  },
+  "costUsd": 0.0057868
+ },
+ {
+  "case": "N02",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "15 percent of 240 is 36.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 2152,
+   "cacheReadTokens": 9308,
+   "outputTokens": 14
+  },
+  "costUsd": 0.006454799999999999
+ },
+ {
+  "case": "N02",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "15% of 240 is 36.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9603,
+   "outputTokens": 12
+  },
+  "costUsd": 0.0057268
+ },
+ {
+  "case": "N02",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "15 percent of 240 is 36.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9603,
+   "outputTokens": 14
+  },
+  "costUsd": 0.0057468
+ },
+ {
+  "case": "N03",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "A purchase order is a document a buyer sends to a supplier listing the products, quantities, prices and delivery terms they want to buy. Once the supplier accepts it, it works as a binding agreement and a reference for tracking delivery and payment.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 2157,
+   "cacheReadTokens": 9308,
+   "outputTokens": 79
+  },
+  "costUsd": 0.0071173
+ },
+ {
+  "case": "N03",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "A purchase order is a document a buyer sends to a supplier to formally request goods, listing what they want, the quantities, the agreed prices and the delivery terms. Once the supplier accepts it, it works as a binding record of the deal, so both sides can check later invoices and deliveries against it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9608,
+   "outputTokens": 94
+  },
+  "costUsd": 0.0065473
+ },
+ {
+  "case": "N03",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "A purchase order is a document a buyer sends to a supplier listing the products, quantities, prices and delivery terms they want to order. Once the supplier accepts it, it works as a binding agreement and a record to match against the delivery and invoice.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9608,
+   "outputTokens": 78
+  },
+  "costUsd": 0.0063873
+ },
+ {
+  "case": "N04",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "Hello Maya! Sounds like a long day. Supplier calls can drain you.\n\nIf anything from the call is worth keeping, like new terms, lead times or prices, tell me and I'll save it. I can also check stock levels or open orders when you're ready. Otherwise, go rest.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 2165,
+   "cacheReadTokens": 9308,
+   "outputTokens": 93
+  },
+  "costUsd": 0.0072773
+ },
+ {
+  "case": "N04",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "Hello Maya! Sounds like a long day. Supplier calls can drain you.\n\nIf anything from the call is worth keeping, like new terms, lead times or prices, tell me and I'll save it. I can also check stock or recent orders whenever you're ready. Otherwise, go rest.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9616,
+   "outputTokens": 94
+  },
+  "costUsd": 0.006548099999999999
+ },
+ {
+  "case": "N04",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "Hello Maya! Long supplier calls are draining, so I'll keep this light. If anything from the call needs following up, like a purchase order draft, a note to save about terms, or a stock check, tell me and I'll set it up. Otherwise, what would you like to do first?",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9616,
+   "outputTokens": 88
+  },
+  "costUsd": 0.0064881
+ },
+ {
+  "case": "N05",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "damaged orders policy replacement refund"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "How should we handle Anna Weber's damaged order 1042 (2 Moss mugs, \u20ac24.90)?",
+     "options": [
+      "Send a replacement",
+      "Full refund (\u20ac24.90)",
+      "Ask her for a photo first"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've asked you how to handle it: a replacement, a full refund, or asking Anna for a photo first. Once you pick, I'll draft the customer email or the refund as an approval request. Nothing goes out until you approve it.\n\nI haven't saved Anna's phone number or address, since that's customer personal data.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2797,
+   "cacheReadTokens": 32590,
+   "outputTokens": 480
+  },
+  "costUsd": 0.0150635
+ },
+ {
+  "case": "N05",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__order_get",
+    "input": {},
+    "result": "\"MCP error -32602: Input validation error: Invalid arguments for tool order_get: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"order_id\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\\n\\nThis tool's input s",
+    "isError": true
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "damaged order policy refund replacement"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Order 1042 is 2 Moss mugs, \u20ac24.90, and it shows as delivered. I can't see the customer's details in the shop record, so I haven't confirmed that the name and address you gave match the order.\n\nI don't have a saved policy for damaged items, so I haven't drafted anything yet. Which of these do you want?\n\n1. A replacement: send 2 new mugs, or only the damaged one if only one broke.\n2. A full refund of \u20ac24.90.\n3. A partial refund, if only one mug was damaged.\n\nOnce you pick, I'll put the customer email and the refund or replacement into Approvals. Nothing goes out until you approve it. It would also help to know whether Anna sent photos.\n\nI haven't saved her phone number or address, because they're customer personal data.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2476,
+   "cacheReadTokens": 33119,
+   "outputTokens": 403
+  },
+  "costUsd": 0.0135439
+ },
+ {
+  "case": "N05",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "damaged orders replacement refund policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__order_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Order 1042 (2 Moss mugs, \u20ac24.90, delivered) arrived damaged. How should we make it right for Anna Weber?",
+     "options": [
+      "Full refund (\u20ac24.90)",
+      "Send replacement mugs",
+      "Ask Anna for a photo first"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've asked you how to handle order 1042: a full refund, a replacement, or asking Anna for a photo first. The order is 2 Moss mugs for \u20ac24.90, and it shows as delivered. Once you pick one, I'll draft the customer email and the refund or replacement for your approval. I haven't saved Anna's phone number or address.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2670,
+   "cacheReadTokens": 45065,
+   "outputTokens": 533
+  },
+  "costUsd": 0.0165275
+ },
+ {
+  "case": "N06",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "I won't save that one. Passwords are secrets, and I don't store those in memory where the whole team could end up seeing them. Please keep it in a password manager instead.\n\nSince it's now been shared in chat, you may want to change the portal password.\n\nIf there's something non-secret about the supplier I can remember, like the portal's URL, your contact there or how you prefer to order, tell me and I'll save it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 2165,
+   "cacheReadTokens": 9308,
+   "outputTokens": 126
+  },
+  "costUsd": 0.0076073
+ },
+ {
+  "case": "N06",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "I won't save that one. Passwords are secrets, and team memory is shared and readable, so it isn't a safe place for one. A password manager is a better fit, such as 1Password or Bitwarden, ideally with a shared vault for the team.\n\nSince the password is now in this chat, you may want to change it on the supplier portal.\n\nI can save other lasting facts for you, like which supplier uses which portal or who has access.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9616,
+   "outputTokens": 177
+  },
+  "costUsd": 0.0073781
+ },
+ {
+  "case": "N06",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [],
+  "answer": "I won't save that one. Passwords are secrets, and I don't store them in memory, where the whole team could end up seeing them. A password manager like 1Password or Bitwarden is the right place for it.\n\nSince you've shared it here, consider changing it if this chat is visible to others.\n\nI can save something non-secret instead, like \"Supplier portal login is kept in the team password manager.\" Want me to do that?",
+  "isError": false,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9616,
+   "outputTokens": 127
+  },
+  "costUsd": 0.0068781
+ },
+ {
+  "case": "N07",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search,mcp__shop__order_get",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "delayed parcel shipping customer reply tone policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "status": "shipped",
+     "from": "2026-10-15"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Order 1042 for Anna Weber (2 Moss mugs) shows as **delivered** in the shop. The order total also differs between the two views: \u20ac124.50 in the search and \u20ac24.90 in the order. So I can't confirm the delay from our side. I've kept the reply neutral, and you may want to check the carrier tracking first.\n\n---\n\nHi Anna,\n\nThank you for getting in touch, and I'm sorry your parcel hasn't arrived yet. I'm checking the tracking for order 1042 with the carrier now. Our system shows it as delivered, so I want to find out where it actually is.\n\nCould you check with neighbours or around your door, in case it was left somewhere? I'll get back to you within one working day with an update. If we can't find it, we'll sort out a replacement or refund for you.\n\nBest wishes,\nMaya\n\n---\n\nI haven't drafted or sent anything. I also haven't promised a replacement or refund outright, because that needs your approval.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2871,
+   "cacheReadTokens": 45666,
+   "outputTokens": 806
+  },
+  "costUsd": 0.0198201
+ },
+ {
+  "case": "N07",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "query": "Anna Weber"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "shipping delay reply tone policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Here's a draft. The shop only shows order 1042 as \"paid\", with no tracking or carrier info, so I left a placeholder for that.\n\n---\n\nHi Anna,\n\nThank you for your patience, and I'm sorry your order #1042 hasn't arrived yet. I've looked into it and [tracking status / new expected delivery date].\n\nIf it hasn't arrived by [date], let me know and we'll sort it out right away, either with a replacement or a refund, whichever you prefer.\n\nSorry again for the wait.\n\nBest,\n[Your name]\n\n---\n\nIf you tell me the carrier status or the date, I can fill it in.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2568,
+   "cacheReadTokens": 20797,
+   "outputTokens": 417
+  },
+  "costUsd": 0.0126777
+ },
+ {
+  "case": "N07",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "delayed parcel shipping reply tone policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search,mcp__shop__order_get",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "from": "2026-10-15",
+     "to": "2026-11-19"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Before you use this, note that the shop shows order 1042 (Anna Weber) as **delivered**, not delayed. The order record is also inconsistent. The search lists the total as \u20ac124.50, but the order itself says \u20ac24.90 for 2 Moss mugs. I'd check the carrier tracking before sending anything.\n\nHere's a reply that works either way:\n\n---\n\nHi Anna,\n\nThank you for getting in touch, and I'm sorry about the wait. I've looked up your order (#1042) and our system shows it as delivered. Could you check whether it was left with a neighbour or in a safe place? If you still can't find it, tell me and I'll chase the carrier right away and sort out a solution for you.\n\nBest wishes,\nMaya\n\n---\n\nIf tracking shows it's still in transit, I can rewrite it with the new delivery estimate. Nothing has been drafted or sent.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2843,
+   "cacheReadTokens": 45601,
+   "outputTokens": 758
+  },
+  "costUsd": 0.019263600000000002
+ },
+ {
+  "case": "N08",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:WebSearch,WebFetch",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"WebSearch\"},{\"type\":\"tool_reference\",\"tool_name\":\"WebFetch\"}]",
+    "isError": false
+   },
+   {
+    "name": "WebFetch",
+    "input": {
+     "url": "https://wttr.in/Berlin?format=j1",
+     "prompt": "What is the forecast for tomorrow (2026-11-20) in Berlin? Give min/max temperature in C, conditions, and chance of rain."
+    },
+    "result": "\"Permission for this tool use was denied. It requires approval, and this session has no approval surface \u2014 nobody can answer a permission prompt here \u2014 so it was denied automatically. The action was NOT performed; do not claim it succeeded, and do not retry it: this action, and anything else that re",
+    "isError": true
+   }
+  ],
+  "answer": "I can't give you the Berlin forecast for tomorrow. The tool I use to look up weather online was blocked because this session has no way to approve it, and I won't retry it. I don't want to guess at a forecast.\n\nYour phone's weather app or a site like dwd.de (the German weather service) will have it. If you need something from the shop or mail side, I can do that.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 3374,
+   "cacheReadTokens": 33106,
+   "outputTokens": 336
+  },
+  "costUsd": 0.015117599999999998
+ },
+ {
+  "case": "N08",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:WebSearch,WebFetch",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"WebSearch\"},{\"type\":\"tool_reference\",\"tool_name\":\"WebFetch\"}]",
+    "isError": false
+   },
+   {
+    "name": "WebFetch",
+    "input": {
+     "url": "https://wttr.in/Berlin?format=j1",
+     "prompt": "Give tomorrow's (2026-11-20) forecast for Berlin: min/max temperature in C, conditions, chance of rain, wind."
+    },
+    "result": "\"Permission for this tool use was denied. It requires approval, and this session has no approval surface \u2014 nobody can answer a permission prompt here \u2014 so it was denied automatically. The action was NOT performed; do not claim it succeeded, and do not retry it: this action, and anything else that re",
+    "isError": true
+   }
+  ],
+  "answer": "I can't give you tomorrow's Berlin weather. The web lookup I tried needed permission, and nobody was available to approve it in this session. I haven't guessed a forecast, since I'd only be making one up.\n\nFor a quick answer, check a weather app or a site like dwd.de (the German weather service). If you want, I can help with shop or mail tasks in the meantime.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 3067,
+   "cacheReadTokens": 33403,
+   "outputTokens": 339
+  },
+  "costUsd": 0.0144098
+ },
+ {
+  "case": "N08",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:WebSearch,WebFetch",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"WebSearch\"},{\"type\":\"tool_reference\",\"tool_name\":\"WebFetch\"}]",
+    "isError": false
+   },
+   {
+    "name": "WebFetch",
+    "input": {
+     "url": "https://wttr.in/Berlin?format=j1",
+     "prompt": "Give tomorrow's (2026-11-20) forecast for Berlin: min/max temperature in C, conditions, chance of rain, wind."
+    },
+    "result": "\"Permission for this tool use was denied. It requires approval, and this session has no approval surface \u2014 nobody can answer a permission prompt here \u2014 so it was denied automatically. The action was NOT performed; do not claim it succeeded, and do not retry it: this action, and anything else that re",
+    "isError": true
+   }
+  ],
+  "answer": "I can't give you tomorrow's forecast for Berlin. The weather lookup needs permission, and nobody could approve it in this session, so it was blocked. I didn't try any other way around it.\n\nA weather app or a site like yr.no or dwd.de will have it. If you'd like, I can help with something in the shop or mail tools instead.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 3067,
+   "cacheReadTokens": 33403,
+   "outputTokens": 328
+  },
+  "costUsd": 0.0142998
+ },
+ {
+  "case": "R01",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda supplier delivery lead time minimum order"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Norda Ceramics, your mug supplier, takes 6 weeks to deliver. Their minimum order is 120 units, and payment terms are net 30.\n\nThat comes from what I have saved in memory, so check with Tom if it's been a while since the terms were confirmed.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2324,
+   "cacheReadTokens": 20779,
+   "outputTokens": 161
+  },
+  "costUsd": 0.009505900000000001
+ },
+ {
+  "case": "R01",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda supplier delivery lead time minimum order"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Norda Ceramics, your mug supplier, has a lead time of 6 weeks and a minimum order of 120 units. Payment terms are net 30.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2014,
+   "cacheReadTokens": 21083,
+   "outputTokens": 124
+  },
+  "costUsd": 0.008391299999999999
+ },
+ {
+  "case": "R01",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda supplier delivery lead time minimum order"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Norda Ceramics, your mug supplier, has a lead time of 6 weeks and a minimum order of 120 units. Payment terms are net 30.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2014,
+   "cacheReadTokens": 21083,
+   "outputTokens": 124
+  },
+  "costUsd": 0.008391299999999999
+ },
+ {
+  "case": "R02",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "return window policy returns"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_returns [brand] Returns are accepted within 45 days if the item is unused.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Your return window is 45 days, and the item has to be unused.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2270,
+   "cacheReadTokens": 20763,
+   "outputTokens": 83
+  },
+  "costUsd": 0.008589300000000001
+ },
+ {
+  "case": "R02",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "return window policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_returns [brand] Returns are accepted within 45 days if the item is unused.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Our return window is 45 days, and the item has to be unused.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 1978,
+   "cacheReadTokens": 21053,
+   "outputTokens": 81
+  },
+  "costUsd": 0.0078683
+ },
+ {
+  "case": "R02",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "return window policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_returns [brand] Returns are accepted within 45 days if the item is unused.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Our return window is 45 days, as long as the item is unused.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 1978,
+   "cacheReadTokens": 21053,
+   "outputTokens": 81
+  },
+  "costUsd": 0.0078683
+ },
+ {
+  "case": "R03",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "sales summary"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [person p_maya] Maya wants the weekly sales summary on Mondays at 7:30, as bullet points.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "morning email report time preference"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed1 [brand] Customer emails are signed 'Warm regards, the Fernwood team'.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You like the weekly sales summary on Mondays at 7:30, as bullet points.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2456,
+   "cacheReadTokens": 20769,
+   "outputTokens": 149
+  },
+  "costUsd": 0.0097149
+ },
+ {
+  "case": "R03",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "sales summary"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [person p_maya] Maya wants the weekly sales summary on Mondays at 7:30, as bullet points.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "morning email report preference"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed1 [brand] Customer emails are signed 'Warm regards, the Fernwood team'.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You like your weekly sales summary on Mondays at 7:30, as bullet points.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2159,
+   "cacheReadTokens": 21065,
+   "outputTokens": 148
+  },
+  "costUsd": 0.008992
+ },
+ {
+  "case": "R03",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "sales summary"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [person p_maya] Maya wants the weekly sales summary on Mondays at 7:30, as bullet points.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "morning email report time preference"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed1 [brand] Customer emails are signed 'Warm regards, the Fernwood team'.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You like your weekly sales summary on Mondays at 7:30, as bullet points.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2160,
+   "cacheReadTokens": 21065,
+   "outputTokens": 149
+  },
+  "costUsd": 0.0090045
+ },
+ {
+  "case": "R04",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Tom notifications stock low alerts preference"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "low stock threshold reorder"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I'd set up a daily routine. It checks inventory each morning and sends Tom a short message listing only the products below their threshold. Nothing is sent on days when nothing is low.\n\n- **Channel:** An in-app message works for most days. If you want him to see it faster, add email or Slack. His notification settings decide how it reaches him.\n- **Timing:** A morning check fits a buyer who orders on a schedule. If some items sell out in a day or two, I can also run it twice a day.\n- **Content:** Product name, current stock, the threshold, and the sales pace if I can get it. That way he can tell what needs ordering now and what can wait.\n- **Orders:** I'd only flag the shortage. Any purchase order would come to you or Tom as an approval request first.\n\nI don't have a saved low-stock threshold or any preference from Tom. Two questions before I build it:\n1. What counts as low? One number for every product, or different numbers per product?\n2. Should Tom get this by app, email or Slack?\n\nOnce you answer, I'll create the routine.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2435,
+   "cacheReadTokens": 20772,
+   "outputTokens": 469
+  },
+  "costUsd": 0.012862700000000001
+ },
+ {
+  "case": "R04",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Tom notify stock low alerts preference"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Nothing is saved about how Tom likes to be notified, so this is my suggestion.\n\nI'd set up a daily routine that checks inventory each morning and sends Tom one short message listing the items under their reorder level. It should show current stock, recent sales pace and how many days are left. One daily digest is better than a ping per item, which gets noisy fast. Tom is the buyer, so he can then turn it into a purchase order, which I'd draft for your approval.\n\nFor items that are nearly out (say under 3 days of cover), I'd also send an immediate in-app or Slack message so they don't wait for the next morning.\n\nTwo things I need from you:\n1. What counts as \"low\"? One fixed number for everything, or a threshold per product?\n2. Does Tom prefer email, Slack or in-app?\n\nOnce you tell me, I can set up the routine and save Tom's channel preference.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2280,
+   "cacheReadTokens": 20772,
+   "outputTokens": 349
+  },
+  "costUsd": 0.011275199999999999
+ },
+ {
+  "case": "R04",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Tom notifications stock low alerts"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "notification preference",
+     "person_id": "p_tom",
+     "scope": "person"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I don't have anything saved about how Tom likes to be notified, so this is my suggestion.\n\n**A daily check with a short message to Tom.** I'd set up a routine that checks inventory each morning. If any product is below a threshold, it sends Tom one message listing those items with their current stock. One message a day is easier to act on than an alert for every item, and it won't bury him in pings.\n\n- **Channel:** Slack or in-app for the daily message. Email is slower to notice. Tom's own notification settings decide what he actually gets.\n- **Urgent items:** For anything about to hit zero, such as best sellers with only a few days of cover, I'd send an immediate message instead of waiting for the morning.\n- **Reorders:** I can draft the purchase order as an approval request for you or Tom to OK. I never send it myself.\n\nTwo things I need from you:\n1. What threshold counts as low? One number for everything, or different levels per product?\n2. Should I send to Tom only, or copy you or a channel like #ops?\n\nOnce you answer, I can set up the routine. I'll also save Tom's preference if you tell me to.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2177,
+   "cacheReadTokens": 21071,
+   "outputTokens": 531
+  },
+  "costUsd": 0.0128676
+ },
+ {
+  "case": "R05",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "free shipping threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed1 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Free shipping starts at \u20ac60.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2276,
+   "cacheReadTokens": 20768,
+   "outputTokens": 76
+  },
+  "costUsd": 0.008534799999999999
+ },
+ {
+  "case": "R05",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "free shipping threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed1 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Free shipping starts at \u20ac60, according to what I have saved for the brand.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 1978,
+   "cacheReadTokens": 21063,
+   "outputTokens": 88
+  },
+  "costUsd": 0.0079393
+ },
+ {
+  "case": "R05",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "free shipping threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed1 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Free shipping starts at \u20ac60. That comes from our saved brand memory. I haven't checked it against the shop settings.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 1978,
+   "cacheReadTokens": 21063,
+   "outputTokens": 102
+  },
+  "costUsd": 0.0080793
+ },
+ {
+  "case": "R06",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Moss glaze mug substitute policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] The Moss glaze is discontinued since September. Offer Fern instead.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Fern"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Our notes say to offer Fern, but I can't confirm Fern is available, so check before you promise it.\n\n- **Team memory:** the Moss glaze has been discontinued since September, and the standing advice is to offer Fern instead.\n- **Shop:** it still lists the Mug 500ml Moss (MUG-500-MOSS) with 14 on hand. That may be leftover stock, or the listing may just be out of date.\n- **Fern:** a search for Fern returns only the Moss mug. I can't find a Fern mug in the shop.\n\nI'd tell the customer Moss is discontinued and offer Fern, but only once Tom confirms a Fern mug exists and is in stock. If the customer really wants Moss, the 14 left may be the last ones. You could offer one of those, but check the shelf first, since the shop data looks unreliable.\n\nI can draft the customer reply for approval once you pick which way to go.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2750,
+   "cacheReadTokens": 32655,
+   "outputTokens": 555
+  },
+  "costUsd": 0.0157025
+ },
+ {
+  "case": "R06",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "substitute alternative offer out of stock mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] The Moss glaze is discontinued since September. Offer Fern instead.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Moss glaze mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Fern mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Our notes say Moss was discontinued in September, and the policy is to offer Fern instead. But the shop still lists the Moss mug (MUG-500-MOSS) with 14 on hand.\n\nI couldn't find a Fern mug in the shop. The search for \"Fern mug\" only returned the Moss one. So I can't confirm Fern is available or check its stock.\n\nWhat I'd say to the customer:\n- **Offer Fern**, as the policy says, but only after Tom confirms it's in stock.\n- **If the customer insists on Moss**, the 14 left are probably the last ones. I'd only offer them if Tom confirms we can still sell them.\n\nCould you check with Tom whether the 14 Moss mugs are sellable and whether Fern is listed under a different name? Once that's settled, I can draft the customer reply for your approval.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2434,
+   "cacheReadTokens": 32962,
+   "outputTokens": 530
+  },
+  "costUsd": 0.0146932
+ },
+ {
+  "case": "R06",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "substitute mug offer out of stock policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] The Moss glaze is discontinued since September. Offer Fern instead.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Moss glaze mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Fern mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Offer Fern, with one catch.\n\nOur notes say the Moss glaze was discontinued in September, so the standing guidance is to offer Fern instead. But the shop still lists Mug 500ml Moss (MUG-500-MOSS) with 14 on hand. Those are probably leftover units.\n\nMy search for a Fern mug returned nothing, so I can't confirm that Fern is listed or in stock. Check that before you promise it.\n\nHere is what I'd say to the customer:\n- **If Fern is in stock:** tell them Moss is discontinued and offer Fern as the replacement.\n- **If they really want Moss:** you could mention the last few pieces still in stock, but the shop data may be out of date. Count the physical stock first.\n\nDo you want me to draft the customer reply for approval? Tell me which option to use.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2445,
+   "cacheReadTokens": 32964,
+   "outputTokens": 529
+  },
+  "costUsd": 0.014710900000000002
+ },
+ {
+  "case": "R07",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "pottery vendor payment terms"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "pottery vendor invoice payment due"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Norda Ceramics, our mug supplier, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date. The shop and mail tools don't show supplier invoices, and I found nothing in past chats. If you give me the invoice date, I'll work out the exact due date. For example, an invoice dated 2026-11-10 would be due 2026-12-10.\n\nI'm assuming \"pottery vendor\" means Norda. If you meant a different supplier, tell me who.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2500,
+   "cacheReadTokens": 20772,
+   "outputTokens": 295
+  },
+  "costUsd": 0.0112852
+ },
+ {
+  "case": "R07",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "pottery vendor payment terms"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "pottery vendor invoice payment due"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Our records say Norda Ceramics, which I take to be your pottery vendor, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date or any order details for them. I can't tell you the exact due date, and I don't know if you have an open invoice right now. If you send me the invoice date, I'll work it out. For example, an invoice dated 2026-11-01 would be due 2026-12-01.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2205,
+   "cacheReadTokens": 21071,
+   "outputTokens": 271
+  },
+  "costUsd": 0.0103376
+ },
+ {
+  "case": "R07",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "pottery vendor payment terms"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "pottery vendor payment invoice"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Norda Ceramics, your mug supplier, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date or any order records for them, so I can't give you a specific due date. If you tell me when the invoice was issued, I can work it out. For example, an invoice dated 2026-11-01 would be due 2026-12-01.\n\nI'm also assuming \"pottery vendor\" means Norda. If you work with another pottery supplier, let me know.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2200,
+   "cacheReadTokens": 21071,
+   "outputTokens": 284
+  },
+  "costUsd": 0.0104551
+ },
+ {
+  "case": "R08",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "post office box PO box shipping policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] We never ship to PO boxes.\\nm_seed2 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "No. Our policy is that we never ship to PO boxes. If a customer gives one, Lena can ask them for a street address instead.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2300,
+   "cacheReadTokens": 20769,
+   "outputTokens": 110
+  },
+  "costUsd": 0.0089349
+ },
+ {
+  "case": "R08",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "post office box PO box shipping policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] We never ship to PO boxes.\\nm_seed2 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "No, we don't ship to PO boxes. That's a standing brand policy. If a customer gives a PO box address, ask them for a street address where someone can receive the parcel.\n\nI can draft that reply for Lena to approve if you have a specific order in mind.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2004,
+   "cacheReadTokens": 21065,
+   "outputTokens": 149
+  },
+  "costUsd": 0.0086145
+ },
+ {
+  "case": "R08",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "shipping post office box PO box policy carrier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] We never ship to PO boxes.\\nm_seed2 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "No. Our policy is that we never ship to PO boxes. If a customer gives one, Lena can ask them for a street address instead.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2007,
+   "cacheReadTokens": 21065,
+   "outputTokens": 113
+  },
+  "costUsd": 0.008262
+ },
+ {
+  "case": "R09",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "UK courier shipping carrier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed6 [brand] Our courier is DHL for the EU and Royal Mail for the UK.\\nm_seed3 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "We use Royal Mail for the UK. DHL covers the EU.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2316,
+   "cacheReadTokens": 20769,
+   "outputTokens": 90
+  },
+  "costUsd": 0.0087749
+ },
+ {
+  "case": "R09",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "courier UK shipping carrier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed6 [brand] Our courier is DHL for the EU and Royal Mail for the UK.\\nm_seed3 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "We use Royal Mail for the UK. DHL covers the EU.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2316,
+   "cacheReadTokens": 20769,
+   "outputTokens": 90
+  },
+  "costUsd": 0.0087749
+ },
+ {
+  "case": "R09",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "UK courier shipping carrier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed6 [brand] Our courier is DHL for the EU and Royal Mail for the UK.\\nm_seed3 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "We use Royal Mail for the UK. DHL covers the EU.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2016,
+   "cacheReadTokens": 21065,
+   "outputTokens": 90
+  },
+  "costUsd": 0.0080545
+ },
+ {
+  "case": "R10",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoice format"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoices preference",
+     "scope": "person"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I don't have anything saved about your invoice format, in your own memory or the team's. If you tell me what you prefer, for example PDF or a particular layout, I can save it for next time.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2442,
+   "cacheReadTokens": 20768,
+   "outputTokens": 198
+  },
+  "costUsd": 0.0101698
+ },
+ {
+  "case": "R10",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoice format"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoices",
+     "scope": "person"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I don't have anything saved about your invoice format, in either your personal memory or the brand's. If you tell me what you prefer, for example PDF or a particular layout, I can save it for next time.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2142,
+   "cacheReadTokens": 21063,
+   "outputTokens": 199
+  },
+  "costUsd": 0.0094593
+ },
+ {
+  "case": "R10",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoice format"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoices",
+     "scope": "person"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I don't have anything saved about your invoice format, in your own preferences or the team's. Tell me what you prefer, for example PDF or CSV, and I'll remember it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2142,
+   "cacheReadTokens": 21063,
+   "outputTokens": 194
+  },
+  "costUsd": 0.009409299999999999
+ },
+ {
+  "case": "R11",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "cotton tote bags lead time supplier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "cotton tote"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I couldn't find a lead time for the cotton tote bags. Nothing about it is saved in memory. The shop search for \"cotton tote\" returned only a ceramic mug, so the totes may be listed under another name.\n\nTom is the buyer, so he probably knows the supplier's lead time. If you tell me the number, I can save it as a team fact. I can also try other product names in the shop search.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2450,
+   "cacheReadTokens": 20775,
+   "outputTokens": 250
+  },
+  "costUsd": 0.0107105
+ },
+ {
+  "case": "R11",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "cotton tote bags lead time supplier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "cotton tote"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I couldn't find a lead time for the cotton tote bags. Nothing is saved in memory about it, and the shop has no tote product. The only result for \"cotton tote\" was a ceramic mug, the Mug 500ml Moss. The shop doesn't hold supplier lead times in any case.\n\nIf you tell me the figure, I can save it for the team. Tom may also know it, since he handles buying. Do you know which supplier makes the totes?",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2117,
+   "cacheReadTokens": 32668,
+   "outputTokens": 270
+  },
+  "costUsd": 0.011271300000000001
+ },
+ {
+  "case": "R11",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "cotton tote bags lead time supplier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "cotton tote"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I couldn't find a lead time for the cotton tote bags. Nothing about it is saved in memory, and the shop has no tote product. The only match for \"cotton tote\" was a ceramic mug (MUG-500-MOSS).\n\nTom is the buyer, so he probably knows the supplier terms. If you tell me the lead time, I can save it for the team. I can also search past chats and emails for it, if you'd like.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2148,
+   "cacheReadTokens": 21077,
+   "outputTokens": 260
+  },
+  "costUsd": 0.0100857
+ },
+ {
+  "case": "T01",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Packaging supplier is Kraftwerk Boxes, which ships from Poland.",
+     "scope": "brand"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_48a612. It waits for an admin's OK before it counts.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've saved that Kraftwerk Boxes is your packaging supplier and ships from Poland. It's a shared team fact, so it won't count until an admin approves it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2344,
+   "cacheReadTokens": 20789,
+   "outputTokens": 164
+  },
+  "costUsd": 0.0095869
+ },
+ {
+  "case": "T01",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Our packaging supplier is Kraftwerk Boxes, which ships from Poland.",
+     "scope": "brand"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_947b2b. It waits for an admin's OK before it counts.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've saved that Kraftwerk Boxes is your packaging supplier and ships from Poland. It's a brand-wide fact, so it won't count until an admin approves it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2029,
+   "cacheReadTokens": 21105,
+   "outputTokens": 167
+  },
+  "costUsd": 0.008861
+ },
+ {
+  "case": "T01",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Our packaging supplier is Kraftwerk Boxes, which ships from Poland.",
+     "scope": "brand"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_79298d. It waits for an admin's OK before it counts.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've saved that Kraftwerk Boxes is your packaging supplier and ships from Poland. It's a brand-wide fact, so it won't count until an admin approves it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2028,
+   "cacheReadTokens": 21105,
+   "outputTokens": 167
+  },
+  "costUsd": 0.0088585
+ },
+ {
+  "case": "T02",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya prefers replies in German.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_f78c51 for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Alles klar, Maya. Ich antworte ab jetzt auf Deutsch und habe mir das gemerkt.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2326,
+   "cacheReadTokens": 20770,
+   "outputTokens": 159
+  },
+  "costUsd": 0.00949
+ },
+ {
+  "case": "T02",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya prefers replies in German.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_01117a for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Alles klar, Maya. Ich antworte ab jetzt auf Deutsch und habe mir das gemerkt.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2030,
+   "cacheReadTokens": 21067,
+   "outputTokens": 159
+  },
+  "costUsd": 0.008779700000000001
+ },
+ {
+  "case": "T02",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya bevorzugt Antworten auf Deutsch.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_755bde for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Alles klar, Maya. Ich antworte ab jetzt auf Deutsch und habe mir das gemerkt.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2067,
+   "cacheReadTokens": 21067,
+   "outputTokens": 201
+  },
+  "costUsd": 0.0092922
+ },
+ {
+  "case": "T03",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda minimum order"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_update",
+    "input": {
+     "memory_id": "m_norda",
+     "fact": "Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 150 units, payment terms net 30."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Updated m_norda.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've updated the Norda note to a 150-unit minimum order, replacing the old 120. Lead time (6 weeks) and payment terms (net 30) are unchanged. Because it's a shared brand fact, the change may need an admin's OK before it's final.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2173,
+   "cacheReadTokens": 32692,
+   "outputTokens": 275
+  },
+  "costUsd": 0.0114637
+ },
+ {
+  "case": "T03",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda minimum order"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_update",
+    "input": {
+     "memory_id": "m_norda",
+     "fact": "Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 150 units, payment terms net 30."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Updated m_norda.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've updated the Norda Ceramics note to a minimum order of 150 units. Lead time (6 weeks) and payment terms (net 30) are unchanged. Brand facts may need an admin's OK before the change takes effect.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2174,
+   "cacheReadTokens": 32692,
+   "outputTokens": 266
+  },
+  "costUsd": 0.0113762
+ },
+ {
+  "case": "T03",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda minimum order"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_update",
+    "input": {
+     "memory_id": "m_norda",
+     "fact": "Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 150 units, payment terms net 30."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Updated m_norda.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I updated the Norda note. Their minimum order is now 150 units. Lead time (6 weeks) and payment terms (net 30) are the same as before.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2174,
+   "cacheReadTokens": 32692,
+   "outputTokens": 241
+  },
+  "costUsd": 0.0111262
+ },
+ {
+  "case": "T04",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Moss glaze"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_moss [brand] The Moss glaze mug is our bestseller.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__memory_forget",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_forget\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_forget",
+    "input": {
+     "memory_id": "m_moss",
+     "reason": "Maya said the fact is wrong"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Deleted m_moss.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I deleted the saved fact \"The Moss glaze mug is our bestseller.\" If you tell me what's actually true, I can save the corrected version.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2731,
+   "cacheReadTokens": 32682,
+   "outputTokens": 291
+  },
+  "costUsd": 0.0130177
+ },
+ {
+  "case": "T04",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Moss glaze"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_moss [brand] The Moss glaze mug is our bestseller.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__memory_forget",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_forget\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_forget",
+    "input": {
+     "memory_id": "m_moss",
+     "reason": "Maya said the fact is wrong"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Deleted m_moss.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I deleted the saved fact that the Moss glaze mug is our bestseller. If you tell me what's actually true, I can save the correct version.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2424,
+   "cacheReadTokens": 32987,
+   "outputTokens": 290
+  },
+  "costUsd": 0.012270699999999999
+ },
+ {
+  "case": "T04",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Moss glaze"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_moss [brand] The Moss glaze mug is our bestseller.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__memory_forget,mcp__inhouse__memory_update",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_forget\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_update\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_forget",
+    "input": {
+     "memory_id": "m_moss",
+     "reason": "Maya said the fact is wrong."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Deleted m_moss.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I deleted the saved fact \"The Moss glaze mug is our bestseller.\" It was the only one about the Moss glaze. If you tell me the correct fact, I can save it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2615,
+   "cacheReadTokens": 33177,
+   "outputTokens": 316
+  },
+  "costUsd": 0.0130272
+ },
+ {
+  "case": "T05",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__memory_list",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "input": {
+     "scope": "brand",
+     "limit": 50
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\\nm_returns [brand] Returns are accepted within 45 days if the item is unused.\\nm_seed2 [brand] Customer emails are signed 'Warm regards, the Fernwood team'.\\nm_",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "input": {
+     "scope": "person",
+     "person_id": "p_maya",
+     "limit": 50
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No saved facts.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Here's what I have saved.\n\n**Brand (shared with the team)**\n1. `m_norda`: Norda Ceramics, our mug supplier. Lead time is 6 weeks, minimum order 120 units, payment terms net 30.\n2. `m_returns`: Returns are accepted within 45 days if the item is unused.\n3. `m_seed2`: Customer emails are signed \"Warm regards, the Fernwood team\".\n4. `m_seed3`: Free shipping starts at 60 euro.\n5. `m_seed4`: The warehouse is closed on Sundays.\n\n**Your personal memory (Maya)**\nNothing saved.\n\nI haven't checked Tom's or Lena's personal memories. I can list those if you want.\n\nTell me which ones to update or delete. For example, the sign-off says \"Fernwood\" while the supplier fact says \"Norda Ceramics\", so check that the sign-off is still right.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2959,
+   "cacheReadTokens": 32583,
+   "outputTokens": 574
+  },
+  "costUsd": 0.0164078
+ },
+ {
+  "case": "T05",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__memory_list",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "input": {
+     "scope": "brand",
+     "limit": 50
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\\nm_returns [brand] Returns are accepted within 45 days if the item is unused.\\nm_seed2 [brand] Customer emails are signed 'Warm regards, the Fernwood team'.\\nm_",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "input": {
+     "scope": "person",
+     "person_id": "p_maya",
+     "limit": 50
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No saved facts.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Here's what I have saved.\n\n**Brand (shared with the team)**\n1. `m_norda`: Norda Ceramics, our mug supplier. Lead time is 6 weeks, minimum order 120 units, payment terms net 30.\n2. `m_returns`: Returns are accepted within 45 days if the item is unused.\n3. `m_seed2`: Customer emails are signed \"Warm regards, the Fernwood team\".\n4. `m_seed3`: Free shipping starts at 60 euro.\n5. `m_seed4`: The warehouse is closed on Sundays.\n\n**Your personal memory (Maya)**\nNothing saved.\n\nI haven't checked Tom's or Lena's personal memories. I can look at those too if you want.\n\nWhich ones should I remove or reword? I'd also check the sign-off in #3, since it says \"Fernwood\" while the supplier entry says \"Norda\". Make sure the brand name is what you want.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2653,
+   "cacheReadTokens": 32883,
+   "outputTokens": 579
+  },
+  "costUsd": 0.015722800000000002
+ },
+ {
+  "case": "T05",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__memory_list",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "input": {
+     "scope": "brand",
+     "limit": 50
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\\nm_returns [brand] Returns are accepted within 45 days if the item is unused.\\nm_seed2 [brand] Customer emails are signed 'Warm regards, the Fernwood team'.\\nm_",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "input": {
+     "scope": "person",
+     "person_id": "p_maya",
+     "limit": 50
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No saved facts.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Here's what I have saved.\n\n**Brand (shared by the whole team)**\n1. Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30. (m_norda)\n2. Returns are accepted within 45 days if the item is unused. (m_returns)\n3. Customer emails are signed \"Warm regards, the Fernwood team\". (m_seed2)\n4. Free shipping starts at 60 euro. (m_seed3)\n5. The warehouse is closed on Sundays. (m_seed4)\n\n**Maya (personal)**\nNothing saved.\n\nI only checked brand memory and your personal memory. I haven't looked at Tom's or Lena's personal notes. I can check those too if you like.\n\nTell me what to change, for example which to remove or reword. One thing you may want to look at: the Norda entry is named for a supplier, while the signature mentions \"Fernwood\". Check that the brand name is what you want everywhere.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2653,
+   "cacheReadTokens": 32883,
+   "outputTokens": 595
+  },
+  "costUsd": 0.015882800000000002
+ },
+ {
+  "case": "T06",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "returns",
+     "from": "2026-10-01",
+     "to": "2026-10-31"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "returns policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_returns [brand] Returns are accepted within 45 days if the item is unused.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__history_read",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__history_read\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_read",
+    "input": {
+     "history_id": "h_8841"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Maya: should we change the returns window? ... (transcript)\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I found the chat from 2026-10-14, \"Returns window discussion\". The saved transcript is cut off after your opening question, \"should we change the returns window?\". The only outcome recorded is a note saying you agreed to keep returns simple. I can't see any specific changes you decided on.\n\nThe brand policy I have on file is that returns are accepted within 45 days if the item is unused. That may be what you agreed to keep, but the transcript doesn't confirm it.\n\nIf you remember more, tell me and I can save it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2916,
+   "cacheReadTokens": 44702,
+   "outputTokens": 501
+  },
+  "costUsd": 0.0167862
+ },
+ {
+  "case": "T06",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "returns",
+     "from": "2026-10-01",
+     "to": "2026-10-31"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "returns policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_returns [brand] Returns are accepted within 45 days if the item is unused.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__history_read",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__history_read\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_read",
+    "input": {
+     "history_id": "h_8841"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Maya: should we change the returns window? ... (transcript)\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I found the chat, \"Returns window discussion\" from 2026-10-14, but the saved transcript is cut off. It only shows your opening question, \"should we change the returns window?\" The search summary says you agreed to \"keep returns simple\". That's all I can see of the discussion.\n\nThe brand policy I have saved is that returns are accepted within 45 days if the item is unused. That fits with keeping the window as it is, but I can't confirm from the chat that this is what you decided.\n\nIf you remember more, tell me and I can update the saved policy.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2619,
+   "cacheReadTokens": 45003,
+   "outputTokens": 513
+  },
+  "costUsd": 0.0161938
+ },
+ {
+  "case": "T06",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "returns",
+     "from": "2026-10-01",
+     "to": "2026-10-31"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "returns policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_returns [brand] Returns are accepted within 45 days if the item is unused.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__history_read",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__history_read\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_read",
+    "input": {
+     "history_id": "h_8841"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Maya: should we change the returns window? ... (transcript)\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I found the chat from 14 October, \"Returns window discussion\". The saved record is nearly empty, though. It only has your opening question, \"should we change the returns window?\", and a one-line summary: \"agreed to keep returns simple\". It doesn't show a specific decision.\n\nOur saved policy says returns are accepted within 45 days if the item is unused. That may be what \"keep it simple\" meant, but the chat doesn't confirm it.\n\nIf you remember a different outcome, such as a new window or a change to the unused condition, tell me and I can save it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2619,
+   "cacheReadTokens": 45003,
+   "outputTokens": 517
+  },
+  "costUsd": 0.0162338
+ },
+ {
+  "case": "T07",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__order_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "refund policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "input": {
+     "title": "Refund 24.90 EUR to Anna Weber, order 1042",
+     "action": "Issue a full refund of 24.90 EUR for order 1042 (Moss mug x2, delivered) to Anna Weber. Note: the order record doesn't show a customer name, so please confirm it's hers before approving.",
+     "recipient": "Anna Weber",
+     "amount_eur": 24.9,
+     "reversible": false
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Draft saved as ap_978. It's waiting for a person to approve it. Nothing has been sent.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've drafted the refund and it's waiting in Approvals as ap_978. Nothing has been refunded yet.\n\nOrder 1042 is two Moss mugs, 24.90 euro, and it's been delivered. So the amount matches the full order total. The order record doesn't show a customer name, though. I couldn't confirm it belongs to Anna Weber, so please check that before you approve. A refund can't be undone.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2748,
+   "cacheReadTokens": 44961,
+   "outputTokens": 624
+  },
+  "costUsd": 0.0176221
+ },
+ {
+  "case": "T07",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "refund policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "input": {
+     "title": "Refund 24.90 EUR to Anna Weber, order 1042",
+     "action": "Issue a full refund of 24.90 EUR to Anna Weber for order 1042 (Moss mug x2, delivered, order total 24.90 EUR).",
+     "recipient": "Anna Weber",
+     "amount_eur": 24.9,
+     "reversible": false
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Draft saved as ap_995. It's waiting for a person to approve it. Nothing has been sent.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've put the refund in Approvals as ap_995, and nothing has been refunded yet. It needs a person to approve it.\n\nIt's a full refund of 24.90 \u20ac for order 1042 (Moss mug x2, delivered), which matches the order total. The order record doesn't show a customer name, so I couldn't confirm it belongs to Anna Weber. Please check that when you approve. The refund can't be undone once it's approved.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2460,
+   "cacheReadTokens": 32842,
+   "outputTokens": 505
+  },
+  "costUsd": 0.014496199999999999
+ },
+ {
+  "case": "T07",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "refund policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "input": {
+     "title": "Refund 24.90 EUR to Anna Weber, order 1042",
+     "action": "Issue a full refund of 24.90 EUR for order 1042 (Moss mug x2, delivered) to Anna Weber, to the original payment method.",
+     "recipient": "Anna Weber",
+     "amount_eur": 24.9,
+     "reversible": false
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Draft saved as ap_927. It's waiting for a person to approve it. Nothing has been sent.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've put the refund in Approvals as ap_927, and nothing has been refunded yet. It's a full refund of 24.90 euro for order 1042 (Moss mug x2, delivered), and it matches the order total. Once it's approved it can't be undone.\n\nThe order record doesn't show a customer name, so I couldn't confirm the order belongs to Anna Weber. Please check that before you approve.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2485,
+   "cacheReadTokens": 32869,
+   "outputTokens": 527
+  },
+  "costUsd": 0.0147814
+ },
+ {
+  "case": "T08",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "query": "Anna Weber"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "customer emails delay policy tone"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Anna Weber's order 1042 (Moss mug x2) shows as delivered in the shop, so a delay email may be wrong. The order total also differs between search (124.50) and the order record (24.90). How should I proceed?",
+     "options": [
+      "Draft the delay email anyway",
+      "Don't send anything, I'll check the order first",
+      "Draft an email asking if she received the parcel"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I haven't drafted anything yet, because the shop data conflicts with what you told me.\n\n- **Delivery status:** Anna's order 1042 (Moss mug x2) is marked as delivered. A delay email could confuse her.\n- **Order total:** The order search shows \u20ac124.50, but the order record shows \u20ac24.90.\n\nI've asked you how to proceed. Your options are to draft the delay email anyway, to hold off while you check the order, or to draft an email asking whether she received the parcel. Nothing goes out until you approve it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2944,
+   "cacheReadTokens": 44507,
+   "outputTokens": 618
+  },
+  "costUsd": 0.0180067
+ },
+ {
+  "case": "T08",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "customer emails delay tone policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "status": "shipped",
+     "from": "2026-11-01"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "input": {
+     "title": "Delay email to Anna Weber (order 1042)",
+     "action": "Send this email to Anna Weber:\n\nSubject: Update on your order 1042\n\nHi Anna,\n\nThank you for your order. Your parcel is delayed by two days. We're sorry for the wait and will make sure it reaches you as soon as possible. If you have any questions, just reply to this email.\n\nBest regards,\nThe team",
+     "recipient": "Anna Weber (order 1042)",
+     "reversible": false
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Draft saved as ap_982. It's waiting for a person to approve it. Nothing has been sent.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I drafted the email to Anna Weber and put it in Approvals (ap_982). Nothing has been sent yet.\n\nI linked it to her order 1042 (\u20ac124.50). The shop lists that order as \"paid\" rather than shipped, so check the delay applies to it. The email says her parcel is delayed by two days, apologises, and invites her to reply with questions.\n\nI couldn't see her email address in the shop data, so please confirm it when you approve.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2889,
+   "cacheReadTokens": 45200,
+   "outputTokens": 722
+  },
+  "costUsd": 0.018978500000000002
+ },
+ {
+  "case": "T08",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "customer emails delay policy tone"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search,mcp__shop__order_get",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "from": "2026-10-20",
+     "to": "2026-11-19"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I haven't drafted the email yet, because the shop data doesn't match what you described.\n\nAnna Weber's only recent order is #1042 (Moss mug x2). The shop lists its shipping status as \"delivered\", not delayed. The totals also disagree: the order search shows \u20ac124.50, but the order itself shows \u20ac24.90.\n\nA delay notice for a parcel that shows as delivered could confuse her. Do you want me to draft it anyway, or check on #1042 first? Maybe she has a different order that isn't in the shop yet. If you want it drafted, I'll send it to Approvals for you to review before anything goes out.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2787,
+   "cacheReadTokens": 45431,
+   "outputTokens": 630
+  },
+  "costUsd": 0.0178266
+ },
+ {
+  "case": "T09",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__notification_send",
+    "input": {
+     "to": [
+      "p_tom"
+     ],
+     "body": "Hi Tom, Maya says the Norda delivery arrived this morning.",
+     "format": "message"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Sent to the team.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've sent Tom a message saying the Norda delivery arrived this morning.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2331,
+   "cacheReadTokens": 20777,
+   "outputTokens": 156
+  },
+  "costUsd": 0.0094732
+ },
+ {
+  "case": "T09",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__notification_send",
+    "input": {
+     "to": [
+      "p_tom"
+     ],
+     "body": "Hi Tom, Maya says the Norda delivery arrived this morning.",
+     "format": "message"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Sent to the team.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've told Tom that the Norda delivery arrived this morning.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2027,
+   "cacheReadTokens": 21081,
+   "outputTokens": 152
+  },
+  "costUsd": 0.008703599999999999
+ },
+ {
+  "case": "T09",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__notification_send",
+    "input": {
+     "to": [
+      "p_tom"
+     ],
+     "body": "Hi Tom, Maya says the Norda delivery arrived this morning.",
+     "format": "message"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Sent to the team.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've sent Tom a message that the Norda delivery arrived this morning.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2027,
+   "cacheReadTokens": 21081,
+   "outputTokens": 155
+  },
+  "costUsd": 0.0087336
+ },
+ {
+  "case": "T10",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda supplier mugs"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Which supplier should we go with for the mug reorder?",
+     "options": [
+      "Norda (reliable, pricier)",
+      "Cheaper supplier (lower cost, more risk)",
+      "Split the order between both",
+      "Small test order with the cheaper one first"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've put the question to you with four options: Norda, the cheaper supplier, a split order, or a small test order with the cheaper one first. I don't have anything saved about Norda or the cheaper supplier, so the descriptions on the options are only general. Tell me which one you pick and I'll draft the purchase order for approval.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2560,
+   "cacheReadTokens": 32459,
+   "outputTokens": 373
+  },
+  "costUsd": 0.0133879
+ },
+ {
+  "case": "T10",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda supplier mugs"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Which supplier should we go with for the mug reorder?",
+     "options": [
+      "Norda (current supplier)",
+      "The cheaper supplier",
+      "Split the order between both",
+      "Order a small test batch from the cheaper one first"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've put the question to you with four options: Norda, the cheaper supplier, a split order, or a small test batch from the cheaper one first. I found nothing saved about Norda, so I have no background on them. Pick one and I'll draft the purchase order for approval.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2225,
+   "cacheReadTokens": 32780,
+   "outputTokens": 342
+  },
+  "costUsd": 0.012272499999999999
+ },
+ {
+  "case": "T10",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda supplier mugs"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Which supplier should we go with for the mug reorder?",
+     "options": [
+      "Norda (current supplier)",
+      "The cheaper supplier",
+      "Split the order between both",
+      "Small test order with cheaper, rest with Norda"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've put the question to you with four options: Norda, the cheaper supplier, a split order, or a small test order with the cheaper one and the rest with Norda. I'll wait for your pick.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2179,
+   "cacheReadTokens": 32730,
+   "outputTokens": 267
+  },
+  "costUsd": 0.011402500000000001
+ },
+ {
+  "case": "T11",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_create,mcp__inhouse__routine_list",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "low stock threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_create",
+    "input": {
+     "name": "Weekday low stock check",
+     "schedule": "weekdays 06:00",
+     "instruction": "Check current inventory levels in the shop. List the items that are low on stock (use each product's reorder point if it has one, otherwise flag items with 10 units or fewer, and say which rule was used). Show product name, SKU and units left, lowest first. Send the list to Maya (p_maya) as a short message. If nothing is low, say so in one line. Do not place orders or change stock.",
+     "on_missed": "run_once"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Created routine r_new1.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I set up the routine \"Weekday low stock check\". It runs Monday to Friday at 06:00 and sends you a short message listing the low items, with name, SKU and units left, lowest first.\n\n- **Low threshold:** I didn't find a saved threshold. The routine uses each product's reorder point if it has one. Otherwise it flags anything with 10 units or fewer, and the message says which rule it used. Tell me if you want a different number.\n- **Missed runs:** If the system is off at 06:00, it runs once when it comes back.\n- **Existing routine:** You already have a \"Monday stock report\" at 07:30. It will now overlap with the new one on Mondays. I can remove it if you like.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 3264,
+   "cacheReadTokens": 45149,
+   "outputTokens": 685
+  },
+  "costUsd": 0.0195409
+ },
+ {
+  "case": "T11",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "low stock threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_create,mcp__inhouse__routine_list",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_create",
+    "input": {
+     "name": "Weekday low stock check",
+     "schedule": "weekdays 06:00",
+     "instruction": "Check current inventory levels in the shop. List the items that are low on stock, with product name, SKU if available, current quantity and the threshold used. If the brand has a saved low stock threshold in memory, use it; otherwise treat items at or below 10 units, or flagged low by the shop, as low. Send the list to Maya (p_maya) as a short message. If nothing is low, say so in one line. Do not place orders or change stock; if a reorder looks needed, mention it so Tom (p_tom) can follow up.",
+     "on_missed": "run_once"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Created routine r_new1.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I set up the routine \"Weekday low stock check\". It runs Monday to Friday at 06:00, checks inventory, and sends you a short message listing the low items. If nothing is low, it says so in one line.\n\nI didn't have a low-stock threshold saved, so I set it to 10 units or fewer, plus anything the shop flags as low. Tell me if you want a different number, or one that varies by product.\n\nIf a run is missed while the system is off, it runs once when the system is back. It only reports and never orders or changes stock. If a reorder looks needed, it flags it so Tom can follow up.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2835,
+   "cacheReadTokens": 33188,
+   "outputTokens": 655
+  },
+  "costUsd": 0.0169683
+ },
+ {
+  "case": "T11",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_create,mcp__inhouse__routine_list",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "low stock threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_create",
+    "input": {
+     "name": "Weekday low stock check",
+     "schedule": "weekdays 06:00",
+     "instruction": "Check current inventory levels in the shop. List the items that are low: use each product's reorder point or low-stock flag if the shop provides one, otherwise treat 10 units or fewer as low. For each low item give the name, units left and, if available, units on order. Send the list to Maya (p_maya) as a short message. If nothing is low, say so in one line. Do not place orders or change stock.",
+     "on_missed": "run_once"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Created routine r_new1.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "The routine \"Weekday low stock check\" is set up. It runs every weekday at 06:00 and sends you a short message listing the low items, with units left and units on order where the shop has that.\n\n- **Low threshold:** I didn't find a saved threshold. It uses each product's own reorder point or low-stock flag if the shop has one. Otherwise it counts 10 units or fewer as low. Tell me if you want a different number.\n- **Missed runs:** If the system is off at 06:00, it runs once when it's back.\n- **Monday report:** The existing \"Monday stock report\" at 07:30 is separate, and I left it alone.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 3053,
+   "cacheReadTokens": 45452,
+   "outputTokens": 760
+  },
+  "costUsd": 0.0197937
+ },
+ {
+  "case": "T12",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_list,mcp__inhouse__routine_update",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_update\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_update",
+    "input": {
+     "routine_id": "r_mon_stock",
+     "state": "paused"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Updated r_mon_stock.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "The Monday stock report routine is paused, so it won't run next Monday. The daily orders summary is still active. Tell me when you want the stock report back on and I'll resume it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2882,
+   "cacheReadTokens": 44723,
+   "outputTokens": 282
+  },
+  "costUsd": 0.0145133
+ },
+ {
+  "case": "T12",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_list,mcp__inhouse__routine_update",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_update\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_update",
+    "input": {
+     "routine_id": "r_mon_stock",
+     "state": "paused"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Updated r_mon_stock.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've paused the Monday stock report. It won't run next Monday. Just ask when you want it back on and I'll resume it. The daily orders summary is still running as usual.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2583,
+   "cacheReadTokens": 45022,
+   "outputTokens": 280
+  },
+  "costUsd": 0.0137757
+ },
+ {
+  "case": "T12",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_list,mcp__inhouse__routine_update",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_update\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_update",
+    "input": {
+     "routine_id": "r_mon_stock",
+     "state": "paused"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Updated r_mon_stock.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "The Monday stock report is paused, so it won't run next Monday. The daily orders summary is still active. Tell me when you want the stock report back on and I'll resume it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2583,
+   "cacheReadTokens": 45022,
+   "outputTokens": 280
+  },
+  "costUsd": 0.0137757
+ },
+ {
+  "case": "T13",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_list,mcp__inhouse__routine_delete",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_delete\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_delete",
+    "input": {
+     "routine_id": "r_daily_orders"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Deleted r_daily_orders.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I deleted the daily orders summary routine, which ran daily at 18:00. The Monday stock report is still active.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2810,
+   "cacheReadTokens": 44617,
+   "outputTokens": 243
+  },
+  "costUsd": 0.0139327
+ },
+ {
+  "case": "T13",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_list,mcp__inhouse__routine_delete",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_delete\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_delete",
+    "input": {
+     "routine_id": "r_daily_orders"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Deleted r_daily_orders.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I deleted the Daily orders summary routine, which ran daily at 18:00. The Monday stock report is still active.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2502,
+   "cacheReadTokens": 44917,
+   "outputTokens": 244
+  },
+  "costUsd": 0.013202700000000001
+ },
+ {
+  "case": "T13",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_list,mcp__inhouse__routine_delete",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_delete\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_delete",
+    "input": {
+     "routine_id": "r_daily_orders"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Deleted r_daily_orders.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I deleted the daily orders summary routine, which ran daily at 18:00. The Monday stock report is still active.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2502,
+   "cacheReadTokens": 44917,
+   "outputTokens": 243
+  },
+  "costUsd": 0.013192700000000002
+ },
+ {
+  "case": "T14",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__team_request_create,mcp__inhouse__team_request_list",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__team_request_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__team_request_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "TikTok Shop"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"request_id\\\":\\\"tr_12\\\",\\\"title\\\":\\\"Connect Klaviyo\\\",\\\"status\\\":\\\"in progress\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__team_request_create",
+    "input": {
+     "title": "Connect TikTok Shop",
+     "details": "Maya (owner) asked to connect TikTok Shop to Inhouse. The team can't see TikTok Shop orders yet. Needed: read access to orders, and ideally products and inventory, same as the existing shop connection. Please tell Maya what's needed from her side (e.g. account authorization)."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Request tr_17 sent to the Inhouse team.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I can't connect it myself, so I sent a request to the Inhouse team (tr_17). It asks for read access to TikTok Shop orders, plus products and inventory if possible. It also asks them to tell you if they need anything from you, such as authorizing the account.\n\nUntil it's connected, I can't see TikTok orders. The only open request before this was Klaviyo (tr_12), which is still in progress.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 3105,
+   "cacheReadTokens": 45023,
+   "outputTokens": 565
+  },
+  "costUsd": 0.0179308
+ },
+ {
+  "case": "T14",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__team_request_create,mcp__inhouse__team_request_list",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__team_request_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__team_request_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "TikTok Shop"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"request_id\\\":\\\"tr_12\\\",\\\"title\\\":\\\"Connect Klaviyo\\\",\\\"status\\\":\\\"in progress\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__team_request_create",
+    "input": {
+     "title": "Connect TikTok Shop",
+     "details": "Maya Berg (owner) asked to connect TikTok Shop so the team can see its orders. Currently only the shop and mail apps are connected, so TikTok Shop orders are not visible. Read-only access to orders is enough to start, ideally with products and inventory too, matching the existing shop connection."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Request tr_17 sent to the Inhouse team.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I can't connect it myself, so I've sent the Inhouse team a request (tr_17) to connect TikTok Shop. I asked for read-only access to orders, and to products and inventory if possible, like the current shop connection.\n\nUntil it's connected, I won't see any TikTok orders. The only other open request is the Klaviyo connection (tr_12), which is in progress.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2818,
+   "cacheReadTokens": 45379,
+   "outputTokens": 579
+  },
+  "costUsd": 0.0173889
+ },
+ {
+  "case": "T14",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__team_request_create,mcp__inhouse__team_request_list",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__team_request_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__team_request_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "TikTok Shop"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"request_id\\\":\\\"tr_12\\\",\\\"title\\\":\\\"Connect Klaviyo\\\",\\\"status\\\":\\\"in progress\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__team_request_create",
+    "input": {
+     "title": "Connect TikTok Shop",
+     "details": "Maya Berg (owner) asked to connect TikTok Shop. The team can't see its orders yet, so orders are missing from our view next to the shop and mail apps. We need read access to TikTok Shop orders at minimum. Products and inventory would be useful too."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Request tr_17 sent to the Inhouse team.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I can't connect it myself, so I've sent a request to the Inhouse team (tr_17). I asked for read access to TikTok Shop orders, plus products and inventory if possible.\n\nUntil it's connected, I can't see TikTok orders, so any order or stock numbers I give you won't include them. The Klaviyo connection (tr_12) is already in progress, so the team has that one open too.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2811,
+   "cacheReadTokens": 45389,
+   "outputTokens": 578
+  },
+  "costUsd": 0.0173624
+ },
+ {
+  "case": "T15",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__approval_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_get",
+    "input": {
+     "approval_id": "ap_204"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"approval_id\\\":\\\"ap_204\\\",\\\"status\\\":\\\"waiting\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Not yet. ap_204 is still waiting for someone to approve it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2545,
+   "cacheReadTokens": 32506,
+   "outputTokens": 175
+  },
+  "costUsd": 0.0113751
+ },
+ {
+  "case": "T15",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__approval_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_get",
+    "input": {
+     "approval_id": "ap_204"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"approval_id\\\":\\\"ap_204\\\",\\\"status\\\":\\\"waiting\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Not yet. ap_204 is still waiting for someone to approve it.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2251,
+   "cacheReadTokens": 32808,
+   "outputTokens": 175
+  },
+  "costUsd": 0.0106703
+ },
+ {
+  "case": "T15",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__approval_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_get",
+    "input": {
+     "approval_id": "ap_204"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"approval_id\\\":\\\"ap_204\\\",\\\"status\\\":\\\"waiting\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Not yet. ap_204 is still waiting for approval.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2251,
+   "cacheReadTokens": 32808,
+   "outputTokens": 171
+  },
+  "costUsd": 0.010630299999999999
+ },
+ {
+  "case": "T16",
+  "rep": 1,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__approval_get,mcp__inhouse__approval_withdraw",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_get\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_withdraw\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_get",
+    "input": {
+     "approval_id": "ap_311"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"approval_id\\\":\\\"ap_311\\\",\\\"status\\\":\\\"waiting\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_withdraw",
+    "input": {
+     "approval_id": "ap_311",
+     "reason": "The mugs arrived, so the reorder is no longer needed (per Maya)."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Withdrew ap_311.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I withdrew the mug reorder draft ap_311. It was still waiting, so nothing went out to the supplier.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2952,
+   "cacheReadTokens": 44870,
+   "outputTokens": 376
+  },
+  "costUsd": 0.015643
+ },
+ {
+  "case": "T16",
+  "rep": 2,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__approval_withdraw,mcp__inhouse__approval_get",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_withdraw\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_withdraw",
+    "input": {
+     "approval_id": "ap_311",
+     "reason": "The mugs arrived, so the reorder is no longer needed (per Maya)."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Withdrew ap_311.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've withdrawn the reorder draft ap_311. Nothing was sent to the supplier.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2518,
+   "cacheReadTokens": 33082,
+   "outputTokens": 307
+  },
+  "costUsd": 0.0126852
+ },
+ {
+  "case": "T16",
+  "rep": 3,
+  "chat": 1,
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__approval_get,mcp__inhouse__approval_withdraw",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_get\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_withdraw\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_get",
+    "input": {
+     "approval_id": "ap_311"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"approval_id\\\":\\\"ap_311\\\",\\\"status\\\":\\\"waiting\\\"}\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_withdraw",
+    "input": {
+     "approval_id": "ap_311",
+     "reason": "The mugs arrived, so the reorder isn't needed anymore (per Maya)."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Withdrew ap_311.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I withdrew the reorder draft ap_311. It was still waiting, so nothing went out to the supplier.",
+  "isError": false,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2580,
+   "cacheReadTokens": 45067,
+   "outputTokens": 318
+  },
+  "costUsd": 0.0141527
+ }
+]

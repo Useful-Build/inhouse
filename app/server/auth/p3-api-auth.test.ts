@@ -5,8 +5,7 @@
 //  3. `smoke` writes or reads a chat that isn't its own;
 //  4. on an `ownerObject` row, another member's chat answers anything but 404 when the handler prefilters by owner, or
 //     a handler that skips `requireObject` answers 2xx (must be 500), or one that passes another owner answers 2xx (403);
-//  5. Inhouse under a live grant can't read an `ownerObject` row without naming an owner, or reads it without a grant;
-//  6. a P3 route stub answers anything but 503 `not_built` to a caller the matrix lets through.
+//  5. Inhouse under a live grant can't read an `ownerObject` row without naming an owner, or reads it without a grant.
 // Expected rows and statuses are literals here, never read from the matrix.
 import { env as baseEnv } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
@@ -82,7 +81,9 @@ describe('the release token (failures 1 and 2)', () => {
     quiet()
     const { call } = setup()
     const h = { 'Cf-Access-Jwt-Assertion': await service(RELEASE_ID), Origin: BRAND.origin }
-    const allowed = ['POST /api/ops/drain', 'GET /api/ops/drain', 'POST /api/ops/warmup']
+    // DELETE drain is the test build's undrain: the matrix lets the release token through, and its handler answers 404
+    // outside the test build (this harness's handlers are all `ok`, so it reads 200 here like the others).
+    const allowed = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup']
     for (const r of DESIGN_ROWS) {
       const res = await call(BRAND.origin, r.pattern.replace(/:[A-Za-z]+/g, 'x1'), { method: r.method, headers: h })
       expect(res.status, `${r.method} ${r.pattern}`).toBe(allowed.includes(`${r.method} ${r.pattern}`) ? 200 : 403)
@@ -180,26 +181,6 @@ describe('the built chat reads refuse Inhouse without a grant (failure 5)', () =
       const res = await call(INHOUSE.origin, path, { headers: h })
       expect(res.status, path).toBe(403)
       expect(await bodyOf(res), path).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
-    }
-    vi.restoreAllMocks()
-  })
-})
-
-describe('the committed P3 routes are PR0 stubs (failure 6)', () => {
-  it('every route 22 to 49 not yet built answers 503 not_built to a caller the matrix lets through (W1 PR 2 built 29-33, 35-37, 49; W1 PR 3 built 22-28; W3 built 38-41; W2 built 46-48)', async () => {
-    quiet()
-    const { call } = setup({ table: routes, rows: accessMatrix })
-    const member = { 'Cf-Access-Jwt-Assertion': await person('member'), Origin: BRAND.origin }
-    const P3 = [
-      ['GET', '/api/socket', member],
-    ] as const
-    // Built and so off this list: 38-41 (W3), 42 (W4 PR 1), 43-45 (W6), 29-33, 35-37 and 49 (W1 PR 2,
-    // server/api/runs.test.ts), 22-28 (W1 PR 3, server/api/chats.test.ts) and 46-48 (W2: server/ops/drain.test.ts).
-    expect(P3).toHaveLength(1)
-    for (const [method, path, headers] of P3) {
-      const res = await call(BRAND.origin, path, { method, headers })
-      expect(res.status, `${method} ${path}`).toBe(503)
-      expect(await bodyOf(res), `${method} ${path}`).toEqual({ error: { code: 'unavailable', reason: 'not_built' } })
     }
     vi.restoreAllMocks()
   })

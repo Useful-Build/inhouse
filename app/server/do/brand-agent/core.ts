@@ -36,6 +36,8 @@ import type { RunScope, RunsHealth } from './ports.ts'
 import type { ActiveRun } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst } from './ports.ts'
+import { SWEEP_EVERY_MS, ensureGrantExpiry, runAuthoritySweep, runGrantExpiry, sweepBy } from './authority.ts'
+import type { AuthorityDeps, SocketAuthority } from './authority.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
 export const STARTING_DEADLINE_MS = 3 * 60_000
@@ -117,6 +119,8 @@ export interface CoreDeps {
   modelUsable: (pickerId: string) => Promise<boolean>
   /** Every stored chat event, for the sockets (PR 4). */
   onEvent?: (e: { runId: string; seq: number; atMs: number; chatId: string; event: ChatEvent }) => void
+  /** The sockets' side of authority (4.10, sockets.ts); absent where no socket can exist. */
+  sockets?: SocketAuthority
 }
 
 const refuse = (code: Refusal['refused']['code'], reason?: Refusal['refused']['reason']): Refusal =>
@@ -242,7 +246,11 @@ export class AgentCore {
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
     const member = t.by.memberId
-    if (this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", member).toArray().length > 0) return refuse('forbidden', 'removed')
+    if (this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", member).toArray().length > 0) {
+      // A re-invited member keeps their id (P2) and nothing tells the object: the sweep checks D1 now (authority.ts).
+      sweepBy(this.sql, this.d.scheduler, this.d.now())
+      return refuse('forbidden', 'removed')
+    }
     // A deleted chat is not found, as route 29 answers it from D1 (that read may predate the delete).
     if (this.sql.exec('SELECT 1 FROM chat_deletion WHERE chat_id = ? AND deleted = 1', t.chatId).toArray().length > 0) return refuse('not_found')
     if (this.paused()) return refuse('forbidden', 'paused')
@@ -290,6 +298,8 @@ export class AgentCore {
       const live = this.sql.exec<TurnRow>("SELECT * FROM turns WHERE run_id = ? AND state = 'live' AND interrupt_asked = 0 AND fenced = 0", runId).toArray()[0]
       if (live) this.askInterrupt(live)
     }
+    // While a turn exists the authority sweep runs every 5 minutes (4.10).
+    sweepBy(this.sql, this.d.scheduler, now + SWEEP_EVERY_MS)
     const claimed = this.advance(runId)
     const position = claimed === turnId ? 'starting' : 'queued'
     this.sql.exec('UPDATE turns SET answer_position = ? WHERE turn_id = ?', position, turnId)
@@ -1271,10 +1281,15 @@ export class AgentCore {
     return answer
   }
 
-  // ---------- authority (4.3, 4.10; the sockets are PR 4's) ----------
+  // ---------- authority (4.3, 4.10, authority.ts) ----------
 
+  /**
+   * A member was removed: into the removed set (its time refreshed, so a sweep reading D1 at the same moment can't take
+   * it out again), their sockets closed `4401`, their tokens revoked and their turns fenced.
+   */
   onMemberRemoved(memberId: string) {
-    this.sql.exec("INSERT INTO authority (kind, id, at_ms) VALUES ('member', ?, ?) ON CONFLICT DO NOTHING", memberId, this.d.now())
+    this.sql.exec("INSERT INTO authority (kind, id, at_ms) VALUES ('member', ?, ?) ON CONFLICT (kind, id) DO UPDATE SET at_ms = excluded.at_ms", memberId, this.d.now())
+    this.d.sockets?.closeMember(memberId)
     this.d.tokens.revokeMember(memberId, 'removed')
     const turns = this.sql.exec<TurnRow>(`SELECT * FROM turns WHERE owner_id = ? AND state IN ('queued', ${ACTIVE.slice(1, -1)}) ORDER BY ord`, memberId).toArray()
     for (const t of turns) {
@@ -1283,9 +1298,27 @@ export class AgentCore {
     }
   }
 
+  /** A grant ended (by hand, or its `grant-expiry`): into the ended set, its sockets closed `4403`. */
   onGrantEnded(grantId: string) {
     this.sql.exec("INSERT INTO authority (kind, id, at_ms) VALUES ('grant', ?, ?) ON CONFLICT DO NOTHING", grantId, this.d.now())
+    this.d.sockets?.closeGrant(grantId)
   }
+
+  /** Route 17 made a grant: its `grant-expiry` task at its end. */
+  onGrantCreated(grantId: string, endsAtMs: number) {
+    ensureGrantExpiry(this.d.scheduler, grantId, endsAtMs)
+  }
+
+  private authorityDeps(): AuthorityDeps {
+    return {
+      sql: this.sql, db: this.d.db, scheduler: this.d.scheduler, now: this.d.now, sockets: this.d.sockets,
+      onMemberRemoved: id => this.onMemberRemoved(id), onGrantEnded: id => this.onGrantEnded(id),
+    }
+  }
+  /** The `authority-sweep` task (authority.ts). */
+  authoritySweep(): Promise<TaskResult> { return runAuthoritySweep(this.authorityDeps()) }
+  /** A `grant-expiry:<grantId>` task (authority.ts). */
+  grantExpiry(taskId: string): Promise<TaskResult> { return runGrantExpiry(this.authorityDeps(), taskId) }
 
   /** A Runner's container exited: its turns (once per generation) end `session_crashed`; one still placing goes back. */
   containerExited(runner: string, gen: number) {
@@ -1341,6 +1374,8 @@ export class AgentCore {
       this.d.scheduler.ensure({ id: `call-lease:${r.turn_id}`, kind: 'call-lease', dueAtMs: now })
     }
     this.gate.seeds()
+    // The authority sweep at once: it seeds `grant-expiry` for each live grant from D1 (authority.ts).
+    sweepBy(this.sql, this.d.scheduler, now)
     // W4's usage tasks: the hourly sweep and today's audit copy (ensure: never moves one that exists).
     ensureUsageTasks(this.d.scheduler, now)
   }

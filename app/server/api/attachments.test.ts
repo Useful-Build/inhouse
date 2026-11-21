@@ -208,6 +208,18 @@ describe('route 39: the name as stored, and the declared length (round 2)', () =
     expect((await upload(chatId, 'a,1\n', encodeURIComponent(`${'€'.repeat(75)}a.csv`))).status).toBe(201)
     expect((await upload(chatId, 'a,1\n', encodeURIComponent(`${'€'.repeat(75)}ab.csv`))).status).toBe(400)
   })
+  it('a file declared one byte over the 20 MiB cap is refused too_large before any byte is read, and nothing is kept', async () => {
+    const chatId = await newChat()
+    const { c } = ctx(stores, personPrincipal(OWNER, 'member'), { method: 'POST', path: `/api/chats/${chatId}/attachments`, params: { id: chatId } })
+    const body = new ReadableStream({ start: ctl => { ctl.enqueue(enc.encode('x')); ctl.close() } })
+    const request = new Request(`https://brand.example.test/api/chats/${chatId}/attachments`, { method: 'POST', headers: { 'X-File-Name': 'big.csv', 'Content-Length': String(20 * 1024 * 1024 + 1) }, body, duplex: 'half' } as RequestInit)
+    expect(request.headers.get('content-length')).toBe(String(20 * 1024 * 1024 + 1))
+    const res = await uploadAttachment({ ...c, request } as never)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: { code: 'invalid', reason: 'too_large' } })
+    expect(request.body?.locked, 'the body was never opened for reading').toBe(false)
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM chat_files WHERE chat_id = ?').bind(chatId).first<number>('n')).toBe(0)
+  })
   it('a body with no Content-Length is refused length_required, and nothing is kept', async () => {
     const chatId = await newChat()
     const { c } = ctx(stores, personPrincipal(OWNER, 'member'), { method: 'POST', path: `/api/chats/${chatId}/attachments`, params: { id: chatId } })

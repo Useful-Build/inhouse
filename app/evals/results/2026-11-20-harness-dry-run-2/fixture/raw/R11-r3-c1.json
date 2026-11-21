@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "R11",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find a lead time for the cotton tote bags. Nothing about it is saved in memory, and the shop has no tote product. The only match for \"cotton tote\" was a ceramic mug (MUG-500-MOSS).\n\nTom is the buyer, so he probably knows the supplier terms. If you tell me the lead time, I can save it for ",
+  "costUsd": 0.0100857,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "cotton tote bags lead time supplier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "cotton tote"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I couldn't find a lead time for the cotton tote bags. Nothing about it is saved in memory, and the shop has no tote product. The only match for \"cotton tote\" was a ceramic mug (MUG-500-MOSS).\n\nTom is the buyer, so he probably knows the supplier terms. If you tell me the lead time, I can save it for the team. I can also search past chats and emails for it, if you'd like.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2148,
+   "cacheReadTokens": 21077,
+   "outputTokens": 260
+  },
+  "costUsd": 0.0100857
+ }
+}

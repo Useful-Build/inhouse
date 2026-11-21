@@ -73,6 +73,8 @@ export interface RunnerPoolPort {
   drain(nowMs: number): DrainState
   /** Route 47. */
   drainState(): DrainState
+  /** The test build's undrain (`DELETE /api/ops/drain`, gated): clears a drain at once, as a passed warm-up would. */
+  undrain(): DrainState
   /** Route 48: start runners, check them, clear the drain. */
   warmup(): Promise<{ ok: true } | Refusal>
   /** A container exited: the turn ids the BrandAgent fences, or null when this generation was already reported. */
@@ -240,6 +242,8 @@ export interface BrandAgentRpc {
   getTrace(id: string, scope: RunScope): Promise<Trace | null>
   onMemberRemoved(memberId: string): Promise<void>
   onGrantEnded(grantId: string): Promise<void>
+  /** Route 17 made a grant: the object schedules its `grant-expiry` at `endsAtMs` (4.10). */
+  onGrantCreated(grantId: string, endsAtMs: number): Promise<void>
   /** A Runner's container exited: the pool names that runner's turns once per generation, and the BrandAgent fences them. */
   containerExited(runner: string, gen: number): Promise<void>
   poolHealth(): Promise<PoolHealth>
@@ -247,6 +251,8 @@ export interface BrandAgentRpc {
   /** `drain`, `drainState` and `warmup` delegate to the pool (`RunnerPoolPort`). */
   drain(): Promise<DrainState>
   drainState(): Promise<DrainState>
+  /** The test build's undrain (delegates to the pool). */
+  undrain(): Promise<DrainState>
   warmup(): Promise<{ ok: true } | Refusal>
   /** The egress's audit route (8.7): the redacted `tool_calls` row, keyed `(turnId, n)`. */
   writeToolCall(turnId: string, n: number, entry: AuditEntry): Promise<void>

@@ -1,0 +1,43 @@
+{
+ "row": {
+  "caseId": "T03",
+  "cat": "choice",
+  "pair": "memory_update/save",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_update"
+  ],
+  "toolSearches": 0,
+  "answer": "Updated.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_update",
+    "input": {
+     "memory_id": "m_norda",
+     "fact": "Norda minimum order is 150 units."
+    },
+    "result": "Updated. It waits for an admin."
+   }
+  ],
+  "answer": "Updated.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

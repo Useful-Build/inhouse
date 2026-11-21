@@ -40,6 +40,12 @@ export class FakeRunnerPool implements RunnerPoolPort {
     return this.drainAnswer
   }
   drainState() { this.calls.push({ method: 'drainState', args: [] }); return this.drainAnswer }
+  /** Like the real one: the drain clears at once. */
+  undrain() {
+    this.calls.push({ method: 'undrain', args: [] })
+    this.drainAnswer = { ...this.drainAnswer, drainingUntilMs: null }
+    return this.drainAnswer
+  }
   /** Like the real one: a warm-up that succeeds clears the drain. */
   async warmup() {
     this.calls.push({ method: 'warmup', args: [] })

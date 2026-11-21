@@ -70,6 +70,13 @@ const designGets = (...classes: string[]) => rows.filter(r => r.method === 'GET'
 
 test.describe.configure({ mode: 'serial' })
 
+// The sweep's POST /api/ops/drain really drains the test build's brand: undrain it after this file (the test build's
+// DELETE /api/ops/drain, release only), so later specs and the next run see an undrained pool.
+test.afterAll(async ({ request }) => {
+  const r = await call(request, actor('release'), 'DELETE', '/api/ops/drain')
+  expect(r.status, r.text).toBe(200)
+})
+
 test.describe('without a live grant', () => {
   test.beforeAll(async ({ request }) => { await endLiveGrants(request) })
   for (const row of rows) {

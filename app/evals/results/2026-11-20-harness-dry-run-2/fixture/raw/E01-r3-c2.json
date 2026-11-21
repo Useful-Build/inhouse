@@ -1,0 +1,52 @@
+{
+ "row": {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like it as a table, not bullets. That's the only formatting preference I have saved. If you want to add columns, an order or a length, tell me and I'll save it.",
+  "costUsd": 0.0094826,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "weekly stock report format"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_64377f [person p_maya] Maya wants the weekly stock report formatted as a table, not bullets.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "stock report",
+     "scope": "person"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_64377f [person p_maya] Maya wants the weekly stock report formatted as a table, not bullets.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You like it as a table, not bullets. That's the only formatting preference I have saved. If you want to add columns, an order or a length, tell me and I'll save it.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2175,
+   "cacheReadTokens": 21071,
+   "outputTokens": 193
+  },
+  "costUsd": 0.0094826
+ }
+}
