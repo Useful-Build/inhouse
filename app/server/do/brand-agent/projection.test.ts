@@ -8,7 +8,11 @@
 //     retry doesn't survive a reset;
 //  3. `getChat`'s runs drop an ended run before its turns are in D1 (nothing to replay them from);
 //  4. a chat delete ends a turn outside `storeFinal`, starts a queued turn on the way (a reserve, a placement), or
-//     touches another chat's turns.
+//     touches another chat's turns;
+//  5. a failed, stopped or never-run turn's end leaves no row, so after a reload the chat shows the question and silence
+//     where the live stream showed a failure, a stopped note or a "busy" / "paused" line (a pause during a cold boot
+//     leaves the turn `ended`, not `cancelled`); the row isn't replayed by a flush retry; or it lands in the agent's own
+//     history (`user`/`agent` rows).
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { openStores } from '../../db/stores.ts'
@@ -88,13 +92,120 @@ describe('the projection (failure 1)', () => {
       answer(h, a.turnId, 'first'); await settle()
       h.clock.now = T0 + 3 * SEC
       answer(h, b.turnId, 'second'); await settle()
+      // The stopped question keeps its stopped note (failure 5's end row, #177 round 1), so the rows after it move down one.
       expect(await d1Rows(c)).toEqual([
         user(x, 0, 'question key-proj04', T0),
-        user(a, 1, 'question key-proj02', T0), part(a, 0, 2, 'first', T0 + 2 * SEC),
-        user(b, 3, 'question key-proj03', T0, JSON.stringify({ quote: 'an earlier line' })), part(b, 0, 4, 'second', T0 + 3 * SEC),
+        { id: `${x.turnId}.x`, run_id: x.runId, turn_id: x.turnId, pos: 1, role: 'event', author_id: null, text: '', part_json: null, extra_json: JSON.stringify({ outcome: 'stopped' }), model: null, at_ms: T0 + 1 * SEC },
+        user(a, 2, 'question key-proj02', T0), part(a, 0, 3, 'first', T0 + 2 * SEC),
+        user(b, 4, 'question key-proj03', T0, JSON.stringify({ quote: 'an earlier line' })), part(b, 0, 5, 'second', T0 + 3 * SEC),
       ])
       expect(await lastAt(c)).toBe(T0 + 3 * SEC)
     })
+  })
+})
+
+describe('a failed or never-run turn keeps its end (failure 5)', () => {
+  const endRow = (t: { turnId: string; runId: string }, kind: 'f' | 'x', pos: number, extra: object, atMs: number) =>
+    ({ id: `${t.turnId}.${kind}`, run_id: t.runId, turn_id: t.turnId, pos, role: 'event', author_id: null, text: '', part_json: null, extra_json: JSON.stringify(extra), model: null, at_ms: atMs })
+
+  it('a failed turn (`protocol`) and a cancelled one (`pool_full`): an end row each, read back by getChat with its code', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      h.pool.placeAnswer = { refused: 'rejected', status: 413 }
+      h.clock.now = T0 + 1 * SEC
+      const f = await send(h, c, 'key-proj20'); await settle()
+      h.pool.placeAnswer = { refused: 'pool_full' }
+      h.clock.now = T0 + 2 * SEC
+      const x = await send(h, c, 'key-proj21'); await settle()
+      expect(await d1Rows(c)).toEqual([
+        user(f, 0, 'question key-proj20', T0 + 1 * SEC), endRow(f, 'f', 1, { failure: 'protocol', retryQuestion: 'question key-proj20' }, T0 + 1 * SEC),
+        user(x, 2, 'question key-proj21', T0 + 2 * SEC), endRow(x, 'x', 3, { why: 'pool_full' }, T0 + 2 * SEC),
+      ])
+      const page = await stores.chats.messages(c, null, 50)
+      expect(page.filter(m => m.role === 'event')).toEqual([
+        { id: `${x.turnId}.x`, role: 'event', text: '', end: { why: 'pool_full' }, turnId: x.turnId, runId: x.runId, pos: 3, at: { iso: new Date(T0 + 2 * SEC).toISOString(), ms: T0 + 2 * SEC } },
+        { id: `${f.turnId}.f`, role: 'event', text: '', end: { failure: 'protocol', retryQuestion: 'question key-proj20' }, turnId: f.turnId, runId: f.runId, pos: 1, at: { iso: new Date(T0 + 1 * SEC).toISOString(), ms: T0 + 1 * SEC } },
+      ])
+      // The agent's own history and search read `user` and `agent` rows only: an end row is in neither.
+      const agentRead = await env.DB.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE chat_id = ? AND role IN ('user', 'agent')").bind(c).first<number>('n')
+      expect(agentRead).toBe(2)
+    })
+  })
+
+  it('a stopped turn keeps its stopped note; a finished one has no end row (a delete: failure 4 keeps its rows as they were)', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      const a = await send(h, c, 'key-proj22'); await settle()
+      const s = await send(h, c, 'key-proj23')
+      expect(h.core.stop(s.turnId, { kind: 'person', memberId: owner })).toEqual({ ok: true })
+      answer(h, a.turnId, 'done'); await settle()
+      const rows = await d1Rows(c)
+      expect(rows.map(r => r.id)).toEqual([`${s.turnId}.u`, `${s.turnId}.x`, `${a.turnId}.u`, `${a.turnId}.0`])
+      expect(rows[1]).toEqual(endRow(s, 'x', 1, { outcome: 'stopped' }, T0))
+      const page = await stores.chats.messages(c, null, 50)
+      expect(page.find(m => m.id === `${s.turnId}.x`)).toMatchObject({ role: 'event', end: { outcome: 'stopped' } })
+    })
+  })
+
+  it('a pause while the placement is still waiting on a cold boot: the paused note is kept, though the fence left it ended', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      h.pool.placeAnswer = () => new Promise(() => {})
+      const p = await send(h, c, 'key-proj24'); await settle()
+      expect(h.turn(p.turnId)).toMatchObject({ state: 'starting', placed: 1 })
+      h.core.pause({ kind: 'person', memberId: 'm_admin' })
+      await h.tick(MIN); await h.tick(MIN)
+      expect(h.turn(p.turnId)).toMatchObject({ state: 'ended', outcome: 'cancelled', cancel_why: 'paused', started_at_ms: null })
+      const rows = await d1Rows(c)
+      expect(rows.map(r => r.id)).toEqual([`${p.turnId}.u`, `${p.turnId}.x`])
+      expect(JSON.parse(rows[1].extra_json as string)).toEqual({ why: 'paused' })
+    })
+  })
+
+  it('a turn that went live and was then paused has no end row (the live view words no cancel of a started turn)', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      const l = await send(h, c, 'key-proj26'); await settle()
+      h.push(l.turnId, ev.started(), ev.text('partial'))
+      h.core.pause({ kind: 'person', memberId: 'm_admin' })
+      await h.tick(MIN); await h.tick(MIN)
+      expect(h.turn(l.turnId)).toMatchObject({ state: 'ended', cancel_why: 'paused' })
+      expect(h.turn(l.turnId).started_at_ms).not.toBeNull()
+      expect((await d1Rows(c)).map(r => r.id)).toEqual([`${l.turnId}.u`, `${l.turnId}.0`])
+    })
+  })
+
+  it('an interrupted turn (asked to stop, then success) keeps its stopped note as `.x` { outcome: interrupted }', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      const i = await send(h, c, 'key-proj27'); await settle()
+      h.push(i.turnId, ev.started(), ev.text('so far'))
+      h.core.interrupt(i.turnId, { kind: 'person', memberId: owner })
+      h.clock.now = T0 + 4 * SEC
+      h.push(i.turnId, ev.checkpoint(2, null, null), ev.success(), ev.released({ mainEntries: 2, lastUuid: null, lastUuidIndex: null }))
+      await settle()
+      expect(h.turn(i.turnId)).toMatchObject({ state: 'ended', outcome: 'interrupted' })
+      const rows = await d1Rows(c)
+      expect(rows.map(r => r.id)).toEqual([`${i.turnId}.u`, `${i.turnId}.0`, `${i.turnId}.x`])
+      expect(rows[2]).toEqual(endRow(i, 'x', 2, { outcome: 'interrupted' }, T0 + 4 * SEC))
+    })
+  })
+
+  it('an end row is replayed with its turn after a failed flush and a reset', async () => {
+    const c = await chat()
+    const { db, mode } = flakyDb()
+    await inAgent(async h => {
+      mode.now = 'fail'
+      h.pool.placeAnswer = { refused: 'rejected', status: 413 }
+      const f = await send(h, c, 'key-proj25'); await settle()
+      expect(await d1Rows(c)).toEqual([])
+      const after = h.restart()
+      mode.now = 'ok'
+      await after.tick(30 * SEC)
+      expect(await d1Rows(c)).toEqual([
+        user(f, 0, 'question key-proj25', T0), endRow(f, 'f', 1, { failure: 'protocol', retryQuestion: 'question key-proj25' }, T0),
+      ])
+    }, { db })
   })
 })
 

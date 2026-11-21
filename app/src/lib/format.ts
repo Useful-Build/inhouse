@@ -200,6 +200,15 @@ export const traceTicks = (durationMs: number, d: Display): TraceTick[] => {
   return ticks
 }
 
+/**
+ * A trace's cost. A model call still open (its step's `costUpTo`, set by the server's runs-read.ts) counts at its
+ * admitted worst case until it closes, so the amount reads "up to …" while one is open.
+ */
+export const fmtTraceCost = (t: { cost: Money; steps: readonly { costUpTo?: boolean }[] }, d: Display): string => {
+  const shown = fmtMoney(t.cost, d, { cents: 'always' })
+  return t.steps.some(s => s.costUpTo === true) ? `up to ${shown}` : shown
+}
+
 /** The line under an answer: mode, steps, time taken and when it answered, as far as they're known ("Balanced · 6 steps · 11.6s · 8:03 AM"). */
 export const fmtAnswerBar = (a: { model?: string; steps: number; durationMs: number; at?: At }, d: Display): string =>
   [a.model, `${a.steps} steps`, fmtDuration(a.durationMs, d), a.at === undefined ? undefined : fmtTime(a.at, d)].filter(Boolean).join(' · ')

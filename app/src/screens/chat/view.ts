@@ -1,7 +1,8 @@
 // A chat's live view, built from its run events (p3-design section 2). A pure reducer: the same events in the same order
 // give the same view, so a replay after a reconnect or a reload shows what the live stream showed. Messages are keyed
 // by their stable ids (`<turnId>.u`, `<turnId>.<n>`), so an event seen twice never doubles a message.
-// Ids the view makes itself (never sent by the server, never in D1): `<turnId>.f` a failed turn's answer, `<turnId>.x` a note.
+// Ids the view makes itself from a turn's end event: `<turnId>.f` a failed turn's answer, `<turnId>.x` a note. The server
+// stores the same ids as the turn's end row (projection.ts), and turn-text.ts `historyMessages` words it the same way.
 import type { Attachment, AttachmentRef, ChatMessage, Instant } from '../../agent/types'
 import type { ChatEvent, TurnFailure } from '../../../shared/contract/runs'
 import { NOTICE } from '../../../shared/contract/chat-codes'

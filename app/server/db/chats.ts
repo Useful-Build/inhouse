@@ -2,7 +2,8 @@
 // store contract in server/routes.ts): the owner lookup routes 29 and 49 prefilter with, the `agent.paused` /
 // `agent.resumed` lines (routes 36 and 37), and the chats and their history (routes 22 to 28; 4.8 writes the history,
 // from the BrandAgent). Whether a chat is `running` is the BrandAgent's, so records here leave it out.
-import type { StoredMessage } from '../../shared/contract/chats.ts'
+import type { StoredMessage, TurnEnd } from '../../shared/contract/chats.ts'
+import type { CancelWhy, TurnFailure } from '../../shared/contract/runs.ts'
 import { auditInsert } from './audit.ts'
 import type { At } from './members.ts'
 import { all, first, runBatch, stmt } from './sql.ts'
@@ -92,7 +93,10 @@ const record = (r: ChatRow): ChatRecord => ({
  */
 function message(r: MessageRow): StoredMessage {
   const where = { turnId: r.turn_id, runId: r.run_id, pos: r.pos, at: instant(r.at_ms) }
-  const extra = (r.extra_json === null ? {} : JSON.parse(r.extra_json)) as { quote?: string; attachments?: { name: string }[]; trace?: string }
+  const extra = (r.extra_json === null ? {} : JSON.parse(r.extra_json)) as {
+    quote?: string; attachments?: { name: string }[]; trace?: string; failure?: TurnFailure; retryQuestion?: string; why?: CancelWhy
+    outcome?: 'stopped' | 'interrupted'
+  }
   if (r.role === 'user') {
     return {
       id: r.id, role: 'user', text: r.text, ...(extra.quote === undefined ? {} : { quote: extra.quote }),
@@ -103,7 +107,10 @@ function message(r: MessageRow): StoredMessage {
     if (r.part_json === null) throw new Error(`chat_messages ${r.id}: an agent row without a part`)
     return { id: r.id, role: 'agent', part: JSON.parse(r.part_json), trace: extra.trace ?? r.turn_id, ...(r.model === null ? {} : { model: r.model }), ...where }
   }
-  return { id: r.id, role: 'event', text: r.text, ...where }
+  // An end row (projection.ts): how its turn ended, for the client to put in words.
+  const end: TurnEnd | null = extra.failure !== undefined ? { failure: extra.failure, retryQuestion: extra.retryQuestion ?? '' }
+    : extra.outcome !== undefined ? { outcome: extra.outcome } : extra.why !== undefined ? { why: extra.why } : null
+  return { id: r.id, role: 'event', text: r.text, ...(end === null ? {} : { end }), ...where }
 }
 
 export function chatStore(deps: { db: D1Database }): ChatStore {

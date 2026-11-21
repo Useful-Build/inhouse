@@ -1153,18 +1153,22 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const cursor = more ? have?.next ?? undefined : undefined
       const epoch = historyEpoch
       set(s => ({ history: { ...s.history, [chatId]: { messages: have?.messages ?? [], next: have?.next ?? null, state: 'loading' } } }))
-      agent.getChat(chatId, cursor).then(page => {
+      agent.getChat(chatId, cursor).then(async page => {
         if (epoch !== historyEpoch) return
         // `runs`: the live run and any ended run whose turns aren't all stored yet (route 24). Each is replayed from its first event;
         // what the history already holds shows once (stable ids).
         void followRuns(page.runs).catch(logFailure('could not follow the answers being written'))
-        // The page is newest first; the thread reads oldest first, by stored position.
-        const older = [...page.messages].sort((a, b) => a.pos - b.pos)
+        // The page is newest first; the thread reads oldest first, by stored position. A turn's stored end row is put in
+        // the words the live stream used (they load with the chat code, as at a send).
+        const sorted = [...page.messages].sort((a, b) => a.pos - b.pos)
+        const older: ChatMessage[] = sorted.some(m => m.role === 'event' && m.end !== undefined) ? (await loadChat()).historyMessages(sorted) : sorted
+        if (epoch !== historyEpoch) return
         set(s => {
           const cur = own(s.history, chatId)
           return { history: { ...s.history, [chatId]: { messages: more ? [...older, ...(cur?.messages ?? [])] : older, next: page.nextCursor, state: 'ready' } } }
         })
-      }, (e: unknown) => {
+      }).catch((e: unknown) => {
+        // The read failed, or the chat code for the page's end rows didn't load: either way the page isn't shown.
         if (epoch !== historyEpoch) return
         // A chat this tab just started whose save failed (or never reached the agent) has no history: it reads as empty, not as an error.
         if (e instanceof AgentError && e.code === NOT_FOUND && get().started.some(c => c.id === chatId)) {

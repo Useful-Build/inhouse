@@ -6,7 +6,7 @@ import { ChatMessageSchema } from './chat.ts'
 import { ChatIdSchema, RunIdSchema, TurnIdSchema } from './chat-ids.ts'
 import { IfRevSchema } from './members.ts'
 import { CursorSchema } from './paging.ts'
-import { ActiveRunSchema } from './runs.ts'
+import { ActiveRunSchema, CancelWhySchema, TurnFailureSchema } from './runs.ts'
 
 export { ChatIdSchema }
 export type { ChatId } from './chat-ids.ts'
@@ -31,8 +31,22 @@ export type ChatSummary = z.infer<typeof ChatSummarySchema>
 const stored = { turnId: TurnIdSchema, runId: RunIdSchema, pos: z.number().int().min(0), at: InstantSchema }
 const [userMsg, agentMsg, eventMsg] = ChatMessageSchema.options
 
-/** A message as D1 keeps it: chat.ts's message plus where it sits. */
-export const StoredMessageSchema = z.discriminatedUnion('role', [userMsg.extend(stored), agentMsg.extend(stored), eventMsg.extend(stored)])
+/**
+ * How a turn ended when the chat has words for it, on its stored end row (an `event` with empty text): a failed turn
+ * (`<turnId>.f`, with the question to ask again), a stopped or interrupted one, or a question that never ran (both
+ * `<turnId>.x`). The client renders the words, the same as at the live `turn.finished` / `turn.cancelled`.
+ */
+export const TurnEndSchema = z.union([
+  z.object({ failure: TurnFailureSchema, retryQuestion: z.string() }),
+  z.object({ outcome: z.enum(['stopped', 'interrupted']) }),
+  z.object({ why: CancelWhySchema }),
+])
+export type TurnEnd = z.infer<typeof TurnEndSchema>
+
+/** A message as D1 keeps it: chat.ts's message plus where it sits (an end row also says how its turn ended). */
+export const StoredMessageSchema = z.discriminatedUnion('role', [
+  userMsg.extend(stored), agentMsg.extend(stored), eventMsg.extend({ ...stored, end: TurnEndSchema.optional() }),
+])
 export type StoredMessage = z.infer<typeof StoredMessageSchema>
 
 /** `GET /api/chats?cursor&limit&deleted`. */
