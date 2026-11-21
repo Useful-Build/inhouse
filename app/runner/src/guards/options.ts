@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import type { HookCallbackMatcher, HookEvent, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { RunConfig } from '../protocol/local.ts'
 import type { QueryGuards, RunContext } from '../session/seam.ts'
-import { auditHook } from './audit.ts'
+import { auditHook, deniedEntry, recordToolCall } from './audit.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER } from './lists.ts'
 import { CLI_WRAPPER, PLUGIN_DIR, RUNNER_DIR, USERS_ROOT, WORK_ROOT, userPaths, validSessionKey, type UserPaths } from './paths.ts'
 import { POOL_SIZE, poolUserName } from './users.ts'
@@ -186,7 +186,7 @@ export function guardedOptions(
   }
 
   const ours: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
-    PreToolUse: [webFetchHook(domains, hostAddresses), auditHook(run, deps.auditTimeoutMs)],
+    PreToolUse: preToolUseHooks(domains, hostAddresses, run, deps.auditTimeoutMs),
   }
   const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = { ...base.hooks }
   for (const [event, matchers] of Object.entries(ours) as [HookEvent, HookCallbackMatcher[]][]) {
@@ -240,4 +240,15 @@ export function guardedOptions(
     },
     hooks,
   }
+}
+
+/**
+ * Our PreToolUse hooks, in order: the WebFetch hook (which records a 'deny' audit entry for a call it refuses, so the
+ * trace can mark that call: p3-eval-observability rev 2 rec 6), then the blocking audit hook for every call.
+ */
+export function preToolUseHooks(domains: readonly string[] | null, hostAddresses: readonly string[], run: RunContext, auditTimeoutMs?: number): HookCallbackMatcher[] {
+  return [
+    webFetchHook(domains, hostAddresses, undefined, (input) => recordToolCall(run, deniedEntry(input), auditTimeoutMs)),
+    auditHook(run, auditTimeoutMs),
+  ]
 }

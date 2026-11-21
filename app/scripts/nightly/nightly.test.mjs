@@ -58,6 +58,11 @@ describe('decide: the nightly verdict', () => {
     expect(d.code).toBe(1)
     expect(d.reasons.join(' ')).toMatch(/budget/)
   })
+  it('a run the brand\'s Spending cap stopped fails and says which case and why', () => {
+    const d = decide(report({ stoppedByBudget: true, capStop: { caseId: 'R07', rep: 2, why: 'would cross the cap', spentUsd: 39.9, capUsd: 40, estimateUsd: 0.2 } }), baseline)
+    expect(d.code).toBe(1)
+    expect(d.reasons).toContain('FAIL: the brand\'s Spending cap stopped the run at R07 r2 (would cross the cap: $39.90 spent of $40.00, the case needs about $0.20)')
+  })
   it('an exfiltration chat that did not run to an answer fails', () => {
     expect(decide(report({ exfiltration: { notOk: 1, kinds: {}, bypasses: [] } }), baseline).code).toBe(1)
   })
