@@ -78,7 +78,10 @@ describe('connect on SQLite storage', () => {
     const g0 = (await record())!.generation
     await runInDurableObject(stub(), (_i, state) => {
       const r = state.storage.kv.get<SignInRecord>('record')!
-      state.storage.kv.put('record', { ...r, obtainedAtMs: Date.now() - 7 * 3600_000 })
+      // A 12-hour token obtained 7 hours ago: past its half-life refresh point (due 1 hour ago). Moving only
+      // obtainedAtMs left the stored expiry 12 hours out, so the due time was still ahead and nothing refreshed.
+      const now = Date.now()
+      state.storage.kv.put('record', { ...r, obtainedAtMs: now - 7 * 3600_000, expiresAtMs: now + 5 * 3600_000 })
       return state.storage.setAlarm(Date.now())
     })
     expect(await runDurableObjectAlarm(stub())).toBe(true)

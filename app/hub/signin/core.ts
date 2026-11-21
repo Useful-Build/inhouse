@@ -1227,6 +1227,9 @@ export class SignInCore {
       this.#session = null
       const now = this.#read()
       if (now?.refresh && now.generation === first.generation) {
+        // The same backoff gate as #mcpAcquire: while refreshes are backing off, a 401 sends no refresh either.
+        const notBefore = this.#refreshNotBefore(now)
+        if (notBefore !== null && this.#d.now() < notBefore) return this.#mcpLogged(accountId, name, started, err(now.lastError?.code ?? 'upstream_unavailable'))
         const g = await this.#grant(accountId)
         if (!g.ok) return this.#mcpLogged(accountId, name, started, err(g.code, g.detail))
       }
