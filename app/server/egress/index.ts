@@ -1,7 +1,8 @@
 // The egress (`egress.internal`, p3-design 8.1): the container's one way out, per call. Every call: the host, the route
-// (`model|mcp|store|files|events|audit`, else 404), the run token hashed and checked by the BrandAgent (refused: 401,
-// or 410 for a closed `events` route), the token header never forwarded, ids only from the grant, request and response
-// headers by allowlist, no redirects followed, pinned upstreams, logs without tokens, hashes, keys or bodies.
+// (`model|mcp|store|files|events|audit`, plus P4 H1's `hub` checked on the `mcp` grant, else 404), the run token hashed
+// and checked by the BrandAgent (refused: 401, or 410 for a closed `events` route), the token header never forwarded,
+// ids only from the grant, request and response headers by allowlist, no redirects followed, pinned upstreams, logs
+// without tokens, hashes, keys or bodies.
 import { WorkerEntrypoint } from 'cloudflare:workers'
 import { EGRESS_ROUTES, hashRunToken } from '../do/brand-agent/tokens.ts'
 import type { EgressRoute } from '../do/brand-agent/tokens.ts'
@@ -52,7 +53,8 @@ export async function handleEgress(request: Request, d: EgressDeps): Promise<Res
   const token = request.headers.get(RUN_TOKEN_HEADER)
   const checked = token ? await d.rpc.checkRunToken(await hashRunToken(token), route) : { refused: 'unknown' as const }
   if ('refused' in checked) {
-    d.log({ event: 'egress_refused', route, why: checked.refused, runner: d.runner })
+    // `path: 'hub'` tells a refused `/hub/` call from a refused `/mcp/` one (both check the `mcp` route).
+    d.log({ event: 'egress_refused', route, ...(hub !== undefined ? { path: 'hub' } : {}), why: checked.refused, runner: d.runner })
     return refusal(route, route === 'events' && checked.refused === 'closed' ? 410 : 401)
   }
   const grant = checked

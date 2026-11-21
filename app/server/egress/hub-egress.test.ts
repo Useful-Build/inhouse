@@ -1,8 +1,10 @@
 // The `hub` route through the egress's dispatch (`handleEgress`), on W1's fake BrandAgentRpc and real run tokens. Needs
-// the orchestrator's dispatch lines in index.ts and deps.ts (H1's PR body). Ways it can fail, written down first:
-//  1. a refused token (each TokenRefusal) reaches the hub, or is answered with anything but 401;
-//  2. the token is checked against any route but `mcp`, so `/hub/` stays open after `mcp` closes (or the reverse);
-//  3. the token header reaches the hub route's handler or the hub.
+// the dispatch lines in index.ts and deps.ts. Ways it can fail, written down first:
+//  1. a refused token (each TokenRefusal) reaches the hub, is answered with anything but 401, or its log line can't be
+//     told from a refused `/mcp/` call's;
+//  2. the token is checked against any route but `mcp`, so `/hub/` stays open after `mcp` closes (or the reverse).
+// (The token header never reaching the hub: the hub sees only the scope, and hub.test.ts's canary sweep sends the token
+// header straight to the handler and finds it in no answer or log line.)
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
@@ -59,7 +61,7 @@ describe('/hub/ through the egress', () => {
     const res = await handleEgress(egressRequest('/hub/', { body: list, headers: { 'content-type': 'application/json' }, token: why === 'missing' ? null : TOKEN }), deps)
     expect(res.status).toBe(401)
     expect(f.scopes).toEqual([])
-    expect(h.logs.filter(l => l.event === 'egress_refused')).toHaveLength(1)
+    expect(h.logs.filter(l => l.event === 'egress_refused')).toEqual([{ event: 'egress_refused', route: 'mcp', path: 'hub', why: why === 'missing' ? 'unknown' : why, runner: 'runner-0' }])
   })
 
   it('on real run tokens: closing the mcp route closes /hub/ too; closing another route does not', async () => {
@@ -78,7 +80,7 @@ describe('/hub/ through the egress', () => {
     })
   })
 
-  it("W3's server scope is a ReadGateway caller too (the same HUB binding)", async () => {
+  it("type-level: W3's { kind: 'server' } scope is a ReadGateway.listTools argument (the same HUB binding)", async () => {
     const f = fakeHub()
     const scope: CallerScope = { kind: 'server', job: 'morning-check', requestId: 'req-9' }
     expect(await f.hub.listTools(scope)).toEqual({ ok: true, value: [] })

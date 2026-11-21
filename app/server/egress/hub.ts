@@ -21,7 +21,7 @@ const LOGGED_METHODS = ['initialize', 'ping', 'tools/list', 'tools/call', 'notif
 export type HubLogMethod = (typeof LOGGED_METHODS)[number] | 'other' | 'none'
 
 /** What a log line's `code` may be: `ok`, a hub error code, or this route's own refusals. */
-export type HubLogCode = 'ok' | HubErrorCode | 'binding_failed' | 'bad_request' | 'bad_params' | 'unknown_method' | 'method_not_allowed' | 'not_found' | 'too_large'
+export type HubLogCode = 'ok' | HubErrorCode | 'binding_failed' | 'unknown_hub_code' | 'bad_request' | 'bad_params' | 'unknown_method' | 'method_not_allowed' | 'not_found' | 'too_large'
 
 /** One line per call, these fields only: never the token, its hash, arguments, results, documents or hub messages. */
 export type HubEgressLog = {
@@ -60,23 +60,31 @@ const INTERNAL_ERROR = -32603
 type Id = string | number
 
 // The zod mirror of the hub's answers (contract.ts types; the hub's own schemas.ts isn't imported, so the product
-// Worker takes no hub dependency). Anything that doesn't parse is a binding failure.
-const HubErrorMirror = z.strictObject({
-  code: z.enum([
-    'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch', 'key_unavailable',
-    'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited', 'result_too_large', 'internal',
-  ] satisfies HubErrorCode[]),
-  message: z.string(),
-  retryAfterMs: z.number().optional(),
-})
+// Worker takes no hub dependency). Anything that doesn't parse is a binding failure. Plain objects that strip unknown
+// keys, and any string as an error code: a hub deployed ahead of the product Worker (a new field, a new code) keeps
+// working; an unknown code is answered as `internal`.
+const HUB_ERROR_CODES: readonly HubErrorCode[] = [
+  'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch', 'key_unavailable',
+  'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited', 'result_too_large', 'internal',
+]
+const isHubCode = (c: string): c is HubErrorCode => (HUB_ERROR_CODES as readonly string[]).includes(c)
+const HubErrorMirror = z.object({ code: z.string(), message: z.string(), retryAfterMs: z.number().optional() })
 const resultMirror = <T extends z.ZodType>(value: T) =>
-  z.discriminatedUnion('ok', [z.strictObject({ ok: z.literal(true), value }), z.strictObject({ ok: z.literal(false), error: HubErrorMirror })])
-const ToolInfoMirror = z.strictObject({ name: z.string(), connector: z.string(), description: z.string(), inputSchema: z.record(z.string(), z.unknown()) })
+  z.discriminatedUnion('ok', [z.object({ ok: z.literal(true), value }), z.object({ ok: z.literal(false), error: HubErrorMirror })])
+const ToolInfoMirror = z.object({ name: z.string(), connector: z.string(), description: z.string(), inputSchema: z.record(z.string(), z.unknown()) })
 const listMirror = resultMirror(z.array(ToolInfoMirror))
-const callMirror = resultMirror(z.strictObject({ data: z.unknown() }))
+const callMirror = resultMirror(z.object({ data: z.unknown() }))
+
+/** The most of the hub's message the model reads (defence in depth: the hub's is already a fixed text). */
+export const HUB_MESSAGE_MAX_CHARS = 500
+const CUT_MARKER = ' [cut]'
 
 /** Tool names a hub list from this isolate has named: the only tool names a log line carries. */
 const knownTools = new Set<string>()
+/** Tests only: forget the names, so no test depends on another's list. */
+export function resetKnownToolsForTests(): void {
+  knownTools.clear()
+}
 
 const HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
 const json = (body: unknown, status = 200, extra: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { ...HEADERS, ...extra } })
@@ -92,11 +100,13 @@ export function listedTool(t: ToolInfo) {
   return { name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: { readOnlyHint: true } }
 }
 
-/** A hub error as the model reads it (a tool execution error). */
+/** A hub error as the model reads it (a tool execution error); the message capped at HUB_MESSAGE_MAX_CHARS. */
 export function errorText(e: { code: HubErrorCode; message: string; retryAfterMs?: number }): string {
   const retry = e.code === 'rate_limited' && e.retryAfterMs !== undefined ? ` (retry after ${Math.ceil(e.retryAfterMs / 1000)} s)` : ''
-  return `${e.code}: ${e.message}${retry}`
+  const message = e.message.length > HUB_MESSAGE_MAX_CHARS ? `${e.message.slice(0, HUB_MESSAGE_MAX_CHARS)}${CUT_MARKER}` : e.message
+  return `${e.code}: ${message}${retry}`
 }
+const INTERNAL_TEXT = 'internal: internal error'
 
 /** One MCP POST to `/hub/`, answered from the hub as the grant's run. */
 export async function handleHub(request: Request, grant: RunGrant, deps: HubRouteDeps): Promise<Response> {
@@ -169,7 +179,11 @@ export async function handleHub(request: Request, grant: RunGrant, deps: HubRout
       }
       const parsed = listMirror.safeParse(answer)
       if (!parsed.success) return done('binding_failed', rpcError(id, INTERNAL_ERROR, 'hub: internal'))
-      if (!parsed.data.ok) return done(parsed.data.error.code, rpcError(id, INTERNAL_ERROR, `hub: ${parsed.data.error.code}`))
+      if (!parsed.data.ok) {
+        const code = parsed.data.error.code
+        if (!isHubCode(code)) return done('unknown_hub_code', rpcError(id, INTERNAL_ERROR, 'hub: internal'))
+        return done(code, rpcError(id, INTERNAL_ERROR, `hub: ${code}`))
+      }
       for (const t of parsed.data.value) knownTools.add(t.name)
       return done('ok', rpcResult(id, { tools: parsed.data.value.map(listedTool) }))
     }
@@ -184,12 +198,23 @@ export async function handleHub(request: Request, grant: RunGrant, deps: HubRout
       try {
         answer = await deps.hub.callTool(scope(), name, args ?? {})
       } catch {
-        return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: 'internal: internal error' }], isError: true }))
+        return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: INTERNAL_TEXT }], isError: true }))
       }
       const parsed = callMirror.safeParse(answer)
-      if (!parsed.success) return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: 'internal: internal error' }], isError: true }))
-      if (!parsed.data.ok) return done(parsed.data.error.code, rpcResult(id, { content: [{ type: 'text', text: errorText(parsed.data.error) }], isError: true }))
-      return done('ok', rpcResult(id, { content: [{ type: 'text', text: JSON.stringify(parsed.data.value.data) ?? 'null' }] }))
+      if (!parsed.success) return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: INTERNAL_TEXT }], isError: true }))
+      if (!parsed.data.ok) {
+        const error = parsed.data.error
+        if (!isHubCode(error.code)) return done('unknown_hub_code', rpcResult(id, { content: [{ type: 'text', text: INTERNAL_TEXT }], isError: true }))
+        return done(error.code, rpcResult(id, { content: [{ type: 'text', text: errorText({ ...error, code: error.code }) }], isError: true }))
+      }
+      // A value JSON can't carry (a BigInt, a cycle) is a binding failure, never an uncaught 500.
+      let text: string
+      try {
+        text = JSON.stringify(parsed.data.value.data) ?? 'null'
+      } catch {
+        return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: INTERNAL_TEXT }], isError: true }))
+      }
+      return done('ok', rpcResult(id, { content: [{ type: 'text', text }] }))
     }
     default:
       return done('unknown_method', rpcError(id, METHOD_NOT_FOUND, 'Method not found'))

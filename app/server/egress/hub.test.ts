@@ -6,12 +6,19 @@
 //     bad JSON, bad params, an unknown method, a hub error, a throwing or malformed binding);
 //  3. a listed tool carries `_meta` (so `anthropic/alwaysLoad` could load it upfront) or isn't marked read only;
 //  4. the scope the hub sees takes anything from the request body, or isn't exactly the grant's run and member;
-//  5. a GET, DELETE or other path reaches the hub; a body over 64 KiB is read whole.
+//  5. a GET, DELETE or other path reaches the hub; a body over 64 KiB is read whole; an Origin or an unsupported
+//     protocol version is answered;
+//  6. a hub a version ahead (a new field, a new error code) breaks every call; a long hub message reaches the model
+//     whole; a value JSON can't carry throws out of the handler;
+//  7. a log line names a tool the hub never listed (caller text).
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import type { CallerScope, HubErrorCode, HubResult, ToolInfo } from '../../hub/index/contract.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
-import { handleHub, type HubEgressLog, type HubRouteDeps, type ReadGatewayLike } from './hub.ts'
+import { handleHub, resetKnownToolsForTests, type HubEgressLog, type HubRouteDeps, type ReadGatewayLike } from './hub.ts'
+
+// Which tool names a log line may carry is module state (names a list in this isolate gave): no test inherits another's.
+beforeEach(() => resetKnownToolsForTests())
 
 const GRANT: RunGrant = {
   turnId: 't_turn1', runId: 'r_run1', chatId: 'chat-a', memberId: 'm_alice', sessionId: '00000000-0000-4000-8000-00000000000a',
@@ -135,7 +142,7 @@ describe('JSON-RPC mapping against literal pairs (failure 2)', () => {
   })
 
   it('a throwing or malformed binding: internal error, never its text; logged binding_failed', async () => {
-    for (const bad of [async () => { throw new Error('binding exploded') }, async () => ({ ok: 'yes' }), async () => ({ ok: false, error: { code: 'nope', message: 'x' } })]) {
+    for (const bad of [async () => { throw new Error('binding exploded') }, async () => ({ ok: 'yes' }), async () => ({ ok: false, error: { code: 1, message: 'x' } })]) {
       const f = fake()
       f.call = bad
       f.list = bad
@@ -145,6 +152,67 @@ describe('JSON-RPC mapping against literal pairs (failure 2)', () => {
       expect((await call(f, { jsonrpc: '2.0', id: 11, method: 'tools/list' })).body).toEqual({ jsonrpc: '2.0', id: 11, error: { code: -32603, message: 'hub: internal' } })
       expect(f.logs.map(l => l.code)).toEqual(['binding_failed', 'binding_failed'])
     }
+  })
+
+  it('a hub a version ahead: extra fields are stripped, not refused', async () => {
+    const f = fake()
+    f.list = async () => ({ ok: true, value: [{ ...TOOLS[1]!, title: 'Product', icons: [] }], nextCursor: 'x' })
+    expect((await call(f, { jsonrpc: '2.0', id: 20, method: 'tools/list' })).body).toEqual({
+      jsonrpc: '2.0', id: 20, result: { tools: [{ name: 'products_get', description: 'Get a product.', inputSchema: { type: 'object', additionalProperties: false }, annotations: { readOnlyHint: true } }] },
+    })
+    f.call = async () => ({ ok: true, value: { data: { count: 2 }, cost: 1 }, trace: 'x' })
+    expect((await call(f, { jsonrpc: '2.0', id: 21, method: 'tools/call', params: { name: 'products_get' } })).body).toEqual({
+      jsonrpc: '2.0', id: 21, result: { content: [{ type: 'text', text: '{"count":2}' }] },
+    })
+    f.call = async () => ({ ok: false, error: { code: 'write_refused', message: 'Read only.', hint: 'x' } })
+    expect((await call(f, { jsonrpc: '2.0', id: 22, method: 'tools/call', params: { name: 'products_get' } })).body).toEqual({
+      jsonrpc: '2.0', id: 22, result: { content: [{ type: 'text', text: 'write_refused: Read only.' }], isError: true },
+    })
+    expect(f.logs.map(l => l.code)).toEqual(['ok', 'ok', 'write_refused'])
+  })
+
+  it('an error code this Worker does not know is answered as internal, logged unknown_hub_code', async () => {
+    const f = fake()
+    f.call = async () => ({ ok: false, error: { code: 'quota_exceeded', message: 'New text.' } })
+    f.list = f.call
+    expect((await call(f, { jsonrpc: '2.0', id: 23, method: 'tools/call', params: { name: 'orders_search' } })).body).toEqual({
+      jsonrpc: '2.0', id: 23, result: { content: [{ type: 'text', text: 'internal: internal error' }], isError: true },
+    })
+    expect((await call(f, { jsonrpc: '2.0', id: 24, method: 'tools/list' })).body).toEqual({ jsonrpc: '2.0', id: 24, error: { code: -32603, message: 'hub: internal' } })
+    expect(f.logs.map(l => l.code)).toEqual(['unknown_hub_code', 'unknown_hub_code'])
+  })
+
+  it('a hub message over 500 characters is cut, with a marker', async () => {
+    const f = fake()
+    f.call = async () => ({ ok: false, error: { code: 'invalid_args', message: `${'m'.repeat(500)}TAIL` } })
+    expect((await call(f, { jsonrpc: '2.0', id: 25, method: 'tools/call', params: { name: 'orders_search' } })).body).toEqual({
+      jsonrpc: '2.0', id: 25, result: { content: [{ type: 'text', text: `invalid_args: ${'m'.repeat(500)} [cut]` }], isError: true },
+    })
+    f.call = async () => ({ ok: false, error: { code: 'invalid_args', message: 'm'.repeat(500) } })
+    expect((await call(f, { jsonrpc: '2.0', id: 26, method: 'tools/call', params: { name: 'orders_search' } })).body).toEqual({
+      jsonrpc: '2.0', id: 26, result: { content: [{ type: 'text', text: `invalid_args: ${'m'.repeat(500)}` }], isError: true },
+    })
+  })
+
+  it('data JSON cannot carry (a BigInt, a cycle) is a binding failure, not a throw', async () => {
+    const cycle: Record<string, unknown> = {}
+    cycle.self = cycle
+    for (const data of [10n, cycle]) {
+      const f = fake()
+      f.call = async () => ({ ok: true, value: { data } })
+      const r = await call(f, { jsonrpc: '2.0', id: 27, method: 'tools/call', params: { name: 'orders_search' } })
+      expect([r.status, r.body]).toEqual([200, { jsonrpc: '2.0', id: 27, result: { content: [{ type: 'text', text: 'internal: internal error' }], isError: true } }])
+      expect(f.logs.map(l => l.code)).toEqual(['binding_failed'])
+    }
+  })
+
+  it('a log line names a tool only after a hub list named it; else unknown', async () => {
+    const f = fake()
+    await call(f, { jsonrpc: '2.0', id: 28, method: 'tools/call', params: { name: 'orders_search' } })
+    await call(f, { jsonrpc: '2.0', id: 29, method: 'tools/list' })
+    await call(f, { jsonrpc: '2.0', id: 30, method: 'tools/call', params: { name: 'orders_search' } })
+    await call(f, { jsonrpc: '2.0', id: 31, method: 'tools/call', params: { name: 'not_listed' } })
+    expect(f.logs.map(l => [l.method, l.tool ?? null])).toEqual([['tools/call', 'unknown'], ['tools/list', null], ['tools/call', 'orders_search'], ['tools/call', 'unknown']])
   })
 
   it('unknown method, bad params, a batch, bad JSON', async () => {
@@ -172,6 +240,16 @@ describe('the HTTP edges (failure 5)', () => {
     for (const path of ['/hub', '/hub/x', '/hubx/']) expect((await call(f, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { path })).status).toBe(404)
     expect((await call(f, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { headers: { 'content-type': 'text/plain' } })).status).toBe(415)
     expect(f.scopes).toEqual([])
+  })
+
+  it('an Origin is 403; an unsupported MCP-Protocol-Version is 400; a supported one passes', async () => {
+    const f = fake()
+    const o = await call(f, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { headers: { origin: 'https://example.com' } })
+    expect([o.status, o.body]).toEqual([403, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Origin not allowed' } }])
+    const v = await call(f, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { headers: { 'mcp-protocol-version': '1999-01-01' } })
+    expect([v.status, v.body]).toEqual([400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Unsupported MCP-Protocol-Version' } }])
+    expect(f.scopes).toEqual([])
+    expect((await call(f, { jsonrpc: '2.0', id: 1, method: 'ping' }, { headers: { 'mcp-protocol-version': '2025-11-25' } })).status).toBe(200)
   })
 
   it('a body over 64 KiB is 413 (declared or streamed); exactly 64 KiB is read', async () => {
@@ -255,14 +333,14 @@ describe('the canary sweep (failure 1)', () => {
   ]
   const canary = fc.stringMatching(/^[a-z0-9]{24}$/).map(s => `canary_${s}`)
 
-  it.prop([canary, canary, fc.constantFrom(...outcomes)], { numRuns: 60 })('the token is nowhere; the hub text only in the tools/call answer, never a log', async (token, hubCanary, outcome) => {
-    fc.pre(token !== hubCanary)
+  it.prop([canary, canary, canary, fc.constantFrom(...outcomes)], { numRuns: 60 })('the token is nowhere; the hub text only in the tools/call answer, never a log', async (token, hubCanary, nameCanary, outcome) => {
+    fc.pre(new Set([token, hubCanary, nameCanary]).size === 3)
     const f = fake()
     // The dispatch is the egress's; this handler gets the request as the runner sent it, token header included.
     f.deps.log = e => console.log(e)
     const answer = async () => {
       if (outcome === 'throw') throw new Error(`exploded ${token} ${hubCanary}`)
-      if (outcome === 'malformed') return { ok: true, value: { data: hubCanary }, extra: hubCanary, error: hubCanary, broken: 1 } as unknown as object
+      if (outcome === 'malformed') return { ok: true, value: hubCanary, error: hubCanary } as unknown as object
       if (outcome === 'ok') return { ok: true, value: { data: { note: hubCanary } } }
       return { ok: false, error: { code: outcome, message: `Fixed text ${hubCanary}.`, retryAfterMs: 1_000 } }
     }
@@ -279,6 +357,10 @@ describe('the canary sweep (failure 1)', () => {
       expect(headers).not.toContain(hubCanary)
       if (r.text.includes(hubCanary)) seen.push((body as { method?: string }).method ?? '')
     }
+    // A tool name the caller made up never reaches a log line (it's caller text), whatever the hub answers.
+    const named = await call(f, { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: nameCanary } }, { headers: { 'x-inhouse-run-token': token } })
+    expect(named.text).not.toContain(token)
+    if (named.text.includes(hubCanary)) seen.push('tools/call')
     for (const big of ['x'.repeat(70_000)]) {
       const r = await call(f, JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: big } }), { headers: { 'x-inhouse-run-token': token } })
       expect(r.status).toBe(413)
@@ -288,11 +370,12 @@ describe('the canary sweep (failure 1)', () => {
     expect(r405.text + JSON.stringify([...r405.headers])).not.toContain(token)
     // The hub's text reaches the model only through the tools/call answer it belongs to: data on ok, the fixed message
     // on a hub error. Never on a throw or a malformed answer, never through tools/list.
-    expect(seen).toEqual(outcome === 'throw' || outcome === 'malformed' ? [] : ['tools/call'])
+    expect(seen).toEqual(outcome === 'throw' || outcome === 'malformed' ? [] : ['tools/call', 'tools/call'])
     expect(printed.length).toBeGreaterThan(0)
     for (const line of printed) {
       expect(line).not.toContain(token)
       expect(line).not.toContain(hubCanary)
+      expect(line).not.toContain(nameCanary)
     }
   })
 })
