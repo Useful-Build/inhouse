@@ -68,7 +68,8 @@
 //   - any other top-level key holds anything but empty values (KV, queues, tail consumers, aliases, a tsconfig, `define`,
 //     `secrets`, the vite plugin's config paths and every other kind: this list fails closed on keys added later);
 //   - (P4) `services` holds anything but one entry, exactly `{ binding: "HUB", service: <its hub>, entrypoint:
-//     "ReadGateway" }`, where its hub is PR N's (`inhouse-sbx-pr<N>-hub`) or, for the candidate, a shared sandbox name.
+//     "ReadGateway" }`, where its hub is PR N's (`inhouse-sbx-pr<N>-hub`) or, for the candidate, exactly CANDIDATE_HUB
+//     (`inhouse-sbx-hub`, names.mjs), and never the product's own name (the candidate product may not be named it either).
 //     A sandbox product Worker binds its own sandbox hub's read surface and nothing else (never the house's
 //     `inhouse-hub`, a live product or another PR's hub). No `services` at all still passes (a build before P4);
 //   - `env` is set, or `workers_dev` or `preview_urls` isn't explicitly false;
@@ -78,20 +79,21 @@
 //     3 x RUNNER_POOL (the sandbox runs RUNNER_POOL=2, max_instances=2).
 // With --hub (P4) the config is the connector hub's (the ops repo writes it from the hub's bundle and config), and the
 // rules above hold with these changes: the Worker name is the hub's (PR N's `inhouse-sbx-pr<N>-hub`, or for the
-// candidate a shared sandbox name); `services` is empty (the hub binds no Worker); only the hub's keys may hold a value
+// candidate exactly CANDIDATE_HUB); `services` is empty (the hub binds no Worker); only the hub's keys may hold a value
 // (name, account, `main`, `no_bundle`, compatibility, `workers_dev`, `preview_urls`, vars, Durable Objects, their
-// migrations, observability, `rules`, `python_modules`, `limits`, `keep_vars`, `send_metrics`, `$schema`): no route,
+// migrations, observability, `rules`, `python_modules`, `limits`, `send_metrics`, `$schema`; not `keep_vars`): no route,
 // custom domain, assets, D1, R2, container or version metadata; `main` is set and `no_bundle` is true (the bundle that
 // was built deploys as it is); per-PR: vars.INHOUSE_TEST_BUILD is "1" (the hub's test build) and INHOUSE_ACCESS isn't
-// needed; candidate: vars hold only SHOPIFY_SHOP and SHOPIFY_CLIENT_ID, both empty (no store credential and no secret
-// in the sandbox account, p4 plan "Must not"), and the product rules don't apply (the hub isn't the product Worker).
-// `secrets` (wrangler fails a deploy whose `secrets.required` aren't set) and `define` (applied at bundle time) must be
-// empty, as every unlisted key.
+// needed; candidate: `vars`, when set, is a plain object holding only SHOPIFY_SHOP and SHOPIFY_CLIENT_ID, both empty (no store
+// credential in the sandbox account, p4 plan "Must not"), and the product rules don't apply (the hub isn't the product
+// Worker). `secrets` (wrangler fails a deploy whose `secrets.required` aren't set) and `define` (applied at bundle time)
+// must be empty, as every unlisted key: no generated sandbox or candidate hub config carries `secrets.required`. Any
+// runtime secret the candidate hub needs is a per-run value the ops deploy sets at deploy time, not a store credential.
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
-  SandboxNameError, assertCandidateName, assertPrNumber, assertSandboxHost, assertZone, perPrNames,
+  CANDIDATE_HUB, SandboxNameError, assertCandidateName, assertPrNumber, assertSandboxHost, assertZone, perPrNames,
 } from './sandbox/names.mjs'
 
 const USAGE = 'usage: node scripts/check-product-config.mjs <wrangler config path>\n' +
@@ -310,8 +312,7 @@ const SANDBOX_HUB_ENTRY = { binding: 'HUB', entrypoint: 'ReadGateway' }
 /** (P4) The keys a sandbox hub config may give a value (a subset of SANDBOX_KEYS). */
 const HUB_KEYS = new Set([
   'name', 'account_id', 'workers_dev', 'preview_urls', 'vars', 'durable_objects', 'migrations', 'main', 'observability',
-  'rules', 'python_modules', '$schema', 'compatibility_date', 'compatibility_flags', 'no_bundle', 'limits', 'keep_vars',
-  'send_metrics',
+  'rules', 'python_modules', '$schema', 'compatibility_date', 'compatibility_flags', 'no_bundle', 'limits', 'send_metrics',
 ])
 /** (P4) The candidate hub's vars: the store's shop and client id, both empty (no store in the sandbox account). */
 const CANDIDATE_HUB_VARS = new Set(['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID'])
@@ -347,8 +348,9 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     }
     try { assertCandidateName(v) } catch (err) {
       if (!(err instanceof SandboxNameError)) throw err
-      fail(`${where}: ${err.message}`)
+      return fail(`${where}: ${err.message}`)
     }
+    if (kind === 'hub' && v !== CANDIDATE_HUB) fail(`${where}: ${JSON.stringify(v)} is not the candidate hub's name (${CANDIDATE_HUB})`)
   }
   const hostOk = (where, host) => {
     if (perPr) {
@@ -380,6 +382,7 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   }
   if (Object.hasOwn(config, 'env')) fail('env is set: a deployable config has no env blocks (each could override what this checks)')
   nameOk('name', config.name, hub ? 'hub' : 'worker')
+  if (!perPr && !hub && config.name === CANDIDATE_HUB) fail(`name: the candidate product may not take the hub's name (${CANDIDATE_HUB})`)
   // (P4) services: nothing for the hub; for the product, nothing or the one entry to its own hub's ReadGateway.
   const services = list('services')
   if (hub) {
@@ -389,7 +392,11 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     const shaped = services.length === 1 && s && typeof s === 'object' && !Array.isArray(s) &&
       Object.keys(s).length === 3 && s.binding === SANDBOX_HUB_ENTRY.binding && s.entrypoint === SANDBOX_HUB_ENTRY.entrypoint && Object.hasOwn(s, 'service')
     if (!shaped) fail('services is set: a sandbox config may not use it, but for exactly one entry { binding: "HUB", service: <its own hub>, entrypoint: "ReadGateway" }')
-    else nameOk('services[0].service', s.service, 'hub')
+    else {
+      const before = failures.length
+      nameOk('services[0].service', s.service, 'hub')
+      if (failures.length === before && s.service === config.name) fail(`services[0].service: the hub may not be the product's own name (${JSON.stringify(s.service)})`)
+    }
   }
   if (hub) {
     if (config.main === undefined) fail('main must be set in a sandbox hub config (the bundle\'s entry, inside the build folder)')
@@ -491,7 +498,10 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in a per-PR test deployment')
     if (!hub && accessOrigins(config).length === 0) fail('vars.INHOUSE_ACCESS must list the per-PR hosts as its app origins')
   } else if (hub) {
-    const vars = config.vars && typeof config.vars === 'object' && !Array.isArray(config.vars) ? config.vars : {}
+    // vars set but not a plain object (a list, a string, null) is refused, so nothing hides behind a shape this loop skips.
+    const plain = config.vars !== null && typeof config.vars === 'object' && !Array.isArray(config.vars)
+    if (config.vars !== undefined && !plain) fail('vars must be a plain object in the candidate hub config')
+    const vars = plain ? config.vars : {}
     for (const [k, v] of Object.entries(vars)) {
       if (!CANDIDATE_HUB_VARS.has(k)) fail(`vars.${k} is set: the candidate hub's vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only (no test switch, no secret)`)
       else if (v !== '') fail(`vars.${k} must be empty: no store credential in the sandbox account`)

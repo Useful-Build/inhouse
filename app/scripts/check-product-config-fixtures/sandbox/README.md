@@ -17,4 +17,5 @@ ends somewhere else (a bare `\r`) can't hide config from the lock. Invented valu
   `wrangler.hub.test.jsonc`: the bundle deployed as built (`no_bundle`), the SignIn Durable Object, the test switch on
   and invented test vars, no `define` or `secrets`.
 - `pass-candidate-hub.json` (P4, `--hub`): the candidate's hub: the product hub config with its store vars empty and
-  no `secrets` (its one secret goes in with the deploy).
+  no `secrets.required` (wrangler fails a deploy whose required secrets are unset). Any runtime secret the candidate hub
+  needs is a per-run value the ops deploy sets at deploy time, not a store credential.

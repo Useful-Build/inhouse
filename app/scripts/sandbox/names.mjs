@@ -54,6 +54,9 @@ export function perPrNames(pr) {
   return { worker, d1: `${worker}-db`, r2: `${worker}-files`, container: worker, image: worker, brand: `${worker}-brand`, team: `${worker}-team`, hub: `${worker}-hub` }
 }
 
+/** The candidate's connector hub: the one shared sandbox hub name (the product's `services[0].service` and the hub config's `name`). */
+export const CANDIDATE_HUB = 'inhouse-sbx-hub'
+
 /** Throws unless `name` is a shared sandbox name: sandbox-wide but no PR's. Returns the name. */
 export function assertCandidateName(name) {
   assertSandboxName(name)

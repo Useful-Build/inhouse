@@ -377,6 +377,8 @@ describe('(P4) the product\'s one service binding, to its own sandbox hub (failu
     ['the PR\'s own product Worker', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-sbx-pr12' }, 'services[0].service: "inhouse-sbx-pr12" is not PR 12\'s hub name'],
     ['the house hub from the candidate', [CANDIDATE, 'pass-candidate.json'], { ...HUB, service: 'inhouse-hub' }, 'services[0].service: "inhouse-hub" is not a sandbox name'],
     ['a PR\'s hub from the candidate', [CANDIDATE, 'pass-candidate.json'], HUB, 'services[0].service: "inhouse-sbx-pr12-hub" is a per-PR name, not the candidate\'s'],
+    ['the candidate product binding its own name', [CANDIDATE, 'pass-candidate.json'], { ...HUB, service: 'inhouse-sbx-product' }, 'services[0].service: "inhouse-sbx-product" is not the candidate hub\'s name (inhouse-sbx-hub)'],
+    ['a PR-style hub name from the candidate', [CANDIDATE, 'pass-candidate.json'], { ...HUB, service: 'inhouse-sbx-pr012-hub' }, 'services[0].service: "inhouse-sbx-pr012-hub" is not the candidate hub\'s name (inhouse-sbx-hub)'],
     ['the server entrypoint', [PR12, 'pass-per-pr.json'], { ...HUB, entrypoint: 'ServerGateway' }, SHAPE],
     ['the default export', [PR12, 'pass-per-pr.json'], { binding: 'HUB', service: HUB.service }, SHAPE],
     ['another binding name', [PR12, 'pass-per-pr.json'], { ...HUB, binding: 'LIVE' }, SHAPE],
@@ -394,6 +396,17 @@ describe('(P4) the product\'s one service binding, to its own sandbox hub (failu
       expect(failureLines(r)).toEqual([expect.stringContaining(text)])
     })
   }
+  test('refuses the candidate product named like the candidate hub, with or without the binding', () => {
+    const config = load('pass-candidate.json')
+    config.name = 'inhouse-sbx-hub'
+    const r1 = run([...CANDIDATE, write(config)])
+    expect(r1.status).toBe(1)
+    expect(failureLines(r1)).toEqual([expect.stringContaining('name: the candidate product may not take the hub\'s name (inhouse-sbx-hub)')])
+    config.services = [{ ...HUB, service: 'inhouse-sbx-hub' }]
+    const r2 = run([...CANDIDATE, write(config)])
+    expect(r2.status).toBe(1)
+    expect(r2.stderr).toContain('the hub may not be the product\'s own name ("inhouse-sbx-hub")')
+  })
   test('refuses services that is not a list', () => {
     const config = load('pass-per-pr.json')
     config.services = HUB
@@ -420,6 +433,15 @@ describe('(P4) --hub: the connector hub\'s sandbox config (failure 12)', () => {
     ['the PR\'s product Worker name', PR12_HUB, 'pass-per-pr-hub.json', c => { c.name = 'inhouse-sbx-pr12' }, 'name: "inhouse-sbx-pr12" is not PR 12\'s hub name'],
     ['another PR\'s hub name', PR12_HUB, 'pass-per-pr-hub.json', c => { c.name = 'inhouse-sbx-pr13-hub' }, 'name: "inhouse-sbx-pr13-hub" is not PR 12\'s hub name'],
     ['a PR\'s hub name as the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.name = 'inhouse-sbx-pr12-hub' }, 'name: "inhouse-sbx-pr12-hub" is a per-PR name'],
+    ['a PR-style hub name as the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.name = 'inhouse-sbx-pr012-hub' }, 'name: "inhouse-sbx-pr012-hub" is not the candidate hub\'s name (inhouse-sbx-hub)'],
+    ['the candidate product\'s name as the candidate hub', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.name = 'inhouse-sbx-product' }, 'name: "inhouse-sbx-product" is not the candidate hub\'s name (inhouse-sbx-hub)'],
+    ['vars as a list', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars = [] }, 'vars must be a plain object in the candidate hub config'],
+    ['vars as a string', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars = 'SHOPIFY_SHOP=' }, 'vars must be a plain object in the candidate hub config'],
+    ['vars as null', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars = null }, 'vars must be a plain object in the candidate hub config'],
+    ['keep_vars true', PR12_HUB, 'pass-per-pr-hub.json', c => { c.keep_vars = true }, 'keep_vars is set: a sandbox hub config may not use it'],
+    ['preview_urls true', PR12_HUB, 'pass-per-pr-hub.json', c => { c.preview_urls = true }, 'preview_urls must be false'],
+    ['an ai binding', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.ai = { binding: 'AI' } }, 'ai is set'],
+    ['an env block', PR12_HUB, 'pass-per-pr-hub.json', c => { c.env = { production: {} } }, 'env is set'],
     ['the house hub as the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.name = 'inhouse-hub' }, 'name: "inhouse-hub" is not a sandbox name'],
     ['a service binding', PR12_HUB, 'pass-per-pr-hub.json', c => { c.services = [{ binding: 'LIVE', service: 'live-product' }] }, 'services is set: a sandbox hub config binds no other Worker'],
     ['a route', PR12_HUB, 'pass-per-pr-hub.json', c => { c.routes = [{ pattern: `inhouse-sbx-pr12-brand.${ZONE}`, custom_domain: true }] }, 'routes is set: a sandbox hub config may not use it'],
@@ -450,6 +472,13 @@ describe('(P4) --hub: the connector hub\'s sandbox config (failure 12)', () => {
       expect(failureLines(r)).toEqual([expect.stringContaining(text)])
     })
   }
+  test('refuses a containers entry (the product rules add their own container failures)', () => {
+    const config = load('pass-candidate-hub.json')
+    config.containers = [{ class_name: 'Runner', image: './Dockerfile' }]
+    const r = run([...CANDIDATE_HUB, write(config)])
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('containers is set: a sandbox hub config may not use it')
+  })
   test('a hub config fails as the product, and the product as the hub', () => {
     const r1 = run([...PR12, `${fixtures}sandbox/pass-per-pr-hub.json`])
     expect(r1.status).toBe(1)
