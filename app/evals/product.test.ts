@@ -630,6 +630,19 @@ describe('the Access service token', () => {
       expect(h.get('CF-Access-Client-Secret')).toBe('eval-ci-secret')
     }
   })
+  // #277 review F4: a caller's header in another case must not survive beside ours (Headers would join the two values).
+  it('a caller\'s token header, in any case, is dropped for ours', async () => {
+    const srv = server()
+    const seen: Headers[] = []
+    const spy = (async (url: string, init?: RequestInit) => { seen.push(new Headers(init?.headers)); return srv.fetch(url, init) }) as typeof fetch
+    const caller = async (key: Parameters<typeof signIn>[0]) => ({ ...(await signIn(key)), 'cf-access-client-id': 'other-id', 'CF-ACCESS-CLIENT-SECRET': 'other-secret' })
+    await (await make(srv, new FakeDoor(), { fetch: spy, signIn: caller }).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    expect(seen.length).toBeGreaterThan(0)
+    for (const h of seen) {
+      expect(h.get('CF-Access-Client-Id')).toBe('id.access')
+      expect(h.get('CF-Access-Client-Secret')).toBe('eval-ci-secret')
+    }
+  })
   it('refuses to start without it, before any call, naming the variables only', () => {
     for (const drop of ['INHOUSE_EVAL_ACCESS_CLIENT_ID', 'INHOUSE_EVAL_ACCESS_CLIENT_SECRET']) {
       let calls = 0

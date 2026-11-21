@@ -6,6 +6,12 @@
 // 2. GET /api/me with the service token and an eval person's test-issuer JWT answers 200 with evalBrand: true: Access let
 //    the call through and the eval build still signed the person in. A 401 from the Worker here means Access replaced the
 //    test issuer's Cf-Access-Jwt-Assertion.
+// Known limits (#277 review F2, F3), bounded because the test issuer stays the first lock (an Access login by a person gives
+// a team-domain token the eval build doesn't trust); to tighten after the first real run:
+//  - the probe sees the app from outside, so an extra Allow policy beside the Service Auth one still passes (a Bypass
+//    policy doesn't: the anonymous call then reaches the Worker);
+//  - any 401 or 403 that isn't the Worker's JSON counts as the edge's refusal (another zone rule would too), though the
+//    signed half then fails the same way, so the probe can't pass without Access letting the token in.
 // Reads only /api/me: no chat, no model, no write. Prints no token or secret. Exit 0 the lock holds and lets the harness
 // in, 1 it doesn't, 2 usage.
 import { pathToFileURL } from 'node:url'

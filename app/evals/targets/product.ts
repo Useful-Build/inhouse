@@ -46,6 +46,9 @@ export const EVAL_ACCESS_CLIENT_SECRET_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_SECRET'
  */
 export const TEST_ASSERTION_HEADER = 'X-Inhouse-Test-Assertion'
 
+/** The Access service token's header names, lowercased: a caller's own copy is dropped before ours goes on. */
+const EDGE_KEYS = new Set(['cf-access-client-id', 'cf-access-client-secret'])
+
 /** The Access service token's headers, or a refusal naming the variables (never their values). */
 export function accessHeaders(env: Record<string, string | undefined>): Record<string, string> {
   const id = env[EVAL_ACCESS_CLIENT_ID_VAR]
@@ -135,8 +138,10 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   async function api(who: PersonKey, method: string, path: string, o: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<{ status: number; json: any; text: string }> {
     let h = headersOf.get(who)
     if (!h) headersOf.set(who, (h = await signIn(who)))
-    // The service token last, so no caller's header can replace it.
-    const headers: Record<string, string> = { ...h, ...o.headers, ...edge }
+    // The service token last, and any caller's token header dropped first in any case (#277 review F4: Headers would join
+    // a differently cased duplicate with ours), so nothing replaces or corrupts it.
+    const headers: Record<string, string> = Object.fromEntries(Object.entries({ ...h, ...o.headers }).filter(([k]) => !EDGE_KEYS.has(k.toLowerCase())))
+    Object.assign(headers, edge)
     if (method !== 'GET') headers.Origin = origin!
     let body: BodyInit | undefined
     if (o.json !== undefined) { body = JSON.stringify(o.json); headers['Content-Type'] = 'application/json' }
