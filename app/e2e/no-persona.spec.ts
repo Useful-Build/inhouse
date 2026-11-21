@@ -171,7 +171,7 @@ for (const size of SIZES) {
         await check(page, `${label} team window from Help`)
         await page.keyboard.press('Escape')
         await accountMenu(page, phone)
-        await page.getByRole('menuitem', { name: 'Report a bug' }).click()
+        await page.getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
         await expect(page.getByRole('dialog', { name: 'Your Inhouse team' })).toBeVisible()
         await check(page, `${label} team window`)
         await page.keyboard.press('Escape')

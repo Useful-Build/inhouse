@@ -79,8 +79,9 @@ export const STATES: UiState[] = [
   {
     name: 'pop-team-bug', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
-      await (await sidebar(page)).getByRole('button', { name: 'Settings' }).click()
-      await page.getByRole('menuitem', { name: 'Report a bug' }).click()
+      // Report a bug left the account menu; the palette keeps it, and the window opens on that type.
+      await page.keyboard.press('ControlOrMeta+k')
+      await page.getByRole('dialog', { name: 'Search' }).getByRole('option', { name: 'Report a bug' }).click()
       await expect(page.getByText('Your Inhouse team')).toBeVisible()
     },
   },

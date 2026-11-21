@@ -563,12 +563,18 @@ test('Activity: every time sits on one line in its column', async ({ page, fx })
   await shot(page, 'activity-times')
 })
 
-test('The Klaviyo line takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
+test('The Klaviyo request takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
   await start(fx, 'Act')
-  const live = side(page).getByText(/goes live by/)
-  await expect(live).toHaveText('Klaviyo goes live by Fri, Nov 20.')
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
-  await side(page).getByRole('button', { name: 'Message the team →' }).click()
+  /** The team window, from the account menu's "Your Inhouse team"; returns the item's open-request count first. */
+  const openTeam = async () => {
+    await side(page).getByRole('button', { name: /account and settings/i }).click()
+    const item = page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ })
+    const count = Number((await item.textContent())!.match(/(\d+) open/)?.[1] ?? 0)
+    await item.click()
+    return count
+  }
+  const withKlaviyo = await openTeam()
   await expect(team).toContainText('Live by Fri, Nov 20')
   await page.keyboard.press('Escape')
   await expect(team).toHaveCount(0)
@@ -588,12 +594,11 @@ test('The Klaviyo line takes its date from the data and hides on First day; Ask 
   expect(csv).toMatch(/\d [AP]M/)
   expect(csv).not.toContain(' ')
 
-  // First day: nothing is being connected yet, so neither the sidebar nor the team window names a date.
+  // First day: nothing is being connected yet, so the team window names no date and the menu counts one request fewer.
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   await page.getByRole('dialog', { name: 'Demo switches' }).getByRole('button', { name: 'First day', exact: true }).click()
   await page.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(live).toHaveCount(0)
-  await side(page).getByRole('button', { name: 'Message the team →' }).click()
+  expect(await openTeam(), 'the Klaviyo request is no longer counted').toBe(withKlaviyo - 1)
   await expect(team).toBeVisible()
   await expect(team).not.toContainText('Live by')
   await shot(page, 'team-window-first-day')

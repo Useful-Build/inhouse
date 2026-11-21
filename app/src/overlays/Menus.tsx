@@ -1,9 +1,9 @@
-import { useRef, useSyncExternalStore } from 'react'
+import { Fragment, useRef, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { agent } from '../agent'
 import type { AgentNotification } from '../agent'
-import { useAgentData, useAgentState, useUi } from '../state/store'
-import { userName } from '../state/derive'
+import { useAgentData, useAgentState, useCtx, useUi } from '../state/store'
+import { openRequests, userName } from '../state/derive'
 import { fmtWhen } from '../lib/format'
 import { display, nowOf } from '../state/display'
 import { Avatar, EmptyState, Icon, IconTile, MenuItem } from '../ui'
@@ -80,23 +80,31 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   const name = userName({ agent: useAgentState(), data })
   const role = me ? ROLE_NAMES[me.role] : meta.role
   const email = me ? me.email ?? '' : meta.email
-  const items: [string, string, () => void][] = [
+  const go = useUi(s => s.go)
+  // The count beside "Your Inhouse team" is the team window's "Open requests" list, counted the same way.
+  const open = openRequests(useCtx(), nowOf(), false).length
+  type Item = [icon: string, label: string, run: () => void, trailing?: ReactNode]
+  // Report a bug and Send feedback are request types in the team window, so the menu has one entry for the team.
+  const groups: Item[][] = [[
     ['person', 'Your settings', () => openSettings('you-general')],
     ['admin_panel_settings', 'Team settings', () => openSettings('team-plan')],
+    ['monitoring', 'Usage', () => go('usage')],
+  ], [
+    ['support_agent', 'Your Inhouse team', () => openTeam('tool'),
+      open > 0 ? <span className="ml-auto text-xs text-muted-foreground tabular-nums">{open} open</span> : undefined],
     ['menu_book', 'Help and guides', () => {
       // Focus goes back to the Settings button that opened this menu, not to the menu item that is about to close.
       document.querySelector<HTMLElement>('button[aria-haspopup="menu"][aria-expanded="true"]')?.focus()
       openPop('help')
     }],
-    ['bug_report', 'Report a bug', () => openTeam('bug')],
-    ['campaign', 'Send feedback', () => openTeam('feedback')],
+  ], [
     // The product signs out through Access (`signOutUrl()`); the demo has no sign-in.
     ['logout', 'Sign out', () => {
       const out = signOutAction(agent.signOutUrl())
       if ('go' in out) { window.location.assign(out.go); return }
       patch({ pop: null, sideOpen: false }); showToast("Sign out isn't connected in this demo.", { icon: 'info', ms: 4000 })
     }],
-  ]
+  ]]
   // The pop only clears if it is still 'me': an item may have opened another one (Help, the team window) already.
   // Where the menu opened: an item that moves to another page leaves focus there (the page focuses its heading).
   const openedOn = useRef('')
@@ -134,10 +142,15 @@ export function AccountMenu({ children }: { children: ReactNode }) {
           <div><div className="text-base font-semibold">{name}</div><div className="text-xs font-normal text-muted-foreground">{email} · {role}</div></div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="mx-1.5 mt-0" />
-        {items.map(([icon, t, fn]) => (
-          <MenuItem key={t} className="gap-2.75 py-0" onSelect={fn}>
-            <Icon name={icon} size={18} className="text-foreground-3" />{t}
-          </MenuItem>
+        {groups.map((items, g) => (
+          <Fragment key={items[0][1]}>
+            {g > 0 && <DropdownMenuSeparator className="mx-1.5" />}
+            {items.map(([icon, t, fn, trailing]) => (
+              <MenuItem key={t} className="gap-2.75 py-0" onSelect={fn}>
+                <Icon name={icon} size={18} className="text-foreground-3" />{t}{trailing && ' '}{trailing}
+              </MenuItem>
+            ))}
+          </Fragment>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>

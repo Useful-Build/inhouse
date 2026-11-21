@@ -67,6 +67,24 @@ export const goingLive = (ctx: Ctx): { name: string; by: string } | null => {
  * A request to the Inhouse team as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20". One the person
  * sent (`sentHere`) says "just now" however long ago it went, as it did before C1; P2 shows `fmtAgo` from its instant.
  */
+export interface OpenRequest { icon: string; title: string; sub: string; status: string; /** A seeded request's place in the data, for its badge look; null for one the person sent here. */ seed: number | null }
+
+/**
+ * The team window's "Open requests": what the person sent here, then the seeded ones, with "Connect <tool>" listed only
+ * while that tool is going live (so on First day it isn't). The account menu counts these, so the two always agree.
+ * `sentHereJustNow`: the demo says "just now" for what was sent here; the product says how long ago.
+ */
+export const openRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean): OpenRequest[] => {
+  const live = goingLive(ctx)
+  const seeded = ctx.data.notifications.teamRequests.flatMap((q, i): OpenRequest[] => {
+    const tool = /^Connect (.+)$/.exec(q.title)?.[1]
+    if (tool && live?.name !== tool) return []
+    const line = teamRequestLine(q, now, false)
+    return [{ icon: q.sub.startsWith('New job') ? 'work' : 'add_link', title: q.title, sub: line.sub, status: tool && live ? `Live by ${live.by}` : line.status, seed: i }]
+  })
+  return [...ctx.agent.teamRequests.map((q): OpenRequest => ({ icon: q.icon, title: q.title, ...teamRequestLine(q, now, sentHereJustNow), seed: null })), ...seeded]
+}
+
 export const teamRequestLine = (q: Omit<TeamRequest, 'icon'>, now: number, sentHere: boolean): { sub: string; status: string } => {
   const d0 = display()
   return { sub: `${q.sub}, ${sentHere ? 'just now' : fmtAgo(q.at, now, d0)}`, status: q.statusAt ? `${q.status} ${fmtWeekday(q.statusAt, d0)}` : q.status }

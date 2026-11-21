@@ -14,13 +14,19 @@
 @font-face { font-family: "Material Symbols Rounded"; src: url("/fonts/material-symbols-rounded.woff2") format("woff2"); font-weight: 300 500; font-style: normal; font-display: block; }
 
 /*
- * The override block: only the tokens whose value differs from ui-base.css. Fonts don't change by theme, so .dark
- * has nothing to override. Inhouse self-hosts Geist (the @font-face above), so the stacks name it, not the
- * "Geist Variable" of the @fontsource packages.
+ * The override block: only the tokens whose value differs from ui-base.css. Inhouse self-hosts Geist (the @font-face
+ * above), so the stacks name it, not the "Geist Variable" of the @fontsource packages. The light page is a lighter grey
+ * than the base's #f3f3f3, so white cards and the white sidebar still sit one clear step above it without extra shadow
+ * (pure white was tried and rejected: cards and the sidebar went flat); the dots step to #d4d4d4 so they keep the same
+ * presence on the lighter ground.
+ * Cascade trap: this block comes after ui-base's .dark block with the same specificity, so the .dark block below
+ * re-states the dark page and dots, or dark mode would take this light grey.
  */
 :root {
   --font-sans: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
+  --background: #fafafa;
+  --dots: #d4d4d4;
 }
 
 /*
@@ -34,6 +40,8 @@
  * 4.5:1 on hover; on a selected row it steps up to text-foreground-3.
  */
 .dark {
+  --background: #111111;  /* unchanged from ui-base: re-stated because the :root override above would win otherwise */
+  --dots: #2c2c2c;
   --popover: #242424;
   --accent: #303030;
   --fill-hover: #383838;

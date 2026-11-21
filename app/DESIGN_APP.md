@@ -18,6 +18,7 @@ The app runs on ui-base v1.1.0, the shared shadcn/ui (Radix) and Tailwind v4 bas
 
 - **Fonts:** Geist, Geist Mono and Material Symbols are self-hosted in `public/fonts` (`@font-face` in `src/index.css`), not imported from `@fontsource-variable`. The override block points `--font-sans` and `--font-mono` at them.
 - **Disabled look:** only a disabled primary `Button` dims. The `src/ui` `Button` (every other variant), `IconButton`, `Select` and `Switch` add `disabled:opacity-100`, which cancels the base's `disabled:opacity-50`, and `MenuItem` does the same for `data-[disabled]`. Nothing else is dimmed with opacity either: a handled or approved card's text is `text-done`.
+- **Page background (light):** the page is `#fafafa` with dots `#d4d4d4`, a step lighter than the base's `#f3f3f3` and `#cdcdcd`, so white cards and the white sidebar still sit one clear step above it without extra shadow. Pure white was tried and rejected: cards and the sidebar go flat. Dark keeps the base's `#111111` and `#2c2c2c`, re-stated in the `.dark` override block because the `:root` override comes after ui-base's `.dark`.
 - **Theme:** `src/lib/theme.ts` holds light, dark or system, saved per browser. An inline script in `index.html` applies it before first paint, so there's no flash. There's no `ThemeProvider`.
 - **Regression suite:** the app's own, not the base's: `npm run test:visual` compares every screen in light and dark with committed baselines and `npm run test:a11y` runs axe on them (see `README.md`). Update the baselines on purpose when a change is meant to show.
 - **Extra scale steps:** `rounded-2xs` 2px and `rounded-t-bar` 5px (a chart bar's top). Spacing: prefer whole and half steps; any quarter step is a pixel (`w-82.5` = 330px, `gap-0.75` = 3px). Flex parts: `grow basis-55` for `flex: 1 1 220px`. Percent widths are fractions (`w-31/50` = 62%).
@@ -25,7 +26,7 @@ The app runs on ui-base v1.1.0, the shared shadcn/ui (Radix) and Tailwind v4 bas
 
 ## Dark
 
-Dark is re-decided, not inverted. The app's `.dark` override block changes seven base role tokens, and fourteen app tokens have their own dark value. Each is a candidate for a ui-base release, since every app on the base has the same near-black surfaces.
+Dark is re-decided, not inverted. The app's `.dark` override block changes seven base role tokens (and re-states the page and dots, see above), and fourteen app tokens have their own dark value. Each is a candidate for a ui-base release, since every app on the base has the same near-black surfaces.
 
 Surfaces climb with height: page `#111`, card `#1a1a1a`, window and side panel `#1f1f1f`, menu and pop-up `#242424`. Rows have three states, each one value everywhere: **hover** (`bg-accent`, also a menu's keyboard cursor), **open** (a trigger whose menu is open holds its own hover look: `data-[state=open]:` or `aria-expanded:` with the same class as its hover) and **selected** (`bg-fill-hover`: the nav row, the open or picked chat, a Library place; a segmented control's pick is `bg-fill-picked`, the same value in dark). Muted text keeps 4.5:1 on hover; on a selected row it steps up to `text-foreground-3` (`NavItem` does it for `meta` and `detail`, `StageTag strong` for its tag, and `Segmented` for any muted text in its picked segment).
 

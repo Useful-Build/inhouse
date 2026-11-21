@@ -203,7 +203,7 @@ Skills
   Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts
 
 Usage
-  Path:     Usage
+  Path:     account menu -> Usage (it isn't in the sidebar; the palette lists it)
   Selector: month picker, daily bars
   Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state
   Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts
@@ -377,19 +377,19 @@ Palette: theme switch
 Palette: Report a bug
   Path:     Cmd+K -> Report a bug
   Selector: option "Report a bug", team window Send
-  Expected: the window opens on the bug type; Send waits for words; sending closes the window, shows "Bug sent to your Inhouse team. Thank you." and lists the report among the open requests (the account menu's item opens it: `tour.spec.ts`)
+  Expected: the window opens on the bug type; Send waits for words; sending closes the window, shows "Bug sent to your Inhouse team. Thank you." and lists the report among the open requests (the palette and a crash's Message the team are the ways in on that type; the account menu has one team entry)
   Covered:  e2e/report-bug.spec.ts
 
 Sidebar
   Path:     sidebar -> collapse
-  Selector: collapse button, rail tooltips
-  Expected: collapses to a rail, stays collapsed after a reload, expands with the shortcut
+  Selector: nav "Main": Today, Approvals (count), Activity, then group "Your agent" (Routines, Skills, Tools, Library); Recent chats; the account row; rail tooltips
+  Expected: two sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; collapses to a rail, stays collapsed after a reload, expands with the shortcut
   Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts
 
 Account menu
   Path:     sidebar -> account and settings
-  Selector: menu "Account", items Your settings, Team settings, Help and guides, Report a bug, Send feedback, Sign out
-  Expected: Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Send feedback opens the team window on Feedback with an empty field and no screenshot box; Report a bug opens it on the bug type; Sign out says it isn't connected
+  Selector: menu "Account", items Your settings, Team settings, Usage | Your Inhouse team ("N open"), Help and guides | Sign out
+  Expected: Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Usage opens the Usage page; Your Inhouse team opens the team window and its count equals the "Open requests" rows (shown only above 0); Report a bug and Feedback are request types in that window; Sign out says it isn't connected
   Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts
 
 Help and guides
@@ -411,7 +411,7 @@ Trace window
   Covered:  e2e/app.spec.ts, e2e/conversation-polish.spec.ts, e2e/no-persona.spec.ts, e2e/overlays-keyboard.spec.ts
 
 Notifications and team window
-  Path:     bell -> a line; Message the team
+  Path:     bell -> a line; account menu -> Your Inhouse team
   Selector: bell count, window Send
   Expected: reading a line drops the count, Mark all as read empties it; Send waits for words and carries the name from Settings
   Covered:  e2e/navigation.spec.ts
