@@ -384,7 +384,7 @@ describe('the chat-title rule (test 5, OC 2)', () => {
  * The stores with the Library's D1 wrapped: `before` runs once, just before the first batch the store sends (between its
  * read of the files and its write), as another request landing in that gap would; `failBatch` makes that batch throw.
  */
-function racing(o: { before?: () => Promise<unknown>; failBatch?: boolean }) {
+function racing(o: { before?: () => Promise<unknown>; failBatch?: boolean; breakBatch?: boolean }) {
   let armed = true
   const wrapped = {
     prepare: (sql: string) => db.prepare(sql),
@@ -393,6 +393,8 @@ function racing(o: { before?: () => Promise<unknown>; failBatch?: boolean }) {
         armed = false
         await o.before?.()
         if (o.failBatch) throw new Error('d1 down at the save')
+        // A statement that fails inside the batch: D1 rolls the whole batch back.
+        if (o.breakBatch) return db.batch([...stmts, db.prepare('INSERT INTO no_such_table (x) VALUES (1)')])
       }
       return db.batch(stmts)
     },
@@ -486,5 +488,30 @@ describe('the trash listing (review fold)', () => {
       }
       expect(JSON.stringify(trash)).not.toContain('the secret plan')
     }
+  })
+})
+
+describe('an Activity line is written exactly with its change (#250 guard, in the mark batch)', () => {
+  it('a delete whose batch fails inside D1 leaves no mark, no audit line and no Activity line', async () => {
+    const chat = await newChat(A)
+    const x = await output(chat, 'x.csv', 'x,1\n', 'text/csv')
+    const since = await lastLineId(db)
+    await expect(call(deleteLibraryFiles, personPrincipal(B, 'member'), { method: 'POST', path: '/api/library/delete', body: { items: [{ id: x, ifRev: 1 }] } }, racing({ breakBatch: true }))).rejects.toThrow()
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM library_marks WHERE file_id = ?').bind(x).first<number>('n')).toBe(0)
+    expect(await libraryLines(since)).toEqual([])
+    expect(await activityFor(x)).toBe(0)
+  })
+  it('a delete and a restore that change their file each write one line, keyed by the revision they made', async () => {
+    const chat = await newChat(A)
+    const x = await output(chat, 'x.csv', 'x,1\n', 'text/csv')
+    expect((await del(personPrincipal(B, 'member'), [{ id: x, ifRev: 1 }])).status).toBe(200)
+    expect((await restore(personPrincipal(C, 'member'), [{ id: x, ifRev: 2 }])).status).toBe(200)
+    // A no-op restore (already live) changes nothing and writes nothing.
+    expect((await restore(personPrincipal(C, 'member'), [{ id: x, ifRev: 3 }])).status).toBe(200)
+    const lines = await db.prepare("SELECT source_key, template, actor_id FROM activity_lines WHERE source = 'library' AND source_key LIKE ? ORDER BY n").bind(`${x}|%`).all()
+    expect(lines.results).toEqual([
+      { source_key: `${x}|rev2`, template: 'library_deleted', actor_id: B },
+      { source_key: `${x}|rev3`, template: 'library_restored', actor_id: C },
+    ])
   })
 })

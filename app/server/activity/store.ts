@@ -47,12 +47,29 @@ export function checkActivity(line: ActivityInput, at: { source: string; key: st
 export const ACTIVITY_INSERT_SQL =
   'INSERT INTO activity_lines (id, at_ms, kind, min_stage, template, fields_json, actor_id, subject_id, trace, source, source_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (source, source_key) DO NOTHING'
 
-export function recordActivity(db: D1Database, line: ActivityInput, at: { source: string; key: string }): D1PreparedStatement {
+/**
+ * A producer's condition on its line (P4 W2, #250): an SQL expression and its params, such as `EXISTS (the row this write
+ * stamped)`. The line is written only while it holds, so a guarded write that matched no row writes no line, in the
+ * same batch as the write.
+ */
+export interface ActivityGuard {
+  sql: string
+  params: readonly (string | number | null)[]
+}
+
+/** The writer's statement with a guard: the same insert as `INSERT ... SELECT <values> WHERE <guard>`. */
+export const guardedInsertSql = (where: string): string => {
+  const sql = ACTIVITY_INSERT_SQL.replace(/ VALUES \(([?, ]+)\) ON CONFLICT/, (_m, marks: string) => ` SELECT ${marks} WHERE ${where} ON CONFLICT`)
+  if (sql === ACTIVITY_INSERT_SQL) throw new Error('guardedInsertSql: the insert has no VALUES list')
+  return sql
+}
+
+export function recordActivity(db: D1Database, line: ActivityInput, at: { source: string; key: string }, guard?: ActivityGuard): D1PreparedStatement {
   checkActivity(line, at)
   return db
-    .prepare(ACTIVITY_INSERT_SQL)
+    .prepare(guard ? guardedInsertSql(guard.sql) : ACTIVITY_INSERT_SQL)
     .bind(
       `a_${crypto.randomUUID().replaceAll('-', '')}`, line.atMs, line.kind, line.minStage ?? null, line.template, JSON.stringify(line.fields),
-      line.actorId ?? null, line.subjectId ?? null, line.trace ?? null, at.source, at.key,
+      line.actorId ?? null, line.subjectId ?? null, line.trace ?? null, at.source, at.key, ...(guard?.params ?? []),
     )
 }

@@ -36,6 +36,9 @@ import type { NoticeReader } from '../notices/read.ts'
 import { libraryStore } from '../files/store.ts'
 import type { LibraryStore } from '../files/store.ts'
 
+import { routinesSignal } from '../routines/signal.ts'
+import type { SignalResult } from '../ops/signals/types.ts'
+
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
   grants: GrantStore & GrantStoreImpl
@@ -66,6 +69,9 @@ export interface Stores extends AuthStores {
   /** P4 W4 (p4-w4.md): Activity's lines and the bell's notices and read state (the writers are `recordActivity` and `addNotice`). */
   activity: ActivityReader
   notices: NoticeReader
+
+  /** P4 W2 (p4-w2.md section 11): the routines signal's read. */
+  routines: { signal(nowMs: number): Promise<SignalResult> }
 
   /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
   library: LibraryStore
@@ -131,6 +137,8 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     // P4's slots.
     activity: activityReader({ db }),
     notices: noticeReader({ db }),
+
+    routines: { signal: nowMs => routinesSignal(db, nowMs) },
 
     library: libraryStore({ db, bucket: env.FILES }),
   }

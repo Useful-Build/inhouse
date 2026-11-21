@@ -53,7 +53,8 @@ test('Phone: the account menu and the team window open above the drawer', async 
   const side = page.getByRole('complementary', { name: 'Sidebar' })
 
   await page.getByRole('button', { name: 'Menu' }).click()
-  await side.getByRole('button', { name: /Message the team/ }).click()
+  await side.getByRole('button', { name: /account and settings/i }).click()
+  await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
   await expect(team).toBeVisible()
   await expect(side).toHaveCount(0)

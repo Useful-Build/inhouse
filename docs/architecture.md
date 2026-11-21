@@ -67,7 +67,9 @@ Two rulesets, kept as JSON in `.github/rulesets/`, guard `main` and `fleet/**`
 - **`ci`** (`.github/workflows/ci.yml`): type check, lint (oxlint plus the design token rules), the Vitest and
   fast-check property tests, a production build and every Playwright project (desktop, phone, visual, accessibility),
   in a digest-pinned Playwright image so screenshots render the same every run. The suite is split across two shards,
-  and a final job named `ci` passes only if both did.
+  and a final job named `ci` passes only if every job that event runs did. That full suite runs on PRs into `main`
+  and on each push to `fleet/**`; a PR into `fleet/**` runs only the fast checks (type check, lint, unit, the builds
+  and their guards, the fresh-install migrations, the runner's tests), phase batching (Wasim, 2026-11-21).
 - **`pr-gates`**: every commit carries a `Verified:` trailer saying how it was checked, and a change to an existing
   check (a spec, a baseline, a property test, a lint script, a workflow) is flagged so the PR has to explain it.
 
