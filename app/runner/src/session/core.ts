@@ -16,7 +16,7 @@
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { AuditEntry, DEFERRED_INPUT_MAX_BYTES, SDK_MESSAGE_MAX_BYTES, STRUCTURED_MAX_DEPTH, STRUCTURED_OUTPUT_MAX_BYTES, jsonBytes, jsonDepth } from '../../../shared/protocol/index.ts'
-import { createFiles, snapshotOutputs } from '../files/files.ts'
+import { createFiles, errnoOf, snapshotOutputs } from '../files/files.ts'
 import { INHOUSE_MCP_SERVER } from '../guards/lists.ts'
 import { RootMessage, capSdkMessage, monotonicMs, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import { LOCAL_MAX_DEPTH, deeperThan, type LineResult } from '../protocol/ndjson.ts'
@@ -378,7 +378,8 @@ export async function runSession(deps: {
     if (restored.event.restored > 0 || restored.event.leftOut.length > 0) await emit(restored.event)
   } catch (e) {
     if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
-    log({ type: 'files_restore_failed', error: message(e).slice(0, 300) })
+    // The code only: an fs error's message names a stored file's folder (chat content).
+    log({ type: 'files_restore_failed', ...errnoOf(e) })
     return emit({ type: 'failed', reason: 'files', message: "the chat's files could not be brought into the work folder" })
   }
   if (ended) return

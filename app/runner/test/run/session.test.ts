@@ -21,7 +21,7 @@
 //   non-empty one; a resume that wrote none sends a checkpoint it can't back (protocol v2's checkpoint is the store's
 //   total, which only a load can tell: R3's second PR).
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -933,6 +933,25 @@ describe('the run lifecycle', () => {
     await h.done
     expect(q.calls).toHaveLength(0)
     expect(h.events()).toEqual([{ type: 'failed', reason: 'files', message: "the chat's files could not be brought into the work folder" }])
+  })
+
+  // Root makes any folder (EACCES never comes), so this runs as a plain user only.
+  ;(process.getuid?.() === 0 ? it.skip : it)("a restore that fails on the file system logs the error's code, never its message (a stored file's folder)", async () => {
+    const cwd = workDir()
+    mkdirSync(join(cwd, 'inputs'))
+    chmodSync(join(cwd, 'inputs'), 0o500)
+    try {
+      const egress = fakeEgress()
+      egress.files.set('inputs/CANARY-folder/a.txt', { body: new Uint8Array(3) })
+      const h = harness(fakeQuery([result]).query, testQueryGuards, { egress, cwd })
+      h.deliver({ type: 'run', config: config() })
+      await h.done
+      expect(h.events()).toEqual([{ type: 'failed', reason: 'files', message: "the chat's files could not be brought into the work folder" }])
+      expect(h.logs).toContainEqual({ type: 'files_restore_failed', code: 'EACCES', syscall: 'mkdir' })
+      expect(JSON.stringify(h.logs)).not.toContain('CANARY')
+    } finally {
+      chmodSync(join(cwd, 'inputs'), 0o700)
+    }
   })
 })
 

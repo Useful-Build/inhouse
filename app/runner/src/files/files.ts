@@ -95,7 +95,7 @@ async function walk(root: Dir, limit: number, signal?: AbortSignal): Promise<{ f
  * What a failure logs: the error's `code` and `syscall` (or the HTTP status a save threw), never its message, which can
  * carry a file's path (an output's name is chat content).
  */
-function errnoOf(e: unknown): { code: string; syscall?: string } {
+export function errnoOf(e: unknown): { code: string; syscall?: string } {
   const { code, syscall } = (e ?? {}) as NodeJS.ErrnoException
   if (typeof code === 'string') return typeof syscall === 'string' ? { code, syscall } : { code }
   if (e instanceof NotFollowed) return { code: 'not_followed' }
