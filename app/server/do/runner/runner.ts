@@ -27,8 +27,12 @@ export const INACTIVITY_MS = 10 * 60_000
 export const ADMIT_TIMEOUT_MS = 15_000
 /** `status`, `interrupt`, `stop` and the warm-up's calls. */
 export const CALL_TIMEOUT_MS = 10_000
-/** How long a new container has to answer `/protocol` (one deadline over the whole start) before it's a placement error. */
-export const BOOT_TIMEOUT_MS = 60_000
+/**
+ * How long a new container has to answer `/protocol` (one deadline over the whole start) before it's a placement error.
+ * Above a measured cold start (56 s to over 60 s on the sandbox, 2026-11-21, when 60 s here ended the first sends) and
+ * under the BrandAgent's `STARTING_DEADLINE_MS` (3 min, brand-agent/core.ts), the starting turn's own deadline.
+ */
+export const BOOT_TIMEOUT_MS = 150_000
 export const BOOT_POLL_MS = 250
 
 /** The only props an intercept gets: never a token, a chat or a member (design 7). */
@@ -81,6 +85,7 @@ export interface RunnerDeps<B> {
  *   a 409 with no readable body is `chat_live`);
  * - `protocol`: no shared version, or a 426;
  * - `placementError`: the container never answered `/protocol` (it didn't start, stopped, or the boot deadline passed);
+ *   `booting`: it's still running (the deadline passed on a slow start), so a later admission joins that start;
  * - `rejected`: a typed 4xx (`ErrorBody`): the runner refused this turn's start (a bad body, too large);
  * - `unavailable`: a typed 5xx (`ErrorBody`: stopping, a session user it couldn't set up): the runner states it didn't
  *   admit (its 202 goes out at admission, so a 5xx from it comes before one);
@@ -91,7 +96,7 @@ export type AdmitResult =
   | { accepted: true; gen: number; protocol: number }
   | { refused: RunRefusalCode; gen: number }
   | { protocol: 'none'; gen: number }
-  | { placementError: string }
+  | { placementError: string; booting: boolean }
   | { rejected: number; gen: number }
   | { unavailable: string; gen: number }
   | { ambiguous: true; gen: number }
@@ -137,7 +142,7 @@ export class RunnerCore<B> {
     try {
       up = await this.#up()
     } catch (e) {
-      return { placementError: errorText(e) }
+      return { placementError: errorText(e), booting: this.#d.container.running }
     }
     if (up.protocol === null) return { protocol: 'none', gen: up.gen }
     const { gen } = up

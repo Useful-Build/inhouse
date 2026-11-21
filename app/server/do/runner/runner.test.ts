@@ -10,7 +10,9 @@
 //  4. two settlements of one generation's monitor report the exit twice;
 //  5. an admission with no answer in 15 s is reported as a refusal (it must be `ambiguous`), or the fetch isn't aborted;
 //  6. the refusals aren't told apart (503 codes, 409, another answer, a container that never answers /protocol);
-//  7. `status` maps the runner's states wrong, or reports `unreachable` for an answer / misses a gone container.
+//  7. `status` maps the runner's states wrong, or reports `unreachable` for an answer / misses a gone container;
+//  8. a cold start slower than the boot deadline (over 60 s on the sandbox, 2026-11-21) is a placement error, or a
+//     deadline that passed on a still-running container doesn't say it's still booting.
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
@@ -254,8 +256,46 @@ describe('boot deadline', () => {
     // The first signal handed out is the boot deadline; the second the first try's own 10 s.
     m.aborts[0].abort(new DOMException('timed out', 'TimeoutError'))
     const r = await pending
-    expect(r).toEqual({ placementError: expect.stringContaining('within 60000 ms') })
+    expect(r).toEqual({ placementError: expect.stringContaining('within 150000 ms'), booting: true })
     expect(c.requests.map(x => x.path)).toEqual(['/protocol'])
+  }))
+})
+
+describe('a slow cold start (failure 8)', () => {
+  it('/protocol first answering 90 s into the start: admitted on that container, no second start', t(async state => {
+    const c = new FakeContainer()
+    // A clock the deps' timeouts and waits share: each signal aborts once the clock passes its own deadline.
+    let clock = 0
+    const timers: { at: number; c: AbortController }[] = []
+    const routes = v2Runner([2])
+    c.route = (path, init) => {
+      if (path === '/protocol' && clock < 90_000) throw new TypeError('connection refused')
+      return routes(path, init)
+    }
+    const core = new RunnerCore<Binding>({
+      name: 'runner-0', container: c, state,
+      bindings: { egress: props => ({ kind: 'egress', props }), web: props => ({ kind: 'web', props }), deny: props => ({ kind: 'deny', props }) },
+      exited: async () => {},
+      timeout: ms => { const a = new AbortController(); timers.push({ at: clock + ms, c: a }); return a.signal },
+      wait: async ms => {
+        clock += ms
+        for (const x of timers) if (x.at <= clock && !x.c.signal.aborted) x.c.abort(new DOMException('timed out', 'TimeoutError'))
+      },
+      log: () => {},
+    })
+    expect(await core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    expect(clock).toBeGreaterThanOrEqual(90_000)
+    expect(c.starts.length).toBe(1)
+  }))
+
+  it('a deadline that passes on a stopped container says it is not booting', t(async state => {
+    const c = new FakeContainer()
+    c.route = path => {
+      if (path === '/protocol') c.running = false
+      throw new TypeError('connection refused')
+    }
+    const { core } = make(c, state)
+    expect(await core.admit(RS)).toEqual({ placementError: 'the container stopped before it answered /protocol', booting: false })
   }))
 })
 

@@ -15,7 +15,8 @@
 //   | typed 5xx (stopping, no user)  | next candidate (queued when none left) | 5 s cool-down (state, protocol kept) |
 //   | typed 4xx                      | refused `rejected` (W1 fails it)       | untouched                            |
 //   | no shared version, 426         | next candidate                         | protocol (never picked)              |
-//   | never answered /protocol       | next candidate                         | sleeping, protocol cleared, 5 s      |
+//   | never answered /protocol       | next candidate                         | sleeping (starting while its container|
+//   |                                |                                        | still runs), protocol cleared, 5 s   |
 // - The placement queue (`pool_queue`) is FIFO and holds turn ids only (a run token is never stored): a free slot or
 //   the `pool-retry` task (5 s after) asks W1 to place the head again (`hooks.retryPlacement`, with a fresh token);
 //   after 60 s `hooks.placementExpired` (W1 fails it `pool_full`).
@@ -186,7 +187,10 @@ export class RunnerPool implements RunnerPoolPort {
         continue
       }
       if ('placementError' in a) {
-        this.#d.sql.exec("UPDATE pool_runners SET state = 'sleeping', refused_until_ms = ?, protocol = NULL WHERE runner = ?", this.#d.now() + REFUSED_COOLDOWN_MS, r.runner)
+        // A container still running only started slowly: it stays `starting`, so the next admission there joins that start
+        // instead of being sent to sleep while it boots.
+        this.#d.sql.exec('UPDATE pool_runners SET state = ?, refused_until_ms = ?, protocol = NULL WHERE runner = ?',
+          a.booting ? 'starting' : 'sleeping', this.#d.now() + REFUSED_COOLDOWN_MS, r.runner)
         continue
       }
       if ('protocol' in a) {
