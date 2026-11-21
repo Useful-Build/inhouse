@@ -10,6 +10,8 @@ export const EVAL_BUILD_FLAVOR: Real['EVAL_BUILD_FLAVOR'] = null
 export const IO_TRACE_MAX_BYTES: Real['IO_TRACE_MAX_BYTES'] = 0
 export const IO_TTL_MS: Real['IO_TTL_MS'] = 0
 export const IO_TTL_TASK: Real['IO_TTL_TASK'] = ''
+/** Reads no input. */
+export const toolInput: Real['toolInput'] = () => ({ text: '', cut: true })
 /** Keeps no input. */
 export const ioRecord: Real['ioRecord'] = () => null
 /** Reads no input. */

@@ -69,6 +69,14 @@ export function auditEntry(input: HookInput & { hook_event_name: 'PreToolUse' })
   return { hook: input.hook_event_name, toolName: input.tool_name, toolUseId: input.tool_use_id, decision: AUDIT_DECISION, input: capInput(input.tool_input) }
 }
 
+/**
+ * The entry a guard records when it denies a call (the WebFetch hook, p3-eval-observability rev 2 rec 6): the same
+ * entry with `decision: 'deny'`, so the trace can say which call a hook refused (by its tool_use id).
+ */
+export function deniedEntry(input: HookInput & { hook_event_name: 'PreToolUse' }): AuditEntry {
+  return { ...auditEntry(input), decision: 'deny' }
+}
+
 /** A rejection's reason as text. Never throws: a value that can't be turned into a string mustn't change the error. */
 function describe(e: unknown): string {
   if (e instanceof Error) return e.message

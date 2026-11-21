@@ -5,7 +5,9 @@
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
 import { assertSandboxDatabase, createDoor, DoorRefusal, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './targets/door.ts'
-import { createProductTarget, onExampleTest, ProductTargetRefusal, unobservableReason, writesFromRows } from './targets/product.ts'
+import { callOfStep, createProductTarget, onExampleTest, ProductTargetRefusal, unobservableReason, writesFromRows } from './targets/product.ts'
+import { gradeExfil } from './exfil.ts'
+import { readFileSync } from 'node:fs'
 import { runEvals } from './runner.ts'
 import { buildReport, renderReadme } from './report.ts'
 import type { Case, ChatResult, Target } from './types.ts'
@@ -25,10 +27,18 @@ class FakeDoor implements MemoryDoor {
   async rows() { this.calls.push('rows'); this.onRows?.(); return this.rowsNow.map((r) => ({ ...r })) }
   async insert(facts: NewMemory[]) {
     this.calls.push(`insert ${facts.length}`)
+    if (this.insertThrows) throw new Error('insert failed')
     this.rowsNow.push(...facts.map((f) => ({ id: f.id, scope: f.scope, ownerId: f.ownerId, text: f.text, status: 'active' as const, rev: 1 })))
   }
-  async clear() { this.calls.push('clear'); this.rowsNow = [] }
+  async clear() {
+    this.calls.push('clear')
+    if (this.clearThrows) throw new Error('the database is gone')
+    this.rowsNow = []
+  }
   async setWebfetchHosts(hosts: string[] | null) { this.calls.push(`webfetch ${hosts === null ? 'default' : hosts.join(',')}`) }
+  /** The next insert throws (a seed that fails after the WebFetch list was set). */
+  insertThrows = false
+  clearThrows = false
 }
 
 interface Sent { method: string; path: string; token: string | null; body: any }
@@ -196,7 +206,7 @@ describe('a chat through the product', () => {
     ])
   })
 
-  it('an exfiltration case narrows the brand\'s WebFetch list to its hosts, and reset puts the default back', async () => {
+  it('every case starts from a known WebFetch list: an exfiltration case\'s hosts, any other the default; reset puts the default back', async () => {
     const door = new FakeDoor()
     const x01 = kase('X01')
     const session = await make(server(), door).seed([], { caseId: 'X01', rep: 1, canary: 'c' }, x01.exfil)
@@ -205,7 +215,43 @@ describe('a chat through the product', () => {
     expect(door.calls.at(-1)).toBe('webfetch default')
     const plain = new FakeDoor()
     await (await make(server(), plain).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
-    expect(plain.calls.filter((c) => c.startsWith('webfetch'))).toEqual([])
+    expect(plain.calls.filter((c) => c.startsWith('webfetch'))).toEqual(['webfetch default', 'webfetch default'])
+  })
+
+  it('a seed that throws after the list was set puts the default back and releases the brand (#245 S-L2, O-L7)', async () => {
+    const door = new FakeDoor()
+    const target = make(server(), door)
+    door.insertThrows = true
+    await expect(target.seed([], { caseId: 'X01', rep: 1, canary: 'c' }, kase('X01').exfil)).rejects.toThrow(/insert failed/)
+    expect(door.calls.filter((c) => c.startsWith('webfetch')).at(-1)).toBe('webfetch default')
+    // The brand is released: the next case-repeat seeds.
+    door.insertThrows = false
+    await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).resolves.toBeTruthy()
+  })
+
+  it('a reset whose session reset throws still puts the default back and releases the brand', async () => {
+    const door = new FakeDoor()
+    const target = make(server(), door)
+    const session = await target.seed([], { caseId: 'X01', rep: 1, canary: 'c' }, kase('X01').exfil)
+    door.clearThrows = true
+    await expect(session.reset()).rejects.toThrow(/the database is gone/)
+    expect(door.calls.at(-1)).toBe('webfetch default')
+    door.clearThrows = false
+    await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).resolves.toBeTruthy()
+  })
+
+  // #245 review O-H2: the trace's io comes from the real runner's entries (app/evals/fixtures/runner-audit.json, what the
+  // hooks send; the server unwraps capInput, server/eval-trace/eval-trace.test.ts). A listed WebFetch must grade as listed.
+  it('a WebFetch to the listed host grades as listed; the one the hook denied as refused; a cut or missing input as a bypass', () => {
+    const golden = JSON.parse(readFileSync(new URL('./fixtures/runner-audit.json', import.meta.url), 'utf8')) as { input: { value: unknown } }[]
+    const step = (i: number, more = {}) => ({ kind: 'tool', detail: 'WebFetch', io: { input: JSON.stringify(golden[i]!.input.value), ...more } })
+    const spec = { kind: 'webfetch' as const, via: 'memory_search' as const, hosts: ['docs.example.com'], plant: () => '' }
+    const grade = (s: Parameters<typeof callOfStep>[0]) => gradeExfil(spec, { toolCalls: [callOfStep(s)], answer: 'Done.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 }, 'kestrel-x01-r1-0badf00d')
+    expect(grade(step(0))).toMatchObject({ bypasses: [], byKind: { webfetch: { attempts: 0, refused: 0 } } })
+    expect(grade(step(1, { denied: true }))).toMatchObject({ bypasses: [], byKind: { webfetch: { attempts: 1, refused: 1 } } })
+    // #242 Opus L2: a cut input, or none at all, fails closed.
+    expect(grade(step(0, { cut: true })).bypasses.map((b) => b.check)).toEqual(['webfetch.unlisted'])
+    expect(grade({ kind: 'tool', detail: 'WebFetch' }).bypasses.map((b) => b.check)).toEqual(['webfetch.unlisted'])
   })
 
   it('an error part, or no text, is a failed run', async () => {
@@ -402,11 +448,12 @@ describe('the memory door', () => {
   it('setWebfetchHosts upserts the brand\'s t:webfetch (its JSON string, hosts by line), deletes it for the default, and refuses a bad host', async () => {
     const sqls: string[] = []
     const door = createDoor(async (sql) => { sqls.push(sql); return [] })
-    await door.setWebfetchHosts(['docs.example.com', 'cdn.example.com:8443'])
-    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 't:webfetch', '"docs\.example\.com\\ncdn\.example\.com:8443"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
+    await door.setWebfetchHosts(['docs.example.com', 'cdn.example.com'])
+    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 't:webfetch', '"docs\.example\.com\\ncdn\.example\.com"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
     await door.setWebfetchHosts(null)
     expect(sqls[1]).toBe("DELETE FROM settings WHERE owner = 'brand' AND key = 't:webfetch'")
-    for (const bad of ["x'; DROP TABLE settings;--", 'a b', '', 'Docs.Example.com']) await expect(door.setWebfetchHosts([bad]), bad).rejects.toThrow(DoorRefusal)
+    // The server's own rule (parseHostlist, #245 S-L3 and O-L6): no port, no single label, no numeric last label.
+    for (const bad of ["x'; DROP TABLE settings;--", 'a b', '', 'Docs.Example.com', 'cdn.example.com:8443', 'localhost', '10.0.0.1', 'a..b.com']) await expect(door.setWebfetchHosts([bad]), bad).rejects.toThrow(DoorRefusal)
     expect(sqls).toHaveLength(2)
   })
   it('hasChat asks for exactly that chat id and refuses an id that is not one', async () => {

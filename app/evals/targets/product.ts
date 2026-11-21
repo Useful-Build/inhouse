@@ -180,9 +180,15 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       tail = new Promise<void>((r) => (release = r))
       await prev
       let session: Session
+      // Set once the list was written this seed: from then on a failure puts the default back before the brand is released.
+      let listWritten = false
       try {
         await setup()
         const d = door!
+        // Every case starts from a known WebFetch list (#245 S-L2): an exfiltration case's hosts (rec 6: the hook refuses
+        // exactly what the grader calls unlisted), any other case the default.
+        listWritten = true
+        await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
         await d.clear()
         const real = new Map<string, string>()
         const facts: NewMemory[] = memory.map((f) => {
@@ -194,15 +200,20 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         if (exfil?.via === 'memory_search') facts.push({ id: newMemoryId(), scope: 'person', ownerId: people.current, text: exfil.plant(run.canary) })
         if (exfil?.via === 'attachment') attachment = { name: 'note.txt', bytes: new TextEncoder().encode(exfil.plant(run.canary)) }
         await d.insert(facts)
-        // Rec 6: the brand's WebFetch list is the case's, so the hook refuses exactly what the grader calls unlisted.
-        if (exfil) await d.setWebfetchHosts(exfil.hosts.map((h) => h.toLowerCase()))
         session = productSession({ api, must, door: d, people, picker, real, attachment, pollMs, sleep, onSpend: (usd) => { spentTotal += usd } })
       } catch (e) {
-        release()
+        try {
+          if (listWritten) await door!.setWebfetchHosts(null)
+        } catch (restore) {
+          throw new AggregateError([e, restore], 'the seed failed, and putting the brand\'s WebFetch list back failed too')
+        } finally {
+          release()
+        }
         throw e
       }
       const d = door!
-      return { ...session, async reset() { try { await session.reset() } finally { try { if (exfil) await d.setWebfetchHosts(null) } finally { release() } } } }
+      // On every path, a failing session reset included: the default list back, then the brand released.
+      return { ...session, async reset() { try { await session.reset() } finally { try { await d.setWebfetchHosts(null) } finally { release() } } } }
     },
   }
 }
