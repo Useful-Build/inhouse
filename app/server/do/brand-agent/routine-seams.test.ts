@@ -193,6 +193,32 @@ describe('B: the end task on every final path, in the final step (failure 1)', (
   })
 })
 
+describe('B: chat delete (route 27, #163\'s endChats) ends every turn through storeFinal with one end task', () => {
+  it('queued, starting and live turns of deleted chats: cancelled deleted, exactly one end task each', () => inSeams(async h => {
+    const seen = captureEnds(h)
+    const live = ok(await submit(h, 'rc-del-a', 'k-del-live')); await settle()
+    h.push(live.turnId, ev.started(), ev.text('a'))
+    const queued = ok(await submit(h, 'rc-del-a', 'k-del-queu', { text: 'second' }))
+    const gate = deferred()
+    h.core.beforeStep = async step => { if (step === 'reserve') await gate.promise }
+    const starting = ok(await submit(h, 'rc-del-b', 'k-del-strt')); await settle()
+    expect([h.turn(live.turnId).state, h.turn(queued.turnId).state, h.turn(starting.turnId).state]).toEqual(['live', 'queued', 'starting'])
+    h.clock.now += SEC
+    h.core.endChats([{ id: 'rc-del-a', rev: 2 }, { id: 'rc-del-b', rev: 2 }])
+    const atDelete = h.clock.now
+    gate.resolve(); await settle()
+    h.clock.now += SEC
+    h.push(live.turnId, ev.released(null, false))
+    const atRelease = h.clock.now
+    const payload = (a: SendTurnResult, chatId: string) => ({ turnId: a.turnId, runId: a.runId, chatId, outcome: 'cancelled', failure: 'deleted', structuredOutput: null })
+    expect(seen.get(queued.turnId)).toEqual([{ kind: 'test-end', id: 'test-end:k-del-queu', due_at_ms: atDelete, payload: payload(queued, 'rc-del-a') }])
+    expect(seen.get(starting.turnId)).toEqual([{ kind: 'test-end', id: 'test-end:k-del-strt', due_at_ms: atDelete, payload: payload(starting, 'rc-del-b') }])
+    expect(seen.get(live.turnId)).toEqual([{ kind: 'test-end', id: 'test-end:k-del-live', due_at_ms: atRelease, payload: payload(live, 'rc-del-a') }])
+    const ids = h.sql.exec<{ id: string }>("SELECT id FROM due_tasks WHERE kind = 'test-end' ORDER BY id").toArray().map(r => r.id)
+    expect(ids).toEqual(['test-end:k-del-live', 'test-end:k-del-queu', 'test-end:k-del-strt'])
+  }))
+})
+
 describe('B: a turn that already ended keeps its own outcome in the payload (#168 r1, Opus 1)', () => {
   const doneThen = async (h: Harness, key: string) => {
     const a = ok(await submit(h, `rc-${key}`, key)); await settle()
