@@ -113,6 +113,9 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, ...(process.env.E2E_TEST_BUILD_REMOTE ? { passes: 200, alsoPasses: [503] } : { passes: 503 }) },
   // Route 51 (W1 PR 6): an empty body passes access, then fails its schema (400), so the sweep revives nothing.
   'POST /api/ops/tasks/revive': { design: d('open', [], ['release']), path: '/api/ops/tasks/revive', json: {}, passes: 400 },
+  // Route 67 (P4 wave 4): the test build's alarm-now control runs one scheduler pass (200); the product build answers 404
+  // (server/ops/alarm-now.test.ts).
+  'POST /api/ops/alarm': { design: d('open', [], ['release']), path: '/api/ops/alarm', json: {}, passes: 200 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 

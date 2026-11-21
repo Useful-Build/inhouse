@@ -22,6 +22,7 @@ import { getFile, listChatFiles, uploadAttachment } from './api/attachments.ts'
 import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
 import { drainState, startDrain, undrain } from './ops/drain.ts'
+import { alarmNow } from './ops/alarm-now.ts'
 import { warmup } from './ops/warmup.ts'
 import { reviveTask } from './ops/revive.ts'
 
@@ -148,6 +149,8 @@ export const routes: readonly Route[] = [
   /* 48 */ { method: 'POST', pattern: '/api/ops/warmup', handler: warmup },
   /* 49 */ { method: 'POST', pattern: '/api/chats/:id/session/reset', handler: resetSession },
   /* 51 */ { method: 'POST', pattern: '/api/ops/tasks/revive', handler: reviveTask },
+  // P4 wave 4 (p4-w6.md OC 2): the test build's alarm-now control (404 elsewhere). P4's product routes are rows 52 to 66.
+  /* 67 */ { method: 'POST', pattern: '/api/ops/alarm', handler: alarmNow },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

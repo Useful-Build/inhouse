@@ -27,7 +27,11 @@
 //   - `workers_dev` or `preview_urls` isn't explicitly false (wrangler turns both on when they're left out);
 //   - any string anywhere in it (a name, a host, a var) carries `inhouse-sbx-` (a sandbox config never passes as a
 //     product one);
-//   - any key at any depth is `__proto__`, `constructor` or `prototype` (both modes; see below).
+//   - any key at any depth is `__proto__`, `constructor` or `prototype` (both modes; see below);
+//   - (P4, p4-h1.md OC 4) `services` isn't exactly `[{ binding: "HUB", service: "inhouse-hub", entrypoint:
+//     "ReadGateway" }]`: no other service, no second hub entry, no other binding name or key, no missing or other
+//     entrypoint, and no `ServerGateway` entry: in P4 the product Worker reads through the hub and nothing more (P5's
+//     PR0 widens this for its gateways).
 //
 // Sandbox mode (P3 PR0 item 12), the prefix lock for the sandbox, which shares its Cloudflare account with live products:
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --per-pr <N> <config path>
@@ -223,6 +227,41 @@ export function checkPool(config, { sandbox = false } = {}) {
   const testBuild = Object.hasOwn(vars, 'INHOUSE_TEST_BUILD') || Object.hasOwn(vars, 'TEST_ISSUER_JWKS')
   const gateway = config.ai !== undefined || Object.keys(vars).some(k => k.startsWith('AI_GATEWAY')) || (config.secrets?.required ?? []).some(k => String(k).startsWith('AI_GATEWAY'))
   if (testBuild && gateway) failures.push('a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway')
+  return failures
+}
+
+/** The connector hub's Worker name (app/wrangler.hub.jsonc), the one entrypoint the product Worker may bind in P4, and its binding name. */
+const HUB_SERVICE = 'inhouse-hub'
+const HUB_ENTRYPOINT = 'ReadGateway'
+const HUB_BINDING = 'HUB'
+const HUB_KEYS = new Set(['binding', 'service', 'entrypoint'])
+
+/**
+ * P4's service rule (p4-h1.md OC 4), on any product-mode config: `services` is exactly the hub's `ReadGateway` as
+ * `HUB`, and nothing else. Every entrypoint of a Worker shares its env, so a binding left out is the only way to keep
+ * the runner's route off the hub's server methods; any other service is a door this phase didn't plan.
+ */
+export function checkHub(config) {
+  const failures = []
+  if (config.services !== undefined && !Array.isArray(config.services)) return ['services must be a list']
+  const services = config.services ?? []
+  services.forEach((s, i) => {
+    if (s?.entrypoint === 'ServerGateway') {
+      failures.push(`services[${i}] binds ServerGateway: in P4 the product Worker binds the hub's ${HUB_ENTRYPOINT} only`)
+      return
+    }
+    if (s?.service !== HUB_SERVICE) {
+      failures.push(`services[${i}] binds ${JSON.stringify(s?.service)}: in P4 the product Worker binds the hub (${HUB_BINDING}) only`)
+      return
+    }
+    if (s.binding !== HUB_BINDING) failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its binding is ${HUB_BINDING}`)
+    const extra = Object.keys(s).filter(k => !HUB_KEYS.has(k))
+    if (extra.length) failures.push(`services[${i}] has ${extra.join(', ')}: the hub entry is binding, service and entrypoint only`)
+    if (s.entrypoint === undefined) failures.push(`services[${i}] binds ${HUB_SERVICE} with no entrypoint (its default export): bind ${HUB_ENTRYPOINT}`)
+    else if (s.entrypoint !== HUB_ENTRYPOINT) failures.push(`services[${i}].entrypoint must be ${HUB_ENTRYPOINT}, not ${JSON.stringify(s.entrypoint)}`)
+  })
+  const named = services.filter(s => s?.service === HUB_SERVICE).length
+  if (named !== 1) failures.push(`services must name ${HUB_SERVICE} exactly once (found ${named})`)
   return failures
 }
 
@@ -493,8 +532,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       try { config = JSON.parse(stripJsonc(text)) } catch (err) { usage(`${args[0]} isn't valid JSONC: ${err.message}`) }
       if (!config || typeof config !== 'object' || Array.isArray(config)) usage(`${args[0]} isn't a config object`)
     }
-    // Product mode adds P3's pool and gateway rules; sandbox mode runs them inside checkSandboxConfig.
-    const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : [...checkConfig(config), ...checkPool(config)]
+    // Product mode adds P3's pool and gateway rules and P4's hub binding rule; sandbox mode runs the pool rules inside
+    // checkSandboxConfig (a sandbox config holds no service binding at all).
+    const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : [...checkConfig(config), ...checkPool(config), ...checkHub(config)]
     const where = sandbox ? ` to the sandbox (${mode.candidate ? 'candidate' : `PR ${mode.perPr}`})` : ''
     if (failures.length) {
       console.error(`check-product-config: ${args[0]} may not deploy${where}:\n${failures.map(f => `  - ${f}`).join('\n')}`)
