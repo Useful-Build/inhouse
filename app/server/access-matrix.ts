@@ -60,6 +60,9 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 49 */ { method: 'POST', pattern: '/api/chats/:id/session/reset', class: 'personal', allow: ['member', 'admin'] },
   // W1 PR 6 (A7): revive one quarantined due task, a runbook action for the release token like drain.
   /* 51 */ { method: 'POST', pattern: '/api/ops/tasks/revive', class: 'open', allow: [], services: ['release'] },
+  // P4 wave 4 (p4-w6.md OC 2): the test build's alarm-now control, release only like the undrain (its handler answers
+  // 404 outside the test build).
+  /* 67 */ { method: 'POST', pattern: '/api/ops/alarm', class: 'open', allow: [], services: ['release'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

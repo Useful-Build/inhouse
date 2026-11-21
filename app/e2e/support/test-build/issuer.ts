@@ -15,6 +15,13 @@ import { TEST_ISSUER, mintPerson } from '../../../server/auth/test-issuer-mint.t
 export { TEST_ISSUER }
 /** Where the test build's Worker config lands (`npm run build:product-test`), relative to app/. */
 export const TEST_BUILD_WORKER_CONFIG = 'dist-product-test/inhouse_product/wrangler.json'
+/**
+ * P4 wave 4: the connector hub's test config, relative to app/. The test build runs it beside the product Worker in one
+ * multi-config `wrangler dev` (the product's config first, so it's the primary Worker on the port; one --persist-to for
+ * both), so the product's HUB binding reaches the hub's ReadGateway. The hub's packages come from app/hub/ (`npm ci` there).
+ * https://developers.cloudflare.com/workers/development-testing/multi-workers/ (read 2026-11-21)
+ */
+export const TEST_BUILD_HUB_CONFIG = 'wrangler.hub.test.jsonc'
 /** The test build's port: its origins (`http://brand.localhost:<port>`) carry it. 8787 by default, as in wrangler.test.jsonc. */
 export const testBuildPort = () => Number(process.env.E2E_TEST_BUILD_PORT ?? 8787)
 

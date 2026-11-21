@@ -29,6 +29,16 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'ops_task_revive': { action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA', result: 'revived', by: 'release' },
+  'routine.created': { action: 'routine.created', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA', need: 1 },
+  'routine.updated': { action: 'routine.updated', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA', changed: ['schedule'] },
+  'routine.enabled': { action: 'routine.enabled', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA', on: true },
+  'routine.deleted': { action: 'routine.deleted', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA' },
+  'routine.restored': { action: 'routine.restored', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA' },
+  'routine.run_now': { action: 'routine.run_now', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA', slotKey: 'now|rt_AAAAAAAAAAAAAAAAAAAAAA|ck_12345678' },
+  'library.uploaded': { action: 'library.uploaded', fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', contentType: 'application/pdf', bytes: 2048 },
+  'library.deleted': { action: 'library.deleted', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
+  'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
+  'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -75,7 +85,7 @@ describe('P3 lines (W1 first PR: the support.access routes of p3-design section 
     const expected: [string, string][] = [
       ['/api/chats', 'The chat list'], ['/api/chats/:id', 'A chat'], ['/api/runs/active', 'The running answers'],
       ['/api/traces/:id', "An answer's steps"], ['/api/socket', 'A live answer'], ['/api/chats/:id/files', "A chat's files"],
-      ['/api/files/:fileId', 'A file'], ['/api/memory', 'Memory'], ['/api/activity', 'Activity'],
+      ['/api/files/:fileId', 'A file'], ['/api/memory', 'Memory'],
     ]
     for (const [route, detail] of expected) expect(access(route), route).toEqual({ what: 'looked at brand data', detail })
   })
@@ -95,5 +105,60 @@ describe('P3 memory lines (W6, item 19)', () => {
     expect(auditText({ action: 'ops_task_revive', kind: 'routine-end', id: 'x', result: 'not_quarantined', by: 'release' }, names)).toEqual({ what: 'restarted a stuck background task', detail: 'routine-end: wasn’t stuck (release job)' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'PUT', route: '/api/memory/brand/:id/forgotten' }, names)).toEqual({ what: 'changed brand data', detail: 'Team memory' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/memory' }, names)).toEqual({ what: 'looked at brand data', detail: 'Memory' })
+  })
+})
+
+describe('P4 lines (wave-4 PR0): literal texts, and no id in any of them', () => {
+  const rt = 'rt_AAAAAAAAAAAAAAAAAAAAAA'
+  const f = 'f_AAAAAAAAAAAAAAAAAAAAAA'
+  it('names each P4 brand_data read', () => {
+    for (const [route, detail] of [
+      ['/api/routines', 'Routines'], ['/api/today', 'Today'], ['/api/activity', 'Activity'], ['/api/library', 'The Library'],
+      ['/api/library/:id/download', 'A Library file'],
+    ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route }, names), route).toEqual({ what: 'looked at brand data', detail })
+  })
+  it('says what happened to a routine', () => {
+    expect(auditText({ action: 'routine.created', routineId: rt, need: 0 }, names)).toEqual({ what: 'set up a routine', detail: 'Needs the Watch stage' })
+    expect(auditText({ action: 'routine.created', routineId: rt, need: 1 }, names)).toEqual({ what: 'set up a routine', detail: 'Needs the Act stage' })
+    expect(auditText({ action: 'routine.created', routineId: rt, need: 2 }, names)).toEqual({ what: 'set up a routine', detail: 'Needs the Run stage' })
+    expect(auditText({ action: 'routine.updated', routineId: rt, changed: ['schedule'] }, names)).toEqual({ what: 'changed a routine', detail: 'Schedule' })
+    expect(auditText({ action: 'routine.updated', routineId: rt, changed: ['missed', 'instruction'] }, names)).toEqual({ what: 'changed a routine', detail: 'Instructions, missed runs' })
+    expect(auditText({ action: 'routine.updated', routineId: rt, changed: ['missed', 'schedule', 'instruction'] }, names)).toEqual({ what: 'changed a routine', detail: 'Instructions, schedule, missed runs' })
+    expect(auditText({ action: 'routine.enabled', routineId: rt, on: true }, names)).toEqual({ what: 'turned a routine on', detail: '' })
+    expect(auditText({ action: 'routine.enabled', routineId: rt, on: false }, names)).toEqual({ what: 'turned a routine off', detail: '' })
+    expect(auditText({ action: 'routine.deleted', routineId: rt }, names)).toEqual({ what: 'deleted a routine', detail: '' })
+    expect(auditText({ action: 'routine.restored', routineId: rt }, names)).toEqual({ what: 'brought back a routine', detail: '' })
+    expect(auditText({ action: 'routine.run_now', routineId: rt, slotKey: `now|${rt}|ck_12345678` }, names)).toEqual({ what: 'ran a routine now', detail: '' })
+  })
+  it('says what happened in the Library, with the type and size of an upload', () => {
+    expect(auditText({ action: 'library.uploaded', fileId: f, contentType: 'application/pdf', bytes: 2048 }, names)).toEqual({ what: 'added a file to the Library', detail: 'PDF, 2 KB' })
+    expect(auditText({ action: 'library.uploaded', fileId: f, contentType: 'text/csv', bytes: 900 }, names)).toEqual({ what: 'added a file to the Library', detail: 'CSV, 900 B' })
+    expect(auditText({ action: 'library.uploaded', fileId: f, contentType: 'image/png', bytes: 1_572_864 }, names)).toEqual({ what: 'added a file to the Library', detail: 'PNG image, 1.5 MB' })
+    expect(auditText({ action: 'library.uploaded', fileId: f, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: 20_971_520 }, names)).toEqual({ what: 'added a file to the Library', detail: 'Spreadsheet, 20 MB' })
+    expect(auditText({ action: 'library.deleted', fileIds: [f] }, names)).toEqual({ what: 'deleted Library files', detail: '1 file' })
+    expect(auditText({ action: 'library.restored', fileIds: [f, 'f_BBBBBBBBBBBBBBBBBBBBBB'] }, names)).toEqual({ what: 'brought back Library files', detail: '2 files' })
+  })
+  it('says what happened to an item on Today', () => {
+    expect(auditText({ action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' }, names)).toEqual({ what: 'snoozed an item on Today', detail: '' })
+    expect(auditText({ action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'dismissed' }, names)).toEqual({ what: 'dismissed an item on Today', detail: '' })
+    expect(auditText({ action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'declined' }, names)).toEqual({ what: 'declined an item on Today', detail: '' })
+    expect(auditText({ action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: null }, names)).toEqual({ what: 'put back an item on Today', detail: '' })
+  })
+  it('never shows an id', () => {
+    for (const action of ['routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now', 'library.uploaded', 'library.deleted', 'library.restored', 'today.set_aside'] as const) {
+      const t = auditText(sample[action], names)
+      expect(`${t.what} ${t.detail}`, action).not.toMatch(/rt_|f_A|p_A|now\|/)
+    }
+  })
+})
+
+describe('support.access writes (P4 review fold): a write reads as a change, never a look', () => {
+  it('names each P4 write route', () => {
+    for (const [method, route, detail] of [
+      ['PUT', '/api/routines/:id/enabled', 'A routine'], ['POST', '/api/routines/:id/run', 'A routine'],
+      ['POST', '/api/routines/:id/delete', 'A routine'], ['POST', '/api/routines/:id/restore', 'A routine'],
+      ['PUT', '/api/today/:id/aside', 'An item on Today'],
+      ['POST', '/api/library/delete', 'The Library'], ['POST', '/api/library/restore', 'The Library'],
+    ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method, route }, names), `${method} ${route}`).toEqual({ what: 'changed brand data', detail })
   })
 })

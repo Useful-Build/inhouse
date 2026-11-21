@@ -141,6 +141,8 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/chats/:id/session/reset', class: 'personal', allow: ['member', 'admin'] },
   // Route 51 (W1 PR 6): revive one quarantined due task, release only like drain.
   { method: 'POST', pattern: '/api/ops/tasks/revive', class: 'open', allow: [], services: ['release'] },
+  // Route 67 (P4 wave 4, p4-w6.md OC 2): the test build's alarm-now control, release only (404 outside the test build).
+  { method: 'POST', pattern: '/api/ops/alarm', class: 'open', allow: [], services: ['release'] },
 ]
 
 /** `CanRows` as section 3 maps them. */
