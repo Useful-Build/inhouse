@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You're out of office on Friday afternoons.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Friday afternoon"
+    },
+    "result": "Out of office every Friday afternoon."
+   }
+  ],
+  "answer": "You're out of office on Friday afternoons.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

@@ -1,0 +1,30 @@
+{
+ "row": {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Here is a draft: \"Hi Anna, your parcel is delayed by two days. Sorry for the wait.\"",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [],
+  "answer": "Here is a draft: \"Hi Anna, your parcel is delayed by two days. Sorry for the wait.\"",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

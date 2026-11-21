@@ -2,7 +2,7 @@
 
 The brand team's app: Today, Library, Approvals, Routines, Activity, Tools, Skills, Usage and Settings, plus chats from the sidebar (New chat, Recent chats, See all), at the stages Watch, Act and Run.
 
-**Phase 1 (this code):** runs on sample data only, through a deterministic mock agent. Nothing real is connected.
+**Two builds.** The demo (`npm run build`) runs on invented sample data through a deterministic mock agent; nothing real is connected. The product build talks to the product Worker (`server/`): members, settings, grants and the audit log (P2), and chats that a real model answers in a sandboxed runner container (P3).
 
 ## Stack
 
@@ -23,7 +23,15 @@ npm run test:unit  # Vitest: src/**/*.test.ts (property tests included) and buil
 npm run test:e2e   # Playwright against the production build
 ```
 
-Two builds share one source tree. `npm run build` (and `npm run dev`) is the demo: the mock agent, the sample data and the demo switches. `npm run build:product` (`vite build --mode product`) is the product: its client is the HTTP stub in `src/agent/http/`, so every read stays `loading` and every write rejects with `unavailable`, and the shell shows one "Not connected yet" screen. The build picks the client through the `@client` alias: `src/agent/client.demo.ts` (mock plus `DemoControls`) or `src/agent/client.product.ts`, both a `ClientEntry` (`{ agent, demo, now() }`). `demo` is `null` in the product, so `?demo`, the switcher and Reset demo do nothing there, and `now()` is the real clock. The zod schemas in `shared/contract/` define every value the `AgentClient` returns, and the contract suite (`src/agent/contract/`) holds the mock to them. `scripts/check-product-build.mjs` fails the product build on sample data, mock code, demo controls or the demo clock.
+Two builds share one source tree. `npm run build` (and `npm run dev`) is the demo: the mock agent, the sample data and the demo switches. `npm run build:product` (`vite build --mode product`) is the product: its client is `HttpAgent` in `src/agent/http/`, the real client of the product Worker's `/api/*` routes: chats and their history, the turn socket, pause, models, usage, memory and settings. Pages whose server side is a later phase still read `loading` and write `unavailable`. The build picks the client through the `@client` alias: `src/agent/client.demo.ts` (mock plus `DemoControls`) or `src/agent/client.product.ts`, both a `ClientEntry` (`{ agent, demo, now() }`). `demo` is `null` in the product, so `?demo`, the switcher and Reset demo do nothing there, and `now()` is the real clock. The zod schemas in `shared/contract/` define every value the `AgentClient` returns, and the contract suite (`src/agent/contract/`) holds the mock to them. `scripts/check-product-build.mjs` fails the product build on sample data, mock code, demo controls or the demo clock.
+
+**Chats in the product (P3).** A chat turn is `POST /api/chats/:id/turns`, and its events stream over one WebSocket (route 34) that replays from a cursor (`seq`), so a reload or a second tab reattaches to a live run. The brand's `BrandAgent` Durable Object (`server/do/brand-agent/`) owns admission, the run queue, pause, the scheduler and the history projection into D1. Its pool of `Runner` objects (`server/do/runner/`) each start a container that runs `app/runner/`: the Claude Agent SDK session inside bwrap, one OS user per session, with every outbound call going to the Worker's egress (`server/egress/`: the model gate with the usage ledger and cap, WebFetch, the chat files store). The `inhouse` MCP server (`server/mcp/`) gives the agent memory and history tools. A real-model eval harness is in `evals/` (the dry run costs nothing; the paid product target refuses without `--paid` and a budget).
+
+**The scripted model (test builds only).** `test/scripted-model/` is a fake Messages endpoint keyed by scenario and turn, so chat specs and the runner's container job run with no real model call. A turn it has no script for fails loud with a named miss. `check-product-build.mjs` fails the product build on its canary.
+
+**The sandbox deploy.** A per-PR deploy of the test build to a separate sandbox account (done by the private ops repo, names checked by `scripts/sandbox/names.mjs`) runs the container, so the chat specs run there: drain, then warm-up (route 48, `server/ops/warmup.ts`: retry after each 503, abort after 10 minutes), then `E2E_TEST_BUILD_REMOTE=1 npx playwright test --project=api` (and the `real-*` projects) with that deploy's origins and test issuer key. The local test build has no container, so specs that need a real run belong to that deploy.
+
+**The product Worker and the test build (P2).** The product's server is `server/` (entry `server/index.ts`): Access sign-in, members, settings, support grants, the audit log and the photo, on D1 and R2. The test build is that Worker with a test issuer compiled in (`npm run build:product-test`, config `wrangler.test.jsonc`, made-up values only, never deployed). Start it locally with `npm run test-build:migrate` and `npm run test-build:seed`, then `E2E_TEST_BUILD=1 npx playwright test --project=api` (Playwright starts `wrangler dev` itself on port 8787). The test issuer makes a fresh RS256 key per run and gives the Worker only the public half; specs sign in by minting a JWT for a seeded member (`e2e/support/test-build/issuer.ts`, `e2e/api/kit.ts`). The seeded members are an Admin, two Members and an Inhouse team person (`server/seed/brand.ts`); the `smoke` service member comes from a migration. The read-only release smoke is `--project=smoke` (`e2e/smoke/product.spec.ts`).
 
 Open any build with `?demo` to show the demo switcher (stage, scenario, dot sweep, the agent's mark, Reset demo). State changes are kept in local storage until you press Reset demo.
 
@@ -65,11 +73,13 @@ npm run deploy     # build, then wrangler deploy to your Cloudflare account
 ```
 
 Phase 1 deploys as one Cloudflare Worker and serves invented sample data only. Every PR gets a Workers Preview, which
-sends `noindex`; production's pages are indexable.
+sends `noindex`; the demo's production pages are indexable (`deploy.yml` drops the `X-Robots-Tag` line from the build's
+`_headers`). The brand deployment (the product Worker) is not: nothing drops that line from its build, so its pages (the
+assets' `_headers`) and every `/api` answer (the Worker parses the same `/*` block) send `noindex, nofollow`.
 
 ## The mock agent, and how phase 2 swaps it
 
-Everything the screens know comes through one interface, `AgentClient` in `src/agent/types.ts`. The build picks the client through the `@client` alias (`client.demo.ts` or `client.product.ts`): phase 2 fills in the product client, and `mock.ts` and the sample data stay demo-only. No screen, store or selector reads the sample data or names a mock key.
+Everything the screens know comes through one interface, `AgentClient` in `src/agent/types.ts`. The build picks the client through the `@client` alias (`client.demo.ts` or `client.product.ts`): the product client is `HttpAgent` (`src/agent/http/`), and `mock.ts` and the sample data stay demo-only. No screen, store or selector reads the sample data or names a mock key.
 
 - **The mock.** `src/agent/mock.ts` reads only `src/agent/sample-data/`: no randomness, no model calls. Chat answers come from `chat-script.json` (thinking steps every 800 ms, then the parts); a question a seeded chat already asked replays that turn, this chat's first. Chats come from `chats.json`, newest first by their `iso` time.
 - **One clock** (`src/agent/demo-clock.ts`, demo-only). The demo is Monday, November 16, 2026 from 8:00 AM in the device's local time (the Settings time zone is the one shown there; it doesn't move the clock): `demoNow(demoStartedAt)` is that plus the real time since the demo started, stopping at 11:59 AM. Everything a person does is stamped on it, never the computer's own time. Times travel as `Instant`s and are shown only through `src/lib/format.ts`. Formats: `fmtTime` "8:03 AM", `fmtDay` "Nov 16", `fmtWeekday` "Mon, Nov 16", `fmtCount` "1,314". A shown time keeps a no-break space before AM or PM (`fmtTime`, and every sample-data string as it loads), so it never wraps. Lists show today as a time, the six days before as a weekday, older as a date. The demo's start is saved at the first load (demo-only, in `DemoControls`), so a reload never restarts the clock. Anything sorted by time is sorted on its `Instant`; nothing sorts a display string.
@@ -97,7 +107,7 @@ Everything the screens know comes through one interface, `AgentClient` in `src/a
 ## Layout
 
 ```
-src/agent/       AgentClient interface, typed sample data, mock agent, the two client entries, http/ (the product's stub)
+src/agent/       AgentClient interface, typed sample data, mock agent, the two client entries, http/ (the product's real client)
 shared/contract/ zod schemas for every value and event the AgentClient returns
 public-demo/     the demo's sample files (Library, avatars), copied only into the demo build
 src/state/       selectors (derive.ts) and the UI store

@@ -1,5 +1,6 @@
 // Values every resource shares: the stages, the demo scenarios, a model's effort and the error codes.
 import { z } from 'zod'
+import { RESOURCE_KEYS } from './keys.ts'
 
 export const StageSchema = z.enum(['Watch', 'Act', 'Run'])
 export type Stage = z.infer<typeof StageSchema>
@@ -15,8 +16,42 @@ export type Scenario = z.infer<typeof ScenarioSchema>
 export const EffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
 export type Effort = z.infer<typeof EffortSchema>
 
-export const AgentErrorCodeSchema = z.enum(['offline', 'forbidden', 'conflict', 'not_found', 'unavailable', 'unknown'])
+export const AgentErrorCodeSchema = z.enum([
+  'offline', 'forbidden', 'conflict', 'not_found', 'unavailable', 'unknown',
+  // P2: a missing or bad sign-in, too many requests, a spending cap hit (P3 chooses it) and a body or value that fails its schema.
+  'unauthorized', 'rate_limited', 'cap_reached', 'invalid',
+])
 export type AgentErrorCode = z.infer<typeof AgentErrorCodeSchema>
+
+/** Why a request was refused, when the code alone doesn't say (p2-design.md section 4). The UI reads `not_invited` and `removed` as "You're not on this team". */
+export const ErrorReasonSchema = z.enum([
+  'not_invited', 'removed', 'bad_origin', 'grant_required', 'admin_read_only', 'not_owner', 'wrong_scope', 'last_admin',
+  'already_member', 'grant_live', 'bad_type', 'too_large',
+  // P3 (p3-design sections 4.3, 4.9 and 8; every P3 reason lands here in W1's first PR).
+  'paused', 'draining', 'model_off', 'turn_ended', 'provider_changed', 'queue_full', 'key_reused', 'session_damaged',
+  'waiting_answer', 'pool_full', 'budget_busy', 'too_many', 'bad_name',
+  // Route 39's refusals (the server sends them as `invalid`; the client tells them apart).
+  'type_not_allowed', 'length_required', 'length_mismatch', 'hash',
+])
+export type ErrorReason = z.infer<typeof ErrorReasonSchema>
+
+/** The body of every refused `/api/*` request: `{ error: { code, reason?, current? } }`. `current` is the record as it is now, on a stale `ifRev`. */
+export const ErrorBodySchema = z.object({
+  error: z.object({
+    code: AgentErrorCodeSchema,
+    reason: ErrorReasonSchema.optional(),
+    current: z.record(z.string(), z.unknown()).optional(),
+  }),
+})
+export type ErrorBody = z.infer<typeof ErrorBodySchema>
+
+/** One entry per list in `AgentData`, so a failed read names what failed (C3). `members` and `audit` also page. */
+export const ResourceKeySchema = z.enum(RESOURCE_KEYS)
+export type ResourceKey = z.infer<typeof ResourceKeySchema>
+
+/** Where one resource stands: loading, ready, or failed with the error's code (and its reason: `not_invited` and `removed` show "You're not on this team"). */
+export const ResourceStatusSchema = z.object({ status: z.enum(['loading', 'ready', 'error']), error: AgentErrorCodeSchema.optional(), reason: ErrorReasonSchema.optional() })
+export type ResourceStatus = z.infer<typeof ResourceStatusSchema>
 
 /** Two strings shown side by side: a label and its value, or a text and its source number. */
 export const PairSchema = z.tuple([z.string(), z.string()])

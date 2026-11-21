@@ -1,11 +1,12 @@
 // The product build (npm run build:product, served by the `product` project): no sample data, no demo switches, no demo
-// clock. Its client has no data yet, so one "Not connected yet" screen stands in for every page.
+// clock. Its Worker has no access config here, so it answers the first read 503 and one load error with Retry stands in
+// for every page (P1 showed "Not connected yet" for any failure of that read; P2 shows the load error, start-screen.ts).
 // The demo clock's absence is not checked here: that screen shows no date or time to read it from. It is proved by
 // scripts/check-product-build.mjs (the product bundle holds no demo clock). Each URL below is a real first load.
 import { expect, test } from '../support/fx.js'
 import type { Page } from '@playwright/test'
 
-const heading = (page: Page) => page.getByRole('heading', { level: 1, name: 'Not connected yet', exact: true })
+const heading = (page: Page) => page.getByRole('alert').filter({ hasText: "Couldn't load Inhouse." })
 const bodyText = (page: Page) => page.evaluate(() => document.body.innerText)
 /** A fresh load of a URL: from a blank page, so a hash-only change is never mistaken for one. */
 async function load(page: Page, url: string) {
@@ -13,12 +14,13 @@ async function load(page: Page, url: string) {
   await page.goto(url)
 }
 
-test('The product build shows the Not connected yet screen in place of every page', async ({ page }) => {
+test('The product build shows the load error in place of every page', async ({ page }) => {
   for (const hash of ['', '#/today', '#/chats', '#/chats/all', '#/library', '#/usage', '#/activity', '#/settings']) {
     await load(page, '/' + hash)
     await expect(heading(page), hash).toBeVisible()
-    await expect(page.getByText("Inhouse isn't connected to your agent yet. Check back soon."), hash).toBeVisible()
-    await expect(page, hash).toHaveTitle('Not connected yet · Inhouse')
+    await expect(page.getByText("Couldn't load Inhouse. Try again in a moment."), hash).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Retry', exact: true }), hash).toBeVisible()
+    await expect(page, hash).toHaveTitle("Couldn't load · Inhouse")
     // The screen stands alone: no sidebar and no navigation.
     await expect(page.getByRole('complementary', { name: 'Sidebar' }), hash).toHaveCount(0)
     await expect(page.getByRole('navigation'), hash).toHaveCount(0)

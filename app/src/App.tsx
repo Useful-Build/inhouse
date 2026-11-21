@@ -1,13 +1,22 @@
 import { Component, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
-import type { ToolsData } from './agent/types'
+import { isChatUnknown } from './state/chat-known'
+import { AgentError } from './agent/types'
+import type { AgentErrorCode, ToolsData } from './agent/types'
+import { NOT_FOUND } from '../shared/contract/error-codes'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
 import { Sidebar } from './shell/Sidebar'
 import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
 import { NotConnected } from './shell/NotConnected'
+import { SignedOut } from './shell/SignedOut'
+import { StartError } from './shell/StartError'
+import { startScreen } from './shell/start-screen'
+import type { StartScreen } from './shell/start-screen'
+import { createHashSync } from './shell/route-sync'
+import { hashBar } from './shell/hash-bar'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -16,12 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { DotsBackground, GooDefs, Page as PageBox } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
-import { Approvals } from './screens/Approvals'
-import { Routines } from './screens/Routines'
-import { Activity } from './screens/Activity'
-import { Tools, ToolPage } from './screens/Tools'
-import { Skills } from './screens/Skills'
-import { MENU } from './screens/settings/content'
+import { MENU } from './screens/settings/menu'
 import { ProblemPanel } from './overlays/ProblemPanel'
 import { TeamWindow } from './overlays/TeamWindow'
 import { HelpWindow } from './overlays/HelpWindow'
@@ -40,11 +44,24 @@ function lazyRoute<M, C extends ComponentType>(load: () => Promise<M>, pick: (m:
   })
 }
 // The heavy routes load on first visit (P-2): Settings, Usage, the Library (its viewer and previews come with it) and
-// the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Today and the
-// rest stay in the entry chunk.
+// the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Approvals, Routines,
+// Activity, Tools (and its tool page) and Skills load on first visit too (P3 ship, to keep Today's first load under its
+// budget: build-support/entry-without-zod.test.ts pins them). Only Today and Chats stay in the entry chunk.
+const Approvals = lazyRoute(() => import('./screens/Approvals'), m => m.Approvals)
+const Routines = lazyRoute(() => import('./screens/Routines'), m => m.Routines)
+const Activity = lazyRoute(() => import('./screens/Activity'), m => m.Activity)
+const Tools = lazyRoute(() => import('./screens/Tools'), m => m.Tools)
+const ToolPage = lazyRoute(() => import('./screens/Tools'), m => m.ToolPage)
+const Skills = lazyRoute(() => import('./screens/Skills'), m => m.Skills)
+// Once the shell has painted and the browser is idle, these five load in the background, so a first visit finds its chunk
+// already there (the skeleton shows only on a slow link). Library, Usage and Settings stay on first visit: they are the big ones.
+const PREFETCH: (() => Promise<unknown>)[] = [
+  () => import('./screens/Approvals'), () => import('./screens/Routines'), () => import('./screens/Activity'), () => import('./screens/Tools'), () => import('./screens/Skills'),
+]
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
+const NotOnTeam = lazyRoute(() => import('./shell/NotOnTeam'), m => m.NotOnTeam)
 const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.TraceWindow)
 
 /** A trace window whose chunk can't load closes and says so, instead of taking the app down. */
@@ -93,7 +110,7 @@ function PageFallback() {
   const [text, setText] = useState('')
   useEffect(() => { const t = setTimeout(() => setText('Loading'), 50); return () => clearTimeout(t) }, [])
   return (
-    <PageBox width="wide" role="status">
+    <PageBox width="wide" role="status" data-page-loading>
       <span className="sr-only">{text}</span>
       <Skeleton className="h-9 w-44 animate-none rounded-sm bg-fill-hover" />
       <Skeleton className="mt-4 h-4 w-80 max-w-full animate-none rounded-sm" />
@@ -185,6 +202,10 @@ if (initialRoute) applyRoute(initialRoute, true)
 /** The first link named a page that doesn't exist: App says so once it has mounted. */
 const bootUnknownPage = !initialRoute && hasSlug(location.hash)
 
+const hashSync = createHashSync(hashBar, {
+  toHash: p => toHash(p.page as Page, p.appKey, p.setTab, p.chatKey, p.menu), fromHash, takeReplaceEntry, fromMenuState: FROM_SETTINGS_MENU,
+})
+
 function useHashRoute() {
   const page = useUi(s => s.page)
   const appKey = useUi(s => s.appKey)
@@ -202,16 +223,28 @@ function useHashRoute() {
   const openKey = openChatKey({ fresh, chatId }, data)
   const chatKey = chatList ? 'all' : openKey ?? 'new'
   // Unknown also covers a deleted chat, and the newest sample chat (`#/chats`) once it was deleted.
-  const chatUnknown = page === 'chats' && !chatList && openKey !== null && !chatEntries(data, started, agentState).some(c => c.id === openKey)
+  const ids = chatEntries(data, started, agentState).map(c => c.id)
+  // The list is one page: a chat it lacks may be an older one. Route 24 is asked about it once (found: it joins the list;
+  // a 404 or a deleted chat: it is unknown), and a failed ask (offline) judges nothing.
+  const [looked, setLooked] = useState<Record<string, true>>({})
+  const listReady = !demo && data.resources.chat.status === 'ready'
+  const needsLook = listReady && page === 'chats' && !chatList && openKey !== null && !ids.includes(openKey) && !looked[openKey]
+  useEffect(() => {
+    if (!needsLook || openKey === null) return
+    const done = () => setLooked(l => ({ ...l, [openKey]: true }))
+    agent.getChat(openKey).then(done, (e: unknown) => { if (e instanceof AgentError && e.code === NOT_FOUND) done() })
+  }, [needsLook, openKey])
+  const chatUnknown = isChatUnknown({ page, chatList, openKey, ids, serverList: demo ? null : data.resources.chat.status, looked: openKey !== null && looked[openKey] === true })
   const fallbackChat = newestChat(data, started, agentState)?.id ?? null
   const chatIsNew = started.some(c => c.id === chatKey)
   useEffect(() => {
     const apply = () => {
       const r = fromHash(location.hash)
       const ui = useUi.getState()
+      hashBar.adopt()
       if (r) { applyRoute(r, false); return }
       const named = hasSlug(location.hash)
-      history.replaceState(null, '', toHash(ui.page, ui.appKey, ui.setTab, ui.chatList ? 'all' : openChatKey(ui, agent.read()) ?? 'new', ui.phone && ui.setMenu))
+      hashBar.replace(toHash(ui.page, ui.appKey, ui.setTab, ui.chatList ? 'all' : openChatKey(ui, agent.read()) ?? 'new', ui.phone && ui.setMenu))
       if (named) notFound(ui.page === 'app' ? toolName(agent.read().tools, ui.appKey) ?? 'Tools' : ui.page === 'settings' ? settingsLabel(ui.setTab) : PAGE_LABEL[ui.page])
     }
     window.addEventListener('hashchange', apply)
@@ -225,7 +258,7 @@ function useHashRoute() {
       // that exists but isn't in this scenario (First day or Loading picked from the demo switches).
       const named = fromHash(location.hash)?.chat
       if (named && named !== 'all' && named !== 'new' && (!agent.allChatIds().includes(named) || agent.getSnapshot().chatDeleted[named])) useUi.getState().showToast("That chat isn't available. It may have been deleted.", { icon: 'info', key: 'route-notice' })
-      history.replaceState(null, '', toHash('chats', appKey, setTab, fallbackChat ?? 'new'))
+      hashBar.replace(toHash('chats', appKey, setTab, fallbackChat ?? 'new'))
       if (fallbackChat) useUi.getState().openChat(fallbackChat) // restores what was added to it, if anything
       else useUi.getState().newChat()
     }
@@ -233,35 +266,30 @@ function useHashRoute() {
   useEffect(() => {
     // An unknown tool or settings tab (a stale or typed link) is replaced in place, so it adds no history entry.
     if (page === 'app' && !toolName(data.tools, appKey)) {
-      history.replaceState(null, '', toHash('apps', appKey, setTab, chatKey))
+      hashBar.replace(toHash('apps', appKey, setTab, chatKey))
       useUi.getState().patch({ page: 'apps' })
       notFound('Tools')
       return
     }
     if (page === 'settings' && !SETTINGS_TABS.includes(setTab)) {
-      history.replaceState(null, '', toHash('settings', appKey, SETTINGS_DEFAULT, chatKey))
+      hashBar.replace(toHash('settings', appKey, SETTINGS_DEFAULT, chatKey))
       useUi.getState().patch({ setTab: SETTINGS_DEFAULT })
       notFound(settingsLabel(SETTINGS_DEFAULT))
       return
     }
     if (chatUnknown) return // replaced above
-    const h = toHash(page, appKey, setTab, chatKey, menu)
-    // An open Library file keeps its own link (#/library/<id>, see screens/library/route.ts).
-    if (location.hash === h || (page === 'library' && location.hash.startsWith(`${h}/`))) return
-    // A hash that only needs tidying (none, unknown, no tab) replaces the entry. A real move adds one.
-    // So does a new chat getting its id when the first question is asked: Back skips the empty chat.
-    const cur = fromHash(location.hash)
-    // On a phone the settings menu and a settings page are two entries; desktop tidies #/settings into its page.
-    const sameMenu = !(page === 'settings' && phone) || (cur?.setMenu ?? menu) === menu
-    const tidy = !cur || (cur.page === page && (cur.appKey ?? appKey) === appKey && (cur.setTab ?? setTab) === setTab && (cur.chat ?? chatKey) === chatKey && sameMenu)
-      || (page === 'chats' && cur.page === 'chats' && cur.chat === 'new' && chatIsNew)
-    // A settings page opened from the phone menu remembers it, so its Back button can step back instead of adding an entry.
-    if (takeReplaceEntry() || tidy) history.replaceState(history.state, '', h)
-    else history.pushState(phone && page === 'settings' && !menu && cur?.page === 'settings' && cur.setMenu ? FROM_SETTINGS_MENU : null, '', h)
+    // The hash follows the app unless someone else just set one (see shell/route-sync.ts).
+    hashSync.sync({ page, appKey, setTab, chatKey, menu, phone, chatIsNew, defaultChat: defaultChatId(data) })
   }, [page, appKey, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
 }
 
 function Shell() {
+  useEffect(() => {
+    const go = () => { for (const load of PREFETCH) load().catch(() => {}) }
+    if (typeof requestIdleCallback === 'function') { const id = requestIdleCallback(go, { timeout: 4000 }); return () => cancelIdleCallback(id) }
+    const t = setTimeout(go, 2000)
+    return () => clearTimeout(t)
+  }, [])
   const page = useUi(s => s.page)
   const appKey = useUi(s => s.appKey)
   const toolKnown = !!toolName(useAgentData().tools, appKey)
@@ -370,11 +398,23 @@ function Shell() {
 }
 
 /**
- * The product build's client reports `loading` for as long as it has nothing (the stub, until P2): one "Not connected yet"
- * screen in place of the pages. The demo has `demo` set and never shows it.
+ * The product build shows one screen in place of the pages until its first read (`meta`) is in (start-screen.ts): "Not
+ * connected yet" while it loads, "You're not on this team", the signed-out screen, or the load error with Retry. The
+ * demo has `demo` set and never shows them.
  */
 export default function App() {
-  const status = useAgentData().status
-  if (demo === null && status === 'loading') return <NotConnected />
+  const data = useAgentData()
+  const screen = demo === null ? startScreen(data) : 'app'
+  // Retry sets `meta` loading again: the load error stays up while it reads, with the last error's words and Retry
+  // disabled, not "Not connected yet".
+  const [last, setLast] = useState<{ screen: StartScreen; error?: AgentErrorCode }>({ screen })
+  const retrying = screen === 'not-connected' && last.screen === 'load-error'
+  const shown = retrying ? 'load-error' : screen
+  const error = retrying ? last.error : data.resources.meta.error
+  if (shown !== last.screen || error !== last.error) setLast({ screen: shown, error })
+  if (shown === 'not-on-team') return <Suspense fallback={null}><NotOnTeam /></Suspense>
+  if (shown === 'signed-out') return <SignedOut />
+  if (shown === 'load-error') return <StartError error={error} retrying={retrying} />
+  if (shown === 'not-connected') return <NotConnected />
   return <Shell />
 }

@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "T16",
+  "cat": "choice",
+  "pair": "approval_withdraw/memory_forget",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_withdraw"
+  ],
+  "toolSearches": 1,
+  "answer": "I've withdrawn the reorder draft ap_311. Nothing was sent to the supplier.",
+  "costUsd": 0.0126852,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__approval_withdraw,mcp__inhouse__approval_get",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_withdraw\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__approval_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__approval_withdraw",
+    "input": {
+     "approval_id": "ap_311",
+     "reason": "The mugs arrived, so the reorder is no longer needed (per Maya)."
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Withdrew ap_311.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've withdrawn the reorder draft ap_311. Nothing was sent to the supplier.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2518,
+   "cacheReadTokens": 33082,
+   "outputTokens": 307
+  },
+  "costUsd": 0.0126852
+ }
+}

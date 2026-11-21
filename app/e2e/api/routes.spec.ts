@@ -1,0 +1,60 @@
+// The route list: access-matrix.ts and routes.ts agree, and every row has a case in the matrix spec (cases.ts). A new
+// route, row or case that doesn't line up fails here, before the matrix spec can quietly skip it.
+import { expect, test } from '@playwright/test'
+import { CASES } from './cases.ts'
+import { INHOUSE_BRAND_WRITES } from '../../server/testing/inhouse-brand-writes.ts'
+import { matrixRows, rowKey, routeList } from './kit.ts'
+
+test('every route has exactly one matrix row, and every row a route', () => {
+  const routes = routeList().map(([method, pattern]) => rowKey({ method, pattern }))
+  const rows = matrixRows().map(rowKey)
+  expect(new Set(routes).size, 'a route is listed twice').toBe(routes.length)
+  expect(new Set(rows).size, 'a row is listed twice').toBe(rows.length)
+  expect(routes.filter(r => !rows.includes(r)), 'routes with no row').toEqual([])
+  expect(rows.filter(r => !routes.includes(r)), 'rows with no route').toEqual([])
+})
+
+test('every row has a case in the matrix spec, and every case a row', () => {
+  const rows = matrixRows().map(rowKey)
+  const cases = Object.keys(CASES)
+  expect(rows.filter(r => !cases.includes(r)), 'rows with no case in cases.ts').toEqual([])
+  expect(cases.filter(c => !rows.includes(c)), 'cases with no row').toEqual([])
+})
+
+test('each server row says what the design says: class, allow, services, adminWrite and ownerObject', () => {
+  const sorted = (v: readonly string[]) => [...v].sort()
+  for (const row of matrixRows()) {
+    const design = CASES[rowKey(row)]?.design
+    expect(design, `${rowKey(row)} has a case`).toBeTruthy()
+    if (!design) continue
+    expect(row.class, `${rowKey(row)}: class`).toBe(design.class)
+    expect(sorted(row.allow), `${rowKey(row)}: allow`).toEqual(sorted(design.allow))
+    expect(sorted(row.services), `${rowKey(row)}: services`).toEqual(sorted(design.services))
+    expect(row.adminWrite, `${rowKey(row)}: adminWrite`).toBe(design.adminWrite)
+    expect(row.ownerObject, `${rowKey(row)}: ownerObject`).toBe(design.ownerObject)
+  }
+})
+
+test('the matrix keeps the design\'s invariants over every row', () => {
+  for (const row of matrixRows()) {
+    const where = rowKey(row)
+    if (row.class === 'technical') expect(row.allow, `${where}: Inhouse writes and reads technical`).toContain('inhouse')
+    if (row.class === 'personal') expect(row.allow, `${where}: personal is never Inhouse`).not.toContain('inhouse')
+    // Decision 19: Inhouse may write baseline rows that list it; never personal, and never a grant.
+    // Changed for item 19 (2026-11-20): nor brand data, except the closed list INHOUSE_BRAND_WRITES (the one list the unit
+    // matrix tests read too), which takes Inhouse only under a live grant, audited.
+    const brandWriteListed = row.class === 'brand_data' && INHOUSE_BRAND_WRITES.includes(rowKey(row))
+    if (row.method !== 'GET' && ['brand_data', 'personal'].includes(row.class) && !brandWriteListed) expect(row.allow, `${where}: Inhouse never writes`).not.toContain('inhouse')
+    if (row.method !== 'GET' && row.pattern.startsWith('/api/grants')) expect(row.allow, `${where}: Inhouse never grants itself access`).not.toContain('inhouse')
+    // Decision 19b: every role change makes or unmakes an Admin, so it is Admin-only.
+    if (row.method === 'PUT' && row.pattern === '/api/members/:id/role') expect(row.allow, `${where}: Inhouse never changes a role`).not.toContain('inhouse')
+    if (row.pattern.startsWith('/api/audit')) expect(row.class, `${where}: the audit log is brand data`).toBe('brand_data')
+    if (row.services.includes('monitor')) expect(row.class, `${where}: monitor is for open rows`).toBe('open')
+    // Changed in P3 (p3-design section 3): smoke is no longer GET-only; it's never on open or report rows.
+    if (row.services.includes('smoke')) expect(['open', 'report'], `${where}: smoke never on open or report rows`).not.toContain(row.class)
+    if (row.services.includes('release')) expect(row.class, `${where}: release is for open rows`).toBe('open')
+    if (row.class === 'open') expect(row.allow, `${where}: no person reaches an open row`).toEqual([])
+    if (row.ownerObject) expect(row.class, `${where}: ownerObject is a brand_data flag`).toBe('brand_data')
+    if (row.adminWrite) expect(row.class).toBe('technical')
+  }
+})

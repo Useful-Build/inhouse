@@ -9,6 +9,7 @@ import { useCtx, useUi } from '../../state/store'
 import { Button, Icon, LogoTile } from '../../ui'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Markdown } from './Markdown'
+import { MODEL_OFF_TEXTS } from './notes'
 import { cn } from '@/lib/utils'
 import { SuggestionChip } from '../../ui/chat'
 
@@ -80,9 +81,11 @@ function ApprovalCard({ problemId }: { problemId: string }) {
   )
 }
 
-export function AgentPart({ part, trace }: { part: MessagePart; trace: string }) {
+export function AgentPart({ part, trace, id }: { part: MessagePart; trace: string; id: string }) {
   const go = useUi(s => s.go)
   const ask = useUi(s => s.ask)
+  const retryAnswer = useUi(s => s.retryAnswer)
+  const openModelMenu = useUi(s => s.openModelMenu)
   const openTrace = useUi(s => s.openTrace)
   const S = useCtx().S
 
@@ -183,7 +186,8 @@ export function AgentPart({ part, trace }: { part: MessagePart; trace: string })
         <div className="box-border flex max-w-prose-measure items-center gap-3 text-base leading-normal">
           <Icon name="error" size={19} className="text-destructive" />
           <span className="min-w-0 flex-1">{part.text}</span>
-          <Button variant="soft" onClick={() => { void ask(part.retryQuestion, { replacesRun: trace }) }}>Try again</Button>
+          {MODEL_OFF_TEXTS.includes(part.text) && <Button variant="soft" onClick={() => openModelMenu()}>Pick another model</Button>}
+          <Button variant="soft" onClick={() => { retryAnswer(id, trace, part.retryQuestion) }}>Try again</Button>
         </div>
       )
 

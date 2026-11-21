@@ -6,7 +6,7 @@ This is phase 1. It runs on invented sample data through a deterministic mock ag
 
 The code lives in [`app/`](app/). Its [README](app/README.md) covers the architecture, the mock agent and the UI regression suite.
 
-**Live demo:** [inhouse.usefulbuild.com](https://inhouse.usefulbuild.com). It deploys from `main` on every merge.
+**Live demo:** [demo.usefulbuild.com](https://demo.usefulbuild.com). It deploys from `main` on every merge.
 
 ![Today in light mode on desktop: six things that need the team, each with a drafted fix](app/e2e/visual.spec.ts-snapshots/light-act-today-visual-desktop-linux.png)
 

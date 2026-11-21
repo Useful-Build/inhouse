@@ -210,7 +210,9 @@ test('Settings: removing Admin asks first and Cancel keeps it; a wrong Monthly c
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await start(page, fx, '#/settings/team-members')
   await page.getByRole('combobox', { name: 'Sam Mercer: Admin' }).click()
-  await page.getByRole('option', { name: 'Approver' }).click()
+  // Approver is a label a member gets from the rules that name them, not a role to pick: the list offers Admin and Member.
+  await expect(page.getByRole('option', { name: 'Approver' })).toHaveCount(0)
+  await page.getByRole('option', { name: 'Member' }).click()
   const ask = page.getByRole('dialog', { name: 'Remove your admin role?' })
   await expect(ask).toBeVisible()
   await shot(page, 'settings-remove-admin')

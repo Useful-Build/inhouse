@@ -2,7 +2,8 @@
 import { z } from 'zod'
 import { ClockTimeSchema, InstantSchema, StageSchema } from './common.ts'
 
-export const AttachmentSchema = z.object({ name: z.string(), meta: z.string(), icon: z.string() })
+/** `fileId`: the chat file behind the chip (route 41 downloads it); a file only the composer holds has none. `pending`: the real client's composer holds the file itself under this key and uploads it when the message is sent. */
+export const AttachmentSchema = z.object({ name: z.string(), meta: z.string(), icon: z.string(), fileId: z.string().optional(), pending: z.string().optional() })
 export type Attachment = z.infer<typeof AttachmentSchema>
 
 export const TablePartSchema = z.object({
@@ -28,6 +29,8 @@ export const RoutineCardSchema = z.object({
   note: z.string(),
   /** Original request, for routines created in a chat. */
   what: z.string().optional(),
+  /** Revision of this routine once a write moved it (delete, restore, regenerate); missing means its first. */
+  rev: z.number().int().min(1).optional(),
 })
 export type RoutineCard = z.infer<typeof RoutineCardSchema>
 

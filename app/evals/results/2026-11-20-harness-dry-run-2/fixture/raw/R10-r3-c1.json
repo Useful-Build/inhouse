@@ -1,0 +1,52 @@
+{
+ "row": {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have anything saved about your invoice format, in your own preferences or the team's. Tell me what you prefer, for example PDF or CSV, and I'll remember it.",
+  "costUsd": 0.009409299999999999,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoice format"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "invoices",
+     "scope": "person"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I don't have anything saved about your invoice format, in your own preferences or the team's. Tell me what you prefer, for example PDF or CSV, and I'll remember it.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2142,
+   "cacheReadTokens": 21063,
+   "outputTokens": 194
+  },
+  "costUsd": 0.009409299999999999
+ }
+}

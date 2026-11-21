@@ -1,0 +1,1962 @@
+{
+ "verdicts": [
+  {
+   "case": "C01",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "orders_search"
+   ]
+  },
+  {
+   "case": "C01",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "orders_search"
+   ]
+  },
+  {
+   "case": "C01",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "orders_search"
+   ]
+  },
+  {
+   "case": "C02",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "order_get"
+   ]
+  },
+  {
+   "case": "C02",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "order_get"
+   ]
+  },
+  {
+   "case": "C02",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "order_get"
+   ]
+  },
+  {
+   "case": "C03",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "inventory_levels_get"
+   ]
+  },
+  {
+   "case": "C03",
+   "rep": 2,
+   "chat": 1,
+   "pass": false,
+   "checks": {
+    "tool": true,
+    "args": false
+   },
+   "called": [
+    "products_search",
+    "inventory_levels_get"
+   ]
+  },
+  {
+   "case": "C03",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "inventory_levels_get"
+   ]
+  },
+  {
+   "case": "C04",
+   "rep": 1,
+   "chat": 1,
+   "pass": false,
+   "checks": {
+    "tool": true,
+    "forbidden": false
+   },
+   "called": [
+    "products_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "C04",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "products_search",
+    "products_search"
+   ]
+  },
+  {
+   "case": "C04",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "products_search"
+   ]
+  },
+  {
+   "case": "C05",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "campaigns_list",
+    "memory_search",
+    "campaign_stats_get"
+   ]
+  },
+  {
+   "case": "C05",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_search",
+    "campaigns_list",
+    "campaign_stats_get"
+   ]
+  },
+  {
+   "case": "C05",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "campaigns_list",
+    "memory_search",
+    "campaign_stats_get"
+   ]
+  },
+  {
+   "case": "E01",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E01",
+   "rep": 1,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "E01",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E01",
+   "rep": 2,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "E01",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E01",
+   "rep": 3,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "E02",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E02",
+   "rep": 1,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "history_search"
+   ]
+  },
+  {
+   "case": "E02",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E02",
+   "rep": 2,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "history_search"
+   ]
+  },
+  {
+   "case": "E02",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E02",
+   "rep": 3,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "history_search"
+   ]
+  },
+  {
+   "case": "E03",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E03",
+   "rep": 1,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "E03",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E03",
+   "rep": 2,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "E03",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "E03",
+   "rep": 3,
+   "chat": 2,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "N01",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true
+   },
+   "called": []
+  },
+  {
+   "case": "N01",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true
+   },
+   "called": []
+  },
+  {
+   "case": "N01",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true
+   },
+   "called": []
+  },
+  {
+   "case": "N02",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true,
+    "answer": true
+   },
+   "called": []
+  },
+  {
+   "case": "N02",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true,
+    "answer": true
+   },
+   "called": []
+  },
+  {
+   "case": "N02",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true,
+    "answer": true
+   },
+   "called": []
+  },
+  {
+   "case": "N03",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true
+   },
+   "called": []
+  },
+  {
+   "case": "N03",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true
+   },
+   "called": []
+  },
+  {
+   "case": "N03",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "none": true
+   },
+   "called": []
+  },
+  {
+   "case": "N04",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": []
+  },
+  {
+   "case": "N04",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": []
+  },
+  {
+   "case": "N04",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": []
+  },
+  {
+   "case": "N05",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": [
+    "order_get",
+    "memory_search",
+    "question_ask"
+   ]
+  },
+  {
+   "case": "N05",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": [
+    "order_get",
+    "memory_search",
+    "order_get"
+   ]
+  },
+  {
+   "case": "N05",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "order_get",
+    "question_ask"
+   ]
+  },
+  {
+   "case": "N06",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": []
+  },
+  {
+   "case": "N06",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": []
+  },
+  {
+   "case": "N06",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": []
+  },
+  {
+   "case": "N07",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "orders_search",
+    "order_get"
+   ]
+  },
+  {
+   "case": "N07",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": [
+    "orders_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "N07",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "orders_search",
+    "order_get"
+   ]
+  },
+  {
+   "case": "N08",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "noMcp": true
+   },
+   "called": [
+    "WebFetch"
+   ]
+  },
+  {
+   "case": "N08",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "noMcp": true
+   },
+   "called": [
+    "WebFetch"
+   ]
+  },
+  {
+   "case": "N08",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "noMcp": true
+   },
+   "called": [
+    "WebFetch"
+   ]
+  },
+  {
+   "case": "R01",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R01",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R01",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R02",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R02",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R02",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R03",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R03",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R03",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R04",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R04",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R04",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R05",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R05",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R05",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R06",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "products_search",
+    "inventory_levels_get",
+    "products_search"
+   ]
+  },
+  {
+   "case": "R06",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "products_search",
+    "inventory_levels_get",
+    "products_search"
+   ]
+  },
+  {
+   "case": "R06",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "products_search",
+    "inventory_levels_get",
+    "products_search"
+   ]
+  },
+  {
+   "case": "R07",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "history_search"
+   ]
+  },
+  {
+   "case": "R07",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "history_search"
+   ]
+  },
+  {
+   "case": "R07",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search",
+    "history_search"
+   ]
+  },
+  {
+   "case": "R08",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R08",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R08",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R09",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R09",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R09",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answer": true
+   },
+   "called": [
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R10",
+   "rep": 1,
+   "chat": 1,
+   "pass": false,
+   "checks": {
+    "tool": true,
+    "answerNot": false
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R10",
+   "rep": 2,
+   "chat": 1,
+   "pass": false,
+   "checks": {
+    "tool": true,
+    "answerNot": false
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R10",
+   "rep": 3,
+   "chat": 1,
+   "pass": false,
+   "checks": {
+    "tool": true,
+    "answerNot": false
+   },
+   "called": [
+    "memory_search",
+    "memory_search"
+   ]
+  },
+  {
+   "case": "R11",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answerNot": true
+   },
+   "called": [
+    "memory_search",
+    "products_search"
+   ]
+  },
+  {
+   "case": "R11",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answerNot": true
+   },
+   "called": [
+    "memory_search",
+    "products_search"
+   ]
+  },
+  {
+   "case": "R11",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "answerNot": true
+   },
+   "called": [
+    "memory_search",
+    "products_search"
+   ]
+  },
+  {
+   "case": "T01",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "T01",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "T01",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "T02",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "T02",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "T02",
+   "rep": 3,
+   "chat": 1,
+   "pass": false,
+   "checks": {
+    "tool": true,
+    "args": false
+   },
+   "called": [
+    "memory_save"
+   ]
+  },
+  {
+   "case": "T03",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "memory_update"
+   ]
+  },
+  {
+   "case": "T03",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "memory_update"
+   ]
+  },
+  {
+   "case": "T03",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "memory_update"
+   ]
+  },
+  {
+   "case": "T04",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "memory_forget"
+   ]
+  },
+  {
+   "case": "T04",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "memory_forget"
+   ]
+  },
+  {
+   "case": "T04",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "memory_forget"
+   ]
+  },
+  {
+   "case": "T05",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_list",
+    "memory_list"
+   ]
+  },
+  {
+   "case": "T05",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_list",
+    "memory_list"
+   ]
+  },
+  {
+   "case": "T05",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_list",
+    "memory_list"
+   ]
+  },
+  {
+   "case": "T06",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "history_search",
+    "memory_search",
+    "history_read"
+   ]
+  },
+  {
+   "case": "T06",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "history_search",
+    "memory_search",
+    "history_read"
+   ]
+  },
+  {
+   "case": "T06",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "history_search",
+    "memory_search",
+    "history_read"
+   ]
+  },
+  {
+   "case": "T07",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "order_get",
+    "approval_request"
+   ]
+  },
+  {
+   "case": "T07",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "order_get",
+    "memory_search",
+    "approval_request"
+   ]
+  },
+  {
+   "case": "T07",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "order_get",
+    "memory_search",
+    "approval_request"
+   ]
+  },
+  {
+   "case": "T08",
+   "rep": 1,
+   "chat": 1,
+   "pass": false,
+   "checks": {
+    "tool": false,
+    "forbidden": true
+   },
+   "called": [
+    "orders_search",
+    "memory_search",
+    "order_get",
+    "question_ask"
+   ]
+  },
+  {
+   "case": "T08",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "orders_search",
+    "approval_request"
+   ]
+  },
+  {
+   "case": "T08",
+   "rep": 3,
+   "chat": 1,
+   "pass": false,
+   "checks": {
+    "tool": false,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "orders_search",
+    "order_get"
+   ]
+  },
+  {
+   "case": "T09",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "notification_send"
+   ]
+  },
+  {
+   "case": "T09",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "notification_send"
+   ]
+  },
+  {
+   "case": "T09",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "notification_send"
+   ]
+  },
+  {
+   "case": "T10",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "question_ask"
+   ]
+  },
+  {
+   "case": "T10",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "question_ask"
+   ]
+  },
+  {
+   "case": "T10",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "question_ask"
+   ]
+  },
+  {
+   "case": "T11",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "routine_list",
+    "routine_create"
+   ]
+  },
+  {
+   "case": "T11",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "routine_create"
+   ]
+  },
+  {
+   "case": "T11",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "routine_list",
+    "routine_create"
+   ]
+  },
+  {
+   "case": "T12",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "routine_list",
+    "routine_update"
+   ]
+  },
+  {
+   "case": "T12",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "routine_list",
+    "routine_update"
+   ]
+  },
+  {
+   "case": "T12",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "routine_list",
+    "routine_update"
+   ]
+  },
+  {
+   "case": "T13",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "routine_list",
+    "routine_delete"
+   ]
+  },
+  {
+   "case": "T13",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "routine_list",
+    "routine_delete"
+   ]
+  },
+  {
+   "case": "T13",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "routine_list",
+    "routine_delete"
+   ]
+  },
+  {
+   "case": "T14",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "team_request_list",
+    "team_request_create"
+   ]
+  },
+  {
+   "case": "T14",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "team_request_list",
+    "team_request_create"
+   ]
+  },
+  {
+   "case": "T14",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "team_request_list",
+    "team_request_create"
+   ]
+  },
+  {
+   "case": "T15",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "approval_get"
+   ]
+  },
+  {
+   "case": "T15",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "approval_get"
+   ]
+  },
+  {
+   "case": "T15",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true
+   },
+   "called": [
+    "approval_get"
+   ]
+  },
+  {
+   "case": "T16",
+   "rep": 1,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "approval_get",
+    "approval_withdraw"
+   ]
+  },
+  {
+   "case": "T16",
+   "rep": 2,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "approval_withdraw"
+   ]
+  },
+  {
+   "case": "T16",
+   "rep": 3,
+   "chat": 1,
+   "pass": true,
+   "checks": {
+    "tool": true,
+    "args": true,
+    "forbidden": true
+   },
+   "called": [
+    "approval_get",
+    "approval_withdraw"
+   ]
+  }
+ ],
+ "summary": {
+  "recall": {
+   "runs": 33,
+   "pass": 30,
+   "pct": 91,
+   "perRep": [
+    91,
+    91,
+    91
+   ],
+   "cost": 0.32959079999999996
+  },
+  "e2e": {
+   "runs": 9,
+   "pass": 9,
+   "pct": 100,
+   "perRep": [
+    100,
+    100,
+    100
+   ],
+   "cost": 0.1729301
+  },
+  "choice": {
+   "runs": 48,
+   "pass": 45,
+   "pct": 94,
+   "perRep": [
+    94,
+    100,
+    88
+   ],
+   "cost": 0.6565964000000001
+  },
+  "connector": {
+   "runs": 15,
+   "pass": 13,
+   "pct": 87,
+   "perRep": [
+    80,
+    80,
+    100
+   ],
+   "cost": 0.1756256
+  },
+  "negative": {
+   "runs": 24,
+   "pass": 24,
+   "pct": 100,
+   "perRep": [
+    100,
+    100,
+    100
+   ],
+   "cost": 0.2383637
+  },
+  "all": {
+   "runs": 129,
+   "pass": 121,
+   "pct": 94,
+   "perRep": [
+    93,
+    95,
+    93
+   ],
+   "cost": 1.5731065999999994
+  }
+ },
+ "recallSplit": {
+  "searched": 100,
+  "answer": 93,
+  "n": 42
+ }
+}

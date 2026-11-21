@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T05",
+  "cat": "choice",
+  "pair": "memory_list/search",
+  "rep": 2,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "forbidden": false
+  },
+  "called": [
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Here is what I found in our chats.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "saved"
+    },
+    "result": "[]"
+   }
+  ],
+  "answer": "Here is what I found in our chats.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

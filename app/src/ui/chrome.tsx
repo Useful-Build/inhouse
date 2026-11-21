@@ -267,10 +267,10 @@ const attachmentDismissVariants = cva('flex-none', {
  * `meta` says why and its button is Dismiss; the caller groups rejected chips in one `role="alert"` region. `tap` gives the
  * button a 44px hit area (phone).
  */
-export function AttachmentChip({ icon, name, meta, onRemove, error, tap }: { icon: string; name: string; meta: string; onRemove?: () => void; error?: boolean; tap?: boolean }) {
+export function AttachmentChip({ icon, name, meta, onRemove, onDownload, downloading, error, tap }: { icon: string; name: string; meta: string; onRemove?: () => void; /** A saved file's chip: shows Download. `downloading` disables it while the file is on its way. */ onDownload?: () => void; downloading?: boolean; error?: boolean; tap?: boolean }) {
   const removable = !!onRemove
   return (
-    <span className={attachmentChipVariants({ removable, tone: error ? 'error' : 'default' })} {...(error ? { 'data-rejected': '' } : {})}>
+    <span className={cn(attachmentChipVariants({ removable, tone: error ? 'error' : 'default' }), onDownload && !error && 'pr-1')} {...(error ? { 'data-rejected': '' } : {})}>
       <span className={cn('flex flex-none items-center justify-center rounded-md', error ? 'size-7.5' : removable ? 'size-7.5 border border-border bg-card' : 'size-7 bg-accent')}>
         <Icon name={error ? 'error' : icon} size={removable ? 17 : 16} />
       </span>
@@ -284,6 +284,10 @@ export function AttachmentChip({ icon, name, meta, onRemove, error, tap }: { ico
           <b className="ellipsis font-strong">{name}</b>
           <span className={cn('flex-none', !error && 'text-muted-foreground')}>{meta}</span>
         </>
+      )}
+      {onDownload && !error && (
+        <IconButton icon="download" label={`Download ${name}`} size={16} box="icon-sm" onClick={onDownload} disabled={downloading} aria-busy={downloading || undefined}
+          className={attachmentDismissVariants({ tone: 'default', tap })} />
       )}
       {onRemove && (
         <IconButton icon="close" label={`${error ? 'Dismiss' : 'Remove'} ${name}`} size={16} box="icon-sm" onClick={onRemove}
