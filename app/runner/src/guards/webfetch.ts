@@ -160,9 +160,32 @@ export async function probeDns(resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS)
   return lookupWithin(dnsProbeHost(), resolve, timeoutMs)
 }
 
-/** Whether every one of a host's answers is a placeholder the probe got (so the host reaches the intercept). */
-export const onlyPlaceholders = (answers: readonly string[], placeholders: ReadonlySet<string>): boolean =>
-  answers.length > 0 && answers.every((a) => placeholders.has(a))
+/**
+ * An address no placeholder may stand for, whatever the probe got: loopback (127/8, ::1), link-local (169.254/16,
+ * fe80::/10), RFC 1918 IPv4 (10/8, 172.16/12, 192.168/16), IPv4 inside IPv6 by its IPv4 part, and this container's
+ * own. A resolver that rewrites every name to one of these is judged, never skipped.
+ */
+export function neverPlaceholder(ip: string, own: readonly string[]): boolean {
+  if (own.includes(ip)) return true
+  const kind = isIP(ip)
+  if (kind === 4) {
+    const [a, b] = v4(ip) as [number, number, number, number]
+    return a === 127 || a === 10 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+  }
+  const g = kind === 6 ? v6Groups(ip) : null
+  if (g === null) return true
+  const v4of = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return neverPlaceholder(v4of(g[6]!, g[7]!), own)
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true
+  return (g[0]! & 0xffc0) === 0xfe80
+}
+
+/**
+ * Whether every one of a host's answers is a placeholder the probe got (so the host reaches the intercept), and none is
+ * an address a placeholder may never stand for.
+ */
+export const onlyPlaceholders = (answers: readonly string[], placeholders: ReadonlySet<string>, own: readonly string[]): boolean =>
+  answers.length > 0 && answers.every((a) => placeholders.has(a) && !neverPlaceholder(a, own))
 
 export function webFetchHook(domains: readonly string[] | null, hostAddresses: readonly string[] = [], resolve: Resolve = systemResolve): HookCallbackMatcher {
   const listed = domains === null ? null : [...domains]
@@ -170,16 +193,16 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
   // The probe's answers, kept only when there are some (real DNS has none, and is asked again each time). A host's
   // answers outside the kept set ask the probe again, in case the placeholders changed, before they're judged.
   let placeholders: ReadonlySet<string> | null = null
-  const reservedHere = async (host: string): Promise<{ reserved: string[]; probe: string[] | null }> => {
+  const reservedHere = async (host: string): Promise<{ reserved: string[]; answers: string[]; probe: string[] | null }> => {
     const answers = await lookupWithin(host, resolve, RESOLVE_TIMEOUT_MS)
     // A failed or slow lookup lets the call through (best effort: the egress still checks).
-    if (answers === null) return { reserved: [], probe: null }
-    if (placeholders !== null && onlyPlaceholders(answers, placeholders)) return { reserved: [], probe: null }
+    if (answers === null) return { reserved: [], answers: [], probe: null }
+    if (placeholders !== null && onlyPlaceholders(answers, placeholders, own)) return { reserved: [], answers, probe: null }
     const probe = await probeDns(resolve)
     // Only replaced by another non-empty answer: a slower probe that failed can't drop what a concurrent one saw.
     if (probe !== null && probe.length > 0) placeholders = new Set(probe)
-    if (placeholders !== null && onlyPlaceholders(answers, placeholders)) return { reserved: [], probe }
-    return { reserved: answers.filter((a) => reservedAddress(a) || own.includes(a)), probe }
+    if (placeholders !== null && onlyPlaceholders(answers, placeholders, own)) return { reserved: [], answers, probe }
+    return { reserved: answers.filter((a) => reservedAddress(a) || own.includes(a)), answers, probe }
   }
   return {
     matcher: 'WebFetch',
@@ -190,13 +213,15 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
         const url = (input.tool_input as { url?: unknown } | null)?.url
         const host = allowedFetchHost(url, listed, own)
         if (host !== null && listed !== null) return {}
-        const { reserved, probe } = host === null ? { reserved: [], probe: null } : await reservedHere(host)
+        const { reserved, answers, probe } = host === null ? { reserved: [], answers: [], probe: null } : await reservedHere(host)
         if (host !== null && reserved.length === 0) return {}
         // What the synthetic-DNS probe got and what a public name resolved to here (both capped), probe first, so a run's
-        // visible refusal shows why the check ran.
+        // visible refusal shows why the check ran. With a probe answer, every one of the host's answers, so a mismatch
+        // with the placeholders shows; without, its reserved ones.
         if (listed === null) {
           if (reserved.length === 0) return deny(WEBFETCH_DENY.publicOnly)
-          return deny(`${WEBFETCH_DENY.publicOnly} (probe: ${probe === null || probe.length === 0 ? 'none' : shown(probe, own)}; ${host} resolved here to ${shown(reserved, own)})`)
+          const probed = probe !== null && probe.length > 0
+          return deny(`${WEBFETCH_DENY.publicOnly} (probe: ${probed ? shown(probe, own) : 'none'}; ${host} resolved here to ${shown(probed ? answers : reserved, own)})`)
         }
         return deny(listed.length === 0 ? WEBFETCH_DENY.off : WEBFETCH_DENY.notListed)
       },
