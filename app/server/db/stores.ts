@@ -33,6 +33,8 @@ import { activityReader } from '../activity/read.ts'
 import type { ActivityReader } from '../activity/read.ts'
 import { noticeReader } from '../notices/read.ts'
 import type { NoticeReader } from '../notices/read.ts'
+import { libraryStore } from '../files/store.ts'
+import type { LibraryStore } from '../files/store.ts'
 
 import { routinesSignal } from '../routines/signal.ts'
 import type { SignalResult } from '../ops/signals/types.ts'
@@ -70,6 +72,9 @@ export interface Stores extends AuthStores {
 
   /** P4 W2 (p4-w2.md section 11): the routines signal's read. */
   routines: { signal(nowMs: number): Promise<SignalResult> }
+
+  /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
+  library: LibraryStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -134,5 +139,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     notices: noticeReader({ db }),
 
     routines: { signal: nowMs => routinesSignal(db, nowMs) },
+
+    library: libraryStore({ db, bucket: env.FILES }),
   }
 }

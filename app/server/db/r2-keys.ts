@@ -10,6 +10,9 @@ export const R2_PREFIXES = [
 
   // W4 (p3-w4.md): the audit log's daily copy (entry in ops/tables/usage.ts).
   'audit-copy/',
+
+  // P4 W5 (p4-w5.md): Library uploads (entry in ops/tables/library.ts).
+  'library/',
 ] as const
 
 /** A member's photo object: `photos/<memberId>/<random>`, a new key on every upload (PR 3's photo route). */
@@ -36,3 +39,7 @@ export const chatFileKey = (chatId: string, fileId: string): string => `${CHAT_F
 // W4's key builders (audit-copy/).
 /** One range of the audit log's daily copy: `audit-copy/<date>/<fromId>-<toId>.jsonl` (p3-design section 9). */
 export const auditCopyKey = (date: string, fromId: number, toId: number): string => `audit-copy/${date}/${fromId}-${toId}.jsonl`
+
+// P4 W5's key builder (library/).
+/** A team upload's bytes: `library/<fileId>` (p4-w5 section 2). */
+export const libraryKey = (fileId: string): string => `library/${fileId}`

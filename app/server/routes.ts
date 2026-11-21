@@ -28,6 +28,8 @@ import { reviveTask } from './ops/revive.ts'
 // P4 W4: Activity and the bell (rows 59 to 61).
 import { listActivity } from './api/activity.ts'
 import { listNotifications, markNotificationsRead } from './api/bell.ts'
+// P4 W5: the Library (rows 62 to 66).
+import { deleteLibraryFiles, downloadLibraryFile, listLibrary, restoreLibraryFiles, uploadLibraryFile } from './api/library.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -158,6 +160,12 @@ export const routes: readonly Route[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', handler: listActivity },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', handler: listNotifications },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', handler: markNotificationsRead },
+  // P4 W5 (p4-w5.md section 3): the Library.
+  /* 62 */ { method: 'GET', pattern: '/api/library', handler: listLibrary },
+  /* 63 */ { method: 'POST', pattern: '/api/library/uploads', handler: uploadLibraryFile },
+  /* 64 */ { method: 'GET', pattern: '/api/library/:id/download', handler: downloadLibraryFile },
+  /* 65 */ { method: 'POST', pattern: '/api/library/delete', handler: deleteLibraryFiles },
+  /* 66 */ { method: 'POST', pattern: '/api/library/restore', handler: restoreLibraryFiles },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

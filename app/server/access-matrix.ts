@@ -67,6 +67,12 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // P4 W5 (p4-w5.md section 3, OC 4): the Library is brand data; the upload is people only.
+  /* 62 */ { method: 'GET', pattern: '/api/library', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 63 */ { method: 'POST', pattern: '/api/library/uploads', class: 'brand_data', allow: ['member', 'admin'] },
+  /* 64 */ { method: 'GET', pattern: '/api/library/:id/download', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 65 */ { method: 'POST', pattern: '/api/library/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 66 */ { method: 'POST', pattern: '/api/library/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */
