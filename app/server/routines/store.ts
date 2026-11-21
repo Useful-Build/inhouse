@@ -14,7 +14,7 @@ import { renderSlot } from './render.ts'
 import { slotInsert } from './rows.ts'
 import type { RoutineRow, SlotRow } from './rows.ts'
 import { intlZone } from './slots.ts'
-import { ON_TIME_MS } from './tick.ts'
+import { ON_TIME_MS } from './limits.ts'
 import { routinesSignal } from './signal.ts'
 
 export interface At {

@@ -67,6 +67,12 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // P4 W5 (p4-w5.md section 3, OC 4): the Library is brand data; the upload is people only.
+  /* 62 */ { method: 'GET', pattern: '/api/library', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 63 */ { method: 'POST', pattern: '/api/library/uploads', class: 'brand_data', allow: ['member', 'admin'] },
+  /* 64 */ { method: 'GET', pattern: '/api/library/:id/download', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 65 */ { method: 'POST', pattern: '/api/library/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 66 */ { method: 'POST', pattern: '/api/library/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // P4 W2 (p4-w2.md section 9, OC 5): the Routines page is brand data; the Inhouse team writes under a live grant
   // (support.access pairs these with audit.ts's PUT and POST lists). Who may switch, delete or restore is the handler's.
   /* 52 */ { method: 'GET', pattern: '/api/routines', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },

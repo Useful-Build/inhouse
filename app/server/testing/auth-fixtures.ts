@@ -147,6 +147,12 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // Rows 62 to 66 (P4 W5): the Library is brand data; the upload is people only.
+  { method: 'GET', pattern: '/api/library', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/library/uploads', class: 'brand_data', allow: ['member', 'admin'] },
+  { method: 'GET', pattern: '/api/library/:id/download', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/library/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/library/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // Rows 52 to 56 (P4 W2): the Routines page, brand data; Inhouse writes under a live grant.
   { method: 'GET', pattern: '/api/routines', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'PUT', pattern: '/api/routines/:id/enabled', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },

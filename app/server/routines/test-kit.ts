@@ -11,6 +11,7 @@ import { routineEnd } from './end.ts'
 import type { RoutineRow, SlotRow } from './rows.ts'
 import { routineTick, TICK_ID, TICK_KIND } from './tick.ts'
 import type { TickContext } from './tick.ts'
+import { resetTestControls } from '@test-controls'
 
 export const db: D1Database = env.DB
 
@@ -173,6 +174,8 @@ export const MIN = 60_000
 
 /** Every routine, slot and routine chat gone (Activity is append-only: tests tell lines apart by their routine ids). */
 export async function fresh(): Promise<void> {
+  // An armed stop-after-batch switch (route 67) left unconsumed by an earlier test.
+  resetTestControls()
   await db.batch([
     db.prepare('DELETE FROM routine_slots'),
     db.prepare('DELETE FROM routines'),

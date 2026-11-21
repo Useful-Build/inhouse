@@ -1,0 +1,184 @@
+// The Library over a fake `fetch` (P4 W5, rows 62 to 66). Ways it could show a person the wrong thing, written down first:
+//  - a page dropped or repeated, or the Inhouse team asked on start (a grant logs every read);
+//  - a delete that leaves the file on screen, sends a revision it doesn't hold, or an Undo that sends the revision from
+//    before its delete answered (a 409 on every quick Undo);
+//  - a refusal or conflict that leaves the files where the write put them, or loses the revision a conflict carries;
+//  - an upload refusal told as a bare code instead of what to do; a file kept before a refusal dropped from the list;
+//  - a download URL that isn't row 64's, or an id that breaks out of its path segment.
+import { describe, expect, test } from 'vitest'
+import { HttpAgent } from './client'
+import { readLibrary } from './library'
+import { Transport } from './transport'
+import { iso, me, reads, refusal, server } from './testing/fake-server'
+import type { Routes } from './testing/fake-server'
+
+/** A file id as the server makes them (`f_` + 22): `F('1')` is `f_1xxxxxxxxxxxxxxxxxxxxx`. */
+const F = (k: string) => `f_${k.padEnd(22, 'x')}`
+const file = (k: string, ms: number, rev = 1, o: Record<string, unknown> = {}) => ({
+  id: F(k), name: `${k}.csv`, type: 'CSV', kind: 'documents', place: 'chats', from: 'From a chat by Ann Lee', by: 'Inhouse agent', madeByAgent: true,
+  size: '4 B', at: iso(ms), rev, canDelete: true, ...o,
+})
+async function loaded(routes: Routes) {
+  const s = server(routes)
+  const agent = new HttpAgent({ fetch: s.fetch, now: () => 10_000 })
+  await agent.whenLoaded()
+  return { agent, ...s }
+}
+const bodyOf = (calls: { method: string; path: string; body?: string }[], path: string) => calls.filter(c => c.method === 'POST' && c.path === path).map(c => JSON.parse(c.body ?? '{}'))
+
+describe('reading the Library', () => {
+  test('every page, in order, nothing twice', async () => {
+    const s = server({
+      'GET /api/library?limit=100': { body: { items: [file('f3', 3), file('f2', 2)], nextCursor: 'c1' } },
+      'GET /api/library?limit=100&cursor=c1': { body: { items: [file('f1', 1)], nextCursor: null } },
+    })
+    expect((await readLibrary(new Transport({ fetch: s.fetch }))).map(f => f.id)).toEqual([F('f3'), F('f2'), F('f1')])
+  })
+  test('the client lists them and the places; the Inhouse team is asked only once its page does', async () => {
+    const { agent } = await loaded(reads({ library: [file('f2', 2), file('f1', 1)] }))
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('f2'), F('f1')])
+    expect(agent.listFiles(), 'stable between changes').toBe(agent.listFiles())
+    expect(agent.read().library.places.map(p => p.id)).toEqual(['chats', 'routines', 'approvals', 'uploads'])
+    expect(agent.read().resources.library).toEqual({ status: 'ready' })
+    const staff = await loaded({ ...reads({ library: [file('f1', 1)] }), 'GET /api/me': { body: me({ role: 'inhouse' }) } })
+    expect(staff.calls.map(c => c.path)).not.toContain('/api/library?limit=100')
+    await staff.agent.retry('library')
+    expect(staff.agent.listFiles().map(f => f.id)).toEqual([F('f1')])
+  })
+})
+
+describe('delete and restore', () => {
+  test("a delete leaves at once and sends each file's rev; an Undo sends the rev the delete's answer gave", async () => {
+    const { agent, calls } = await loaded({
+      ...reads({ library: [file('f2', 2), file('f1', 1)] }),
+      'POST /api/library/delete': { body: { items: [file('f2', 2, 2)] } },
+      'POST /api/library/restore': { body: { items: [file('f2', 2, 3)] } },
+    })
+    const del = agent.deleteFiles([F('f2')])
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('f1')])
+    // The Undo before the delete has answered: it waits, then sends rev 2.
+    const back = agent.restoreFiles([F('f2')])
+    await Promise.all([del, back])
+    expect(bodyOf(calls, '/api/library/delete')).toEqual([{ items: [{ id: F('f2'), ifRev: 1 }] }])
+    expect(bodyOf(calls, '/api/library/restore')).toEqual([{ items: [{ id: F('f2'), ifRev: 2 }] }])
+    expect(agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f2'), 3], [F('f1'), 1]])
+  })
+  test('a refusal puts the files back; a conflict keeps them and takes the revisions it carries', async () => {
+    const refused = await loaded({ ...reads({ library: [file('f1', 1)] }), 'POST /api/library/delete': refusal(503, 'unavailable') })
+    await expect(refused.agent.deleteFiles([F('f1')])).rejects.toMatchObject({ code: 'unavailable' })
+    expect(refused.agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f1'), 1]])
+
+  })
+  test("a conflict reads the Library again: a file someone else deleted doesn't come back as a ghost", async () => {
+    let lists = 0
+    const { agent } = await loaded({
+      ...reads(),
+      'GET /api/library?limit=100': () => ({ body: { items: ++lists === 1 ? [file('f2', 2), file('f1', 1)] : [file('f1', 1)], nextCursor: null } }),
+      'POST /api/library/delete': refusal(409, 'conflict', { current: { items: [file('f2', 2, 3)] } }),
+    })
+    const relisted = new Promise<void>(done => {
+      const off = agent.subscribe(() => { if (lists === 2 && agent.listFiles().length === 1) { off(); done() } })
+    })
+    await expect(agent.deleteFiles([F('f2')])).rejects.toMatchObject({ code: 'conflict' })
+    await relisted
+    expect(lists).toBe(2)
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('f1')])
+  })
+  test('no blink: a delete answering while its Undo is queued leaves the file live and folds in its rev; a failed Undo keeps that rev', async () => {
+    let restores = 0
+    const { agent, calls } = await loaded({
+      ...reads({ library: [file('f1', 1)] }),
+      'POST /api/library/delete': { body: { items: [file('f1', 1, 2)] } },
+      'POST /api/library/restore': () => (++restores === 1 ? refusal(503, 'unavailable') : { body: { items: [file('f1', 1, 3)] } }),
+    })
+    const del = agent.deleteFiles([F('f1')])
+    const back = agent.restoreFiles([F('f1')])
+    // From the Undo's own apply until the delete has answered, every snapshot shows the file.
+    const shown: boolean[] = []
+    const off = agent.subscribe(() => shown.push(agent.listFiles().some(f => f.id === F('f1'))))
+    await del
+    off()
+    expect(shown.every(Boolean), 'the file never left the list').toBe(true)
+    expect(agent.listFiles().map(f => [f.id, f.rev]), 'live, at the rev the delete answered').toEqual([[F('f1'), 2]])
+    await expect(back).rejects.toMatchObject({ code: 'unavailable' })
+    expect(agent.listFiles().map(f => f.id), 'the refused Undo puts it back among the deleted').toEqual([])
+    await agent.restoreFiles([F('f1')])
+    expect(bodyOf(calls, '/api/library/restore')).toEqual([{ items: [{ id: F('f1'), ifRev: 2 }] }, { items: [{ id: F('f1'), ifRev: 2 }] }])
+    expect(agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f1'), 3]])
+  })
+  test('two deletes on different files, the first refused: that file comes back live, the other stays deleted', async () => {
+    const { agent } = await loaded({
+      ...reads({ library: [file('f2', 2), file('f1', 1)] }),
+      'POST /api/library/delete': req => (req.body?.includes(F('f1')) ? refusal(503, 'unavailable') : { body: { items: [file('f2', 2, 2)] } }),
+    })
+    const first = agent.deleteFiles([F('f1')])
+    const second = agent.deleteFiles([F('f2')])
+    await expect(first).rejects.toMatchObject({ code: 'unavailable' })
+    await second
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('f1')])
+  })
+  test("a conflict's fresh read waits for the Library writes queued behind it, so it can't bring a ghost back", async () => {
+    // The server's own state: f2 is deleted by the queued write; the list answers from that state when it is read.
+    let f2Deleted = false
+    let lists = 0
+    const { agent, calls } = await loaded({
+      ...reads(),
+      'GET /api/library?limit=100': () => {
+        lists++
+        return { body: { items: [...(f2Deleted ? [] : [file('f2', 2, 1)]), file('f1', 1, 3)], nextCursor: null } }
+      },
+      'POST /api/library/delete': req => {
+        if (req.body?.includes(F('f1'))) return refusal(409, 'conflict', { current: { items: [file('f1', 1, 3)] } })
+        f2Deleted = true
+        return { body: { items: [file('f2', 2, 2)] } }
+      },
+      'POST /api/library/restore': { body: { items: [file('f2', 2, 3)] } },
+    })
+    const settled = new Promise<void>(done => { const off = agent.subscribe(() => { if (lists === 2) { off(); done() } }) })
+    const a = agent.deleteFiles([F('f1')])
+    const b = agent.deleteFiles([F('f2')])
+    await expect(a).rejects.toMatchObject({ code: 'conflict' })
+    await b
+    await settled
+    const order = calls.map(c => `${c.method} ${c.path}`).filter(c => c.includes('/api/library'))
+    expect(order.slice(-2), 'the fresh read comes after the queued delete').toEqual(['POST /api/library/delete', 'GET /api/library?limit=100'])
+    expect(agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f1'), 3]])
+    // f2 is still this client's to undo.
+    await agent.restoreFiles([F('f2')])
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('f2'), F('f1')])
+  })
+  test('nothing is sent for an id the list lacks, an id twice, or over 100', async () => {
+    const { agent, calls } = await loaded(reads({ library: [file('f1', 1)] }))
+    await expect(agent.deleteFiles(['nope'])).rejects.toMatchObject({ code: 'not_found' })
+    await expect(agent.deleteFiles([F('f1'), F('f1')])).rejects.toMatchObject({ code: 'invalid' })
+    await expect(agent.deleteFiles([])).rejects.toMatchObject({ code: 'invalid' })
+    // A restore of a file this client doesn't hold as deleted (an Undo joined to a refused delete) skips it: nothing to send.
+    await agent.restoreFiles([F('f1')])
+    expect(calls.filter(c => c.method === 'POST')).toEqual([])
+  })
+})
+
+describe('upload and download', () => {
+  test('each file is sent with its name percent-encoded and joins the list newest first; a refusal stops the rest with what to do', async () => {
+    let n = 0
+    const { agent, calls } = await loaded({
+      ...reads({ library: [file('f1', 1)] }),
+      'POST /api/library/uploads': () => (++n === 1
+        ? { status: 201, body: file('u1', 50, 1, { name: 'stock list.csv', place: 'uploads', madeByAgent: false }) }
+        : { status: 400, body: { error: { code: 'invalid', reason: 'type_not_allowed' } } }),
+    })
+    const heard: string[] = []
+    agent.onNotice(x => { if (x.type === 'error') heard.push(x.text) })
+    const files = [new File(['a,1\n'], 'stock list.csv'), new File(['<html>'], 'page.pdf'), new File(['x'], 'never.csv')]
+    await expect(agent.uploadFiles(files)).rejects.toMatchObject({ code: 'invalid', reason: 'type_not_allowed' })
+    const sent = calls.filter(c => c.path === '/api/library/uploads')
+    expect(sent.map(c => c.headers['X-File-Name'])).toEqual(['stock%20list.csv', 'page.pdf'])
+    expect(heard).toEqual(["page.pdf isn't a type Inhouse can read. Use a PDF, an image, a spreadsheet, a document or plain text."])
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('u1'), F('f1')])
+  })
+  test("the download URL is row 64's, the id kept in one segment", async () => {
+    const { agent } = await loaded(reads())
+    expect(agent.fileDownloadUrl('f_abc')).toBe('/api/library/f_abc/download')
+    expect(agent.fileDownloadUrl('../x?y')).toBe('/api/library/..%2Fx%3Fy/download')
+  })
+})

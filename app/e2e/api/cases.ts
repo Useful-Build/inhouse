@@ -122,6 +122,12 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/activity': { design: d('brand_data', ALL), path: '/api/activity', passes: 200 },
   'GET /api/notifications': { design: d('personal', PEOPLE), path: '/api/notifications', passes: 200 },
   'POST /api/notifications/read': { design: d('personal', PEOPLE), path: '/api/notifications/read', json: { ids: ['n_e2e_nobody'] }, passes: 200 },
+  // Rows 62 to 66 (P4 W5): the Library. An upload with no X-File-Name, a write with no items: 400; an id nobody has: 404.
+  'GET /api/library': { design: d('brand_data', ALL), path: '/api/library', passes: 200 },
+  'POST /api/library/uploads': { design: d('brand_data', PEOPLE), path: '/api/library/uploads', json: {}, passes: 400 },
+  'GET /api/library/:id/download': { design: d('brand_data', ALL), path: `/api/library/f_${'0'.repeat(22)}/download`, passes: 404 },
+  'POST /api/library/delete': { design: d('brand_data', ALL), path: '/api/library/delete', json: {}, passes: 400 },
+  'POST /api/library/restore': { design: d('brand_data', ALL), path: '/api/library/restore', json: {}, passes: 400 },
   // Rows 52 to 56 (P4 W2): the Routines page. The list reads (200); a write names a routine nobody has (404, nothing written).
   'GET /api/routines': { design: d('brand_data', ALL), path: '/api/routines', passes: 200 },
   'PUT /api/routines/:id/enabled': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/enabled`, json: { on: false, ifRev: 1 }, passes: 404 },

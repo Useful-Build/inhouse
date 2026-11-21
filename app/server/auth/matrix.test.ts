@@ -273,6 +273,13 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/activity': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'GET /api/notifications': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/notifications/read': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 62 to 66 (P4 W5): the Library is brand data (Inhouse under a grant may list, download, delete and restore); the
+  // upload is people only.
+  'GET /api/library': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/uploads': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/library/:id/download': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   // Rows 52 to 56 (P4 W2): brand data for every person; the Inhouse team reads and writes only under a live grant.
   'GET /api/routines': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'PUT /api/routines/:id/enabled': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
