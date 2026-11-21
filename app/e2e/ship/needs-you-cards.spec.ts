@@ -75,7 +75,7 @@ test('S2: Review draft opens the panel: progress, facts, how the agent worked it
   await expect(progress).toContainText('Sent to Kestrel')
   // The facts strip, then the sources folded into one row that opens.
   await expect(p).toContainText('Stock left')
-  await expect(p).toContainText('Out of stock for')
+  await expect(p).toContainText('Out of stock') // "Out of stock for" on desktop, the short label on a phone
   const how = p.getByRole('button', { name: /How your Inhouse agent worked it out/ })
   await expect(how).toHaveAttribute('aria-expanded', 'false')
   await how.click()

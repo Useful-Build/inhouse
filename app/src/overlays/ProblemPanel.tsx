@@ -105,7 +105,7 @@ export function ProblemPanel() {
           <Button variant="ghost" size="sm" aria-label="Ask about this" className={cn('text-foreground-3', tap)} onClick={askTitle}>
             <Icon name="chat_bubble" size={16} />Ask
           </Button>
-          <IconButton icon="close" label="Close" onClick={closeProblem} />
+          <IconButton icon="close" label="Close" onClick={closeProblem} className={tap} />
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto px-6 pt-3 pb-6">
