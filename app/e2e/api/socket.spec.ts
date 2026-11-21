@@ -23,16 +23,15 @@ test.beforeAll(async ({ request }) => { await endLiveGrants(request) })
 test.afterAll(async ({ request }) => { await endLiveGrants(request) })
 
 test('the upgrade without a valid JWT is 401, and with a wrong Origin 403', async ({ request }) => {
-  expect((await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, token: null, origin: appOrigin('brand') })).status).toBe(401)
-  expect((await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, token: 'not-a-jwt', origin: appOrigin('brand') })).status).toBe(401)
+  expectError(await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, token: null, origin: appOrigin('brand') }), 401, 'unauthorized')
+  expectError(await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, token: 'not-a-jwt', origin: appOrigin('brand') }), 401, 'unauthorized')
   // A token for another application's audience is no sign-in here.
-  expect((await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, token: await mint(dana, { aud: 'some-other-application' }), origin: appOrigin('brand') })).status).toBe(401)
+  expectError(await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, token: await mint(dana, { aud: 'some-other-application' }), origin: appOrigin('brand') }), 401, 'unauthorized')
   for (const origin of ['https://evil.example.test', 'http://brand.localhost.evil.test', appOrigin('inhouse')]) {
-    const r = await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, origin })
-    expect(r.status, origin).toBe(403)
+    expectError(await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, origin }), 403, 'forbidden', 'bad_origin')
   }
   // No Origin on an upgrade is refused too.
-  expect((await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, origin: null })).status).toBe(403)
+  expectError(await call(request, dana, 'GET', '/api/socket?v=1', { headers: UPGRADE, origin: null }), 403, 'forbidden', 'bad_origin')
 })
 
 test('a plain GET to the socket route is 400: it only upgrades', async ({ request }) => {

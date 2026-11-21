@@ -180,6 +180,5 @@ test('an attachment is named in the turn that carries it: the send is accepted a
   // A file id from another chat is not this chat's input: refused before any run.
   const otherChat = await createChat(request, dana)
   const bad = await call(request, dana, 'POST', `/api/chats/${otherChat}/turns`, { json: { clientTurnKey: 'e2e-attach-key-0002', text: 'scenario:hello', model: 'sonnet', attachments: [{ fileId: up.json.fileId, name: up.json.name }] } })
-  expect(bad.status, bad.text).toBeGreaterThanOrEqual(400)
-  expect(bad.status).toBeLessThan(500)
+  expectError(bad, 400, 'invalid')
 })

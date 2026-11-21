@@ -39,7 +39,7 @@ test('a Member can\'t pause or resume; an Admin pauses, and everyone then reads 
   expect(paused.json).toMatchObject({ paused: true, by: adminId, at: { ms: expect.any(Number) } })
   for (const who of [dana, admin]) expect(await state(request, who)).toEqual(paused.json)
   // The body is `{}` and nothing else.
-  expect((await call(request, admin, 'POST', '/api/pause', { json: { reason: 'x' } })).status).toBe(400)
+  expectError(await call(request, admin, 'POST', '/api/pause', { json: { reason: 'x' } }), 400, 'invalid')
   await resume(request)
   expect((await state(request)).paused).toBe(false)
 })
@@ -50,11 +50,12 @@ test('while paused a send is refused with reason paused, and resuming starts no 
   const refused = await sendTurn(request, dana, chat, 'scenario:hello are you there?')
   expectError(refused, 403, 'forbidden', 'paused')
   // The refusal left no turn behind: no run, no message.
-  expect((await call(request, dana, 'GET', '/api/runs/active')).json).toEqual({ runs: [] })
+  const runsOfChat = async () => ((await call(request, dana, 'GET', '/api/runs/active')).json.runs as { chatId: string }[]).filter(r => r.chatId === chat)
+  expect(await runsOfChat()).toEqual([])
   expect((await call(request, dana, 'GET', `/api/chats/${chat}`)).json).toMatchObject({ messages: [], runs: [] })
   await resume(request)
   // Resume admits new sends again but starts nothing by itself: the refused text is not sent again.
-  expect((await call(request, dana, 'GET', '/api/runs/active')).json).toEqual({ runs: [] })
+  expect(await runsOfChat()).toEqual([])
   expect((await call(request, dana, 'GET', `/api/chats/${chat}`)).json).toMatchObject({ messages: [], runs: [] })
 })
 

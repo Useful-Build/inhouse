@@ -83,8 +83,10 @@ test('rename and pin are guarded by ifRev: a stale rev is a 409 carrying the cha
     expectError(await call(request, other, 'PUT', `/api/chats/${id}/title`, { json: { title: 'Mine', ifRev: 4 } }), 404, 'not_found')
     expectError(await call(request, other, 'PUT', `/api/chats/${id}/pin`, { json: { pinned: false, ifRev: 4 } }), 404, 'not_found')
   }
-  for (const bad of [{ title: '', ifRev: 4 }, { title: 'x', ifRev: 0 }, { title: 'x' }, { title: 'x', ifRev: 4, extra: 1 }]) {
-    expect((await call(request, dana, 'PUT', `/api/chats/${id}/title`, { json: bad })).status, JSON.stringify(bad)).toBe(400)
+  // `ifRev` 0 is a valid (stale) rev: a 409 carrying the chat as it is now, never a 400.
+  expect(expectConflict(await call(request, dana, 'PUT', `/api/chats/${id}/title`, { json: { title: 'x', ifRev: 0 } }))).toMatchObject({ id, rev: 4 })
+  for (const bad of [{ title: '', ifRev: 4 }, { title: 'x', ifRev: -1 }, { title: 'x', ifRev: 1_000_000_000 }, { title: 'x' }, { title: 'x', ifRev: 4, extra: 1 }]) {
+    expectError(await call(request, dana, 'PUT', `/api/chats/${id}/title`, { json: bad }), 400, 'invalid')
   }
 })
 
@@ -109,8 +111,8 @@ test('delete and restore take 1 to 50 of the caller\'s own chats, all or nothing
   expect(ids(await list(request, dana))).not.toContain(b)
   expectError(await call(request, leo, 'POST', '/api/chats/restore', { json: { ids: [b] } }), 404, 'not_found')
   // The size rule: 0 and 51 ids are 400.
-  expect((await call(request, dana, 'POST', '/api/chats/delete', { json: { ids: [] } })).status).toBe(400)
-  expect((await call(request, dana, 'POST', '/api/chats/delete', { json: { ids: Array.from({ length: 51 }, newChatId) } })).status).toBe(400)
+  expectError(await call(request, dana, 'POST', '/api/chats/delete', { json: { ids: [] } }), 400, 'invalid')
+  expectError(await call(request, dana, 'POST', '/api/chats/delete', { json: { ids: Array.from({ length: 51 }, newChatId) } }), 400, 'invalid')
   expect(ids(await list(request, leo))).toContain(foreign)
 })
 
@@ -124,9 +126,7 @@ test('the list pages newest first by keyset, with no repeat and no gap', async (
   const second = await list(request, leo, `?limit=2&cursor=${encodeURIComponent(first.nextCursor!)}`)
   expect(second.items[0]!.id).toBe(made[0])
   expect(ids(second)).not.toContain(made[1])
-  expect((await call(request, leo, 'GET', '/api/chats?limit=0')).status).toBe(400)
-  expect((await call(request, leo, 'GET', '/api/chats?limit=101')).status).toBe(400)
-  expect((await call(request, leo, 'GET', '/api/chats?cursor=not-a-cursor')).status).toBe(400)
+  for (const q of ['limit=0', 'limit=101', 'cursor=not-a-cursor']) expectError(await call(request, leo, 'GET', `/api/chats?${q}`), 400, 'invalid')
 })
 
 test('the session reset (49) is the owner\'s: another member\'s chat is 404, and an idle chat resets', async ({ request }) => {

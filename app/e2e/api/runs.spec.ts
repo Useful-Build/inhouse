@@ -4,6 +4,7 @@
 //   - a container (`needsContainer()`: the per-PR deployment, E2E_TEST_BUILD_REMOTE): a turn on the scripted model's scenarios
 //     (app/test/scripted-model/scenarios.ts): the answer, the trace, the idempotent send, who may read a trace, a stop or
 //     interrupt on an ended turn, and a WebFetch through the sandbox (allowed and refused). No real model is called.
+// Every refusal is asserted on its whole body, `{ error: { code, reason? } }` (p2-design section 4: a 400 carries no reason).
 // Oracles: design section 3's table (owner 404 before the object check, Inhouse only under a grant), 4.3 (the same
 // `(chatId, clientTurnKey)` and payload answers the original turn; another payload is `conflict`/`key_reused`; an ended or
 // stale turn is `conflict`/`turn_ended`) and 4.5's step labels (`Reading a web page` for WebFetch).
@@ -51,8 +52,7 @@ test('a bad send is 400 before any run: an empty text, a bad key, a model nobody
     { priority: 'urgent' }, { attachments: [{ fileId: 'f_not_a_file', name: 'a.txt' }] },
   ]
   for (const extra of bad) {
-    const r = await sendTurn(request, dana, chat, 'scenario:hello hi', extra)
-    expect(r.status, JSON.stringify(extra).slice(0, 80)).toBe(400)
+    expectError(await sendTurn(request, dana, chat, 'scenario:hello hi', extra), 400, 'invalid')
   }
   expect((await call(request, dana, 'GET', `/api/chats/${chat}`)).json).toMatchObject({ messages: [], runs: [] })
 })
@@ -121,6 +121,7 @@ test('interrupt and stop on an ended turn are conflict/turn_ended, and on anothe
   }
 })
 
+// Note for Q2: `webfetch-allowed` fetches https://example.com/ from the sandbox, so it needs that site reachable from there.
 test('WebFetch through the sandbox: an allowed page and a refused address each show one "Reading a web page" step', async ({ request }) => {
   needsContainer()
   for (const [scenario, answerText] of [['webfetch-allowed', 'Read the page.'], ['webfetch-refused', 'The page could not be read.']] as const) {
