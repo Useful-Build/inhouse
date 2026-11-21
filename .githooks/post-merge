@@ -1,0 +1,5 @@
+#!/bin/sh
+# Chain only: the global and the repo's own post-merge hooks (see chain.sh).
+. "$(dirname "$0")/chain.sh"
+chain_hooks post-merge "$@"
+exit $?
