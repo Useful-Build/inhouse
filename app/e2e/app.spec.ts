@@ -23,7 +23,7 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
   await kestrel.getByRole('button', { name: 'Review' }).click()
 
   const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Spends money')
+  await expect(panel).toContainText('Spends $9,600')
   await expect(panel).toContainText('Remembered: Kestrel ships in 14 days')
   await expect(panel).toContainText('Dana Kim usually signs off orders over $5,000')
   await page.screenshot({ path: test.info().outputPath('act-panel-kestrel.png') })

@@ -21,8 +21,8 @@ const moreItem = async (page: Page, title: string, item: string) => {
 /** Approve a draft from its card: low-risk ones in one tap, the rest through Review in the panel. */
 const approveDraft = async (page: Page, title: string) => {
   const d = draft(page, title)
-  if (await d.getByRole('button', { name: 'Review', exact: true }).count()) {
-    await d.getByRole('button', { name: 'Review', exact: true }).click()
+  if (await d.getByRole('button', { name: 'Review draft', exact: true }).count()) {
+    await d.getByRole('button', { name: 'Review draft', exact: true }).click()
     await page.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click()
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog')).toHaveCount(0)
