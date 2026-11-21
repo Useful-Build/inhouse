@@ -59,7 +59,7 @@ export const SLOW_ADMIT_MS = 3_000
 /** `pool_shortfall`: a turn queued longer than this, or a `pool_full`, within the window. */
 export const SHORTFALL_WAIT_MS = 30_000
 export const SHORTFALL_WINDOW_MS = 15 * 60_000
-/** `pool_restarts`: more than this many container exits of one runner in an hour. */
+/** `pool_restarts`: more than this many exits in an hour of one runner's containers that came up (never a failed start). */
 export const RESTARTS_PER_HOUR = 3
 /** A drain undoes itself after this long. */
 export const DRAIN_MS = 30 * 60_000
@@ -380,7 +380,12 @@ export class RunnerPool implements RunnerPoolPort {
     const now = this.#d.now()
     const r = JSON.parse(row.restarts_json) as Restarts
     if (gen <= r.lastExitGen) return null
-    const next: Restarts = { lastExitGen: gen, exits: [...r.exits.filter(t => t > now - HOUR_MS), now] }
+    // A restart is a container that came up and stopped: the pool saw this generation (or a newer one) up, through an
+    // admission's answer or a warm-up. A start that never answered (a cold image still arriving, while the release job
+    // retries warm-up every few seconds) is a failed start: its exit is taken once, but it isn't counted.
+    const cameUp = row.container_gen !== null && row.container_gen >= gen
+    const recent = r.exits.filter(t => t > now - HOUR_MS)
+    const next: Restarts = { lastExitGen: gen, exits: cameUp ? [...recent, now] : recent }
     this.#d.sql.exec('UPDATE pool_runners SET restarts_json = ? WHERE runner = ?', JSON.stringify(next), runner)
     // An older generation than the one the pool placed on: the turns there run on the newer container.
     if (row.container_gen !== null && row.container_gen > gen) return []

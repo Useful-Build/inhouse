@@ -15,7 +15,8 @@
 //  7. drain: an admission after the drain step, counts that don't reach 0, an expiry that doesn't clear or advance runs;
 //     warm-up clearing the drain with a failed /health or on the container from before the drain, or not starting a
 //     run's queued follow-up;
-//  8. the signals miss a protocol runner, a restart storm or a shortfall;
+//  8. the signals miss a protocol runner, a restart storm or a shortfall, or count a start that never came up (a refused
+//     warm-up retried every 5 s while a cold image arrives) as a restart (Q2's sandbox, 2026-11-21);
 //  9. a slow cold start (the boot deadline passed, the container still running): the runner is sent to sleep instead of
 //     kept `starting` (so the retry doesn't join that start), or the same placement wakes a second sleeping runner (two
 //     boots outlast the turn's 3 min starting deadline) (Q2's sandbox, 2026-11-21).
@@ -1092,6 +1093,8 @@ describe('signals', () => {
   it('pool_restarts: more than 3 exits of one runner in an hour; a repeated generation counts once', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
+      // Each of these containers came up: the pool saw generation 4 (an admission or a warm-up answered on it).
+      sql.exec("UPDATE pool_runners SET container_gen = 4 WHERE runner = 'runner-0'")
       for (const gen of [1, 2, 3]) rig.pool.containerExited('runner-0', gen)
       rig.pool.containerExited('runner-0', 3)
       expect(rig.pool.health().restarts.ok).toBe(true)
@@ -1099,6 +1102,23 @@ describe('signals', () => {
       expect(rig.pool.health().restarts.ok).toBe(false)
       rig.clock.now = T0 + 3_600_001
       expect(rig.pool.health().restarts.ok).toBe(true)
+    })
+  })
+
+  it('pool_restarts: a start that never came up is no restart (ten refused warm-ups, then the one that worked)', async () => {
+    await inObject(async sql => {
+      const rig = drainRig(sql)
+      // Generations 1..10 never answered: the pool never saw them up (container_gen stays unset), each exit reported once.
+      for (let gen = 1; gen <= 10; gen++) expect(rig.pool.containerExited('runner-0', gen)).toEqual([])
+      expect(rig.pool.health().restarts.ok).toBe(true)
+      // Generation 11 came up (the warm-up passed on it), then exits four times over the hour's later gens: those count.
+      sql.exec("UPDATE pool_runners SET container_gen = 11 WHERE runner = 'runner-0'")
+      rig.pool.containerExited('runner-0', 11)
+      for (const gen of [12, 13, 14]) {
+        sql.exec('UPDATE pool_runners SET container_gen = ? WHERE runner = ?', gen, 'runner-0')
+        rig.pool.containerExited('runner-0', gen)
+      }
+      expect(rig.pool.health().restarts.ok).toBe(false)
     })
   })
 
