@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { traceOf, useTraces } from '../screens/chat/traces'
 import type { Trace, TraceStep, TraceStepKind } from '../agent/types'
-import { fmtDuration, fmtMoney, traceTicks } from '../lib/format'
+import { fmtDuration, fmtTraceCost, traceTicks } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Button, Icon, IconButton, Segmented, Window } from '../ui'
@@ -113,8 +113,8 @@ function TraceSteps({ trace }: { trace: Trace }) {
   const toolsUsed = new Set(steps.filter(s => s.kind === 'tool' && s.label.includes(' · ')).map(s => s.label.split(' · ')[0])).size
   const shown = fmtDur(t == null ? D : t)
   const stats: [string, string | number][] = tech
-    ? [['Duration', shown], ['Cost', fmtMoney(trace.cost, d0, { cents: 'always' })], ['Tokens', trace.tokens], ['Model calls', cnt('model')], ['Tool calls', cnt('tool')], ['Errors', cnt('fail')]]
-    : [['Time taken', shown], ['Cost', fmtMoney(trace.cost, d0, { cents: 'always' })], ['Tools used', toolsUsed], ['Steps', steps.length - 1], ['Waits', cnt('wait') + cnt('approval')], ['Problems', cnt('fail')]]
+    ? [['Duration', shown], ['Cost', fmtTraceCost(trace, d0)], ['Tokens', trace.tokens], ['Model calls', cnt('model')], ['Tool calls', cnt('tool')], ['Errors', cnt('fail')]]
+    : [['Time taken', shown], ['Cost', fmtTraceCost(trace, d0)], ['Tools used', toolsUsed], ['Steps', steps.length - 1], ['Waits', cnt('wait') + cnt('approval')], ['Problems', cnt('fail')]]
 
   const plainIo = (s: (typeof steps)[number]) => s.kind === 'model'
     ? cap1(s.detail.split(' · ').slice(1).join(' · ') || 'It worked this out itself, without reading a tool')
@@ -194,7 +194,7 @@ function TraceSteps({ trace }: { trace: Trace }) {
             const vis = started(s)
             const dur = s.kind === 'approval' ? 'waits for a person'
               : s.kind === 'fail' ? 'failed after ' + fmtDur(Math.max(0, endT - s.startMs))
-                : s.kind === 'root' && t == null ? fmtDur(s.endMs - s.startMs) + ' · ' + fmtMoney(trace.cost, d0, { cents: 'always' })
+                : s.kind === 'root' && t == null ? fmtDur(s.endMs - s.startMs) + ' · ' + fmtTraceCost(trace, d0)
                   : fmtDur(Math.max(0, endT - s.startMs))
             // A step the replay hasn't reached yet is muted text, its tile too (never dimmed).
             const ifg = !vis ? 'text-muted-foreground' : s.kind === 'agent' ? 'text-brand' : s.kind === 'fail' ? 'text-destructive' : s.kind === 'approval' ? 'text-warning-text' : 'text-foreground-2'
