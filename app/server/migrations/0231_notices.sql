@@ -18,9 +18,11 @@ CREATE TABLE notices (
   CHECK ((audience = 'member') = (audience_member_id IS NOT NULL))
 );
 CREATE INDEX notices_recent ON notices(audience, audience_member_id, at_ms DESC);
+CREATE INDEX notices_at ON notices(at_ms);
 CREATE TABLE notice_reads (
   member_id TEXT NOT NULL REFERENCES members(id),
   notice_id TEXT NOT NULL REFERENCES notices(id),
   at_ms INTEGER NOT NULL,
   PRIMARY KEY (member_id, notice_id)
 );
+CREATE INDEX notice_reads_notice ON notice_reads(notice_id);

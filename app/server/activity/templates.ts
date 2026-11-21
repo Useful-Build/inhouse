@@ -24,19 +24,21 @@ export interface ActivityTemplate {
 }
 
 export const ACTIVITY_TEMPLATES = {
+  // W2 (p4-w2.md 6, 8): a team routine's run reads "Ran a routine" (its trace opens the steps); the closes `lost` and
+  // `missed` and a failure are problem lines keyed `slot_key|lost`, `slot_key|missed`, `slot_key`.
   routine_ran: {
     kind: 'read', source: 'routine-slot',
-    text: 'A routine ran and found {items} things', why: 'Its time came', result: 'Found {items}', who: 'Your Inhouse agent',
-    fields: { items: 'number' },
-  },
-  system_routine_ran: {
-    kind: 'read', source: 'routine-slot',
-    text: 'The {routine} check ran and found {items} things', why: 'Its time came', result: 'Found {items}', who: 'Your Inhouse agent',
-    fields: { routine: 'code', items: 'number' },
+    text: 'Ran a routine', why: 'Its time came', result: 'It finished', who: 'Your Inhouse agent',
+    fields: {},
   },
   routine_missed: {
     kind: 'problem', source: 'routine-slot',
     text: 'A routine missed its time', why: 'The agent was busy or unavailable at its time', result: 'It didn\'t run', who: 'Your Inhouse agent',
+    fields: {},
+  },
+  routine_lost: {
+    kind: 'problem', source: 'routine-slot',
+    text: 'A routine stopped without an end', why: 'No end came in time', result: 'Its result was not saved', who: 'Your Inhouse agent',
     fields: {},
   },
   routine_failed: {
@@ -44,9 +46,15 @@ export const ACTIVITY_TEMPLATES = {
     text: 'A routine failed', why: 'It stopped with {code}', result: 'Nothing was saved', who: 'Your Inhouse agent',
     fields: { code: 'code' },
   },
+  // W3: the system routine's name is ours, so "Ran the morning check" is fine (p4-w2.md 8).
+  morning_check_ran: {
+    kind: 'read', source: 'routine-slot',
+    text: 'Ran the morning check and found {items} things', why: 'Its time came', result: 'Found {items}', who: 'Your Inhouse agent',
+    fields: { items: 'number' },
+  },
   routine_made: {
     kind: 'change', source: 'routine',
-    text: '{actor} made a routine', why: '{actor} asked for it', result: 'It runs on its schedule', who: '{actor}',
+    text: '{actor} set up a routine', why: '{actor} asked for it', result: 'It runs on its schedule', who: '{actor}',
     fields: {},
   },
   routine_changed: {
@@ -59,11 +67,13 @@ export const ACTIVITY_TEMPLATES = {
     text: '{actor} deleted a routine', why: '{actor} asked for it', result: 'It won\'t run again', who: '{actor}',
     fields: {},
   },
-  today_aside: {
-    kind: 'read', source: 'today-aside',
-    text: 'Your Inhouse agent set {items} things aside on Today', why: 'They looked like they could wait', result: 'You can bring them back', who: 'Your Inhouse agent',
-    fields: { items: 'number' },
+  // W3 (p4-w3.md 6): "<person> set aside an item on Today", the person as `actorId`.
+  today_set_aside: {
+    kind: 'change', source: 'today-aside',
+    text: '{actor} set aside an item on Today', why: '{actor} chose to', result: 'It leaves Today\'s list', who: '{actor}',
+    fields: {},
   },
+  // W5: the uploader as `actorId`.
   library_uploaded: {
     kind: 'change', source: 'library',
     text: '{actor} added {files} files to the Library', why: '{actor} uploaded them', result: 'The agent can use them', who: '{actor}',

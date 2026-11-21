@@ -1,10 +1,11 @@
 // Activity's store (0230 and `recordActivity`), in the Workers runtime on the real migrations. Ways it can fail:
 //  1. an UPDATE of a line goes through (the trigger), or a repeat of one (source, key) writes a second line;
 //  2. a producer's batch that fails leaves its Activity line behind (the line must commit with the change or not at all);
-//  3. a refused line is written, or a line holds a member's name (a raw dump scan, with the seeded names as the oracle).
+//  3. a refused line is written, or a line holds a member's name (a raw dump scan, with the seeded names as the oracle);
+//  4. a CHECK or NOT NULL failure is swallowed (the batch must abort), as INSERT OR IGNORE would.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
-import { recordActivity } from './store.ts'
+import { ACTIVITY_INSERT_SQL, recordActivity } from './store.ts'
 
 const db = env.DB
 const NAME = 'Dana Fixture-Kim'
@@ -34,6 +35,17 @@ describe('activity_lines', () => {
       db.prepare("INSERT INTO members (id, kind, status, created_at_ms) VALUES ('m_bad', 'nope', 'active', 1)"),
     ])).rejects.toThrow()
     expect(await count('library')).toBe(before)
+  })
+
+  it('a CHECK failure aborts the batch instead of vanishing (failure 4)', async () => {
+    await seed()
+    const sqlText = ACTIVITY_INSERT_SQL
+    expect(sqlText).toContain('ON CONFLICT (source, source_key) DO NOTHING')
+    // kind and min_stage outside their CHECKs, bound straight to the writer's statement, must throw, not skip the row.
+    await expect(db.prepare(sqlText).bind('a_x1', 1, 'bogus', null, 't', '{}', null, null, null, 's', 'k1').run()).rejects.toThrow(/CHECK/)
+    await expect(db.prepare(sqlText).bind('a_x2', 1, 'read', 9, 't', '{}', null, null, null, 's', 'k2').run()).rejects.toThrow(/CHECK/)
+    await expect(db.prepare(sqlText).bind('a_x3', 1, 'read', null, null, '{}', null, null, null, 's', 'k3').run()).rejects.toThrow(/NOT NULL/)
+    expect(await count('s')).toBe(0)
   })
 
   it('refuses a bad line before anything is built, and an unknown member fails the batch (failure 3)', async () => {

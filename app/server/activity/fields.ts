@@ -19,7 +19,7 @@ export class TemplateError extends Error {
 /** Throws when `fields` isn't exactly the template's declared fields, each of its declared type. */
 export function checkFields(templateId: string, spec: FieldSpec, fields: FieldValues): void {
   for (const key of Object.keys(fields)) {
-    if (!(key in spec)) throw new TemplateError(`template ${templateId} doesn't declare field ${key}`)
+    if (!Object.hasOwn(spec, key)) throw new TemplateError(`template ${templateId} doesn't declare field ${key}`)
   }
   for (const [key, type] of Object.entries(spec)) {
     const v = fields[key]
