@@ -35,6 +35,8 @@ describe('the health route', () => {
         { name: 'session_damaged', ok: true, detail: '0 damaged in 24 h' }, { name: 'scheduler', ok: true, detail: '0 quarantined' },
         { name: 'pool_protocol', ok: true }, { name: 'pool_restarts', ok: true }, { name: 'pool_shortfall', ok: true },
         { name: 'usage_stranded', ok: true },
+        // P4 W2: the routines signal (no routines here: green).
+        { name: 'routines', ok: true },
       ] },
     })
   })

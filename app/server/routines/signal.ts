@@ -1,7 +1,7 @@
 // The routines signal (p4-w2.md section 11, Opus F4): red when routines stop deciding, a system routine missed its time,
 // a run failed or was lost, a claimed row outlived its deadline, or an invariant alarm fired, in the last 24 hours. The
 // detail names counts only. No rule reads `started` slots: one may wait on a question for days (section 6b).
-import type { SignalResult } from '../ops/signals/types.ts'
+import type { Signal, SignalResult } from '../ops/signals/types.ts'
 
 const DAY = 86_400_000
 /** A routine whose cursor lags `now` by more than this means the heartbeat stopped, or its pass throws. */
@@ -29,3 +29,10 @@ export async function routinesSignal(db: D1Database, nowMs: number): Promise<Sig
   ].filter(Boolean)
   return parts.length === 0 ? { ok: true } : { ok: false, detail: parts.join(', ') }
 }
+
+/** The `routines` health signal over the request's stores. `now`: the health route's clock (signals get none of their own). */
+export function routinesHealth(now: () => number = () => Date.now()): Signal {
+  return { name: 'routines', check: ({ stores }) => stores.routines.signal(now()) }
+}
+
+export const routinesSignals: readonly Signal[] = [routinesHealth()]

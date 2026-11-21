@@ -28,6 +28,9 @@ import type { UsageStore } from '../usage/store.ts'
 import { memoryStore } from '../mcp/tools/memory/store.ts'
 import type { MemoryStore } from '../mcp/tools/memory/store.ts'
 
+import { routinesSignal } from '../routines/signal.ts'
+import type { SignalResult } from '../ops/signals/types.ts'
+
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
   grants: GrantStore & GrantStoreImpl
@@ -54,6 +57,9 @@ export interface Stores extends AuthStores {
 
   /** W6 (p3-w6.md): memory. */
   memory: MemoryStore
+
+  /** P4 W2 (p4-w2.md section 11): the routines signal's read. */
+  routines: { signal(nowMs: number): Promise<SignalResult> }
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -112,5 +118,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     usage: usageStore({ db }),
 
     memory: memoryStore({ db }),
+
+    routines: { signal: nowMs => routinesSignal(db, nowMs) },
   }
 }
