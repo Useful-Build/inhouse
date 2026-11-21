@@ -184,6 +184,8 @@ describe('test 5: channels', () => {
     ['needs a reconnect', { code: 'scope_mismatch', message: 'granted scopes do not match the connector' }, 'refused', 'slack_not_connected'],
     ['rate limited', { code: 'rate_limited', message: 'rate limited by the upstream', retryAfterMs: 7000 }, 'failed', 'rate_limited'],
     ['anything else', { code: 'upstream_rejected', message: 'upstream rejected the request' }, 'failed', 'slack_unavailable'],
+    ['APP_ORIGIN missing at the hub', { code: 'not_configured', message: 'connector not configured: APP_ORIGIN' }, 'refused', 'app_origin_missing'],
+    ['Slack not configured', { code: 'not_configured', message: 'connector not configured' }, 'refused', 'slack_not_connected'],
   ] as const)('%s maps to %s %s', async (_, error, outcome, detail) => {
     const s = await scene()
     const { delivery } = fakeDelivery(() => ({ ok: false, error }))
@@ -196,6 +198,17 @@ describe('test 5: channels', () => {
     const out = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), msg({ to: { members: [s.owner], channels: ['ops-alerts'] } }))
     expect(out.recipients.map(r => `${r.outcome}:${r.detail ?? ''}`)).toEqual(['posted:', 'failed:slack_unavailable'])
     expect(await sends("run_id = ? AND kind = 'slack'", s.runId)).toEqual([])
+  })
+})
+
+describe('review round 1: APP_ORIGIN missing has its own detail', () => {
+  it('the audit line and the outcome say app_origin_missing', async () => {
+    const s = await scene()
+    const since = await lastLine()
+    const { delivery } = fakeDelivery(() => ({ ok: false, error: { code: 'not_configured', message: 'connector not configured: APP_ORIGIN' } }))
+    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ link: { kind: 'today' } }))
+    expect(out.recipients).toEqual([{ kind: 'slack', to: '#ops-alerts', outcome: 'refused', detail: 'app_origin_missing' }])
+    expect((await lines(since)).map(l => (JSON.parse(l.args_json) as { detail?: string }).detail)).toEqual(['app_origin_missing'])
   })
 })
 

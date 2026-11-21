@@ -146,4 +146,22 @@ describe('routes F, G and H', () => {
     ]
     for (const r of bodies) expect(ErrorBodySchema.safeParse(await r.json()).success, String(r.status)).toBe(true)
   })
+
+  it('review round 1: two kept channels swapping names at Slack, or a chain of renames, save without a 500', async () => {
+    const { hub } = fakeHub()
+    const p = await admin()
+    await db.prepare('DELETE FROM notify_channels').run()
+    const r0 = await rev()
+    expect((await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 })).status).toBe(200)
+    // Slack now names them the other way round.
+    const swapped = { ...SLACK.C0TEST0001!, name: 'general' }, swapped2 = { ...SLACK.C0TEST0002!, name: 'ops-alerts' }
+    const renamed = { ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => ({ ok: true as const, value: req.channelId === 'C0TEST0001' ? swapped : swapped2 }) }
+    const r = await json(await put(p, renamed as never, { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 + 1 }))
+    expect(r).toEqual({ status: 200, body: { rev: r0 + 2, channels: [{ channelId: 'C0TEST0001', name: 'general', alerts: false }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] } })
+    // A chain: 1 takes 2's name, 2 takes a new one.
+    const chain = { ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => ({ ok: true as const, value: req.channelId === 'C0TEST0001' ? { ...swapped, name: 'ops-alerts' } : { ...swapped2, name: 'ops-old' } }) }
+    const c = await json(await put(p, chain as never, { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 + 2 }))
+    expect(c.status).toBe(200)
+    expect((c.body.channels as { name: string }[]).map(x => x.name)).toEqual(['ops-alerts', 'ops-old'])
+  })
 })

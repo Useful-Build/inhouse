@@ -137,6 +137,8 @@ export const NotifyOutcomeSchema = z.enum(['posted', 'refused', 'failed', 'unkno
 export const NotifyDetailSchema = z.enum([
   'not_listed', 'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'run_cap', 'day_cap', 'too_long',
   'empty', 'unknown_member', 'slack_not_connected', 'slack_unavailable', 'rate_limited', 'to_bell', 'no_alerts_channel', 'below_act',
+  // The hub's APP_ORIGIN is unset or malformed, so a post carrying the app link is refused (review round 1).
+  'app_origin_missing',
 ])
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()

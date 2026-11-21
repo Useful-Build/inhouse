@@ -41,6 +41,12 @@ export function notifyChannelStore({ db, hook = s => s }: { db: D1Database; hook
         stmts.push(stmt(`UPDATE notify_channels SET removed_by = ?, removed_at_ms = ?, alerts = 0, req_id = ? WHERE channel_id = ? AND removed_at_ms IS NULL ${guard}`,
           at.actorId, at.nowMs, stamp, c.channelId, input.ifRev))
       }
+      // A kept row whose name changed at Slack first takes a placeholder no Slack name can be (`~` + its id), so two
+      // channels swapping or chaining names never meet the lowercase-name index mid-batch (review round 1).
+      for (const c of kept.filter(k => before.get(k.channelId)!.name !== k.name)) {
+        stmts.push(stmt(`UPDATE notify_channels SET name = '~' || channel_id, req_id = ? WHERE channel_id = ? AND removed_at_ms IS NULL ${guard}`,
+          stamp, c.channelId, input.ifRev))
+      }
       // Rows losing the alerts mark first, so the one-alerts-channel index never sees two at once.
       const alertsOf = (id: string) => (id === input.alertsChannelId ? 1 : 0)
       for (const c of [...kept].sort((a, b) => alertsOf(a.channelId) - alertsOf(b.channelId))) {

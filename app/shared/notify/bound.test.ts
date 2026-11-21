@@ -9,7 +9,7 @@ import { bellLink, checkLink, linkPath } from './links.ts'
 // ---------- the oracle (independent detectors) ----------
 const ORACLE_HOST = /(?:[a-z0-9\u00C0-\u{10FFFF}-]+\.)+(?:[a-z\u00C0-\u{10FFFF}]{2,}|xn--[a-z0-9-]+)(?![a-z0-9])/iu
 const ORACLE_IP = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/
-const ORACLE_SCHEME = /\b(?:https?|ftp|mailto|tel|sms|slack|data|javascript|vbscript|file):/i
+const ORACLE_SCHEME = /\b(?:https?|ftp|mailto|tel|sms|slack|data|javascript|vbscript|file):(?=\S)/i
 // eslint-disable-next-line no-control-regex -- the oracle looks for control characters
 const ORACLE_CONTROL = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]|[\u{E0000}-\u{E007F}]/u
 const cp = (s: string) => [...s].length
@@ -80,6 +80,22 @@ describe('test 1: the bounds, property', () => {
     if (after <= 1500) expect(out).toMatchObject({ ok: true, text })
     else expect(out).toEqual({ ok: false, reason: 'too_long' })
     expect(escapedLength(text)).toBe(after)
+  })
+})
+
+describe('must remove and must keep, written by hand (review round 1)', () => {
+  // Each token alone, between two words; the escape is on, as at the hub. Dropping any one rule of step 2 fails a case.
+  const MUST_REMOVE = [
+    'e.g.@here', 'a.b@herecom', // the escape drops the `@`: no host may be left behind
+    'example\uFF0Ecom', 'example\u3002com', 'example\uFF61com', 'example\u2024com', 'example\uFE52com', // every odd dot
+    'data:text/html,hi', 'tel:+15550100', 'javascript:x', 'mailto:a@b.co', 'sms:+1', 'slack:open', 'vbscript:x',
+  ]
+  it.each(MUST_REMOVE)('%j is removed', token => {
+    expect(boundNotice({ title: 'T', text: `before ${token} after`, format: 'message' }, { escape: true })).toMatchObject({ ok: true, text: `before ${LINK_REMOVED} after` })
+  })
+  const MUST_KEEP = ['Raw data: 5 rows', 'Call tel: later', 'Note: mailto: is off', 'Ratio 3.5 kg', 'Version v1.2']
+  it.each(MUST_KEEP)('%j stays as written', text => {
+    expect(boundNotice({ title: 'T', text, format: 'message' }, { escape: true })).toMatchObject({ ok: true, text, changed: { links: false } })
   })
 })
 

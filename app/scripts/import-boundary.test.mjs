@@ -41,10 +41,13 @@ describe('the P5 import boundary', () => {
       'server/egress/f.ts': "import { notificationSend } from '../mcp/tools/notifications/send.ts'\nexport const f = notificationSend\n",
       'server/egress/g.ts': "import { handlers } from '../mcp/tools/notifications/index.ts'\nexport const g = handlers\n",
       'server/egress/h.ts': "import type { PostNoticeRequest } from '../../hub/index/contract.ts'\nexport const h: PostNoticeRequest | null = null\n",
+      // Review round 1: deliveryOf from deps.ts, and the folder itself (its index).
+      'server/egress/i.ts': "import { deliveryOf } from '../mcp/tools/notifications/deps.ts'\nexport const i = deliveryOf\n",
+      'server/egress/j.ts': "import { handlers } from '../mcp/tools/notifications'\nexport const j = handlers\n",
     })
     expect(r.status).toBe(1)
     const hits = lines(r.out)
-    for (const file of ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts', 'h.ts']) expect(hits.some(l => l.includes(`/${file}:`)), file).toBe(true)
+    for (const file of ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts', 'h.ts', 'i.ts', 'j.ts']) expect(hits.some(l => l.includes(`/${file}:`)), file).toBe(true)
   })
 
   test("the egress may use the hub's ReadGateway types, and other folders aren't bound by the rule", () => {
