@@ -82,6 +82,24 @@ describe('historyMessages: a stored end row in the live words', () => {
     expect(ids(mergeHistory(shown, [], liveMessages))).toEqual([`${T1}.u`, `${T1}.f`])
   })
 
+  test('a stopped turn and a question paused during its start read as their live notes, each shown once after a reload', () => {
+    const page = [
+      storedUser(T1, 0, 'a'), end(T1, 'x', 1, { outcome: 'stopped' }),
+      storedUser(T2, 2, 'b'), end(T2, 'x', 3, { why: 'paused' }),
+    ]
+    const shown = historyMessages(page)
+    expect(shown).toEqual([
+      page[0], { id: `${T1}.x`, role: 'event', text: 'You stopped your Inhouse agent. Nothing was changed.' },
+      page[2], { id: `${T2}.x`, role: 'event', text: 'Your Inhouse agent was paused, so this question was not asked.' },
+    ])
+    const liveMessages = live(
+      queued(T1, 'a'), { type: 'turn.started', turnId: T1, model: 'sonnet' }, { type: 'turn.finished', turnId: T1, outcome: 'stopped' },
+      queued(T2, 'b'), { type: 'turn.cancelled', turnId: T2, why: 'paused' },
+    )
+    expect(liveMessages.filter(m => m.role === 'event')).toEqual([shown[1], shown[3]])
+    expect(ids(mergeHistory(shown, [], liveMessages))).toEqual([`${T1}.u`, `${T1}.x`, `${T2}.u`, `${T2}.x`])
+  })
+
   test('a question that never ran reads as its live note; one with nothing to say is left out; other messages stay as they are', () => {
     const page = [
       storedUser(T1, 0, 'a'), end(T1, 'x', 1, { why: 'pool_full' }),

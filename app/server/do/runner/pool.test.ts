@@ -16,8 +16,9 @@
 //     warm-up clearing the drain with a failed /health or on the container from before the drain, or not starting a
 //     run's queued follow-up;
 //  8. the signals miss a protocol runner, a restart storm or a shortfall;
-//  9. a slow cold start (the boot deadline passed, the container still running) sends the runner to sleep, so the retry
-//     doesn't join that start (Q2's sandbox, 2026-11-21).
+//  9. a slow cold start (the boot deadline passed, the container still running): the runner is sent to sleep instead of
+//     kept `starting` (so the retry doesn't join that start), or the same placement wakes a second sleeping runner (two
+//     boots outlast the turn's 3 min starting deadline) (Q2's sandbox, 2026-11-21).
 import { fc } from '@fast-check/vitest'
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
@@ -457,19 +458,46 @@ describe('routing', () => {
     })
   })
 
-  it('a boot deadline passed on a container still running: the runner stays starting, cooled 5 s, and the turn moves on (failure 9)', async () => {
+  it('a boot deadline passed on a container still running: the runner stays starting, cooled 5 s, no second runner is woken, the turn queues (failure 9)', async () => {
     await inObject(async sql => {
       w1Tables(sql)
-      sql.exec("INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES ('t_a', 'starting', 1, NULL), ('t_b', 'starting', 1, NULL)")
-      const pool = poolWith(sql, name => async () => name === 'runner-0'
-        ? { placementError: 'no /protocol answer within 150000 ms', booting: true }
-        : { placementError: 'the container stopped before it answered /protocol', booting: false })
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES ('t_a', 'starting', 1, NULL)")
+      const admits: string[] = []
+      const pool = poolWith(sql, name => async start => {
+        admits.push(`${start.runId}@${name}`)
+        return { placementError: 'no /protocol answer within 150000 ms', booting: true }
+      })
       expect(await pool.place(rs('t_a'), 1)).toEqual({ queued: true })
+      expect(admits).toEqual(['t_a@runner-0'])
       const rows = sql.exec('SELECT runner, state, refused_until_ms, protocol FROM pool_runners ORDER BY runner').toArray()
       expect(rows).toEqual([
         { runner: 'runner-0', state: 'starting', refused_until_ms: T0 + 5_000, protocol: null },
-        { runner: 'runner-1', state: 'sleeping', refused_until_ms: T0 + 5_000, protocol: null },
+        { runner: 'runner-1', state: 'sleeping', refused_until_ms: null, protocol: null },
       ])
+    })
+  })
+
+  it('after a slow start the turn still moves to a runner that is up (failure 9)', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES ('t_a', 'starting', 1, NULL)")
+      const pool = poolWith(sql, name => async () => name === 'runner-0'
+        ? { placementError: 'no /protocol answer within 150000 ms', booting: true }
+        : { accepted: true, gen: 1, protocol: 2 })
+      sql.exec("UPDATE pool_runners SET state = 'up' WHERE runner = 'runner-1'")
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-1' })
+    })
+  })
+
+  it('a stopped container (not booting) still moves the turn on to the next sleeping runner', async () => {
+    await inObject(async sql => {
+      w1Tables(sql)
+      sql.exec("INSERT INTO seed_turns (turn_id, state, gen, runner) VALUES ('t_a', 'starting', 1, NULL)")
+      const pool = poolWith(sql, name => async () => name === 'runner-0'
+        ? { placementError: 'the container stopped before it answered /protocol', booting: false }
+        : { accepted: true, gen: 1, protocol: 2 })
+      expect(await pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-1' })
+      expect(sql.exec("SELECT state FROM pool_runners WHERE runner = 'runner-0'").one().state).toBe('sleeping')
     })
   })
 

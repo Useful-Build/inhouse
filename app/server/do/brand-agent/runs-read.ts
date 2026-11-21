@@ -100,7 +100,9 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
       const detail = u?.refused === true ? `${c.model} · refused by the model service`
         : c.closed_at_ms === null ? `${c.model} · in progress${input + output > 0 ? ` · ${counts} so far` : ''}`
         : `${counts}${c.state === 'cut' ? ' · cut' : ''}`
-      steps.push({ label: c.model, kind: 'model', startMs: at(c.granted_at_ms), endMs: at(c.closed_at_ms ?? nowMs), depth: 1, detail })
+      // Open and not refused: priced at its worst case in the cost below until it closes.
+      const upTo = c.closed_at_ms === null && u?.refused !== true
+      steps.push({ label: c.model, kind: 'model', startMs: at(c.granted_at_ms), endMs: at(c.closed_at_ms ?? nowMs), depth: 1, detail, ...(upTo ? { costUpTo: true } : {}) })
     }
   }
   // Stable: records of one moment keep their order (steps, then hooks, then calls).

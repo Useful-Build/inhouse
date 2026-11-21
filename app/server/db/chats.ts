@@ -95,6 +95,7 @@ function message(r: MessageRow): StoredMessage {
   const where = { turnId: r.turn_id, runId: r.run_id, pos: r.pos, at: instant(r.at_ms) }
   const extra = (r.extra_json === null ? {} : JSON.parse(r.extra_json)) as {
     quote?: string; attachments?: { name: string }[]; trace?: string; failure?: TurnFailure; retryQuestion?: string; why?: CancelWhy
+    outcome?: 'stopped' | 'interrupted'
   }
   if (r.role === 'user') {
     return {
@@ -108,7 +109,7 @@ function message(r: MessageRow): StoredMessage {
   }
   // An end row (projection.ts): how its turn ended, for the client to put in words.
   const end: TurnEnd | null = extra.failure !== undefined ? { failure: extra.failure, retryQuestion: extra.retryQuestion ?? '' }
-    : extra.why !== undefined ? { why: extra.why } : null
+    : extra.outcome !== undefined ? { outcome: extra.outcome } : extra.why !== undefined ? { why: extra.why } : null
   return { id: r.id, role: 'event', text: r.text, ...(end === null ? {} : { end }), ...where }
 }
 

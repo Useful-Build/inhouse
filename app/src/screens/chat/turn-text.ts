@@ -4,7 +4,7 @@ import type { TurnFailure } from '../../../shared/contract/runs'
 import type { StoredMessage } from '../../../shared/contract/chats'
 import type { ChatMessage } from '../../agent/types'
 import { CANCEL, FAIL, NOTICE } from '../../../shared/contract/chat-codes'
-import { ATTACHMENT_NAME_TOO_LONG, MODEL_OFF_FAILED, MODEL_OFF_REFUSED, NOTICE_TEXT, RUN_FAILED } from './notes'
+import { ATTACHMENT_NAME_TOO_LONG, MODEL_OFF_FAILED, MODEL_OFF_REFUSED, NOTICE_TEXT, RUN_FAILED, STOPPED_NOTE } from './notes'
 import { RATE_LIMITED, REASON } from '../../../shared/contract/error-codes'
 
 /** Why a failed turn failed, in the person's words. */
@@ -38,7 +38,7 @@ export const CANCELLED_TEXT: Record<(typeof CANCEL)[keyof typeof CANCEL], string
 
 /**
  * A stored history page in the words the live stream used. A turn's end row (the server's projection.ts) becomes the
- * message its live `turn.finished` or `turn.cancelled` showed (view.ts), with the same id, so the two show once; one with
+ * message its live `turn.finished` or `turn.cancelled` showed (view.ts: the failure, the stopped note or the cancel note), with the same id, so the two show once; one with
  * nothing to say is left out. Every other message is kept as it is.
  */
 export function historyMessages(page: readonly StoredMessage[]): ChatMessage[] {
@@ -48,9 +48,11 @@ export function historyMessages(page: readonly StoredMessage[]): ChatMessage[] {
       out.push(m)
     } else if ('failure' in m.end) {
       out.push({ id: m.id, role: 'agent', trace: m.turnId, at: m.at, part: { type: 'error', text: FAILURE_TEXT[m.end.failure] ?? RUN_FAILED, retryQuestion: m.end.retryQuestion } })
+    } else if ('outcome' in m.end) {
+      out.push({ id: m.id, role: 'event', text: STOPPED_NOTE })
     } else {
       const text = CANCELLED_TEXT[m.end.why]
-      if (text !== null) out.push({ id: m.id, role: 'event', text })
+      if (text != null) out.push({ id: m.id, role: 'event', text })
     }
   }
   return out

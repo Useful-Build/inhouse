@@ -5,8 +5,14 @@ import { DurationMsSchema, MoneySchema } from './common.ts'
 export const TraceStepKindSchema = z.enum(['root', 'model', 'tool', 'agent', 'wait', 'handoff', 'approval', 'answer', 'fail'])
 export type TraceStepKind = z.infer<typeof TraceStepKindSchema>
 
-/** `startMs` and `endMs` are ms from the start of the run. */
-export const TraceStepSchema = z.object({ label: z.string(), kind: TraceStepKindSchema, startMs: DurationMsSchema, endMs: DurationMsSchema, depth: z.number(), detail: z.string() })
+/**
+ * `startMs` and `endMs` are ms from the start of the run. `costUpTo`: a model call still open, counted in the trace's cost
+ * at its admitted worst case until it closes (so the cost is an upper bound while one is set).
+ */
+export const TraceStepSchema = z.object({
+  label: z.string(), kind: TraceStepKindSchema, startMs: DurationMsSchema, endMs: DurationMsSchema, depth: z.number(), detail: z.string(),
+  costUpTo: z.boolean().optional(),
+})
 export type TraceStep = z.infer<typeof TraceStepSchema>
 
 /** `id` is whatever the agent calls the run: a recorded key or a run id in the mock, a run id in phase 2. */

@@ -17,7 +17,8 @@ import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { RunStart } from '../../../shared/protocol/index.ts'
-import { RunnerCore, sqlRunnerState, type ContainerPort, type EgressProps, type RunnerState } from './runner.ts'
+import { ADMIT_TIMEOUT_MS, BOOT_TIMEOUT_MS, RunnerCore, sqlRunnerState, type ContainerPort, type EgressProps, type RunnerState } from './runner.ts'
+import { STARTING_DEADLINE_MS } from '../brand-agent/core.ts'
 
 type Binding = { kind: 'egress' | 'web' | 'deny'; props: EgressProps }
 type Route = (path: string, init: RequestInit | undefined) => Response | Promise<Response>
@@ -262,6 +263,10 @@ describe('boot deadline', () => {
 })
 
 describe('a slow cold start (failure 8)', () => {
+  it('a whole admission (the boot deadline, then the 15 s admit) fits in the starting turn\'s deadline', () => {
+    expect(BOOT_TIMEOUT_MS + ADMIT_TIMEOUT_MS).toBeLessThan(STARTING_DEADLINE_MS)
+  })
+
   it('/protocol first answering 90 s into the start: admitted on that container, no second start', t(async state => {
     const c = new FakeContainer()
     // A clock the deps' timeouts and waits share: each signal aborts once the clock passes its own deadline.

@@ -17,6 +17,9 @@
 //   | no shared version, 426         | next candidate                         | protocol (never picked)              |
 //   | never answered /protocol       | next candidate                         | sleeping (starting while its container|
 //   |                                |                                        | still runs), protocol cleared, 5 s   |
+//   A slow start (its container still running) moves the turn only to an `up` runner, else queues it: never a second
+//   start in one placement. So a running but wedged container costs its 150 s boot deadline on each admission there,
+//   and `starting` is picked before `sleeping`.
 // - The placement queue (`pool_queue`) is FIFO and holds turn ids only (a run token is never stored): a free slot or
 //   the `pool-retry` task (5 s after) asks W1 to place the head again (`hooks.retryPlacement`, with a fresh token);
 //   after 60 s `hooks.placementExpired` (W1 fails it `pool_full`).
@@ -140,12 +143,15 @@ export class RunnerPool implements RunnerPoolPort {
       return { queued: true }
     }
     const tried = new Set<string>()
+    // A slow start already took this placement's boot deadline: only a runner that's up now is tried after it, never a
+    // second start (two boots would outlast the turn's starting deadline).
+    let upOnly = false
     for (;;) {
       if (this.#draining(this.#d.now())) {
         this.#dequeue(turnId)
         return { refused: 'draining' }
       }
-      const r = this.#pick(tried)
+      const r = this.#pick(tried, upOnly)
       if (r === null) {
         this.#enqueue(turnId)
         return { queued: true }
@@ -191,6 +197,7 @@ export class RunnerPool implements RunnerPoolPort {
         // instead of being sent to sleep while it boots.
         this.#d.sql.exec('UPDATE pool_runners SET state = ?, refused_until_ms = ?, protocol = NULL WHERE runner = ?',
           a.booting ? 'starting' : 'sleeping', this.#d.now() + REFUSED_COOLDOWN_MS, r.runner)
+        if (a.booting) upOnly = true
         continue
       }
       if ('protocol' in a) {
@@ -214,8 +221,11 @@ export class RunnerPool implements RunnerPoolPort {
     }
   }
 
-  /** The best candidate not yet tried: fill-first over `up` runners, then the lowest-index sleeping one. */
-  #pick(tried: ReadonlySet<string>): RunnerRow | null {
+  /**
+   * The best candidate not yet tried: fill-first over `up` runners, then the lowest-index sleeping one. `upOnly`: only a
+   * runner already up (or refused, an up container cooling), never one starting or asleep.
+   */
+  #pick(tried: ReadonlySet<string>, upOnly = false): RunnerRow | null {
     const now = this.#d.now()
     const live = this.#liveCounts()
     const rows = this.#d.sql
@@ -225,8 +235,9 @@ export class RunnerPool implements RunnerPoolPort {
     const free = (r: RunnerRow) =>
       !tried.has(r.runner) && !slow.has(r.runner) && (live.get(r.runner) ?? 0) < PER_RUNNER && (r.refused_until_ms ?? 0) <= now
     // `starting`: another placement is waking it; an admission there joins that start.
-    const up = rows.find(r => (r.state === 'up' || r.state === 'starting' || r.state === 'refused') && free(r))
+    const up = rows.find(r => (r.state === 'up' || (r.state === 'starting' && !upOnly) || r.state === 'refused') && free(r))
     if (up) return up
+    if (upOnly) return null
     return rows.find(r => r.state === 'sleeping' && free(r)) ?? null
   }
 
