@@ -276,6 +276,10 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   // Routes 68 and 69 (P5 W1): the Inhouse team alone, grant or not; a Member or an Admin is refused even a GET.
   'POST /api/connect/:accountId/start': ['no', 'ro', 'ok', 'ok', 'no', 'no', 'no'],
   'GET /api/connect/callback': ['no', 'no', 'ok', 'ok', 'no', 'no', 'no'],
+  // Routes 70 to 72 (P5 W3): everyone reads the Tools page; the Inhouse team alone pauses, resumes and disconnects.
+  'GET /api/tools': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'PUT /api/tools/:accountId/paused': ['no', 'ro', 'ok', 'ok', 'no', 'no', 'no'],
+  'POST /api/tools/:accountId/disconnect': ['no', 'ro', 'ok', 'ok', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

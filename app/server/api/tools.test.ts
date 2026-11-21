@@ -13,7 +13,8 @@ import type { Principal } from '../auth/index.ts'
 import type { HandlerContext } from '../routes.ts'
 import { ToolsDataSchema } from '../../shared/contract/tools.ts'
 import { CONNECT_STATE_TTL_MS, buildToolsData, toolsHandlers } from './tools.ts'
-import type { AccountSummary, ConnectGateway, ConnectorAccountRow, HubError, ToolsAuditArgs, ToolsDeps } from './tools.ts'
+import type { AccountSummary, HubError } from '../../hub/index/contract.ts'
+import type { ConnectorAccountRow, ToolsAuditArgs, ToolsDeps, ToolsGateway } from './tools.ts'
 
 const NOW = Date.parse('2026-11-20T12:00:00.000Z')
 const inst = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
@@ -164,7 +165,7 @@ function fake(o: FakeOpts = {}) {
   const rowWrites: { accountId: string; connector: string }[] = []
   let failNext = o.rowWriteFailsOnce ?? false
   const fail = () => ({ ok: false as const, error: o.hubFails! })
-  const gateway: ConnectGateway = {
+  const gateway: ToolsGateway = {
     listAccounts: async () => (o.hubFails ? fail() : { ok: true, value: [acct('slack:workspace', o.slack), acct('shopify:store')] }),
     setPaused: async (_s, id, paused) => { hubCalls.push(`pause:${id}:${paused}`); return o.hubFails ? fail() : { ok: true, value: { paused } } },
     disconnect: async (_s, id) => { hubCalls.push(`disconnect:${id}`); return o.hubFails ? fail() : { ok: true, value: { revoked: o.revoked ?? true } } },
@@ -204,8 +205,9 @@ describe('the matrix rows (the lines in the PR body) refuse before the handler',
     expect([0, 1, 2].map(i => decide(member, i))).toEqual([true, false, false])
     expect([0, 1, 2].map(i => decide(inhouse, i))).toEqual([true, true, true])
   })
-  it('the real matrix has no row for these paths yet (the orchestrator adds them)', () => {
-    expect(accessMatrix.some(r => r.pattern.startsWith('/api/tools'))).toBe(false)
+  it('the real matrix carries exactly these three rows', () => {
+    const real = accessMatrix.filter(r => r.pattern.startsWith('/api/tools')).map(r => ({ method: r.method, pattern: r.pattern, class: r.class, allow: r.allow }))
+    expect(real).toEqual(rows.map(r => ({ method: r.method, pattern: r.pattern, class: r.class, allow: [...r.allow] })))
   })
 })
 

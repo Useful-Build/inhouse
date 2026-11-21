@@ -150,6 +150,10 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   // Routes 68 and 69 (P5 W1, p5-w1.md section 9): connect start and the OAuth callback, the Inhouse team alone.
   { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
   { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },
+  // Routes 70 to 72 (P5 W3): the Tools page; everyone reads, the Inhouse team alone writes.
+  { method: 'GET', pattern: '/api/tools', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/tools/:accountId/paused', class: 'technical', allow: ['inhouse'] },
+  { method: 'POST', pattern: '/api/tools/:accountId/disconnect', class: 'technical', allow: ['inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

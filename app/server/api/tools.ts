@@ -14,54 +14,18 @@ import { readBody, writer } from '../db/handler-kit.ts'
 import type { At } from '../db/members.ts'
 import { apiError, apiJson } from '../http.ts'
 import type { Handler, HandlerContext } from '../routes.ts'
+import type { AccountSummary, ConnectGateway, HubError } from '../../hub/index/contract.ts'
+import type { ConnectorAccount } from '../db/connector-accounts.ts'
 import { TOOL_CATALOG, catalogByAccount } from './tools-catalog.ts'
 import type { CatalogEntry } from './tools-catalog.ts'
 
-// ---- The hub's `ConnectGateway` (p5-w1.md section 3, H0's `AccountStatus` fields), mirrored for the types this file uses. ----
-// Replace these with `import type` from the hub's contract once W1 is on the branch (part 2 of the W3 brief).
-export type Instant = { iso: string; ms: number }
-export type HubErrorCode =
-  | 'invalid_args' | 'unknown_tool' | 'write_refused' | 'not_configured' | 'credentials_rejected' | 'scope_mismatch' | 'key_unavailable'
-  | 'upstream_unavailable' | 'upstream_rejected' | 'upstream_version_mismatch' | 'rate_limited' | 'result_too_large' | 'internal'
-  | 'state_invalid' | 'workspace_mismatch' | 'connect_stale' | 'connect_refused' | 'paused'
-export type HubError = { code: HubErrorCode; message: string; retryAfterMs?: number }
-export type HubResult<T> = { ok: true; value: T } | { ok: false; error: HubError }
-export type CallerScope = { kind: 'server'; job: string; requestId: string }
-export interface AccountSummary {
-  accountId: string
-  connector: string
-  configured: boolean
-  status: {
-    accountId: string
-    state: 'empty' | 'active' | 'failed' | 'disconnected'
-    kid: string | null
-    expiresAt: Instant | null
-    scopes: string[]
-    lastError: { code: HubErrorCode; at: Instant } | null
-    paused: boolean
-    kind: 'client_credentials' | 'oauth_mcp'
-    connectedBy: string | null
-    connectedAt: Instant | null
-    revokeFailedAt: Instant | null
-    needsReconnect: boolean
-  }
-}
-export interface ConnectGateway {
-  /** Must be idempotent: route E calls it again on a retry after a failed row write (the hub is already `disconnected`). */
-  disconnect(scope: CallerScope, accountId: string): Promise<HubResult<{ revoked: boolean }>>
-  setPaused(scope: CallerScope, accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>>
-  listAccounts(scope: CallerScope): Promise<HubResult<AccountSummary[]>>
-}
+/** The ConnectGateway methods these routes call (W1's contract, app/hub/index/contract.ts). */
+export type ToolsGateway = Pick<ConnectGateway, 'listAccounts' | 'setPaused' | 'disconnect'>
+// `disconnect` must be idempotent: route E calls it again on a retry after a failed row write (the hub is already
+// `disconnected`).
 
-/** A `connector_accounts` row (W1's 0300): the product's lifecycle record for the page. */
-export interface ConnectorAccountRow {
-  accountId: string
-  connector: string
-  lastState: 'never' | 'connecting' | 'connected' | 'failed' | 'disconnected'
-  lastStateAtMs: number
-  connectedBy: string | null
-  connectedAtMs: number | null
-}
+/** What the page reads of a `connector_accounts` row (W1's store, `ConnectorAccount`). */
+export type ConnectorAccountRow = Pick<ConnectorAccount, 'accountId' | 'connector' | 'lastState' | 'lastStateAtMs' | 'connectedBy' | 'connectedAtMs'>
 
 /** What route D and route E write to the audit log (`app/shared/contract/audit.ts`'s two new actions). */
 export type ToolsAuditArgs =
@@ -81,14 +45,14 @@ export interface ToolsAccounts {
 }
 
 export interface ToolsDeps {
-  gateway: ConnectGateway
+  gateway: ToolsGateway
   accounts: ToolsAccounts
 }
 
 /** The hub's state TTL for a connect in progress (W1 section 5): an older `connecting` row is an abandoned connect. */
 export const CONNECT_STATE_TTL_MS = 10 * 60 * 1000
 
-const instant = (ms: number): Instant => ({ iso: new Date(ms).toISOString(), ms })
+const instant = (ms: number): { iso: string; ms: number } => ({ iso: new Date(ms).toISOString(), ms })
 /** STUB: the `lastRead.default` until the agent's read times are recorded (the real client's empty value). */
 const NEVER_READ = instant(0)
 
@@ -165,7 +129,7 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
 
 const NoBody = z.object({}).strict()
 
-const scopeOf = (c: HandlerContext, job: string): CallerScope => ({ kind: 'server', job, requestId: c.requestId })
+const scopeOf = (c: HandlerContext, job: string) => ({ kind: 'server' as const, job, requestId: c.requestId })
 
 /**
  * The hub's failure as the API's: `not_configured` is a 409 with its reason, `rate_limited` a 429 (with `Retry-After`
