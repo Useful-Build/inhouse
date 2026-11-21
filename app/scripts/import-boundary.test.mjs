@@ -37,15 +37,21 @@ describe('the P5 import boundary', () => {
       'server/egress/c.ts': "import { postToSlack } from '../notify-slack/post.ts'\nexport const c = postToSlack\n",
       'server/egress/d.ts': "import type { ConnectGateway } from '../../hub/index/contract.ts'\nexport const d: ConnectGateway | null = null\n",
       'server/egress/deep/e.ts': "import type { DeliveryGateway } from '../../../hub/index/contract.ts'\nexport const e: DeliveryGateway | null = null\n",
+      // P5 W4 (B2, 2026-11-21): the notifications tool's handler and its delivery types are off limits too.
+      'server/egress/f.ts': "import { notificationSend } from '../mcp/tools/notifications/send.ts'\nexport const f = notificationSend\n",
+      'server/egress/g.ts': "import { handlers } from '../mcp/tools/notifications/index.ts'\nexport const g = handlers\n",
+      'server/egress/h.ts': "import type { PostNoticeRequest } from '../../hub/index/contract.ts'\nexport const h: PostNoticeRequest | null = null\n",
     })
     expect(r.status).toBe(1)
     const hits = lines(r.out)
-    for (const file of ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts']) expect(hits.some(l => l.includes(`/${file}:`)), file).toBe(true)
+    for (const file of ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts', 'h.ts']) expect(hits.some(l => l.includes(`/${file}:`)), file).toBe(true)
   })
 
   test("the egress may use the hub's ReadGateway types, and other folders aren't bound by the rule", () => {
     const r = lint({
       'server/egress/fine.ts': "import type { ReadGateway } from '../../hub/index/contract.ts'\nexport const f: ReadGateway | null = null\n",
+      // P5 W4: the one allowed import from the notifications tool, its opaque deps factory.
+      'server/egress/deps-ok.ts': "import { notifyDeps } from '../mcp/tools/notifications/deps.ts'\nexport const n = notifyDeps\n",
       'server/api/other.ts': "import { startConnect } from './connect.ts'\nimport type { ConnectGateway } from '../../hub/index/contract.ts'\nexport const o: [unknown, ConnectGateway | null] = [startConnect, null]\n",
     })
     expect(lines(r.out)).toEqual([])

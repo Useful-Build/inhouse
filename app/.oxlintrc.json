@@ -39,9 +39,13 @@
                   "**/api/tools",
                   "**/api/tools.ts",
                   "**/notify-slack",
-                  "**/notify-slack/**"
+                  "**/notify-slack/**",
+                  "**/tools/notifications/send",
+                  "**/tools/notifications/send.ts",
+                  "**/tools/notifications/index",
+                  "**/tools/notifications/index.ts"
                 ],
-                "message": "P5 import boundary (p5-orchestrator.md section 2): the runner's egress never reaches the connect, tools or Slack delivery server code."
+                "message": "P5 import boundary (p5-orchestrator.md section 2): the runner's egress never reaches the connect, tools or Slack delivery server code. From the notifications tool, only its deps.ts factory (notifyDeps) is allowed."
               },
               {
                 "group": [
@@ -50,7 +54,9 @@
                 ],
                 "importNames": [
                   "ConnectGateway",
-                  "DeliveryGateway"
+                  "DeliveryGateway",
+                  "PostNoticeRequest",
+                  "SlackChannel"
                 ],
                 "message": "P5 import boundary: the egress may use the hub's ReadGateway types only, never ConnectGateway or DeliveryGateway."
               }
