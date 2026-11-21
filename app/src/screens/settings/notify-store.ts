@@ -91,7 +91,7 @@ export function createNotifyStore(deps: { agent: NotifyAgent; toast: (text: stri
       if (e instanceof AgentError && e.code === 'conflict' && !e.reason) {
         // A stale rev: the latest list, from the answer when it carried one, else read again.
         if (e.current) set({ list: e.current as unknown as NotifyChannelList })
-        else void read()
+        else if (open) void read()
         deps.toast(STALE_TEXT)
       } else if (e instanceof AgentError && e.reason && Object.hasOwn(SAVE_REFUSED, e.reason)) {
         deps.toast(SAVE_REFUSED[e.reason as keyof typeof SAVE_REFUSED](nameOf(e.current)))

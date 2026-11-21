@@ -177,6 +177,24 @@ describe('routes F, G and H', () => {
     // Adding one still needs Slack.
     const added = await json(await put(p, paused, { channelIds: ['C0TEST0002', 'C0TEST0001'], ifRev: r0 + 3 }))
     expect([added.status, (added.body.error as { reason: string }).reason]).toEqual([503, 'slack_not_connected'])
+    // Kept channels were asked too (best effort), and their failures didn't stop the saves.
     expect(calls).toEqual(['check:server:C0TEST0001', 'check:server:C0TEST0002'])
+  })
+
+  it('review round 2: a rename at Slack, and two kept channels swapping names, reach the list through the route', async () => {
+    const { hub } = fakeHub()
+    const p = await admin()
+    await db.prepare('DELETE FROM notify_channels').run()
+    const r0 = await rev()
+    expect((await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 })).status).toBe(200)
+    const named = (names: Record<string, string>) => ({ ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => ({ ok: true as const, value: { ...SLACK[req.channelId]!, name: names[req.channelId] ?? SLACK[req.channelId]!.name } }) })
+    const renamed = await json(await put(p, named({ C0TEST0002: 'general-chat' }), { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 + 1 }))
+    expect(renamed.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general-chat', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: false }] })
+    const swapped = await json(await put(p, named({ C0TEST0001: 'general-chat', C0TEST0002: 'ops-alerts' }), { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 + 2 }))
+    expect(swapped).toEqual({ status: 200, body: { rev: r0 + 3, channels: [{ channelId: 'C0TEST0001', name: 'general-chat', alerts: false }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] } })
+    // A kept channel that became shared still saves (its posts are refused at the hub); a thrown check keeps the name.
+    const shared = { ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => (req.channelId === 'C0TEST0001' ? { ok: true as const, value: { ...SLACK.C0TEST0001!, name: 'general-chat', shared: true } } : Promise.reject(new Error('hub down'))) }
+    const kept = await json(await put(p, shared as never, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 + 3 }))
+    expect(kept.body).toEqual({ rev: r0 + 4, channels: [{ channelId: 'C0TEST0001', name: 'general-chat', alerts: true }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] })
   })
 })

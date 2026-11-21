@@ -69,4 +69,23 @@ describe('notice channel calls', () => {
     const c = server(503, { error: { code: 'unavailable', reason: 'slack_not_connected' } })
     await expect(readAvailableChannels(c.transport)).rejects.toMatchObject({ code: 'unavailable', reason: 'slack_not_connected' })
   })
+
+  test("HttpAgent passes a stale save's current list on only when it parses (review round 2)", async () => {
+    const { HttpAgent } = await import('./client')
+    const agentWith = (current: unknown) => new HttpAgent({
+      fetch: async (input, init) => (String(input) === '/api/notify/channels' && init?.method === 'PUT'
+        ? new Response(JSON.stringify({ error: { code: 'conflict', current } }), { status: 409, headers: { 'Content-Type': 'application/json' } })
+        : new Response(JSON.stringify({ error: { code: 'unavailable' } }), { status: 503, headers: { 'Content-Type': 'application/json' } })),
+      now: () => 5000,
+    })
+    const good = await agentWith(LIST).saveNotifyChannels({ channelIds: [], ifRev: 1 }).catch((x: unknown) => x)
+    expect(good).toBeInstanceOf(AgentError)
+    expect(good).toMatchObject({ code: 'conflict', current: LIST })
+    for (const bad of [{ rev: 'x', channels: [] }, { rev: 1, channels: [{ channelId: 'U0TEST0001', name: 'dm', alerts: false }] }, { anything: true }]) {
+      const e = await agentWith(bad).saveNotifyChannels({ channelIds: [], ifRev: 1 }).catch((x: unknown) => x)
+      expect(e).toBeInstanceOf(AgentError)
+      expect((e as AgentError).code).toBe('conflict')
+      expect((e as AgentError).current, JSON.stringify(bad)).toBeUndefined()
+    }
+  })
 })

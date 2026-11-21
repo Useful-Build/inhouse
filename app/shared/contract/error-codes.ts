@@ -22,8 +22,9 @@ export const REASON = {
   notConfigured: 'not_configured', notDisconnectable: 'not_disconnectable', notConnected: 'not_connected',
 } as const satisfies Record<string, ErrorReason>
 /**
- * P5 (p5-w4): the notice channel list's refusals, a separate object so Today's first load (which reads REASON) doesn't
- * carry them: only the Settings page and the demo's lazily loaded channel list name them.
+ * P5 (p5-w4): the notice channel list's refusals. Kept apart from REASON because a bundler keeps a used object literal
+ * whole: keys added to REASON would ride in Today's first load (some 0.1 KB gzipped), while this export is read only by
+ * the Settings page and the demo's lazily loaded channel list. Most of #275's bundle saving is the dynamic imports.
  */
 export const NOTIFY_REASON = {
   sharedChannel: 'shared_channel', archived: 'archived', notPublic: 'not_public', notMember: 'not_member', channelNotFound: 'not_found',

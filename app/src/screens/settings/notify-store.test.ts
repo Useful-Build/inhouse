@@ -138,10 +138,12 @@ describe('the Slack notices store', () => {
     await slow.store.retry()
     const first = slow.store.add('C0TEST0005')
     expect(slow.store.getSnapshot().busy).toBe(true)
-    await slow.store.remove('C0TEST0002')
+    const second = slow.store.remove('C0TEST0002')
+    // Checked before awaiting: a regression would send (and wait on) a second save.
     expect(f.saves.length).toBe(1)
     release()
-    await first
+    await Promise.all([first, second])
+    expect(f.saves.length).toBe(1)
     expect(slow.store.getSnapshot().busy).toBe(false)
   })
 
@@ -161,5 +163,20 @@ describe('the Slack notices store', () => {
     answer(LIST)
     await settle()
     expect(f.store.getSnapshot().list).toBeNull()
+  })
+
+  it('a stale save without a current list after the page closed reads nothing', async () => {
+    let reads = 0
+    let reject!: (e: unknown) => void
+    const f = fake({ listNotifyChannels: async () => { reads++; return LIST }, saveNotifyChannels: () => new Promise((_, r) => { reject = r }) })
+    const close = f.store.open(false)
+    await f.store.retry()
+    const before = reads
+    const saving = f.store.setAlerts(null)
+    close()
+    reject(new AgentError('conflict', 'x'))
+    await saving
+    await settle()
+    expect(reads).toBe(before)
   })
 })

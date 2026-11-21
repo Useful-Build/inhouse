@@ -68,14 +68,22 @@ export async function putNotifyChannels(c: NotifyRouteCtx): Promise<Response> {
   const current = await store.list()
   if (current.rev !== body.ok.ifRev) return apiError('conflict', { current })
   const ids = [...new Set(body.ok.channelIds)]
-  // Only an ADDED channel is checked at Slack here (B2, review round 1): a kept one keeps its stored name and is
-  // re-checked on every post, so removing a channel or moving the alerts mark still saves while Slack is paused.
+  // An ADDED channel must pass Slack's check here. A kept one is asked too, best effort, only for a fresh name (B2,
+  // review rounds 1 and 2): any hub error keeps the stored name and still saves, and its refusal flags are ignored
+  // (every post re-checks the channel), so removing a channel or moving the alerts mark saves while Slack is paused.
   const listed = new Map(current.channels.map(ch => [ch.channelId, ch]))
   const checked: { channelId: string; name: string }[] = []
   for (const channelId of ids) {
     const kept = listed.get(channelId)
     if (kept) {
-      checked.push({ channelId, name: kept.name })
+      let name = kept.name
+      try {
+        const r = await gateway(c).checkChannel(scope(c), { accountId: SLACK, channelId })
+        if (r.ok) name = r.value.name
+      } catch {
+        // Best effort: the stored name stays.
+      }
+      checked.push({ channelId, name })
       continue
     }
     let r: Awaited<ReturnType<ChannelsBinding['checkChannel']>>
