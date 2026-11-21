@@ -9,6 +9,9 @@ import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ChatView } from '../screens/chat/view'
 import { NO_MODEL_TEXT, RELOAD_NOTE, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from '../screens/chat/notes'
 import { productStage } from './stage'
+import { heldFile, dropFile } from './pending-files'
+import { uploadPending } from '../screens/chat/upload'
+import { UploadCancelled } from '../agent/http/transport'
 import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/upgrade-times'
 import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
@@ -695,6 +698,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   /** Tokens of runs that finished, and of runs dropped here while their send was still on its way: what a late send answer needs to know. */
   const ended = new Set<number>()
   const cancelledSends = new Set<number>()
+  /** The upload of a send that is still putting its files on the server, by the send's token: Stop ends it. */
+  const uploadAborts = new Map<number, AbortController>()
   /** A message's id when it was first shown here (`local-…`) to the stable one the run gave it: Undo of a Regenerate looks it up. */
   const renamed = new Map<string, string>()
   /** Forgets a chat's run here: its later events are ignored (its token is gone). The agent's run goes on, or is ended by whatever asked. */
@@ -716,7 +721,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     const waiting = own(get().views, chatId)
     if (r.turnId) agent.stop(r.turnId).catch(logFailure('could not stop the answer'))
     else if (r.runId && waiting?.budgetWait && waiting.queued[0]) agent.stop(waiting.queued[0].turnId).catch(logFailure('could not stop the answer'))
-    else if (!r.runId) set(s => { const cur = own(s.runs, chatId); return cur ? { runs: { ...s.runs, [chatId]: { ...cur, stopAsked: true } } } : {} })
+    else if (!r.runId) { uploadAborts.get(r.token)?.abort(); set(s => { const cur = own(s.runs, chatId); return cur ? { runs: { ...s.runs, [chatId]: { ...cur, stopAsked: true } } } : {} }) }
     return true
   }
   const stopChat = stopLive
@@ -839,12 +844,37 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set(s => ({ runs: { ...s.runs, [cid]: { runId: null, turnId: null, text: 'Reading your question…', token, sent: [] } } }))
       addTo(cid, { id: local, role: 'user', text: q, quote: o.quote, atts: o.atts.length ? o.atts : undefined })
     }
+    // The real client keeps a file on the server before the message names it (route 39, which needs the chat to exist: its save
+    // goes first). The demo names a made-up id and keeps nothing.
+    const uploaded = new Map<string, string>()
+    const ctl = new AbortController()
     try {
       const { refOf, rememberAttachments } = await loadChat()
+      let refs: { fileId: string; name: string }[] | undefined
+      if (agent.uploadsFiles() && o.atts.length) {
+        const asked = o.atts
+        const showAtts = (list: Attachment[]) => { if (!existing) updateChat(cid, c => ({ ...c, extras: c.extras.map(m => (m.id === local && m.role === 'user' ? { ...m, atts: list.length ? list : undefined } : m)) })) }
+        if (asked.some(a => a.pending !== undefined)) showAtts(asked.map(a => (a.pending === undefined ? a : { ...a, meta: 'Uploading…' })))
+        uploadAborts.set(token, ctl)
+        let up: Awaited<ReturnType<typeof uploadPending>>
+        try {
+          up = await uploadPending(asked, { fileOf: heldFile, upload: (f, signal) => agent.uploadFile(cid, f, signal), signal: ctl.signal, onUploaded: (a, ref) => { uploaded.set(a.pending!, ref.fileId) } })
+        } finally { uploadAborts.delete(token) }
+        for (const a of asked) if (a.pending !== undefined) dropFile(a.pending)
+        showAtts(up.atts)
+        o = { ...o, atts: up.atts }
+        if (up.refused.length) {
+          // The message doesn't go without the files the person chose: the reasons say what to change, and Try again sends the rest.
+          if (own(get().runs, cid)?.token === token && !existing) { forgetRun(cid); cancelledSends.delete(token) }
+          failed(up.refused.map(r => r.text).join(' '))
+          return
+        }
+        refs = up.refs
+      }
       rememberAttachments(o.atts)
       const result = await agent.send(cid, {
         clientTurnKey: key, text: q, ...(o.quote !== undefined ? { quote: o.quote } : {}), priority, model: mode.id,
-        ...(o.replacesRun !== undefined ? { replacesRun: o.replacesRun } : {}), ...(o.atts.length ? { attachments: o.atts.map(refOf) } : {}),
+        ...(o.replacesRun !== undefined ? { replacesRun: o.replacesRun } : {}), ...(refs ? (refs.length ? { attachments: refs } : {}) : o.atts.length ? { attachments: o.atts.map(refOf) } : {}),
       })
       failedSends.delete(`${local}.f`)
       const run = own(get().runs, cid)
@@ -867,6 +897,14 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       }
       if (own(get().runs, cid)?.stopAsked) { agent.stop(result.turnId).catch(logFailure('could not stop the answer')) }
     } catch (e) {
+      // Stop pressed while the files were on their way: nothing was sent, so the message goes as if it was never asked.
+      if (e instanceof UploadCancelled) {
+        if (own(get().runs, cid)?.token === token && !existing) { forgetRun(cid); cancelledSends.delete(token) }
+        if (!existing) updateChat(cid, c => ({ ...c, extras: c.extras.filter(m => m.id !== local) }))
+        return
+      }
+      // Files that did land keep their ids, so Try again doesn't put them on the server twice.
+      if (uploaded.size) o = { ...o, atts: o.atts.map(a => { if (a.pending === undefined || !uploaded.has(a.pending)) return a; const { pending, ...rest } = a; dropFile(pending); return { ...rest, fileId: uploaded.get(pending)! } }) }
       // A refusal by the agent is final; one that only says it couldn't be reached is worth asking again with the same key.
       console.warn('Inhouse: the agent did not take the message.', e)
       if (e instanceof AgentError && e.reason === REASON.sessionDamaged) set(s => ({ views: { ...s.views, [cid]: { ...(own(s.views, cid) ?? emptyView()), damaged: true } } }))

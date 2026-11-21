@@ -384,3 +384,46 @@ describe('spending (route 42)', () => {
     expect(agent.read().resources.models.status).toBe('ready')
   })
 })
+
+describe('uploadFile (route 39) on the chat client', () => {
+  const FILE = 'f_SERVERSERVERSERVERSERV'
+  const kept = { fileId: FILE, kind: 'input', path: `inputs/${FILE}-a.csv`, name: 'a.csv', bytes: 4, contentType: 'text/csv', atMs: 5 }
+  test('it is a real-client capability', async () => {
+    const { agent } = await loaded(reads())
+    expect(agent.uploadsFiles()).toBe(true)
+  })
+
+  test('it waits for the chat\'s own save, and the turn after it names the id the server gave', async () => {
+    let release!: () => void
+    const held = new Promise<void>(r => { release = r })
+    const s = server({
+      ...reads(),
+      'POST /api/chats': { body: chatRow('c1') },
+      'POST /api/chats/c1/attachments': { status: 201, body: kept },
+      'POST /api/chats/c1/turns': { status: 202, body: { runId: 'r_aaaaaaaaaaaaaaaaaaaaaa', turnId: 't_aaaaaaaaaaaaaaaaaaaaaa', messageId: 't_aaaaaaaaaaaaaaaaaaaaaa.u', position: 'starting' } },
+    })
+    const slow: typeof fetch = async (i, init) => { if (String(i).endsWith('/api/chats') && init?.method === 'POST') await held; return s.fetch(i, init) }
+    const agent = new HttpAgent({ fetch: slow, now: () => 5000 })
+    await agent.whenLoaded()
+    void agent.createChat({ id: 'c1', title: 'Hi' })
+    const up = agent.uploadFile('c1', new File(['a,1\n'], 'a.csv'))
+    await new Promise(r => setTimeout(r, 0))
+    expect(s.calls.filter(c => c.path.endsWith('/attachments'))).toHaveLength(0)
+    release()
+    const got = await up
+    expect(got).toEqual({ fileId: FILE, name: 'a.csv' })
+    await agent.send('c1', { clientTurnKey: 'key-0001', text: 'hi', model: 'sonnet', attachments: [got] })
+    const order = s.calls.map(c => `${c.method} ${c.path}`).filter(p => p.includes('/api/chats/c1') || p === 'POST /api/chats')
+    expect(order).toEqual(['POST /api/chats', 'POST /api/chats/c1/attachments', 'POST /api/chats/c1/turns'])
+    expect(json(s.calls.at(-1)!).attachments).toEqual([{ fileId: FILE, name: 'a.csv' }])
+  })
+
+  test('a 401 is the signed-out state; a refusal is not', async () => {
+    const a = await loaded({ ...reads(), 'POST /api/chats/c1/attachments': refusal(401, 'unauthorized') })
+    expect(await errorOf(a.agent.uploadFile('c1', new File(['x'], 'a.csv')))).toMatchObject({ code: 'unauthorized' })
+    expect(a.agent.read().resources.meta).toMatchObject({ status: 'error', error: 'unauthorized' })
+    const b = await loaded({ ...reads(), 'POST /api/chats/c1/attachments': refusal(400, 'invalid', { reason: 'type_not_allowed' }) })
+    expect(await errorOf(b.agent.uploadFile('c1', new File(['x'], 'a.csv')))).toMatchObject({ code: 'invalid', reason: 'type_not_allowed' })
+    expect(b.agent.read().resources.meta).toMatchObject({ status: 'ready' })
+  })
+})

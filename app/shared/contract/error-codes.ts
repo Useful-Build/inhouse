@@ -15,5 +15,7 @@ export const REASON = {
   paused: 'paused', draining: 'draining', modelOff: 'model_off', turnEnded: 'turn_ended', providerChanged: 'provider_changed',
   queueFull: 'queue_full', keyReused: 'key_reused', sessionDamaged: 'session_damaged', waitingAnswer: 'waiting_answer',
   poolFull: 'pool_full', budgetBusy: 'budget_busy', tooMany: 'too_many', badName: 'bad_name',
+  // Route 39 (an attachment's upload).
+  tooLarge: 'too_large', typeNotAllowed: 'type_not_allowed',
 } as const satisfies Record<string, ErrorReason>
 export const RATE_LIMITED = 'rate_limited' satisfies AgentErrorCode
