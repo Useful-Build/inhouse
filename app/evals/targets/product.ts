@@ -17,7 +17,10 @@ import { SEED_PEOPLE } from '../../server/seed/brand.ts'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
 import { createDoor, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
-import type { Case, ChatResult, ExfilSpec, People, PersonKey, RunContext, SeedFact, Session, Target, ToolCall } from '../types.ts'
+import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
+
+/** The eval brand's monthly Spending cap (decision 18: $40 enforced by us; the $60 workspace limit is the outer stop). */
+export const EVAL_CAP = '$40'
 
 export class ProductTargetRefusal extends Error {
   override name = 'ProductTargetRefusal'
@@ -161,7 +164,28 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     const probe = `eval-probe-${rid()}`
     must(await api('current', 'POST', '/api/chats', { json: { id: probe, title: 'Eval probe' } }), 'create the probe chat')
     if (!(await door.hasChat(probe))) throw new ProductTargetRefusal(`refusing: ${EVAL_D1_NAME} does not hold the chat the origin just created, so it is not this deployment's database`)
+    // The O2 note: the brand's own Spending cap is the run's $40 (no second ledger). Pinned here, then read back as the
+    // product reads it: anything else refuses before any case is seeded.
+    await door.setSpendingCap(EVAL_CAP)
+    const { spentUsd } = await room()
+    // A month already at the cap is refused here, not on the first chat (#253 review O1).
+    if (spentUsd >= Number(EVAL_CAP.slice(1))) throw new ProductTargetRefusal(`refusing: this month's spend ($${spentUsd.toFixed(2)}) has reached the ${EVAL_CAP} cap`)
   })())
+
+  /** The month's spend and the cap, from route 42 (the Usage page's numbers) as the Admin eval person. */
+  // Every read refuses unless the cap is still the pinned $40 (#253 review O3): a re-seed's $320 or a Settings change can't
+  // silently lift our layer mid-run.
+  async function room(): Promise<{ spentUsd: number; capUsd: number }> {
+    const u = await api('lena', 'GET', '/api/usage')
+    must(u, 'read the month\'s usage', [200])
+    const cents = (m: unknown, what: string) => {
+      if (!Number.isInteger(m)) throw new Error(`route 42 gave no ${what}`)
+      return (m as number) / 100
+    }
+    const r = { spentUsd: cents(u.json?.total?.minor, 'total'), capUsd: cents(u.json?.cap?.minor, 'cap') }
+    if (Math.round(r.capUsd * 100) !== Number(EVAL_CAP.slice(1)) * 100) throw new ProductTargetRefusal(`refusing: the brand's Spending cap is not ${EVAL_CAP} (route 42 says $${r.capUsd.toFixed(2)})`)
+    return r
+  }
 
   let spentTotal = 0
   let tail: Promise<void> = Promise.resolve()
@@ -173,6 +197,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     provides: new Set<string>(),
     unobservable: unobservableReason,
     spentUsd: () => spentTotal,
+    room,
     async seed(memory: SeedFact[], run: RunContext, exfil?: ExfilSpec): Promise<Session> {
       // One case-repeat at a time: the brand's memory is shared.
       const prev = tail
@@ -314,7 +339,15 @@ function productSession(d: SessionDeps): Session {
         if (o?.signal?.aborted) throw new Error('the chat was aborted')
         const page = await d.api('current', 'GET', `/api/chats/${chatId}`, { signal: o?.signal })
         d.must(page, 'read the chat', [200])
-        const mine = (page.json.messages as { role: string; turnId: string; pos: number; part?: { type: string; text?: string } }[]).filter((m) => m.role === 'agent' && m.turnId === turnId).sort((a, b) => a.pos - b.pos)
+        const messages = page.json.messages as { role: string; turnId: string; pos: number; part?: { type: string; text?: string }; end?: { failure?: string; why?: string } }[]
+        // The turn's end row: the Spending cap fenced it (stop the run, never a pass), or it ended with no answer at all.
+        const end = messages.find((m) => m.role === 'event' && m.turnId === turnId && m.end)?.end
+        if (end?.failure === 'cap_reached' || end?.why === 'cap_reached') throw new CapReachedError(turnId)
+        const mine = messages.filter((m) => m.role === 'agent' && m.turnId === turnId).sort((a, b) => a.pos - b.pos)
+        if (mine.length === 0 && end) {
+          sawError = true
+          break
+        }
         if (mine.length > 0) {
           answer = mine.filter((m) => m.part?.type === 'text').map((m) => m.part!.text ?? '').join('\n\n')
           sawError = mine.some((m) => m.part?.type === 'error')
@@ -356,6 +389,27 @@ function productSession(d: SessionDeps): Session {
   }
 }
 
+/**
+ * The test issuer's private key from its file. Refusals carry a fixed message: a JSON parse error quotes a slice of its
+ * input, and GitHub masks only the whole secret, so a malformed key must never reach the log (ops#14 review N1).
+ */
+export function readIssuerKey(file: string): JWK {
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    throw new ProductTargetRefusal(`refusing: the test issuer's private key file (${EVAL_ISSUER_JWK_FILE}) can't be read`)
+  }
+  let key: unknown
+  try {
+    key = JSON.parse(text)
+  } catch {
+    throw new ProductTargetRefusal('refusing: the test issuer\'s private key file is not valid JSON')
+  }
+  if (typeof key !== 'object' || key === null || Array.isArray(key)) throw new ProductTargetRefusal('refusing: the test issuer\'s private key file is not a JWK object')
+  return key as JWK
+}
+
 /** Signs in with a test-issuer token minted from the deployment's private key (a file), the way the e2e specs do. */
 function defaultSignIn(env: Record<string, string | undefined>): (key: PersonKey) => Promise<Record<string, string>> {
   return async (key) => {
@@ -363,7 +417,7 @@ function defaultSignIn(env: Record<string, string | undefined>): (key: PersonKey
     const aud = env[EVAL_AUD_VAR]
     if (!file || !aud) throw new ProductTargetRefusal(`refusing: ${EVAL_ISSUER_JWK_FILE} and ${EVAL_AUD_VAR} are not both set, so the eval people can't sign in`)
     const who = EVAL_PEOPLE[key]
-    const token = await mintPerson({ sub: who.sub, email: who.email, key: JSON.parse(readFileSync(file, 'utf8')) as JWK, aud })
+    const token = await mintPerson({ sub: who.sub, email: who.email, key: readIssuerKey(file), aud })
     return { 'Cf-Access-Jwt-Assertion': token }
   }
 }

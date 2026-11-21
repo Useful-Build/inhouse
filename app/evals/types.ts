@@ -118,6 +118,22 @@ export interface Target {
   seed(memory: SeedFact[], run: RunContext, exfil?: ExfilSpec): Promise<Session>
   /** Server-reported spend so far in USD, when the target knows it (the product target); else the runner sums. */
   spentUsd?(): number
+  /** The month's spend and the brand's Spending cap, from the product's own usage (the product target, O2 note). */
+  room?(): Promise<{ spentUsd: number; capUsd: number }>
+}
+
+/**
+ * A turn the brand's Spending cap fenced (`cap_reached`, as a failure or a cancel reason on the turn's end row): the run
+ * stops there, and the chat is never graded as a pass (O2 note: the eval brand's $40 cap, decision 18).
+ */
+export class CapReachedError extends Error {
+  override name = 'CapReachedError'
+  readonly turnId: string
+  // No parameter property: node runs evals/ with type stripping only.
+  constructor(turnId: string) {
+    super(`cap reached: the brand's Spending cap fenced turn ${turnId}`)
+    this.turnId = turnId
+  }
 }
 
 export interface CheckVerdict {

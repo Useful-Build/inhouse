@@ -3,7 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { diskResult } from './redact.ts'
-import { renderReadme, type Row } from './report.ts'
+import { renderReadme, type CapStop, type Row } from './report.ts'
 import type { ChatResult } from './types.ts'
 
 /** The runner's `onChat`: one raw file per chat, `{ row, result }`, the result reduced for disk. */
@@ -15,8 +15,10 @@ export function rawWriter(out: string): (row: Row, result: ChatResult | null, ca
 }
 
 /** graded.json, report.json (the report with the run's budget facts) and README.md. */
-export function writeResults(out: string, result: { rows: Row[]; stoppedByBudget: boolean; spentUsd: number }, report: Parameters<typeof renderReadme>[0], topic: string): void {
+export function writeResults(out: string, result: { rows: Row[]; stoppedByBudget: boolean; spentUsd: number; capStop?: CapStop }, report: Parameters<typeof renderReadme>[0], topic: string): void {
   fs.writeFileSync(path.join(out, 'graded.json'), JSON.stringify(result.rows, null, 1))
-  fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify({ ...report, stoppedByBudget: result.stoppedByBudget, spentUsd: result.spentUsd }, null, 1))
-  fs.writeFileSync(path.join(out, 'README.md'), renderReadme(report, topic))
+  // The Spending cap stop (#253), when there was one: the verdict (scripts/nightly/decide.mjs) fails on it.
+  const full = { ...report, stoppedByBudget: result.stoppedByBudget, spentUsd: result.spentUsd, ...(result.capStop ? { capStop: result.capStop } : {}) }
+  fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(full, null, 1))
+  fs.writeFileSync(path.join(out, 'README.md'), renderReadme(report, topic, { capStop: result.capStop }))
 }
