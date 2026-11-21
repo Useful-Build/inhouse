@@ -2,6 +2,7 @@
 // Each write is one `rev`-guarded statement that bumps `rev`, with its audit line in the same batch (guarded on the row
 // the write stamped, as P2's writer does); a schedule or on/off change moves the cursor to now (no backfill). Who may
 // change a routine (its creator or an active Admin) is part of the statement, so a refused write changes nothing.
+import { stripFixed } from '../today/words.ts'
 import { AuditArgsSchema } from '../../shared/contract/audit.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { recordActivity } from '../activity/store.ts'
@@ -230,7 +231,8 @@ export async function runNow(db: D1Database, routineId: string, clientKey: strin
 
 /** A slot's last result in plain words: its `result_text`, else its failure, else how it ended. */
 export function resultWords(s: Pick<SlotRow, 'state' | 'result_text' | 'failure' | 'outcome' | 'reason'>): string {
-  if (s.result_text) return s.result_text
+  // A morning check's tail of normaliser counts (`(fixed: 2 cut)`) is for the eval runner, never for a person.
+  if (s.result_text) return stripFixed(s.result_text)
   if (s.state === 'ended') {
     if (s.failure) return `It stopped with ${s.failure}`
     return s.outcome === 'done' ? 'It finished' : `It was ${s.outcome ?? 'ended'}`

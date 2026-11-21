@@ -33,7 +33,7 @@ export interface Reader {
 
 export interface RunnerEnv {
   nowMs(): number
-  /** Points the product Worker's SHOPIFY_SHOP at `host` (a restart of the test build, or a cheaper switch). */
+  /** Points the product Worker's SHOPIFY_SHOP at `host` (a restart of the test build, confirmed). Throws when it can't be confirmed: the case is refused. */
   useShop(host: string): Promise<void>
   /** A fresh Run now key (32 hex characters, no `.`): each case's own manual slot `now|<routine>|<key>`. */
   newKey(): string
@@ -46,6 +46,8 @@ export interface RunnerEnv {
   reader: Reader
   /** The most one case may take, in ms. */
   caseTimeoutMs: number
+  /** After a case times out, how long to wait for its manual slot to reach a terminal state before the next Run now (else the next case meets `run_open`). */
+  settleMs: number
 }
 
 const ZERO: Fixed = { truncated: 0, dropped: 0, deduped: 0, overflow: 0 }
@@ -76,9 +78,15 @@ export async function observe(reader: Reader, slot: SlotRow): Promise<Observed> 
 
 export async function runCase(env: RunnerEnv, c: MorningCaseMeta): Promise<CaseResult> {
   const started = env.nowMs()
-  await env.useShop(hostOf(c.id))
   const clientKey = env.newKey()
   const slotKey = `now|${ROUTINE_ID}|${clientKey}`
+  try {
+    await env.useShop(hostOf(c.id))
+  } catch (e) {
+    // The shop couldn't be switched or confirmed: no Run now on the wrong store. This case is refused and the run goes on.
+    const observed = { ok: false as const, cause: `shop: ${e instanceof Error ? e.message : String(e)}`, calls: [], fixed: null }
+    return { id: c.id, group: c.group, verdict: grade(c, observed), observed, slotKey: null, failure: null, resultText: null, ms: env.nowMs() - started }
+  }
   try {
     await env.trigger(clientKey)
   } catch (e) {
@@ -95,9 +103,22 @@ export async function runCase(env: RunnerEnv, c: MorningCaseMeta): Promise<CaseR
   }
   const ms = env.nowMs() - started
   if (!slot || !TERMINAL.has(slot.state)) {
+    // A slot that began but never ended would answer the next Run now `run_open`: wait (with a deadline) for it to settle.
+    // If it doesn't, the cascade is recorded: `settled: false` here, and the next case's cause says `trigger: ... run_open`.
+    let settled = true
+    if (slot) {
+      const until = env.nowMs() + env.settleMs
+      let now: SlotRow | null = slot
+      while (now && !TERMINAL.has(now.state) && env.nowMs() < until) {
+        await env.nudge()
+        await env.pause()
+        now = await env.reader.slot(slotKey)
+      }
+      settled = now !== null && TERMINAL.has(now.state)
+    }
     const cause = slot ? 'timed_out' : 'no_slot'
     const observed = { ok: false as const, cause: cause as 'timed_out' | 'no_slot', calls: [], fixed: null }
-    return { id: c.id, group: c.group, verdict: grade(c, observed), observed, slotKey: slot?.slot_key ?? null, failure: null, resultText: null, ms }
+    return { id: c.id, group: c.group, verdict: grade(c, observed), observed, slotKey: slot?.slot_key ?? null, failure: null, resultText: null, ms, ...(slot ? { settled } : {}) }
   }
   const observed = await observe(env.reader, slot)
   return { id: c.id, group: c.group, verdict: grade(c, observed), observed, slotKey: slot.slot_key, failure: slot.failure, resultText: slot.result_text, ms }

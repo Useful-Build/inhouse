@@ -12,7 +12,8 @@ import { intlZone } from '../routines/slots.ts'
 import { cardId, itemId } from './ids.ts'
 import { cardProblem, toProblem } from './problem.ts'
 import { hides } from './store.ts'
-import { fixedWords, incompleteSummary, gapsOfSummary, thingsWords } from './words.ts'
+import { fixedWords, incompleteSummary, gapsOfSummary, stripFixed, thingsWords } from './words.ts'
+import { resultWords } from '../routines/store.ts'
 import { clockWords, todayView } from './view.ts'
 import type { RoutineFacts, SlotFacts } from './view.ts'
 
@@ -149,6 +150,17 @@ describe('the words', () => {
     expect(fixedWords({ truncated: 0, dropped: 0, deduped: 0, overflow: 0 })).toBe('')
     expect(fixedWords({ truncated: 2, dropped: 0, deduped: 1, overflow: 3 })).toBe(' (fixed: 2 cut, 1 repeated, 3 over the cap)')
     expect(gapsOfSummary(null)).toEqual({ areas: [], tooMany: false })
+  })
+  it('the tail of fixed counts never reaches the product text: resultWords drops it, the stored text keeps it', () => {
+    const stored = "found 3 things; couldn't read refunds (fixed: 2 cut, 1 repeated)"
+    expect(stripFixed(stored)).toBe("found 3 things; couldn't read refunds")
+    expect(stripFixed('found 3 things')).toBe('found 3 things')
+    expect(stripFixed('found 1 thing (fixed: 1 cut) and more')).toBe('found 1 thing (fixed: 1 cut) and more')
+    const slot = { state: 'ended' as const, failure: 'incomplete', outcome: 'done', reason: null }
+    expect(resultWords({ ...slot, result_text: stored })).toBe("found 3 things; couldn't read refunds")
+    expect(resultWords({ ...slot, result_text: `found 4 things${fixedWords({ truncated: 1, dropped: 2, deduped: 3, overflow: 4 })}` })).toBe('found 4 things')
+    expect(resultWords({ ...slot, result_text: 'found 4 things' })).toBe('found 4 things')
+    expect(gapsOfSummary(stored).areas).toEqual(['refunds'])
   })
   it('names the clock', () => {
     expect([clockWords('06:00'), clockWords('00:05'), clockWords('12:30'), clockWords('13:07'), clockWords('23:59')]).toEqual(['6:00 AM', '12:05 AM', '12:30 PM', '1:07 PM', '11:59 PM'])

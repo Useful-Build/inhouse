@@ -1,6 +1,6 @@
 // One recorded upstream per case (the hub's test build registers `MORNING_CHECK_UPSTREAMS` in hub/testing/index.ts; the
-// runner points the product Worker's SHOPIFY_SHOP at a case's host). Datasets are built when this module loads, so each
-// start of the hub gives fresh ages: a run is minutes long, never hours. Imports no npm package (bundled into the hub).
+// runner points the product Worker's SHOPIFY_SHOP at a case's host). A dataset is built on its case's first request, so each
+// start of the hub gives fresh ages (a run is minutes long, never hours). Imports no npm package (bundled into the hub).
 import { createShopifyUpstream } from '../shopify/server'
 import { CASES } from './cases'
 import type { MorningCase } from './cases'
@@ -45,9 +45,18 @@ export function upstreamFor(c: MorningCase, nowMs: number): Upstream {
   return c.fault ? withFault(plain, c.fault) : plain
 }
 
-/** Every case's upstream by host, built now. */
-export function morningCheckUpstreams(nowMs: number = Date.now()): Record<string, Upstream> {
-  return Object.fromEntries(CASES.map(c => [hostOf(c.id), upstreamFor(c, nowMs)]))
+/**
+ * The case's upstream, built on its first request with the clock's time, then kept: a dataset's ages are relative to the
+ * moment it is built, and a module is evaluated before the hub has a real clock (workerd's `Date.now()` is 0 until a request
+ * is being handled), so building at load would give every order an age of decades.
+ */
+export function lazyUpstream(c: MorningCase, clock: () => number): Upstream {
+  let built: Upstream | undefined
+  return req => (built ??= upstreamFor(c, clock()))(req)
 }
+
+/** Every case's upstream by host; each builds its dataset on its first request. */
+export const morningCheckUpstreams = (clock: () => number = Date.now): Record<string, Upstream> =>
+  Object.fromEntries(CASES.map(c => [hostOf(c.id), lazyUpstream(c, clock)]))
 
 export const MORNING_CHECK_UPSTREAMS: Record<string, Upstream> = morningCheckUpstreams()

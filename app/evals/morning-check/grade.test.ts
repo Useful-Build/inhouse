@@ -4,14 +4,14 @@
 //  3. the 90% threshold is off by one, or lets a failed clean or outage case through;
 //  4. the runner waits on a fixed sleep, never gives up on a slot that doesn't end, or grades the wrong slot;
 //  5. a result file is overwritten, or loses the normaliser's counts and the failure cause.
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { AMBER, META, RED, hostOf } from './expected.ts'
 import type { MorningCaseMeta } from './expected.ts'
-import { grade, summarise } from './grade.ts'
+import { grade, showsName, summarise } from './grade.ts'
 import type { Observed } from './grade.ts'
 import { openResults, resultPath, writeResults } from './results.ts'
 import { ROUTINE_ID, observe, parseFixed, runAll, runCase } from './runner.ts'
@@ -45,6 +45,20 @@ describe('what fails', () => {
     expect(grade(late, { ...p, items: [{ ...p.items[0], sev: RED }] }).checks.sev).toBe(false)
     expect(grade(late, { ...p, items: [{ ...p.items[0], sources: ['#2001', '#2002'] }] }).checks.sources).toBe(false)
     expect(grade(late, { ...p, items: [{ ...p.items[0], sources: ['#2001', '#2002', '#2003', '#2999'] }] }).pass).toBe(true)
+  })
+  it('a source name must be shown whole: "#2001" is in "Order #2001" but not in "#20011", and a sku is not a prefix of another', () => {
+    expect(showsName('#2001', '#2001')).toBe(true)
+    expect(showsName('Order #2001 (shipped)', '#2001')).toBe(true)
+    expect(showsName('#20011', '#2001')).toBe(false)
+    expect(showsName('#2001-R1', '#2001')).toBe(false)
+    expect(showsName('X#2001', '#2001')).toBe(false)
+    expect(showsName('MC-LOW-2', 'MC-LOW')).toBe(false)
+    expect(showsName('wool socks (MC-LOW)', 'MC-LOW')).toBe(true)
+    expect(showsName('Trail Rain Jacket', 'Trail Rain Jacket')).toBe(true)
+    expect(showsName('anything (a+b)', 'a+b')).toBe(true)
+    const late = byId('late-orders')
+    const p = perfect(late)
+    expect(grade(late, { ...p, items: [{ ...p.items[0]!, sources: ['#20011', '#2002', '#2003'] }] }).checks.sources).toBe(false)
   })
   it('a duplicate key does not equal the set', () => {
     const p = perfect(byId('mixed-a'))
@@ -155,7 +169,7 @@ describe('the runner', () => {
       },
       async nudge() { log.push('nudge') },
       async pause() { now += 1_000 },
-      reader, caseTimeoutMs: 60_000,
+      reader, caseTimeoutMs: 60_000, settleMs: 10_000,
     }
     return { env, log, made }
   }
@@ -206,6 +220,37 @@ describe('the runner', () => {
     expect(file.cases[1]!.verdict.pass).toBe(true)
   })
 
+  it('a shop that can\'t be switched or confirmed refuses that case without a Run now, and the run goes on', async () => {
+    const { env, log } = fakeEnv(perfectAnswer)
+    const real = env.useShop
+    let n = 0
+    env.useShop = async h => { if (++n === 1) throw new Error('the build showing SHOPIFY_SHOP example-mc-late-orders: not within 120 s'); return real(h) }
+    const file = await runAll(env, META.slice(0, 2), { date: '2026-11-22', sha: 'abc1234', model: 'fake' })
+    expect(file.cases[0]).toMatchObject({ verdict: { pass: false }, slotKey: null, observed: { ok: false, cause: expect.stringMatching(/^shop: the build showing SHOPIFY_SHOP/) } })
+    expect(file.cases[1]!.verdict.pass).toBe(true)
+    expect(log.filter(l => l.startsWith('trigger'))).toHaveLength(1)
+  })
+
+  it('after a timeout it waits, with a deadline, for the case\'s slot to settle before the next Run now; if it does, the cascade is not recorded', async () => {
+    const { env } = fakeEnv(() => ({ slot: {}, items: [] }))
+    let polls = 0
+    env.reader.slot = async key => ({ slot_key: key, state: ++polls > 8 ? 'lost' : 'started', failure: null, result_text: null, turn_id: null, claimed_at_ms: 1 })
+    const r = await runCase({ ...env, caseTimeoutMs: 3_000, settleMs: 20_000 }, byId('late-orders'))
+    expect(r.observed).toMatchObject({ cause: 'timed_out' })
+    expect(r.settled).toBe(true)
+  })
+
+  it('a slot that never settles is recorded as `settled: false`, and the next case then fails with the run_open text', async () => {
+    const { env } = fakeEnv(() => ({ slot: {}, items: [] }))
+    env.reader.slot = async key => ({ slot_key: key, state: 'started', failure: null, result_text: null, turn_id: null, claimed_at_ms: 1 })
+    const real = env.trigger
+    let n = 0
+    env.trigger = async k => { if (++n === 2) throw new Error('POST run answered 409: run_open'); return real(k) }
+    const file = await runAll({ ...env, caseTimeoutMs: 3_000, settleMs: 4_000 }, META.slice(0, 2), { date: '2026-11-22', sha: 'abc1234', model: 'fake' })
+    expect(file.cases[0]).toMatchObject({ observed: { cause: 'timed_out' }, settled: false })
+    expect(file.cases[1]!.observed).toMatchObject({ cause: 'trigger: POST run answered 409: run_open' })
+  })
+
   it('gives up on a slot that never appears, at the deadline, without a sleep', async () => {
     const { env } = fakeEnv(() => 'never')
     const r = await runCase(env, byId('late-orders'))
@@ -231,8 +276,8 @@ describe('the runner', () => {
     const crashing = fakeEnv(perfectAnswer)
     let n = 0
     const seen: number[] = []
-    crashing.env.useShop = async () => { if (++n === 3) throw new Error('the build did not come up') }
-    await expect(runAll(crashing.env, some, { date: '2026-11-22', sha: 'abc1234', model: 'fake' }, f => seen.push(f.cases.length))).rejects.toThrow('did not come up')
+    crashing.env.newKey = () => { if (++n === 3) throw new Error('the runner crashed'); return `${'0'.repeat(31)}${n}` }
+    await expect(runAll(crashing.env, some, { date: '2026-11-22', sha: 'abc1234', model: 'fake' }, f => seen.push(f.cases.length))).rejects.toThrow('the runner crashed')
     expect(seen).toEqual([1, 2])
   })
 
@@ -269,6 +314,14 @@ describe('the result file', () => {
     mine.write({ ...base, model: 'two' })
     expect(JSON.parse(readFileSync(mine.path, 'utf8')).model).toBe('two')
     expect(JSON.parse(readFileSync(other, 'utf8')).model).toBe('m')
+  })
+  it('never overwrites a file another run made at the same path, even one made after the path was chosen', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mc-wx-'))
+    const base = { date: '2026-11-22', sha: 'abc1234', model: 'mine', summary: summarise([], META), cases: [] }
+    const mine = openResults(dir, '2026-11-22', 'abc1234')
+    writeFileSync(mine.path, 'another run\n')
+    expect(() => mine.write(base)).toThrow(/EEXIST/)
+    expect(readFileSync(mine.path, 'utf8')).toBe('another run\n')
   })
   it('refuses a malformed date or sha', () => {
     expect(() => resultPath('d', '22-11-2026', 'abc1234')).toThrow()

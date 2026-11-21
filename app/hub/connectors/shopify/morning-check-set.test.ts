@@ -11,7 +11,7 @@ import { AMBER, GAPS, META, OPERATIONS_OF, RED } from '../../../evals/morning-ch
 import { CASES } from '../../../test/upstreams/morning-check/cases'
 import { DAY, HOUR, fixtureStore, healthy } from '../../../test/upstreams/morning-check/datasets'
 import { expectedFindings } from '../../../test/upstreams/morning-check/oracle'
-import { MORNING_CHECK_UPSTREAMS, hostOf, upstreamFor, withFault } from '../../../test/upstreams/morning-check/upstreams'
+import { MORNING_CHECK_UPSTREAMS, hostOf, lazyUpstream, morningCheckUpstreams, upstreamFor, withFault } from '../../../test/upstreams/morning-check/upstreams'
 import { checkDataset } from '../../../test/upstreams/shopify/dataset'
 import { createShopifyUpstream } from '../../../test/upstreams/shopify/server'
 import { call, signInClient } from './test-kit'
@@ -55,6 +55,28 @@ describe('the cases', () => {
   it('the clean stores and the healthy store have no findings', () => {
     for (const c of CASES.filter(x => x.group === 'clean')) expect(expectedFindings(c.build(NOW), NOW), c.id).toEqual([])
     expect(expectedFindings(healthy(NOW), NOW)).toEqual([])
+  })
+})
+
+describe('datasets are built at the first request, with the clock then', () => {
+  it('does not read the clock until a request comes, and reads it once', async () => {
+    let reads = 0
+    const ups = morningCheckUpstreams(() => (++reads, NOW))
+    expect(reads).toBe(0)
+    const host = hostOf('late-orders')
+    const probe = () => ups[host]!(new Request(`https://${host}/admin/oauth/access_token`, { method: 'POST', body: 'grant_type=x' }))
+    await probe()
+    await probe()
+    expect(reads).toBe(1)
+  })
+
+  it('a dataset built at the epoch (what a module evaluated in workerd would get) reads differently from one built now', () => {
+    const c = CASES.find(x => x.id === 'late-orders')!
+    // Built now: the three orders are 5 to 6 days old, amber. Built at 0 and read now: decades old, so red.
+    expect(expectedFindings(c.build(NOW), NOW).map(f => `${f.key}:${f.sev}`)).toEqual(['late-orders:amber'])
+    expect(expectedFindings(c.build(0), NOW).map(f => `${f.key}:${f.sev}`)).toEqual(['late-orders:red'])
+    expect(MORNING_CHECK_UPSTREAMS[hostOf('late-orders')]).toBeTypeOf('function')
+    expect(lazyUpstream(c, () => NOW)).toBeTypeOf('function')
   })
 })
 

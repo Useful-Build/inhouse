@@ -14,6 +14,8 @@ export interface CaseResult {
   failure: string | null
   resultText: string | null
   ms: number
+  /** A timed-out case only: whether its manual slot reached a terminal state before the next case (false: the next Run now meets `run_open`). */
+  settled?: boolean
 }
 
 export interface ResultFile {
