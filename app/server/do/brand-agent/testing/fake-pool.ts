@@ -52,7 +52,7 @@ export class FakeRunnerPool implements RunnerPoolPort {
     if ('ok' in this.warmupAnswer) this.drainAnswer = { ...this.drainAnswer, drainingUntilMs: null }
     return this.warmupAnswer
   }
-  containerExited(runner: string, gen: number) {
+  containerExited(runner: string, gen: number, _cameUp: boolean) {
     this.calls.push({ method: 'containerExited', args: [runner, gen] })
     const key = `${runner} ${gen}`
     if (this.exited.has(key)) return null

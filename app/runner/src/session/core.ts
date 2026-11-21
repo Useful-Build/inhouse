@@ -436,7 +436,9 @@ export async function runSession(deps: {
     terminal = { type: 'failed', reason: 'store', message: `the store doesn't hold the transcript to resume: ${resumeRefused ?? (check.state === 'failed' ? check.error : '')}`.slice(0, 2000) }
   } else if (check.state === 'pending' && !stopping && !abort.signal.aborted && (result !== null || !untouchedResume)) {
     // An unstopped query that ended (with a result, or after writing to the store) without the SDK ever loading the main
-    // transcript: nothing proved the resume ran on the expected transcript. A stop or an interrupt keeps its own end.
+    // transcript: nothing proved the resume ran on the expected transcript. A stop keeps its own end (and so does an
+    // interrupt that fell back to the abort signal); an interrupt the SDK honoured, on a resume that ended before the
+    // transcript loaded, still ends `failed store` here, as intended.
     terminal = { type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' }
   } else if (result !== null && result.subtype === 'error_max_structured_output_retries') {
     // The SDK ran out of attempts at output matching the schema (it throws after this result; that's this, not a crash).
