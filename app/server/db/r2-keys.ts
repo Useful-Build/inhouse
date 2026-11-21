@@ -5,6 +5,7 @@ export const R2_PREFIXES = [
 
   // W3 (p3-w3.md): 'sessions/' (PR 1), 'files/' (PR 2); entries in ops/tables/files.ts.
   'sessions/',
+  // INVARIANT (see CHAT_FILES_PREFIX): every live object here has a chat_files row naming its key.
   'files/',
 
   // W4 (p3-w4.md): the audit log's daily copy (entry in ops/tables/usage.ts).
@@ -23,8 +24,14 @@ export const sessionPrefix = (chatId: string, sessionId: string, projectHash: st
 export const sessionKey = (chatId: string, sessionId: string, projectHash: string, sub: string, part: string): string =>
   `${sessionPrefix(chatId, sessionId, projectHash)}${sub}/${part}.json`
 
+/**
+ * The prefix of every chat file's bytes (the orphan sweep lists it). INVARIANT: every live object under `files/` has a
+ * `chat_files` row naming its key; the sweep deletes old objects with none. Any new holder of a `files/` key must be added
+ * to the sweep's lookup (files-io/orphan-sweep.ts `namedSql`) in the same PR; `orphan-sweep.test.ts` pins the callers.
+ */
+export const CHAT_FILES_PREFIX = 'files/'
 /** A chat file's bytes: `files/<chatId>/<fileId>` (an attachment or an output, p3-design 8.5). */
-export const chatFileKey = (chatId: string, fileId: string): string => `files/${chatId}/${fileId}`
+export const chatFileKey = (chatId: string, fileId: string): string => `${CHAT_FILES_PREFIX}${chatId}/${fileId}`
 
 // W4's key builders (audit-copy/).
 /** One range of the audit log's daily copy: `audit-copy/<date>/<fromId>-<toId>.jsonl` (p3-design section 9). */

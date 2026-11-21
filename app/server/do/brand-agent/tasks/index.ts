@@ -13,6 +13,7 @@ import { auditCopy } from '../../../audit-copy.ts'
 import { createUsageSweep } from '../../../usage/sweep.ts'
 import { turnCalls } from '../turn-calls.ts'
 import { poolRetry } from '../../runner/pool-retry.ts'
+import { chatFileSweep } from '../../../files-io/orphan-sweep.ts'
 
 export const taskHandlers: Readonly<Record<string, TaskHandler>> = {
   // W1
@@ -31,4 +32,6 @@ export const taskHandlers: Readonly<Record<string, TaskHandler>> = {
   'usage-sweep': createUsageSweep(turnCalls),
   // W2
   'pool-retry': poolRetry,
+  // W3 follow-up: the chat file orphan sweep (a seed: ensured due now on every start).
+  'chat-file-sweep': chatFileSweep,
 }
