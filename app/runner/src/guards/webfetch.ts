@@ -10,10 +10,11 @@
 //   (server/do/runner/runner.ts), "A and AAAA lookups for an intercepted hostname return a placeholder address that
 //   routes the request to the intercept", and a `*` target makes "every hostname resolve, including hostnames that do not
 //   exist" (https://developers.cloudflare.com/durable-objects/api/container/, read 2026-11-21). So the check first asks
-//   for a fresh random name under example.com that real DNS doesn't answer; when it resolves, and only to reserved
-//   addresses, DNS is the intercept's, every fetch goes through the egress's own DoH check, and the lookup is skipped
-//   (it would refuse every public host). Not `.invalid`: the sandbox showed the platform resolver NXDOMAINs that
-//   special-use name while it answers example.com with its placeholder (fd00::119:1);
+//   for a fresh random name under example.com that real DNS has no record for; what it answers is the intercept's
+//   placeholder set (the sandbox: fd00::119:1 and an IPv4 address). A host whose every answer is in that set reaches
+//   the intercept, so the egress's own DoH check decides it and the lookup's verdict is skipped (it would refuse every
+//   public host). Any other answer is judged as before, so a resolver that rewrites a name to 127.0.0.1 is still
+//   refused. Not `.invalid`: the platform resolver has no answer for that special-use name;
 // - a list: only those hosts, exactly;
 // - `[]`: none.
 // Three layers:
@@ -32,8 +33,9 @@ import { fetchHostRefusal } from './options.ts'
 
 /**
  * A name real DNS has no record for: a fresh random label under example.com (IANA's documentation domain, which has no
- * wildcard; the label is neutral, so nothing about the product reaches an outside resolver), fully qualified (the trailing dot skips search domains). If it resolves, and only to reserved addresses,
- * the answers are synthetic. A fresh label per probe, so no cache anywhere can answer it from an earlier lookup.
+ * wildcard; the label is neutral, so nothing about the product reaches an outside resolver), fully qualified (the trailing dot skips search domains). Whatever it resolves to
+ * is a placeholder every name gets (the container intercept's). A fresh label per probe, so no cache anywhere can
+ * answer it from an earlier lookup.
  */
 export const dnsProbeHost = (): string => `dns-probe-${randomBytes(6).toString('hex')}.example.com.`
 /** The most resolved addresses a deny reason lists. */
@@ -153,28 +155,31 @@ export async function resolvesToReserved(host: string, own: readonly string[], r
   return (await reservedResolution(host, own, resolve, timeoutMs)).length > 0
 }
 
-/**
- * Whether this process's DNS is synthetic (the container intercept's placeholder): the probe name resolves, and every
- * answer is reserved. A resolver that answers NXDOMAIN with a public address (a hijacking ISP's) reads as real DNS, so
- * the check stays on there. `answers`: what the probe got (null: nothing), for a deny's diagnosis.
- */
-export async function probeDns(resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<{ synthetic: boolean; answers: string[] | null }> {
-  const answers = await lookupWithin(dnsProbeHost(), resolve, timeoutMs)
-  return { synthetic: answers !== null && answers.length > 0 && answers.every((a) => reservedAddress(a)), answers }
+/** What the probe name resolves to (null: no record, a failure or too slow): the placeholders every name gets, if any. */
+export async function probeDns(resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<string[] | null> {
+  return lookupWithin(dnsProbeHost(), resolve, timeoutMs)
 }
+
+/** Whether every one of a host's answers is a placeholder the probe got (so the host reaches the intercept). */
+export const onlyPlaceholders = (answers: readonly string[], placeholders: ReadonlySet<string>): boolean =>
+  answers.length > 0 && answers.every((a) => placeholders.has(a))
 
 export function webFetchHook(domains: readonly string[] | null, hostAddresses: readonly string[] = [], resolve: Resolve = systemResolve): HookCallbackMatcher {
   const listed = domains === null ? null : [...domains]
   const own = [...hostAddresses]
-  // Asked until a yes is seen: the container's DNS stays the intercept's for its life. A no is asked again (real DNS
-  // answers at once that the name has no record).
-  let synthetic = false
+  // The probe's answers, kept only when there are some (real DNS has none, and is asked again each time). A host's
+  // answers outside the kept set ask the probe again, in case the placeholders changed, before they're judged.
+  let placeholders: ReadonlySet<string> | null = null
   const reservedHere = async (host: string): Promise<{ reserved: string[]; probe: string[] | null }> => {
-    if (synthetic) return { reserved: [], probe: null }
-    const p = await probeDns(resolve)
-    // Only ever set to true: a slower probe that failed can't undo a concurrent one that saw the intercept.
-    if (p.synthetic) synthetic = true
-    return { reserved: synthetic ? [] : await reservedResolution(host, own, resolve), probe: p.answers }
+    const answers = await lookupWithin(host, resolve, RESOLVE_TIMEOUT_MS)
+    // A failed or slow lookup lets the call through (best effort: the egress still checks).
+    if (answers === null) return { reserved: [], probe: null }
+    if (placeholders !== null && onlyPlaceholders(answers, placeholders)) return { reserved: [], probe: null }
+    const probe = await probeDns(resolve)
+    // Only replaced by another non-empty answer: a slower probe that failed can't drop what a concurrent one saw.
+    if (probe !== null && probe.length > 0) placeholders = new Set(probe)
+    if (placeholders !== null && onlyPlaceholders(answers, placeholders)) return { reserved: [], probe }
+    return { reserved: answers.filter((a) => reservedAddress(a) || own.includes(a)), probe }
   }
   return {
     matcher: 'WebFetch',
@@ -187,11 +192,11 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
         if (host !== null && listed !== null) return {}
         const { reserved, probe } = host === null ? { reserved: [], probe: null } : await reservedHere(host)
         if (host !== null && reserved.length === 0) return {}
-        // What a public name resolved to here and what the synthetic-DNS probe got (both capped), so a run's visible
-        // refusal shows why the check ran.
+        // What the synthetic-DNS probe got and what a public name resolved to here (both capped), probe first, so a run's
+        // visible refusal shows why the check ran.
         if (listed === null) {
           if (reserved.length === 0) return deny(WEBFETCH_DENY.publicOnly)
-          return deny(`${WEBFETCH_DENY.publicOnly} (${host} resolved here to ${shown(reserved, own)}; probe: ${probe === null || probe.length === 0 ? 'none' : shown(probe, own)})`)
+          return deny(`${WEBFETCH_DENY.publicOnly} (probe: ${probe === null || probe.length === 0 ? 'none' : shown(probe, own)}; ${host} resolved here to ${shown(reserved, own)})`)
         }
         return deny(listed.length === 0 ? WEBFETCH_DENY.off : WEBFETCH_DENY.notListed)
       },
