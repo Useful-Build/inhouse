@@ -88,6 +88,29 @@ export class Transport {
     return parsed.data
   }
 
+  /**
+   * A GET whose answer is a file: its bytes and its `Content-Disposition`, with the same sign-in, timeout and refusals as
+   * `call`. The schemas load only for a refusal, so a download never waits for them.
+   */
+  async download(path: string): Promise<{ blob: Blob; disposition: string | null }> {
+    const headers: Record<string, string> = { Accept: '*/*', ...(await this.extra?.()) }
+    const ctl = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; ctl.abort() }, this.timeoutMs)
+    try {
+      let res: Response
+      try {
+        res = await this.doFetch(this.origin + path, { method: 'GET', headers, credentials: 'same-origin', redirect: 'manual', signal: ctl.signal })
+      } catch {
+        throw timedOut ? new AgentError('unavailable', MESSAGE.unavailable) : new AgentError('offline', MESSAGE.offline)
+      }
+      if (res.type === 'opaqueredirect') throw new AgentError('unauthorized', MESSAGE.unauthorized)
+      if (!res.ok) await this.answer(res, await res.text().catch(() => ''), this.contract())
+      const blob = await res.blob().catch((): never => { throw new AgentError(timedOut ? 'unavailable' : 'offline', timedOut ? MESSAGE.unavailable : MESSAGE.offline) })
+      return { blob, disposition: res.headers.get('Content-Disposition') }
+    } finally { clearTimeout(timer) }
+  }
+
   private async send(method: string, path: string, json: unknown, bytes: Call<Answer>['bytes'], k: Promise<Contract>): Promise<unknown> {
     const headers: Record<string, string> = { Accept: 'application/json', ...(await this.extra?.()) }
     let body: BodyInit | undefined

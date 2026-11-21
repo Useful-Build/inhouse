@@ -23,6 +23,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
 import { MENU, checkField, settingsPage } from './settings/content'
 import { useTheme } from '@/lib/theme'
+import { saveBlob } from '@/lib/save-file'
 import type { Env, FieldType, Row } from './settings/content'
 
 /** Upload and Remove for a person's photo. Saved through the agent, so every avatar updates at once. */
@@ -228,11 +229,7 @@ const TeamMark = () => <span aria-hidden="true" className="flex size-9 items-cen
 
 /** Saves a file from the browser. */
 function download(file: string, text: string, type: string) {
-  const url = URL.createObjectURL(new Blob([text], { type }))
-  const a = document.createElement('a')
-  a.href = url; a.download = file
-  document.body.append(a); a.click(); a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  saveBlob(file, new Blob([text], { type }))
 }
 
 export function Settings() {

@@ -2,7 +2,8 @@
 import { z } from 'zod'
 import { ClockTimeSchema, InstantSchema, StageSchema } from './common.ts'
 
-export const AttachmentSchema = z.object({ name: z.string(), meta: z.string(), icon: z.string() })
+/** `fileId`: the chat file behind the chip (route 41 downloads it); a file only the composer holds has none. */
+export const AttachmentSchema = z.object({ name: z.string(), meta: z.string(), icon: z.string(), fileId: z.string().optional() })
 export type Attachment = z.infer<typeof AttachmentSchema>
 
 export const TablePartSchema = z.object({

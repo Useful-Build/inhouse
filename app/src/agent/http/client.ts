@@ -15,6 +15,7 @@ import type {
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
+import { downloadFile } from './files'
 import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -860,6 +861,7 @@ export class HttpAgent implements AgentClient {
   /** Where the audit log downloads from. A relative path: the browser sends it to its own origin, with its sign-in. */
   auditExportUrl = (): string | null => '/api/audit/export.csv'
   signOutUrl = (): string | null => '/cdn-cgi/access/logout'
+  downloadFile = (fileId: string): Promise<{ blob: Blob; name: string | null }> => downloadFile(this.http, fileId)
 
   // ---------- everything else: the P1 stub, until its phase ----------
 

@@ -73,7 +73,7 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       return v.openRuns.includes(ev.runId) ? v : { ...v, openRuns: [...v.openRuns, ev.runId] }
     case 'turn.queued': {
       if (v.turns[ev.turnId]) return v
-      const atts = ev.attachments.map(a => attOf(a.name))
+      const atts = ev.attachments.map(a => ({ ...attOf(a.name), fileId: a.fileId }))
       const info: TurnInfo = { turnId: ev.turnId, runId, state: 'queued', text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts }
       const q: QueuedTurn = { turnId: ev.turnId, messageId: ev.messageId, text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts, priority: ev.priority }
       return { ...v, turns: { ...v.turns, [ev.turnId]: info }, queued: [...v.queued, q] }
