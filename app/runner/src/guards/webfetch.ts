@@ -27,8 +27,11 @@ import type { HookCallbackMatcher, HookInput, HookJSONOutput } from '@anthropic-
 import { WEBFETCH_DENY } from '../../../shared/protocol/webfetch-denials.ts'
 import { fetchHostRefusal } from './options.ts'
 
-/** A name real DNS never answers (RFC 6761 reserves `.invalid`): if it resolves, the answers are synthetic. */
-export const DNS_PROBE_HOST = 'inhouse-dns-probe.invalid'
+/**
+ * A name real DNS never answers (RFC 6761 reserves `.invalid`), fully qualified (the trailing dot skips search domains):
+ * if it resolves, and only to reserved addresses, the answers are synthetic.
+ */
+export const DNS_PROBE_HOST = 'inhouse-dns-probe.invalid.'
 /** The most resolved addresses a deny reason lists. */
 export const DENY_ADDRESSES_MAX = 4
 
@@ -110,6 +113,12 @@ export function allowedFetchHost(url: unknown, domains: readonly string[] | null
   return domains.includes(host) ? host : null
 }
 
+/** Reserved addresses for a deny reason: zone ids dropped, this container's own named only as such, capped. */
+function shown(reserved: readonly string[], own: readonly string[]): string {
+  const names = [...new Set(reserved.map((a) => (own.includes(a) ? 'an own address' : a.replace(/%.*$/, ''))))]
+  return `${names.slice(0, DENY_ADDRESSES_MAX).join(', ')}${names.length > DENY_ADDRESSES_MAX ? ', ...' : ''}`
+}
+
 const deny = (reason: string): HookJSONOutput => ({
   hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason },
 })
@@ -140,10 +149,14 @@ export async function resolvesToReserved(host: string, own: readonly string[], r
   return (await reservedResolution(host, own, resolve, timeoutMs)).length > 0
 }
 
-/** Whether this process's DNS is synthetic (the container intercept's): the never-answered probe name resolves. */
+/**
+ * Whether this process's DNS is synthetic (the container intercept's placeholder): the never-answered probe name resolves,
+ * and every answer is reserved. A resolver that answers NXDOMAIN with a public address (a hijacking ISP's) reads as real
+ * DNS, so the check stays on there.
+ */
 export async function dnsIsSynthetic(resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<boolean> {
   const addresses = await lookupWithin(DNS_PROBE_HOST, resolve, timeoutMs)
-  return addresses !== null && addresses.length > 0
+  return addresses !== null && addresses.length > 0 && addresses.every((a) => reservedAddress(a))
 }
 
 export function webFetchHook(domains: readonly string[] | null, hostAddresses: readonly string[] = [], resolve: Resolve = systemResolve): HookCallbackMatcher {
@@ -153,7 +166,8 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
   // DNS answers `.invalid` at once with NXDOMAIN).
   let synthetic = false
   const reservedHere = async (host: string): Promise<string[]> => {
-    if (!synthetic) synthetic = await dnsIsSynthetic(resolve)
+    // Only ever set to true: a slower probe that failed can't undo a concurrent one that saw the intercept.
+    if (!synthetic && (await dnsIsSynthetic(resolve))) synthetic = true
     return synthetic ? [] : reservedResolution(host, own, resolve)
   }
   return {
@@ -168,7 +182,7 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
         const reserved = host === null ? [] : await reservedHere(host)
         if (host !== null && reserved.length === 0) return {}
         // The addresses a public name resolved to here (capped), so a run's visible refusal shows what DNS answered.
-        if (listed === null) return deny(reserved.length === 0 ? WEBFETCH_DENY.publicOnly : `${WEBFETCH_DENY.publicOnly} (${host} resolved here to ${reserved.slice(0, DENY_ADDRESSES_MAX).join(', ')}${reserved.length > DENY_ADDRESSES_MAX ? ', ...' : ''})`)
+        if (listed === null) return deny(reserved.length === 0 ? WEBFETCH_DENY.publicOnly : `${WEBFETCH_DENY.publicOnly} (${host} resolved here to ${shown(reserved, own)})`)
         return deny(listed.length === 0 ? WEBFETCH_DENY.off : WEBFETCH_DENY.notListed)
       },
     ],
