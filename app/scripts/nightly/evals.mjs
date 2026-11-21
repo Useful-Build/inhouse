@@ -1,7 +1,11 @@
 // The nightly's eval step: runs the harness on the product target with the budget it's given, then applies decide.mjs.
 //   node scripts/nightly/evals.mjs --max-usd <usd> [--reps 3] [--cases all] [--out <dir>] [--baseline evals/baseline.json]
 //   node scripts/nightly/evals.mjs --from-report <report.json> [--baseline <file>]   (grade an existing run, no model)
-// Env for a live run: INHOUSE_EVAL_BRAND=1 and INHOUSE_EVAL_ORIGIN (the eval deployment sets both; the harness refuses without).
+// Env for a live run (names only; the harness refuses without them): INHOUSE_EVAL_BRAND=1, INHOUSE_EVAL_ORIGIN (the eval deployment's
+// origin), INHOUSE_EVAL_ISSUER_JWK_FILE and INHOUSE_EVAL_AUD (the test issuer's private key file and the brand app's aud: how the eval
+// people sign in), INHOUSE_EVAL_D1_NAME (an inhouse-sbx-* database) and INHOUSE_EVAL_WRANGLER_CONFIG (the sandbox config that binds it),
+// CF_SANDBOX_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (wrangler's door to that D1: it seeds and reads memory). The target also refuses a brand
+// with any member off example.test.
 // Exit 1 on any bypass, failed chats above 10%, or recall or tool choice more than 5 points under the baseline.
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'

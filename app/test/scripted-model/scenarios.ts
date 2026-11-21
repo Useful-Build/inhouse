@@ -21,6 +21,18 @@ const resultOf = (id: string) => (r: MessagesRequest) => {
   return last?.role === 'user' && JSON.stringify(last.content).includes(`"tool_use_id":"${id}"`)
 }
 
+/**
+ * The last user message carries the result of tool call `id`, and its `is_error` is what the scenario expects: `error: true`
+ * wants a refusal, `error: false` wants a call that went through (absent counts as false). A mismatch is a loud miss, so a
+ * WebFetch the egress refused can't pass as an allowed one, nor the other way round.
+ */
+const resultIs = (id: string, error: boolean) => (r: MessagesRequest) => {
+  const last = r.messages.at(-1)
+  if (last?.role !== 'user' || !Array.isArray(last.content)) return false
+  const block = last.content.find((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id) as { is_error?: unknown } | undefined
+  return block !== undefined && (block.is_error === true) === error
+}
+
 const both =
   (...checks: ((r: MessagesRequest) => boolean)[]) =>
   (r: MessagesRequest) =>
@@ -95,6 +107,13 @@ export const STRUCTURED_ANSWER = { late_orders: 3, summary: 'Three orders shippe
 /** How many invalid answers `structured-retries` gives: more than the SDK's retries, so it gives up first. */
 export const STRUCTURED_BAD_TURNS = 12
 
+/** The pages the WebFetch scenarios ask for: a public https page, and a private address the runner hook and the egress both refuse. */
+export const WEBFETCH_ALLOWED_URL = 'https://example.com/'
+export const WEBFETCH_REFUSED_URL = 'https://10.0.0.1/'
+
+/** The fact the `memory-save` scenario saves (a person's own, active at once). */
+export const MEMORY_SAVE_TEXT = 'Likes the weekly stock report as a table.'
+
 export const SCENARIOS: Record<string, Scenario> = {
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
@@ -111,6 +130,30 @@ export const SCENARIOS: Record<string, Scenario> = {
       content: [{ type: 'tool_use' as const, id: `toolu_scripted_bad_${i}`, name: 'StructuredOutput', input: { late_orders: 'many' } }],
       expect: mainLoop('StructuredOutput'),
     })),
+  },
+
+  /** Saves one fact for the person with memory_save, then answers: a chat turn makes a memory line through the API alone (the contract suite's forgetMemory). */
+  'memory-save': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_memory', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_SAVE_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
+      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory')) },
+    ],
+  },
+
+  /** One WebFetch to an allowed public page, then an answer: a test drives a WebFetch through the sandbox (Q2's check). */
+  'webfetch-allowed': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_fetch', name: 'WebFetch', input: { url: WEBFETCH_ALLOWED_URL, prompt: 'Summarise the page' } }], expect: mainLoop('WebFetch') },
+      { content: [{ type: 'text', text: 'Read the page.' }], expect: both(mainLoop('WebFetch'), resultIs('toolu_scripted_fetch', false)) },
+    ],
+  },
+
+  /** The refused twin: one WebFetch to a private address (never reachable, whatever the brand lists), then an answer. */
+  'webfetch-refused': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_fetch_refused', name: 'WebFetch', input: { url: WEBFETCH_REFUSED_URL, prompt: 'Summarise the page' } }], expect: mainLoop('WebFetch') },
+      { content: [{ type: 'text', text: 'The page could not be read.' }], expect: both(mainLoop('WebFetch'), resultIs('toolu_scripted_fetch_refused', true)) },
+    ],
   },
 
   /** Four subagents in flight at once, each answer held until `openParallelHold()`. */

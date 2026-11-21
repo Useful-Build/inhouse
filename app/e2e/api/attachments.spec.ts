@@ -8,6 +8,7 @@ import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { actor, call, endLiveGrants, expectError, me } from './kit.ts'
 import { writeSql } from './db.ts'
+import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
 
 const dana = actor('memberA')
 const leo = actor('memberB')
@@ -137,4 +138,47 @@ test('a file over the 20 MiB cap is refused and nothing is kept', async ({ reque
   expect(r.status, r.text.slice(0, 200)).toBe(400)
   expect(r.json.error.code).toBe('invalid')
   expect((await call(request, dana, 'GET', `/api/chats/${chatId}/files`)).json.items).toEqual([])
+})
+
+// W7 PR 2: what needs a container (the per-PR deployment). A turn on the scripted model saves a file; outputs are the team's
+// (BD11's second sentence), so any person on the brand reads one, while the chat itself stays the owner's.
+test('a file the agent wrote to outputs/ is listed, and downloads for any member as an attachment, byte for byte', async ({ request }) => {
+  needsContainer()
+  const chat = await createChat(request, dana)
+  const sent = await send(request, dana, chat, 'scenario:write-output make the table')
+  expect(textOf(await answerOf(request, dana, chat, sent.turnId))).toBe('Saved outputs/table.csv.')
+  let out: { fileId: string; kind: string; name: string; path: string; bytes: number }[] = []
+  await expect.poll(async () => {
+    const l = await call(request, dana, 'GET', `/api/chats/${chat}/files`)
+    expect(l.status, l.text).toBe(200)
+    out = l.json.items.filter((f: { kind: string }) => f.kind === 'output')
+    return out.length
+  }, { timeout: 60_000, message: 'the saved file in the chat\'s file list' }).toBe(1)
+  expect(out[0]).toMatchObject({ kind: 'output', name: 'table.csv', path: 'outputs/table.csv', bytes: Buffer.byteLength('sku,qty\nA1,3\n') })
+  for (const who of [dana, leo, admin]) {
+    const got = await call(request, who, 'GET', `/api/files/${out[0]!.fileId}`)
+    expect(got.status, got.text).toBe(200)
+    expect(got.text).toBe('sku,qty\nA1,3\n')
+    expect(got.headers['content-disposition']).toMatch(/^attachment;/)
+    expect(got.headers['x-content-type-options']).toBe('nosniff')
+    expect(got.headers['content-security-policy']).toBe("default-src 'none'; sandbox")
+  }
+  // The chat's own file list stays the owner's.
+  for (const other of [leo, admin]) expectError(await call(request, other, 'GET', `/api/chats/${chat}/files`), 404, 'not_found')
+})
+
+test('an attachment is named in the turn that carries it: the send is accepted and the turn answers', async ({ request }) => {
+  needsContainer()
+  const chat = await createChat(request, dana)
+  const up = await upload(request, dana, chat, 'stock list.csv', 'sku,qty\nmug,12\n')
+  expect(up.status, up.text).toBe(201)
+  const sent = await send(request, dana, chat, 'scenario:hello look at the attachment')
+  expect(sent.runId).toBeTruthy()
+  const withFile = await call(request, dana, 'POST', `/api/chats/${chat}/turns`, { json: { clientTurnKey: 'e2e-attach-key-0001', text: 'scenario:hello and again', model: 'sonnet', attachments: [{ fileId: up.json.fileId, name: up.json.name }] } })
+  expect([200, 201, 202], withFile.text).toContain(withFile.status)
+  expect(textOf(await answerOf(request, dana, chat, withFile.json.turnId))).toBe('Hello from the scripted model.')
+  // A file id from another chat is not this chat's input: refused before any run.
+  const otherChat = await createChat(request, dana)
+  const bad = await call(request, dana, 'POST', `/api/chats/${otherChat}/turns`, { json: { clientTurnKey: 'e2e-attach-key-0002', text: 'scenario:hello', model: 'sonnet', attachments: [{ fileId: up.json.fileId, name: up.json.name }] } })
+  expectError(bad, 400, 'invalid')
 })

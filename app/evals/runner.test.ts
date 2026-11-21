@@ -105,6 +105,27 @@ describe('the product target refuses without --paid, a budget and the eval brand
   })
 })
 
+describe('a cost that can\'t be read stops the whole run', () => {
+  it('records "cost unknown" on the row and runs no further chat or case', async () => {
+    let resets = 0
+    const target: Target = {
+      name: 'fake', people: S5_PEOPLE, provides: new Set(['shop', 'mail', 'routines']),
+      seed: async () => ({
+        chat: async (): Promise<ChatResult> => { throw new Error('boom') },
+        settledCostUsd: async () => { throw new Error('the trace could not be read') },
+        reset: async () => { resets++ },
+      }),
+    }
+    const cases = CASES.filter((c) => c.id === 'N01' || c.id === 'N02' || c.id === 'N03')
+    const out = await runEvals({ target, cases, reps: 3, concurrency: 1, budgetUsd: 100 })
+    expect(out.rows).toHaveLength(1)
+    expect(out.rows[0]!.err).toBe('boom; cost unknown: the trace could not be read')
+    expect(out.costUnknown).toBe(true)
+    expect(out.stoppedByBudget).toBe(true)
+    expect(resets).toBe(1) // the session was still reset
+  })
+})
+
 describe('budget, timeout and failures', () => {
   const stub = (cost: number, chat?: Target['seed']): Target => ({
     name: 'fake', people: S5_PEOPLE, provides: new Set(['shop', 'mail', 'routines']),
