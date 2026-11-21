@@ -15,7 +15,9 @@
 //     CONNECT_REDIRECT_URI; P5 W1);
 //   - sets `alias`, `no_bundle` or `build` (each swaps a module or skips the esbuild bundle the bundle scan reads);
 //   - lacks the SIGNIN binding to the hub's own SignIn class, or the migration that creates SignIn on SQLite;
-//   - has a `main` other than hub/index/index.ts.
+//   - has a `main` other than hub/index/index.ts;
+//   - sets `worker_loaders` as anything but exactly one entry `{ "binding": "LOADER" }` (P5 W2's code mode; absent is
+//     allowed: code mode then has no loader).
 // Not checked: `compatibility_flags` (allowed; a flag changes runtime behaviour, not the route, secret or bundle rules).
 // It passes on wrangler.hub.jsonc and must FAIL on wrangler.hub.test.jsonc (CI asserts both). No dependencies: the
 // hub's CI job doesn't install app/. scripts/check-hub-config.test.mjs runs it on one fixture per rule
@@ -136,6 +138,12 @@ export function checkHubConfig(config) {
     fail('signin-migration', 'no migration with `new_sqlite_classes` containing "SignIn"')
   }
   if (config.main !== 'hub/index/index.ts') fail('main', '`main` must be "hub/index/index.ts"')
+  if (has(config, 'worker_loaders')) {
+    const loaders = config.worker_loaders
+    const one = Array.isArray(loaders) && loaders.length === 1 ? loaders[0] : null
+    const exact = one !== null && typeof one === 'object' && !Array.isArray(one) && Object.keys(one).length === 1 && one.binding === 'LOADER'
+    if (!exact) fail('worker-loaders', '`worker_loaders` must be exactly [{ "binding": "LOADER" }] (code mode\'s one loader)')
+  }
   return failures
 }
 
