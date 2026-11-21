@@ -26,7 +26,7 @@ const THE_20 = [
   'team_request_create', 'team_request_list',
 ]
 const THE_6 = ['memory_search', 'memory_save', 'approval_request', 'question_ask', 'history_search', 'notification_send']
-const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'history_search', 'history_read']
+const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'history_search', 'history_read', 'notification_send']
 
 const post = (body: string, headers: Record<string, string> = {}, scope = SCOPE) =>
   handleMcp(new Request('http://egress.internal/mcp/', { method: 'POST', body, headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers } }), scope, { db, now: () => NOW })
