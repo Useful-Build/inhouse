@@ -273,6 +273,13 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/activity': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'GET /api/notifications': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/notifications/read': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 62 to 66 (P4 W5): the Library is brand data (Inhouse under a grant may list, download, delete and restore); the
+  // upload is people only.
+  'GET /api/library': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/uploads': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/library/:id/download': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
