@@ -22,6 +22,8 @@
 		"bindings": [{ "name": "SIGNIN", "class_name": "SignIn" }]
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignIn"] }],
+	// P5 W2: code mode runs scripts in Dynamic Workers (env.LOADER). Exactly this one binding (check-hub-config.mjs).
+	"worker_loaders": [{ "binding": "LOADER" }],
 	// The test upstream seam (hub/testing/) is only in a bundle built with this "true" (wrangler.hub.test.jsonc).
 	"define": {
 		"__INHOUSE_HUB_TEST__": "false"
