@@ -44,6 +44,7 @@ Run them in `app/`.
 | `npm run build` | Type check and production build (the demo build) |
 | `npm run build:product` | The product build into `dist-product/`: no mock, sample data, demo controls or demo clock. `node scripts/check-product-build.mjs` checks it (CI runs both) |
 | `npm run build:product-test` | The test build into `dist-product-test/`: the product Worker with the test issuer compiled in and `wrangler.test.jsonc`. Never deployed |
+| `npm run build:product-eval` | The eval build into `dist-product-eval/`: the test issuer and the eval trace (`@eval-trace`) compiled in, the real model through the gateway (no scripted model), `wrangler.eval.jsonc`. Deployed only to the sandbox, from main, by the ops repo. `check-product-build.mjs` needs it beside the other two |
 | `npm run test-build:migrate` | Apply `server/migrations/` to the test build's local D1 (`.wrangler/test-build`, or `-- --persist-to <dir>`) |
 | `npm run test-build:seed` | Seed that D1 with the invented brand (`server/seed/run.ts`; refuses an unmigrated D1 and fails loud if the seed is missing; same `-- --persist-to <dir>`) |
 | `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone` | The test build's specs (`e2e/api/`, `e2e/real/`), after `npm run build:product-test`. No other run includes them |
@@ -155,9 +156,14 @@ skill before any UI change. Repo specifics:
   test build's, made-up values only, and never deploys. `scripts/check-product-config.mjs` (W1) exits 0 for a
   deployable config, 1 when it refuses one and 2 on usage or a crash; CI requires exactly 1 on `wrangler.test.jsonc`.
 - **The test issuer stays out of the product build:** import it only as `@test-issuer`, never by its path. Only
-  `vite build --mode product-test` resolves that to `server/auth/test-issuer.ts`; every other build gets
-  `server/auth/issuer-off.ts` (same exports, trusting nothing), and `check-product-build.mjs` fails the deployable
-  build on any `test-issuer` module or the canary.
+  `vite build --mode product-test` and `--mode product-eval` resolve that to `server/auth/test-issuer.ts`; every other
+  build gets `server/auth/issuer-off.ts` (same exports, trusting nothing), and `check-product-build.mjs` fails the
+  deployable build on any `test-issuer` module or the canary.
+- **The eval trace stays in the eval build:** import it only as `@eval-trace`. Only `vite build --mode product-eval`
+  resolves that to `server/eval-trace/on.ts`; every other build, the test build included, gets
+  `server/eval-trace/off.ts`, and `check-product-build.mjs` fails the product and test builds on its module or canary
+  and the eval build without them. The eval build never compiles the scripted model, so its egress always takes the
+  gateway (`__INHOUSE_EVAL_BUILD__`).
 - **The test build** is the proof path for the backend: `npm run build:product-test`, then the `api` and `real`
   Playwright projects with `E2E_TEST_BUILD=1` (the `verify` skill has the details). It runs the product Worker under
   `wrangler dev` with a fresh local D1 and a test issuer whose key pair is made per run; only the public half reaches

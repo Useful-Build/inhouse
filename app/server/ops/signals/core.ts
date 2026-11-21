@@ -3,8 +3,10 @@
 // the last one applied, and a lower number applied later on a reused sandbox still reads correctly).
 import type { HandlerEnv } from '../../routes.ts'
 import type { Signal } from './types.ts'
+import { EVAL_BUILD_FLAVOR } from '@eval-trace'
 
 declare const __INHOUSE_TEST_BUILD__: boolean
+declare const __INHOUSE_EVAL_BUILD__: boolean
 
 /**
  * The Worker version's id, from the version metadata binding when the config has one
@@ -16,18 +18,27 @@ export function versionOf(env: HandlerEnv): string | null {
 }
 
 /**
- * The deployed version: a release's config has the `version_metadata` binding (wrangler.product.jsonc), so a Worker
- * without it is misconfigured and fails. Only the test build (compiled in and switched on, as the test issuer is) may run
- * without one, and its detail says so.
+ * The deployed version and the build's flavor (p3-eval-observability rev 2, rec 4): `product`, `test`, or the eval
+ * build's `eval (<canary>)`, so a release can see which bundle answers (the ops repo's release smoke refuses any flavor
+ * but `product`). A release's config has the `version_metadata` binding (wrangler.product.jsonc), so a Worker without it
+ * is misconfigured and fails. A test or eval bundle runs only with its runtime switch on (`INHOUSE_TEST_BUILD === '1'`,
+ * as the test issuer does): without it, it's that bundle under a product config, and fails. With it, it may run without
+ * version metadata, and its detail says so. `compiledTestBuild` and `evalFlavor` are seams for the unit tests (vitest
+ * compiles neither in).
  */
-export function versionSignal(compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__): Signal {
+export function versionSignal(
+  compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__,
+  evalFlavor: string | null = __INHOUSE_EVAL_BUILD__ ? EVAL_BUILD_FLAVOR : null,
+): Signal {
+  const flavor = evalFlavor ?? (compiledTestBuild ? 'test' : 'product')
   return {
     name: 'version',
     async check({ env }) {
       const id = versionOf(env)
-      if (id !== null) return { ok: true, detail: id }
-      const testBuild = compiledTestBuild && (env as { INHOUSE_TEST_BUILD?: unknown }).INHOUSE_TEST_BUILD === '1'
-      return testBuild ? { ok: true, detail: 'no version metadata (test build)' } : { ok: false, detail: 'no version metadata' }
+      const switchedOn = (env as { INHOUSE_TEST_BUILD?: unknown }).INHOUSE_TEST_BUILD === '1'
+      if (compiledTestBuild && !switchedOn) return { ok: false, detail: `${id ?? 'no version metadata'} · ${flavor} build without its switch` }
+      if (id !== null) return { ok: true, detail: `${id} · ${flavor} build` }
+      return compiledTestBuild ? { ok: true, detail: `no version metadata (${flavor} build)` } : { ok: false, detail: 'no version metadata · product build' }
     },
   }
 }

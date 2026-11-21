@@ -6,7 +6,9 @@
 //     not just the newest: latest.ts is retired), or fails when every shipped one is applied beside others;
 //  5. a release without the version metadata binding answers 200 healthy instead of failing the version signal (503);
 //  6. (P3, W2) the pool signals are missing from the list, or an idle pool (no container started, nothing queued) reads
-//     red.
+//     red;
+//  7. (eval build, p3-eval-observability rev 2 rec 4) the version signal doesn't name the build's flavor (product, test or
+//     eval), or a test or eval bundle running without its runtime switch (under a product config) reads green.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { HandlerEnv } from '../routes.ts'
@@ -30,7 +32,7 @@ describe('the health route', () => {
     expect(await call(health)).toEqual({
       status: 200,
       body: { version: 'v-123', ok: true, signals: [
-        { name: 'version', ok: true, detail: 'v-123' }, { name: 'd1', ok: true }, { name: 'migrations', ok: true, detail: `${SHIPPED_MIGRATIONS.length} applied` },
+        { name: 'version', ok: true, detail: 'v-123 · product build' }, { name: 'd1', ok: true }, { name: 'migrations', ok: true, detail: `${SHIPPED_MIGRATIONS.length} applied` },
         { name: 'runs_failed', ok: true, detail: '0 of 0 failed in the last hour' }, { name: 'runs_stuck', ok: true, detail: '0 stuck' },
         { name: 'session_damaged', ok: true, detail: '0 damaged in 24 h' }, { name: 'scheduler', ok: true, detail: '0 quarantined' },
         { name: 'pool_protocol', ok: true }, { name: 'pool_restarts', ok: true }, { name: 'pool_shortfall', ok: true },
@@ -53,16 +55,30 @@ describe('the health route', () => {
       const out = await call(health, { ...bare, env })
       expect(out.status).toBe(503)
       expect(out.body.version).toBeNull()
-      expect(out.body.signals[0]).toEqual({ name: 'version', ok: false, detail: 'no version metadata' })
+      expect(out.body.signals[0]).toEqual({ name: 'version', ok: false, detail: 'no version metadata · product build' })
     }
     // A test build is compiled in and switched on: it may run without one, and says so.
     const testBuild = versionSignal(true)
-    expect(await testBuild.check({ env: { INHOUSE_TEST_BUILD: '1' } as unknown as HandlerEnv, stores })).toEqual({ ok: true, detail: 'no version metadata (test build)' })
-    expect(await testBuild.check({ env: {} as HandlerEnv, stores }), 'compiled in but not switched on').toEqual({ ok: false, detail: 'no version metadata' })
-    expect(await testBuild.check({ env: VERSIONED, stores })).toEqual({ ok: true, detail: 'v-123' })
+    const ON = { INHOUSE_TEST_BUILD: '1' }
+    expect(await testBuild.check({ env: ON as unknown as HandlerEnv, stores })).toEqual({ ok: true, detail: 'no version metadata (test build)' })
+    expect(await testBuild.check({ env: {} as HandlerEnv, stores }), 'compiled in but not switched on').toEqual({ ok: false, detail: 'no version metadata · test build without its switch' })
+    expect(await testBuild.check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · test build' })
     for (const id of ['', 7, undefined]) {
-      expect(await versionSignal(false).check({ env: { CF_VERSION_METADATA: { id } } as unknown as HandlerEnv, stores })).toEqual({ ok: false, detail: 'no version metadata' })
+      expect(await versionSignal(false).check({ env: { CF_VERSION_METADATA: { id } } as unknown as HandlerEnv, stores })).toEqual({ ok: false, detail: 'no version metadata · product build' })
     }
+  })
+  it('names the flavor, and fails a test or eval bundle without its runtime switch (failure 7)', async () => {
+    const ON = { INHOUSE_TEST_BUILD: '1' }
+    const evalBuild = versionSignal(true, 'eval (canary)')
+    expect(await evalBuild.check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · eval (canary) build' })
+    expect(await evalBuild.check({ env: ON as unknown as HandlerEnv, stores })).toEqual({ ok: true, detail: 'no version metadata (eval (canary) build)' })
+    // A test or eval bundle under a product config (version metadata, no switch) is red: that bundle must never answer there.
+    expect(await evalBuild.check({ env: VERSIONED, stores })).toEqual({ ok: false, detail: 'v-123 · eval (canary) build without its switch' })
+    expect(await versionSignal(true).check({ env: VERSIONED, stores })).toEqual({ ok: false, detail: 'v-123 · test build without its switch' })
+    // The product build reads the runtime switch as nothing (the test issuer isn't in it).
+    expect(await versionSignal(false).check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · product build' })
+    // This compile (vitest, as the product build): the defaults name the product flavor.
+    expect(await versionSignal().check({ env: VERSIONED, stores })).toEqual({ ok: true, detail: 'v-123 · product build' })
   })
   it('answers 503 when one fails, and a throwing signal fails alone with its error name only (failures 1 to 3)', async () => {
     const out = await call(healthHandler([

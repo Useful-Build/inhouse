@@ -1,5 +1,5 @@
 // scripts/check-product-build.mjs part 4: the test-build proof is always hard (exit 1 when the test build has no canary),
-// whatever the server folder holds. Builds are fixtures in temp dirs.
+// whatever the server folder holds. Part 5: the eval trace in the eval build only. Builds are fixtures in temp dirs.
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { SCRIPTED_MODEL_CANARY } from '../test/scripted-model/index.ts'
+import { EVAL_TRACE_CANARY } from '../server/eval-trace/on.ts'
 
 const script = fileURLToPath(new URL('./check-product-build.mjs', import.meta.url))
 const CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
@@ -23,16 +24,23 @@ function build(dir, { html = '<p>ok</p>', clientModules = ['src/main.tsx'], work
   return dir
 }
 
-function run({ server = {}, productTest = {}, product: productOpts = {} } = {}) {
+// The eval build as vite.config.ts makes it: the eval trace's module in its graph and its canary in its Worker.
+const EVAL = 'inhouse-eval-trace-canary-5d1e8a40'
+const EVAL_MODULE = 'server/eval-trace/on.ts'
+const EVAL_OK = { workerJs: `const f = 'eval (${EVAL})'`, serverModules: ['server/index.ts', EVAL_MODULE, 'server/eval-trace/off.ts'] }
+
+function run({ server = {}, productTest = {}, product: productOpts = {}, productEval = EVAL_OK } = {}) {
   const tmp = mkdtempSync(join(tmpdir(), 'check-product-build-'))
   const product = build(join(tmp, 'product'), productOpts)
   // The demo build trips parts 1 to 3: a marker canary, a mock module and a public-demo/ file.
   const demo = build(join(tmp, 'demo'), { html: 'inhouse-canary:mock', clientModules: ['src/agent/mock.ts'], extra: { 'client/avatars/a.png': 'x' } })
   const test = build(join(tmp, 'product-test'), productTest)
+  // null: no eval build folder at all.
+  const evalBuild = productEval === null ? join(tmp, 'product-eval') : build(join(tmp, 'product-eval'), productEval)
   const serverDir = join(tmp, 'server')
   mkdirSync(serverDir)
   for (const [rel, text] of Object.entries(server)) put(join(serverDir, rel), text)
-  return spawnSync('node', [script, '--product', product, '--demo', demo, '--product-test', test, '--server', serverDir], { encoding: 'utf8' })
+  return spawnSync('node', [script, '--product', product, '--demo', demo, '--product-test', test, '--product-eval', evalBuild, '--server', serverDir], { encoding: 'utf8' })
 }
 
 const PROOF_FAILED = `no "${CANARY}" in the test build`
@@ -91,4 +99,60 @@ test('nothing imports @scripted-model yet: a note, and a test build without its 
   // A test file importing it doesn't count: only what the Worker can bundle.
   const testOnly = run({ ...ISSUER_OK, server: { ...ISSUER_OK.server, 'egress/model.test.ts': "import { x } from '@scripted-model'" } })
   expect(testOnly.status).toBe(0)
+})
+
+// Part 5 (p3-eval-observability rev 2, rec 1): the eval trace (`@eval-trace`, server/eval-trace/on.ts) is in the eval build
+// and nowhere else; the eval build has no scripted model. Ways it can fail, written down first:
+//  1. the eval trace's canary or module reaches the deployable Worker;
+//  2. it reaches the test build (built from PR code on every PR, so its `io` path must not ride along);
+//  3. the eval build has no canary or no module, so the scan proves nothing (it scanned the wrong folder, or the alias
+//     stopped resolving to on.ts);
+//  4. the eval build carries the scripted model (a paid eval would grade it);
+//  5. the canary written here drifts from the module's and the script's.
+test('the eval canary is the module\'s and the script\'s (failure 5)', () => {
+  expect(EVAL_TRACE_CANARY).toBe(EVAL)
+  expect(readFileSync(script, 'utf8')).toContain(`const EVAL_CANARY = '${EVAL}'`)
+})
+
+test('the eval build carries the eval trace and the others don\'t: the check passes', () => {
+  const r = run(ISSUER_OK)
+  expect(r.stdout).toContain('ok    eval trace: not in the deployable Worker')
+  expect(r.stdout).toContain('ok    eval trace: not in the test build')
+  expect(r.stdout).toContain('ok    eval trace: caught the eval build')
+  expect(r.status).toBe(0)
+})
+
+test.each([
+  ['its canary in the deployable Worker', 'product', { workerJs: `const f = 'eval (${EVAL})'` }, 'the deployable Worker'],
+  ['its module in the deployable Worker\'s graph', 'product', { serverModules: ['server/index.ts', EVAL_MODULE] }, 'the deployable Worker'],
+  ['its canary in the test build', 'productTest', { workerJs: `const c = '${CANARY}'; const f = '${EVAL}'` }, 'the test build'],
+  ['its module in the test build\'s graph', 'productTest', { workerJs: `const c = '${CANARY}'`, serverModules: ['server/index.ts', EVAL_MODULE] }, 'the test build'],
+])('the eval trace ships: %s fails the check (failures 1, 2)', (_name, where, opts, label) => {
+  const r = run({ ...ISSUER_OK, [where]: opts })
+  expect(r.stderr).toContain(`FAIL  eval trace: ${label}`)
+  expect(r.status).toBe(1)
+})
+
+test.each([
+  ['no canary', { workerJs: 'export default {}', serverModules: ['server/index.ts', EVAL_MODULE] }],
+  ['no module', { workerJs: `const f = 'eval (${EVAL})'`, serverModules: ['server/index.ts', 'server/eval-trace/off.ts'] }],
+])('the eval build has %s: the scan proves nothing and fails (failure 3)', (_name, productEval) => {
+  const r = run({ ...ISSUER_OK, productEval })
+  expect(r.stderr).toContain('FAIL  eval trace: the eval build')
+  expect(r.status).toBe(1)
+})
+
+test.each([
+  ['its canary', { workerJs: `const f = 'eval (${EVAL})'; const s = '${SCRIPTED}'` }],
+  ['its module', { ...EVAL_OK, serverModules: [...EVAL_OK.serverModules, 'test/scripted-model/index.ts'] }],
+])('the scripted model in the eval build (%s) fails the check (failure 4)', (_name, productEval) => {
+  const r = run({ ...ISSUER_OK, productEval })
+  expect(r.stderr).toContain('FAIL  eval trace: the eval build carries the scripted model')
+  expect(r.status).toBe(1)
+})
+
+test('no eval build folder: a usage failure (exit 2), never a pass (failure 3)', () => {
+  const r = run({ ...ISSUER_OK, productEval: null })
+  expect(r.stderr).toContain('product-eval build folder')
+  expect(r.status).toBe(2)
 })
