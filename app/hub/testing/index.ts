@@ -13,6 +13,7 @@
 // - An unregistered host answers 599 with a clear message. Never a real fetch.
 
 import { createShopifyUpstream } from '../../test/upstreams/shopify/server'
+import { MORNING_CHECK_UPSTREAMS } from '../../test/upstreams/morning-check/upstreams'
 import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
@@ -26,6 +27,10 @@ export const testUpstreams = new Map<string, TestUpstream>()
 // The recorded Shopify store (P4 W1): the read fixture as recorded (recordings/fixture/), for the test config's
 // SHOPIFY_SHOP. Unit tests that need the planted edge cases use the hand dataset directly.
 testUpstreams.set('example-fixture.myshopify.com', createShopifyUpstream(shopifyFixtureDataset))
+
+// The graded morning-check set (P4 W3): one invented shop per case (evals/morning-check/), each with its own dataset and
+// fault. The runner points the product Worker's SHOPIFY_SHOP at a case's host.
+for (const [host, upstream] of Object.entries(MORNING_CHECK_UPSTREAMS)) testUpstreams.set(host, upstream)
 
 export async function testUpstreamFetch(req: Request): Promise<Response> {
   const host = new URL(req.url).host
