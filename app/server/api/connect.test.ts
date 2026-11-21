@@ -60,9 +60,9 @@ async function inhouse(s: Stores = stores): Promise<Principal> {
 }
 
 const start = (p: Principal, hub: ConnectBinding, accountId = SLACK) =>
-  startConnect({ ...ctx(stores, p, { method: 'POST', path: `/api/connect/${accountId}/start`, params: { accountId }, nowMs: T }).c, env: { HUB_CONNECT: hub } })
+  startConnect({ ...ctx(stores, p, { method: 'POST', path: `/api/connect/${accountId}/start`, params: { accountId }, nowMs: T }).c, env: { HUB_CONNECT: hub as unknown as Service } })
 const callback = (p: Principal, hub: ConnectBinding, query: string, s: Stores = stores) =>
-  connectCallback({ ...ctx(s, p, { path: `/api/connect/callback?${query}`, nowMs: T }).c, env: { HUB_CONNECT: hub } })
+  connectCallback({ ...ctx(s, p, { path: `/api/connect/callback?${query}`, nowMs: T }).c, env: { HUB_CONNECT: hub as unknown as Service } })
 const row = () => db.prepare('SELECT * FROM connector_accounts WHERE account_id = ?').bind(SLACK).first<Record<string, unknown>>()
 
 beforeEach(async () => {

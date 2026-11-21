@@ -271,7 +271,8 @@ describe('P4 lines (wave-4 PR0)', () => {
 
   it('appends its block after P3\'s, in this order', () => {
     const all = AuditActionSchema.options
-    expect(all.slice(all.indexOf('ops_task_revive'))).toEqual([
+    // P5 W1 appends its block after this one, so the check ends at P4's last action rather than at the list's end.
+    expect(all.slice(all.indexOf('ops_task_revive'), all.indexOf('today.set_aside') + 1)).toEqual([
       'ops_task_revive',
       'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
       'library.uploaded', 'library.deleted', 'library.restored',
@@ -320,6 +321,11 @@ describe('support.access write pairs (P4 review fold)', () => {
 })
 
 describe('P5 (p5-w1): connect lines carry an account id and a closed outcome only', () => {
+  it("appends its block after P4's, in this order", () => {
+    const all = AuditActionSchema.options
+    expect(all.slice(all.indexOf('today.set_aside'))).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect'])
+  })
+
   it('refuses free text, an unknown outcome and an extra field', () => {
     expect(ok({ action: 'tools.connect_start', accountId: 'slack:workspace' })).toBe(true)
     expect(ok({ action: 'tools.connect', accountId: 'shopify:store', outcome: 'ok' })).toBe(true)

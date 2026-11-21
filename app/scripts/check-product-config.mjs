@@ -232,36 +232,43 @@ export function checkPool(config, { sandbox = false } = {}) {
 
 /** The connector hub's Worker name (app/wrangler.hub.jsonc), the one entrypoint the product Worker may bind in P4, and its binding name. */
 const HUB_SERVICE = 'inhouse-hub'
-const HUB_ENTRYPOINT = 'ReadGateway'
-const HUB_BINDING = 'HUB'
-const HUB_KEYS = new Set(['binding', 'service', 'entrypoint'])
-
 /**
- * P4's service rule (p4-h1.md OC 4), on any product-mode config: `services` is exactly the hub's `ReadGateway` as
- * `HUB`, and nothing else. Every entrypoint of a Worker shares its env, so a binding left out is the only way to keep
- * the runner's route off the hub's server methods; any other service is a door this phase didn't plan.
+ * The hub entrypoints the product Worker binds, by binding name, and nothing else (P4 H1's ReadGateway; P5 W1's
+ * ConnectGateway, product server code only). ServerGateway is never bound. Keeping the runner off HUB_CONNECT is code
+ * discipline plus checks (the import-boundary rule, W5's runtime tests), not this config: every module shares `env`.
  */
+const HUB_BINDINGS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway' }
+const HUB_KEYS = new Set(['binding', 'service', 'entrypoint'])
+const HUB_LIST = Object.entries(HUB_BINDINGS).map(([b, e]) => `${b} → ${e}`).join(', ')
+
+/** The services list is exactly the hub's bindings above, each once, with binding, service and entrypoint only. */
 export function checkHub(config) {
   const failures = []
   if (config.services !== undefined && !Array.isArray(config.services)) return ['services must be a list']
   const services = config.services ?? []
   services.forEach((s, i) => {
     if (s?.entrypoint === 'ServerGateway') {
-      failures.push(`services[${i}] binds ServerGateway: in P4 the product Worker binds the hub's ${HUB_ENTRYPOINT} only`)
+      failures.push(`services[${i}] binds ServerGateway: the product Worker binds the hub's ${HUB_LIST} only`)
       return
     }
     if (s?.service !== HUB_SERVICE) {
-      failures.push(`services[${i}] binds ${JSON.stringify(s?.service)}: in P4 the product Worker binds the hub (${HUB_BINDING}) only`)
+      failures.push(`services[${i}] binds ${JSON.stringify(s?.service)}: the product Worker binds the hub (${HUB_LIST}) only`)
       return
     }
-    if (s.binding !== HUB_BINDING) failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its binding is ${HUB_BINDING}`)
+    const expected = Object.hasOwn(HUB_BINDINGS, s.binding) ? HUB_BINDINGS[s.binding] : null
+    if (!expected) {
+      failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its bindings are ${Object.keys(HUB_BINDINGS).join(' and ')}`)
+      return
+    }
     const extra = Object.keys(s).filter(k => !HUB_KEYS.has(k))
     if (extra.length) failures.push(`services[${i}] has ${extra.join(', ')}: the hub entry is binding, service and entrypoint only`)
-    if (s.entrypoint === undefined) failures.push(`services[${i}] binds ${HUB_SERVICE} with no entrypoint (its default export): bind ${HUB_ENTRYPOINT}`)
-    else if (s.entrypoint !== HUB_ENTRYPOINT) failures.push(`services[${i}].entrypoint must be ${HUB_ENTRYPOINT}, not ${JSON.stringify(s.entrypoint)}`)
+    if (s.entrypoint === undefined) failures.push(`services[${i}] binds ${HUB_SERVICE} with no entrypoint (its default export): bind ${expected}`)
+    else if (s.entrypoint !== expected) failures.push(`services[${i}].entrypoint must be ${expected} for ${s.binding}, not ${JSON.stringify(s.entrypoint)}`)
   })
-  const named = services.filter(s => s?.service === HUB_SERVICE).length
-  if (named !== 1) failures.push(`services must name ${HUB_SERVICE} exactly once (found ${named})`)
+  for (const binding of Object.keys(HUB_BINDINGS)) {
+    const n = services.filter(s => s?.service === HUB_SERVICE && s?.binding === binding).length
+    if (n !== 1) failures.push(`services must bind ${binding} exactly once (found ${n})`)
+  }
   return failures
 }
 

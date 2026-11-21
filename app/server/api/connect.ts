@@ -15,10 +15,19 @@ import { apiError, apiJson, SECURITY_HEADERS } from '../http.ts'
 import { storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
 import type { ConnectorLastState } from '../db/connector-accounts.ts'
+import type { HandlerEnv } from '../routes.ts'
 
-/** The ConnectGateway methods these routes call (the `HUB_CONNECT` binding; a fake in tests). */
+/** The ConnectGateway methods these routes call. */
 export type ConnectBinding = Pick<ConnectGateway, 'startConnect' | 'completeConnect' | 'failConnect' | 'listAccounts'>
-export type ConnectCtx = ApiCtx & { env: { HUB_CONNECT: ConnectBinding } }
+/** The generated binding (`HUB_CONNECT: Service`, entrypoint ConnectGateway of inhouse-hub). */
+export type ConnectCtx = ApiCtx & { env: Pick<HandlerEnv, 'HUB_CONNECT'> }
+
+/**
+ * The binding as the hub's contract. `wrangler types` types a service binding to a named entrypoint of another Worker
+ * as a bare `Service` (it can't see the hub's code), so the RPC methods are typed from the hub's plain contract file;
+ * every answer is a HubResult the handlers check.
+ */
+const gateway = (c: ConnectCtx): ConnectBinding => c.env.HUB_CONNECT as unknown as ConnectBinding
 
 const scope = (c: ApiCtx) => ({ kind: 'server' as const, job: 'connect', requestId: c.requestId })
 
@@ -47,7 +56,7 @@ export async function startConnect(c: ConnectCtx): Promise<Response> {
   if (!memberId) return apiError('forbidden')
   const id = ConnectorAccountIdSchema.safeParse(c.params.accountId)
   if (!id.success) return apiError('not_found')
-  const r = await c.env.HUB_CONNECT.startConnect(scope(c), { accountId: id.data, memberId })
+  const r = await gateway(c).startConnect(scope(c), { accountId: id.data, memberId })
   if (!r.ok) {
     const code = r.error.code
     return apiError(API_ERROR[code] ?? (code === 'internal' ? 'unknown' : 'conflict'), API_ERROR[code] || code === 'internal' ? {} : { reason: code })
@@ -76,7 +85,7 @@ export function stateAccountHint(state: string | null): string | null {
 
 /** The hub's state for an account as the row's `last_state` (`listAccounts`); `failed` when the hub can't say. */
 async function hubLastState(c: ConnectCtx, accountId: string): Promise<Exclude<ConnectorLastState, 'connecting'>> {
-  const rows = await c.env.HUB_CONNECT.listAccounts(scope(c))
+  const rows = await gateway(c).listAccounts(scope(c))
   const row = rows.ok ? rows.value.find(r => r.accountId === accountId) : undefined
   if (!row) return 'failed'
   return ({ active: 'connected', failed: 'failed', disconnected: 'disconnected', empty: 'never' } as const)[row.status.state]
@@ -100,7 +109,7 @@ export async function connectCallback(c: ConnectCtx): Promise<Response> {
   const state = q.get('state')
   const code = q.get('code')
   const error = q.get('error')
-  const hub = c.env.HUB_CONNECT
+  const hub = gateway(c)
 
   let outcome: ConnectOutcome
   let confirmed: string | null = null

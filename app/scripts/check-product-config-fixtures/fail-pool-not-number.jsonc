@@ -1,6 +1,6 @@
 // check-product-config fixture: RUNNER_POOL is not a whole number of 2 or more (invented values).
 {
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {
