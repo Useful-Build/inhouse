@@ -12,7 +12,7 @@
 import { fc, test as propTest } from '@fast-check/vitest'
 import { describe, expect, test } from 'vitest'
 import {
-  SandboxNameError, assertCandidateName, assertEvalName, assertPerPrName, assertPrNumber, assertSandboxHost, assertSandboxName,
+  CANDIDATE_HUB, SandboxNameError, assertCandidateName, assertEvalName, assertPerPrName, assertPrNumber, assertSandboxHost, assertSandboxName,
   evalNames, isEvalName, isPerPrName, isSandboxName, perPrNames, prNumberOf,
 } from './names.mjs'
 
@@ -70,7 +70,7 @@ describe('PR numbers, PR names and the candidate rule (failures 1, 2)', () => {
   test('perPrNames gives PR 12 its literal names, and refuses anything but a PR number', () => {
     expect(perPrNames(12)).toEqual({
       worker: 'inhouse-sbx-pr12', d1: 'inhouse-sbx-pr12-db', r2: 'inhouse-sbx-pr12-files', container: 'inhouse-sbx-pr12',
-      image: 'inhouse-sbx-pr12', brand: 'inhouse-sbx-pr12-brand', team: 'inhouse-sbx-pr12-team',
+      image: 'inhouse-sbx-pr12', brand: 'inhouse-sbx-pr12-brand', team: 'inhouse-sbx-pr12-team', hub: 'inhouse-sbx-pr12-hub',
     })
     expect(perPrNames(999999).d1).toBe('inhouse-sbx-pr999999-db')
     for (const pr of [0, -1, 1.5, 1_000_000, '12', NaN, undefined, null]) {
@@ -203,5 +203,15 @@ describe('the rules agree with the reference parser', () => {
     const host = `${label}.${ZONE}`
     if (ok) expect(assertSandboxHost(host, ZONE, rule)).toBe(host)
     else expect(() => assertSandboxHost(host, ZONE, rule)).toThrow(SandboxNameError)
+  })
+})
+
+describe('(P4) the hub names and the eval names', () => {
+  test('the candidate hub and every PR\'s hub are shared or per-PR names, never an eval name; no eval name is a hub', () => {
+    expect(assertCandidateName(CANDIDATE_HUB)).toBe(CANDIDATE_HUB)
+    expect(isEvalName(CANDIDATE_HUB)).toBe(false)
+    for (const pr of [1, 12, 999999]) expect(isEvalName(perPrNames(pr).hub)).toBe(false)
+    expect(Object.values(evalNames())).not.toContain(CANDIDATE_HUB)
+    expect(Object.keys(evalNames())).not.toContain('hub')
   })
 })
