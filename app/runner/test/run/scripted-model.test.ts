@@ -21,8 +21,11 @@ const mainReq = (messages: Msg[], stream = false) =>
 /** A structured run's main-loop request: the CLI adds the StructuredOutput tool when outputFormat is set. */
 const structuredReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }, { name: 'StructuredOutput' }] })
-/** The main-loop request a scenario expects: a structured one for the structured scenarios. */
-const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : mainReq)
+/** A main-loop request with WebFetch in its tool list, as the WebFetch scenarios expect. */
+const webReq = (messages: Msg[]) =>
+  req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }, { name: 'WebFetch' }] })
+/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those. */
+const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : mainReq)
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
@@ -89,6 +92,20 @@ describe('the scripted model', () => {
     expect((await model.handle(req(convo(0), false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
     expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn', 'the request does not match the turn'])
     expect((await model.handle(mainFor(name)(convo(0)), name)).status).toBe(200)
+  })
+
+  it.each([
+    ['webfetch-allowed', 'toolu_scripted_fetch', 'https://example.com/', 'Read the page.'],
+    ['webfetch-refused', 'toolu_scripted_fetch_refused', 'https://10.0.0.1/', 'The page could not be read.'],
+  ])('%s: turn 0 makes one WebFetch to the literal URL; turn 1 answers only a request carrying its result', async (name, id, url, answer) => {
+    const model = createScriptedModel(SCENARIOS)
+    const first = (await (await model.handle(webReq(convo(0)), name)).json()) as { content: { type: string; name?: string; input?: unknown }[] }
+    expect(first.content).toEqual([expect.objectContaining({ type: 'tool_use', name: 'WebFetch', input: { url, prompt: 'Summarise the page' } })])
+    const asked: Msg = { role: 'assistant', content: SCENARIOS[name]!.turns[0]!.content }
+    expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: 'go on' }]), name)).status).toBe(400)
+    const res = await model.handle(webReq([{ role: 'user', content: 'q' }, asked, toolResult(id)]), name)
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe(answer)
   })
 
   it("ask: the resume (turn 1) answers only a request whose last user message carries the question's result", async () => {

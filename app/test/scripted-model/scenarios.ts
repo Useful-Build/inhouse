@@ -95,6 +95,10 @@ export const STRUCTURED_ANSWER = { late_orders: 3, summary: 'Three orders shippe
 /** How many invalid answers `structured-retries` gives: more than the SDK's retries, so it gives up first. */
 export const STRUCTURED_BAD_TURNS = 12
 
+/** The pages the WebFetch scenarios ask for: a public https page, and a private address the runner hook and the egress both refuse. */
+export const WEBFETCH_ALLOWED_URL = 'https://example.com/'
+export const WEBFETCH_REFUSED_URL = 'https://10.0.0.1/'
+
 export const SCENARIOS: Record<string, Scenario> = {
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
@@ -111,6 +115,22 @@ export const SCENARIOS: Record<string, Scenario> = {
       content: [{ type: 'tool_use' as const, id: `toolu_scripted_bad_${i}`, name: 'StructuredOutput', input: { late_orders: 'many' } }],
       expect: mainLoop('StructuredOutput'),
     })),
+  },
+
+  /** One WebFetch to an allowed public page, then an answer: a test drives a WebFetch through the sandbox (Q2's check). */
+  'webfetch-allowed': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_fetch', name: 'WebFetch', input: { url: WEBFETCH_ALLOWED_URL, prompt: 'Summarise the page' } }], expect: mainLoop('WebFetch') },
+      { content: [{ type: 'text', text: 'Read the page.' }], expect: both(mainLoop('WebFetch'), resultOf('toolu_scripted_fetch')) },
+    ],
+  },
+
+  /** The refused twin: one WebFetch to a private address (never reachable, whatever the brand lists), then an answer. */
+  'webfetch-refused': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_fetch_refused', name: 'WebFetch', input: { url: WEBFETCH_REFUSED_URL, prompt: 'Summarise the page' } }], expect: mainLoop('WebFetch') },
+      { content: [{ type: 'text', text: 'The page could not be read.' }], expect: both(mainLoop('WebFetch'), resultOf('toolu_scripted_fetch_refused')) },
+    ],
   },
 
   /** Four subagents in flight at once, each answer held until `openParallelHold()`. */
