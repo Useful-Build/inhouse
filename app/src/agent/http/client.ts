@@ -14,10 +14,14 @@ import type {
   MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SupportGrant, Trace, UsageData,
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
+import type { Problem } from '../../../shared/contract/problem'
+import type { SetAsideReason, SetAsideRecord } from '../../../shared/contract/state'
+import type { TodayAside } from '../../../shared/contract/today'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
 import { ACTIVITY_PAGE, readActivityPage, splitActivity } from './activity'
 import { postNoticesRead, readNotifications } from './bell'
 import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibraryFile } from './library'
+import { putAside, readToday } from './today'
 import { newRunKey, postRoutineRev, postRoutineRun, readRoutines, setRoutineToggle } from './routines'
 import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { listedModels, readModels } from './models'
@@ -33,8 +37,8 @@ import type { Contract, TransportOptions } from './transport'
 const UNAVAILABLE = 'Not connected yet.'
 
 /** The resources this client reads. Every other key has nothing to read until its phase, so it reads as ready and empty. */
-type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library' | 'routines'
-const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library', 'routines'] satisfies readonly Loaded[]
+type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library' | 'routines' | 'problems'
+const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library', 'routines', 'problems'] satisfies readonly Loaded[]
 
 export interface HttpAgentOptions extends TransportOptions {
   /** Epoch ms. The real clock by default; the contract target moves it on (`advance`). */
@@ -152,6 +156,10 @@ interface Slices {
   /** Route 52: the routines (each one's switch is the `r:<id>` toggle in `state`), and the deleted ones (Undo restores them by their rev). */
   routines: RoutineDef[]
   routinesGone: RoutineDef[]
+  /** Route 57: Today's cards (set aside ones left out), the records of every card of the shown run (their `rev` is what the next set-aside sends), and the cards this client set aside (out of `problems` until put back). */
+  problems: Problem[]
+  aside: Record<string, TodayAside>
+  asideStash: Record<string, { problem: Problem; index: number }>
   /** The record revision last read for each setting key (a key never set is absent: rev 0). */
   revs: Record<string, number>
   state: AgentState
@@ -181,7 +189,7 @@ export class HttpAgent implements AgentClient {
   private readonly now: () => number
   private s: Slices = {
     me: null, members: [], membersNext: null, audit: [], auditNext: null, grant: null, memory: EMPTY_DATA.memory, chats: [], chatsNext: null, served: null, modelList: [],
-    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], files: NO_FILES, gone: {}, routines: [], routinesGone: [], revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
+    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], files: NO_FILES, gone: {}, routines: [], routinesGone: [], problems: [], aside: {}, asideStash: {}, revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
   }
   private readonly socket: ChatSocket
   private readonly origin: string
@@ -267,7 +275,7 @@ export class HttpAgent implements AgentClient {
     if (hit && hit.live === live) return hit.data
     // A change to what read() doesn't carry (a setting, a switch) leaves its object alone, so nothing re-renders for it.
     const last = this.lastBuilt
-    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'routines', 'res'] as const).every(k => last.s[k] === this.s[k])
+    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'routines', 'problems', 'res'] as const).every(k => last.s[k] === this.s[k])
     const data = same ? last.data : this.build(live)
     this.dataCache.set(this.s, { live, data })
     this.lastBuilt = { s: this.s, live, data }
@@ -285,6 +293,7 @@ export class HttpAgent implements AgentClient {
       auditLog: this.s.audit,
       memory: this.s.memory,
       routines: this.s.routines,
+      problems: this.s.problems,
       activity: splitActivity(this.s.activity, this.now(), { timeZone: this.s.state.settings['g:tz'] ?? deviceTimeZone(), locale: 'en-US' }),
       ...(this.s.usage ? { usage: this.s.usage, usageMonths: this.s.usageMonths } : {}),
       models: this.s.modelList,
@@ -316,7 +325,7 @@ export class HttpAgent implements AgentClient {
 
   private async loadAll() {
     if (!(await this.loadMeta())) return
-    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines()])
+    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadProblems()])
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
@@ -495,6 +504,31 @@ export class HttpAgent implements AgentClient {
     }
   }
 
+  /**
+   * Route 57. As Activity: the Inhouse team reads it only when asked (each read under a grant writes a support.access line).
+   * The cards come as the server lists them (set aside ones left out); `state.setAside` holds the records of the hidden ones.
+   */
+  private async loadProblems(asked = false) {
+    if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('problems', { status: 'ready' })
+    try {
+      const today = await readToday(this.http)
+      this.commit(this.withToday(this.s, today.items, today.aside))
+      this.setStatus('problems', { status: 'ready' })
+    } catch (e) {
+      if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('problems', { status: 'ready' })
+      this.failStatus('problems', e)
+    }
+  }
+
+  /** The cards and records as given; `state.setAside` is the records of the cards left out (a snooze that has ended lists its card again, so it isn't one). */
+  private withToday(s: Slices, problems: Problem[], aside: Record<string, TodayAside>): Slices {
+    const listed = new Set(problems.map(p => p.id))
+    const setAside: Record<string, SetAsideRecord> = {}
+    for (const [id, r] of Object.entries(aside)) if (r.reason !== null && !listed.has(id)) setAside[id] = { reason: r.reason, at: r.at, by: r.by, loggedAt: r.loggedAt }
+    const asideStash = Object.fromEntries(Object.entries(s.asideStash).filter(([id]) => id in setAside))
+    return { ...s, problems, aside, asideStash, state: { ...s.state, setAside } }
+  }
+
   /** Route 60. The Inhouse team has no bell (the route is the brand team's), so it isn't asked. */
   private async loadNotifications() {
     if (this.s.me?.role === 'inhouse') return this.setStatus('notifications', { status: 'ready' })
@@ -538,7 +572,7 @@ export class HttpAgent implements AgentClient {
    * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
    */
   retry = (resource: ResourceKey): Promise<void> => {
-    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true), routines: () => this.loadRoutines(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
+    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true), routines: () => this.loadRoutines(true), problems: () => this.loadProblems(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
     const running = this.retrying.get(resource)
     if (running) return running
@@ -548,7 +582,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private async reloadMeta() {
-    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines()])
+    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadProblems()])
   }
 
   /** The next page of a list. A second call while one is in flight for the same list does nothing. */
@@ -1266,7 +1300,48 @@ export class HttpAgent implements AgentClient {
   deleteFiles = this.needs((k, ids: string[]) => this.libraryWrite(k, ids, 'delete'))
   restoreFiles = this.needs((k, ids: string[]) => this.libraryWrite(k, ids, 'restore'))
 
-  setAside = (_id: string, _reason: Parameters<AgentClient['setAside']>[1]) => this.refuse()
+  /**
+   * Route 58: a snooze or a dismissal (the card leaves at once), or an Undo (`null`: it comes back). `declined` is P6's, so it
+   * is refused. The write carries the record's rev (C6); a refusal puts the card back (C3) and a conflict takes the server's
+   * record and reads Today again.
+   */
+  setAside = this.needs((k, id: string, reason: SetAsideReason | null): Promise<void> => {
+    if (reason === 'declined') return this.refuse()
+    if (reason !== null && !this.s.problems.some(p => p.id === id)) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
+    const me = this.s.me?.memberId ?? ''
+    const hide = (s: Slices, why: 'snoozed' | 'dismissed'): Slices => {
+      const index = s.problems.findIndex(p => p.id === id)
+      if (index < 0) return s
+      const at = { iso: new Date(this.now()).toISOString(), ms: this.now() }
+      const have = s.aside[id]
+      const aside = { ...s.aside, [id]: { reason: why, at, by: me, loggedAt: at, rev: have?.rev ?? 0 } }
+      const next = this.withToday(s, s.problems.filter(p => p.id !== id), aside)
+      return { ...next, asideStash: { ...next.asideStash, [id]: { problem: s.problems[index], index } } }
+    }
+    const show = (s: Slices): Slices => {
+      const held = s.asideStash[id]
+      const have = s.aside[id]
+      const problems = held ? [...s.problems.slice(0, held.index), held.problem, ...s.problems.slice(held.index)] : s.problems
+      return this.withToday(s, problems, have ? { ...s.aside, [id]: { ...have, reason: null } } : s.aside)
+    }
+    const held = this.s.asideStash[id] !== undefined
+    return this.write({
+      lane: `today:${id}`,
+      apply: s => (reason === null ? show(s) : hide(s, reason)),
+      // The rev as it is when the write leaves (an earlier write on this card may have moved it).
+      send: () => putAside(this.http, k, id, reason, this.s.aside[id]?.rev ?? 0),
+      // A later write on this card is queued and its change is on screen: take in only the rev the server gave.
+      done: (s, record, others) => this.withToday(s, s.problems, { ...s.aside, [id]: others ? { ...(s.aside[id] ?? record), rev: record.rev } : record }),
+      undo: (s, before, others) => (others ? s : this.withToday(s, before.problems, before.aside)),
+      onConflict: (s, current) => {
+        const record = k.ANSWERS.todayAside.safeParse(current)
+        void this.loadProblems(true)
+        return record.success ? this.withToday(s, s.problems, { ...s.aside, [id]: record.data }) : s
+      },
+      // An Undo of a card this client doesn't hold (set aside before a reload) brings it back by reading Today again.
+      after: reason === null && !held ? () => this.loadProblems(true) : undefined,
+    })
+  })
   // ----- routines (P4 W2, routes 53 to 56) -----
 
   /**
