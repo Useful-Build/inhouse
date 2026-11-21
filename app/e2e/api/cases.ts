@@ -30,6 +30,8 @@ export interface RouteCase {
   bytes?: { content: Buffer; contentType: string }
   /** The status of a caller the matrix lets through. */
   passes: number
+  /** Other statuses that are right too (the warm-up route while a container deployment is still warming). */
+  alsoPasses?: number[]
 }
 
 const NO_MEMBER = 'm_e2e_nobody'
@@ -106,7 +108,9 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: 200 },
   // Route 50, the test build's undrain (W2): 200 here (the test build); the product build answers 404 (server/ops/drain.test.ts).
   'DELETE /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: 200 },
-  'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: 503 },
+  // The warm-up has no container to wake on the local test build (503); on a deployed test build with containers (the per-PR
+  // deployment, the same remote detection as chat-kit's needsContainer()) it answers 200 once warmed, and 503 only while warming.
+  'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, ...(process.env.E2E_TEST_BUILD_REMOTE ? { passes: 200, alsoPasses: [503] } : { passes: 503 }) },
   // Route 51 (W1 PR 6): an empty body passes access, then fails its schema (400), so the sweep revives nothing.
   'POST /api/ops/tasks/revive': { design: d('open', [], ['release']), path: '/api/ops/tasks/revive', json: {}, passes: 400 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
