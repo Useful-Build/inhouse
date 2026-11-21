@@ -67,8 +67,8 @@
 	"vars": {
 		"INHOUSE_TEST_BUILD": "1",
 		"INHOUSE_EVAL_BRAND": "1",
+		"TEST_ISSUER_JWKS": "{\"keys\":[{\"kty\":\"EC\",\"crv\":\"P-256\",\"alg\":\"ES256\",\"kid\":\"eval-test\",\"use\":\"sig\",\"x\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"y\":\"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\"}]}",
 		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://test-issuer.invalid\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://inhouse-sbx-eval-brand.zone.example.test\",\"aud\":\"b1a2c3d4e5f60718293a4b5c6d7e8f90b1a2c3d4e5f60718293a4b5c6d7e8f90\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse-sbx-eval-team.zone.example.test\",\"aud\":\"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"}],\"serviceTokens\":{}}",
-		"AUDIT_HASH_KEY": "test-only-audit-hash-key-not-a-secret",
 		"RUNNER_POOL": "2",
 		"AI_GATEWAY_ID": "inhouse-sbx-eval-gateway"
 	},

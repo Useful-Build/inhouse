@@ -80,7 +80,12 @@
 //   - a name or host isn't exactly the eval deployment's (scripts/sandbox/names.mjs `evalNames()`: `inhouse-sbx-eval`,
 //     `-db`, `-files`, and hosts `-brand`, `-team` on SBX_ZONE), which no PR and not the candidate can carry;
 //   - `ai` isn't exactly `{ binding: <name> }`, or vars.AI_GATEWAY_ID isn't a gateway id;
+//   - a var is a Worker secret or has a secret-like name (the product rule; eval holds the real gateway token, so it has
+//     no test-value exception, AUDIT_HASH_KEY included: both go in with `wrangler secret put`), or is any other
+//     `AI_GATEWAY_*` var than AI_GATEWAY_ID;
 //   - vars.INHOUSE_TEST_BUILD or vars.INHOUSE_EVAL_BRAND isn't "1", or INHOUSE_ACCESS lists no app origins;
+//   - vars.TEST_ISSUER_JWKS isn't a JWKS of exactly one public key (no private member: the private half stays in the ops
+//     repo's secret);
 //   - `version_metadata` has no `binding` name (the eval build's version signal, like the test build's, reads green
 //     without one, so the deployment must carry it).
 // The generic product, per-PR and candidate rules are unchanged by it; checkPool's "no gateway on a test build" rule is
@@ -242,7 +247,7 @@ export function checkPool(config, { sandbox = false, evalMode = false } = {}) {
   }
   const testBuild = Object.hasOwn(vars, 'INHOUSE_TEST_BUILD') || Object.hasOwn(vars, 'TEST_ISSUER_JWKS')
   const gateway = config.ai !== undefined || Object.keys(vars).some(k => k.startsWith('AI_GATEWAY')) || (config.secrets?.required ?? []).some(k => String(k).startsWith('AI_GATEWAY'))
-  if (testBuild && gateway && !(sandbox && evalMode)) failures.push('a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway')
+  if (testBuild && gateway && !(sandbox === true && evalMode === true)) failures.push('a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway')
   return failures
 }
 
@@ -478,6 +483,12 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   } else if (evalMode) {
     if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in the eval deployment (the harness signs in through the test issuer)')
     if (config.vars?.INHOUSE_EVAL_BRAND !== '1') fail('vars.INHOUSE_EVAL_BRAND must be "1" in the eval deployment (the eval brand marker)')
+    // No secret in plain vars (#240 review M1): the product rule, with no exception (eval holds the real gateway token).
+    for (const name of Object.keys(config.vars ?? {})) {
+      if (SECRET_VARS.has(name) || SECRET_LIKE.test(name)) fail(`vars.${name} looks like a secret: set secrets with wrangler secret put, never in the config`)
+      else if (name.startsWith('AI_GATEWAY') && name !== 'AI_GATEWAY_ID') fail(`vars.${name} is set: of the gateway's settings only AI_GATEWAY_ID is a var`)
+    }
+    if (!isPublicJwks(config.vars?.TEST_ISSUER_JWKS)) fail('vars.TEST_ISSUER_JWKS must be a JWKS of one public key (the test issuer\'s public half; the private half never leaves the ops repo)')
     if (accessOrigins(config).length === 0) fail('vars.INHOUSE_ACCESS must list the eval hosts as its app origins')
     // The eval build's version signal, like the test build's, reads green without version metadata (the test issuer is
     // compiled in), so its deployment must carry the binding to report which version answers.
@@ -490,6 +501,19 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   // eval mode, the gateway beside the test issuer allowed).
   for (const f of checkPool(config, { sandbox: true, evalMode })) if (!failures.includes(f)) fail(f)
   return failures
+}
+
+/** JWK members that only a private key carries (RFC 7518: EC and OKP `d`, RSA's primes and CRT values, oct `k`). */
+const PRIVATE_JWK_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k']
+/** A JSON string holding `{ keys: [<one public JWK>] }`. */
+function isPublicJwks(text) {
+  if (typeof text !== 'string') return false
+  let jwks
+  try { jwks = JSON.parse(text) } catch { return false }
+  const keys = jwks?.keys
+  if (!Array.isArray(keys) || keys.length !== 1) return false
+  const key = keys[0]
+  return !!key && typeof key === 'object' && !Array.isArray(key) && typeof key.kty === 'string' && !PRIVATE_JWK_MEMBERS.some(m => Object.hasOwn(key, m))
 }
 
 /** A sandbox config: plain JSON only (no comments), a JSON object. Throws a message for a usage error otherwise. */

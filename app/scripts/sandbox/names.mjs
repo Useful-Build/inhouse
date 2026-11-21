@@ -7,7 +7,8 @@
 //     sandbox resources (the candidate Worker, its D1 and R2), never a live product's name.
 //   - eval rule (p3-eval-observability rev 2, rec 2): exactly the eval deployment's names, `inhouse-sbx-eval` and
 //     `inhouse-sbx-eval-<db|files|brand|team>`. Disjoint from the per-PR rule (no `pr<N>`) and refused by the candidate
-//     rule, so neither a PR's deploy or cleanup nor the candidate ever names the eval brand's resources.
+//     rule, so neither a PR's deploy or cleanup nor the candidate ever names the eval brand's resources. Its host rule
+//     takes only the two host names (`-brand`, `-team`).
 //   - host rule: `<name>.<zone>`, where <name> passes the rule asked for and <zone> is exactly the sandbox zone (one
 //     label; a deeper host, the bare zone or another zone fails).
 // JavaScript's `$` (no `m` flag) matches only at the very end, so a trailing newline fails; tests pin that.
@@ -93,7 +94,8 @@ export function assertZone(zone) {
 
 /**
  * Throws unless `host` is `<name>.<zone>` with <name> passing `rule` ('per-pr', optionally for PR `pr`; 'sandbox';
- * 'candidate', a sandbox name that is no PR's and not the eval deployment's; or 'eval', one of the eval deployment's).
+ * 'candidate', a sandbox name that is no PR's and not the eval deployment's; or 'eval', the eval deployment's brand or
+ * team host name).
  * Returns the host.
  */
 export function assertSandboxHost(host, zone, rule, pr) {
@@ -105,7 +107,10 @@ export function assertSandboxHost(host, zone, rule, pr) {
     if (rule === 'per-pr') assertPerPrName(label, pr)
     else if (rule === 'sandbox') assertSandboxName(label)
     else if (rule === 'candidate') assertCandidateName(label)
-    else if (rule === 'eval') assertEvalName(label)
+    else if (rule === 'eval') {
+      const { brand, team } = evalNames()
+      if (label !== brand && label !== team) throw new SandboxNameError(`${show(label)} is not one of the eval deployment's hosts (${brand}, ${team})`)
+    }
     else throw new Error(`assertSandboxHost: unknown rule ${show(rule)}`)
   } catch (err) {
     if (err instanceof SandboxNameError) throw new SandboxNameError(`host ${show(host)}: ${err.message}`)

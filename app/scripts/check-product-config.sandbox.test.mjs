@@ -348,6 +348,17 @@ const EVAL_CASES = [
   // #236 review O2: the eval build reads green without version metadata (as the test build may), so its deployment must
   // carry the binding.
   ['no version metadata', c => { delete c.version_metadata }, 'version_metadata needs a binding name in the eval deployment'],
+  // #240 review M1: eval holds the real gateway token, so no secret may sit in its plain vars.
+  ['the gateway token as a var', c => { c.vars.AI_GATEWAY_TOKEN = 'real-token' }, 'vars.AI_GATEWAY_TOKEN looks like a secret: set secrets with wrangler secret put'],
+  ['a provider key as a var', c => { c.vars.ANTHROPIC_API_KEY = 'sk-ant-real' }, 'vars.ANTHROPIC_API_KEY looks like a secret: set secrets with wrangler secret put'],
+  ['another gateway var', c => { c.vars.AI_GATEWAY_URL = 'https://gateway.example.test/' }, 'vars.AI_GATEWAY_URL is set: of the gateway\'s settings only AI_GATEWAY_ID is a var'],
+  ['the audit hash key as a var', c => { c.vars.AUDIT_HASH_KEY = 'test-only-audit-hash-key-not-a-secret' }, 'vars.AUDIT_HASH_KEY looks like a secret: set secrets with wrangler secret put'],
+  ['a secret-like var', c => { c.vars.SESSION_SECRET = 'x' }, 'vars.SESSION_SECRET looks like a secret: set secrets with wrangler secret put'],
+  // #240 review O-L2: the plan's required test-issuer key, its public half only.
+  ['no test issuer key', c => { delete c.vars.TEST_ISSUER_JWKS }, 'vars.TEST_ISSUER_JWKS must be a JWKS of one public key'],
+  ['a private test issuer key', c => { const j = JSON.parse(c.vars.TEST_ISSUER_JWKS); j.keys[0].d = 'CCCC'; c.vars.TEST_ISSUER_JWKS = JSON.stringify(j) }, 'vars.TEST_ISSUER_JWKS must be a JWKS of one public key'],
+  ['two test issuer keys', c => { const j = JSON.parse(c.vars.TEST_ISSUER_JWKS); j.keys.push(j.keys[0]); c.vars.TEST_ISSUER_JWKS = JSON.stringify(j) }, 'vars.TEST_ISSUER_JWKS must be a JWKS of one public key'],
+  ['a test issuer key that is not JSON', c => { c.vars.TEST_ISSUER_JWKS = '{keys' }, 'vars.TEST_ISSUER_JWKS must be a JWKS of one public key'],
   ['version metadata without a binding', c => { c.version_metadata = {} }, 'version_metadata needs a binding name in the eval deployment'],
   // The sandbox's own rules hold in eval mode too.
   ['another account', c => { c.account_id = 'fedcba9876543210fedcba9876543210' }, 'account_id is missing or is not the sandbox account'],

@@ -119,6 +119,11 @@ describe('the eval deployment\'s names (failure 5)', () => {
     expect(assertSandboxHost(`inhouse-sbx-eval-brand.${ZONE}`, ZONE, 'eval')).toBe(`inhouse-sbx-eval-brand.${ZONE}`)
     expect(() => assertSandboxHost(`inhouse-sbx-brand.${ZONE}`, ZONE, 'eval')).toThrow(SandboxNameError)
     expect(() => assertSandboxHost(`inhouse-sbx-eval-brand.other.test`, ZONE, 'eval')).toThrow(SandboxNameError)
+    // #240 review S-L3: only the two host names, never another eval name as a host label.
+    expect(assertSandboxHost(`inhouse-sbx-eval-team.${ZONE}`, ZONE, 'eval')).toBe(`inhouse-sbx-eval-team.${ZONE}`)
+    for (const label of ['inhouse-sbx-eval', 'inhouse-sbx-eval-db', 'inhouse-sbx-eval-files']) {
+      expect(() => assertSandboxHost(`${label}.${ZONE}`, ZONE, 'eval'), label).toThrow(/not one of the eval deployment's hosts/)
+    }
     expect(() => assertSandboxHost(`inhouse-sbx-eval-brand.${ZONE}`, ZONE, 'candidate')).toThrow(/eval deployment's name/)
   })
 })

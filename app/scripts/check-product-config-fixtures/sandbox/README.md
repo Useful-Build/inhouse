@@ -12,6 +12,7 @@ ends somewhere else (a bare `\r`) can't hide config from the lock. Invented valu
   `getOutputConfig`, sandbox names already filled). The lock refuses it on exactly what `config.mjs` must rewrite: the
   plugin's config paths and a `migrations_dir` that leaves the build folder.
 - `pass-eval.json`: the eval deployment (p3-eval-observability rev 2, rec 2): the eval build with its own names, the test
-  issuer on, the eval brand marker, and the one AI binding and gateway id the sandbox allows.
+  issuer on with its public JWKS (invented key values), the eval brand marker, and the one AI binding and gateway id the
+  sandbox allows. No secret in `vars` (eval sets AUDIT_HASH_KEY and AI_GATEWAY_TOKEN with `wrangler secret put`).
 - `pass-candidate.json`: the candidate (the product build rehearsed on the shared sandbox resources); it passes the
   product rules too.

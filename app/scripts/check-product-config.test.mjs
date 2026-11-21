@@ -137,6 +137,12 @@ describe('check-product-config', () => {
     const c = testConfig()
     expect(checkPool({ ...c, vars: { ...c.vars, AI_GATEWAY_ID: 'gw' } })).toEqual([GATEWAY])
     expect(checkPool({ ...c, secrets: { required: ['AI_GATEWAY_TOKEN'] } })).toEqual([GATEWAY])
+    // #240 review O-L3: only the sandbox's eval mode lifts it, and only for exactly `true` on both (an exported lock).
+    const gw = { ...c, ai: { binding: 'AI' } }
+    for (const o of [{ sandbox: true, evalMode: 'yes' }, { sandbox: 'yes', evalMode: true }, { sandbox: 1, evalMode: 1 }, { evalMode: true }, { sandbox: true }]) {
+      expect(checkPool(gw, o), JSON.stringify(o)).toEqual([GATEWAY])
+    }
+    expect(checkPool(gw, { sandbox: true, evalMode: true })).toEqual([])
     // The product config may name the gateway: the rule is about the test build only.
     const product = JSON.parse(stripJsonc(readFileSync(template, 'utf8')))
     expect(checkPool(product)).toEqual([])
