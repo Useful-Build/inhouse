@@ -390,7 +390,7 @@ test('Data: no text a person reads holds a 24-hour time, "2025", an old "17 Nov"
   // The answers written in code, not in the data: the formatted query answer and the ask-for-a-time reply.
   const mock = mockSource()
   const inCode = [/const QUERY_ANSWER = \[([\s\S]*?)\]\.join/, /const ASK_FOR_TIME = ('.*')/].map(re => re.exec(mock)?.[1])
-  expect(inCode.every(Boolean), 'the answers in mock.ts were found').toBe(true)
+  expect(inCode.every(Boolean), 'the answers in the demo agent were found').toBe(true)
   for (const text of inCode as string[]) {
     for (const [re, what] of [[/\b(sample|demo|mock)\b/i, 'sample, demo or mock'], [/\b2025\b/, '2025'], [/\b(colour|summaris|fulfilment|centre|organis|favour|behaviour|catalogue)/i, 'UK spelling'], [/\b\d{1,2}:[0-5]\d\b(?!( |\\u00a0)[AP]M)/, '24-hour time']] as [RegExp, string][]) {
       if (re.test(text)) bad.push(`mock.ts (${what}): ${text.slice(0, 80)}`)

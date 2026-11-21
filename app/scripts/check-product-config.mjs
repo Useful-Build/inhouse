@@ -5,15 +5,24 @@
 //   - it has an `env` block at all (each `env.<name>` can override vars, workers_dev and preview_urls, so none may
 //     deploy unchecked: the product config is one environment);
 //   - the test issuer is switched on: `INHOUSE_TEST_BUILD` or `TEST_ISSUER_JWKS` in `vars`;
-//   - a var is a Worker secret (`AUDIT_HASH_KEY`, the only one the server reads) or has a secret-like name (ends in
-//     SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with `wrangler secret put`, never in the config;
+//   - a var is a Worker secret (`AUDIT_HASH_KEY` or `AI_GATEWAY_TOKEN`, the product config's required ones) or has a
+//     secret-like name (ends in SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with
+//     `wrangler secret put`, never in the config;
 //   - `version_metadata` has no `binding` name (the Worker reads its release from that binding);
 //   - INHOUSE_ACCESS is missing or not JSON, or its `teamDomain` isn't `https://<name>.cloudflareaccess.com`;
 //   - INHOUSE_ACCESS.apps isn't exactly one `brand` app and one `inhouse` app;
 //   - an app lacks `origin` or `aud`, an origin isn't a bare `https://` origin, two apps share a hostname (an origin,
 //     or a port-only difference: Access's cookie is per hostname) or an `aud`,
 //     or an `aud` isn't 64 hex;
-//   - a service token maps to anything but `monitor` or `smoke`;
+//   - a service token maps to anything but `monitor`, `smoke` or `release` (P3);
+//   - (P3) a config with the runner pool (a `Runner` Durable Object binding, a `containers` entry or `RUNNER_POOL`) whose
+//     `RUNNER_POOL` isn't a whole number of 2 or more, or that hasn't exactly one `Runner` container with
+//     `max_instances` = 3 x RUNNER_POOL (p3-design section 7);
+//   - (P3) a test-build config (the test issuer on) with an AI binding or a gateway var or secret: tests never reach the
+//     gateway (p3-design section 13). A test config is refused anyway; this names the gateway too, so it can't creep in;
+//   - (P3) a config with the AI binding or an `AI_GATEWAY_ID` var whose `AI_GATEWAY_ID` is empty or not a gateway id
+//     (the egress calls `env.AI.gateway(AI_GATEWAY_ID)`, p3-design 8.2); the template ships it empty, so only a filled
+//     config (the release's) passes;
 //   - a brand origin is on `workers.dev` (preview URLs live there too: `<version>-<worker>.<subdomain>.workers.dev`);
 //   - `workers_dev` or `preview_urls` isn't explicitly false (wrangler turns both on when they're left out);
 //   - any string anywhere in it (a name, a host, a var) carries `inhouse-sbx-` (a sandbox config never passes as a
@@ -59,6 +68,8 @@
 //   - `env` is set, or `workers_dev` or `preview_urls` isn't explicitly false;
 //   - per-PR: vars.INHOUSE_TEST_BUILD isn't "1" (Q2's one exception: the test issuer in a deployed build, sandbox only);
 //   - candidate: any product rule above but the `inhouse-sbx-` one fails (it is the product build, rehearsed).
+//   - (P3) P3's pool and gateway rules (checkPool) fail, with the sandbox's container cap of 2 in place of
+//     3 x RUNNER_POOL (the sandbox runs RUNNER_POOL=2, max_instances=2).
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -112,8 +123,8 @@ export function stripJsonc(text) {
 
 const TEAM_DOMAIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$/
 const AUD = /^[0-9a-f]{64}$/i
-/** The Worker's secrets (server/db/stores.ts's StoresEnv), and the names that look like one. */
-const SECRET_VARS = new Set(['AUDIT_HASH_KEY'])
+/** The Worker's secrets (wrangler.product.jsonc's required ones), and the names that look like one. */
+const SECRET_VARS = new Set(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN'])
 const SECRET_LIKE = /(SECRET|TOKEN|PASSWORD|PRIVATE|_KEY)$/i
 
 /** Every reason this config may not deploy as a product (empty: it may). */
@@ -178,10 +189,40 @@ function productRules(config) {
       auds.set(app.aud, i)
     }
   })
+  if (config.ai !== undefined || Object.hasOwn(vars, 'AI_GATEWAY_ID')) {
+    if (typeof vars.AI_GATEWAY_ID !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(vars.AI_GATEWAY_ID)) {
+      failures.push('vars.AI_GATEWAY_ID must name the AI Gateway (lowercase letters, digits and dashes): the egress calls the model through it')
+    }
+  }
   const tokens = access?.serviceTokens && typeof access.serviceTokens === 'object' ? access.serviceTokens : {}
   for (const service of Object.values(tokens)) {
-    if (service !== 'monitor' && service !== 'smoke') failures.push(`INHOUSE_ACCESS.serviceTokens maps a token to "${String(service)}" (only monitor or smoke)`)
+    if (!['monitor', 'smoke', 'release'].includes(service)) failures.push(`INHOUSE_ACCESS.serviceTokens maps a token to "${String(service)}" (only monitor, smoke or release)`)
   }
+  return failures
+}
+
+/**
+ * P3's runner pool and gateway rules (p3-design sections 7 and 13), apart from INHOUSE_ACCESS so they run on any config.
+ * `sandbox`: the sandbox lock caps the container at 2 instances with RUNNER_POOL=2, so there the 3 x RUNNER_POOL rule
+ * (placement headroom; nothing in the code reads max_instances) gives way to that cap; every other pool rule holds.
+ */
+export function checkPool(config, { sandbox = false } = {}) {
+  const failures = []
+  const vars = config.vars ?? {}
+  const runnerBound = (config.durable_objects?.bindings ?? []).some(b => b?.class_name === 'Runner')
+  const containers = Array.isArray(config.containers) ? config.containers : []
+  if (runnerBound || containers.length || Object.hasOwn(vars, 'RUNNER_POOL')) {
+    const n = /^[1-9][0-9]*$/.test(String(vars.RUNNER_POOL ?? '')) ? Number(vars.RUNNER_POOL) : NaN
+    if (!(n >= 2)) failures.push('vars.RUNNER_POOL must be a whole number of 2 or more (the runner pool size)')
+    const runners = containers.filter(c => c?.class_name === 'Runner')
+    if (runners.length !== 1 || containers.length !== 1) failures.push('containers must be exactly one, for the Runner class')
+    else if (!sandbox && n >= 2 && runners[0].max_instances !== 3 * n) {
+      failures.push(`the Runner container's max_instances (${String(runners[0].max_instances)}) must be 3 x RUNNER_POOL (${3 * n})`)
+    }
+  }
+  const testBuild = Object.hasOwn(vars, 'INHOUSE_TEST_BUILD') || Object.hasOwn(vars, 'TEST_ISSUER_JWKS')
+  const gateway = config.ai !== undefined || Object.keys(vars).some(k => k.startsWith('AI_GATEWAY')) || (config.secrets?.required ?? []).some(k => String(k).startsWith('AI_GATEWAY'))
+  if (testBuild && gateway) failures.push('a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway')
   return failures
 }
 
@@ -406,6 +447,8 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   } else {
     for (const f of productRules(config)) if (!failures.includes(f)) fail(f)
   }
+  // P3's pool and gateway rules hold in the sandbox too, the container cap of 2 standing in for 3 x RUNNER_POOL.
+  for (const f of checkPool(config, { sandbox: true })) if (!failures.includes(f)) fail(f)
   return failures
 }
 
@@ -450,7 +493,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       try { config = JSON.parse(stripJsonc(text)) } catch (err) { usage(`${args[0]} isn't valid JSONC: ${err.message}`) }
       if (!config || typeof config !== 'object' || Array.isArray(config)) usage(`${args[0]} isn't a config object`)
     }
-    const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : checkConfig(config)
+    // Product mode adds P3's pool and gateway rules; sandbox mode runs them inside checkSandboxConfig.
+    const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : [...checkConfig(config), ...checkPool(config)]
     const where = sandbox ? ` to the sandbox (${mode.candidate ? 'candidate' : `PR ${mode.perPr}`})` : ''
     if (failures.length) {
       console.error(`check-product-config: ${args[0]} may not deploy${where}:\n${failures.map(f => `  - ${f}`).join('\n')}`)

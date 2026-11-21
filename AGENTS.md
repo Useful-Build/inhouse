@@ -5,13 +5,16 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
 ## Layout
 
 - `app/` is the whole app: a React single-page app served by a Cloudflare Worker. The demo's Worker is `app/worker/`
-  (assets plus the client-error route); the product's is `app/server/` (P2, below).
+  (assets plus the client-error route); the product's is `app/server/` (P2 and P3, below).
 - `app/src/agent/` holds the `AgentClient` interface, the mock agent and its sample data (`sample-data/`, invented). The
   two client entries (`client.demo.ts`, `client.product.ts`) pick the client at build time; `src/agent/http/` is the
-  product's client stub.
+  product's real client (`HttpAgent`: chats, the turn socket, usage, memory, models, settings).
 - `app/shared/` holds the zod schemas for everything the `AgentClient` returns (`shared/contract/`); `src/agent/types.ts`
   re-exports their types.
-- `app/server/` is the product Worker (P2, below), `app/ops/` the table registry (`ops/tables/`: every D1 table, Durable
+- `app/server/` is the product Worker (P2 and P3, below; the chat code is `server/do/brand-agent/`, `server/do/runner/`,
+  `server/egress/` and `server/mcp/`), `app/runner/` the container image's runner (its own `package.json`: `npm test`,
+  `npm run typecheck`, `npm run check:zod`, with `harness/` for the S6 check and `image/` for the probes),
+  `app/test/scripted-model/` the scripted model (test builds only), `app/evals/` the eval harness, `app/ops/` the table registry (`ops/tables/`: every D1 table, Durable
   Object store and R2 prefix, registered in the PR that adds it).
 - `app/build-support/` holds the build helpers and their tests (the demo deploy redirect).
 - `app/public-demo/` holds the demo-only public files (the Library's sample files, avatars); the product build ships none.
@@ -44,6 +47,8 @@ Run them in `app/`.
 | `npm run test-build:migrate` | Apply `server/migrations/` to the test build's local D1 (`.wrangler/test-build`, or `-- --persist-to <dir>`) |
 | `npm run test-build:seed` | Seed that D1 with the invented brand (`server/seed/run.ts`; refuses an unmigrated D1 and fails loud if the seed is missing; same `-- --persist-to <dir>`) |
 | `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone` | The test build's specs (`e2e/api/`, `e2e/real/`), after `npm run build:product-test`. No other run includes them |
+| `cd runner && npm test` | The runner's unit tests (light job; `npm run typecheck` and `npm run check:zod` beside it). CI's `runner` job also builds the image and runs the container probes |
+| `node evals/run.ts --target fake --out <dir>` | The eval harness dry run (no model, no cost). `--target product` needs `--paid` and `--budget`, and Wasim's OK to run |
 | `E2E_TEST_BUILD=1 npx playwright test --project=smoke` | The release smoke (`e2e/smoke/`, read only) on the test build. On a release: `SMOKE_BASE_URL=<url> npx playwright test --project=smoke`, with the service-token env vars in the `verify` skill |
 | `npm run preview` | Build, then serve the build |
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
@@ -135,8 +140,8 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`, `app/server/auth/**` (auth), `app/server/migrations/` (the D1
-  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops), `app/hub/{signin,crypto,scope,testing}/` (the hub's sign-in, key handling, scopes and
-  test seam), `app/wrangler.hub.jsonc` and `app/wrangler.hub.test.jsonc` (hub Worker config) and the `check-hub-*`
+  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops), `app/hub/{signin,crypto,scope,testing}/` (P4, not built yet: the hub's sign-in, key handling, scopes and
+  test seam), `app/wrangler.hub.jsonc` and `app/wrangler.hub.test.jsonc` (P4, not built yet: hub Worker config) and the `check-hub-*`
   scripts in `app/scripts/` (`check-hub-build.mjs`, `check-hub-config.mjs` and their fixtures).
 - **The product Worker (P2).** `app/server/` is the product Worker (entry `server/index.ts`): every `/api/*` request is
   authenticated (Access JWT), then the `Origin` check, the route (`server/routes.ts`), its row in
@@ -174,6 +179,9 @@ skill before any UI change. Repo specifics:
   `server/migrations/`: P2 `0001`-`0099`, then a block of 100 per phase (P3 `0100`-`0199` up to P8 `0600`-`0699`), as the
   backend plan's "Migrations" says; forward-only.
 - **Accounts and releases (P2).** The sandbox Cloudflare account is for candidate deploys only (the ops workflow
-  rehearsed with invented data); there is no per-PR product preview (decision Q1), the test build is the per-PR proof.
+  rehearsed with invented data); there is no per-PR product preview (decision Q1). Since P3 a per-PR deploy of the test build with the runner container
+  goes to the sandbox account (`inhouse-sbx-pr<N>` names, guarded by `scripts/sandbox/names.mjs`), is drained and warmed up
+  (route 48), and the chat specs run against it with `E2E_TEST_BUILD_REMOTE=1` (decision Q2: the local sandbox can't run
+  Bash, so chats are proved there). The test build is still the per-PR proof for everything else.
   The release (create D1 and R2, fill the config template, migrate, set secrets, deploy a tag, run the smoke) runs from
   the private ops repo, never from this one. Keep account ids, hostnames and team domains out of this repo.

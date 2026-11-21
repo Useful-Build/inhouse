@@ -23,13 +23,14 @@ export interface MemberDirectory {
    * A person on the brand app (p2-design section 7, "Sign-in binding"): the row bound to `subject`, else binds an open
    * invite for `email` once (writing `member.bound` in the same batch). Never yields an `inhouse` or `service` principal.
    */
-  resolvePerson(signIn: SignIn): Promise<{ ok: Extract<Principal, { kind: 'person' }> } | { refused: SignInRefusal }>
+  resolvePerson(signIn: SignIn): Promise<{ ok: Omit<Extract<Principal, { kind: 'person' }>, 'expMs'> } | { refused: SignInRefusal }>
   /**
    * An Inhouse team member (Inhouse app only): the `inhouse` row for `subject`, or a new one with
    * `inhouse.first_sign_in`. Returns the principal **without** its grant: `authenticate` is the one caller of
-   * `GrantStore.active` and attaches the grant itself.
+   * `GrantStore.active` and attaches the grant itself. `expMs` (both methods) comes from the token, so `authenticate`
+   * adds it too.
    */
-  resolveInhouse(signIn: SignIn): Promise<Omit<InhousePrincipal, 'grant'>>
+  resolveInhouse(signIn: SignIn): Promise<Omit<InhousePrincipal, 'grant' | 'expMs'>>
   /** The member id of a service's own row (only `smoke` has one; `monitor` has none). */
   serviceMember(name: 'smoke'): Promise<string>
   /** What `GET /api/me` shows of a member, or null when there's no such row. */

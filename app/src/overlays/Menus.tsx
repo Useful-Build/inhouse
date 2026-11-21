@@ -100,7 +100,8 @@ export function AccountMenu({ children }: { children: ReactNode }) {
     // The product signs out through Access (`signOutUrl()`); the demo has no sign-in.
     ['logout', 'Sign out', () => {
       const out = signOutAction(agent.signOutUrl())
-      if ('go' in out) { window.location.assign(out.go); return }
+      // The chat socket closes first, so nothing is followed while the sign-in ends.
+      if ('go' in out) { agent.disconnect(); window.location.assign(out.go); return }
       patch({ pop: null, sideOpen: false }); showToast("Sign out isn't connected in this demo.", { icon: 'info', ms: 4000 })
     }],
   ]]

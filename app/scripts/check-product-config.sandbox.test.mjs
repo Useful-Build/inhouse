@@ -76,7 +76,7 @@ const PER_PR_CASES = [
   ['container image of a live product', c => { c.containers[0].image = `registry.cloudflare.com/${ACCOUNT}/live-product:v1` }, 'containers[0].image: "live-product" is not PR 12\'s image name'],
   ['durable object of another Worker', c => { c.durable_objects.bindings[0].script_name = 'live-product' }, 'durable_objects.bindings[0].script_name is set'],
   ['durable object of another environment', c => { c.durable_objects.bindings[0].environment = 'production' }, 'durable_objects.bindings[0].environment is set'],
-  ['a migration that takes another Worker\'s objects', c => { c.migrations.push({ tag: 'v2', transferred_classes: [{ from: 'Live', from_script: 'live-product', to: 'RunnerContainer' }] }) }, 'migrations[1].transferred_classes is set'],
+  ['a migration that takes another Worker\'s objects', c => { c.migrations.push({ tag: 'v2', transferred_classes: [{ from: 'Live', from_script: 'live-product', to: 'Runner' }] }) }, 'migrations[1].transferred_classes is set'],
   ['service binding', c => { c.services = [{ binding: 'LIVE', service: 'live-product' }] }, 'services is set: a sandbox config may not use it'],
   ['kv binding', c => { c.kv_namespaces = [{ binding: 'KV', id: '0123' }] }, 'kv_namespaces is set'],
   ['queue producer', c => { c.queues = { producers: [{ binding: 'Q', queue: 'live-queue' }], consumers: [] } }, 'queues is set'],
@@ -90,15 +90,15 @@ const PER_PR_CASES = [
   ['__proto__ at the top', c => c, 'config.__proto__ is a forbidden key', after('"name":"inhouse-sbx-pr12"', '"__proto__":{"account_id":"fedcba9876543210fedcba9876543210"}')],
   ['__proto__ in a d1 binding', c => c, 'config.d1_databases[0].__proto__ is a forbidden key', after('"database_name":"inhouse-sbx-pr12-db"', '"__proto__":{"database_id":"00000000-0000-4000-8000-000000000001"}')],
   ['__proto__ in build', c => { c.build = { watch_dir: './src' } }, 'config.build.__proto__ is a forbidden key', after('"watch_dir":"./src"', '"__proto__":{"command":"npm run build"}')],
-  ['__proto__ in a durable object binding', c => c, 'config.durable_objects.bindings[0].__proto__ is a forbidden key', after('"name":"RUNNER","class_name":"RunnerContainer"', '"__proto__":{"script_name":"live-product"}')],
+  ['__proto__ in a durable object binding', c => c, 'config.durable_objects.bindings[0].__proto__ is a forbidden key', after('"name":"RUNNER","class_name":"Runner"', '"__proto__":{"script_name":"live-product"}')],
   ['__proto__ in a container', c => c, 'config.containers[0].__proto__ is a forbidden key', after('"max_instances":2', '"__proto__":{"max_instances":20}')],
   ['__proto__ in assets', c => c, 'config.assets.__proto__ is a forbidden key', after('"directory":"../client"', '"__proto__":{"directory":"/"}')],
   ['a constructor key', c => { c.vars.constructor = 'x' }, 'config.vars.constructor is a forbidden key'],
   ['a prototype key', c => { c.migrations[0].prototype = {} }, 'config.migrations[0].prototype is a forbidden key'],
   // 11: migration step values.
-  ['a rename from another Worker', c => { c.migrations.push({ tag: 'v2', renamed_classes: [{ from: 'Live', from_script: 'live-product', to: 'RunnerContainer' }] }) }, 'migrations[1].renamed_classes items must be exactly { from, to }'],
+  ['a rename from another Worker', c => { c.migrations.push({ tag: 'v2', renamed_classes: [{ from: 'Live', from_script: 'live-product', to: 'Runner' }] }) }, 'migrations[1].renamed_classes items must be exactly { from, to }'],
   ['a rename without a target', c => { c.migrations.push({ tag: 'v2', renamed_classes: [{ from: 'Old' }] }) }, 'migrations[1].renamed_classes items must be exactly { from, to }'],
-  ['a class list of objects', c => { c.migrations[0].new_sqlite_classes = [{ name: 'RunnerContainer', script: 'live-product' }] }, 'migrations[0].new_sqlite_classes must be a list of class names'],
+  ['a class list of objects', c => { c.migrations[0].new_sqlite_classes = [{ name: 'Runner', script: 'live-product' }] }, 'migrations[0].new_sqlite_classes must be a list of class names'],
   ['a class list that is a string', c => { c.migrations.push({ tag: 'v2', deleted_classes: 'Live' }) }, 'migrations[1].deleted_classes must be a list of class names'],
   // 8: paths.
   ['main outside the build', c => { c.main = '../../../../proc/self/environ' }, 'main must be a relative path inside the build folder'],
@@ -132,12 +132,17 @@ const PER_PR_CASES = [
   // 3: account, spend, size, builds, public URLs.
   ['no account id', c => { delete c.account_id }, 'account_id is missing or is not the sandbox account'],
   ['another account', c => { c.account_id = 'fedcba9876543210fedcba9876543210' }, 'account_id is missing or is not the sandbox account'],
-  ['an AI binding', c => { c.ai = { binding: 'AI' } }, 'ai is set: the sandbox runs the scripted model only'],
+  ['an AI binding', c => { c.ai = { binding: 'AI' } }, 'ai is set: the sandbox runs the scripted model only', undefined, ['a test-build config has an AI binding or a gateway var or secret']],
   ['3 containers at most', c => { c.containers[0].max_instances = 3 }, 'containers[0].max_instances must be 1 or 2'],
   ['no container limit', c => { delete c.containers[0].max_instances }, 'containers[0].max_instances must be 1 or 2 (left out'],
   ['a container limit of 0', c => { c.containers[0].max_instances = 0 }, 'containers[0].max_instances must be 1 or 2'],
   ['a fractional container limit', c => { c.containers[0].max_instances = 1.5 }, 'containers[0].max_instances must be 1 or 2'],
-  ['two containers', c => { c.containers.push({ ...c.containers[0], class_name: 'Other', max_instances: 1 }) }, 'containers has more than one container'],
+  // P3's pool rules hold in the sandbox, the container cap of 2 standing in for 3 x RUNNER_POOL (the pass fixture has
+  // RUNNER_POOL 2 with max_instances 2, which product mode would refuse).
+  ['no RUNNER_POOL beside the Runner container', c => { delete c.vars.RUNNER_POOL }, 'vars.RUNNER_POOL must be a whole number of 2 or more'],
+  ['a RUNNER_POOL of 1', c => { c.vars.RUNNER_POOL = '1' }, 'vars.RUNNER_POOL must be a whole number of 2 or more'],
+  ['the container not for the Runner class', c => { c.containers[0].class_name = 'Other'; c.durable_objects.bindings[0].class_name = 'Other'; c.migrations[0].new_sqlite_classes = ['Other'] }, 'containers must be exactly one, for the Runner class'],
+  ['two containers', c => { c.containers.push({ ...c.containers[0], class_name: 'Other', max_instances: 1 }) }, 'containers has more than one container', undefined, ['containers must be exactly one, for the Runner class']],
   ['a container built from a Dockerfile', c => { c.containers[0].image = './runner/Dockerfile' }, 'containers[0].image must be registry.cloudflare.com/<CF_SANDBOX_ACCOUNT_ID>/'],
   ['a container image in another account', c => { c.containers[0].image = 'registry.cloudflare.com/fedcba9876543210fedcba9876543210/inhouse-sbx-pr12:v1' }, 'containers[0].image must be registry.cloudflare.com/'],
   ['a container image on Docker Hub', c => { c.containers[0].image = 'docker.io/library/inhouse-sbx-pr12:v1' }, 'containers[0].image must be registry.cloudflare.com/'],
@@ -178,13 +183,14 @@ describe('check-product-config --sandbox --per-pr: PR 12', () => {
       '  - d1_databases[0].migrations_dir must be a relative path inside the build folder (no .., not absolute)',
     ])
   })
-  for (const [name, change, text, textChange] of PER_PR_CASES) {
+  for (const [name, change, text, textChange, also = []] of PER_PR_CASES) {
     test(`refuses ${name} with exit 1 and names it`, () => {
       const config = load('pass-per-pr.json')
       change(config)
       const r = run([...PR12, write(config, textChange)])
       expect(r.status).toBe(1)
-      expect(failureLines(r)).toEqual([expect.stringContaining(text)])
+      // `also`: P3's pool and gateway rules (checkPool) name the same break in their own words.
+      expect(failureLines(r)).toEqual([text, ...also].map(t => expect.stringContaining(t)))
     })
   }
   test('refuses a container image that exists as a file beside the config (wrangler would build it)', () => {

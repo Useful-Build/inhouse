@@ -3,12 +3,16 @@
 // On a phone both boxes keep attach and send: the tools and the model move into "+", the logo stack and dictate leave (M27).
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, DragEvent, ReactElement } from 'react'
+import { agent } from '../agent'
 import type { Attachment } from '../agent/types'
+import { dropFile, keepFile } from '../state/pending-files'
 import { activeMode, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
 import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AttachmentChip, Button, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
 import { TAP } from '../ui/fields'
+import { fileIcon, fileSize } from '@/lib/file-meta'
+import { ATTACHMENT_NAME_TOO_LONG, NO_MODEL_NOTE, NO_MODEL_YET, attachmentNameTooLong } from '../screens/chat/notes'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Textarea } from '@/components/ui/textarea'
@@ -60,8 +64,6 @@ function useTouchOnly() {
 /** Browsers without field-sizing get the field's height measured instead. */
 const AUTO_SIZE = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content')
 
-const fileSize = (b: number) => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB'
-const fileIcon = (n: string) => /\.(png|jpe?g|gif|webp|heic)$/i.test(n) ? 'image' : /\.(csv|xlsx?|numbers)$/i.test(n) ? 'table_view' : /\.pdf$/i.test(n) ? 'picture_as_pdf' : 'description'
 
 export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat'; showToolsLabel: boolean }) {
   const ctx = useCtx()
@@ -75,6 +77,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // A sent question being edited in this chat: Send puts it in place of the old one and its answer.
   const editing = useUi(s => variant === 'chat' && s.editMsg !== null && s.editMsg.chatId === openChatKey(s, ctx.data))
   const composerFocus = useUi(s => s.composerFocus)
+  const modelMenuAsk = useUi(s => s.modelMenuAsk)
   const atts = useUi(s => s.atts)
   const replyTo = useUi(s => s.replyTo)
   const modelSel = useUi(s => s.modelSel)
@@ -90,6 +93,13 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // The field's top edge fades once it scrolls (over 8 lines), so a cut line reads as more above (M12).
   const [scrolled, setScrolled] = useState(false)
   const [pop, setPop] = useState<Pop>(null)
+  // A failed answer asked for the model menu (on a phone it lives in "+"). Only the chat's composer answers.
+  const seenAsk = useRef(modelMenuAsk)
+  useEffect(() => {
+    if (modelMenuAsk === seenAsk.current) return
+    seenAsk.current = modelMenuAsk
+    if (variant !== 'today') setPop(slim ? 'attach' : 'model')
+  }, [modelMenuAsk, slim, variant])
   // Limit notes belong to the chat they were shown in.
   const [rejectedIn, setRejectedIn] = useState<{ key: string; list: { name: string; reason: string }[] }>({ key: chatKey, list: [] })
   const rejected = rejectedIn.key === chatKey ? rejectedIn.list : []
@@ -111,8 +121,10 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
     const bad: { name: string; reason: string }[] = []
     for (const file of files) {
       if (file.size > MAX_MB * 1e6) bad.push({ name: file.name, reason: `Over the ${MAX_MB} MB limit` })
+      else if (attachmentNameTooLong(file.name)) bad.push({ name: file.name, reason: ATTACHMENT_NAME_TOO_LONG })
       else if (have + ok.length >= MAX_FILES) bad.push({ name: file.name, reason: `Only ${MAX_FILES} files per message` })
-      else ok.push({ name: file.name, meta: fileSize(file.size), icon: fileIcon(file.name) })
+      // The real client keeps the file until the send, which uploads it; the demo's chip is only its name and size.
+      else ok.push({ name: file.name, meta: fileSize(file.size), icon: fileIcon(file.name), ...(agent.uploadsFiles() ? { pending: keepFile(file) } : {}) })
     }
     if (ok.length) addAtts(ok)
     setRejected(bad)
@@ -172,9 +184,10 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
 
   // Stubs say what they are (M36).
   const notConnected = (what: string) => useUi.getState().showToast(`${what} isn't connected in this demo.`, { icon: 'info', ms: 4000 })
-  const canSend = !!draft.trim()
+  const noModel = thinkingModes(data, ctx.agent.settings).every(m => !m.on)
+  const canSend = !!draft.trim() && !noModel
   const send = () => {
-    if (!draft.trim()) return
+    if (!draft.trim() || noModel) return
     setRejected([])
     // Editing goes first: it replaces the old question (and stops an answer to it). Over a running answer a message
     // waits above the box for its turn.
@@ -199,7 +212,11 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const toolsLabel = counts.connected === 0 ? 'No tools connected yet'
     : offHere > 0 ? `${onTools.length} of ${TOOL_KEYS.length} tools on in this chat`
       : counts.reading < counts.connected ? `${counts.reading} of ${counts.connected} tools connected` : `${counts.reading} tools connected`
-  const modes = thinkingModes(data, ctx.agent.settings).filter(m => m.on)
+  const everyMode = thinkingModes(data, ctx.agent.settings)
+  const modes = everyMode.filter(m => m.on)
+  // A model the person picked that an Admin has since switched off stays in the list, greyed, until they pick another.
+  const offPick = everyMode.find(m => !m.on && m.id === modelSel)
+  const listed = offPick ? [offPick, ...modes] : modes
   const sel = activeMode(data, ctx.agent.settings, modelSel)?.id ?? ''
   const modelLabel = modes.find(m => m.id === sel)?.label ?? ''
 
@@ -248,6 +265,12 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
           <Button variant="ghost" size="sm" onClick={cancelEdit} className={cn('-my-1.5 flex-none', phone && TAP)}>Cancel</Button>
         </div>
       )}
+      {noModel && (
+        <div className={NOTE_BAR}>
+          <Icon name="info" size={15} />
+          <b className="min-w-0 flex-1 font-semibold text-foreground">{NO_MODEL_NOTE}</b>
+        </div>
+      )}
       {variant === 'chat' && replyTo && (
         <div className={NOTE_BAR}>
           <Icon name="reply" size={15} />
@@ -259,7 +282,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
       {(atts.length > 0 || rejected.length > 0) && (
         <div className="mb-2.5 -ml-1.5 flex flex-wrap gap-1.5">
           {atts.map((a, i) => (
-            <AttachmentChip key={a.name + i} icon={a.icon} name={a.name} meta={a.meta} tap={phone} onRemove={() => patch({ atts: atts.filter((_, j) => j !== i) })} />
+            <AttachmentChip key={a.name + i} icon={a.icon} name={a.name} meta={a.meta} tap={phone} onRemove={() => { if (a.pending !== undefined) dropFile(a.pending); patch({ atts: atts.filter((_, j) => j !== i) }) }} />
           ))}
           {rejected.length > 0 && (
             // One alert for all the rejected files, so a screen reader reads them together once.
@@ -321,7 +344,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
                   <>
                     <DropdownMenuSeparator className="mx-1.5 my-1" />
                     <DropdownMenuLabel className="px-2.5 pt-2 pb-1 text-sm font-normal text-muted-foreground">Model</DropdownMenuLabel>
-                    <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
+                    <ModelItems modes={listed} sel={sel} onPick={id => patch({ modelSel: id })} />
                   </>
                 )}
               </>
@@ -361,7 +384,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             </DropdownMenuTrigger>
           </Tip>
           <DropdownMenuContent {...menuProps} align="end" alignOffset={-46} className={cn(MENU, phone ? 'w-menu-mode-phone' : 'w-menu-mode')}>
-            <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
+            <ModelItems modes={listed} sel={sel} onPick={id => patch({ modelSel: id })} />
             <div className="mt-1 border-t border-divider px-2.5 pt-2 pb-1.5 text-xs text-muted-foreground">Admins choose which models the team can use, in Settings.</div>
           </DropdownMenuContent>
         </DropdownMenu>}
@@ -389,8 +412,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             </button>
           </Tip>
         ) : (
-          <Tip label="Send">
-            <button type="button" data-composer-send aria-label="Send" onClick={send} disabled={!canSend} className={SEND}>
+          <Tip label={noModel ? NO_MODEL_YET : 'Send'}>
+            <button type="button" data-composer-send aria-label={noModel ? `Send, ${NO_MODEL_YET}` : 'Send'} onClick={send} disabled={!canSend} className={SEND}>
               <Icon name="arrow_upward" size={19} weight={400} />
             </button>
           </Tip>
@@ -401,14 +424,14 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
 }
 
 /** The model choices, in the model menu and, on a phone, in "+". */
-function ModelItems({ modes, sel, onPick }: { modes: { id: string; label: string; model: string; sub: string }[]; sel: string; onPick: (id: string) => void }) {
+function ModelItems({ modes, sel, onPick }: { modes: { id: string; label: string; model: string; sub: string; on?: boolean }[]; sel: string; onPick: (id: string) => void }) {
   return (
     <DropdownMenuRadioGroup aria-label="Model" value={sel} onValueChange={onPick}>
       {modes.map(m => (
-        <DropdownMenuRadioItem key={m.id} value={m.id} className={cn(OWN_MARK, 'py-2')}>
+        <DropdownMenuRadioItem key={m.id} value={m.id} disabled={m.on === false} className={cn(OWN_MARK, 'py-2')}>
           <span className="min-w-0 flex-1">
             <span className="block text-base font-medium">{m.label}</span>
-            <span className="block text-xs text-muted-foreground">{m.model} · {m.sub}</span>
+            <span className="block text-xs text-muted-foreground">{m.on === false ? `${m.model} · Switched off by your Admin` : `${m.model} · ${m.sub}`}</span>
           </span>
           {sel === m.id && <Icon name="check" size={18} className="text-foreground" />}
         </DropdownMenuRadioItem>

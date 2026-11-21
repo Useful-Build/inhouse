@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R03",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like it on Mondays at 7:30, as bullet points.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "weekly sales summary"
+    },
+    "result": "Maya wants the weekly sales summary on Mondays at 7:30."
+   }
+  ],
+  "answer": "You like it on Mondays at 7:30, as bullet points.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

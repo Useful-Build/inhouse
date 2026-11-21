@@ -4,6 +4,7 @@
 import { expect, test } from '@playwright/test'
 import { actor, allPages, call, endLiveGrants, expectError, imageBytes, me } from './kit.ts'
 import type { ImageType } from './kit.ts'
+import { auditAfter, auditMax } from './db.ts'
 
 const dana = actor('memberA')
 const leo = actor('memberB')
@@ -127,27 +128,21 @@ test('removing a photo clears it, for everyone', async ({ request }) => {
   expectError(await call(request, leo, 'GET', `/api/members/${id}/photo`), 404, 'not_found')
 })
 
-test('the download is refused to a principal the row doesn\'t allow, and to the Inhouse team without a grant', async ({ request }) => {
+test('the download is refused to a principal the row doesn\'t allow; the Inhouse team reads it without a grant (baseline)', async ({ request }) => {
   const id = (await me(request, dana)).memberId
   const url = (await call(request, dana, 'PUT', '/api/photo', { bytes: imageBytes('image/png'), contentType: 'image/png' })).json.photoUrl as string
   expect(url.startsWith(`/api/members/${id}/photo?v=`), 'the versioned URL is gated as the path is').toBe(true)
   for (const who of ['smoke', 'monitor'] as const) expectError(await call(request, actor(who), 'GET', url), 403, 'forbidden')
-  expectError(await call(request, actor('inhouse'), 'GET', url), 403, 'forbidden', 'grant_required')
+  // A member photo is baseline (decision 19): the Inhouse team reads it with no grant and no support.access line.
+  const mark = auditMax()
+  const got = await call(request, actor('inhouse'), 'GET', url)
+  expect(got.status, got.text).toBe(200)
+  expect(got.headers['content-type']).toBe('image/png')
+  expect(got.headers['x-content-type-options']).toBe('nosniff')
+  expect(auditAfter(mark).filter(l => l.action === 'support.access')).toEqual([])
   // The upload and removal are the owner's only: the Inhouse team, `smoke` and `monitor` can't.
   for (const who of ['inhouse', 'smoke', 'monitor'] as const) {
     expectError(await call(request, actor(who), 'PUT', '/api/photo', { bytes: imageBytes('image/png'), contentType: 'image/png' }), 403, 'forbidden')
     expectError(await call(request, actor(who), 'DELETE', '/api/photo'), 403, 'forbidden')
   }
-  // Under a live grant the Inhouse team reads it, and a line says so.
-  const made = await call(request, actor('admin'), 'POST', '/api/grants', { json: { hours: 1 } })
-  expect(made.status, made.text).toBe(201)
-  try {
-    const got = await call(request, actor('inhouse'), 'GET', url)
-    expect(got.status, got.text).toBe(200)
-    expect(got.headers['content-type']).toBe('image/png')
-    expect(got.headers['x-content-type-options']).toBe('nosniff')
-  } finally {
-    await endLiveGrants(request)
-  }
-  expectError(await call(request, actor('inhouse'), 'GET', url), 403, 'forbidden', 'grant_required')
 })

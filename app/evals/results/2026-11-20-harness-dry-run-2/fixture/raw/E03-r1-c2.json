@@ -1,0 +1,52 @@
+{
+ "row": {
+  "caseId": "E03",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Lena prefers a Slack DM over email when the team needs her.",
+  "costUsd": 0.010034900000000001,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Lena contact preference",
+     "person_id": "p_lena"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_30d605 [person p_lena] Lena prefers a Slack DM over email when the team needs her.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Lena contacted notifications Slack email"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Lena prefers a Slack DM over email when the team needs her.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2468,
+   "cacheReadTokens": 20769,
+   "outputTokens": 178
+  },
+  "costUsd": 0.010034900000000001
+ }
+}

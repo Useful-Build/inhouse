@@ -20,7 +20,7 @@ test('the expired grant starts unlogged; the first Inhouse request writes its ex
   expect(logged()[0].expiry_logged).toBe(0)
   expect(auditWhere('grant.expired')).toEqual([])
   // The Inhouse sign-in reads grants, so this request writes the expiry; it is refused all the same.
-  expectError(await call(request, alex, 'GET', '/api/members'), 403, 'forbidden', 'grant_required')
+  expectError(await call(request, alex, 'GET', '/api/audit'), 403, 'forbidden', 'grant_required')
   expect(logged()[0].expiry_logged, 'the Inhouse request wrote the expiry').toBe(1)
 })
 
@@ -46,5 +46,5 @@ test('after that the Admin reads find grant.expired written once, by the system,
   expect(items.filter(i => i.what === wording && i.actorId === expired[0].actor_id)).toHaveLength(1)
 
   await endLiveGrants(request)
-  expectError(await call(request, alex, 'GET', '/api/members'), 403, 'forbidden', 'grant_required')
+  expectError(await call(request, alex, 'GET', '/api/audit'), 403, 'forbidden', 'grant_required')
 })

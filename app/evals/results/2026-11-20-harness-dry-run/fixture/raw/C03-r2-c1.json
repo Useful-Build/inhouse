@@ -1,0 +1,60 @@
+{
+ "row": {
+  "caseId": "C03",
+  "cat": "connector",
+  "pair": "inventory_levels_get/products_search",
+  "rep": 2,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": true,
+   "args": false
+  },
+  "called": [
+   "products_search",
+   "inventory_levels_get"
+  ],
+  "toolSearches": 1,
+  "answer": "You have 14 Moss mugs (Mug 500ml Moss, SKU MUG-500-MOSS) in stock.",
+  "costUsd": 0.011871800000000002,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Moss mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__inventory_levels_get",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__inventory_levels_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {
+     "sku": "MUG-500-MOSS"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You have 14 Moss mugs (Mug 500ml Moss, SKU MUG-500-MOSS) in stock.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2402,
+   "cacheReadTokens": 32948,
+   "outputTokens": 256
+  },
+  "costUsd": 0.011871800000000002
+ }
+}

@@ -4,7 +4,7 @@
 // in the Library and All chats, the Library's file viewer and an open Help guide.
 import { expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { mockClient } from './support/clients/mock.js'
+import { mockClient, routeReady } from './support/clients/mock.js'
 
 export const THEMES = ['light', 'dark'] as const
 export type Theme = (typeof THEMES)[number]
@@ -242,6 +242,7 @@ export async function openState(page: Page, s: UiState, theme: Theme) {
   await client.open(s.hash)
   await expect(page.getByText(s.ready, { exact: false }).first()).toBeVisible()
   if (s.act) await s.act(page)
+  await routeReady(page)
   await fontsReady(page)
   await atRest(page)
 }

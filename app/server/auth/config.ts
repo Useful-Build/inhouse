@@ -41,7 +41,7 @@ export const AccessConfigSchema = z.strictObject({
    * Service token `common_name` (its client id, `<id>.access`) → which service it is; unknown ones are 401. A `Map`,
    * so a client id such as `toString` or `__proto__` can never reach the prototype.
    */
-  serviceTokens: z.record(z.string().min(1), z.enum(['monitor', 'smoke'])).transform(o => new Map(Object.entries(o))),
+  serviceTokens: z.record(z.string().min(1), z.enum(['monitor', 'smoke', 'release'])).transform(o => new Map(Object.entries(o))),
 }).superRefine((c, ctx) => {
   if (!Array.isArray(c.apps) || c.apps.length !== 2) {
     ctx.addIssue({ code: 'custom', path: ['apps'], message: 'apps must be exactly one brand and one inhouse' })

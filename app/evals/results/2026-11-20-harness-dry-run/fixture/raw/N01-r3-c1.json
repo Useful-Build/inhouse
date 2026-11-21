@@ -1,0 +1,30 @@
+{
+ "row": {
+  "caseId": "N01",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "You're welcome, Maya. Talk soon.",
+  "costUsd": 0.0057868,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [],
+  "answer": "You're welcome, Maya. Talk soon.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9603,
+   "outputTokens": 18
+  },
+  "costUsd": 0.0057868
+ }
+}

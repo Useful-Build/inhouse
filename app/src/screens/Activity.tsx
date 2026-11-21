@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { agent } from '../agent'
+import { traceOf, useTraces } from './chat/traces'
 import { keepUnitsTogether, plainSpaces } from '../agent/clock'
 import { activityRows, groupByDay, memberFor, userName } from '../state/derive'
 import type { ActivityRow } from '../state/derive'
@@ -12,6 +13,7 @@ import { SearchBox, TAP } from '../ui/fields'
 const TABS: [ActivityFilter, string][] = [['all', 'All'], ['change', 'Changes'], ['needs', 'Waiting on you'], ['problem', 'Problems']]
 
 export function Activity() {
+  useTraces()
   const ctx = useCtx()
   const { S } = ctx
   const filter = useUi(s => s.actFilter)
@@ -55,7 +57,7 @@ export function Activity() {
           <div className="rounded-2xl border border-border bg-card px-5 py-1">
             {day.rows.map((r, i) => {
               const isOpen = open === r.key
-              const tr = isOpen && r.trace ? agent.getTrace(r.trace) : null
+              const tr = isOpen && r.trace ? traceOf(r.trace) : null
               const facts: [string, string][] = [['Why', r.why], ['What happened', r.result], ['Who', r.by], ...(r.fix ? [['To fix', r.fix] as [string, string]] : [])]
               return (
                 <div key={r.key} className={i === 0 ? '' : 'border-t border-divider'}>

@@ -38,10 +38,19 @@ In:
   triggers reject update and delete).
 - **The access matrix:** a committed table of route by role by ownership, a scope for every settings key (personal,
   brand or technical), and one of three classes for every route. *Brand data* (chats, memory, the audit log): the
-  Inhouse team needs an unexpired support grant. *Baseline* (health, errors, usage numbers): the Inhouse team always
-  has it (BD7). *Technical controls* (agent setup, models, run limits, data and access, tools, skills): the Inhouse
+  Inhouse team needs an unexpired support grant. *Baseline* (health, errors, usage numbers, and since decision 19 the
+  members, brand settings and pause): the Inhouse team always reads it, and writes it wherever a row lists the
+  Inhouse team, with no grant (BD7 as amended below). *Technical controls* (agent setup, models, run limits, data and access, tools, skills): the Inhouse
   team edits, admins read (decision log, "Roles" and "Roles: admin views"); the one admin exception is switching a
-  model off. Object checks (whose record, which role, an unexpired grant) read from it.
+  model off or back on (decision 27a, 2026-11-20). Object checks (whose record, which role, an unexpired grant) read
+  from it.
+  **Amended 2026-11-20 (decision 19, "we are like an agency"):** the Inhouse team can do everything an Admin can
+  (members, brand settings, models, pause, tools) plus the technical pages, with no grant. The member list and member
+  photos are baseline, not brand data. A brand's chats, memory and audit log still need an Admin's live, time-boxed
+  grant; the Inhouse team never creates or ends a grant itself; a person's own settings and photo stay the owner's.
+  **Amended again 2026-11-20 (decision 19b):** the Inhouse team can't change roles, invite an Admin or remove an Admin
+  (so it can't make itself or anyone else an Admin and then grant itself access). Role changes are Admin-only; an
+  Inhouse invite or removal that touches an Admin is 403 `forbidden`, with nothing written and no audit line.
 - **Support grants** (BD7): an admin grants the Inhouse team time-boxed access to brand data; the grant, its use and
   its end are audited; ending it closes that access at once.
 - **C2** `me()` (member id, name, role, `can`), actor ids on records, approvers as member ids, stage from the server.
@@ -205,7 +214,7 @@ freezes the principal type and the object-check interface; W2 and W3 fan out fro
    comes only from its own Access application.
 2. The role and object spec passes for every row of the access matrix, every role, two Members with the same role, and
    the Inhouse team with and without a grant; every route has a matrix row, a class and a spec. Without a grant the
-   Inhouse team reads baseline routes and technical controls, and no brand data.
+   Inhouse team reads and writes the baseline routes that list it and the technical controls, and reads no brand data.
 3. The config check fails a deployable config that sets the test flag, trusts any issuer but the account's Access
    team, maps a service token to anything but `monitor` or `smoke`, or gives a brand deployment a `workers.dev` or
    preview hostname. The server bundle scan finds no test-issuer canary in a deployable build.

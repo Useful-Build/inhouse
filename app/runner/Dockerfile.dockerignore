@@ -1,0 +1,7 @@
+# Allowlist for the runner image's build context (app/). Everything else in app/ stays out of the image.
+*
+!runner/package.json
+!runner/package-lock.json
+!runner/src/
+!runner/image/
+!shared/
