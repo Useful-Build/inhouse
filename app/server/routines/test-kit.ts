@@ -177,6 +177,7 @@ export async function fresh(): Promise<void> {
     db.prepare('DELETE FROM routine_slots'),
     db.prepare('DELETE FROM routines'),
     db.prepare('DELETE FROM routine_alerts'),
+    db.prepare("DELETE FROM chat_messages WHERE chat_id IN (SELECT id FROM chats WHERE owner_id = 'm_system')"),
     db.prepare("DELETE FROM chats WHERE owner_id = 'm_system'"),
   ])
 }

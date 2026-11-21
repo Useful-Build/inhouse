@@ -203,3 +203,31 @@ describe('what a routine run reads (test 7, acceptance 6)', () => {
     expect((await call('history_read', { chat_id: 'rc_w2_routine' }, sys)).isError).toBeUndefined()
   })
 })
+
+describe('no read after a committed write (#250 review)', () => {
+  it('a settings read that fails once the write committed can\'t turn a committed create or update into isError', async () => {
+    // Every settings read after the first batch throws, as a transient D1 failure would.
+    let committed = false
+    const flaky = {
+      prepare: (q: string) => {
+        if (committed && /FROM settings/.test(q)) throw new Error('D1 is unavailable')
+        return db.prepare(q)
+      },
+      batch: async (stmts: D1PreparedStatement[]) => {
+        const out = await db.batch(stmts)
+        committed = true
+        return out
+      },
+    } as unknown as D1Database
+    const h = TOOL_HANDLERS.get('routine_create')!
+    const made = await h.call(h.input.parse({ name: NAME, instruction: INSTRUCTION, days: 'daily', time: '06:00' }), scope(ALEX), { db: flaky })
+    expect(made.isError, text(made)).toBeUndefined()
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM routines').first('n')).toBe(1)
+
+    committed = false
+    const u = TOOL_HANDLERS.get('routine_update')!
+    const updated = await u.call(u.input.parse({ routine_id: data(made).routine_id, time: '07:00' }), scope(ALEX), { db: flaky })
+    expect(updated.isError, text(updated)).toBeUndefined()
+    expect(data(updated)).toMatchObject({ schedule: 'Every day at 07:00' })
+  })
+})

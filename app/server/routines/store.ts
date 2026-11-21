@@ -8,6 +8,7 @@ import { recordActivity } from '../activity/store.ts'
 import type { ActivityTemplateId } from '../activity/templates.ts'
 import { writeStamp } from '../db/ids.ts'
 import { brandFacts, submitSettings } from './brand.ts'
+import type { BrandFacts } from './brand.ts'
 import { CLIENT_KEY, manualSlotKey, newRoutineId } from './keys.ts'
 import { renderSlot } from './render.ts'
 import { slotInsert } from './rows.ts'
@@ -79,8 +80,10 @@ export interface NewRoutine {
 }
 
 /** A team routine (section 8): needs Act or Run (section 7), `need` 1, the cursor at now. */
-export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourceChatId: string | null): Promise<{ ok: RoutineRow } | { refused: 'stage' }> {
-  if ((await brandFacts(db)).stage < 1) return { refused: 'stage' }
+/** `tz`: the brand's zone, read before the write with the stage, so a caller answers the next run with no read after the commit. */
+export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourceChatId: string | null): Promise<{ ok: RoutineRow; tz: BrandFacts['tz'] } | { refused: 'stage' }> {
+  const brand = await brandFacts(db)
+  if (brand.stage < 1) return { refused: 'stage' }
   const id = newRoutineId()
   const stamp = writeStamp(at.requestId)
   const [made] = await db.batch([
@@ -92,7 +95,7 @@ export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourc
     routineAudit(db, at, { action: 'routine.created', routineId: id, need: 1 }, id, stamped(id, stamp)),
     personLine(db, 'routine_made', at, `${id}|created`),
   ])
-  return { ok: written(made, 'createRoutine') }
+  return { ok: written(made, 'createRoutine'), tz: brand.tz }
 }
 
 export interface RoutinePatch {

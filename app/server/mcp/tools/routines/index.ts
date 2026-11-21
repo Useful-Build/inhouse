@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { decodeCursor, encodeCursor } from '../../../db/handler-kit.ts'
 import { SYSTEM_MEMBER_ID } from '../../../db/ids.ts'
 import { brandFacts } from '../../../routines/brand.ts'
+import type { BrandFacts } from '../../../routines/brand.ts'
 import { hashId } from '../../../routines/keys.ts'
 import type { RoutineRow } from '../../../routines/rows.ts'
 import { DaysSchema, TimeSchema, daysMask, parseTime, scheduleWords } from '../../../routines/schedule.ts'
@@ -31,10 +32,12 @@ const missed = z.enum(['skip', 'catch_up']).describe('A run missed while the sys
 
 const at = (scope: ToolScope): At => ({ actorId: scope.memberId, requestId: scope.requestId, nowMs: scope.nowMs })
 
-/** When it runs next as an ISO instant, or null (switched off, or the brand's zone can't be read). */
-async function nextIso(db: D1Database, r: RoutineRow, nowMs: number): Promise<string | null> {
+/**
+ * When it runs next as an ISO instant, or null (switched off, or the brand's zone can't be read). Pure: the zone is read
+ * before any write, so a committed write is never answered with an error from a read after it.
+ */
+function nextIso(r: RoutineRow, tz: BrandFacts['tz'], nowMs: number): string | null {
   if (r.enabled !== 1) return null
-  const { tz } = await brandFacts(db)
   if (typeof tz !== 'string') return null
   const n = nextSlot(r, tz, nowMs, NEXT_WITHIN_MS)
   return n ? new Date(n.dueAtMs).toISOString() : null
@@ -63,7 +66,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       const made = await createRoutine(deps.db, { name: a.name, instruction: a.instruction, days_mask: daysMask(a.days), hour, minute, missed: a.missed ?? 'skip' }, at(scope), scope.chatId)
       if ('refused' in made) return refusal('stage', STAGE_TEXT)
       const r = made.ok
-      const next = await nextIso(deps.db, r, scope.nowMs)
+      const next = nextIso(r, made.tz, scope.nowMs)
       return answer(`Set up "${r.name}": ${words(r)}.${next ? ` Next run: ${next}.` : ''} (routine_id: ${r.id})`, { routine_id: r.id, schedule: words(r), next })
     },
   }),
@@ -80,21 +83,22 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
         if (!m) return refusal('invalid', 'That cursor is not one routine_list returned. Call routine_list without it to start over.')
         after = { ms: Number(m[1]), id: m[2] }
       }
+      const { tz } = await brandFacts(deps.db)
       const rows = await listRoutines(deps.db, after, PAGE + 1)
       const page = rows.slice(0, PAGE)
-      const items = await Promise.all(page.map(async r => ({
+      const items = page.map(r => ({
         routine_id: r.id,
         name: r.name,
         schedule: words(r),
         enabled: r.enabled === 1,
-        next: await nextIso(deps.db, r, scope.nowMs),
+        next: nextIso(r, tz, scope.nowMs),
         last: r.last_state === null ? null : {
           at: r.last_ended_at_ms === null ? null : new Date(r.last_ended_at_ms).toISOString(),
           result: resultWords({ state: r.last_state, result_text: r.last_result_text, failure: r.last_failure, outcome: r.last_outcome, reason: r.last_reason }),
         },
         // The chat that made it, only to the person who made it.
         ...(r.source_chat_id !== null && r.creator_id === scope.memberId ? { source_chat_id: r.source_chat_id } : {}),
-      })))
+      }))
       const last = page[page.length - 1]
       const next_cursor = rows.length > PAGE && last ? encodeCursor(`${last.created_at_ms}:${last.id}`) : null
       if (items.length === 0) return answer('No routines are set up.', { routines: [], next_cursor })
@@ -114,6 +118,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       if (scope.memberId === SYSTEM_MEMBER_ID) return IN_ROUTINE
       const r = await readRoutine(deps.db, a.routine_id)
       if (!r || r.deleted_at_ms !== null) return NOT_FOUND(a.routine_id)
+      const { tz } = await brandFacts(deps.db)
       const t = a.time === undefined ? {} : parseTime(a.time)
       const o = await updateRoutine(deps.db, r.id, r.rev, {
         ...(a.instruction !== undefined ? { instruction: a.instruction } : {}),
@@ -124,7 +129,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       }, at(scope))
       if (!('ok' in o)) return writeRefused(o, a.routine_id)
       const u = o.ok
-      const next = await nextIso(deps.db, u, scope.nowMs)
+      const next = nextIso(u, tz, scope.nowMs)
       return answer(`"${u.name}" now runs ${words(u)}${u.enabled === 1 ? '' : ', switched off'}.${next ? ` Next run: ${next}.` : ''}`, {
         routine_id: u.id, schedule: words(u), enabled: u.enabled === 1, next,
       })
