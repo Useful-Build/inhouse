@@ -15,6 +15,8 @@ let version = 0
 const keyOf = (id: string) => { const s = useUi.getState(); return `${s.stage}|${s.scenario}|${id}` }
 
 export function traceOf(id: string): Trace | null | undefined {
+  // A message the client made itself (a send the server refused) has no turn, so no id: there are no steps to ask for.
+  if (id === '') return null
   const key = keyOf(id)
   if (cache.has(key)) return cache.get(key)
   if (!asked.has(key)) {

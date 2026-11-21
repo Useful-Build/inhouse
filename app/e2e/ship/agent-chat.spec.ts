@@ -97,6 +97,14 @@ async function sidebar(page: Page) {
   return side(page)
 }
 
+/** On a phone the drawer stays open over the chat after a navigation: close it, so a screenshot shows the chat. */
+async function closeDrawer(page: Page) {
+  if (phone() && await side(page).isVisible()) {
+    await page.keyboard.press('Escape')
+    await expect(side(page)).toBeHidden()
+  }
+}
+
 async function goTo(page: Page, name: string) {
   await (await sidebar(page)).getByRole('button', { name, exact: true }).click()
 }
@@ -170,6 +178,9 @@ test('S1: Ask a question on Today and watch the answer stream into a new chat', 
   await expect(log(page).getByText(question, { exact: true })).toBeVisible({ timeout: 60_000 })
   await expect(log(page).getByText(HELLO, { exact: true })).toBeVisible({ timeout: 150_000 })
   await expect((await sidebar(page)).locator('[data-chat-row]').filter({ hasText: question }).first()).toBeVisible()
+  // On a phone that check opened the drawer over the chat; the shot shows the streamed answer.
+  await closeDrawer(page)
+  await expect(log(page).getByText(HELLO, { exact: true })).toBeVisible()
   await shot(page, 'S1-answer-in-a-new-chat')
 })
 
@@ -271,6 +282,31 @@ test('S5: All chats lists the server\'s chats; rename and pin survive a reload',
   await shot(page, 'S5-after-the-reload')
 })
 
+test('S5: An old chat with real turns opens after a reload, with its full history', async ({ context, page }) => {
+  needsContainer()
+  test.setTimeout(240_000)
+  await openAs(context, page, 'dana', '#/today')
+  // Asked through the UI, so the chat holds a real turn and its answer (not an empty chat made through the API).
+  const tag = uid()
+  const question = `scenario:hello an old question ${tag}`
+  await askFromToday(page, question)
+  await expect(log(page).getByText(HELLO, { exact: true })).toBeVisible({ timeout: 150_000 })
+  // The turn's history is stored when it ends: the reload must find it on the server, not in this tab.
+  await expect.poll(async () => {
+    const chats = await api(page, 'GET', '/api/chats')
+    return (chats.json.items as { title: string }[]).some(c => c.title.includes(tag))
+  }, { timeout: 60_000, message: 'the chat in the server\'s list' }).toBe(true)
+  await page.reload()
+  await ready(page)
+  await seeAll(page)
+  await chatRow(page, tag).getByRole('button', { name: new RegExp(tag) }).click()
+  await expect(log(page).getByText(question, { exact: true })).toBeVisible({ timeout: 60_000 })
+  await expect(log(page).getByText(HELLO, { exact: true })).toBeVisible()
+  await expect(log(page).getByText(HELLO, { exact: true })).toHaveCount(1)
+  await closeDrawer(page)
+  await shot(page, 'S5-old-chat-full-history')
+})
+
 test('S6: A second Member can\'t see the first person\'s chat', async ({ browser, context, page }) => {
   await openAs(context, page, 'dana', '#/today')
   const title = `Ship S6 ${uid()} private`
@@ -296,7 +332,7 @@ test('S6: A second Member can\'t see the first person\'s chat', async ({ browser
 
 // ---------- S7: memory (a container) ----------
 
-test('S7: A fact the agent saves for you shows in your Memory; a team fact waits for an admin and no page lists it', async ({ browser, context, page }) => {
+test('S7: A fact the agent saves for you shows in your Memory and a new chat uses it; a team fact isn\'t used by a new chat (the admin approval is P6)', async ({ browser, context, page }) => {
   needsContainer()
   test.setTimeout(240_000)
   await openAs(context, page, 'dana', '#/today')
@@ -319,6 +355,13 @@ test('S7: A fact the agent saves for you shows in your Memory; a team fact waits
   await settingsPage(page, 'Your settings', 'Memory')
   await expect(main(page)).toContainText(MEMORY_PERSON)
   await shot(page, 'S7-your-memory-has-the-fact')
+  // A NEW chat uses it: the scripted agent searches memory and says what the search returned, so the fact shows only if the
+  // session got it.
+  await goTo(page, 'New chat')
+  await ask(page, 'scenario:memory-recall how do I like my stock report?')
+  await expect(log(page).getByText(`From memory: ${MEMORY_PERSON}`, { exact: true })).toBeVisible({ timeout: 150_000 })
+  await closeDrawer(page)
+  await shot(page, 'S7-a-new-chat-uses-the-saved-fact')
   // A team fact: saved, but waiting for an admin, so the Admin's Team memory doesn't list it.
   const admin = await pageFor(browser, 'admin', '#/today')
   await askFromToday(admin, 'scenario:memory-save-team remember we restock on Fridays')
@@ -331,7 +374,15 @@ test('S7: A fact the agent saves for you shows in your Memory; a team fact waits
   expect(loaded.team.flatMap(g => g.lines.map(l => l.text))).not.toContain(MEMORY_TEAM)
   await settingsPage(admin, 'Team settings', 'Team memory')
   await expect(main(admin)).not.toContainText(MEMORY_TEAM)
-  await shot(admin, 'S7-team-fact-waits-for-an-admin')
+  await shot(admin, 'S7-team-fact-not-in-team-memory')
+  // And a new chat doesn't use it: the same kind of search, for the team fact, finds nothing. (The words "waiting for an admin"
+  // are P6's approvals; what P3 can show is that the fact is not in use.)
+  await goTo(admin, 'New chat')
+  await ask(admin, 'scenario:memory-recall-team when do we restock?')
+  await expect(log(admin).getByText('Nothing saved matches that.', { exact: true })).toBeVisible({ timeout: 150_000 })
+  await expect(log(admin).getByText(MEMORY_TEAM)).toHaveCount(0)
+  await closeDrawer(admin)
+  await shot(admin, 'S7-a-new-chat-does-not-use-the-team-fact')
 })
 
 // ---------- S8: pause ----------
@@ -356,8 +407,14 @@ test('S8: Pause the agent; a new question is refused with a notice; resume', asy
     // Resume (through the API: the top bar's Pause pill doesn't show on a brand with no tools connected yet).
     await setPaused(page, false)
     expect((await api(page, 'GET', '/api/pause')).json.paused).toBe(false)
-    await ask(member, 'scenario:hello now that it is back')
-    await expect(log(member).getByText(HELLO, { exact: true })).toBeVisible({ timeout: 150_000 })
+    // The answer after the resume needs a container; the refusal and the resume above do not.
+    if (process.env.E2E_TEST_BUILD_REMOTE) {
+      test.setTimeout(240_000)
+      await ask(member, 'scenario:hello now that it is back')
+      await expect(log(member).getByText(HELLO, { exact: true })).toBeVisible({ timeout: 150_000 })
+      await closeDrawer(member)
+      await shot(member, 'S8-resumed-and-answered')
+    }
   } finally {
     await setPaused(page, false)
   }

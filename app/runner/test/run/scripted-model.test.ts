@@ -32,7 +32,10 @@ const webReq = (messages: Msg[]) =>
 const memoryReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_save' }] })
 /** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`. */
-const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name.startsWith('memory-save') ? memoryReq : mainReq)
+/** A main-loop request with the memory search tool in its list, as `memory-recall` expects. */
+const recallReq = (messages: Msg[]) =>
+  req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_search' }] })
+const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name.startsWith('memory-save') ? memoryReq : name.startsWith('memory-recall') ? recallReq : mainReq)
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
@@ -354,6 +357,39 @@ describe("the real CLI's requests", () => {
     expect(await answer(model, captured['write-output']!.turn0!, 'slow-bash')).toEqual({ status: 200, content: ['Waiting a while.', 'Bash'] })
     expect(await answer(model, turn1, 'slow-bash')).toEqual({ status: 200, content: ['Done waiting.'] })
     expect(model.misses).toEqual([])
+  })
+
+  describe('memory-recall: the answer follows what the search returned', () => {
+    const FACT = 'Likes the weekly stock report as a table.'
+    const TEAM = 'We restock on Fridays.'
+    /** The captured memory-save turn 1 (or its budget variant) as a search turn: the tool call id renamed, the result's text replaced. */
+    const withResult = (key: 'turn1' | 'turn1-budget', id: string, text: string): MessagesRequest => {
+      const r = JSON.parse(JSON.stringify(captured['memory-save']![key]!).replaceAll('toolu_scripted_memory', id)) as MessagesRequest
+      for (const m of r.messages) for (const b of Array.isArray(m.content) ? (m.content as { type?: string; tool_use_id?: string; content?: unknown }[]) : []) if (b.type === 'tool_result' && b.tool_use_id === id) b.content = [{ type: 'text', text }]
+      return r
+    }
+    it.each([
+      ['memory-recall', 'toolu_scripted_recall', FACT],
+      ['memory-recall-team', 'toolu_scripted_recall_team', TEAM],
+    ])('%s: turn 0 searches, turn 1 says the fact only when the result holds it, also past the trailing budget line', async (name, id, fact) => {
+      for (const key of ['turn1', 'turn1-budget'] as const) {
+        const model = createScriptedModel(SCENARIOS)
+        expect(await answer(model, captured['memory-save']!.turn0!, name)).toEqual({ status: 200, content: ['mcp__inhouse__memory_search'] })
+        expect(await answer(model, withResult(key, id, `1 saved fact matches:\n- ${fact}`), name)).toEqual({ status: 200, content: [`From memory: ${fact}`] })
+        expect(await answer(model, withResult(key, id, 'Nothing saved matches "x". Try other words.'), name)).toEqual({ status: 200, content: ['Nothing saved matches that.'] })
+        expect(model.misses).toEqual([])
+      }
+    })
+    it('a result that holds the other scenario\'s fact is not this one\'s', async () => {
+      const model = createScriptedModel(SCENARIOS)
+      expect(await answer(model, withResult('turn1', 'toolu_scripted_recall', `1 saved fact matches:\n- ${TEAM}`), 'memory-recall')).toEqual({ status: 200, content: ['Nothing saved matches that.'] })
+    })
+    it('turn 1 without a search result misses', async () => {
+      const model = createScriptedModel(SCENARIOS)
+      const r = withResult('turn1', 'toolu_scripted_recall', FACT)
+      const noResult = { ...r, messages: r.messages.slice(0, -1) }
+      expect((await answer(model, noResult, 'memory-recall')).status).toBe(400)
+    })
   })
 
   it("memory-save-team: the real CLI's memory-save requests (the same tool call), with the call id renamed, get its two answers, also past the trailing budget line", async () => {

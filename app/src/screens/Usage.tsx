@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { activeChannel, capStatus, usageSummary } from '../state/derive'
-import { calendarOf, fmtCount, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
+import { calendarOf, fmtCount, fmtShare, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
 import { display, nowOf } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
@@ -153,7 +153,7 @@ export function Usage() {
         <div className="mt-3 border-t border-border">
           {rows.map(r => {
             const cost = majorOf(r.spent)
-            const share = Math.round(cost / total * 100) + '%'
+            const share = fmtShare(cost, total)
             return (
               <div key={r.name} className="flex items-start gap-3 border-b border-border py-3 text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
                 {tab === 'person' && <span className="inline-flex"><RowMark who={r.name} /></span>}
@@ -184,7 +184,7 @@ export function Usage() {
           </div>
           {rows.map(r => {
             const cost = majorOf(r.spent)
-            const share = Math.round(cost / total * 100) + '%'
+            const share = fmtShare(cost, total)
             return (
               <div key={r.name} className="flex min-h-13.5 items-center border-b border-border text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
                 {tab === 'person' && <span className="mr-3 inline-flex"><RowMark who={r.name} /></span>}

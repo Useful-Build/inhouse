@@ -145,6 +145,8 @@ export const fmtClock = (t: ClockTime, _d: Display): string => clockText(t.hour,
 // ---------- amounts and counts ----------
 
 /** A count ("1,314"). Every number over 999 on screen goes through it. */
+/** A row's share of the total, in whole percent. Nothing spent yet (a zero or missing total) is "0%", never "NaN%" from a 0/0. */
+export const fmtShare = (cost: number, total: number): string => (total > 0 && Number.isFinite(cost / total) ? `${Math.round((cost / total) * 100)}%` : '0%')
 export const fmtCount = (n: number, d: Display): string => nf(d.locale, {}).format(n)
 
 const minorDigits = (currency: string): number => nf('en-US', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2
