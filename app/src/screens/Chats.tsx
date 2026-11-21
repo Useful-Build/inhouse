@@ -196,11 +196,18 @@ function Thread() {
   const msgs = useOpenChatMessages()
 
   // The turns this view saw running, in this chat: only their text is revealed word by word (what's already there when a chat
-  // opens, a reload or a reopened chat is not), and a reveal that began runs on after the run ends. Adjusted during render
-  // (React redraws at once), so a turn is in before its first part draws.
-  const [seen, setSeen] = useState<{ key: string | null; ids: ReadonlySet<string> }>({ key: openId, ids: new Set() })
-  let seenNow = seen.key === openId ? seen : { key: openId, ids: new Set<string>() }
-  for (const t of [run?.turnId, view?.live]) if (t && !seenNow.ids.has(t)) seenNow = { key: openId, ids: new Set([...seenNow.ids, t]) }
+  // opens, a reload or a reopened chat is not), and a reveal that began runs on after the run ends. A turn counts only when it
+  // is first seen after the chat's history is in (or the chat was started here): on a reload the replayed run shows up while
+  // the history is still loading, and that turn never counts (`skip`). Adjusted during render (React redraws at once), so a
+  // turn is in before its first part draws.
+  const startedHere = useUi(s => openId !== null && s.started.some(c => c.id === openId))
+  const historyIn = !noSeed || startedHere || history?.state === 'ready'
+  const [seen, setSeen] = useState<{ key: string | null; ids: ReadonlySet<string>; skip: ReadonlySet<string> }>({ key: openId, ids: new Set(), skip: new Set() })
+  let seenNow = seen.key === openId ? seen : { key: openId, ids: new Set<string>(), skip: new Set<string>() }
+  for (const t of [run?.turnId, view?.live]) {
+    if (!t || seenNow.ids.has(t) || seenNow.skip.has(t)) continue
+    seenNow = historyIn ? { ...seenNow, ids: new Set([...seenNow.ids, t]) } : { ...seenNow, skip: new Set([...seenNow.skip, t]) }
+  }
   if (seenNow !== seen) setSeen(seenNow)
   // Answers with words still to come: the log is busy while there are any, so a screen reader doesn't read half an answer.
   const [revealing, setRevealing] = useState<ReadonlySet<string>>(() => new Set())
@@ -493,7 +500,7 @@ function Thread() {
                     the thinking line at its foot, so no second card shows. */}
                 {(inCard.length > 0 || streaming) && (
                   <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
-                    {inCard.map(x => <AgentPart key={x.id} id={x.id} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} onBusy={onBusy} />)}
+                    {inCard.map(x => <AgentPart key={x.id} id={x.id} chat={openId ?? undefined} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} onBusy={onBusy} />)}
                     {streaming && <Thinking text={thinkingText} />}
                     {endsTurn && <SourcesRow parts={inCard.map(x => x.part)} trace={tr} onToggle={onToggleLong} />}
                   </div>

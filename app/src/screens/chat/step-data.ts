@@ -34,8 +34,14 @@ export function splitStep(label: string): { tool: string | null; text: string } 
   return i < 0 ? { tool: null, text: label } : { tool: label.slice(0, i), text: label.slice(i + 3) }
 }
 
-/** A step that changed something (saved, sent, wrote) rather than read it: its row says what it did. */
-const WROTE = /^(saved|sent|created|posted|updated|wrote|drafted|deleted|changed|added|scheduled|replied|approved)\b/i
+/**
+ * A step that changed something (saved, sent, wrote) rather than read it: its row says what it did. The label is a write
+ * when a write verb is followed by what it did it to ("saved the report", "sent a reply", "updated 3 orders"), not a read
+ * of what was sent or saved ("sent campaigns, last 30 days", "sent mail").
+ */
+const WROTE = /^(saved|sent|created|posted|updated|wrote|drafted|deleted|changed|added|scheduled|replied|approved)\s+(the|a|an|your|my|this|these|those|it|them|to|\d+)\b/i
+const READ_RANGE = /,\s*(last|past|this|previous)\b|\b(last|past)\s+\d+\s+\w+$/i
+export const isWrite = (text: string) => WROTE.test(text) && !READ_RANGE.test(text)
 
 export interface StepRow { tool: string | null; text: string; ms: number; /** It read, so the steps line may say "Checked". */ read: boolean }
 
@@ -45,7 +51,7 @@ export function stepRows(data: AgentData, trace: Trace): StepRow[] {
     const { tool, text } = splitStep(s.label)
     const key = s.kind === 'tool' && tool !== null ? toolKeyOf(data, tool) : null
     const ms = s.endMs - s.startMs
-    return key !== null ? { tool: key, text: cap1(text), ms, read: !WROTE.test(text) } : { tool: null, text: s.label, ms, read: false }
+    return key !== null ? { tool: key, text: cap1(text), ms, read: !isWrite(text) } : { tool: null, text: s.label, ms, read: false }
   })
 }
 
@@ -61,7 +67,7 @@ const words = (t: string) => t.toLowerCase().match(/[a-z0-9#]{3,}/g) ?? []
 
 /**
  * The sources an answer cites: its tables' sources ("Shopify · Orders"), each with the read the run made from that tool and
- * how long it took when the trace says. Each source gets its own read: the tool's step that shares a word with it, else the
+ * how long it took when the trace says. Each source gets its own read: the tool's step that shares a word with it and no source has taken, else the
  * next step of that tool no source has taken; a source with no step to match shows none (never another source's).
  */
 export function sourcesOf(data: AgentData, parts: readonly MessagePart[], trace: Trace | null | undefined): Source[] {
@@ -78,7 +84,7 @@ export function sourcesOf(data: AgentData, parts: readonly MessagePart[], trace:
       const toolName = tool ?? src
       const own = steps.filter(x => splitStep(x.s.label).tool?.toLowerCase() === toolName.toLowerCase())
       const mine = new Set(words(text))
-      const hit = own.find(x => words(splitStep(x.s.label).text).some(w => mine.has(w))) ?? own.find(x => !taken.has(x.i))
+      const hit = own.find(x => !taken.has(x.i) && words(splitStep(x.s.label).text).some(w => mine.has(w))) ?? own.find(x => !taken.has(x.i))
       if (hit) taken.add(hit.i)
       const ms = hit ? hit.s.endMs - hit.s.startMs : 0
       out.push({

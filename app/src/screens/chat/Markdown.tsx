@@ -5,6 +5,7 @@ import { Fragment } from 'react'
 import type { ReactNode } from 'react'
 import { IconButton } from '../../ui'
 import { copyText } from './copy'
+import { FENCE, ROW, SEP } from './md-syntax'
 
 interface List { ordered: boolean; start: number; items: { text: string; sub?: List }[] }
 type Block =
@@ -16,14 +17,11 @@ type Block =
   | { k: 'list'; list: List }
   | { k: 'table'; head: string[]; rows: string[][] }
 
-const FENCE = /^\s*```\s*([\w+#.-]*)/
 const HEADING = /^\s{0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/
 const HR = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/
 const LIST = /^(\s*)(?:[-*+]|(\d+)[.)])\s+(.*)$/
 // Only "> " (or a bare ">") starts a quote, so ">100 units" stays text.
 const QUOTE = /^\s*>(?: (.*)|\s*$)/
-const ROW = /^\s*\|.*\|\s*$/
-const SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/
 
 /** A table row's cells: split on pipes that aren't escaped, then `\|` becomes `|`. */
 function cells(line: string): string[] {
