@@ -8,13 +8,18 @@ import { RESULT_HANDLERS } from './results.ts'
  * The system routines' prompts, by `prompt_ref` (one line each, added with the routine's row: W3's morning check). An
  * unknown ref fails loud: that routine's pass throws, its cursor holds and the routines signal goes red on the lag.
  */
-export const SYSTEM_ROUTINE_PROMPTS: Readonly<Record<string, string>> = {}
+export const SYSTEM_ROUTINE_PROMPTS: Readonly<Record<string, string>> = {
+  // W3's morning check. A placeholder: the orchestrator replaces this line with the import from `prompt/routines/morning-check.ts`.
+  'morning-check': 'PLACEHOLDER: the morning check prompt is the orchestrator\'s (app/server/prompt/routines/morning-check.ts).',
+}
 
 /**
  * The system routines' descriptions for the Routines page's `what` (section 9), by `prompt_ref`: one line each, added with
  * the routine's prompt (prompts.test.ts fails a prompt without one, so a missing one shows in CI, not on the page).
  */
-export const SYSTEM_ROUTINE_DESCRIPTIONS: Readonly<Record<string, string>> = {}
+export const SYSTEM_ROUTINE_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  'morning-check': 'Checks the store each morning for orders, stock and money that need a person.',
+}
 
 export function systemDescription(ref: string | null): string {
   const key = ref ?? ''

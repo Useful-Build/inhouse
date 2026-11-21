@@ -67,6 +67,9 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // P4 W3 (p4-w3.md section 5): Today is brand data; setting an item aside is a write the Inhouse team may make under a live grant (audited; INHOUSE_BRAND_WRITES).
+  /* 57 */ { method: 'GET', pattern: '/api/today', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 58 */ { method: 'PUT', pattern: '/api/today/:id/aside', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // P4 W5 (p4-w5.md section 3, OC 4): the Library is brand data; the upload is people only.
   /* 62 */ { method: 'GET', pattern: '/api/library', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 63 */ { method: 'POST', pattern: '/api/library/uploads', class: 'brand_data', allow: ['member', 'admin'] },

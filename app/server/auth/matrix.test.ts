@@ -273,6 +273,9 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/activity': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'GET /api/notifications': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/notifications/read': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 57 and 58 (P4 W3): Today is brand data like Activity; setting an item aside is a write the Inhouse team may make under a live grant (audited).
+  'GET /api/today': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'PUT /api/today/:id/aside': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   // Rows 62 to 66 (P4 W5): the Library is brand data (Inhouse under a grant may list, download, delete and restore); the
   // upload is people only.
   'GET /api/library': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],

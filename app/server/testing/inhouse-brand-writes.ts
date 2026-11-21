@@ -2,7 +2,7 @@
 // list, the one oracle both the matrix's unit tests (server/auth/matrix.test.ts) and the e2e route invariants
 // (e2e/api/routes.spec.ts) read. P3: forgetting a team fact (row 45). Every other brand_data or personal write stays
 // closed to the Inhouse team. Plain data, no imports, so the Playwright specs can load it.
-// P4 (wave-4 PR0): the routine rows (p4-w2.md routes 51 to 54), Today's set-aside (p4-w3.md route 56) and the
+// P4 (wave-4 PR0): the routine rows (p4-w2.md routes 51 to 54), Today's set-aside (p4-w3.md route 58) and the
 // Library's delete and restore (p4-w5.md routes 63 and 64). shared/contract/audit.test.ts keeps this list and the
 // support.access write pairs equal.
 export const INHOUSE_BRAND_WRITES: readonly string[] = [

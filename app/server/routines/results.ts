@@ -2,9 +2,11 @@
 // `morning_check` by an orchestrator line. A handler reads what it needs before the end's batch and returns idempotent
 // statements keyed by the slot, so a re-delivered end writes nothing twice.
 import type { OutputFormat } from '../../shared/protocol/index.ts'
+import { morningCheckHandler } from '../today/result.ts'
 import type { ActivityTemplateId } from '../activity/templates.ts'
 import type { FieldValues } from '../activity/fields.ts'
 import type { TurnEndPayload } from '../do/brand-agent/ports.ts'
+import type { ReadGateway } from '../../hub/index/contract.ts'
 
 /** The slot an end lands on, as the end handler read it. */
 export interface EndSlot {
@@ -14,6 +16,8 @@ export interface EndSlot {
   local_date: string
   local_time: string | null
   claimed_at_ms: number
+  /** The slot's state as the end read it: a handler writes nothing for a slot already `ended`. */
+  state: string
   creator_id: string
   requested_by: string | null
 }
@@ -34,7 +38,17 @@ export interface ResultOutput {
 export interface ResultHandler {
   /** Sent as the turn's `outputFormat`. */
   outputFormat?: OutputFormat
-  run(slot: EndSlot, end: EndOutcome, ctx: { db: D1Database; nowMs: number }): Promise<ResultOutput>
+  run(slot: EndSlot, end: EndOutcome, ctx: ResultContext): Promise<ResultOutput>
 }
 
-export const RESULT_HANDLERS: Readonly<Record<string, ResultHandler>> = {}
+/** What a handler reads with: the clock, the hub's read side (`HUB`) the turn's id (W3: its tool calls) and the run's id. */
+export interface ResultContext {
+  db: D1Database
+  nowMs: number
+  hub: Pick<ReadGateway, 'listTools'>
+  turnId: string
+  /** The run's id: what a Today item keeps as its trace. */
+  runId: string
+}
+
+export const RESULT_HANDLERS: Readonly<Record<string, ResultHandler>> = { morning_check: morningCheckHandler }

@@ -5,6 +5,7 @@
 // no payload, and the outcome lives only in it.
 import { addNotice } from '../notices/store.ts'
 import type { DueTask, TaskContext, TaskResult } from '../do/brand-agent/scheduler.ts'
+import type { ReadGatewayLike } from '../egress/hub.ts'
 import type { TurnEndPayload } from '../do/brand-agent/ports.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
 import { hashId, slotKeyOfEndTask } from './keys.ts'
@@ -35,7 +36,7 @@ export async function routineEnd(task: DueTask, ctx: EndContext): Promise<TaskRe
   const db = ctx.env.DB
   const now = ctx.nowMs
   const slot = await db.prepare(
-    `SELECT s.slot_key, s.routine_id, s.run_id, s.kind, s.local_date, s.local_time, s.claimed_at_ms, s.creator_id, s.requested_by,
+    `SELECT s.slot_key, s.routine_id, s.run_id, s.kind, s.local_date, s.local_time, s.claimed_at_ms, s.state, s.creator_id, s.requested_by,
         r.kind AS routine_kind, r.need
       FROM routine_slots s JOIN routines r ON r.id = s.routine_id WHERE s.slot_key = ?`,
   ).bind(slotKey).first<EndSlot & { run_id: string | null; routine_kind: string; need: number }>()
@@ -46,7 +47,7 @@ export async function routineEnd(task: DueTask, ctx: EndContext): Promise<TaskRe
   }
   const handler = Object.hasOwn(RESULT_HANDLERS, slot.routine_kind) ? RESULT_HANDLERS[slot.routine_kind] : undefined
   const out: ResultOutput = handler
-    ? await handler.run(slot, { outcome: end.outcome, failure: end.failure, structuredOutput: end.structuredOutput }, { db, nowMs: now })
+    ? await handler.run(slot, { outcome: end.outcome, failure: end.failure, structuredOutput: end.structuredOutput }, { db, nowMs: now, hub: ctx.env.HUB as unknown as ReadGatewayLike, turnId: end.turnId, runId: end.runId })
     : { statements: [], summary: null }
   // P3 sets `failure` only for failed and cancelled ends; every other end takes the handler's, or none (revision 3.3).
   const failure = end.failure ?? out.failure ?? null
