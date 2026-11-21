@@ -255,23 +255,25 @@ describe('a chat delete ends its turns through storeFinal (failure 4)', () => {
     })
   })
 
-  it("a delete's late call after a restore changes nothing; a newer delete applies (the D1 rev orders them)", async () => {
+  it("a delete's late call after the restore that undid it changes nothing; a newer delete applies, and an older restore after it changes nothing (the D1 rev orders them)", async () => {
     const c = await chat()
     await inAgent(async h => {
       h.core.endChats([{ id: c, rev: 2 }])
       expect(await h.submit(c, 'key-proj18', { member: owner })).toEqual({ refused: { code: 'not_found' } })
-      h.core.restoreChats([{ id: c, rev: 3 }])
-      // Delete rev 2's call arriving again, late: overtaken by restore rev 3.
+      // The restore that read the deletion at rev 2 undoes it, at the equal rev.
+      h.core.restoreChats([{ id: c, rev: 2 }])
+      // Delete rev 2's call arriving again, late: the restore read that deletion, so it stays undone.
       h.core.endChats([{ id: c, rev: 2 }])
       const ok = await send(h, c, 'key-proj19')
       expect(ok.turnId).toMatch(/^t_/)
-      // An opposite op at an equal rev is skipped (only a newer rev applies): the chat stays restored.
-      h.core.endChats([{ id: c, rev: 3 }])
-      expect(h.sql.exec('SELECT deleted, rev FROM chat_deletion WHERE chat_id = ?', c).one()).toEqual({ deleted: 0, rev: 3 })
+      expect(h.sql.exec('SELECT deleted, rev FROM chat_deletion WHERE chat_id = ?', c).one()).toEqual({ deleted: 0, rev: 2 })
       // A newer delete wins.
       h.core.endChats([{ id: c, rev: 4 }])
       expect(await h.submit(c, 'key-proj20', { member: owner })).toEqual({ refused: { code: 'not_found' } })
+      // A restore that read an older deletion (rev 3), arriving late: overtaken by delete rev 4.
+      h.core.restoreChats([{ id: c, rev: 3 }])
       expect(h.sql.exec('SELECT deleted, rev FROM chat_deletion WHERE chat_id = ?', c).one()).toEqual({ deleted: 1, rev: 4 })
+      expect(await h.submit(c, 'key-proj21', { member: owner })).toEqual({ refused: { code: 'not_found' } })
     })
   })
 

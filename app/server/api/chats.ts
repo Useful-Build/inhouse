@@ -162,17 +162,20 @@ export const pinChat: Handler = async c => {
 }
 
 /**
- * Routes 27 and 28: 1 to 50 of the caller's chats, all or nothing (any id not theirs: 404, nothing changes). The
- * BrandAgent applies each chat's delete or restore only if its rev (the chat's D1 rev after that change) is newer than
- * the last it applied, so a delete's late call can't undo a later restore, nor the other way round.
- * - Delete: D1 first, reading the chats back in the same transaction (each carries the delete's own rev), then the
- *   BrandAgent cancels their queued turns and stops their running one (each through its own paths, ending in its
- *   final-state step) and refuses sends into them. A failed call answers an error; the retry finds the chats already
- *   deleted and calls again with the same revs (applied if the failed call never was).
- * - Restore: only the chats read as deleted. The BrandAgent first (with each one's rev once restored), then D1, each
- *   write conditioned on the rev it was read at. A chat that changed in between isn't flipped: 409 (the BrandAgent may
- *   already have it restored; a retry heals). A failed call leaves the chats deleted in D1, so the restore can be
- *   retried; a failed D1 write after it leaves them hidden but sendable until a retry.
+ * Routes 27 and 28: 1 to 50 of the caller's chats, all or nothing (any id not theirs: 404, nothing changes). Each call
+ * to the BrandAgent names, per chat, a D1 rev the chat really had while deleted (never a predicted one), and the
+ * BrandAgent keeps the newest, so a delete's late call can't undo a later restore, nor the other way round.
+ * - Delete: D1 first. Every delete moves the chats' rev, a repeated one too, and reads them back in the same
+ *   transaction (each carries this delete's own rev). Then the BrandAgent cancels their queued turns and stops their
+ *   running one (each through its own paths, ending in its final-state step) and refuses sends into them. That rev is
+ *   newer than any restore that read the chat before it, so such a restore's D1 write no longer applies. A failed
+ *   call answers an error; the retry is a new delete.
+ * - Restore: only the chats read as deleted. The BrandAgent first, with the rev each was read at (the deletion being
+ *   undone), then D1, in one statement that applies only while every one of them is still deleted at that rev. If any
+ *   changed in between, none is flipped: 409. So a chat that is live in D1 is always live in the BrandAgent.
+ * A restore that fails or answers 409 after its BrandAgent call leaves its chats deleted in D1 and restored in the
+ * BrandAgent (hidden; route 29 still refuses sends from D1). The next delete or restore of them that answers 200 puts
+ * the two back in step (#163's escalation round).
  */
 function deleteOrRestore(deleted: boolean): Handler {
   return async c => {
@@ -191,7 +194,7 @@ function deleteOrRestore(deleted: boolean): Handler {
       return apiJson({ items: await summaries(c, after) })
     }
     const toRestore = ids.filter(id => states.get(id)!.deleted).map(id => ({ id, rev: states.get(id)!.rev }))
-    if (toRestore.length > 0) await brandAgent(c.env).restoreChats(toRestore.map(t => ({ id: t.id, rev: t.rev + 1 })))
+    if (toRestore.length > 0) await brandAgent(c.env).restoreChats(toRestore)
     const done = await stores.chats.restore(toRestore, ids, by.memberId, writer(c))
     if (!done.applied) return apiError('conflict')
     return apiJson({ items: await summaries(c, done.records) })

@@ -9,7 +9,9 @@
 //  6. a delete leaves a queued turn waiting or a live one running, or ends them outside the BrandAgent's paths;
 //  7. `running` and `runs` don't follow the BrandAgent's live run;
 //  8. a send whose D1 read happened before a delete committed is admitted into the deleted chat, or a restored chat
-//     still refuses sends.
+//     still refuses sends;
+//  9. a delete answers 200 and the BrandAgent still admits sends (a restore before it named a rev the chat never had
+//     deleted, or one equal to the delete's), or a restore that answers 409 has flipped some of its chats.
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -58,7 +60,7 @@ const inhouse = (grant = true): Principal => ({ kind: 'inhouse', memberId: admin
 const smoke: Principal = { kind: 'service', name: 'smoke', memberId: 'm_smoke', requestId: 'r-smoke' }
 const me = (who: string, role: 'member' | 'admin' = 'member') => personPrincipal(who, role)
 
-const call = async (h: (c: HandlerContext) => Promise<Response>, principal: Principal, init: { method?: string; path: string; body?: unknown; params?: Record<string, string> }, s: Stores = stores, e: Env = env) => {
+const call = async (h: (c: HandlerContext) => Promise<Response>, principal: Principal, init: { method?: string; path: string; body?: unknown; params?: Record<string, string>; nowMs?: number }, s: Stores = stores, e: Env = env) => {
   const { c, objects } = ctx(s, principal, init)
   const res = await h({ ...c, env: e, ctx: {} as ExecutionContext } as HandlerContext)
   return { status: res.status, body: await res.json() as Record<string, unknown>, objects }
@@ -435,7 +437,7 @@ describe('routes 27 and 28: delete and restore, all or nothing (failures 4 and 6
     expect(await agentSend(id)).toEqual({ refused: { code: 'not_found' } })
   })
 
-  it("a restore whose BrandAgent call landed but whose D1 write failed heals on retry (the BrandAgent skips the equal rev)", async () => {
+  it("a restore whose BrandAgent call landed but whose D1 write failed heals on retry (the BrandAgent takes the same rev again)", async () => {
     const id = `c-${uniq()}`
     await chat(id, alice)
     expect((await del(me(alice), { ids: [id] })).status).toBe(200)
@@ -448,5 +450,66 @@ describe('routes 27 and 28: delete and restore, all or nothing (failures 4 and 6
     expect(await deletedCount([id])).toBe(1)
     expect((await restore(me(alice), { ids: [id] })).body.items).toEqual([summary(id, { rev: 3 })])
     expect(await agentSend(id)).toMatchObject({ position: expect.any(String) })
+  })
+
+  const rename = (id: string, ifRev: number) => call(renameChat, me(alice), { method: 'PUT', path: `/api/chats/${id}/title`, params: { id }, body: { title: 'New', ifRev } })
+  /** A restore whose BrandAgent call lands in the real object, then `between` runs before the handler's D1 write. */
+  const restoreWithGap = (chatIds: string[], between: () => Promise<void>) => call(restoreChats, me(alice), { method: 'POST', path: '/api/chats/restore', body: { ids: chatIds } },
+    stores, agentEnv({ restoreChats: async c => { await brandAgent(env).restoreChats(c); await between() } }))
+
+  it("a rename between a restore's BrandAgent call and its D1 write: 409, and a delete after it still reaches the BrandAgent (escalation, 1)", async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    const r = await restoreWithGap([id], async () => { expect((await rename(id, 2)).status).toBe(200) })
+    expect(r).toMatchObject({ status: 409, body: { error: { code: 'conflict' } } })
+    expect(await deletedCount([id])).toBe(1)
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    expect(await agentSend(id)).toEqual({ refused: { code: 'not_found' } })
+  })
+
+  it("a delete between a restore's BrandAgent call and its D1 write wins: the restore is 409 and both have the chat deleted (escalation, 1)", async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    const r = await restoreWithGap([id], async () => {
+      // A repeated delete moves the rev, so the restore's write (on the rev it read) no longer applies.
+      expect((await del(me(alice), { ids: [id] })).body.items).toEqual([summary(id, { deleted: true, rev: 3 })])
+    })
+    expect(r).toMatchObject({ status: 409, body: { error: { code: 'conflict' } } })
+    expect(await deletedCount([id])).toBe(1)
+    expect(await agentSend(id)).toEqual({ refused: { code: 'not_found' } })
+  })
+
+  it('a restore whose BrandAgent call landed but whose D1 write failed, then a delete instead of a retry: the delete reaches the BrandAgent (escalation, 2)', async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    expect((await del(me(alice), { ids: [id] })).status).toBe(200)
+    let failOnce = true
+    const flaky: Stores = { ...stores, chats: chatStore({ db: { prepare: (q: string) => db.prepare(q), batch: async (b: D1PreparedStatement[]) => {
+      if (failOnce) { failOnce = false; throw new Error('D1_ERROR: scripted failure') }
+      return db.batch(b)
+    } } as unknown as D1Database }) }
+    await expect(call(restoreChats, me(alice), { method: 'POST', path: '/api/chats/restore', body: { ids: [id] } }, flaky)).rejects.toBeInstanceOf(StoreUnavailableError)
+    // Five seconds later. The rev moves; the deletion time stays the first delete's.
+    const again = await call(deleteChats, me(alice), { method: 'POST', path: '/api/chats/delete', body: { ids: [id] }, nowMs: NOW + 5_000 })
+    expect(again.body.items).toEqual([summary(id, { deleted: true, rev: 3 })])
+    expect(await db.prepare('SELECT deleted_at_ms FROM chats WHERE id = ?').bind(id).first('deleted_at_ms')).toBe(NOW)
+    expect(await agentSend(id)).toEqual({ refused: { code: 'not_found' } })
+  })
+
+  it('a restore of two chats, one changed in between, flips neither (409, all or nothing); its retry restores both (escalation, 3)', async () => {
+    const a = `c-${uniq()}`
+    const b = `${a}-b`
+    await chat(a, alice)
+    await chat(b, alice)
+    expect((await del(me(alice), { ids: [a, b] })).status).toBe(200)
+    const r = await restoreWithGap([a, b], async () => { expect((await rename(b, 2)).status).toBe(200) })
+    expect(r).toMatchObject({ status: 409, body: { error: { code: 'conflict' } } })
+    expect((await db.prepare('SELECT id, rev, deleted_at_ms IS NOT NULL AS deleted FROM chats WHERE id IN (?, ?) ORDER BY id').bind(a, b).all()).results)
+      .toEqual([{ id: a, rev: 2, deleted: 1 }, { id: b, rev: 3, deleted: 1 }])
+    expect((await restore(me(alice), { ids: [a, b] })).body.items).toEqual([summary(a, { rev: 3 }), summary(b, { customTitle: 'New', rev: 4 })])
+    expect(await agentSend(a)).toMatchObject({ position: expect.any(String) })
+    expect(await agentSend(b)).toMatchObject({ position: expect.any(String) })
   })
 })

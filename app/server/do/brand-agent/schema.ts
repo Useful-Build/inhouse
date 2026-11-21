@@ -15,9 +15,9 @@
 // - `turn_trace`: audit and step records for the trace (route 33), never parts;
 // - `authority`: the object's removed-member and ended-grant sets (4.3, 4.10);
 // - `turn_rows`: a final turn's D1 rows, fixed at its end (4.8, projection.ts), so a retry replays the same ones;
-// - `chat_deletion`: each chat route 27 deleted or route 28 restored, with the chat's D1 rev of that change (only a
-//   newer one replaces it): `submitTurn` refuses a deleted one, so a send that read the chat in D1 before the delete
-//   committed can't start a turn in it;
+// - `chat_deletion`: each chat route 27 deleted or route 28 restored, with a D1 rev the chat had while deleted (the
+//   delete's own, or the one the restore read; a newer delete or a restore at least as new replaces it): `submitTurn`
+//   refuses a deleted one, so a send that read the chat in D1 before the delete committed can't start a turn in it;
 // - PR 2b, the model gate (8.2): `model_calls` and `ledger_queue` as 4.1, plus `model_calls.n` (the turn's arrival
 //   order: FIFO without trusting the clock), `money_wait` (sent back to wait for money: decided again only once a
 //   sibling closes), `closed_at_ms` (the trace's end of a call); `turns.ledger_hold_micro` (4.1: the ledger's last

@@ -119,7 +119,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async endChats(chats: { id: string; rev: number }[]): Promise<void> {
     this.core.endChats(chats)
   }
-  /** Route 28: the chats are being restored (each with its D1 rev once restored); sends into them are admitted again. */
+  /** Route 28: the chats are being restored (each with the D1 rev it was read deleted at); sends into them are admitted again. */
   async restoreChats(chats: { id: string; rev: number }[]): Promise<void> {
     this.core.restoreChats(chats)
   }

@@ -1158,17 +1158,18 @@ export class AgentCore {
   chatRuns(chatIds: string[]): ActiveRun[] { return activeRuns(this.sql, { all: true }, chatIds) }
 
   /**
-   * Applies route 27's or 28's change for each chat only when it is newer than the last one applied: `rev` is the
-   * chat's D1 rev after that change (every delete and restore that changes the chat moves it, and no two carry the same
-   * rev), so a delete whose call arrives after a later restore changes nothing, nor the other way round (#163 reviews).
-   * The same rev again (a retry whose first call landed) changes nothing. The chats it applied.
+   * Applies route 27's or 28's change for each chat unless a newer one is already applied. `rev` is a D1 rev the chat
+   * really had while deleted: a delete's is the rev its own write left; a restore's is the rev of the deletion it read
+   * and is undoing (its D1 write applies only at that rev). So a delete applies only when its rev is newer than the
+   * last applied, and a restore also at an equal rev: it read that deletion, so it is the later of the two. A delete
+   * whose call arrives after a later restore changes nothing, nor the other way round (#163 reviews). The chats it applied.
    */
   private markChats(chats: { id: string; rev: number }[], deleted: boolean): string[] {
     const now = this.d.now()
     const applied: string[] = []
     for (const c of chats) {
       const last = this.sql.exec<{ rev: number }>('SELECT rev FROM chat_deletion WHERE chat_id = ?', c.id).toArray()[0]
-      if (last && last.rev >= c.rev) continue
+      if (last && (deleted ? last.rev >= c.rev : last.rev > c.rev)) continue
       this.sql.exec(`INSERT INTO chat_deletion (chat_id, deleted, rev, at_ms) VALUES (?, ?, ?, ?)
         ON CONFLICT(chat_id) DO UPDATE SET deleted = excluded.deleted, rev = excluded.rev, at_ms = excluded.at_ms`, c.id, deleted ? 1 : 0, c.rev, now)
       applied.push(c.id)
@@ -1201,7 +1202,7 @@ export class AgentCore {
     for (const r of runs) this.advance(r)
   }
 
-  /** Route 28: the chats are being restored (each with its D1 rev once restored); sends into them are admitted again. */
+  /** Route 28: the chats are being restored (each with the D1 rev it was read deleted at); sends into them are admitted again. */
   restoreChats(chats: { id: string; rev: number }[]) {
     this.markChats(chats, false)
   }

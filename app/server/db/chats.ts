@@ -42,13 +42,14 @@ export interface ChatStore {
   /** Each id's owner, rev and whether it's deleted (ids not found are absent). */
   statesOf(chatIds: string[]): Promise<Map<string, { ownerId: string; rev: number; deleted: boolean }>>
   /**
-   * Marks the owner's chats deleted (a chat already deleted keeps its rev) and reads them back in the same batch (one
-   * D1 transaction), so each record carries the delete's own rev. The chats after, in order.
+   * Marks the owner's chats deleted and reads them back in the same batch (one D1 transaction), so each record carries
+   * this delete's own rev. A chat already deleted keeps its deletion time, and its rev moves too: a restore that read
+   * it before no longer applies (`restore`). The chats after, in order.
    */
   markDeleted(chatIds: string[], ownerId: string, at: At): Promise<ChatRecord[]>
   /**
-   * Restores `chats`, each only while it is still deleted at the rev it was read at (one statement per chat, one batch),
-   * and reads `chatIds` back in the same batch. `applied`: every one of `chats` was restored.
+   * Restores `chats`, all or none: one statement that changes a row only while every one of them is still deleted at
+   * the rev it was read at. Reads `chatIds` back in the same batch. `applied`: they were restored.
    */
   restore(chats: { id: string; rev: number }[], chatIds: string[], ownerId: string, at: At): Promise<{ records: ChatRecord[]; applied: boolean }>
   /** Up to `limit` messages, `pos DESC`, below `beforePos` when given. */
@@ -150,18 +151,24 @@ export function chatStore(deps: { db: D1Database }): ChatStore {
     },
     async markDeleted(chatIds, ownerId, at) {
       const results = await runBatch(db, [
-        stmt(`UPDATE chats SET deleted_at_ms = ?, rev = rev + 1, req_id = ? WHERE id IN (${marks(chatIds.length)}) AND owner_id = ? AND deleted_at_ms IS NULL`,
+        stmt(`UPDATE chats SET deleted_at_ms = COALESCE(deleted_at_ms, ?), rev = rev + 1, req_id = ? WHERE id IN (${marks(chatIds.length)}) AND owner_id = ?`,
           at.nowMs, at.requestId, ...chatIds, ownerId),
         readBack(chatIds),
       ])
       return inOrder(chatIds, results[1].results as ChatRow[])
     },
     async restore(chats, chatIds, ownerId, at) {
-      const writes = chats.map(c => stmt(
-        'UPDATE chats SET deleted_at_ms = NULL, rev = rev + 1, req_id = ? WHERE id = ? AND owner_id = ? AND rev = ? AND deleted_at_ms IS NOT NULL',
-        at.requestId, c.id, ownerId, c.rev))
+      // `{ id: rev }` as one bound JSON value (50 pairs would pass D1's 100 bound parameters), read with `json_each`:
+      // https://developers.cloudflare.com/d1/sql-api/query-json/ (read 2026-11-21). The count is over the chats still
+      // deleted at their rev, so one that moved leaves every row as it was.
+      const want = JSON.stringify(Object.fromEntries(chats.map(c => [c.id, c.rev])))
+      const writes = chats.length === 0 ? [] : [stmt(
+        `UPDATE chats SET deleted_at_ms = NULL, rev = rev + 1, req_id = ? WHERE id IN (SELECT key FROM json_each(?))
+          AND (SELECT COUNT(*) FROM chats c JOIN json_each(?) w ON w.key = c.id AND w.value = c.rev
+            WHERE c.owner_id = ? AND c.deleted_at_ms IS NOT NULL) = ?`,
+        at.requestId, want, want, ownerId, chats.length)]
       const results = await runBatch(db, [...writes, readBack(chatIds)])
-      const applied = results.slice(0, writes.length).every(r => r.meta.changes === 1)
+      const applied = writes.length === 0 || results[0].meta.changes === chats.length
       return { records: inOrder(chatIds, results[writes.length].results as ChatRow[]), applied }
     },
     async messages(chatId, beforePos, limit) {
