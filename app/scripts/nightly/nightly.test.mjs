@@ -153,3 +153,25 @@ describe('probes.sh', () => {
     expect(read(path.join(here, 'probes.sh'))).toMatch(/sh image\/probes\/build\.sh/)
   })
 })
+
+// .github/workflows/nightly.yml (E-9, 2026-11-21): the container guard probes (P3 Acc 5's proof) every night on main.
+// Ways it can fail, written down first: it stops running on a schedule; it runs a branch's code (a dispatch from a PR
+// branch); it holds a secret or reaches the eval deployment (the eval run needs the test-issuer key, which only the
+// ops repo holds, and runs only once the baseline's cost is measured); it runs something other than probes.sh.
+describe('nightly.yml', () => {
+  const wf = () => fs.readFileSync(path.join(here, '../../../.github/workflows/nightly.yml'), 'utf8')
+  it('runs on a daily schedule and by hand', () => {
+    expect(wf()).toMatch(/\n  schedule:\n    - cron: "\d+ \d+ \* \* \*"\n/)
+    expect(wf()).toMatch(/\n  workflow_dispatch:\n/)
+  })
+  it('runs main only, with no secrets and read-only contents', () => {
+    expect(wf()).toMatch(/\n    if: github\.ref == 'refs\/heads\/main'\n/)
+    expect(wf()).not.toMatch(/secrets\./)
+    expect(wf()).toMatch(/\npermissions:\n  contents: read\n/)
+    expect(wf()).toMatch(/persist-credentials: false/)
+  })
+  it('runs probes.sh, and no eval step', () => {
+    expect(wf()).toMatch(/\n        run: sh app\/scripts\/nightly\/probes\.sh\n/)
+    expect(wf()).not.toMatch(/evals\.mjs|evals\/run|--paid|INHOUSE_EVAL/)
+  })
+})
