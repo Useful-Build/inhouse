@@ -3,6 +3,8 @@
 // - the guards aren't applied, a NODE_CHANNEL_ variable reaches the CLI's env, or a custom CLI spawn or MCP delivery
 //   sneaks back in (the SDK's default spawn keeps the session's stdio from the CLI);
 // - an interrupt that falls back to abort is reported as an SDK error;
+// - an interrupt the SDK honours (its `error_during_execution` result, then its throw) is reported as an SDK error, while
+//   a genuine SDK error with a throw and no interrupt is reported as anything but one;
 // - a run ends twice, or not at all, when the query throws, is stopped, or the root sends garbage;
 // - sessionEnv() grows a variable that isn't on its list (where a token could hide);
 // - the session process keeps the inherited umask (022), so what it writes in /tmp is readable by other sessions;
@@ -89,7 +91,11 @@ const config = (over = {}) => {
   return c
 }
 
-function fakeQuery(messages: SDKMessage[], opts: { throwAt?: number; holdUntilInterrupt?: boolean; interruptThrows?: boolean; abortThrows?: boolean } = {}) {
+/**
+ * `afterHold`: what the query yields once released (by `interrupt()`), and `thenThrow`: the error it throws after
+ * everything it yielded, as the real SDK does after an `is_error` result ("Claude Code returned an error result").
+ */
+function fakeQuery(messages: SDKMessage[], opts: { throwAt?: number; holdUntilInterrupt?: boolean; interruptThrows?: boolean; abortThrows?: boolean; afterHold?: SDKMessage[]; thenThrow?: string } = {}) {
   const calls: Parameters<QueryFn>[0][] = []
   let interrupted = 0
   let release!: () => void
@@ -109,6 +115,8 @@ function fakeQuery(messages: SDKMessage[], opts: { throwAt?: number; holdUntilIn
         )
       }
       if (opts.holdUntilInterrupt) await held
+      for (const m of opts.afterHold ?? []) yield m
+      if (opts.thenThrow !== undefined) throw new Error(opts.thenThrow)
     }
     return Object.assign(gen(), {
       interrupt: async () => {
@@ -235,6 +243,42 @@ describe('runSession', () => {
     await h.done
     expect(h.events().map((e) => e.type)).toEqual(['sdk', 'checkpoint', 'failed'])
     expect(h.events().at(-1)).toMatchObject({ type: 'failed', reason: 'interrupted' })
+  })
+
+  // The real SDK, asked to interrupt (live-turns.spec on the sandbox, and a local run of the real CLI): the turn ends with
+  // an `error_during_execution` result (is_error), then the iteration throws "Claude Code returned an error result".
+  const EDE = { type: 'result', subtype: 'error_during_execution', is_error: true, num_turns: 1, total_cost_usd: 0.00007, usage: { input_tokens: 10 }, errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'] } as unknown as SDKMessage
+  const EDE_THROW = 'Claude Code returned an error result: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'
+  const EDE_FINISHED = { type: 'finished', subtype: 'error_during_execution', isError: true, numTurns: 1, costUsd: 0.00007, usage: { input_tokens: 10 } }
+
+  it("an interrupt the SDK honours (its error_during_execution result, then its throw) ends finished with that result", async () => {
+    const q = fakeQuery([assistant], { holdUntilInterrupt: true, afterHold: [EDE], thenThrow: EDE_THROW })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await waitForTicks(() => q.calls.length === 1)
+    h.deliver({ type: 'interrupt' })
+    await h.done
+    expect(q.interrupts()).toBe(1)
+    expect(h.events().filter((e) => e.type === 'failed' || e.type === 'finished')).toEqual([EDE_FINISHED])
+  })
+
+  it('an interrupt delivered with the run (pending until the query exists), honoured the same way, ends finished', async () => {
+    const q = fakeQuery([assistant], { holdUntilInterrupt: true, afterHold: [EDE], thenThrow: EDE_THROW })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    h.deliver({ type: 'interrupt' })
+    await h.done
+    expect(q.interrupts()).toBe(1)
+    expect(h.events().filter((e) => e.type === 'failed' || e.type === 'finished')).toEqual([EDE_FINISHED])
+  })
+
+  it('the same result and throw with no interrupt is an SDK error', async () => {
+    const q = fakeQuery([assistant, EDE], { thenThrow: EDE_THROW })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(q.interrupts()).toBe(0)
+    expect(h.events().filter((e) => e.type === 'failed' || e.type === 'finished')).toEqual([{ type: 'failed', reason: 'sdk_error', message: EDE_THROW }])
   })
 
   it('an interrupt delivered with the run, in the same tick, reaches the query', async () => {
