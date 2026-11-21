@@ -137,6 +137,12 @@ test('the server imports @test-controls: the test build must carry their canary'
   expect(withIt.status).toBe(0)
 })
 
+test('the routine tick\'s hook alone (routines/tick.ts) also makes the test build carry the controls\' canary', () => {
+  const r = run({ ...ISSUER_OK, server: { ...ISSUER_OK.server, 'routines/tick.ts': "import { afterTickBatch } from '@test-controls'" } })
+  expect(r.stderr).toContain('the server imports @test-controls but the test build')
+  expect(r.status).toBe(1)
+})
+
 // P4 (p4-h1.md OC 4): the hub is its own Worker. The product Worker names hub/index/contract.ts as types only.
 test.each([
   ['a hub module in the deployable Worker\'s graph', { product: { serverModules: ['server/index.ts', 'hub/index/contract.ts'] } }, 'the product Worker reaches hub code'],

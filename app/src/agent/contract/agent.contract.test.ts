@@ -1036,7 +1036,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.listNotifications().every(n => !n.unread)).toBe(true)
     })
 
-    only('uploadFiles')('uploadFiles rejects as unavailable with a notice, and a file has no download link in the demo', async () => {
+    // The demo keeps nothing (P4 W5 changed this to a demo-only case: a product target keeps uploads, the case after this one).
+    test.skipIf(lacks('uploadFiles', 'fileDownloadUrl') || t.capabilities.keepsFiles)('uploadFiles rejects as unavailable with a notice, and a file has no download link in the demo', async () => {
       const heard: string[] = []
       const off = t.client.onNotice(n => { if (n.type === 'error') heard.push(n.text) })
       const e = await errorOf(t.client.uploadFiles([new File(['x'], 'a.txt')]))
@@ -1045,6 +1046,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect((e as AgentError).code).toBe('unavailable')
       expect(heard).toEqual(["Uploads aren't connected in this demo."])
       expect(t.client.fileDownloadUrl(firstFile())).toBeNull()
+    })
+
+    test.skipIf(lacks('uploadFiles', 'fileDownloadUrl') || !t.capabilities.keepsFiles)('a product target keeps an upload: it lists as the team\'s and downloads from row 64', async () => {
+      const [kept] = await t.client.uploadFiles([new File(['sku,qty\nA1,3\n'], 'contract upload.csv', { type: 'text/csv' })])
+      expect(kept).toMatchObject({ name: 'contract upload.csv', type: 'CSV', place: 'uploads', madeByAgent: false, rev: 1 })
+      expect(t.client.listFiles().map(f => f.id)).toContain(kept!.id)
+      expect(t.client.fileDownloadUrl(kept!.id)).toMatch(new RegExp(`/api/library/${kept!.id}/download$`))
     })
 
     only('deleteFiles')('delete library files and restore them', async () => {

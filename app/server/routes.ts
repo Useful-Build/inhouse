@@ -30,6 +30,8 @@ import { listActivity } from './api/activity.ts'
 import { listNotifications, markNotificationsRead } from './api/bell.ts'
 // P4 W3: Today (rows 57 and 58).
 import { getToday, putAside } from './api/today.ts'
+// P4 W5: the Library (rows 62 to 66).
+import { deleteLibraryFiles, downloadLibraryFile, listLibrary, restoreLibraryFiles, uploadLibraryFile } from './api/library.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -163,6 +165,12 @@ export const routes: readonly Route[] = [
   // P4 W3 (p4-w3.md section 5): Today.
   /* 57 */ { method: 'GET', pattern: '/api/today', handler: getToday },
   /* 58 */ { method: 'PUT', pattern: '/api/today/:id/aside', handler: putAside },
+  // P4 W5 (p4-w5.md section 3): the Library.
+  /* 62 */ { method: 'GET', pattern: '/api/library', handler: listLibrary },
+  /* 63 */ { method: 'POST', pattern: '/api/library/uploads', handler: uploadLibraryFile },
+  /* 64 */ { method: 'GET', pattern: '/api/library/:id/download', handler: downloadLibraryFile },
+  /* 65 */ { method: 'POST', pattern: '/api/library/delete', handler: deleteLibraryFiles },
+  /* 66 */ { method: 'POST', pattern: '/api/library/restore', handler: restoreLibraryFiles },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

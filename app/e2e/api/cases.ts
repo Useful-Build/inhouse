@@ -125,6 +125,12 @@ export const CASES: Record<string, RouteCase> = {
   // Rows 57 and 58 (P4 W3): Today (brand data). An id of the right shape that names nothing passes access and the body check to the store's lookup: 404, nothing changes.
   'GET /api/today': { design: d('brand_data', ALL), path: '/api/today', passes: 200 },
   'PUT /api/today/:id/aside': { design: d('brand_data', ALL), path: `/api/today/${NO_TODAY}/aside`, json: { reason: 'dismissed', ifRev: 0 }, passes: 404 },
+  // Rows 62 to 66 (P4 W5): the Library. An upload with no X-File-Name, a write with no items: 400; an id nobody has: 404.
+  'GET /api/library': { design: d('brand_data', ALL), path: '/api/library', passes: 200 },
+  'POST /api/library/uploads': { design: d('brand_data', PEOPLE), path: '/api/library/uploads', json: {}, passes: 400 },
+  'GET /api/library/:id/download': { design: d('brand_data', ALL), path: `/api/library/f_${'0'.repeat(22)}/download`, passes: 404 },
+  'POST /api/library/delete': { design: d('brand_data', ALL), path: '/api/library/delete', json: {}, passes: 400 },
+  'POST /api/library/restore': { design: d('brand_data', ALL), path: '/api/library/restore', json: {}, passes: 400 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 
