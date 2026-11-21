@@ -31,11 +31,11 @@ import { WEBFETCH_DENY } from '../../../shared/protocol/webfetch-denials.ts'
 import { fetchHostRefusal } from './options.ts'
 
 /**
- * A name real DNS doesn't answer: a fresh random label under example.com (IANA's documentation domain, which has no
- * wildcard), fully qualified (the trailing dot skips search domains). If it resolves, and only to reserved addresses,
+ * A name real DNS has no record for: a fresh random label under example.com (IANA's documentation domain, which has no
+ * wildcard; the label is neutral, so nothing about the product reaches an outside resolver), fully qualified (the trailing dot skips search domains). If it resolves, and only to reserved addresses,
  * the answers are synthetic. A fresh label per probe, so no cache anywhere can answer it from an earlier lookup.
  */
-export const dnsProbeHost = (): string => `inhouse-dns-probe-${randomBytes(6).toString('hex')}.example.com.`
+export const dnsProbeHost = (): string => `dns-probe-${randomBytes(6).toString('hex')}.example.com.`
 /** The most resolved addresses a deny reason lists. */
 export const DENY_ADDRESSES_MAX = 4
 
@@ -167,7 +167,7 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
   const listed = domains === null ? null : [...domains]
   const own = [...hostAddresses]
   // Asked until a yes is seen: the container's DNS stays the intercept's for its life. A no is asked again (real DNS
-  // answers a missing name at once with NXDOMAIN).
+  // answers at once that the name has no record).
   let synthetic = false
   const reservedHere = async (host: string): Promise<{ reserved: string[]; probe: string[] | null }> => {
     if (synthetic) return { reserved: [], probe: null }

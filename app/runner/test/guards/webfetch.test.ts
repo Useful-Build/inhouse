@@ -50,9 +50,9 @@ const DNS: Record<string, string[]> = {
   'mixed.example': ['93.184.216.34', '192.168.1.1'],
 }
 /** The synthetic-DNS probe's name: a fresh random label under example.com, fully qualified. */
-const PROBE = /^inhouse-dns-probe-[0-9a-f]{12}\.example\.com\.$/
+const PROBE = /^dns-probe-[0-9a-f]{12}\.example\.com\.$/
 const isProbe = (h: string) => PROBE.test(h)
-/** Real DNS: example.com has no wildcard, so the probe's random name is NXDOMAIN and the probe reads no. */
+/** Real DNS: example.com has no wildcard, so the probe's random name has no record (Node: ENOTFOUND) and the probe reads no. */
 const fakeResolve: Resolve = async (host) => {
   if (isProbe(host)) throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: 'ENOTFOUND' })
   return DNS[host] ?? ['93.184.216.34']
@@ -95,6 +95,9 @@ describe('WebFetch open to any public host (null)', () => {
     expect(await reasonOpen('https://self.example/')).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (self.example resolved here to an own address; probe: none)` })
     const zoned: Resolve = async (h) => (isProbe(h) ? Promise.reject(new Error('ENOTFOUND')) : ['fe80::1%eth0'])
     expect(await reasonOpen('https://zoned.example/', zoned)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (zoned.example resolved here to fe80::1; probe: none)` })
+    // The probe's own answers go through the same cap and masking: more than 4, one of them an own address, one zoned.
+    const noisyProbe: Resolve = async (h) => (isProbe(h) ? ['fe80::2%eth0', '203.0.113.7', '10.9.0.1', '10.9.0.2', '10.9.0.3', '198.51.100.10'] : fakeResolve(h))
+    expect(await reasonOpen('https://127.0.0.1.nip.io/', noisyProbe)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (127.0.0.1.nip.io resolved here to 127.0.0.1; probe: fe80::2, an own address, 10.9.0.1, 10.9.0.2, ...)` })
     // A refusal by name, IP or port keeps the plain reason (nothing was resolved).
     expect(await reasonOpen('https://127.0.0.1/')).toEqual({ decision: 'deny', reason: WEBFETCH_DENY.publicOnly })
   })
