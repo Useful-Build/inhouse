@@ -51,7 +51,7 @@ export function assertPrNumber(pr) {
 export function perPrNames(pr) {
   assertPrNumber(pr)
   const worker = `inhouse-sbx-pr${pr}`
-  return { worker, d1: `${worker}-db`, r2: `${worker}-files`, container: worker, image: worker, brand: `${worker}-brand`, team: `${worker}-team` }
+  return { worker, d1: `${worker}-db`, r2: `${worker}-files`, container: worker, image: worker, brand: `${worker}-brand`, team: `${worker}-team`, hub: `${worker}-hub` }
 }
 
 /** Throws unless `name` is a shared sandbox name: sandbox-wide but no PR's. Returns the name. */

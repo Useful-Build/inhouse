@@ -67,7 +67,7 @@ describe('PR numbers, PR names and the candidate rule (failures 1, 2)', () => {
   test('perPrNames gives PR 12 its literal names, and refuses anything but a PR number', () => {
     expect(perPrNames(12)).toEqual({
       worker: 'inhouse-sbx-pr12', d1: 'inhouse-sbx-pr12-db', r2: 'inhouse-sbx-pr12-files', container: 'inhouse-sbx-pr12',
-      image: 'inhouse-sbx-pr12', brand: 'inhouse-sbx-pr12-brand', team: 'inhouse-sbx-pr12-team',
+      image: 'inhouse-sbx-pr12', brand: 'inhouse-sbx-pr12-brand', team: 'inhouse-sbx-pr12-team', hub: 'inhouse-sbx-pr12-hub',
     })
     expect(perPrNames(999999).d1).toBe('inhouse-sbx-pr999999-db')
     for (const pr of [0, -1, 1.5, 1_000_000, '12', NaN, undefined, null]) {

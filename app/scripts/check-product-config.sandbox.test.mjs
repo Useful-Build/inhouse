@@ -14,6 +14,10 @@
 //  9. it runs with the sandbox's account, zone or mode unset or malformed instead of stopping (exit 2);
 // 10. its reader and wrangler's disagree on where a comment ends (a bare \r), so config hides from the check.
 // 11. a migration step's values carry what its keys don't (a `from_script` inside `renamed_classes`).
+// 12. (P4) a sandbox product Worker binds a hub that isn't its own (the house's `inhouse-hub`, another PR's, a live
+//     Worker), another entrypoint (the hub's server surface) or a second service; or a hub config (--hub) gets a route,
+//     storage, a service binding, an unbundled build, a `secrets` list wrangler would fail on, or (candidate) a store
+//     credential or the test switch.
 // Oracles: the literal pass fixtures in check-product-config-fixtures/sandbox/ and one literal change per rule below,
 // each with the failure text it must print. Every case runs the script as CI and the ops repo do.
 import { spawnSync } from 'node:child_process'
@@ -345,5 +349,138 @@ describe('usage (failure 9)', () => {
     expect(run([...PR12, '--other']).status).toBe(2)
     expect(run([file, '--sandbox']).status).toBe(2)
     expect(run([...PR12, write([])]).status).toBe(2)
+  })
+})
+
+const HUB = { binding: 'HUB', service: 'inhouse-sbx-pr12-hub', entrypoint: 'ReadGateway' }
+const PR12_HUB = [...PR12, '--hub']
+const CANDIDATE_HUB = [...CANDIDATE, '--hub']
+
+describe('(P4) the product\'s one service binding, to its own sandbox hub (failure 12)', () => {
+  test('PR 12 may bind inhouse-sbx-pr12-hub\'s ReadGateway, and the candidate a shared sandbox hub', () => {
+    const pr = load('pass-per-pr.json')
+    pr.services = [HUB]
+    const r1 = run([...PR12, write(pr)])
+    expect(r1.stderr).toBe('')
+    expect(r1.status).toBe(0)
+    const candidate = load('pass-candidate.json')
+    candidate.services = [{ ...HUB, service: 'inhouse-sbx-hub' }]
+    const r2 = run([...CANDIDATE, write(candidate)])
+    expect(r2.stderr).toBe('')
+    expect(r2.status).toBe(0)
+  })
+  const SHAPE = 'services is set: a sandbox config may not use it, but for exactly one entry { binding: "HUB", service: <its own hub>, entrypoint: "ReadGateway" }'
+  const PRODUCT_CASES = [
+    ['the house hub', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-hub' }, 'services[0].service: "inhouse-hub" is not PR 12\'s hub name (inhouse-sbx-pr12-hub)'],
+    ['another PR\'s hub', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-sbx-pr13-hub' }, 'services[0].service: "inhouse-sbx-pr13-hub" is not PR 12\'s hub name'],
+    ['the candidate\'s hub from a PR', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-sbx-hub' }, 'services[0].service: "inhouse-sbx-hub" is not PR 12\'s hub name'],
+    ['the PR\'s own product Worker', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-sbx-pr12' }, 'services[0].service: "inhouse-sbx-pr12" is not PR 12\'s hub name'],
+    ['the house hub from the candidate', [CANDIDATE, 'pass-candidate.json'], { ...HUB, service: 'inhouse-hub' }, 'services[0].service: "inhouse-hub" is not a sandbox name'],
+    ['a PR\'s hub from the candidate', [CANDIDATE, 'pass-candidate.json'], HUB, 'services[0].service: "inhouse-sbx-pr12-hub" is a per-PR name, not the candidate\'s'],
+    ['the server entrypoint', [PR12, 'pass-per-pr.json'], { ...HUB, entrypoint: 'ServerGateway' }, SHAPE],
+    ['the default export', [PR12, 'pass-per-pr.json'], { binding: 'HUB', service: HUB.service }, SHAPE],
+    ['another binding name', [PR12, 'pass-per-pr.json'], { ...HUB, binding: 'LIVE' }, SHAPE],
+    ['an environment', [PR12, 'pass-per-pr.json'], { ...HUB, environment: 'production' }, SHAPE],
+    ['a second entry', [PR12, 'pass-per-pr.json'], [HUB, { ...HUB, binding: 'HUB2' }], SHAPE],
+    ['the hub binding twice', [PR12, 'pass-per-pr.json'], [HUB, HUB], SHAPE],
+    ['a live product', [CANDIDATE, 'pass-candidate.json'], { binding: 'LIVE', service: 'live-product' }, SHAPE],
+  ]
+  for (const [name, [mode, fixture], entry, text] of PRODUCT_CASES) {
+    test(`refuses ${name}`, () => {
+      const config = load(fixture)
+      config.services = Array.isArray(entry) ? entry : [entry]
+      const r = run([...mode, write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual([expect.stringContaining(text)])
+    })
+  }
+  test('refuses services that is not a list', () => {
+    const config = load('pass-per-pr.json')
+    config.services = HUB
+    const r = run([...PR12, write(config)])
+    expect(r.status).toBe(1)
+    expect(failureLines(r)).toEqual([expect.stringContaining('services must be a list')])
+  })
+})
+
+describe('(P4) --hub: the connector hub\'s sandbox config (failure 12)', () => {
+  test('passes pass-per-pr-hub.json as PR 12\'s hub and pass-candidate-hub.json as the candidate\'s', () => {
+    const r1 = run([...PR12_HUB, `${fixtures}sandbox/pass-per-pr-hub.json`])
+    expect(r1.stderr).toBe('')
+    expect(r1.status).toBe(0)
+    expect(r1.stdout).toContain('may deploy to the sandbox (PR 12 hub)')
+    const r2 = run([...CANDIDATE_HUB, `${fixtures}sandbox/pass-candidate-hub.json`])
+    expect(r2.stderr).toBe('')
+    expect(r2.status).toBe(0)
+    expect(r2.stdout).toContain('may deploy to the sandbox (candidate hub)')
+  })
+  const HUB_CASES = [
+    // [case, mode, fixture, change, failure text]
+    ['the house hub\'s name', PR12_HUB, 'pass-per-pr-hub.json', c => { c.name = 'inhouse-hub' }, 'name: "inhouse-hub" is not PR 12\'s hub name (inhouse-sbx-pr12-hub)'],
+    ['the PR\'s product Worker name', PR12_HUB, 'pass-per-pr-hub.json', c => { c.name = 'inhouse-sbx-pr12' }, 'name: "inhouse-sbx-pr12" is not PR 12\'s hub name'],
+    ['another PR\'s hub name', PR12_HUB, 'pass-per-pr-hub.json', c => { c.name = 'inhouse-sbx-pr13-hub' }, 'name: "inhouse-sbx-pr13-hub" is not PR 12\'s hub name'],
+    ['a PR\'s hub name as the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.name = 'inhouse-sbx-pr12-hub' }, 'name: "inhouse-sbx-pr12-hub" is a per-PR name'],
+    ['the house hub as the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.name = 'inhouse-hub' }, 'name: "inhouse-hub" is not a sandbox name'],
+    ['a service binding', PR12_HUB, 'pass-per-pr-hub.json', c => { c.services = [{ binding: 'LIVE', service: 'live-product' }] }, 'services is set: a sandbox hub config binds no other Worker'],
+    ['a route', PR12_HUB, 'pass-per-pr-hub.json', c => { c.routes = [{ pattern: `inhouse-sbx-pr12-brand.${ZONE}`, custom_domain: true }] }, 'routes is set: a sandbox hub config may not use it'],
+    ['assets', PR12_HUB, 'pass-per-pr-hub.json', c => { c.assets = { directory: '../client' } }, 'assets is set: a sandbox hub config may not use it'],
+    ['a D1 binding', PR12_HUB, 'pass-per-pr-hub.json', c => { c.d1_databases = [{ binding: 'DB', database_name: 'inhouse-sbx-pr12-db' }] }, 'd1_databases is set: a sandbox hub config may not use it'],
+    ['an R2 binding', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.r2_buckets = [{ binding: 'FILES', bucket_name: 'inhouse-sbx-files' }] }, 'r2_buckets is set: a sandbox hub config may not use it'],
+    ['a cron trigger', PR12_HUB, 'pass-per-pr-hub.json', c => { c.triggers = { crons: ['* * * * *'] } }, 'triggers is set: a sandbox hub config may not use it'],
+    ['required secrets (wrangler would fail the deploy)', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.secrets = { required: ['HUB_TOKEN_KEYS'] } }, 'secrets is set: a sandbox config may not use it'],
+    ['a define', PR12_HUB, 'pass-per-pr-hub.json', c => { c.define = { __INHOUSE_HUB_TEST__: 'true' } }, 'define is set: a sandbox config may not use it'],
+    ['no main', PR12_HUB, 'pass-per-pr-hub.json', c => { delete c.main }, 'main must be set in a sandbox hub config'],
+    ['main outside the build', PR12_HUB, 'pass-per-pr-hub.json', c => { c.main = '../hub/index/index.ts' }, 'main must be a relative path inside the build folder'],
+    ['a rebundle', PR12_HUB, 'pass-per-pr-hub.json', c => { delete c.no_bundle }, 'no_bundle must be true in a sandbox hub config'],
+    ['another Worker\'s Durable Object', PR12_HUB, 'pass-per-pr-hub.json', c => { c.durable_objects.bindings[0].script_name = 'live-product' }, 'durable_objects.bindings[0].script_name is set'],
+    ['workers.dev on', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.workers_dev = true }, 'workers_dev must be false'],
+    ['another account', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.account_id = 'fedcba9876543210fedcba9876543210' }, 'account_id is missing or is not the sandbox account'],
+    ['no test switch in a PR\'s hub', PR12_HUB, 'pass-per-pr-hub.json', c => { delete c.vars.INHOUSE_TEST_BUILD }, 'vars.INHOUSE_TEST_BUILD must be "1"'],
+    ['a store in the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.SHOPIFY_SHOP = 'real-store' }, 'vars.SHOPIFY_SHOP must be empty: no store credential in the sandbox account'],
+    ['a client id in the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.SHOPIFY_CLIENT_ID = 'abc' }, 'vars.SHOPIFY_CLIENT_ID must be empty'],
+    ['a secret in the candidate\'s vars', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.SHOPIFY_CLIENT_SECRET = 'x' }, 'vars.SHOPIFY_CLIENT_SECRET is set: the candidate hub\'s vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only'],
+    ['the test switch in the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.INHOUSE_TEST_BUILD = '1' }, 'vars.INHOUSE_TEST_BUILD is set: the candidate hub\'s vars'],
+  ]
+  for (const [name, mode, fixture, change, text] of HUB_CASES) {
+    test(`refuses ${name}`, () => {
+      const config = load(fixture)
+      change(config)
+      const r = run([...mode, write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual([expect.stringContaining(text)])
+    })
+  }
+  test('a hub config fails as the product, and the product as the hub', () => {
+    const r1 = run([...PR12, `${fixtures}sandbox/pass-per-pr-hub.json`])
+    expect(r1.status).toBe(1)
+    expect(r1.stderr).toContain('name: "inhouse-sbx-pr12-hub" is not PR 12\'s worker name')
+    const r2 = run([...PR12_HUB, `${fixtures}sandbox/pass-per-pr.json`])
+    expect(r2.status).toBe(1)
+    expect(r2.stderr).toContain('name: "inhouse-sbx-pr12" is not PR 12\'s hub name')
+    expect(r2.stderr).toContain('d1_databases is set: a sandbox hub config may not use it')
+    const r3 = run([...CANDIDATE_HUB, `${fixtures}sandbox/pass-candidate.json`])
+    expect(r3.status).toBe(1)
+    expect(r3.stderr).toContain('routes is set: a sandbox hub config may not use it')
+  })
+  test('the hub\'s own config files never pass as a sandbox hub, as written or as plain JSON', () => {
+    for (const name of ['wrangler.hub.jsonc', 'wrangler.hub.test.jsonc']) {
+      const file = fileURLToPath(new URL(`../${name}`, import.meta.url))
+      let text
+      try { text = readFileSync(file, 'utf8') } catch { continue } // the hub's configs arrive with P4; nothing to read before
+      for (const mode of [PR12_HUB, CANDIDATE_HUB]) {
+        expect(run([...mode, file]).status, name).toBe(2)
+        const r = run([...mode, write(JSON.parse(stripJsonc(text)))])
+        expect(r.status, name).toBe(1)
+        expect(r.stderr).toContain('account_id is missing')
+      }
+    }
+  })
+  test('usage: --hub only right after the mode, once', () => {
+    const file = `${fixtures}sandbox/pass-per-pr-hub.json`
+    for (const args of [['--sandbox', '--hub', '--per-pr', '12', file], ['--sandbox', '--per-pr', '12', '--hub', '--hub', file], ['--sandbox', '--per-pr', '12', file, '--hub'], ['--hub', file]]) {
+      const r = run(args)
+      expect(r.status, args.join(' ')).toBe(2)
+      expect(r.stdout).toBe('')
+    }
   })
 })
