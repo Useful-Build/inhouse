@@ -15,8 +15,9 @@
 //  7. drain: an admission after the drain step, counts that don't reach 0, an expiry that doesn't clear or advance runs;
 //     warm-up clearing the drain with a failed /health or on the container from before the drain, or not starting a
 //     run's queued follow-up;
-//  8. the signals miss a protocol runner, a restart storm or a shortfall, or count a start that never came up (a refused
-//     warm-up retried every 5 s while a cold image arrives) as a restart (Q2's sandbox, 2026-11-21);
+//  8. the signals miss a protocol runner, a restart storm (a runner whose starts never come up, outside a drain, included)
+//     or a shortfall, or count a start that never came up during a drain (a refused warm-up retried every 5 s while a
+//     cold image arrives) as a restart (Q2's sandbox, 2026-11-21);
 //  9. a slow cold start (the boot deadline passed, the container still running): the runner is sent to sleep instead of
 //     kept `starting` (so the retry doesn't join that start), or the same placement wakes a second sleeping runner (two
 //     boots outlast the turn's 3 min starting deadline) (Q2's sandbox, 2026-11-21).
@@ -303,7 +304,7 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
       if (newerThan !== null && r.gen <= newerThan) {
         if (r.unfinished.size > 0) return { ok: false, why: 'busy', detail: 'runs on the old container' }
         // Idle: the Runner replaces it, and reports the old generation's exit (it fences nothing).
-        const fenced = pool.containerExited(`runner-${i}`, r.gen)
+        const fenced = pool.containerExited(`runner-${i}`, r.gen, true)
         if (JSON.stringify(fenced) !== '[]') L.violate(`warm runner-${i}: the replaced container fenced ${JSON.stringify(fenced)}`)
         r.gen++
       }
@@ -335,9 +336,9 @@ async function runReal(sql: SqlStorage, ops: Op[], s: fc.Scheduler) {
       const r = L.runners[op.r]
       if (r.awake || r.protocolBad) {
         const want = [...r.unfinished].sort()
-        const fenced = pool.containerExited(`runner-${op.r}`, r.gen)
+        const fenced = pool.containerExited(`runner-${op.r}`, r.gen, true)
         if (JSON.stringify(fenced) !== JSON.stringify(want)) L.violate(`exit runner-${op.r}: fenced ${JSON.stringify(fenced)}, the ledger has ${JSON.stringify(want)}`)
-        if (pool.containerExited(`runner-${op.r}`, r.gen) !== null) L.violate(`exit runner-${op.r}: generation ${r.gen} taken twice`)
+        if (pool.containerExited(`runner-${op.r}`, r.gen, true) !== null) L.violate(`exit runner-${op.r}: generation ${r.gen} taken twice`)
         for (const id of want) ended(id)
         r.awake = false
         r.protocolBad = false
@@ -452,7 +453,7 @@ describe('routing', () => {
       const pool = new RunnerPool({ sql, scheduler: new FakeScheduler(), now: () => T0, size: 2, runner, hooks: { retryPlacement: async () => {}, placementExpired: async () => {} } })
       sql.exec("UPDATE pool_runners SET state = 'up' WHERE runner = 'runner-0'")
       const placing = pool.place(rs('t_a'), 1)
-      expect(pool.containerExited('runner-0', 1)).toEqual(['t_old'])
+      expect(pool.containerExited('runner-0', 1, true)).toEqual(['t_old'])
       open()
       expect(await placing).toEqual({ admitted: 'runner-1' })
       expect(sql.exec("SELECT runner FROM turns WHERE turn_id = 't_a'").one().runner).toBe('runner-1')
@@ -701,9 +702,9 @@ describe('routing', () => {
       const pool = poolWith(sql, () => async () => ({ accepted: true, gen: 3, protocol: 2 }))
       expect(await pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-0' })
       sql.exec("UPDATE turns SET state = 'live' WHERE turn_id = 't_a'")
-      expect(pool.containerExited('runner-0', 2)).toEqual([])
+      expect(pool.containerExited('runner-0', 2, true)).toEqual([])
       expect(sql.exec("SELECT state FROM pool_runners WHERE runner = 'runner-0'").one().state).toBe('up')
-      expect(pool.containerExited('runner-0', 3)).toEqual(['t_a'])
+      expect(pool.containerExited('runner-0', 3, true)).toEqual(['t_a'])
     })
   })
 
@@ -1093,31 +1094,36 @@ describe('signals', () => {
   it('pool_restarts: more than 3 exits of one runner in an hour; a repeated generation counts once', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
-      // Each of these containers came up: the pool saw generation 4 (an admission or a warm-up answered on it).
-      sql.exec("UPDATE pool_runners SET container_gen = 4 WHERE runner = 'runner-0'")
-      for (const gen of [1, 2, 3]) rig.pool.containerExited('runner-0', gen)
-      rig.pool.containerExited('runner-0', 3)
+      for (const gen of [1, 2, 3]) rig.pool.containerExited('runner-0', gen, true)
+      rig.pool.containerExited('runner-0', 3, true)
       expect(rig.pool.health().restarts.ok).toBe(true)
-      rig.pool.containerExited('runner-0', 4)
+      rig.pool.containerExited('runner-0', 4, true)
       expect(rig.pool.health().restarts.ok).toBe(false)
       rig.clock.now = T0 + 3_600_001
       expect(rig.pool.health().restarts.ok).toBe(true)
     })
   })
 
-  it('pool_restarts: a start that never came up is no restart (ten refused warm-ups, then the one that worked)', async () => {
+  it('pool_restarts during a drain: starts that never came up (ten refused warm-ups) are not counted; exits of up containers are', async () => {
     await inObject(async sql => {
       const rig = drainRig(sql)
-      // Generations 1..10 never answered: the pool never saw them up (container_gen stays unset), each exit reported once.
-      for (let gen = 1; gen <= 10; gen++) expect(rig.pool.containerExited('runner-0', gen)).toEqual([])
+      // The release case: generation 1 was up before the drain.
+      sql.exec("UPDATE pool_runners SET container_gen = 1 WHERE runner = 'runner-0'")
+      rig.pool.drain(rig.clock.now)
+      for (let gen = 2; gen <= 11; gen++) expect(rig.pool.containerExited('runner-0', gen, false)).toEqual([])
       expect(rig.pool.health().restarts.ok).toBe(true)
-      // Generation 11 came up (the warm-up passed on it), then exits four times over the hour's later gens: those count.
-      sql.exec("UPDATE pool_runners SET container_gen = 11 WHERE runner = 'runner-0'")
-      rig.pool.containerExited('runner-0', 11)
-      for (const gen of [12, 13, 14]) {
-        sql.exec('UPDATE pool_runners SET container_gen = ? WHERE runner = ?', gen, 'runner-0')
-        rig.pool.containerExited('runner-0', gen)
-      }
+      for (const gen of [12, 13, 14, 15]) rig.pool.containerExited('runner-0', gen, true)
+      expect(rig.pool.health().restarts.ok).toBe(false)
+    })
+  })
+
+  it('pool_restarts outside a drain: a runner whose starts never come up is a crash loop, counted', async () => {
+    await inObject(async sql => {
+      const rig = drainRig(sql)
+      sql.exec("UPDATE pool_runners SET container_gen = 1 WHERE runner = 'runner-0'")
+      for (const gen of [2, 3, 4]) rig.pool.containerExited('runner-0', gen, false)
+      expect(rig.pool.health().restarts.ok).toBe(true)
+      rig.pool.containerExited('runner-0', 5, false)
       expect(rig.pool.health().restarts.ok).toBe(false)
     })
   })

@@ -59,7 +59,10 @@ export const SLOW_ADMIT_MS = 3_000
 /** `pool_shortfall`: a turn queued longer than this, or a `pool_full`, within the window. */
 export const SHORTFALL_WAIT_MS = 30_000
 export const SHORTFALL_WINDOW_MS = 15 * 60_000
-/** `pool_restarts`: more than this many exits in an hour of one runner's containers that came up (never a failed start). */
+/**
+ * `pool_restarts`: more than this many counted container exits of one runner in an hour (every exit, except a start that
+ * never answered /protocol during a drain: warm-up's retries).
+ */
 export const RESTARTS_PER_HOUR = 3
 /** A drain undoes itself after this long. */
 export const DRAIN_MS = 30 * 60_000
@@ -374,18 +377,19 @@ export class RunnerPool implements RunnerPoolPort {
    * A Runner's container of generation `gen` exited: the turns on it for W1 to fence, or null when this exit (or a later
    * one) was already taken. The runner sleeps until a placement or warm-up starts a new container.
    */
-  containerExited(runner: string, gen: number): string[] | null {
+  containerExited(runner: string, gen: number, cameUp: boolean): string[] | null {
     const row = this.#d.sql.exec<{ restarts_json: string; container_gen: number | null }>('SELECT restarts_json, container_gen FROM pool_runners WHERE runner = ?', runner).toArray()[0]
     if (row === undefined) return null
     const now = this.#d.now()
     const r = JSON.parse(row.restarts_json) as Restarts
     if (gen <= r.lastExitGen) return null
-    // A restart is a container that came up and stopped: the pool saw this generation (or a newer one) up, through an
-    // admission's answer or a warm-up. A start that never answered (a cold image still arriving, while the release job
-    // retries warm-up every few seconds) is a failed start: its exit is taken once, but it isn't counted.
-    const cameUp = row.container_gen !== null && row.container_gen >= gen
+    // Counted: a container that came up (the Runner saw it answer /protocol) and stopped, or any exit outside a drain. A
+    // start that never answered during a drain (a cold image still arriving while the release job retries warm-up every
+    // few seconds) is taken once but not counted; outside a drain, a runner that fails every start is a crash loop the
+    // signal must show even while other runners serve.
+    const counted = cameUp || !this.#draining(now)
     const recent = r.exits.filter(t => t > now - HOUR_MS)
-    const next: Restarts = { lastExitGen: gen, exits: cameUp ? [...recent, now] : recent }
+    const next: Restarts = { lastExitGen: gen, exits: counted ? [...recent, now] : recent }
     this.#d.sql.exec('UPDATE pool_runners SET restarts_json = ? WHERE runner = ?', JSON.stringify(next), runner)
     // An older generation than the one the pool placed on: the turns there run on the newer container.
     if (row.container_gen !== null && row.container_gen > gen) return []

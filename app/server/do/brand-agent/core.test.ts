@@ -293,7 +293,7 @@ describe('placement answers (obligations 6, 7, 9)', () => {
     h.pool.runnerTurns.set('runner-0', [a.turnId])
     h.pool.placeAnswer = () => new Promise(() => {})
     h.nextRunner.name = 'runner-1'
-    h.core.containerExited('runner-0', 1)
+    h.core.containerExited('runner-0', 1, true)
     await settle()
     expect(h.turn(a.turnId)).toMatchObject({ state: 'starting', runner: 'runner-1', requeues: 1 })
     // L1: the old attempt's token is revoked by the requeue.

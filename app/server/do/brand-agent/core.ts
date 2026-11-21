@@ -1526,8 +1526,8 @@ export class AgentCore {
   grantExpiry(taskId: string): Promise<TaskResult> { return runGrantExpiry(this.authorityDeps(), taskId) }
 
   /** A Runner's container exited: its turns (once per generation) end `session_crashed`; one still placing goes back. */
-  containerExited(runner: string, gen: number) {
-    const ids = this.d.ports.pool.containerExited(runner, gen)
+  containerExited(runner: string, gen: number, cameUp: boolean) {
+    const ids = this.d.ports.pool.containerExited(runner, gen, cameUp)
     for (const id of ids ?? []) {
       const t = this.turn(id)
       if (!t) continue

@@ -78,7 +78,7 @@ export interface RunnerPoolPort {
   /** Route 48: start runners, check them, clear the drain. */
   warmup(): Promise<{ ok: true } | Refusal>
   /** A container exited: the turn ids the BrandAgent fences, or null when this generation was already reported. */
-  containerExited(runner: string, gen: number): string[] | null
+  containerExited(runner: string, gen: number, cameUp: boolean): string[] | null
   /** The `pool-retry` task's work (its handler only gets `ctx.ports.pool`): try the placement queue again. */
   retryQueue(): Promise<void>
   /** Takes a turn out of the placement queue (the BrandAgent cancelled it); nothing when it isn't queued. */
@@ -328,7 +328,7 @@ export interface BrandAgentRpc {
   /** Route 17 made a grant: the object schedules its `grant-expiry` at `endsAtMs` (4.10). */
   onGrantCreated(grantId: string, endsAtMs: number): Promise<void>
   /** A Runner's container exited: the pool names that runner's turns once per generation, and the BrandAgent fences them. */
-  containerExited(runner: string, gen: number): Promise<void>
+  containerExited(runner: string, gen: number, cameUp: boolean): Promise<void>
   poolHealth(): Promise<PoolHealth>
   runsHealth(): Promise<RunsHealth>
   /** `drain`, `drainState` and `warmup` delegate to the pool (`RunnerPoolPort`). */

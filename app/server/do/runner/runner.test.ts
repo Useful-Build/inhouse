@@ -11,6 +11,8 @@
 //  5. an admission with no answer in 15 s is reported as a refusal (it must be `ambiguous`), or the fetch isn't aborted;
 //  6. the refusals aren't told apart (503 codes, 409, another answer, a container that never answers /protocol);
 //  7. `status` maps the runner's states wrong, or reports `unreachable` for an answer / misses a gone container;
+//  9. an exit is reported as a container that came up when it never answered /protocol (a failed start), or as one that
+//     never came up when it had (after a refusal, or while its admission was in flight);
 //  8. a cold start slower than the boot deadline (over 60 s on the sandbox, 2026-11-21) is a placement error, or a
 //     deadline that passed on a still-running container doesn't say it's still booting.
 import { runInDurableObject } from 'cloudflare:test'
@@ -124,10 +126,13 @@ interface Made {
   core: RunnerCore<Binding>
   /** [runner, gen, how many starts the container had seen when the exit was reported] */
   exits: [string, number, number][]
+  /** [gen, cameUp] as each exit was reported: whether that generation had answered /protocol */
+  ups: [number, boolean][]
   aborts: AbortController[]
 }
 function make(container: FakeContainer, state: RunnerState, accepted?: readonly number[], name = 'runner-0'): Made {
   const exits: [string, number, number][] = []
+  const ups: [number, boolean][] = []
   const aborts: AbortController[] = []
   const core = new RunnerCore<Binding>({
     name,
@@ -138,7 +143,7 @@ function make(container: FakeContainer, state: RunnerState, accepted?: readonly 
       web: props => ({ kind: 'web', props }),
       deny: props => ({ kind: 'deny', props }),
     },
-    exited: async (runner, gen) => void exits.push([runner, gen, container.starts.length]),
+    exited: async (runner, gen, cameUp) => { exits.push([runner, gen, container.starts.length]); ups.push([gen, cameUp]) },
     accepted,
     timeout: () => {
       const c = new AbortController()
@@ -148,7 +153,7 @@ function make(container: FakeContainer, state: RunnerState, accepted?: readonly 
     wait: async () => {},
     log: () => {},
   })
-  return { core, exits, aborts }
+  return { core, exits, ups, aborts }
 }
 
 const headerOf = (init: RequestInit | undefined) => new Headers(init?.headers).get('x-inhouse-protocol')
@@ -301,6 +306,41 @@ describe('a slow cold start (failure 8)', () => {
     }
     const { core } = make(c, state)
     expect(await core.admit(RS)).toEqual({ placementError: 'the container stopped before it answered /protocol', booting: false })
+  }))
+})
+
+describe('an exit says whether its container came up (failure 9)', () => {
+  it('a container that stops before answering /protocol: reported as never up', t(async state => {
+    const c = new FakeContainer()
+    c.route = () => { c.exit(1); throw new TypeError('connection refused') }
+    const m = make(c, state)
+    expect(await m.core.admit(RS)).toEqual({ placementError: 'the container stopped before it answered /protocol', booting: false })
+    await settle()
+    expect(m.ups).toEqual([[1, false]])
+  }))
+
+  it('a container that answered, refused the run (typed 503) and then died: reported as up', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2], () => json(503, { error: 'the runner is stopping' }))
+    const m = make(c, state)
+    expect(await m.core.admit(RS)).toEqual({ unavailable: 'the runner is stopping', gen: 1 })
+    c.exit(1)
+    await settle()
+    expect(m.ups).toEqual([[1, true]])
+  }))
+
+  it('a container that dies while its admission is in flight (after /protocol): reported as up', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2], (_p, init) => new Promise<Response>((_res, rej) => init!.signal!.addEventListener('abort', () => rej(init!.signal!.reason))))
+    const m = make(c, state)
+    const pending = m.core.admit(RS)
+    await settle()
+    expect(c.requests.map(x => x.path)).toEqual(['/protocol', '/runs'])
+    c.exit(1)
+    await settle()
+    expect(m.ups).toEqual([[1, true]])
+    m.aborts.at(-1)!.abort(new DOMException('timed out', 'TimeoutError'))
+    expect(await pending).toEqual({ ambiguous: true, gen: 1 })
   }))
 })
 

@@ -193,8 +193,8 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
 
   // ---------- the pool (W2) ----------
-  async containerExited(runner: string, gen: number): Promise<void> {
-    this.core.containerExited(runner, gen)
+  async containerExited(runner: string, gen: number, cameUp: boolean): Promise<void> {
+    this.core.containerExited(runner, gen, cameUp)
   }
   async poolHealth(): Promise<PoolHealth> {
     return this.ports.pool.health()

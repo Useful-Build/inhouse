@@ -28,7 +28,7 @@ export class Runner extends DurableObject<Env> {
         web: props => exports.WebEgress({ props }),
         deny: props => exports.DenyEgress({ props }),
       },
-      exited: (runner, gen) => brandAgent(env).containerExited(runner, gen),
+      exited: (runner, gen, cameUp) => brandAgent(env).containerExited(runner, gen, cameUp),
     })
     return this.#core
   }
