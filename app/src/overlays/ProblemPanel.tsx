@@ -197,6 +197,8 @@ export function ProblemPanel() {
                     <Icon name="edit" size={15} />{isEditing ? 'Done' : 'Edit'}
                   </Button>
                 </div>
+                {/* What the draft does, in its own words (Run's partial job has its own title). */}
+                <div className="mt-2 text-md font-semibold">{dv.draftTitle}</div>
                 {to && (
                   <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
                     <div><div className="text-xs text-muted-foreground">From</div><div className="mt-0.5 font-semibold">{ctx.data.meta.brand.name}</div></div>
