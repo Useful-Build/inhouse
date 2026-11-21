@@ -1,5 +1,5 @@
 // PR 4 at 390 px: no card cuts a word at Watch, Act or Run; Today has no sort and Approvals' header stays on one line with
-// Approve all low-risk alone; each draft is Approve (or Review) plus "···"; an approved row's time and Undo wrap under its text.
+// Approve all low-risk alone; each draft is its approve action (or Review draft) plus "···"; an approved row's time and Undo wrap under its text.
 import { expect, test } from './csp.js'
 import type { Page } from '@playwright/test'
 import { expectNothingCut, start, STAGES } from './today-approvals-helpers.js'
@@ -23,7 +23,7 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   await start(page, 'Act', '#/today')
   await expect(page.getByRole('article').first()).toBeVisible()
   await expect(page.getByRole('combobox', { name: /^Sort cards/ })).toHaveCount(0)
-  // No fixed card height: the cards have no minimum height at all (the desktop's is 224px).
+  // No fixed card height: the cards have no minimum height at all.
   const minHeights = await page.getByRole('article').evaluateAll(els => els.map(e => getComputedStyle(e).minHeight))
   expect(minHeights.every(h => h === '0px' || h === 'auto'), `min-height of each card: ${minHeights}`).toBe(true)
   // The card has no click handler of its own: its title is the one button that opens it.
@@ -56,15 +56,18 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   await shot(page, 'approvals-approved-row-390')
 })
 
-test('Phone 390: the review panel gives its main action a row of its own, on one line, with Edit and Don\'t send below', async ({ page }) => {
+test('Phone 390: the review panel gives its main action a full-width row of its own, on one line, with Don\'t send below', async ({ page }) => {
   await start(page, 'Act', '#/today')
   await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
   const panel = page.getByRole('dialog')
   const primary = await panel.getByRole('button', { name: /^Approve and/ }).boundingBox()
-  const edit = await panel.getByRole('button', { name: 'Edit', exact: true }).boundingBox()
   const dont = await panel.getByRole('button', { name: "Don't send", exact: true }).boundingBox()
-  expect(primary!.height, 'the main label is on one line').toBeLessThan(44)
-  expect(edit!.y, 'Edit sits below the main action').toBeGreaterThan(primary!.y + primary!.height - 1)
-  expect(Math.abs(dont!.y - edit!.y), 'Edit and Don\'t send share a row').toBeLessThanOrEqual(4)
+  const box = await panel.boundingBox()
+  // The main action is 46px tall: one line of its label, where two would pass 60.
+  expect(primary!.height, 'the main label is on one line').toBeLessThanOrEqual(48)
+  expect(await panel.getByRole('button', { name: /^Approve and/ }).evaluate(e => e.scrollWidth <= e.clientWidth), 'the label fits its button').toBe(true)
+  expect(primary!.width, 'the main action spans the footer').toBeGreaterThan(box!.width - 60)
+  expect(dont!.y, "Don't send sits below the main action").toBeGreaterThan(primary!.y + primary!.height - 1)
+  expect(dont!.height, "Don't send is a full tap target").toBeGreaterThanOrEqual(44)
   await shot(page, 'panel-actions-390')
 })

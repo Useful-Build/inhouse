@@ -1,0 +1,13 @@
+// check-product-config fixture: refused, rule "eval-brand-var" (the eval brand marker is the sandbox eval deployment's alone).
+{
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"name": "inhouse-product",
+	"main": "server/index.ts",
+	"vars": {
+		"INHOUSE_EVAL_BRAND": "1",
+		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://example-team.cloudflareaccess.com\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://brand.example.test\",\"aud\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse.example.test\",\"aud\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}],\"serviceTokens\":{\"monitor-client.access\":\"monitor\",\"smoke-client.access\":\"smoke\"}}"
+	},
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"workers_dev": false,
+	"preview_urls": false
+}

@@ -1,32 +1,30 @@
 // Chats: the thread (one card per answer, D2), hover actions under each answer and your own messages, the "···" menu,
 // long messages that fold, Retry on a stopped answer, Jump to latest, the queued messages and the ask box.
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
-import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted, mergeHistory } from './chat/notes'
+import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { fileIcon, fileSize } from '@/lib/file-meta'
-import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'
-import { fmtAnswerBar } from '../lib/format'
-import { display } from '../state/display'
+import { listNames, readingTools, toolDetail } from '../state/derive'
 import { cn } from '@/lib/utils'
 import { isStoppedNote, openChatKey, openRun, useCtx, useUi } from '../state/store'
 import type { QueuedMsg } from '../state/store'
 import { Confirm, TAP } from '../ui/fields'
-import { AgentMark, AttachmentChip, Button, Icon, IconButton, MenuItem, StageTag } from '../ui'
+import { AgentMark, AttachmentChip, Button, Icon, IconButton, LogoTile, MenuItem, StageTag } from '../ui'
 import { Button as UiButton } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { AgentPart } from './chat/Parts'
+import { AgentPart, ApprovalCard } from './chat/Parts'
+import { SourcesRow, StepsLine } from './chat/Steps'
+import { toolInText } from './chat/step-data'
+import { useOpenChatMessages } from './chat/open-messages'
 import { FileChip } from './chat/FileChip'
 import { filesOfTurns } from './chat/view'
 import { ChatList } from './chat/ChatList'
 import { SuggestionChip } from '../ui/chat'
 import { copyText } from './chat/copy'
-
-// The row of actions under a message: one 28px step, the icon buttons as IconButton's `action` look at `icon-sm`.
-const AB = 'inline-flex h-7 min-w-7 items-center justify-center rounded-md text-foreground-3 hover:bg-fill-hover aria-expanded:bg-fill-hover'
 
 /** Within this many px of the bottom, new messages and thinking steps keep the view at the bottom. */
 const NEAR_BOTTOM = 80
@@ -123,12 +121,20 @@ const NO_QUEUE: QueuedMsg[] = []
 /** An answer turn's card (D2). */
 const CARD = 'box-border flex max-w-full min-w-0 flex-col gap-3.5 self-start rounded-3xl bg-card py-4'
 
-/** The thinking line while an answer streams. Hidden from the log: the status line reads it out. */
+/**
+ * The working line while an answer streams, always one line: the agent's mark (moving, whatever the demo's switch says),
+ * the logo of the tool the step names, and the step's text with a light sweep across it. New text fades up. Hidden from the
+ * log: the status line reads it out.
+ */
 function Thinking({ text }: { text: string }) {
+  const ctx = useCtx()
+  // The logo only of a tool the agent can read now, the one the text names first.
+  const tool = toolInText(ctx.data, text, readingTools(ctx))
   return (
-    <div data-thinking aria-hidden="true" className="flex items-center gap-3">
-      <AgentMark />
-      <span className="min-w-0 text-base text-foreground-3">{text}</span>
+    <div data-thinking aria-hidden="true" className="flex min-w-0 items-center gap-2.5">
+      <AgentMark live />
+      {tool !== null && <LogoTile k={tool} size="sm" round />}
+      <span key={text} className="min-w-0 animate-step-in"><span className="shimmer-text ellipsis block text-base">{text}</span></span>
     </div>
   )
 }
@@ -136,14 +142,14 @@ function Thinking({ text }: { text: string }) {
 function Thread() {
   useTraces()
   const ctx = useCtx()
-  const { fresh, chatId, extras, hidden, phone, feedback } = useUi()
+  const { fresh, chatId, phone, feedback } = useUi()
   const run = useUi(openRun)
   const thinking = !!run
   const view = useUi(s => { const k = openChatKey(s, agent.read()); return k !== null && Object.hasOwn(s.views, k) ? s.views[k] : undefined })
   const link = useSyncExternalStore(agent.onLink, agent.link)
   const thinkingText = view?.budgetWait ? NOTICE_TEXT.budget_busy : run?.text ?? ''
   const editingId = useUi(s => s.editMsg?.id)
-  const { ask, openTrace, patch, showToast, openTeam, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue, sendQueuedNow } = useUi.getState()
+  const { ask, patch, showToast, openTeam, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue, sendQueuedNow } = useUi.getState()
   const [menuId, setMenuId] = useState<string | null>(null)
   // Edit of a queued message over a draft asks first.
   const [replacing, setReplacing] = useState<QueuedMsg | null>(null)
@@ -187,8 +193,32 @@ function Thread() {
   const loadHistory = useUi(s => s.loadHistory)
   // A chat the agent keeps (no sample turns) reads its past when it opens.
   useEffect(() => { if (openId !== null && noSeed) loadHistory(openId) }, [openId, noSeed, loadHistory])
-  const all = useMemo(() => mergeHistory(history?.messages, openId === null ? [] : chatMessages(ctx, openId), extras), [ctx, openId, extras, history?.messages])
-  const msgs = all.filter(m => !hidden[m.id])
+  const msgs = useOpenChatMessages()
+
+  // The turns this view saw running, in this chat: only their text is revealed word by word (what's already there when a chat
+  // opens, a reload or a reopened chat is not), and a reveal that began runs on after the run ends. A turn counts only when it
+  // is first seen after the chat's history is in (or the chat was started here): on a reload the replayed run shows up while
+  // the history is still loading, and that turn never counts (`skip`). Adjusted during render (React redraws at once), so a
+  // turn is in before its first part draws.
+  const startedHere = useUi(s => openId !== null && s.started.some(c => c.id === openId))
+  const historyIn = !noSeed || startedHere || history?.state === 'ready'
+  const [seen, setSeen] = useState<{ key: string | null; ids: ReadonlySet<string>; skip: ReadonlySet<string> }>({ key: openId, ids: new Set(), skip: new Set() })
+  let seenNow = seen.key === openId ? seen : { key: openId, ids: new Set<string>(), skip: new Set<string>() }
+  // This tab's own run (a send from here) always counts; a turn only the stream reports (`view.live`, a replay) counts once
+  // the history is in.
+  for (const [t, counts] of [[run?.turnId, true], [view?.live, historyIn]] as const) {
+    if (!t || seenNow.ids.has(t) || seenNow.skip.has(t)) continue
+    seenNow = counts ? { ...seenNow, ids: new Set([...seenNow.ids, t]) } : { ...seenNow, skip: new Set([...seenNow.skip, t]) }
+  }
+  if (seenNow !== seen) setSeen(seenNow)
+  // Answers with words still to come: the log is busy while there are any, so a screen reader doesn't read half an answer.
+  const [revealing, setRevealing] = useState<ReadonlySet<string>>(() => new Set())
+  const onBusy = useCallback((id: string, busy: boolean) => setRevealing(cur => {
+    if (cur.has(id) === busy) return cur
+    const next = new Set(cur)
+    if (busy) next.add(id); else next.delete(id)
+    return next
+  }), [])
 
   // Keep the view at the bottom as messages and thinking steps arrive, but only while the person is near it:
   // once they scroll up, their place stays and Jump to latest shows. Asking a question goes back to the bottom.
@@ -228,7 +258,7 @@ function Thread() {
     if (el.scrollTop === pinnedTop.current) { pinnedTop.current = -1; return }
     recheck()
   }
-  // Show more or less keeps the reader where they are: the message grows below, the view doesn't follow it down.
+  // Show more or less, and opening an answer's steps or sources, keeps the reader where they are: it grows below, the view doesn't follow it down.
   const onToggleLong = () => { stick.current = false; requestAnimationFrame(recheck) }
   const last = msgs[msgs.length - 1]
   const lastQuestion = last?.role === 'user' ? last.id : undefined
@@ -284,33 +314,14 @@ function Thread() {
   const bubbleMax = phone ? 'max-w-22/25' : 'max-w-18/25'
   const blocks = blocksOf(msgs)
 
-  /** Under an answer: the steps line first (it never moves), then the actions; on a phone Copy, steps and "···" (D3). */
+  /** Under an answer: the actions; on a phone Copy and "···" (D3). */
   const answerBar = (b: Extract<Block, { kind: 'turn' }>) => {
     const m = b.ms[b.ms.length - 1]
     const i = b.at + b.ms.length - 1
     const next = msgs[i + 1]
     const menuOpen = menuId === m.id
-    const tr = traceOf(m.trace)
-    const failed = m.part.type === 'error'
-    // Mode, step count, time taken and when it answered, as far as they're known.
-    const modelLabel = m.model ? ctx.data.models.find(x => x.id === m.model)?.label : undefined
-    const stepsLine = tr ? fmtAnswerBar({ model: modelLabel, steps: tr.steps.length - 1, durationMs: tr.durationMs, at: m.at }, display()) : ''
-    const steps = tr && (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button type="button" className={cn(AB, 'min-w-0 gap-2 pr-1.5 pl-2.5 text-muted-foreground hover:text-foreground', phone && TAP)} onClick={() => openTrace(m.trace)}>
-            <span className="ellipsis min-w-0 tabular-nums">{stepsLine}</span><Icon name="chevron_right" size={17} />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>See every step</TooltipContent>
-      </Tooltip>
-    )
-    // An error turn has no answer to act on, only the run's steps.
-    if (failed) {
-      return steps && (
-        <div className="mt-1.5 flex items-center self-start rounded-md bg-background text-sm text-foreground-3 shadow-page-xs">{steps}</div>
-      )
-    }
+    // An error turn has no answer to act on (its steps line sits above its card).
+    if (m.part.type === 'error') return null
     const txt = b.ms.flatMap(x => (x.part.type === 'text' ? [x.part.text] : [])).join('\n\n') || "Inhouse agent's answer"
     const ask0 = questionBefore(b.at)
     const question = ask0?.q
@@ -371,19 +382,15 @@ function Thread() {
     if (phone) {
       return (
         <div data-on="1" className={cn('relative mt-1.5 flex max-w-full items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3', BAR_GROUND)}>
-          {copyBtn}{steps}
-          {/* Set apart from the steps link, so "···" reads as its own control. */}
-          <span className="ml-3 flex flex-none">{more}</span>
+          {copyBtn}
+          <span className="flex flex-none">{more}</span>
         </div>
       )
     }
-    // At rest every answer shows only its steps line; the actions show on hover or focus, and stay while More is open
-    // so the menu's button never fades from under the pointer.
+    // The actions show on hover or focus, and stay while More is open so the menu's button never fades from under the pointer.
     const on = menuOpen ? '1' : undefined
     return (
       <div data-on={on} className={cn('relative mt-1.5 flex flex-wrap items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3', BAR_GROUND)}>
-        {/* The steps line goes first, at the row's left edge, so nothing moves when the actions show. */}
-        {steps}
         <span data-on={on} data-answer-actions className={cn('flex flex-wrap items-center gap-0.5', REVEAL)}>
           <IconButton icon="reply" label="Reply" size={17} variant="action" box="icon-sm" onClick={() => patch({ replyTo: txt.slice(0, 140) })} />
           {copyBtn}
@@ -424,7 +431,7 @@ function Thread() {
               </Button>
             </div>
           )}
-          <div key={threadKey} role="log" aria-label="Conversation" className="flex flex-col">
+          <div key={threadKey} role="log" aria-label="Conversation" aria-busy={revealing.size > 0 || undefined} className="flex flex-col">
           {blocks.map((b, k) => {
             const mt = k === 0 ? 'mt-2' : b.kind === 'event' ? 'mt-3.5' : 'mt-5.5'
             if (b.kind === 'user') {
@@ -481,14 +488,30 @@ function Thread() {
             }
             const streaming = thinking && b.at + b.ms.length === msgs.length
             const endsTurn = !streaming
+            const lastMsg = b.ms[b.ms.length - 1]
+            const traceId = lastMsg.trace
+            const tr = endsTurn ? traceOf(traceId) : null
+            // A draft to approve is its own card after the answer's; everything else is in the answer's card.
+            const inCard = b.ms.filter(x => x.part.type !== 'approval')
+            const drafts = b.ms.filter(x => x.part.type === 'approval')
             return (
               <div key={b.ms[0].id} data-chat-msg data-answer className={`group/msg relative flex flex-col ${mt}`}>
-                {/* One white card per answer (D2): its text, tables, drafts and routines inside, and while it streams
+                {/* The finished steps, collapsed above the card. */}
+                {tr && <StepsLine trace={tr} traceId={traceId} model={ctx.data.models.find(x => x.id === lastMsg.model)?.label} at={lastMsg.at} onToggle={onToggleLong} />}
+                {/* One white card per answer (D2): its text and tables inside, then its sources, and while it streams
                     the thinking line at its foot, so no second card shows. */}
-                <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
-                  {b.ms.map(x => <AgentPart key={x.id} id={x.id} part={x.part} trace={x.trace} />)}
-                  {streaming && <Thinking text={thinkingText} />}
-                </div>
+                {(inCard.length > 0 || streaming) && (
+                  <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
+                    {inCard.map(x => <AgentPart key={x.id} id={x.id} chat={openId ?? undefined} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} onBusy={onBusy} />)}
+                    {streaming && <Thinking text={thinkingText} />}
+                    {endsTurn && <SourcesRow parts={inCard.map(x => x.part)} trace={tr} onToggle={onToggleLong} />}
+                  </div>
+                )}
+                {drafts.map(x => (
+                  <div key={x.id} className="mt-1.5 flex flex-col">
+                    {x.part.type === 'approval' && <ApprovalCard problemId={x.part.problemId} />}
+                  </div>
+                ))}
                 {/* The files this answer saved, each with Download. */}
                 {(() => {
                   const files = filesOfTurns(view, new Set(b.ms.map(m => m.trace)))

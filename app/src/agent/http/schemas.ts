@@ -4,11 +4,13 @@
 // beside the first reads, and the client waits for it only where it parses.
 export { ErrorBodySchema } from '../../../shared/contract/common'
 import { UploadResultSchema } from '../../../shared/contract/attachments'
+import { ActivityPageSchema } from '../../../shared/contract/activity'
 import { AuditPageSchema } from '../../../shared/contract/audit'
 import { GrantCreateInputSchema, GrantEndInputSchema, GrantsListSchema, SupportGrantSchema } from '../../../shared/contract/grants'
 import { MeSchema } from '../../../shared/contract/me'
 import { InviteInputSchema, MemberRecordSchema, MemberRoleSchema, PhotoResultSchema, RoleChangeInputSchema } from '../../../shared/contract/members'
 import { MemoryDataSchema, MemoryForgetInputSchema, MemoryLineSchema } from '../../../shared/contract/memory'
+import { NotificationsListSchema, NotificationsReadInputSchema } from '../../../shared/contract/notifications'
 import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
 import { UsageDataSchema } from '../../../shared/contract/usage'
@@ -29,6 +31,8 @@ export const ANSWERS = {
   chatList: ChatListSchema, chatPage: ChatPageSchema, chat: ChatSummarySchema, chatItems: z.object({ items: z.array(ChatSummarySchema) }),
   chatFile: UploadResultSchema, sendTurn: SendTurnResultSchema, ack: z.looseObject({}), activeRuns: ActiveRunsSchema, trace: TraceSchema, pause: PauseStateSchema,
   models: z.object({ default: z.string().nullable(), modes: z.array(ModelModeSchema) }),
+  // P4 (W4): Activity (route 59) and the bell (route 60; route 61 answers `ack`).
+  activityPage: ActivityPageSchema, notifications: NotificationsListSchema,
 }
 
 /** What each write sends. */
@@ -36,6 +40,7 @@ export const BODIES = {
   invite: InviteInputSchema, role: MemberRoleSchema, roleChange: RoleChangeInputSchema, grantCreate: GrantCreateInputSchema,
   grantEnd: GrantEndInputSchema, settingWrite: SettingWriteInputSchema,
   memoryForget: MemoryForgetInputSchema,
+  notificationsRead: NotificationsReadInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
 }
 

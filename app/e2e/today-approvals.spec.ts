@@ -38,15 +38,19 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   await note.fill('Olive units first, the rest after the count.')
   await shot(page, 'panel-note-1440')
 
-  // The actions sit on one row above the ask bar, all inside the panel's box.
-  const actions = await Promise.all(['Approve and restock', 'Done', "Don't send"].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
-  const ask = await panel.getByRole('button', { name: 'Ask about this…' }).boundingBox()
+  // Done (Edit while not editing) sits in the draft's own header; Ask sits in the panel's header, above the title.
+  const done = await panel.getByRole('article', { name: 'Shopify change draft' }).getByRole('button', { name: 'Done', exact: true }).boundingBox()
+  const ask = await panel.getByRole('button', { name: 'Ask about this', exact: true }).boundingBox()
+  const title = await panel.getByRole('heading', { name: '11 returns are not restocked' }).boundingBox()
+  expect(done, 'Done is in the draft').not.toBeNull()
+  expect(ask!.y + ask!.height, 'Ask sits above the title').toBeLessThanOrEqual(title!.y)
+  // The footer holds two actions on one row, Don't send then the main action, inside the panel's box.
+  const actions = await Promise.all(["Don't send", 'Approve and restock'].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
   const box = await panel.boundingBox()
   for (const b of actions) expect(b).not.toBeNull()
-  const tops = actions.map(b => Math.round(b!.y))
-  expect(Math.max(...tops) - Math.min(...tops), 'the three actions share one row').toBeLessThanOrEqual(4)
-  expect(actions[0]!.y + actions[0]!.height, 'actions end above the ask bar').toBeLessThanOrEqual(ask!.y)
-  expect(ask!.y + ask!.height, 'the ask bar stays inside the panel').toBeLessThanOrEqual(box!.y + box!.height)
+  expect(Math.abs(actions[0]!.y - actions[1]!.y), 'the two actions share one row').toBeLessThanOrEqual(4)
+  expect(actions[0]!.x, "Don't send comes first").toBeLessThan(actions[1]!.x)
+  expect(actions[1]!.y + actions[1]!.height, 'the actions stay inside the panel').toBeLessThanOrEqual(box!.y + box!.height)
 
   await panel.getByRole('button', { name: 'Approve and restock', exact: true }).click()
   await expect(panel).toContainText('11 units restocked on Shopify')
@@ -72,7 +76,7 @@ test('Approve all low-risk approves three drafts, and one Undo in the toast take
   await expect(approved.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(3)
   await expect(page.getByRole('button', { name: 'Approve all low-risk' })).toHaveCount(0)
   // The sensitive three stay: each one's primary action is Review.
-  await expect(page.getByRole('main').getByRole('button', { name: 'Review', exact: true })).toHaveCount(3)
+  await expect(page.getByRole('main').getByRole('button', { name: 'Review draft', exact: true })).toHaveCount(3)
   await shot(page, 'approved-all-low-risk-1440')
   await toast(page, 'Approved 3 drafts').getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(waiting(page)).toHaveText(/·\s6$/)
@@ -86,12 +90,12 @@ test('Today: the whole card opens the panel from one real button, and the "··�
   // The title is a real button; the card has no click handler of its own.
   await card.getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true }).focus()
   await page.keyboard.press('Enter')
-  await expect(page.getByRole('dialog')).toContainText('What your Inhouse agent found')
+  await expect(page.getByRole('dialog')).toContainText('How your Inhouse agent worked it out')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   // A click on the card's blank area lands on the title's stretched hit area and opens it too.
   await card.click({ position: { x: 200, y: 100 } })
-  await expect(page.getByRole('dialog')).toContainText('What your Inhouse agent found')
+  await expect(page.getByRole('dialog')).toContainText('How your Inhouse agent worked it out')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await card.getByRole('button', { name: 'More actions for Ridge 30L Pack runs out in 9 days' }).click()

@@ -32,10 +32,10 @@ const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} }
  * build-time `__INHOUSE_TEST_BUILD__` (false in this test's own compile, so the default table is the product build's),
  * `flag` for the runtime `INHOUSE_TEST_BUILD` var.
  */
-function setup(mode?: { compiled: boolean; flag: string | undefined }) {
+function setup(mode?: { compiled: boolean; flag: string | undefined; eval?: boolean }) {
   const s = fakeStores({ people: { member: { role: 'member' }, admin: { role: 'admin' } }, grant: null })
   const table: readonly Route[] = mode === undefined ? routes
-    : routes.map(r => (r.method === 'DELETE' && r.pattern === '/api/ops/drain' ? { ...r, handler: undrainHandler(mode.compiled) } : r))
+    : routes.map(r => (r.method === 'DELETE' && r.pattern === '/api/ops/drain' ? { ...r, handler: undrainHandler(mode.compiled, mode.eval ?? false) } : r))
   const parts: ApiParts = {
     authenticate: (r, e, st, n, id) => authenticate(r, e, st, n, id, good.keys),
     checkOrigin, checkAccess, stores: () => s.stores, routes: table, accessMatrix,
@@ -130,6 +130,18 @@ describe('the test build\'s undrain, DELETE /api/ops/drain (one case per build m
       expect(res.status, String(flag)).toBe(404)
       expect((await bodyOf(await call('/api/ops/drain', { headers: h }))).drainingUntilMs, String(flag)).toEqual(expect.any(Number))
     }
+    vi.restoreAllMocks()
+  })
+
+  it('eval build (the test issuer compiled in and switched on, the eval build too): 404, the drain holds (no test-only routes on the internet-reachable eval sandbox)', async () => {
+    quiet()
+    const call = setup({ compiled: true, flag: '1', eval: true })
+    const h = await release()
+    expect((await call('/api/ops/drain', { method: 'POST', headers: h })).status).toBe(200)
+    const res = await call('/api/ops/drain', { method: 'DELETE', headers: h })
+    expect(res.status).toBe(404)
+    expect(await bodyOf(res)).toEqual({ error: { code: 'not_found' } })
+    expect((await bodyOf(await call('/api/ops/drain', { headers: h }))).drainingUntilMs).toEqual(expect.any(Number))
     vi.restoreAllMocks()
   })
 
