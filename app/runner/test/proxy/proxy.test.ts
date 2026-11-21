@@ -1,7 +1,8 @@
 // The loopback proxy. Ways it could fail, written first:
 // - it forwards for an unknown uid, a uid with no live run, root, or when the uid lookup itself fails;
 // - it forwards without a token, or passes on a token (or key) the caller made up;
-// - it forwards a route outside the four, or a path that climbs out of its route;
+// - it forwards a route outside the five, or a path that climbs out of its route;
+// - (P4 H1) `/hub/` asks for any token but the run's `mcp` one, or a hub path climbs out of `/hub/`;
 // - the token ends up in a log line;
 // - a header outside the allowlist is forwarded;
 // - the uid is looked up per request (or blocking) instead of once per connection;
@@ -137,7 +138,23 @@ describe('what is forwarded', () => {
     expect(s.headers['anthropic-version']).toBe('2023-06-01')
   })
 
-  it.each(['/model', '/other/x', '/', 'http://elsewhere/model/x', '/MODEL/x'])('%s: 404, nothing forwarded', async (path) => {
+  it('(P4 H1) /hub/ is forwarded as it came, with the token the root gives for the mcp route', async () => {
+    const asked: string[] = []
+    const p = await makeProxy({ tokenForUid: (uid, route) => (asked.push(route), uid === 1001 && route === 'mcp' ? 'tok_mcp_route_1001_aaaaaaaa' : null) })
+    try {
+      const res = await fetch(`${p.url}/hub/`, { method: 'POST', headers: { connection: 'close', 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' })
+      expect(res.status).toBe(200)
+      expect(asked).toEqual(['mcp'])
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ method: 'POST', url: '/egress/hub/', body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' })
+      expect(seen[0]!.headers[RUN_TOKEN_HEADER]).toBe('tok_mcp_route_1001_aaaaaaaa')
+    } finally {
+      p.server.closeAllConnections()
+      await new Promise((r) => p.server.close(r))
+    }
+  })
+
+  it.each(['/model', '/other/x', '/', 'http://elsewhere/model/x', '/MODEL/x', '/hub', '/hubx/'])('%s: 404, nothing forwarded', async (path) => {
     const res = await new Promise<number>((resolve, reject) => {
       const u = new URL(proxyUrl)
       http.request({ host: u.hostname, port: u.port, path, method: 'GET', headers: { connection: 'close' } }, (r) => {
@@ -149,7 +166,7 @@ describe('what is forwarded', () => {
     expect(seen).toHaveLength(0)
   })
 
-  it.each(['/model/../store/x', '/files/%2e%2e/x', '/mcp/a\\b', '/store/./x', '/model/..#x', '/model/.%2e#x', '/model/%23/../x', '/model/x#frag', '/model/..%23x', '/model/x?q=#..', '/model/..?x', '/files/a%2fb/%2E%2E?q=1'])('%s: 400, nothing forwarded', async (path) => {
+  it.each(['/hub/../model/', '/hub/%2e%2e/model/', '/model/../store/x', '/files/%2e%2e/x', '/mcp/a\\b', '/store/./x', '/model/..#x', '/model/.%2e#x', '/model/%23/../x', '/model/x#frag', '/model/..%23x', '/model/x?q=#..', '/model/..?x', '/files/a%2fb/%2E%2E?q=1'])('%s: 400, nothing forwarded', async (path) => {
     const res = await new Promise<number>((resolve, reject) => {
       const u = new URL(proxyUrl)
       http.request({ host: u.hostname, port: u.port, path, method: 'GET', headers: { connection: 'close' } }, (r) => {
@@ -176,7 +193,7 @@ describe('targetFor (the last check on where a path goes)', () => {
   it.each(['/model/..#x', '/model/../x', '/model/./../store/x', '/model/x#y', '/model/%2e%2e/x/../../x'])('%s: refused', (path) => {
     expect(targetFor(base, path, 'model')).toBeNull()
   })
-  it.prop([fc.webPath(), fc.constantFrom('model', 'mcp', 'store', 'files')])('anything it lets through sits under the base and the route', (path, route) => {
+  it.prop([fc.webPath(), fc.constantFrom('model', 'mcp', 'store', 'files', 'hub')])('anything it lets through sits under the base and the route', (path, route) => {
     const t = targetFor(base, `/${route}/${path.replace(/^\//, '')}`, route)
     if (t !== null) {
       expect(t.origin).toBe(base.origin)

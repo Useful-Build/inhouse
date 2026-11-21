@@ -25,6 +25,9 @@ import { drainState, startDrain, undrain } from './ops/drain.ts'
 import { alarmNow } from './ops/alarm-now.ts'
 import { warmup } from './ops/warmup.ts'
 import { reviveTask } from './ops/revive.ts'
+// P4 W4: Activity and the bell (rows 59 to 61).
+import { listActivity } from './api/activity.ts'
+import { listNotifications, markNotificationsRead } from './api/bell.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -151,6 +154,10 @@ export const routes: readonly Route[] = [
   /* 51 */ { method: 'POST', pattern: '/api/ops/tasks/revive', handler: reviveTask },
   // P4 wave 4 (p4-w6.md OC 2): the test build's alarm-now control (404 elsewhere). P4's product routes are rows 52 to 66.
   /* 67 */ { method: 'POST', pattern: '/api/ops/alarm', handler: alarmNow },
+  // P4 W4 (p4-w4.md section 3): Activity and the bell.
+  /* 59 */ { method: 'GET', pattern: '/api/activity', handler: listActivity },
+  /* 60 */ { method: 'GET', pattern: '/api/notifications', handler: listNotifications },
+  /* 61 */ { method: 'POST', pattern: '/api/notifications/read', handler: markNotificationsRead },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

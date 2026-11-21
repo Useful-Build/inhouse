@@ -1,7 +1,8 @@
 // The egress (`egress.internal`, p3-design 8.1): the container's one way out, per call. Every call: the host, the route
-// (`model|mcp|store|files|events|audit`, else 404), the run token hashed and checked by the BrandAgent (refused: 401,
-// or 410 for a closed `events` route), the token header never forwarded, ids only from the grant, request and response
-// headers by allowlist, no redirects followed, pinned upstreams, logs without tokens, hashes, keys or bodies.
+// (`model|mcp|store|files|events|audit`, plus P4 H1's `hub` checked on the `mcp` grant, else 404), the run token hashed
+// and checked by the BrandAgent (refused: 401, or 410 for a closed `events` route), the token header never forwarded,
+// ids only from the grant, request and response headers by allowlist, no redirects followed, pinned upstreams, logs
+// without tokens, hashes, keys or bodies.
 import { WorkerEntrypoint } from 'cloudflare:workers'
 import { EGRESS_ROUTES, hashRunToken } from '../do/brand-agent/tokens.ts'
 import type { EgressRoute } from '../do/brand-agent/tokens.ts'
@@ -13,13 +14,16 @@ import type { EgressDeps, EgressRpc } from './deps.ts'
 import { eventsRoute } from './events.ts'
 import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
+import { handleHub, hubRouteDeps, type ReadGatewayLike } from './hub.ts'
 import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
 import { modelRoute } from './model.ts'
 import { storeRoute } from './store.ts'
 
-/** The test build's compile-time switch (vite.config.ts); false in every other build. */
+/** The test issuer's compile-time switch (vite.config.ts); true in the test and eval builds only. */
 declare const __INHOUSE_TEST_BUILD__: boolean
+/** The eval build's compile-time switch (vite.config.ts); true there only. */
+declare const __INHOUSE_EVAL_BUILD__: boolean
 
 export const EGRESS_HOST = 'egress.internal'
 
@@ -43,16 +47,20 @@ export async function handleEgress(request: Request, d: EgressDeps): Promise<Res
   const url = new URL(request.url)
   if (url.hostname !== EGRESS_HOST) return jsonAnswer({ error: 'not_found' }, 404)
   const name = /^\/([a-z]+)\//.exec(url.pathname)?.[1]
-  if (!name || !(EGRESS_ROUTES as readonly string[]).includes(name)) return jsonAnswer({ error: 'not_found' }, 404)
-  const route = name as EgressRoute
+  // `/hub/` (P4 H1): the hub's read tools, the turn's second MCP server, on the grant's `mcp` route (it closes with `mcp`).
+  const hub = name === 'hub' ? d.hub : undefined
+  if (!name || !(hub !== undefined || (EGRESS_ROUTES as readonly string[]).includes(name))) return jsonAnswer({ error: 'not_found' }, 404)
+  const route = (hub !== undefined ? 'mcp' : name) as EgressRoute
 
   const token = request.headers.get(RUN_TOKEN_HEADER)
   const checked = token ? await d.rpc.checkRunToken(await hashRunToken(token), route) : { refused: 'unknown' as const }
   if ('refused' in checked) {
-    d.log({ event: 'egress_refused', route, why: checked.refused, runner: d.runner })
+    // `path: 'hub'` tells a refused `/hub/` call from a refused `/mcp/` one (both check the `mcp` route).
+    d.log({ event: 'egress_refused', route, ...(hub !== undefined ? { path: 'hub' } : {}), why: checked.refused, runner: d.runner })
     return refusal(route, route === 'events' && checked.refused === 'closed' ? 410 : 401)
   }
   const grant = checked
+  if (hub !== undefined) return handleHub(withoutToken(request), grant, hub)
   const path = url.pathname
   switch (route) {
     case 'model':
@@ -82,9 +90,17 @@ export async function brandSettings(db: D1Database): Promise<SettingsView> {
 /** The env the egress reads beyond the generated `Env`: the test build's flag, set only on the test build's config. */
 type EgressEnv = Env & { INHOUSE_TEST_BUILD?: string }
 
+/**
+ * Whether the model route answers from the scripted model: the test build only (compiled in AND switched on, as the test
+ * issuer is). The eval build compiles the test issuer in too but never the scripted model, so it always takes the gateway
+ * (p3-eval-observability rev 2, rec 1). `compiled` is a seam for the unit tests (vitest defines both flags false).
+ */
+export function usesScriptedModel(env: Pick<EgressEnv, 'INHOUSE_TEST_BUILD'>, compiled = { test: __INHOUSE_TEST_BUILD__, eval: __INHOUSE_EVAL_BUILD__ }): boolean {
+  return compiled.test && !compiled.eval && env.INHOUSE_TEST_BUILD === '1'
+}
+
 /** The real deps from the Worker's env (the test build's model is the scripted one, and only there). */
 export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressProps): EgressDeps {
-  const testBuild = __INHOUSE_TEST_BUILD__ && env.INHOUSE_TEST_BUILD === '1'
   return {
     // W1's BrandAgent implements BrandAgentRpc; the stub is typed by that interface.
     rpc: env.BRAND_AGENT.getByName('brand') as unknown as EgressRpc,
@@ -92,7 +108,7 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     touchRunner: async runner => {
       await (env.RUNNER.getByName(runner) as unknown as { touch(): Promise<void> }).touch()
     },
-    upstream: testBuild ? scriptedUpstream() : gatewayUpstream(env),
+    upstream: usesScriptedModel(env) ? scriptedUpstream() : gatewayUpstream(env),
     settings: () => brandSettings(env.DB),
     bucket: env.FILES,
     db: env.DB,
@@ -100,6 +116,8 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     newFileId,
     // W6's `inhouse` MCP server (server/mcp/server/index.ts), acting as the grant's member only.
     mcp: mcpHandler({ db: env.DB }),
+    // The hub's ReadGateway (P4 H1, OC 4: the only hub entrypoint the product Worker binds).
+    hub: hubRouteDeps(env.HUB as unknown as ReadGatewayLike, entry => console.log(entry)),
     waitUntil: p => ctx.waitUntil(p),
     setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: t => clearInterval(t),

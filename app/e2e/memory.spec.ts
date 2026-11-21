@@ -171,10 +171,12 @@ test('Memory: the demo clock never runs backwards after a reload, even with noth
   await todayBox(page).fill(Q)
   await page.keyboard.press('Enter')
   await expect(log(page).getByText(A)).toBeVisible({ timeout: 15_000 })
-  // The answer's footer: "Smart · 6 steps · 9.4s · 8:30 AM".
-  const footers = log(page).locator('button span.tabular-nums').filter({ hasText: /steps ·/ })
+  // The answer's step list, opened from its steps line, ends with "Smart · 9.4s · 8:30 AM".
+  const stepsLines = log(page).locator('[data-steps]')
   const stampOf = async (i: number) => {
-    const m = /(\d{1,2}):(\d\d)\s(AM|PM)$/.exec((await footers.nth(i).innerText()).trim())
+    const meta = stepsLines.nth(i).locator('[data-steps-meta]')
+    if (await meta.count() === 0) await stepsLines.nth(i).getByRole('button', { name: /\d+ steps/ }).click()
+    const m = /(\d{1,2}):(\d\d)\s(AM|PM)$/.exec((await meta.innerText()).trim())
     expect(m, 'the answer footer ends with its time').not.toBeNull()
     return (Number(m![1]) % 12 + (m![3] === 'PM' ? 12 : 0)) * 60 + Number(m![2])
   }

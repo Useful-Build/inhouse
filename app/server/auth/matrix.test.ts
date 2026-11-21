@@ -269,6 +269,10 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/ops/tasks/revive': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   // Route 67 (P4 wave 4): the test build's alarm-now control, release only; its handler answers 404 outside the test build.
   'POST /api/ops/alarm': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  // Rows 59 to 61 (P4 W4): Activity is brand data like Memory; the bell is personal, and the Inhouse team has none.
+  'GET /api/activity': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/notifications': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/notifications/read': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

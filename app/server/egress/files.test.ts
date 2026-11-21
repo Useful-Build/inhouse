@@ -77,6 +77,21 @@ describe('an R2 write that fails (failure 1)', () => {
   })
 })
 
+describe('a slot row gone while the bytes were written (failure 1)', () => {
+  it('answers 409 conflict, not 201: nothing the runner could confirm was kept', async () => {
+    const { grant, h } = await setup()
+    // The sweep's pending expiry (or a purge) deletes the pending row between the reserve and the complete.
+    h.deps.files = { ...files, putBytes: async (key, body, hash, type) => {
+      await files.putBytes(key, body, hash, type)
+      await db.prepare('DELETE FROM chat_files WHERE turn_id = ?').bind(grant.turnId).run()
+    } }
+    const res = await putFile(h, 'outputs/gone.csv', 'g,1\n')
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'conflict' })
+    expect(await outputsOf(grant.turnId)).toBe(0)
+  })
+})
+
 describe('a streamed PUT (p3-design 8.5, a streamed size)', () => {
   const MiB3 = 3_145_728
   // Letters by position (`0x61 + (i * 7 % 26)`): a reordered or repeated chunk changes the hash (shasum literal).
