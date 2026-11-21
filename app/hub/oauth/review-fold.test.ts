@@ -198,3 +198,42 @@ describe('item 8', () => {
     expect(w.alarm('shopify:store').at).toBe(w.clock.ms + 60_000)
   })
 })
+
+describe('re-check lows (B2)', () => {
+  it("a 401 on a still-valid token while refreshes are rate limited sends no refresh", async () => {
+    const w = world({ rotation: true })
+    await connect(w)
+    const r = record(w)
+    // The proactive refresh at half-life is rate limited; the token itself is still good for 6 hours.
+    w.clock.ms = r.obtainedAtMs! + (r.expiresAtMs! - r.obtainedAtMs!) / 2
+    w.slack.refreshModes = ['ratelimited']
+    await w.core(SLACK).alarm()
+    expect(record(w)).toMatchObject({ state: 'active', failures: 1 })
+    expect(w.slack.refreshSends).toHaveLength(1)
+    for (const t of w.slack.tokens.values()) t.revoked = true
+    expect(codeOf(await search(w))).toBe('rate_limited')
+    expect(w.slack.refreshSends).toHaveLength(1)
+    expect(record(w).state).toBe('active')
+  })
+
+  it('an error on a reused session drops it: the next call initialises first', async () => {
+    const w = world()
+    await connect(w)
+    expect(codeOf(await search(w))).toBe('ok')
+    const real = w.slack.fetch
+    let failed = false
+    w.slack.fetch = async req => {
+      const body = await req.clone().text()
+      if (!failed && body.includes('"tools/call"')) {
+        failed = true
+        return new Response(null, { status: 500 })
+      }
+      return real(req)
+    }
+    expect(codeOf(await search(w))).toBe('upstream_unavailable')
+    w.slack.fetch = real
+    const before = w.slack.requests.length
+    expect(codeOf(await search(w))).toBe('ok')
+    expect(w.slack.requests[before]!.rpc).toBe('initialize')
+  })
+})
