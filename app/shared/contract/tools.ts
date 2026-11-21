@@ -30,7 +30,11 @@ export const ToolDetailSchema = z.object({
 })
 export type ToolDetail = z.infer<typeof ToolDetailSchema>
 
-export const CatalogToolSchema = z.object({ k: z.string(), name: z.string(), desc: z.string(), need: StageIndexSchema.optional() })
+export const CatalogToolSchema = z.object({
+  k: z.string(), name: z.string(), desc: z.string(), need: StageIndexSchema.optional(),
+  /** P5: the hub's account id, on a tool the Inhouse team can connect here. The client sends it to the connect route. */
+  accountId: z.string().optional(),
+})
 export type CatalogTool = z.infer<typeof CatalogToolSchema>
 
 /** A channel the team hears from the agent on (Slack): not a tool it reads. Decision D6. */
