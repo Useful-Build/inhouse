@@ -16,6 +16,8 @@ const run = (...args) => spawnSync(process.execPath, [script, ...args], { encodi
 const RULE_TEXT = {
   'test-build-var': 'vars.INHOUSE_TEST_BUILD is set',
   'test-issuer-jwks': 'vars.TEST_ISSUER_JWKS is set',
+  // The eval build (p3-eval-observability rev 2, rec 2): the eval brand marker is the sandbox eval deployment's alone.
+  'eval-brand-var': "vars.INHOUSE_EVAL_BRAND is set: only the sandbox's eval deployment is an eval brand",
   'env-block': 'env is set: a deployable config has no env blocks',
   'apps-no-inhouse': 'must be exactly one "brand" app and one "inhouse" app',
   'apps-two-brands': 'must be exactly one "brand" app and one "inhouse" app',
@@ -144,6 +146,12 @@ describe('check-product-config', () => {
     const c = testConfig()
     expect(checkPool({ ...c, vars: { ...c.vars, AI_GATEWAY_ID: 'gw' } })).toEqual([GATEWAY])
     expect(checkPool({ ...c, secrets: { required: ['AI_GATEWAY_TOKEN'] } })).toEqual([GATEWAY])
+    // #240 review O-L3: only the sandbox's eval mode lifts it, and only for exactly `true` on both (an exported lock).
+    const gw = { ...c, ai: { binding: 'AI' } }
+    for (const o of [{ sandbox: true, evalMode: 'yes' }, { sandbox: 'yes', evalMode: true }, { sandbox: 1, evalMode: 1 }, { evalMode: true }, { sandbox: true }]) {
+      expect(checkPool(gw, o), JSON.stringify(o)).toEqual([GATEWAY])
+    }
+    expect(checkPool(gw, { sandbox: true, evalMode: true })).toEqual([])
     // The product config may name the gateway: the rule is about the test build only.
     const product = JSON.parse(stripJsonc(readFileSync(template, 'utf8')))
     expect(checkPool(product)).toEqual([])

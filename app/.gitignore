@@ -11,6 +11,7 @@ node_modules
 dist
 dist-product
 dist-product-test
+dist-product-eval
 dist-ssr
 *.local
 

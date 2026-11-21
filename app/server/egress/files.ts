@@ -63,7 +63,10 @@ export async function filesRoute(request: Request, urlPath: string, grant: RunGr
       d.log({ event: 'egress_file_save_failed', route: 'files', error: e instanceof Error ? e.name : 'unknown' })
       return jsonAnswer({ error: 'save_failed' }, 502)
     }
-    await d.files.completeOutput(id, { contentType: saved.contentType, bytes: saved.bytes, sha256: saved.sha256 })
+    // No row changed: the slot is gone, so nothing could confirm these bytes. The object is left to the orphan sweep.
+    if (!(await d.files.completeOutput(id, { contentType: saved.contentType, bytes: saved.bytes, sha256: saved.sha256 }))) {
+      return jsonAnswer({ error: 'conflict' }, 409)
+    }
     kept = true
     return jsonAnswer({ path, bytes: saved.bytes, contentType: saved.contentType }, 201)
   } finally {

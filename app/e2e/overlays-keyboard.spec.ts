@@ -87,6 +87,11 @@ test('Dark, by keyboard: the palette, Help, the team window, the account menu an
   await page.keyboard.press('ArrowDown')
   await expect(menu.getByRole('menuitem', { name: 'Team settings' })).toBeFocused()
   await page.keyboard.press('ArrowDown')
+  await expect(menu.getByRole('menuitem', { name: 'Usage' })).toBeFocused()
+  // The separator is skipped.
+  await page.keyboard.press('ArrowDown')
+  await expect(menu.getByRole('menuitem', { name: /^Your Inhouse team/ })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
   await expect(menu.getByRole('menuitem', { name: 'Help and guides' })).toBeFocused()
   await page.keyboard.press('Enter')
   const help = page.getByRole('dialog', { name: 'Help and guides' })
@@ -103,13 +108,16 @@ test('Dark, by keyboard: the palette, Help, the team window, the account menu an
   await attach(page, 'help')
   await escapeTo(page, help, account(page))
 
-  // The team window, from the sidebar's "Message the team".
-  const message = side(page).getByRole('button', { name: /Message the team/ })
-  await press(message)
+  // The team window, from the account menu's "Your Inhouse team": it opens quiet and Escape gives focus back to the
+  // account button.
+  await press(account(page))
+  await expect(menu.getByRole('menuitem', { name: 'Your settings' })).toBeFocused()
+  await menu.getByRole('menuitem', { name: /^Your Inhouse team/ }).focus()
+  await page.keyboard.press('Enter')
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
   await opensQuiet(page, team)
   await attach(page, 'team-window')
-  await escapeTo(page, team, message)
+  await escapeTo(page, team, account(page))
 
   // Notifications, from the bell: Escape closes only the pop-up.
   const bell = header(page).getByRole('button', { name: /^Notifications/ })
@@ -137,9 +145,12 @@ test('Dark, by keyboard: the problem panel, the trace window, a file viewer and 
   await attach(page, 'problem-panel')
   await escapeTo(page, panel, review)
 
-  // The trace window, from an answer's steps link.
+  // The trace window, from the Details link in an answer's step list (its steps line opens the list).
   await open(page, fx, '#/chats/stuck', '3 orders · $556')
-  const steps = page.locator('main').getByRole('button', { name: /6 steps/ }).last()
+  const stepsLine = page.locator('main').getByRole('button', { name: /6 steps/ }).last()
+  await press(stepsLine)
+  await expect(stepsLine).toHaveAttribute('aria-expanded', 'true')
+  const steps = stepsLine.locator('xpath=..').getByRole('button', { name: 'Details', exact: true })
   await press(steps)
   const trace = page.getByRole('dialog', { name: /What your Inhouse agent did/ })
   await expect(trace).toContainText('9.4s')

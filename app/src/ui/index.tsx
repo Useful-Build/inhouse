@@ -322,9 +322,10 @@ export function StageTag({ tag, icon = true, size = 'default', strong }: { tag: 
   )
 }
 
-/** The agent's three-dot mark. Animated (goo filter) while the agent works. Blue: running. */
-export function AgentMark({ color = 'var(--brand)', scale = 1 }: { color?: string; scale?: number }) {
-  const live = useUi(s => s.animateMark)
+/** The agent's three-dot mark. Animated (goo filter) while the agent works. Blue: running. `live` forces it on or off (the demo's animate switch otherwise decides). */
+export function AgentMark({ color = 'var(--brand)', scale = 1, live: force }: { color?: string; scale?: number; live?: boolean }) {
+  const demo = useUi(s => s.animateMark)
+  const live = force ?? demo
   const dot = (cls: string, a: string) => (
     <i className={cn('absolute rounded-full bg-current', cls, live && a)} />
   )

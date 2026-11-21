@@ -22,12 +22,22 @@ const PRODUCT = 'product'
  * `wrangler dev` for the `api` and `real` Playwright projects. Never deployed.
  */
 const PRODUCT_TEST = 'product-test'
+/**
+ * `vite build --mode product-eval` (npm run build:product-eval): the EVAL BUILD (p3-eval-observability rev 2, rec 1).
+ * The test build's sign-in (the test issuer) with the real model (the egress always takes the gateway,
+ * `__INHOUSE_EVAL_BUILD__`), no scripted model, and the eval trace (`@eval-trace`). Deployed only to the sandbox, from
+ * main, by the ops repo (`check-product-config.mjs --sandbox --eval`); check-product-build.mjs proves its module and
+ * canary are in no other build.
+ */
+const PRODUCT_EVAL = 'product-eval'
 /** The product builds' own output folders, so `npm run build` keeps writing the demo to dist/. */
 const PRODUCT_OUT_DIR = 'dist-product'
 const PRODUCT_TEST_OUT_DIR = 'dist-product-test'
+const PRODUCT_EVAL_OUT_DIR = 'dist-product-eval'
 /** The Worker config each product mode builds `server/index.ts` from; the demo builds worker/ from wrangler.jsonc. */
-const PRODUCT_CONFIG: Record<string, string> = { [PRODUCT]: 'wrangler.product.jsonc', [PRODUCT_TEST]: 'wrangler.test.jsonc' }
-const PRODUCT_OUT: Record<string, string> = { [PRODUCT]: PRODUCT_OUT_DIR, [PRODUCT_TEST]: PRODUCT_TEST_OUT_DIR }
+const PRODUCT_CONFIG: Record<string, string> = { [PRODUCT]: 'wrangler.product.jsonc', [PRODUCT_TEST]: 'wrangler.test.jsonc', [PRODUCT_EVAL]: 'wrangler.eval.jsonc' }
+/** Every product mode's output folder: keepDemoDeployRedirect restores a pointer into any of them (build-support/vite-config.test.ts). */
+export const PRODUCT_OUT: Record<string, string> = { [PRODUCT]: PRODUCT_OUT_DIR, [PRODUCT_TEST]: PRODUCT_TEST_OUT_DIR, [PRODUCT_EVAL]: PRODUCT_EVAL_OUT_DIR }
 /** The client entry `src/agent/index.ts` imports as `@client`, picked by mode (tsconfig.app.json and vitest.config.ts name the demo one). */
 const clientEntry = (product: boolean) =>
   fileURLToPath(new URL(product ? './src/agent/client.product.ts' : './src/agent/client.demo.ts', import.meta.url))
@@ -150,8 +160,8 @@ function demoPublicFiles(): Plugin[] {
  * `wrangler deploy` at the last build's Worker config. A product build would point it at dist-product/, so this puts
  * back what was there (the demo build's, or nothing): after buildApp, on process exit (a failed or thrown build) and on
  * SIGINT, SIGTERM and SIGHUP. SIGKILL can't be caught: after one, the next product build removes the stale pointer and
- * the next demo build rewrites it. It restores only a pointer into dist-product/ or dist-product-test/ (both product
- * outputs, whichever mode runs; build-support/demo-deploy-redirect.ts).
+ * the next demo build rewrites it. It restores only a pointer into dist-product/, dist-product-test/ or
+ * dist-product-eval/ (every product output, whichever mode runs; build-support/demo-deploy-redirect.ts).
  * Never run a demo and a product build at the same time, or preview or deploy while a product build runs: the pointer
  * points at the product for a moment before the restore, and a demo pointer written in between may be removed (preview
  * then fails loud; it never serves the product). The product builds are served with
@@ -163,7 +173,7 @@ function keepDemoDeployRedirect(): Plugin {
   let snapshot: RedirectSnapshot | null = null
   const restore = () => {
     if (!snapshot) return
-    for (const outDir of [PRODUCT_OUT_DIR, PRODUCT_TEST_OUT_DIR]) restoreRedirect(snapshot, outDir)
+    for (const outDir of Object.values(PRODUCT_OUT)) restoreRedirect(snapshot, outDir)
   }
   return {
     name: 'inhouse:keep-demo-deploy-redirect',
@@ -199,7 +209,10 @@ function productHtmlTitle(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const product = mode === PRODUCT || mode === PRODUCT_TEST
+  const product = mode === PRODUCT || mode === PRODUCT_TEST || mode === PRODUCT_EVAL
+  // The test issuer is compiled into the test and eval builds (the eval harness signs in through it); the scripted model
+  // only into the test build (the eval build runs the real model); the eval trace only into the eval build.
+  const testIssuer = mode === PRODUCT_TEST || mode === PRODUCT_EVAL
   return {
     plugins: [
       // The demo keeps the default config (wrangler.jsonc, worker/); each product mode names its own (server/).
@@ -210,26 +223,31 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@client': clientEntry(product), '@sample': sampleData,
-        // The test issuer (W1) only in the test build; every other build gets the switched-off stand-in, so the module
-        // never enters their graph (server/auth/issuer-off.ts; check-product-build.mjs proves it).
-        '@test-issuer': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/auth/test-issuer.ts' : './server/auth/issuer-off.ts', import.meta.url)),
+        // The test issuer (W1) only in the test and eval builds; every other build gets the switched-off stand-in, so the
+        // module never enters their graph (server/auth/issuer-off.ts; check-product-build.mjs proves it).
+        '@test-issuer': fileURLToPath(new URL(testIssuer ? './server/auth/test-issuer.ts' : './server/auth/issuer-off.ts', import.meta.url)),
         // The scripted model (P3, app/test/scripted-model/) the same way: only the test build's Worker can import it; every
         // other build gets server/model/scripted-off.ts (check-product-build.mjs proves it).
         '@scripted-model': fileURLToPath(new URL(mode === PRODUCT_TEST ? './test/scripted-model/index.ts' : './server/model/scripted-off.ts', import.meta.url)),
         // P4's test-build controls (server/ops/test-controls.ts, route 67) the same way: every other build gets
         // server/ops/test-controls-off.ts (check-product-build.mjs proves it).
         '@test-controls': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/ops/test-controls.ts' : './server/ops/test-controls-off.ts', import.meta.url)),
+        // The eval trace (p3-eval-observability rev 2, rec 5) only in the eval build; every other build, the test build
+        // included, gets server/eval-trace/off.ts (check-product-build.mjs proves the module and its canary absent).
+        '@eval-trace': fileURLToPath(new URL(mode === PRODUCT_EVAL ? './server/eval-trace/on.ts' : './server/eval-trace/off.ts', import.meta.url)),
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
     // The Cloudflare plugin puts each environment under build.outDir: dist-product/client and dist-product/inhouse_product
-    // (dist-product-test/ the same).
+    // (dist-product-test/ and dist-product-eval/ the same).
     ...(product ? { build: { outDir: PRODUCT_OUT[mode] } } : {}),
     define: {
       // The commit the build came from, sent with every client error report (src/report-error.ts).
       __RELEASE_SHA__: JSON.stringify(process.env.RELEASE_SHA || 'dev'),
-      // The test issuer's compile-time switch (server/build-flags.d.ts): true only in the test build.
-      __INHOUSE_TEST_BUILD__: JSON.stringify(mode === PRODUCT_TEST),
+      // The test issuer's compile-time switch (server/build-flags.d.ts): true only in the test and eval builds.
+      __INHOUSE_TEST_BUILD__: JSON.stringify(testIssuer),
+      // The eval build's switch (server/build-flags.d.ts): true only there. The egress then always takes the gateway.
+      __INHOUSE_EVAL_BUILD__: JSON.stringify(mode === PRODUCT_EVAL),
     },
     environments: { client: { build: { sourcemap: 'hidden' } } },
   }
