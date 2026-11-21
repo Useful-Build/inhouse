@@ -35,13 +35,15 @@ export function splitStep(label: string): { tool: string | null; text: string } 
 }
 
 /**
- * A step that changed something (saved, sent, wrote) rather than read it: its row says what it did. The label is a write
- * when a write verb is followed by what it did it to ("saved the report", "sent a reply", "updated 3 orders"), not a read
- * of what was sent or saved ("sent campaigns, last 30 days", "sent mail").
+ * A step that changed something (saved, sent, wrote) rather than read it: its row says what it did. A label that starts
+ * with a write verb is a write ("saved notes", "sent email to Sam", "created draft order #12"), unless it reads as a look
+ * at what was sent or saved: a period ("sent campaigns, last 30 days") or a bare plural of messages or files ("sent
+ * mail"). When unsure it says what it did rather than claim a read, so a change is never shown as "Checked".
  */
-const WROTE = /^(saved|sent|created|posted|updated|wrote|drafted|deleted|changed|added|scheduled|replied|approved)\s+(the|a|an|your|my|this|these|those|it|them|to|\d+)\b/i
-const READ_RANGE = /,\s*(last|past|this|previous)\b|\b(last|past)\s+\d+\s+\w+$/i
-export const isWrite = (text: string) => WROTE.test(text) && !READ_RANGE.test(text)
+const WROTE = /^(saved|sent|created|posted|updated|wrote|drafted|deleted|changed|added|scheduled|replied|approved)\b/i
+const READ_RANGE = /,\s*(last|past|previous)\b|,\s*this\s+(week|month|quarter|year)\b|\b(last|past)\s+\d+\s+\w+$/i
+const READ_OF = /^(sent|saved)\s+(mail|emails|messages|campaigns|files|items)$/i
+export const isWrite = (text: string) => WROTE.test(text) && !READ_RANGE.test(text) && !READ_OF.test(text)
 
 export interface StepRow { tool: string | null; text: string; ms: number; /** It read, so the steps line may say "Checked". */ read: boolean }
 

@@ -204,9 +204,11 @@ function Thread() {
   const historyIn = !noSeed || startedHere || history?.state === 'ready'
   const [seen, setSeen] = useState<{ key: string | null; ids: ReadonlySet<string>; skip: ReadonlySet<string> }>({ key: openId, ids: new Set(), skip: new Set() })
   let seenNow = seen.key === openId ? seen : { key: openId, ids: new Set<string>(), skip: new Set<string>() }
-  for (const t of [run?.turnId, view?.live]) {
+  // This tab's own run (a send from here) always counts; a turn only the stream reports (`view.live`, a replay) counts once
+  // the history is in.
+  for (const [t, counts] of [[run?.turnId, true], [view?.live, historyIn]] as const) {
     if (!t || seenNow.ids.has(t) || seenNow.skip.has(t)) continue
-    seenNow = historyIn ? { ...seenNow, ids: new Set([...seenNow.ids, t]) } : { ...seenNow, skip: new Set([...seenNow.skip, t]) }
+    seenNow = counts ? { ...seenNow, ids: new Set([...seenNow.ids, t]) } : { ...seenNow, skip: new Set([...seenNow.skip, t]) }
   }
   if (seenNow !== seen) setSeen(seenNow)
   // Answers with words still to come: the log is busy while there are any, so a screen reader doesn't read half an answer.

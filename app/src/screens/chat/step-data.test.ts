@@ -15,6 +15,11 @@ describe('stepRows', () => {
     ['Library · saved the report', false],
     ['Library · saved a chart', false],
     ['Gmail · drafted a reply to Sam', false],
+    ['Gmail · sent email to Sam', false],
+    ['Shopify · created draft order #12', false],
+    ['Library · saved notes', false],
+    ['Library · sent the weekly report, this morning', false],
+    ['Shopify · updated orders, this week', true],
   ])('%s reads: %s', (label, read) => {
     expect(stepRows(data, trace(label))[0].read).toBe(read)
   })
