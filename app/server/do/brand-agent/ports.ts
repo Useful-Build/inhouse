@@ -271,7 +271,8 @@ export const PERSON_DATA_TABLES = [
   'turn_effects', 'turn_trace', 'turn_rows', 'chat_deletion',
 ] as const
 export type PersonDataTable = (typeof PERSON_DATA_TABLES)[number]
-export type PersonDataAnswer = { counts: Record<PersonDataTable, number> } | { busy: true }
+/** `refused: invalid` for the system member (`m_system`): its rows are every routine's, never one person's. */
+export type PersonDataAnswer = { counts: Record<PersonDataTable, number> } | { busy: true } | Refusal
 
 /** Route 47's answer: what's still running, and until when a drain holds. */
 export interface DrainState {

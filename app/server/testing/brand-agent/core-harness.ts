@@ -71,6 +71,8 @@ export interface Harness {
   modelsOff: Set<string>
   /** The start's settings read throws while `throws` is set. */
   modelCheck: { throws: boolean }
+  /** D1's chat read (`chatGone`) waits for `gate` when set: a barrier inside a resume's await. */
+  chatCheck: { gate: Promise<void> | null }
   /** The socket hub (PR 4), its sockets (kept across a restart, as hibernated sockets are) and its audit write. */
   hub: SocketHub
   sockets: FakeSocket[]
@@ -118,6 +120,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
     let sessions = 0
     const modelsOff = new Set<string>()
     const modelCheck = { throws: false }
+    const chatCheck: Harness['chatCheck'] = { gate: null }
     const sockets: FakeSocket[] = []
     const attachAudit: Harness['attachAudit'] = { lines: [], gate: null, fails: false }
     const build = (): Harness => {
@@ -147,6 +150,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
         taskSeeds: registrySeeds(registry),
         // D1's `chats` as the real object reads it (index.ts): gone or in the trash.
         chatGone: async chatId => {
+          if (chatCheck.gate) await chatCheck.gate
           const c = await chatStore({ db: env.DB }).ownerOf(chatId)
           return c === null || c.deleted
         },
@@ -157,7 +161,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
         },
       })
       const h: Harness = {
-        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck, registry, hub, sockets, attachAudit,
+        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck, chatCheck, registry, hub, sockets, attachAudit,
         connect(p, v = '1') {
           const answer = hub.open(JSON.stringify(p), v)
           if (!('accept' in answer)) return { ws: null, answer }

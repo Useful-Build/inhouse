@@ -102,7 +102,7 @@ export interface TurnRow {
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
   pos_from: number | null; pos_to: number | null; d1_flushed: number
   output_format_json: string | null; on_end_json: string | null; structured_output_json: string | null
-  resume_json: string | null
+  resume_json: string | null; abandoned: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
@@ -172,6 +172,8 @@ function actorRefusal(by: Actor): Refusal | null {
  * still writes its own reason on the row (e.g. `done` then a pause), which must not read as a failure (#168 r1).
  */
 function endPayload(t: TurnRow): TurnEndPayload {
+  // A deferred turn whose wait was given up (PR 6 r1): its question was closed, so its result is never delivered.
+  if (t.abandoned !== null) return { turnId: t.turn_id, runId: t.run_id, chatId: t.chat_id, outcome: 'cancelled', failure: t.abandoned, structuredOutput: null }
   const outcome = (t.outcome ?? 'cancelled') as TurnEndPayload['outcome']
   const failure = outcome === 'failed' ? t.failure : outcome === 'cancelled' ? t.cancel_why : null
   return {
@@ -339,6 +341,10 @@ export class AgentCore {
     if (cs?.session === 'damaged') return refuse('conflict', 'session_damaged')
     // Only the resume of the question the chat waits on passes a waiting chat (PR 6).
     if (cs?.session === 'waiting' && !(extra?.resume !== undefined && this.waitingOf(cs)?.questionId === extra.resume.questionId)) {
+      return refuse('conflict', 'waiting_answer')
+    }
+    // A resume admitted but not yet running still answers the question first: a send (even `now`) waits for it (r1).
+    if (extra?.resume === undefined && this.count("chat_id = ? AND resume_json IS NOT NULL AND state IN ('queued', 'starting')", t.chatId) > 0) {
       return refuse('conflict', 'waiting_answer')
     }
     if (cs?.provider !== undefined && cs.provider !== null && cs.provider !== 'anthropic') return refuse('conflict', 'provider_changed')
@@ -992,6 +998,8 @@ export class AgentCore {
     this.sql.exec('UPDATE turns SET saw_checkpoint = 1 WHERE turn_id = ?', t.turn_id)
     const fresh = this.turn(t.turn_id)!
     if (fresh.mirror_error === 1) return
+    // A wait given up before this turn was final (r1): the chat state is what the abandonment left; nothing parks again.
+    if (fresh.abandoned !== null) return
     if (cp.mainEntries === 0) {
       this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
         checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, t.chat_id)
@@ -1029,13 +1037,21 @@ export class AgentCore {
   /**
    * A path that abandons a chat's wait without a resume (a resume into a deleted chat, route 49's reset, damage) ends
    * the parked turn's end task here, `cancelled` with `failure` (A8: exactly once; the caller clears `waiting_json` in
-   * the same synchronous step). A parked turn not yet final fires its own end at its `storeFinal` (no longer parked).
+   * the same synchronous step). A parked turn not yet final (still `ending`) is made unparkable in this same step: its
+   * `deferred_json` cleared and the reason kept in `abandoned`, so a late `released` checkpoint can't make the chat wait
+   * again and its own `storeFinal` fires its end once, `cancelled` with this reason (never its `done`: the question
+   * was closed, so its result is never delivered).
    */
   private fireParked(cs: ChatStateRow, failure: string) {
     const w = cs.session === 'waiting' ? this.waitingOf(cs) : null
     if (!w) return
     const t = this.turn(w.turnId)
-    if (!t || t.on_end_json === null || (t.state !== 'ended' && t.state !== 'cancelled')) return
+    if (!t) return
+    if (t.state !== 'ended' && t.state !== 'cancelled') {
+      this.sql.exec('UPDATE turns SET deferred_json = NULL, abandoned = ? WHERE turn_id = ?', failure, t.turn_id)
+      return
+    }
+    if (t.on_end_json === null) return
     const onEnd = JSON.parse(t.on_end_json) as OnEnd
     const payload: TurnEndPayload = { turnId: t.turn_id, runId: t.run_id, chatId: t.chat_id, outcome: 'cancelled', failure, structuredOutput: null }
     this.d.scheduler.ensure({ id: onEnd.id, kind: onEnd.kind, dueAtMs: this.d.now(), payload })
@@ -1390,17 +1406,32 @@ export class AgentCore {
    * throws makes this throw with the flag kept (paused stays paused) and the later hooks not run; a retried pause runs
    * every hook again, so hooks are idempotent.
    */
-  async pause(by: Actor): Promise<PauseState> {
-    const state = this.pauseNow(by)
-    for (const h of this.pauseHooks) await h.onPause({ by, atMs: this.d.now() })
-    return state
+  pause(by: Actor): Promise<PauseState> {
+    return this.inOrder(() => this.pauseNow(by), h => h.onPause({ by, atMs: this.d.now() }))
   }
 
   /** Route 37's resume: the flag cleared (nothing starts), then every hook's `onResume` awaited in order, as `pause`. */
-  async resume(by: Actor): Promise<PauseState> {
-    const state = this.resumeNow()
-    for (const h of this.pauseHooks) await h.onResume({ by, atMs: this.d.now() })
-    return state
+  resume(by: Actor): Promise<PauseState> {
+    return this.inOrder(() => this.resumeNow(), h => h.onResume({ by, atMs: this.d.now() }))
+  }
+
+  /**
+   * Pauses and resumes run one at a time, each flag change with its hooks (r1): a resume landing while a pause's hooks
+   * are awaited waits for them, so the hooks' last word always matches the flag. With nothing in flight the flag step
+   * runs at once, in the caller's step.
+   */
+  private pauseTail: Promise<void> | null = null
+  private inOrder(step: () => PauseState, hook: (h: PauseHook) => Promise<void>): Promise<PauseState> {
+    const run = async () => {
+      const state = step()
+      for (const h of this.pauseHooks) await hook(h)
+      return state
+    }
+    const p = this.pauseTail === null ? run() : this.pauseTail.then(run)
+    const tail = p.then(() => {}, () => {})
+    this.pauseTail = tail
+    void tail.then(() => { if (this.pauseTail === tail) this.pauseTail = null })
+    return p
   }
 
   /** Flag; fence every turn on a runner; cancel every queued turn and the placement queue. Starts nothing on resume. */
@@ -1542,14 +1573,18 @@ export class AgentCore {
    * the recovery is route 51's revive, which keeps the payload, so the same call runs again.
    */
   async deferredHook(task: DueTask, ctx: TaskContext): Promise<TaskResult> {
+    const q = task.payload as DeferredQuestion
+    // Only while the chat still waits on this question (a revived or retried task after a resume, reset or expiry: r1).
+    const cs = this.chatState(q.chatId)
+    if (!cs || cs.session !== 'waiting' || this.waitingOf(cs)?.questionId !== q.questionId) return { done: true }
     if (this.onDeferred === null) return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: 'no onDeferred hook' }
-    const answer = await this.onDeferred(task.payload as DeferredQuestion, ctx)
+    const answer = await this.onDeferred(q, ctx)
     if ('ok' in answer) return { done: true }
     return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: answer.retry.slice(0, 300) }
   }
 
   /**
-   * Answers the question the chat waits on (P6 ask 5): submits the resume turn (empty text, `now`, the parked turn's
+   * Answers the question the chat waits on (P6 ask 5): submits the resume turn (empty text, `next`, the parked turn's
    * model, format and end task), idempotent by `questionId` (a second call answers the first's turn, whatever its
    * decision). Refused `not_found` when the chat doesn't wait on this question. A chat in the trash (or gone) in D1:
    * the wait is abandoned here, its parked end fired `cancelled`/`deleted`, and `not_found`. A refusal it should wait
@@ -1565,9 +1600,11 @@ export class AgentCore {
     if (!w0 || w0.questionId !== questionId) return refuse('not_found')
     const parked0 = this.turn(w0.turnId)
     if (!parked0) return refuse('not_found')
-    const input = { clientTurnKey: key, text: '', priority: 'now' as const, model: parked0.picker_id, attachments: [] }
+    // `next`, never `now`: `now` would interrupt a parked turn still live (r1); the run's queue already waits for it to end.
+    const input = { clientTurnKey: key, text: '', priority: 'next' as const, model: parked0.picker_id, attachments: [] }
     // The hash is stored like any turn's; a second call never compares it (it answers the first turn by key).
     const hash = await submitPayloadHash({ ...input, effort: parked0.effort })
+    // Read for a routine's (`m_system`) chat too: P4 ensures the routine chat in D1 before its first submit.
     const goneInD1 = await this.d.chatGone(chatId)
     // Back from the awaits: the same checks again on what's stored now (claim before await, 4.2.1).
     const again = this.byKey(chatId, key)
@@ -1579,9 +1616,7 @@ export class AgentCore {
     // after the await, so a delete that landed meanwhile counts).
     const gone = goneInD1 || this.sql.exec('SELECT 1 FROM chat_deletion WHERE chat_id = ? AND deleted = 1', chatId).toArray().length > 0
     if (gone) {
-      this.fireParked(cs, 'deleted')
-      this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
-        checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, chatId)
+      this.abandonWait(cs, 'deleted')
       return refuse('not_found')
     }
     const parked = this.turn(w.turnId)!
@@ -1603,8 +1638,18 @@ export class AgentCore {
         id: `deferred-resume:${questionId}`, kind: 'deferred-resume', dueAtMs: this.d.now() + RESUME_RETRY_MS,
         payload: { chatId, decision, questionId },
       })
+    } else if ('refused' in answer) {
+      // Any other refusal (the owner removed, say) never passes by waiting: the wait is given up now, once (r1).
+      this.abandonWait(this.chatState(chatId)!, answer.refused.reason ?? answer.refused.code)
     }
     return answer
+  }
+
+  /** Gives up a chat's wait: the parked end fired (`fireParked`), the session fresh, in one synchronous step. */
+  private abandonWait(cs: ChatStateRow, failure: string) {
+    this.fireParked(cs, failure)
+    this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
+      checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, cs.chat_id)
   }
 
   /** The `deferred-resume:<questionId>` task: the resume again (a wait reschedules it from inside `resumeDeferred`). */
@@ -1634,6 +1679,8 @@ export class AgentCore {
    */
   personData(personId: string, mode: 'count' | 'delete'): PersonDataAnswer {
     if (mode !== 'count' && mode !== 'delete') throw new Error(`personData: unknown mode ${String(mode)}`)
+    // The system member's rows are every routine's, never one person's (r1).
+    if (personId === SYSTEM_MEMBER_ID) return refuse('invalid')
     const live = this.count(`owner_id = ? AND state IN ('queued', ${ACTIVE.slice(1, -1)})`, personId)
       + this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM chat_state WHERE owner_id = ? AND session = 'waiting'", personId).one().n
       + this.count("owner_id = ? AND state IN ('ended', 'cancelled') AND reserved > 0 AND settled = 0", personId)
@@ -1641,6 +1688,8 @@ export class AgentCore {
       // batch land after C1's D1 delete (rows nothing would reach). Busy until flushed: once delete answers, no D1 write
       // for this person follows from this object.
       + this.count("owner_id = ? AND state IN ('ended', 'cancelled') AND d1_flushed = 0", personId)
+      // A pending file confirm: `drainEffects` may be inside `files.confirm` (D1 and R2 writes after an await) (r1).
+      + this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM turn_effects WHERE turn_id IN (SELECT turn_id FROM turns WHERE owner_id = ?)', personId).one().n
     if (mode === 'delete' && live > 0) return { busy: true }
     const turnsOf = "SELECT turn_id FROM turns WHERE owner_id = ?"
     const byTurn = (table: string) => [`${table} WHERE turn_id IN (${turnsOf})`, [personId]] as const

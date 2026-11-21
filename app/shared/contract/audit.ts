@@ -45,7 +45,8 @@ const MemoryIdArgSchema = z.string().regex(/^mem_[A-Za-z0-9_-]{22}$/)
 const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
 /**
  * A due task's kind and id as route 51 takes them: ids the server makes, never a name, an email or a text. An id is a
- * kind-shaped seed id (`outbox-sweep`) or `<kind-shaped prefix>:<server id>` (`deferred-hook:q_...`).
+ * kind-shaped seed id (`outbox-sweep`) or `<kind-shaped prefix>:<server id>` (`deferred-hook:q_...`). A bare lowercase
+ * word also matches the seed shape: "ids only" rests on route 51 being release-only (the release job sends task ids).
  */
 export const TaskKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 export const TaskIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}(:[A-Za-z0-9_:.-]{1,200})?$/)

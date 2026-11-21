@@ -212,14 +212,14 @@ describe('onDeferred through deferred-hook:<questionId> (P6 ask 4, failure 3)', 
 })
 
 describe('resumeDeferred (P6 ask 5, failure 4)', () => {
-  it('submits the resume turn: empty text, now, the parked turn\'s settings, resume:true from the checkpoint', () => inAgent(async h => {
+  it('submits the resume turn: empty text, next, the parked turn\'s settings, resume:true from the checkpoint', () => inAgent(async h => {
     await d1Chat('c-res', MEMBER)
     const a = ok(await h.submit('c-res', 'key-res001')); await settle()
     defer(h, a.turnId)
     const r = ok(await h.core.resumeDeferred('c-res', 'allow', qid(a.turnId))); await settle()
     expect(r.position).toBe('starting')
     expect(h.turn(r.turnId)).toMatchObject({
-      text: '', priority: 'now', owner_id: MEMBER, client_key: `resume_${qid(a.turnId)}`, model: 'claude-sonnet-5-5',
+      text: '', priority: 'next', owner_id: MEMBER, client_key: `resume_${qid(a.turnId)}`, model: 'claude-sonnet-5-5',
       resume_json: JSON.stringify({ questionId: qid(a.turnId), decision: 'allow', toolUseId: 'tu_9' }),
     })
     expect(chatRow(h, 'c-res')).toEqual({ session: 'resumable', waiting_json: null })
@@ -235,9 +235,8 @@ describe('resumeDeferred (P6 ask 5, failure 4)', () => {
     const first = ok(await h.core.resumeDeferred('c-twice', 'deny', qid(a.turnId)))
     expect(await h.core.resumeDeferred('c-twice', 'deny', qid(a.turnId))).toEqual(first)
     expect(await h.core.resumeDeferred('c-twice', 'allow', qid(a.turnId))).toEqual(first)
-    // Two concurrent calls: both answer the one turn.
-    const b = ok(await h.submit('c-twice', 'key-twice2'))
-    expect(b).toMatchObject({ position: 'queued' })
+    // A plain send waits while the resume isn't running yet (r1 item 2).
+    expect(await h.submit('c-twice', 'key-twice2')).toEqual({ refused: { code: 'conflict', reason: 'waiting_answer' } })
     expect(h.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM turns WHERE client_key LIKE 'resume_%'").one().n).toBe(1)
   }))
 
