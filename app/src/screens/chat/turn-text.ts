@@ -1,6 +1,7 @@
 // The words the chat says about a turn's end and about a refused send. Loads with the first send (run.ts); the notes and
 // notices that show without a run are in notes.ts. House voice: contractions, no dashes, plain.
 import type { TurnFailure } from '../../../shared/contract/runs'
+import type { FileRefusalReason } from '../../../shared/contract/attachments'
 import type { StoredMessage } from '../../../shared/contract/chats'
 import type { ChatMessage } from '../../agent/types'
 import { CANCEL, FAIL, NOTICE } from '../../../shared/contract/chat-codes'
@@ -24,6 +25,29 @@ export const FAILURE_TEXT: Record<TurnFailure, string> = {
   [FAIL.modelOff]: MODEL_OFF_FAILED,
   // Only a routine's run asks for structured output (P4), and no person's chat shows one: the generic words.
   [FAIL.structuredOutput]: RUN_FAILED,
+}
+
+/** A file the agent made that wasn't saved (the `file.refused` event), with its name. */
+export function fileRefusedText(name: string, reason: FileRefusalReason): string {
+  const made = `Your Inhouse agent made ${name}, but`
+  switch (reason) {
+    case 'too_large': return `${made} it wasn't saved because it's too big.`
+    case 'too_many': return `${made} it wasn't saved because this answer made too many files.`
+    case 'type_not_allowed': return `${made} it wasn't saved because your team doesn't allow that type of file.`
+    case 'save_failed': return `${made} it couldn't be saved. Ask again to try once more.`
+    case 'bad_name': return `${made} it wasn't saved because its name can't be used.`
+  }
+}
+
+/** The most left-out files a note names; the rest are counted. */
+const LEFT_OUT_NAMED = 5
+
+/** The chat's earlier files a run couldn't bring back (the `files.restored` event's `leftOut`), named without their folder. */
+export function filesLeftOutText(leftOut: readonly string[]): string {
+  const names = leftOut.slice(0, LEFT_OUT_NAMED).map(p => p.replace(/^(inputs|outputs)\//, ''))
+  const more = leftOut.length - names.length
+  const list = more > 0 ? `${names.join(', ')} and ${more} more` : names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]
+  return `Some of this chat's earlier files were too big to bring back together, so your Inhouse agent can't use these in this answer: ${list}.`
 }
 
 /** Why a turn that was waiting never ran. Null: nothing to say (the person removed or deleted it). */

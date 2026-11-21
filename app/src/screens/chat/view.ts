@@ -3,11 +3,13 @@
 // by their stable ids (`<turnId>.u`, `<turnId>.<n>`), so an event seen twice never doubles a message.
 // Ids the view makes itself from a turn's end event: `<turnId>.f` a failed turn's answer, `<turnId>.x` a note. The server
 // stores the same ids as the turn's end row (projection.ts), and turn-text.ts `historyMessages` words it the same way.
+// Live-only notes (the server stores neither): `<turnId>.r.<name>` a file the agent made that wasn't saved,
+// `<turnId>.l` the chat's earlier files a run couldn't bring back.
 import type { Attachment, AttachmentRef, ChatMessage, Instant } from '../../agent/types'
 import type { ChatEvent, TurnFailure } from '../../../shared/contract/runs'
 import { NOTICE } from '../../../shared/contract/chat-codes'
 import { NOTICE_TEXT, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from './notes'
-import { CANCELLED_TEXT, FAILURE_TEXT } from './turn-text'
+import { CANCELLED_TEXT, FAILURE_TEXT, fileRefusedText, filesLeftOutText } from './turn-text'
 
 export type NoticeCode = Extract<ChatEvent, { type: 'notice' }>['code']
 
@@ -94,8 +96,9 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
     case 'file':
       return v.files.some(f => f.fileId === ev.fileId) ? v : { ...v, files: [...v.files, { turnId: ev.turnId, fileId: ev.fileId, name: ev.name, bytes: ev.bytes, contentType: ev.contentType }] }
     case 'file.refused':
+      return { ...v, messages: upsert(v.messages, { id: `${ev.turnId}.r.${ev.name}`, role: 'event', text: fileRefusedText(ev.name, ev.reason) }) }
     case 'files.restored':
-      return v
+      return ev.leftOut.length === 0 ? v : { ...v, messages: upsert(v.messages, { id: `${ev.turnId}.l`, role: 'event', text: filesLeftOutText(ev.leftOut) }) }
     case 'turn.finished': {
       const t = v.turns[ev.turnId]
       if (!t || t.state === 'done' || t.state === 'interrupted' || t.state === 'stopped' || t.state === 'failed' || t.state === 'cancelled') return v
