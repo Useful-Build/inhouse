@@ -82,12 +82,14 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
 
   /**
    * The test build's alarm-now control (route 67, server/ops/alarm-now.ts; p4-w6.md OC 2): one scheduler pass, as
-   * `alarm()` runs it. Inside `blockConcurrencyWhile`, so no other event (the runtime's own alarm included) runs on the
-   * object until the pass ends, keeping the scheduler's "passes never overlap". Outside the test build `@test-controls`
-   * is the off module, which throws; route 67 answers 404 there before it gets here.
+   * `alarm()` runs it, called directly (no `blockConcurrencyWhile`: it would hold inbound calls, reset the object after
+   * 30 s, and deadlock a handler that calls back into the object). So this pass may overlap the runtime's own alarm:
+   * that rests on what the scheduler already relies on for at-least-once alarms, handlers idempotent by task id and
+   * results that commit only for the generation they started with (W6's "fire twice, exactly one turn" case tests it).
+   * Outside the test build `@test-controls` is the off module, which throws; route 67 answers 404 there first.
    */
   async testRunAlarm(): Promise<{ ran: true }> {
-    return this.ctx.blockConcurrencyWhile(() => runAlarmNow(() => this.sched.alarm()))
+    return runAlarmNow(() => this.sched.alarm())
   }
 
   /**

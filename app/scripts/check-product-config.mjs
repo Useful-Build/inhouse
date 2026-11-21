@@ -28,9 +28,10 @@
 //   - any string anywhere in it (a name, a host, a var) carries `inhouse-sbx-` (a sandbox config never passes as a
 //     product one);
 //   - any key at any depth is `__proto__`, `constructor` or `prototype` (both modes; see below);
-//   - (P4, p4-h1.md OC 4) `services` hasn't exactly one entry naming `inhouse-hub`, that entry has no `entrypoint` (the
-//     hub's default export) or one other than `ReadGateway`, or any entry binds a `ServerGateway` entrypoint: in P4 the
-//     product Worker reads through the hub and nothing more (P5 adds `ServerGateway` with its Tools page).
+//   - (P4, p4-h1.md OC 4) `services` isn't exactly `[{ binding: "HUB", service: "inhouse-hub", entrypoint:
+//     "ReadGateway" }]`: no other service, no second hub entry, no other binding name or key, no missing or other
+//     entrypoint, and no `ServerGateway` entry: in P4 the product Worker reads through the hub and nothing more (P5's
+//     PR0 widens this for its gateways).
 //
 // Sandbox mode (P3 PR0 item 12), the prefix lock for the sandbox, which shares its Cloudflare account with live products:
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --per-pr <N> <config path>
@@ -229,14 +230,16 @@ export function checkPool(config, { sandbox = false } = {}) {
   return failures
 }
 
-/** The connector hub's Worker name (app/wrangler.hub.jsonc) and the one entrypoint the product Worker may bind in P4. */
+/** The connector hub's Worker name (app/wrangler.hub.jsonc), the one entrypoint the product Worker may bind in P4, and its binding name. */
 const HUB_SERVICE = 'inhouse-hub'
 const HUB_ENTRYPOINT = 'ReadGateway'
+const HUB_BINDING = 'HUB'
+const HUB_KEYS = new Set(['binding', 'service', 'entrypoint'])
 
 /**
- * P4's hub binding rule (p4-h1.md OC 4), on any product-mode config: exactly one `inhouse-hub` entry, bound to
- * `ReadGateway`, and no `ServerGateway` entry at all. Every entrypoint of a Worker shares its env, so a binding left out
- * is the only way to keep the runner's route off the hub's server methods.
+ * P4's service rule (p4-h1.md OC 4), on any product-mode config: `services` is exactly the hub's `ReadGateway` as
+ * `HUB`, and nothing else. Every entrypoint of a Worker shares its env, so a binding left out is the only way to keep
+ * the runner's route off the hub's server methods; any other service is a door this phase didn't plan.
  */
 export function checkHub(config) {
   const failures = []
@@ -247,7 +250,13 @@ export function checkHub(config) {
       failures.push(`services[${i}] binds ServerGateway: in P4 the product Worker binds the hub's ${HUB_ENTRYPOINT} only`)
       return
     }
-    if (s?.service !== HUB_SERVICE) return
+    if (s?.service !== HUB_SERVICE) {
+      failures.push(`services[${i}] binds ${JSON.stringify(s?.service)}: in P4 the product Worker binds the hub (${HUB_BINDING}) only`)
+      return
+    }
+    if (s.binding !== HUB_BINDING) failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its binding is ${HUB_BINDING}`)
+    const extra = Object.keys(s).filter(k => !HUB_KEYS.has(k))
+    if (extra.length) failures.push(`services[${i}] has ${extra.join(', ')}: the hub entry is binding, service and entrypoint only`)
     if (s.entrypoint === undefined) failures.push(`services[${i}] binds ${HUB_SERVICE} with no entrypoint (its default export): bind ${HUB_ENTRYPOINT}`)
     else if (s.entrypoint !== HUB_ENTRYPOINT) failures.push(`services[${i}].entrypoint must be ${HUB_ENTRYPOINT}, not ${JSON.stringify(s.entrypoint)}`)
   })

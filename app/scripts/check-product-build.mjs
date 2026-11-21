@@ -206,23 +206,24 @@ function hubImports() {
   return found
 }
 const productWorker = workerDir(productDir, 'product')
+// serverScan first: it exits with "server-modules.json is missing" before the hub check reads that file.
+const inServer = serverScan(productWorker)
 const hubIn = [...hubImports(), ...hubModules(productWorker)]
 if (hubIn.length) {
   bad = true
   console.error(`FAIL  hub: the product Worker reaches hub code other than \`import type\` of hub/index/contract.ts:\n${show(hubIn)}`)
 } else console.log('ok    hub: no hub module in the deployable Worker, and the server names hub/index/contract.ts as types only.')
-const inServer = serverScan(productWorker)
 if (inServer.length) {
   bad = true
   console.error(`FAIL  server bundle: the deployable Worker (${relative(root, productWorker)}) has the test issuer, the scripted model or the test controls:\n${show(inServer)}`)
 } else console.log(`ok    server bundle: no test issuer, no scripted model and no test controls in the deployable Worker (${relative(root, productWorker)}).`)
 const testWorker = workerDir(productTestDir, 'product-test')
+const inTest = serverScan(testWorker)
 const hubInTest = hubModules(testWorker)
 if (hubInTest.length) {
   bad = true
   console.error(`FAIL  hub: the test build's product Worker bundles hub modules (the hub runs as its own Worker):\n${show(hubInTest)}`)
 }
-const inTest = serverScan(testWorker)
 // The proof is always required: the test build must carry the canary, or the scan proves nothing.
 if (!inTest.some(h => h.includes(SERVER_CANARY))) {
   bad = true

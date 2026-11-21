@@ -1,7 +1,7 @@
 // scripts/check-product-build.mjs part 4: the test-build proof is always hard (exit 1 when the test build has no canary),
 // whatever the server folder holds. Builds are fixtures in temp dirs.
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -155,4 +155,17 @@ test('the hub: `import type` of hub/index/contract.ts (with or without .ts, over
   expect(r.stderr).toBe('')
   expect(r.stdout).toContain('ok    hub: no hub module in the deployable Worker')
   expect(r.status).toBe(0)
+})
+
+// Review fold (#237): a build with no server-modules.json gets the clean "is missing" message, not a crash in the hub check.
+test.each([['product'], ['productTest']])('no server-modules.json in the %s build: exit 2 with "is missing"', which => {
+  const tmp = mkdtempSync(join(tmpdir(), 'check-product-build-'))
+  const dirs = { product: build(join(tmp, 'product')), demo: build(join(tmp, 'demo'), { html: 'inhouse-canary:mock', clientModules: ['src/agent/mock.ts'], extra: { 'client/avatars/a.png': 'x' } }), productTest: build(join(tmp, 'product-test'), { workerJs: `const c = '${CANARY}'` }) }
+  rmSync(join(dirs[which], 'server-modules.json'))
+  const serverDir = join(tmp, 'server')
+  mkdirSync(serverDir)
+  const r = spawnSync('node', [script, '--product', dirs.product, '--demo', dirs.demo, '--product-test', dirs.productTest, '--server', serverDir], { encoding: 'utf8' })
+  expect(r.stderr).toContain('server-modules.json is missing')
+  expect(r.stderr).not.toContain('ENOENT')
+  expect(r.status).toBe(2)
 })

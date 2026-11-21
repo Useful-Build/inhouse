@@ -49,6 +49,9 @@ const RULE_TEXT = {
   'hub-other-entrypoint': 'services[0].entrypoint must be ReadGateway, not "Admin"',
   'hub-second-entry': 'services must name inhouse-hub exactly once (found 2)',
   'hub-missing': 'services must name inhouse-hub exactly once (found 0)',
+  // Review fold (#237): the list is exactly the hub's ReadGateway as HUB.
+  'hub-other-service': 'services[1] binds "other-worker": in P4 the product Worker binds the hub (HUB) only',
+  'hub-binding-name': 'services[0] binds inhouse-hub as "SHOPIFY": its binding is HUB',
   'sbx-name': 'config.name carries inhouse-sbx-',
   'sbx-host': 'config.vars.INHOUSE_ACCESS carries inhouse-sbx-',
 }
@@ -173,7 +176,13 @@ describe('check-product-config', () => {
     expect(checkHub({ services: [...HUB, { binding: 'OTHER', service: 'renamed-hub', entrypoint: 'ServerGateway' }] })).toEqual([
       "services[1] binds ServerGateway: in P4 the product Worker binds the hub's ReadGateway only",
     ])
-    expect(checkHub({ services: [...HUB, { binding: 'OTHER', service: 'other-worker' }] })).toEqual([])
+    // Changed in the review fold (#237): another service is refused (was allowed); P5's PR0 widens the list.
+    expect(checkHub({ services: [...HUB, { binding: 'OTHER', service: 'other-worker' }] })).toEqual([
+      'services[1] binds "other-worker": in P4 the product Worker binds the hub (HUB) only',
+    ])
+    expect(checkHub({ services: [{ ...HUB[0], props: { mode: 'server' } }] })).toEqual([
+      'services[0] has props: the hub entry is binding, service and entrypoint only',
+    ])
     expect(checkHub({ services: { HUB: 'inhouse-hub' } })).toEqual(['services must be a list'])
   })
 

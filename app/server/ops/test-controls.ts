@@ -9,7 +9,7 @@ export const TEST_CONTROLS_CANARY = 'inhouse-test-controls-canary-5d81e0a7'
 
 /**
  * Runs one scheduler pass now (the BrandAgent's `alarm()` body), for specs that can't wait for the runtime's alarm.
- * The caller runs it inside `blockConcurrencyWhile`, so it never interleaves with another event on the object.
+ * It may overlap the runtime's own pass; the scheduler's handlers are idempotent by task id (BrandAgent.testRunAlarm).
  */
 export async function runAlarmNow(pass: () => Promise<void>): Promise<{ ran: true }> {
   console.log({ event: 'test_control', control: 'alarm_now', canary: TEST_CONTROLS_CANARY })
