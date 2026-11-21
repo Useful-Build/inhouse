@@ -94,10 +94,14 @@ skill before any UI change. Repo specifics:
   `fleet/**`, with no bypass. `ci` runs on every PR into either. Into `main` it runs everything (typecheck, lint,
   unit, build, every Playwright project, the test build, the runner image and its probes). Into a `fleet/**` branch
   (phase batching, Wasim, 2026-11-21) it runs only the fast checks: typecheck, lint, unit, the builds and their guards,
-  and the runner's tests without the image. The whole suite then runs on each push to `fleet/**` (every merge), and a
-  newer merge cancels the run in progress, so an e2e break shows up there a few merges late, not on its own PR. Watch
-  the branch's `ci` runs after merging into it. `pr-gates` fails a commit without a `Verified:` trailer and flags changed existing checks. `main` also needs
-  the branch up to date with `main`. No merge queue for now.
+  the fresh-install migrations, and the runner's tests without the image. The whole suite then runs on each push to
+  `fleet/**` (every merge), and a newer merge cancels the run in progress, so an e2e break shows up there a few
+  merges late, not on its own PR. Watch the branch's `ci` runs after merging into it. Never retarget a PR from
+  `fleet/**` to `main`: its fast-path `ci` stays green and `ci` doesn't re-run on a base change. Open a new PR, or
+  push a commit after retargeting so the main path runs. Before merging anything into `main`, check that
+  `e2e (1/2)`, `e2e (2/2)` and `test-build` show pass, not skipped. `pr-gates` fails a commit without a `Verified:`
+  trailer and flags changed existing checks. `main` also needs the branch up to date with `main`. No merge queue for
+  now.
 - **Commit hook:** `.githooks/commit-msg` refuses a commit whose `Verified:` trailer `git interpret-trailers --parse`
   can't print (merge commits pass). `npm install` in `app/` runs `prepare`, which sets `core.hooksPath` to `.githooks`
   (the hooks run the global hook of the same name and the repo's own `.git/hooks` one after their own check, via
@@ -165,13 +169,14 @@ skill before any UI change. Repo specifics:
 - **The test build** is the proof path for the backend: `npm run build:product-test`, then the `api` and `real`
   Playwright projects with `E2E_TEST_BUILD=1` (the `verify` skill has the details). It runs the product Worker under
   `wrangler dev` with a fresh local D1 and a test issuer whose key pair is made per run; only the public half reaches
-  the Worker, and only a build compiled with the test flag trusts it. CI's `test-build` job runs it on every PR, with
-  no secret.
+  the Worker, and only a build compiled with the test flag trusts it. CI's `test-build` job runs it on every PR into
+  `main` and on each push to `fleet/**` (not on a PR into `fleet/**`: phase batching), with no secret.
 - **Migrations:** `app/server/migrations/`, forward-only (never rename or drop in the release that stops using it).
   Ranges per phase: P2 `0001`-`0099`, then a block of 100 each (P3 `0100`-`0199` up to P8 `0600`-`0699`); the
   orchestrator gives each worker its numbers in landing order. Wrangler applies every file not yet in `d1_migrations` in file-name order, so a lower number
   merged after a higher one still applies (checked 2026-11-20 with wrangler 4.162.0). CI's `test-build` job applies
-  them all to an empty D1 (the migration job's fresh install); from P3 it also upgrades from the last release tag.
+  them all to an empty D1 (the migration job's fresh install), and on a PR into `fleet/**` the `fast` job does; from
+  P3 it also upgrades from the last release tag.
 - **Candidate deploys** go to the separate sandbox Cloudflare account only, with invented data, before a phase's final
   PR. Nothing from a `fleet/` branch deploys to the house or a brand account; releases come from tags on `main`.
 - **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`), the test build 8787 (`E2E_TEST_BUILD_PORT`; the `ship` workflow serves it there too). Give each parallel worktree its own `E2E_PORT`, `E2E_PRODUCT_PORT` and `E2E_TEST_BUILD_PORT`.

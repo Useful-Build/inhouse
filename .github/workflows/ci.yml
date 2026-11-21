@@ -3,7 +3,9 @@
 # The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
 # Playwright image so screenshots render the same on every run. Two shards at most: runner slots are shared.
 # Phase batching (Wasim, 2026-11-21): a PR into a fleet/** branch runs only the fast checks (the fast job: type check,
-# lint, unit, the builds and their guards; the runner job without its image and container probes). The whole suite
+# lint, unit, the builds and their guards, the fresh-install migrations; the runner job without its image and container
+# probes). ci doesn't listen to a base change (pull_request: edited), so a PR retargeted from fleet/** to main keeps its
+# fast-path ci: never retarget one (AGENTS.md, "How changes land here"). The whole suite
 # runs on every push to fleet/** (each merge into the phase branch; a newer merge cancels the run in progress, so a
 # burst of merges costs one run), on every PR into main and on dispatch. "Fleet PR" below means exactly:
 #   github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')
@@ -278,7 +280,9 @@ jobs:
             -v "$RUNNER_TEMP/probes:/opt/runner/probes:ro" -e PROBE_GW_PORT=18080 inhouse-runner:ci node /opt/runner/probes/run.mjs
 
   # A fleet PR's fast checks (phase batching): e2e shard 1's checks and builds without Playwright, and the test-build
-  # job's config check, in the same image. Its build is the PR's preview build (preview.yml), as e2e's is on a PR into
+  # job's fresh-install migrations and config check, in the same image. Left to the push run: every Playwright project
+  # (the product project and the test build's api, real and smoke included), the contract suite on the real client and
+  # the runner image steps. Its build is the PR's preview build (preview.yml), as e2e's is on a PR into
   # main. Target: 3 to 5 minutes.
   fast:
     if: ${{ github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
@@ -326,6 +330,11 @@ jobs:
       # As e2e shard 1: the product build ships no demo code, and the deployable Worker no test issuer.
       - if: ${{ !cancelled() }}
         run: npm run build:product && npm run build:product-test && node scripts/check-product-build.mjs
+      # As the test-build job: every migration on an empty local D1 (the fresh install), so a broken migration shows on
+      # its own fleet PR, not a few merges later.
+      - name: Migrations, fresh install
+        if: ${{ !cancelled() }}
+        run: rm -rf .wrangler/test-build && npm run test-build:migrate
       # As the test-build job: the config check must refuse wrangler.test.jsonc with exit code 1, nothing else.
       - name: The config check refuses wrangler.test.jsonc
         if: ${{ !cancelled() }}
