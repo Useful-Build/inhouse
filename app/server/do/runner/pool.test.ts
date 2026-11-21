@@ -484,6 +484,8 @@ describe('routing', () => {
       const pool = poolWith(sql, name => async () => name === 'runner-0'
         ? { placementError: 'no /protocol answer within 150000 ms', booting: true }
         : { accepted: true, gen: 1, protocol: 2 })
+      // runner-0 is picked first (starting, by index), so its slow start runs before runner-1 is tried.
+      sql.exec("UPDATE pool_runners SET state = 'starting' WHERE runner = 'runner-0'")
       sql.exec("UPDATE pool_runners SET state = 'up' WHERE runner = 'runner-1'")
       expect(await pool.place(rs('t_a'), 1)).toEqual({ admitted: 'runner-1' })
     })

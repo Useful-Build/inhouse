@@ -162,6 +162,35 @@ describe('a failed or never-run turn keeps its end (failure 5)', () => {
     })
   })
 
+  it('a turn that went live and was then paused has no end row (the live view words no cancel of a started turn)', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      const l = await send(h, c, 'key-proj26'); await settle()
+      h.push(l.turnId, ev.started(), ev.text('partial'))
+      h.core.pause({ kind: 'person', memberId: 'm_admin' })
+      await h.tick(MIN); await h.tick(MIN)
+      expect(h.turn(l.turnId)).toMatchObject({ state: 'ended', cancel_why: 'paused' })
+      expect(h.turn(l.turnId).started_at_ms).not.toBeNull()
+      expect((await d1Rows(c)).map(r => r.id)).toEqual([`${l.turnId}.u`, `${l.turnId}.0`])
+    })
+  })
+
+  it('an interrupted turn (asked to stop, then success) keeps its stopped note as `.x` { outcome: interrupted }', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      const i = await send(h, c, 'key-proj27'); await settle()
+      h.push(i.turnId, ev.started(), ev.text('so far'))
+      h.core.interrupt(i.turnId, { kind: 'person', memberId: owner })
+      h.clock.now = T0 + 4 * SEC
+      h.push(i.turnId, ev.checkpoint(2, null, null), ev.success(), ev.released({ mainEntries: 2, lastUuid: null, lastUuidIndex: null }))
+      await settle()
+      expect(h.turn(i.turnId)).toMatchObject({ state: 'ended', outcome: 'interrupted' })
+      const rows = await d1Rows(c)
+      expect(rows.map(r => r.id)).toEqual([`${i.turnId}.u`, `${i.turnId}.0`, `${i.turnId}.x`])
+      expect(rows[2]).toEqual(endRow(i, 'x', 2, { outcome: 'interrupted' }, T0 + 4 * SEC))
+    })
+  })
+
   it('an end row is replayed with its turn after a failed flush and a reset', async () => {
     const c = await chat()
     const { db, mode } = flakyDb()
