@@ -29,6 +29,19 @@ const ROUTE: Record<string, string> = {
   '/api/memory/brand/:id/forgotten': 'Team memory',
 }
 
+/** A connector account as the log names it: its connector's name (P5 W1). */
+const CONNECTOR: Record<string, string> = { slack: 'Slack', shopify: 'Shopify' }
+const connectorName = (accountId: string) => CONNECTOR[accountId.split(':')[0]!] ?? accountId
+/** Why a connect didn't finish, in a few words; any other code shows as it is. */
+const CONNECT_FAILED: Record<string, string> = {
+  state_invalid: 'the link was used or expired',
+  workspace_mismatch: 'another workspace was chosen',
+  scope_mismatch: 'the permissions granted didn’t match',
+  connect_stale: 'it was disconnected meanwhile',
+  connect_refused: 'the provider refused',
+  not_configured: 'it isn’t set up',
+}
+
 const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
 
 /** `name(id)`: the member's current name, or null when the id names no member. */
@@ -62,6 +75,11 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'support.attach': return { what: 'watched a live answer', detail: '' }
     case 'memory.forgotten': return { what: 'forgot a team memory', detail: '' }
     case 'memory.restored': return { what: 'brought back a team memory', detail: 'It waits for an admin’s OK' }
+    case 'tools.connect_start': return { what: 'started connecting a tool', detail: connectorName(args.accountId) }
+    case 'tools.connect':
+      return args.outcome === 'ok'
+        ? { what: 'connected a tool', detail: connectorName(args.accountId) }
+        : { what: 'couldn’t connect a tool', detail: `${connectorName(args.accountId)}: ${CONNECT_FAILED[args.outcome] ?? args.outcome}` }
     case 'ops_task_revive': return { what: 'restarted a stuck background task', detail: `${args.kind}: ${REVIVE[args.result]} (release job)` }
   }
 }

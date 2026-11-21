@@ -35,6 +35,9 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'ops_task_revive': { action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA', result: 'revived', by: 'release' },
+  // P5 (p5-w1)
+  'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
+  'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'scope_mismatch' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -142,5 +145,16 @@ describe('P3 memory lines (W6, item 19)', () => {
       expect(ok({ action, memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', text: 'We restock on Fridays' })).toBe(false)
       expect(ok({ action, memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', memberId: m })).toBe(false)
     }
+  })
+})
+
+describe('P5 (p5-w1): connect lines carry an account id and a closed outcome only', () => {
+  it('refuses free text, an unknown outcome and an extra field', () => {
+    expect(ok({ action: 'tools.connect_start', accountId: 'slack:workspace' })).toBe(true)
+    expect(ok({ action: 'tools.connect', accountId: 'shopify:store', outcome: 'ok' })).toBe(true)
+    expect(ok({ action: 'tools.connect_start', accountId: 'Slack Workspace' })).toBe(false)
+    expect(ok({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'invalid_code from slack' })).toBe(false)
+    expect(ok({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok', code: 'abc' })).toBe(false)
+    expect(ok({ action: 'tools.connect_start', accountId: 'slack:workspace', memberId: m, email: 'a@example.com' })).toBe(false)
   })
 })

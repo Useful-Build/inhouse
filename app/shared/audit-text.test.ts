@@ -29,6 +29,9 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'ops_task_revive': { action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA', result: 'revived', by: 'release' },
+  // P5 (p5-w1)
+  'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
+  'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -95,5 +98,14 @@ describe('P3 memory lines (W6, item 19)', () => {
     expect(auditText({ action: 'ops_task_revive', kind: 'routine-end', id: 'x', result: 'not_quarantined', by: 'release' }, names)).toEqual({ what: 'restarted a stuck background task', detail: 'routine-end: wasn’t stuck (release job)' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'PUT', route: '/api/memory/brand/:id/forgotten' }, names)).toEqual({ what: 'changed brand data', detail: 'Team memory' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/memory' }, names)).toEqual({ what: 'looked at brand data', detail: 'Memory' })
+  })
+})
+
+describe('P5 (p5-w1): connect lines', () => {
+  it('names the connector and the outcome in words, never upstream text', () => {
+    expect(auditText({ action: 'tools.connect_start', accountId: 'slack:workspace' }, names)).toEqual({ what: 'started connecting a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok' }, names)).toEqual({ what: 'connected a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'workspace_mismatch' }, names)).toEqual({ what: 'couldn’t connect a tool', detail: 'Slack: another workspace was chosen' })
+    expect(auditText({ action: 'tools.connect', accountId: 'notes:test', outcome: 'rate_limited' }, names)).toEqual({ what: 'couldn’t connect a tool', detail: 'notes:test: rate_limited' })
   })
 })

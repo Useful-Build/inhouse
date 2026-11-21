@@ -23,6 +23,8 @@ export const AuditActionSchema = z.enum([
   'memory.forgotten', 'memory.restored',
   // P3 W1 PR 6 (route 51): the release job revived one quarantined due task (P4's and P6's runbooks).
   'ops_task_revive',
+  // P5 (p5-w1): the Inhouse team starts connecting a tool, and how the connect ended.
+  'tools.connect_start', 'tools.connect',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -51,6 +53,17 @@ const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
 export const TaskKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 export const TaskIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}(:[A-Za-z0-9_:.-]{1,200})?$/)
 export const ReviveResultSchema = z.enum(['revived', 'not_quarantined', 'not_found'])
+
+// P5 (p5-w1): a connector account and how a connect ended. W3's audit block reuses both.
+/** The hub's account id (H0's pattern, app/hub/index/schemas.ts `ACCOUNT_ID`): `slack:workspace`, `shopify:store`. */
+export const ConnectorAccountIdSchema = z.string().regex(/^[a-z]+(:[a-z0-9-]{1,40})?$/)
+/** `ok`, or one of the hub's closed error codes (app/hub/index/contract.ts `HubErrorCode`), never upstream text. */
+export const ConnectOutcomeSchema = z.enum([
+  'ok', 'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch',
+  'key_unavailable', 'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited',
+  'result_too_large', 'internal', 'state_invalid', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'paused',
+])
+export type ConnectOutcome = z.infer<typeof ConnectOutcomeSchema>
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
@@ -95,6 +108,9 @@ const otherLines = [
    * release token has no member row, so the line's actor is `m_system`.
    */
   line('ops_task_revive', { kind: TaskKindSchema, id: TaskIdSchema, result: ReviveResultSchema, by: z.literal('release') }),
+  // P5 (p5-w1): connect start (route A) and its end (route B), the account id and the outcome code only.
+  line('tools.connect_start', { accountId: ConnectorAccountIdSchema }),
+  line('tools.connect', { accountId: ConnectorAccountIdSchema, outcome: ConnectOutcomeSchema }),
 ] as const
 
 /**

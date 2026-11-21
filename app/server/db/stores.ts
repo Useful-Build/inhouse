@@ -28,6 +28,9 @@ import type { UsageStore } from '../usage/store.ts'
 import { memoryStore } from '../mcp/tools/memory/store.ts'
 import type { MemoryStore } from '../mcp/tools/memory/store.ts'
 
+import { connectorAccountStore } from './connector-accounts.ts'
+import type { ConnectorAccountStore } from './connector-accounts.ts'
+
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
   grants: GrantStore & GrantStoreImpl
@@ -54,6 +57,9 @@ export interface Stores extends AuthStores {
 
   /** W6 (p3-w6.md): memory. */
   memory: MemoryStore
+
+  /** P5 W1 (p5-w1.md section 9): connector accounts, the Tools page's lifecycle record. */
+  connectors: ConnectorAccountStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -112,5 +118,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     usage: usageStore({ db }),
 
     memory: memoryStore({ db }),
+
+    connectors: connectorAccountStore({ db, hook }),
   }
 }
