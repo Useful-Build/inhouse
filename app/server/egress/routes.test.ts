@@ -141,6 +141,59 @@ describe('scope on the real run tokens (failure 1, acceptance 6)', () => {
   })
 })
 
+// P3 acceptance item 6, the refusal itself: a run token the BrandAgent no longer honours (its turn revoked, or a token
+// it never minted) is refused before any route runs: 401 and one `egress_refused` line naming the route and why. A
+// live token for chat A naming chat B's session is not a refused token: it's 403 `scope`, with no refusal line.
+describe('a refused run token on the session and files routes (acceptance 6)', () => {
+  const sessionA = '00000000-0000-4000-8000-0000000000a2'
+  const sessionB = '00000000-0000-4000-8000-0000000000b2'
+  it("chat A's revoked or unknown token against chat B's session and files: 401 and egress_refused; a live one is 403 scope", async () => {
+    await runInDurableObject(env.BRAND_AGENT.getByName('w3-refused'), async (_i, state) => {
+      const now = 1_800_000_000_000
+      const tokens = createRunTokens(state.storage.sql, () => now)
+      const base = { runId: 'r_r', model: 'claude-sonnet-5-5', sideModel: 'claude-haiku-5-5' }
+      const chatA = `refused-a-${Date.now()}`
+      const chatB = `refused-b-${Date.now()}`
+      const tokenA = await tokens.mint({ ...base, turnId: 't_ra', chatId: chatA, sessionId: sessionA, memberId: 'm_a' }, now)
+      await tokens.mint({ ...base, turnId: 't_rb', chatId: chatB, sessionId: sessionB, memberId: 'm_b' }, now)
+      const h = await harness({ bucket, rpc: new FakeEgressRpc(tokens, () => now) })
+      const onB = (token: string) => [
+        egressRequest('/store/load', { body: { key: { projectKey: 'p', sessionId: sessionB } }, token }),
+        egressRequest('/store/append', { body: { key: { projectKey: 'p', sessionId: sessionB }, entries: [{ type: 'from-a' }], part: '000000000000001-000001' }, token }),
+        egressRequest('/files/', { method: 'GET', token, headers: { 'x-chat-id': chatB } }),
+        egressRequest('/files/outputs/b.csv', { method: 'GET', token, headers: { 'x-chat-id': chatB } }),
+      ]
+
+      // Live: the store's own scope answers (403), and nothing is logged as a refused token.
+      const live = await Promise.all(onB(tokenA).slice(0, 2).map(async r => (await handleEgress(r, h.deps)).status))
+      expect(live).toEqual([403, 403])
+      expect(h.logs).toEqual([])
+
+      // Revoked (the turn ended): every route answers 401 before it runs, one line each.
+      tokens.revokeTurn('t_ra', 'turn_ended')
+      const revoked = await Promise.all(onB(tokenA).map(async r => {
+        const res = await handleEgress(r, h.deps)
+        return [res.status, await res.json()]
+      }))
+      expect(revoked).toEqual([[401, { error: 'refused' }], [401, { error: 'refused' }], [401, { error: 'refused' }], [401, { error: 'refused' }]])
+      expect(h.logs).toEqual([
+        { event: 'egress_refused', route: 'store', why: 'revoked', runner: 'runner-0' },
+        { event: 'egress_refused', route: 'store', why: 'revoked', runner: 'runner-0' },
+        { event: 'egress_refused', route: 'files', why: 'revoked', runner: 'runner-0' },
+        { event: 'egress_refused', route: 'files', why: 'revoked', runner: 'runner-0' },
+      ])
+
+      // A token the BrandAgent never minted: the same 401, why `unknown`.
+      h.logs.length = 0
+      const unknown = await Promise.all(onB('tok_never_minted_0123456789abcdef').map(async r => (await handleEgress(r, h.deps)).status))
+      expect(unknown).toEqual([401, 401, 401, 401])
+      expect(h.logs.map(l => [l.route, l.why])).toEqual([['store', 'unknown'], ['store', 'unknown'], ['files', 'unknown'], ['files', 'unknown']])
+      // Chat B's store was never written.
+      expect((await bucket.list({ prefix: `sessions/${chatB}/` })).objects).toEqual([])
+    })
+  })
+})
+
 describe('events and audit (failures 4, 5)', () => {
   const ev = (seq: number, turnId = GRANT.turnId) => ({ runId: turnId, seq, type: 'heartbeat' })
   it('ingests the grant turn then touches the runner, answering the ack', async () => {
