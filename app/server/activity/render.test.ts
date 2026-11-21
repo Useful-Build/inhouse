@@ -12,6 +12,9 @@ import { fill, FORMER, renderLine } from './render.ts'
 import type { LineRow } from './render.ts'
 import { ACTIVITY_TEMPLATES } from './templates.ts'
 import type { ActivityTemplateId } from './templates.ts'
+import { checkActivity } from './store.ts'
+import { checkNotice } from '../notices/store.ts'
+import { slotsOf } from './fields.ts'
 import { renderNotice } from '../notices/render.ts'
 import type { NoticeRow } from '../notices/read.ts'
 import { NOTICE_TEMPLATES } from '../notices/templates.ts'
@@ -84,6 +87,30 @@ describe('every template renders (failure 4)', () => {
     for (const s of [line.text, line.why, line.result, line.who]) { expect(s).not.toMatch(/[{}]/); expect(s).not.toContain('undefined') }
   })
   it('an unknown template fails loud', () => expect(() => renderLine(row({ template: 'nope' }), new Map())).toThrow(/unknown activity template/))
+})
+
+describe('slot parity with the writers (failure 6)', () => {
+  const sampleFields = (spec: Record<string, 'number' | 'code'>) => Object.fromEntries(Object.entries(spec).map(([k, t]) => [k, t === 'number' ? 3 : 'run_failed']))
+  it('every activity template: the ids its writer demands are exactly the ids its slots read, and that line renders', () => {
+    for (const [id, t] of Object.entries(ACTIVITY_TEMPLATES)) {
+      const slots = new Set([t.text, t.why, t.result, t.who].flatMap(slotsOf))
+      const actorId = slots.has('actor') ? 'm_ada' : undefined
+      const subjectId = slots.has('subject') ? 'm_bo' : undefined
+      const fields = sampleFields(t.fields)
+      // The writer takes exactly these ids (and refuses the others, checks.test.ts)...
+      expect(() => checkActivity({ template: id as ActivityTemplateId, fields, kind: t.kind, ...(actorId ? { actorId } : {}), ...(subjectId ? { subjectId } : {}), atMs: 1 }, { source: t.source, key: 'k' }), id).not.toThrow()
+      // ...and the reader, given those ids and no more, fills every slot.
+      expect(() => renderLine(row({ template: id, kind: t.kind, fields_json: JSON.stringify(fields), actor_id: actorId ?? null, subject_id: subjectId ?? null }), new Map()), id).not.toThrow()
+    }
+  })
+  it('every notice template: personId is demanded exactly when a {person} slot exists, and that notice renders', () => {
+    for (const [id, t] of Object.entries(NOTICE_TEMPLATES)) {
+      const person = new Set([t.text, t.who].flatMap(slotsOf)).has('person') ? 'm_ada' : undefined
+      const fields = sampleFields(t.fields)
+      expect(() => checkNotice(NOTICE_TEMPLATES, { id: 'n', audience: 'team', template: id, fields, ...(person ? { personId: person } : {}), icon: 'x', link: { to: 'page', page: 'today' }, atMs: 1 }), id).not.toThrow()
+      expect(() => renderNotice({ id: 'n', audience: 'team', template: id, fields_json: JSON.stringify(fields), body: null, icon: 'x', person_id: person ?? null, at_ms: 1, waiting: 0, link_json: '{"to":"page","page":"today"}', unread: 1 }, new Map()), id).not.toThrow()
+    }
+  })
 })
 
 describe('notices (failure 5)', () => {

@@ -1096,21 +1096,23 @@ export class HttpAgent implements AgentClient {
   sendTeamRequest = (_req: Parameters<AgentClient['sendTeamRequest']>[0]) => this.refuse()
   listNotifications = () => this.s.notifications
   /**
-   * Route 61: the notices opened, or every one listed. They show read at once; a refusal puts the dot back only on a notice
-   * that still shows read (one a newer read made unread, or replaced, is left as that read has it), and the server skips
-   * any id this person can't see.
+   * Route 61: the notices opened, or every one listed. They show read at once; a refusal puts the dot back only on the very
+   * items this write marked (a newer read replaced the others, and its answer stands), and the server skips any id this
+   * person can't see.
    */
   markNoticesRead = this.needs((k, ids: string[]): Promise<void> => {
     const marked = new Set(ids)
     const unread = new Set(this.s.notifications.filter(n => n.unread && marked.has(n.id)).map(n => n.id))
     if (unread.size === 0) return Promise.resolve()
-    const set = (s: Slices, from: boolean, to: boolean): Slices => ({ ...s, notifications: s.notifications.map(n => (unread.has(n.id) && n.unread === from ? { ...n, unread: to } : n)) })
+    // The items `apply` makes: a refusal puts the dot back only on these very objects. A read that landed meanwhile replaced
+    // them, so its answer (read or unread) stands.
+    const marked_ = new Set<AgentNotification>()
     return this.write({
       lane: 'notices',
-      apply: s => set(s, true, false),
+      apply: s => ({ ...s, notifications: s.notifications.map(n => { if (!unread.has(n.id) || !n.unread) return n; const m = { ...n, unread: false }; marked_.add(m); return m }) }),
       send: () => postNoticesRead(this.http, k, [...unread]),
       done: s => s,
-      undo: s => set(s, false, true),
+      undo: s => ({ ...s, notifications: s.notifications.map(n => (marked_.has(n) ? { ...n, unread: true } : n)) }),
     })
   })
 
