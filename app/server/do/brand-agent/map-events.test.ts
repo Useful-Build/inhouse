@@ -16,7 +16,8 @@ describe('outcomeOf (failures 1, 2)', () => {
     ['error_max_budget_usd', true, false, { outcome: 'failed', reason: 'turn_budget' }],
     ['error_during_execution', true, false, { outcome: 'failed', reason: 'sdk_error' }],
     ['error_during_execution', true, true, { outcome: 'interrupted' }],
-    ['error_max_structured_output_retries', true, false, { outcome: 'failed', reason: 'sdk_error' }],
+    // PR 5 (ask C): the SDK's structured-output give-up is the `structured_output` failure, not a generic one.
+    ['error_max_structured_output_retries', true, false, { outcome: 'failed', reason: 'structured_output' }],
     ['success', true, false, { outcome: 'failed', reason: 'sdk_error' }],
   ] as const)('finished %s (isError %s, asked %s)', (subtype, isError, asked, want) => {
     expect(outcomeOf(finished(subtype, isError), asked)).toEqual(want)
@@ -28,7 +29,8 @@ describe('outcomeOf (failures 1, 2)', () => {
     ['timeout', false, { outcome: 'failed', reason: 'timeout' }],
     ['store', false, { outcome: 'failed', reason: 'store' }],
     ['session_crashed', false, { outcome: 'failed', reason: 'session_crashed' }],
-    ['structured_output', false, { outcome: 'failed', reason: 'sdk_error' }],
+    // PR 5 (ask C): TurnFailure has `structured_output` now (it read sdk_error until then).
+    ['structured_output', false, { outcome: 'failed', reason: 'structured_output' }],
   ] as const)('failed %s (asked %s)', (reason, asked, want) => {
     expect(outcomeOf({ type: 'failed', reason, message: 'm' }, asked)).toEqual(want)
   })

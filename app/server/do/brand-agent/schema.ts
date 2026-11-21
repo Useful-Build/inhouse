@@ -25,6 +25,9 @@
 //   `ledger_retry_at_ms` (a ledger call that failed is sent again from the `call-lease` task, never given up);
 //   `chat_state.damaged_at_ms` (the `session_damaged` signal counts damage in the last 24 hours); `turns.runner_cost_micro`
 //   (the terminal event's `costUsd`, passed to settle as a cross-check only, never booked).
+// - PR 5 (the routine seams): `turns.output_format_json` (the run's structured-output format, into `RunStart`),
+//   `on_end_json` (the `{ kind, id }` task the turn's final step ensures), `structured_output_json` (the terminal
+//   event's value, at most 64 KiB); added to an older table by `ALTER TABLE` below.
 
 import { TURN_ROWS_TABLE } from './projection.ts'
 
@@ -50,10 +53,15 @@ export function createAgentTables(sql: SqlStorage): void {
     start_hold_micro INTEGER NOT NULL DEFAULT 0, ledger_fails INTEGER NOT NULL DEFAULT 0, ledger_retry_at_ms INTEGER,
     runner_cost_micro INTEGER, parts_n INTEGER NOT NULL DEFAULT 0,
     steps_n INTEGER NOT NULL DEFAULT 0, count_tokens_calls INTEGER NOT NULL DEFAULT 0,
-    outcome TEXT, failure TEXT, cancel_why TEXT,
+    outcome TEXT, failure TEXT, cancel_why TEXT, output_format_json TEXT, on_end_json TEXT, structured_output_json TEXT,
     pos_from INTEGER, pos_to INTEGER, d1_flushed INTEGER NOT NULL DEFAULT 0,
     created_at_ms INTEGER NOT NULL, claimed_at_ms INTEGER, started_at_ms INTEGER, ended_at_ms INTEGER,
     UNIQUE (chat_id, client_key))`)
+  // PR 5's columns on an object whose `turns` predates them (CREATE IF NOT EXISTS leaves an existing table as it is).
+  const have = new Set(sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('turns')").toArray().map(r => r.name))
+  for (const col of ['output_format_json', 'on_end_json', 'structured_output_json']) {
+    if (!have.has(col)) sql.exec(`ALTER TABLE turns ADD COLUMN ${col} TEXT`)
+  }
   sql.exec('CREATE INDEX IF NOT EXISTS turns_run ON turns(run_id, state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_state ON turns(state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_owner ON turns(owner_id, state)')
