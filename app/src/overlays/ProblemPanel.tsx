@@ -67,14 +67,14 @@ export function ProblemPanel() {
         {p.found.map(([t, c], i) => (
           <span key={i}>
             <span>{t}</span>
-            {c && <Cite n={c} />}
+            {c && (p.sources.some(x => x.n === c) ? <Cite n={c} /> : <span className="text-foreground-3"> · {c}</span>)}
           </span>
         ))}
       </p>
       <div className="mt-3.5 flex flex-col gap-1.75 border-t border-divider pt-3 text-xs text-foreground-3">
         {p.sources.map(s => (
           <div key={s.n} className="flex items-center gap-2">
-            <span className="w-3 font-mono text-2xs font-semibold text-brand">{s.n}</span>
+            <span className="min-w-3 font-mono text-2xs font-semibold text-brand">{s.n}</span>
             {s.logo && <LogoTile k={s.logo} size="xs" className="-my-px" />}
             {s.icon && <span className="flex w-4.5 flex-none justify-center text-foreground"><Icon name={s.icon} size={14} weight={400} /></span>}
             <span><b className="font-strong text-foreground">{s.name}</b> · {s.text}</span>

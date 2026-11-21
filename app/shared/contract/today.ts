@@ -80,6 +80,7 @@ const KEEP = new Set(['type', 'enum', 'required', 'additionalProperties', 'prope
 export function reduceSchema(node: Json): Json {
   const out: Json = {}
   const notes: string[] = []
+  for (const k of ['oneOf', 'allOf', 'not', '$ref']) if (k in node) throw new Error(`reduceSchema: ${k} is not supported`)
   const alt = node.anyOf
   if (Array.isArray(alt)) {
     const nulls = alt.filter(a => (a as Json).type === 'null')

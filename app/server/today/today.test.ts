@@ -240,7 +240,9 @@ describe('a slot that already ended', () => {
     const notices = async () => (await db.prepare('SELECT COUNT(*) AS n FROM notices').first<number>('n'))!
     const before = { slot: await slotRow(s.key), notices: await notices() }
     expect(before.slot).toEqual({ state: 'ended', failure: 'not_connected', result_text: "Shopify isn't connected" })
-    await deliver(s, result(['a']), at('2026-06-01T10:09:00Z'), {}, SHOPIFY)
+    // The guard sits above the hub call: the second delivery never asks the hub (a hub that throws proves it).
+    const tripwire = { listTools: async () => { throw new Error('the hub was asked for an ended slot') } }
+    await deliver(s, result(['a']), at('2026-06-01T10:09:00Z'), {}, tripwire)
     expect(await rowCount()).toBe(0)
     expect(await notices()).toBe(before.notices)
     expect(await slotRow(s.key)).toEqual(before.slot)
@@ -279,7 +281,7 @@ describe('the coverage backstop and incomplete runs', () => {
     const shown = await titles()
     expect(shown).toHaveLength(11)
     expect(shown.at(-1)).toBe('The 6:00 AM check found more than 10 things; showing 10')
-    expect((await slotRow(s.key))?.result_text).toBe('found more than 10 things; showing 10')
+    expect((await slotRow(s.key))?.result_text).toBe('found more than 10 things; showing 10 (fixed: 1 over the cap)')
   })
 
   it('dismissing an incomplete card leaves a later failed card of the same day visible', async () => {
