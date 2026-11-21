@@ -5,7 +5,8 @@
 import type { TurnFailure } from '../../../shared/contract/runs.ts'
 import type { RunEventBody } from '../../../shared/protocol/index.ts'
 
-export type MappedBlock = { kind: 'text'; text: string } | { kind: 'step'; label: string; tool: string }
+/** A step's `toolUseId`: its tool_use block's id, when it's a string (the eval trace keys a call's kept input by it). */
+export type MappedBlock = { kind: 'text'; text: string } | { kind: 'step'; label: string; tool: string; toolUseId?: string }
 
 /** Tool names (the SDK's built-ins and the `inhouse` server's) to the work row's label. Anything else: `Using a tool`. */
 export const STEP_LABELS: Readonly<Record<string, string>> = {
@@ -58,7 +59,9 @@ export function mapSdkMessage(message: Record<string, unknown>, truncated: boole
     if (block.type === 'text' && typeof block.text === 'string' && block.text !== '' && !subagent) out.push({ kind: 'text', text: block.text })
     // The SDK's own `StructuredOutput` tool carries the run's answer (up to 256 KiB in this message), never a work row
     // or a trace step (PR 5, ask C): the value is kept once, from the terminal event, capped at 64 KiB.
-    if (block.type === 'tool_use' && typeof block.name === 'string' && block.name !== STRUCTURED_OUTPUT_TOOL) out.push({ kind: 'step', label: stepLabel(block.name), tool: block.name })
+    if (block.type === 'tool_use' && typeof block.name === 'string' && block.name !== STRUCTURED_OUTPUT_TOOL) {
+      out.push({ kind: 'step', label: stepLabel(block.name), tool: block.name, ...(typeof block.id === 'string' ? { toolUseId: block.id } : {}) })
+    }
   }
   return out
 }

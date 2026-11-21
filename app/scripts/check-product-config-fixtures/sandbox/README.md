@@ -16,3 +16,9 @@ ends somewhere else (a bare `\r`) can't hide config from the lock. Invented valu
   sandbox allows. No secret in `vars` (eval sets AUDIT_HASH_KEY and AI_GATEWAY_TOKEN with `wrangler secret put`).
 - `pass-candidate.json`: the candidate (the product build rehearsed on the shared sandbox resources); it passes the
   product rules too.
+- `pass-per-pr-hub.json` (P4, `--hub`): PR 12's connector hub as the ops repo writes it from the hub's test bundle and
+  `wrangler.hub.test.jsonc`: the bundle deployed as built (`no_bundle`), the SignIn Durable Object, the test switch on
+  and invented test vars, no `define` or `secrets`.
+- `pass-candidate-hub.json` (P4, `--hub`): the candidate's hub: the product hub config with its store vars empty and
+  no `secrets.required` (wrangler fails a deploy whose required secrets are unset). Any runtime secret the candidate hub
+  needs is a per-run value the ops deploy sets at deploy time, not a store credential.
