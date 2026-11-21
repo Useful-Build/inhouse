@@ -1,6 +1,6 @@
 // PR 5, navigation (desktop): the ⌘K palette (a chat, a settings page, New chat, focus back on Escape), the shortcuts,
 // the collapsible sidebar and its icon rail across a reload, notifications read one at a time and all at once, and the
-// team window's Send and sender.
+// team window's Send and sender, and the sidebar's two sections.
 import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
@@ -181,15 +181,17 @@ test('Sidebar: collapse to the rail, move through it by its tooltips, stay colla
   await approvals.click()
   await expect.poll(() => hash(page)).toBe('#/approvals')
   await expect(approvals).toHaveAttribute('aria-current', 'page')
-  const usage = side(page).getByRole('button', { name: 'Usage' })
+  // Usage left the rail for the account menu; Tools, in the "Your agent" group, takes its place in this check.
+  const tools = side(page).getByRole('group', { name: 'Your agent' }).getByRole('button', { name: 'Tools' })
   // Radix can skip the first move onto a trigger right after another tooltip closed; move again until it opens.
   await expect(async () => {
     await away()
-    await usage.hover()
-    await expect(tip(page, /^Usage$/)).toBeVisible({ timeout: 1500 })
+    await tools.hover()
+    await expect(tip(page, /^Tools$/)).toBeVisible({ timeout: 1500 })
   }).toPass()
-  await usage.click()
-  await expect.poll(() => hash(page)).toBe('#/usage')
+  await tools.click()
+  await expect.poll(() => hash(page)).toBe('#/tools')
+  await expect(side(page).getByRole('button', { name: 'Usage' })).toHaveCount(0)
   // The account avatar opens the account menu from the rail.
   await side(page).getByRole('button', { name: /account and settings/i }).click()
   await expect(page.getByRole('menu', { name: 'Account' })).toBeVisible()
@@ -252,8 +254,33 @@ test('Team window: Send waits for words (whitespace is empty), and the request c
   await expect(team).toHaveCount(0)
   await expect(page.locator('[data-toast]').filter({ hasText: 'Request sent' })).toBeVisible()
 
-  await side(page).getByRole('button', { name: 'Message the team →' }).click()
+  await side(page).getByRole('button', { name: /account and settings/i }).click()
+  await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
   await expect(team.getByText('Connect our Gorgias macros')).toBeVisible()
   await expect(team.getByText('New tool · sent by Robin Okafor, just now')).toBeVisible()
   await shot(page, 'team-sent-by-name')
+})
+
+test('Sidebar sections: Today, Approvals and Activity first, then the "Your agent" group announced as a group; Usage and the team live in the account menu', async ({ fx, page }) => {
+  await start(page, fx)
+  const nav = side(page).getByRole('navigation', { name: 'Main' })
+  // Each row's label as shown: the icon ligatures (`.ms`) and the Approvals count left out.
+  const names = (where: ReturnType<typeof side>) => where.getByRole('button').evaluateAll(els => els.map(e => {
+    const c = e.cloneNode(true) as HTMLElement
+    c.querySelectorAll('.ms').forEach(i => i.remove())
+    return (c.textContent ?? '').replace(/\d+$/, '').trim()
+  }))
+  // The label names the group for a screen reader.
+  const agentGroup = nav.getByRole('group', { name: 'Your agent' })
+  await expect(agentGroup).toBeVisible()
+  expect(await names(agentGroup)).toEqual(['Routines', 'Skills', 'Tools', 'Library'])
+  expect(await names(nav)).toEqual(['Today', 'Approvals', 'Activity', 'Routines', 'Skills', 'Tools', 'Library'])
+  // Usage and the old team card left the sidebar; the palette still lists Usage.
+  await expect(side(page).getByRole('button', { name: 'Usage' })).toHaveCount(0)
+  await expect(side(page).getByRole('button', { name: /Message the team/ })).toHaveCount(0)
+  await page.keyboard.press('ControlOrMeta+k')
+  await paletteInput(page).fill('usage')
+  await expect(palette(page).getByRole('option', { name: 'Usage' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await shot(page, 'sidebar-sections')
 })

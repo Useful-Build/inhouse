@@ -213,8 +213,10 @@ test('Chats: each recent chat opens its own conversation', async ({ page, fx }) 
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
 })
 
-test('Chats: every seeded answer ends with its footer, its model, steps and seconds from its own trace', async ({ page, fx }) => {
-  const traces = json('traces.json').traces as Record<string, { durationSeconds: number; steps: { kind: string; detail?: string }[] }>
+test('Chats: every seeded answer has its steps line and, opened, its model and seconds, from its own trace', async ({ page, fx }) => {
+  const traces = json('traces.json').traces as Record<string, { durationSeconds: number; steps: { kind: string; label: string; detail?: string }[] }>
+  const toolNames = (json('tools.json').details as Record<string, { name: string }>)
+  const names = Object.values(toolNames).map(d => d.name)
   const modes = json('models.json').modes as { id: string; label: string; model: string }[]
   const secs = (x: number) => (x < 60 ? `${Math.round(x * 10) / 10}s` : `${Math.floor(x / 60)}m ${Math.round(x % 60)}s`)
   type Turn = { user?: string; stage?: string; trace?: string; model?: string }
@@ -224,6 +226,7 @@ test('Chats: every seeded answer ends with its footer, its model, steps and seco
   for (const c of chats) {
     // In Act, the answers that show: each turn's footer is its last answer's trace.
     const expected: string[] = []
+    const expectedMeta: string[] = []
     let inAnswer = false
     for (const t of typeof c.turns === 'string' ? seed : c.turns) {
       if (t.user) { inAnswer = false; continue }
@@ -234,14 +237,20 @@ test('Chats: every seeded answer ends with its footer, its model, steps and seco
       const mode = modes.find(m => m.id === t.model)
       expect(mode?.model, `${c.id}: ${t.trace}`).toBe(last)
       if (t.stage && t.stage !== 'Act') continue
-      const line = `${mode!.label} · ${tr.steps.length - 1} steps · ${secs(tr.durationSeconds)}`
-      if (inAnswer) expected[expected.length - 1] = line; else expected.push(line)
+      // The steps line names the connected tools the run read (not wrote to), in order, with a check, and counts the steps; the model and seconds are in the opened list.
+      const read = [...new Set(tr.steps.filter(x => x.kind === 'tool' && !/^(saved|sent|created|posted|updated|wrote|drafted|deleted|changed|added|scheduled|replied|approved)\b/i.test(x.label.split(' · ').slice(1).join(' · '))).map(x => x.label.split(' · ')[0]).filter(n => names.includes(n)))]
+      const named = read.length > 1 ? `${read.slice(0, -1).join(', ')} and ${read.at(-1)}` : read.join('')
+      const line = `${read.length ? `Checked ${named} · ` : ''}${tr.steps.length - 1} steps`
+      const meta = `${mode!.label} · ${secs(tr.durationSeconds)}`
+      if (inAnswer) { expected[expected.length - 1] = line; expectedMeta[expectedMeta.length - 1] = meta } else { expected.push(line); expectedMeta.push(meta) }
       inAnswer = true
     }
     await page.evaluate(id => { location.hash = `#/chats/${id}` }, c.id)
-    const footers = page.getByRole('log', { name: 'Conversation' }).locator('button span.tabular-nums').filter({ hasText: /steps ·/ })
-    await expect(footers, c.id).toHaveText(expected)
-    await expect(footers.first(), c.id).toBeVisible()
+    const lines = page.getByRole('log', { name: 'Conversation' }).locator('[data-steps] > button')
+    await expect(lines, c.id).toHaveText(expected.map(l => new RegExp(`^${l.startsWith('Checked') ? 'check' : ''}${l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}expand_more$`)))
+    await expect(lines.first(), c.id).toBeVisible()
+    for (const line of await lines.all()) await line.click()
+    await expect(page.getByRole('log', { name: 'Conversation' }).locator('[data-steps-meta]'), c.id).toHaveText(expectedMeta)
   }
   await shot(page, 'chat-footers-stuck')
 })
@@ -563,12 +572,18 @@ test('Activity: every time sits on one line in its column', async ({ page, fx })
   await shot(page, 'activity-times')
 })
 
-test('The Klaviyo line takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
+test('The Klaviyo request takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
   await start(fx, 'Act')
-  const live = side(page).getByText(/goes live by/)
-  await expect(live).toHaveText('Klaviyo goes live by Fri, Nov 20.')
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
-  await side(page).getByRole('button', { name: 'Message the team →' }).click()
+  /** The team window, from the account menu's "Your Inhouse team", once the item counts `open` requests. */
+  const openTeam = async (open: number) => {
+    await side(page).getByRole('button', { name: /account and settings/i }).click()
+    const item = page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ })
+    await expect(item).toHaveAccessibleName(`Your Inhouse team ${open} open`)
+    await item.click()
+  }
+  // Two open requests: the Klaviyo connection and the weekly wholesale job.
+  await openTeam(2)
   await expect(team).toContainText('Live by Fri, Nov 20')
   await page.keyboard.press('Escape')
   await expect(team).toHaveCount(0)
@@ -588,12 +603,12 @@ test('The Klaviyo line takes its date from the data and hides on First day; Ask 
   expect(csv).toMatch(/\d [AP]M/)
   expect(csv).not.toContain(' ')
 
-  // First day: nothing is being connected yet, so neither the sidebar nor the team window names a date.
+  // First day: nothing is being connected yet, so the team window names no date and the menu counts one request fewer.
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   await page.getByRole('dialog', { name: 'Demo switches' }).getByRole('button', { name: 'First day', exact: true }).click()
   await page.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(live).toHaveCount(0)
-  await side(page).getByRole('button', { name: 'Message the team →' }).click()
+  // The Klaviyo request is no longer listed or counted.
+  await openTeam(1)
   await expect(team).toBeVisible()
   await expect(team).not.toContainText('Live by')
   await shot(page, 'team-window-first-day')
