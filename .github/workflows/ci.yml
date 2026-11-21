@@ -1,13 +1,20 @@
-# The required check for main and fleet/** (job name "ci"). Runs on PRs and on dispatch. The merge_group trigger is kept
-# for a merge queue, which is off for now (see AGENTS.md, "How changes land here").
+# The required check for main and fleet/** (job name "ci"). Runs on PRs, on push to fleet/** and on dispatch. The
+# merge_group trigger is kept for a merge queue, which is off for now (see AGENTS.md, "How changes land here").
 # The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
 # Playwright image so screenshots render the same on every run. Two shards at most: runner slots are shared.
+# Phase batching (Wasim, 2026-11-21): a PR into a fleet/** branch runs only the fast checks (the fast job: type check,
+# lint, unit, the builds and their guards; the runner job without its image and container probes). The whole suite
+# runs on every push to fleet/** (each merge into the phase branch; a newer merge cancels the run in progress, so a
+# burst of merges costs one run), on every PR into main and on dispatch. "Fleet PR" below means exactly:
+#   github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')
 name: ci
 
 on:
   pull_request:
     branches: [main, "fleet/**"]
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: ["fleet/**"]
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -16,13 +23,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Only a new commit cancels a running run. A reopen or ready_for_review on the same commit queues behind it.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+  # A push to fleet/** has its own group per branch, and the newest merge cancels the run in progress. A PR's group
+  # (refs/pull/<n>/merge) is as before.
+  group: ${{ github.event_name == 'push' && format('ci-push-{0}', github.ref) || format('ci-{0}', github.ref) }}
+  # On a PR only a new commit cancels a running run. A reopen or ready_for_review on the same commit queues behind it.
+  cancel-in-progress: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action == 'synchronize') }}
 
 jobs:
   e2e:
     name: e2e (${{ matrix.shard }}/2)
+    # Not on a fleet PR (the fast job stands in); on its branch's push instead.
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # The image's version must match @playwright/test in app/package.json (also in .github/workflows/baselines.yml
@@ -126,6 +137,8 @@ jobs:
   # The TEST BUILD (P2, p2-design section 10): the product Worker under `wrangler dev` with a fresh local D1 and the
   # test issuer. No secret anywhere: the issuer's key pair is made per run and only its public half reaches the Worker.
   test-build:
+    # Not on a fleet PR; on its branch's push instead.
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # The same image as e2e (keep the tag and digest in step with it).
@@ -147,7 +160,7 @@ jobs:
       - name: Migrations, fresh install
         run: rm -rf .wrangler/test-build && npm run test-build:migrate
       # The deployable-config check must refuse the test build's config (it sets the test flag and test origins).
-      # The script's fixture tests run with test:unit (e2e shard 1).
+      # The script's fixture tests run with test:unit (e2e shard 1). The fast job runs this same step on a fleet PR.
       # Its exit codes (AGENTS.md): 0 deployable, 1 refused, 2 usage or a crash. Only 1 counts as refusing here: a crash
       # (2) or any other code fails this step too.
       - name: The config check refuses wrangler.test.jsonc
@@ -213,12 +226,15 @@ jobs:
         working-directory: app/runner/harness
         run: npm ci && npm run typecheck
       # Build context is app/, so the protocol schemas in app/shared/ can be bundled; Dockerfile.dockerignore keeps the
-      # rest of app/ out.
-      - run: docker build -f Dockerfile -t inhouse-runner:ci ..
+      # rest of app/ out. The image, its start check and the container probes don't run on a fleet PR (its branch's push
+      # runs them).
+      - if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
+        run: docker build -f Dockerfile -t inhouse-runner:ci ..
       # The image starts with the guards installed and answers its health route. Until Node listens, Docker's port
       # proxy may refuse the connection or accept and close it, so the check polls on that condition, at most 30 times
       # about a second apart, and stops at once if the container has exited. A failure prints the container's log.
       - name: The image starts
+        if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
         run: |
           docker run -d --name runner -p 8080:8080 -e EGRESS_URL=http://127.0.0.1:9 inhouse-runner:ci
           for _ in $(seq 30); do
@@ -248,6 +264,7 @@ jobs:
       #   AppArmor profile refuses bwrap's mounts, and its masked /proc paths make the kernel refuse a fresh /proc.
       # The host serves probe.txt on the bridge gateway: a private address outside the container for the egress probes.
       - name: Probe setup
+        if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
         run: |
           if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
           if [ -e /etc/apparmor.d/bwrap-userns-restrict ]; then sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict; fi
@@ -255,30 +272,102 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gw" && echo GW_OK > "$RUNNER_TEMP/gw/probe.txt"
           nohup python3 -m http.server 18080 --bind 0.0.0.0 --directory "$RUNNER_TEMP/gw" > /dev/null 2>&1 &
       - name: The guards in the container
+        if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
         run: |
           docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
             -v "$RUNNER_TEMP/probes:/opt/runner/probes:ro" -e PROBE_GW_PORT=18080 inhouse-runner:ci node /opt/runner/probes/run.mjs
 
+  # A fleet PR's fast checks (phase batching): e2e shard 1's checks and builds without Playwright, and the test-build
+  # job's config check, in the same image. Its build is the PR's preview build (preview.yml), as e2e's is on a PR into
+  # main. Target: 3 to 5 minutes.
+  fast:
+    if: ${{ github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The same image as e2e (keep the tag and digest in step with it).
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      options: --user 1001 --ipc=host
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: node --version && npm run test:unit
+      - run: npm run build
+        env:
+          RELEASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: node scripts/check-bundle.mjs
+      # The preview build and its meta, exactly as e2e shard 1 uploads them on a PR into main.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-build
+          path: |
+            app/dist
+            app/.wrangler/deploy/config.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - env:
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
+        run: printf '{"pr":%s,"sha":"%s"}\n' "$PR" "$SHA" > pr-meta.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-meta
+          path: app/pr-meta.json
+          if-no-files-found: error
+          retention-days: 7
+      # As e2e shard 1: the product build ships no demo code, and the deployable Worker no test issuer.
+      - if: ${{ !cancelled() }}
+        run: npm run build:product && npm run build:product-test && node scripts/check-product-build.mjs
+      # As the test-build job: the config check must refuse wrangler.test.jsonc with exit code 1, nothing else.
+      - name: The config check refuses wrangler.test.jsonc
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          node scripts/check-product-config.mjs wrangler.test.jsonc || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::check-product-config.mjs exited $rc on wrangler.test.jsonc; it must refuse it with exit code 1 (0 = passed a config that must never deploy, 2 = usage or a crash)."
+            exit 1
+          fi
+          echo "check-product-config.mjs refused wrangler.test.jsonc (exit 1), as it must."
+
   ci:
-    needs: [e2e, test-build, runner]
-    # always(): a cancelled or skipped shard makes ci red, never skipped (a skipped check counts as passing).
+    needs: [e2e, test-build, runner, fast]
+    # always(): a cancelled or skipped job makes ci red, never skipped (a skipped check counts as passing). The one
+    # exception is a job skipped by design: e2e and test-build on a fleet PR, fast on every other event. Each of those
+    # must be exactly skipped, and every other job exactly success.
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Every shard, the test build and the runner job passed
+      - name: Every job this event runs passed (a fleet PR - fast and runner; otherwise every shard, the test build and the runner job)
         env:
+          FLEET_PR: ${{ github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
           RESULT: ${{ needs.e2e.result }}
           TEST_BUILD: ${{ needs.test-build.result }}
           RUNNER: ${{ needs.runner.result }}
+          FAST: ${{ needs.fast.result }}
         run: |
+          echo "fleet PR (fast checks only): $FLEET_PR"
           echo "e2e: $RESULT"
           echo "test-build: $TEST_BUILD"
           echo "runner: $RUNNER"
-          if [ "$RESULT" = cancelled ] || [ "$TEST_BUILD" = cancelled ] || [ "$RUNNER" = cancelled ]; then
+          echo "fast: $FAST"
+          if [ "$RESULT" = cancelled ] || [ "$TEST_BUILD" = cancelled ] || [ "$RUNNER" = cancelled ] || [ "$FAST" = cancelled ]; then
             echo "::error::A job was cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
-          test "$RESULT" = success && test "$TEST_BUILD" = success && test "$RUNNER" = success
+          if [ "$FLEET_PR" = true ]; then
+            test "$FAST" = success && test "$RUNNER" = success && test "$RESULT" = skipped && test "$TEST_BUILD" = skipped
+          else
+            test "$RESULT" = success && test "$TEST_BUILD" = success && test "$RUNNER" = success && test "$FAST" = skipped
+          fi
 
   pr-gates:
     if: github.event_name == 'pull_request'

@@ -91,8 +91,12 @@ skill before any UI change. Repo specifics:
 ## How changes land here
 
 - **CI gates:** rulesets (`.github/rulesets/`) require a PR and the checks `ci` and `pr-gates` on `main` and
-  `fleet/**`, with no bypass. `ci` (typecheck, lint, unit, build, every Playwright project) runs on every PR into
-  either. `pr-gates` fails a commit without a `Verified:` trailer and flags changed existing checks. `main` also needs
+  `fleet/**`, with no bypass. `ci` runs on every PR into either. Into `main` it runs everything (typecheck, lint,
+  unit, build, every Playwright project, the test build, the runner image and its probes). Into a `fleet/**` branch
+  (phase batching, Wasim, 2026-11-21) it runs only the fast checks: typecheck, lint, unit, the builds and their guards,
+  and the runner's tests without the image. The whole suite then runs on each push to `fleet/**` (every merge), and a
+  newer merge cancels the run in progress, so an e2e break shows up there a few merges late, not on its own PR. Watch
+  the branch's `ci` runs after merging into it. `pr-gates` fails a commit without a `Verified:` trailer and flags changed existing checks. `main` also needs
   the branch up to date with `main`. No merge queue for now.
 - **Commit hook:** `.githooks/commit-msg` refuses a commit whose `Verified:` trailer `git interpret-trailers --parse`
   can't print (merge commits pass). `npm install` in `app/` runs `prepare`, which sets `core.hooksPath` to `.githooks`
