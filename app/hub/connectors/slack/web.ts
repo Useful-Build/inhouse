@@ -18,6 +18,11 @@ import type { SlackChannel } from './contract'
 export const SLACK_API = 'https://slack.com/api/'
 export const SLACK_API_HOSTS = ['slack.com'] as const
 export const LIST_LIMIT = 200
+/**
+ * `conversations.list` only (B2, 2026-11-21, a design change): a channel object is about 1 KB (24 fields), so a page of
+ * 200 needs room beyond H0's 64 KiB, which `conversations.info` and `chat.postMessage` keep.
+ */
+export const LIST_MAX_BYTES = 512 * 1024
 
 /** A public channel id: never `U…` (a DM by user id), `D…` (a DM) or `G…` (private or multi-person DM). */
 export const POSTABLE_CHANNEL = /^C[A-Z0-9]{8,}$/
@@ -44,7 +49,7 @@ export async function callWeb(upstream: Upstream, token: string, method: WebMeth
       headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', Authorization: `Bearer ${token}` },
       body: new URLSearchParams(params).toString(),
     },
-    { allowedHosts: SLACK_API_HOSTS, timeoutMs: TOKEN_TIMEOUT_MS, maxBytes: TOKEN_MAX_BYTES },
+    { allowedHosts: SLACK_API_HOSTS, timeoutMs: TOKEN_TIMEOUT_MS, maxBytes: method === 'conversations.list' ? LIST_MAX_BYTES : TOKEN_MAX_BYTES },
   )
   if (sent.kind === 'blocked') return { kind: 'error', code: 'internal' }
   if (sent.kind !== 'response') return { kind: 'error', code: 'upstream_unavailable' }

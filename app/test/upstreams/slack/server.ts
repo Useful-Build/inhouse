@@ -63,6 +63,8 @@ export class FakeSlackWeb {
   throwNextPost = false
   /** Pages of `conversations.list` hold this many channels. */
   pageSize = 200
+  /** Pads each channel object in a list or info answer with a `purpose` this long (real objects are about 1 KB). */
+  padBytes = 0
   #ts = 0
 
   get hosts(): string[] {
@@ -89,7 +91,7 @@ export class FakeSlackWeb {
         return json({ ok: true, team_id: 'T0TEST0001', user_id: 'U0TEST0001' })
       case '/api/conversations.info': {
         const c = this.channels.get(params.channel ?? '')
-        return c ? json({ ok: true, channel: c }) : json({ ok: false, error: 'channel_not_found' })
+        return c ? json({ ok: true, channel: this.#padded(c) }) : json({ ok: false, error: 'channel_not_found' })
       }
       case '/api/conversations.list':
         return this.#list(params)
@@ -107,7 +109,11 @@ export class FakeSlackWeb {
     const size = Math.min(this.pageSize, Number(params.limit ?? '100'))
     const page = all.slice(start, start + size)
     const next = start + size < all.length ? `page_${start + size}` : ''
-    return json({ ok: true, channels: page, response_metadata: { next_cursor: next } })
+    return json({ ok: true, channels: page.map(c => this.#padded(c)), response_metadata: { next_cursor: next } })
+  }
+
+  #padded(c: FakeChannel): FakeChannel | (FakeChannel & { purpose: { value: string } }) {
+    return this.padBytes > 0 ? { ...c, purpose: { value: 'p'.repeat(this.padBytes) } } : c
   }
 
   async #post(params: Record<string, string>): Promise<Response> {

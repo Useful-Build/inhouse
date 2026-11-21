@@ -254,6 +254,35 @@ describe('listChannels and checkChannel', () => {
   })
 })
 
+describe('response caps (B2, 2026-11-21: 512 KiB for conversations.list only)', () => {
+  function fill(w: DeliveryWorld, n: number) {
+    for (let i = 0; i < n; i++) {
+      const id = `C1TEST${String(i).padStart(4, '0')}`
+      w.web.channels.set(id, { id, name: `team-${i}`, is_channel: true, is_private: false, is_archived: false, is_member: true, is_shared: false, is_ext_shared: false, is_org_shared: false, is_pending_ext_shared: false })
+    }
+  }
+  it('a 200-channel page of about 1.2 KB a channel fits (about 240 KB, over the old 64 KiB)', async () => {
+    const w = await connected()
+    fill(w, 200)
+    w.web.padBytes = 1000
+    const r = await listChannels(w.deps, SERVER, { accountId: SLACK })
+    expect(r.ok && r.value.channels.length).toBe(200)
+  })
+  it('a page over 512 KiB answers result_too_large', async () => {
+    const w = await connected()
+    fill(w, 200)
+    w.web.padBytes = 2800
+    expect(code(await listChannels(w.deps, SERVER, { accountId: SLACK }))).toBe('result_too_large')
+  })
+  it('conversations.info keeps 64 KiB: a 70 KB answer is result_too_large and nothing is posted', async () => {
+    const w = await connected()
+    w.web.padBytes = 70_000
+    expect(code(await checkChannel(w.deps, SERVER, { accountId: SLACK, channelId: 'C0TEST0001' }))).toBe('result_too_large')
+    expect(code(await postToSlack(w.stub, { channelId: 'C0TEST0001', title: 'T', text: 'x' }))).toBe('result_too_large')
+    expect(w.web.posts).toEqual([])
+  })
+})
+
 describe('logs', () => {
   it('hub_delivery carries the channel hash, never the id or the text', async () => {
     const w = await connected()
