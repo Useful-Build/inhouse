@@ -40,7 +40,7 @@ async function dotsBehind(page: Page, selectors: string[]) {
   expect(tops).toEqual(selectors.map(() => 'ok'))
 }
 
-test('All chats has the plain background; dots sit behind the cards on Today and in a chat', async ({ page }) => {
+test('All chats and a chat that has started have the plain background; dots sit behind the cards on Today and in an empty new chat', async ({ page }) => {
   await start(page, '#/chats/all')
   await expect(page.getByRole('heading', { name: 'All chats' })).toBeVisible()
   await expect(page.locator('div:has(> main) > div[aria-hidden="true"]')).toHaveCount(0)
@@ -50,10 +50,17 @@ test('All chats has the plain background; dots sit behind the cards on Today and
   await expect(page.getByRole('heading', { level: 1 })).toContainText('things need you')
   await dotsBehind(page, ['.today-card', '[data-composer]'])
 
+  // A chat with messages has no dot grid, only the page colour.
   await page.goto('/?demo#/chats')
   await expect(page.getByRole('textbox', { name: 'Message your Inhouse agent' })).toBeVisible()
-  await dotsBehind(page, ['[data-composer]', '[data-chat-msg]'])
+  await expect(page.locator('[data-chat-msg]').first()).toBeVisible()
+  await expect(page.locator('div:has(> main) > div[aria-hidden="true"]')).toHaveCount(0)
   await shot(page, 'chat-1440')
+
+  // An empty new chat keeps the dots.
+  await page.goto('/?demo#/chats/new')
+  await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+  await dotsBehind(page, ['[data-composer]'])
 })
 
 test('Today shows only the title, the composer and the Needs you cards, at every stage', async ({ page }) => {
@@ -92,8 +99,9 @@ test('Composer logo row: 3 logos, a +N chip for the rest, and the real count', a
   const logos = chip.locator('img')
   const more = chip.getByTestId('tools-more')
 
-  // The sample has 6 tools.
-  await expect(chip).toContainText('6 tools connected')
+  // The sample has 6 tools, all read: the logos and +3 say so, and the count is in the button's name, not written out.
+  await expect(chip).toHaveAccessibleName(/6 tools connected$/)
+  await expect(chip).not.toContainText('tools connected')
   await expect(logos).toHaveCount(3)
   await expect(more).toHaveText('+3')
   await shot(page, 'today-logo-row-1440')

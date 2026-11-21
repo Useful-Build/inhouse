@@ -212,6 +212,10 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const toolsLabel = counts.connected === 0 ? 'No tools connected yet'
     : offHere > 0 ? `${onTools.length} of ${TOOL_KEYS.length} tools on in this chat`
       : counts.reading < counts.connected ? `${counts.reading} of ${counts.connected} tools connected` : `${counts.reading} tools connected`
+  // The logos and their +N already say how many tools are read, so the plain "6 tools connected" isn't shown; the label
+  // shows only when it says what the logos can't: none connected, some turned off in this chat, or some not read yet.
+  // The button's name always carries it.
+  const toolsNote = counts.connected === 0 || offHere > 0 || counts.reading < counts.connected
   const everyMode = thinkingModes(data, ctx.agent.settings)
   const modes = everyMode.filter(m => m.on)
   // A model the person picked that an Admin has since switched off stays in the list, greyed, until they pick another.
@@ -365,7 +369,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
                   )}
                 </span>
                 {/* The label gives way first when the row is tight (768px), so Send stays inside the box (M13). */}
-                {showToolsLabel && <>{' '}<span className="ellipsis ml-1 min-w-0 text-xs text-muted-foreground">{toolsLabel}</span></>}
+                {showToolsLabel && toolsNote && <>{' '}<span className="ellipsis ml-1 min-w-0 text-xs text-muted-foreground">{toolsLabel}</span></>}
               </button>
             </DropdownMenuTrigger>
           </Tip>
