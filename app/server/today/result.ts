@@ -43,6 +43,8 @@ export const itemUpsert = (db: D1Database, slot: Pick<EndSlot, 'slot_key' | 'loc
 const none = (summary: string, failure: string): ResultOutput => ({ statements: [], summary, failure })
 
 export async function morningCheck(slot: EndSlot, end: Parameters<ResultHandler['run']>[1], ctx: ResultContext): Promise<ResultOutput & { normalised?: Normalised }> {
+  // A slot that already ended has its result: a re-delivery writes nothing more (the slot's own statements are guarded the same way).
+  if (slot.state === 'ended') return { statements: [], summary: null }
   // 0. Is a store connected? Only a hub that says it isn't configured, or lists no Shopify tool, counts: any other hub
   // error throws, so the end is retried instead of recording a wrong cause.
   const tools = await ctx.hub.listTools({ kind: 'server', job: JOB, requestId: await hashId('mc_', slot.slot_key) })
@@ -63,7 +65,7 @@ export async function morningCheck(slot: EndSlot, end: Parameters<ResultHandler[
   let coverage = result.coverage
   let gaps = result.gaps
   if (coverage === 'complete') {
-    const calls = await ctx.db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE turn_id = ? AND tool LIKE 'mcp\\_\\_apps\\_\\_%' ESCAPE '\\'").bind(ctx.turnId).first<{ n: number }>()
+    const calls = await ctx.db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE turn_id = ? AND decision = 'allow' AND tool LIKE 'mcp\\_\\_apps\\_\\_%' ESCAPE '\\'").bind(ctx.turnId).first<{ n: number }>()
     if ((calls?.n ?? 0) === 0) {
       coverage = 'incomplete'
       gaps = ['orders', 'products', 'inventory', 'refunds', 'returns']

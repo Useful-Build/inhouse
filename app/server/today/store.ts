@@ -139,7 +139,7 @@ export function todayStore({ db, hook = s => s }: { db: D1Database; hook?: Audit
       const now = await first<AsideRow>(db, stmt('SELECT item_id, reason, by, at_ms, rev FROM today_aside WHERE item_id = ?', w.id))
       if (result.meta.changes > 0 && now) return { ok: record(now) }
       // Nothing matched: the row isn't at `ifRev` (a stale write, or a first write over an existing row).
-      return { conflict: now ? record(now) : { reason: null, at: instant(0), by: at.actorId, loggedAt: instant(0), rev: 0 } }
+      return now ? { conflict: record(now) } : { refused: 'not_found' }
     },
   }
 }

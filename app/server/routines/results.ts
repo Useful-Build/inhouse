@@ -16,6 +16,8 @@ export interface EndSlot {
   local_date: string
   local_time: string | null
   claimed_at_ms: number
+  /** The slot's state as the end read it: a handler writes nothing for a slot already `ended`. */
+  state: string
   creator_id: string
   requested_by: string | null
 }

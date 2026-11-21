@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { OutputFormat } from '../protocol/index.ts'
 import { MorningCheckResultSchema, SEVERITIES, AREAS, morningCheckWireSchema, reduceSchema } from './today.ts'
 
-const REFUSED = ['maxLength', 'minLength', 'maxItems', 'minItems', 'pattern', 'format', 'minimum', 'maximum', 'anyOf', '$schema', 'additionalItems']
+const REFUSED = ['maxLength', 'minLength', 'maxItems', 'minItems', 'pattern', 'format', 'minimum', 'maximum', '$schema', 'additionalItems']
 const keysOf = (v: unknown, out = new Set<string>()): Set<string> => {
   if (Array.isArray(v)) for (const x of v) keysOf(x, out)
   else if (v !== null && typeof v === 'object') {
@@ -32,9 +32,33 @@ describe('the wire schema', () => {
       if (Array.isArray(n)) return n.every(closed)
       if (n === null || typeof n !== 'object') return true
       const o = n as Record<string, unknown>
-      return (o.type !== 'object' || o.additionalProperties === false) && Object.values(o).every(closed)
+      const types = Array.isArray(o.type) ? o.type : [o.type]
+      return (!types.includes('object') || o.additionalProperties === false) && Object.values(o).every(closed)
     }
     expect(closed(wire)).toBe(true)
+  })
+
+  it('closes every object node, the `cost` money object included, and writes each nullable as anyOf with a null type', () => {
+    const objects: { path: string; closed: boolean }[] = []
+    const walk = (n: unknown, path: string): void => {
+      if (Array.isArray(n)) return n.forEach((x, i) => walk(x, `${path}[${i}]`))
+      if (n === null || typeof n !== 'object') return
+      const o = n as Record<string, unknown>
+      const types = Array.isArray(o.type) ? o.type : [o.type]
+      if (types.includes('object')) objects.push({ path, closed: o.additionalProperties === false })
+      for (const [k, v] of Object.entries(o)) {
+        if (k === 'properties') for (const [p, sch] of Object.entries(v as object)) walk(sch, `${path}.${p}`)
+        else walk(v, `${path}.${k}`)
+      }
+    }
+    walk(wire, 'wire')
+    expect(objects.length).toBe(4) // the result, an item, its cost (inside the anyOf) and a source
+    expect(objects.filter(o => !o.closed)).toEqual([])
+    expect(objects.some(o => o.path.includes('cost'))).toBe(true)
+    const item = (wire.properties as { items: { items: { properties: Record<string, unknown> } } }).items.items.properties
+    expect(item.cost).toMatchObject({ anyOf: [{ type: 'object', additionalProperties: false }, { type: 'null' }] })
+    expect(item.since).toMatchObject({ anyOf: [{ type: 'string' }, { type: 'null' }] })
+    expect(JSON.stringify(wire)).not.toMatch(/"type":\[/)
   })
 
   it("moves each maximum into the field's description", () => {
@@ -42,8 +66,7 @@ describe('the wire schema', () => {
     expect(item.items.properties.title.description).toBe('at most 120 characters; at least 1 character')
     expect(item.items.properties.found.description).toBe('at most 6 items')
     expect((wire.properties as { items: { description?: string } }).items.description).toBe('at most 10 items')
-    expect(item.items.properties.cost).toMatchObject({ type: ['object', 'null'] })
-    expect(item.items.properties.since).toMatchObject({ type: ['string', 'null'], description: 'at most 40 characters' })
+    expect(item.items.properties.since).toMatchObject({ description: 'at most 40 characters' })
   })
 
   it('passes the SDK caps (16 KiB, 64 levels) as P3 checks them', () => {

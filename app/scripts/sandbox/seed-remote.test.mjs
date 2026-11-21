@@ -172,7 +172,7 @@ describe('the rendered SQL replays to the same rows (failure 2)', () => {
   const byJson = (x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1)
   // 0221_morning_check.sql stamps its system routine with the time the migration ran (P4 W3), so two migrated databases differ in those three columns by design.
   const MIGRATION_TIME = ['checked_until_ms', 'created_at_ms', 'updated_at_ms']
-  const dump = db => Object.fromEntries(tables(db).map(t => [t, db.prepare(`SELECT * FROM ${t}`).all().map(r => (t === 'routines' ? { ...r, ...Object.fromEntries(MIGRATION_TIME.map(c => [c, 0])) } : { ...r })).sort(byJson)]))
+  const dump = db => Object.fromEntries(tables(db).map(t => [t, db.prepare(`SELECT * FROM ${t}`).all().map(r => (t === 'routines' && r.id === 'routine-morning-check' ? { ...r, ...Object.fromEntries(MIGRATION_TIME.map(c => [c, 0])) } : { ...r })).sort(byJson)]))
 
   test('on a freshly migrated database: the brand as seed.test.ts counts it, and every table equal', async () => {
     const { sql, db: recorded } = await renderSeedSql({ hashKey: 'test-only-audit-hash-key-not-a-secret', nowMs: 1_800_000_000_000 })

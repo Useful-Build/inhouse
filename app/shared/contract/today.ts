@@ -74,7 +74,7 @@ const KEEP = new Set(['type', 'enum', 'required', 'additionalProperties', 'prope
 /**
  * The reduced draft-07 schema the SDK gets as `outputFormat.schema`: types, `enum`, `required`, `additionalProperties:
  * false`, nothing else (the API's constrained decoding refuses `maxLength`, `maxItems` over 1, complex patterns and
- * `format`). A limit it drops goes into the field's `description`. A nullable becomes a type list. Built from the zod
+ * `format`). A limit it drops goes into the field's `description`. A nullable becomes an `anyOf` with `{ type: 'null' }`. Built from the zod
  * schema, never copied by hand.
  */
 export function reduceSchema(node: Json): Json {
@@ -85,9 +85,9 @@ export function reduceSchema(node: Json): Json {
     const nulls = alt.filter(a => (a as Json).type === 'null')
     const rest = alt.filter(a => (a as Json).type !== 'null')
     if (rest.length !== 1 || nulls.length !== 1) throw new Error('reduceSchema: only a nullable union is supported')
-    const inner = reduceSchema(rest[0] as Json)
-    const t = inner.type
-    return { ...inner, type: [...(Array.isArray(t) ? t : [t]), 'null'] }
+    // The documented route for a nullable: `anyOf` the schema and `{ type: 'null' }` (a type list isn't mentioned).
+    const { description, ...inner } = reduceSchema(rest[0] as Json)
+    return { anyOf: [inner, { type: 'null' }], ...(description ? { description } : {}) }
   }
   if (typeof node.maxLength === 'number') notes.push(`at most ${node.maxLength} characters`)
   if (typeof node.minLength === 'number' && node.minLength > 0) notes.push(`at least ${node.minLength} character${node.minLength === 1 ? '' : 's'}`)
@@ -100,6 +100,8 @@ export function reduceSchema(node: Json): Json {
     else if (k === 'items') out.items = reduceSchema(v as Json)
     else if (k !== 'description') out[k] = v
   }
+  // Every object is closed (the structured-outputs docs require `additionalProperties: false` on each).
+  if (out.type === 'object') out.additionalProperties = false
   const description = [typeof node.description === 'string' ? node.description : null, ...notes].filter(Boolean).join('; ')
   if (description) out.description = description
   return out

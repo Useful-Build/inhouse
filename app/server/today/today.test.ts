@@ -233,7 +233,28 @@ describe('what is never saved', () => {
   })
 })
 
+describe('a slot that already ended', () => {
+  it('a re-delivery writes nothing more: not_connected first, then Shopify connected: no items, no bell, the slot unchanged', async () => {
+    const s = await addSlot({ claimed: at('2026-06-01T10:00:00Z'), kind: 'manual' })
+    await deliver(s, result(['a']), at('2026-06-01T10:03:00Z'), {}, hubWith([]))
+    const notices = async () => (await db.prepare('SELECT COUNT(*) AS n FROM notices').first<number>('n'))!
+    const before = { slot: await slotRow(s.key), notices: await notices() }
+    expect(before.slot).toEqual({ state: 'ended', failure: 'not_connected', result_text: "Shopify isn't connected" })
+    await deliver(s, result(['a']), at('2026-06-01T10:09:00Z'), {}, SHOPIFY)
+    expect(await rowCount()).toBe(0)
+    expect(await notices()).toBe(before.notices)
+    expect(await slotRow(s.key)).toEqual(before.slot)
+  })
+})
+
 describe('the coverage backstop and incomplete runs', () => {
+  it('counts only allowed store calls: a denied one leaves a complete result incomplete', async () => {
+    const s = await addSlot({ claimed: at('2026-06-01T10:00:00Z') })
+    await db.prepare("UPDATE tool_calls SET decision = 'deny' WHERE turn_id = ?").bind(s.turnId).run()
+    await deliver(s, result(['a']), at('2026-06-01T10:03:00Z'))
+    expect((await slotRow(s.key))?.failure).toBe('incomplete')
+  })
+
   it('a complete result from a turn with no store call saves as incomplete with all five gaps (items kept)', async () => {
     const s = await addSlot({ claimed: at('2026-06-01T10:00:00Z') })
     await db.prepare('DELETE FROM tool_calls WHERE turn_id = ?').bind(s.turnId).run()
@@ -304,10 +325,11 @@ describe('set aside', () => {
   })
 
   it('an unknown id is not found; a first write over an existing row and a stale ifRev conflict with the current record; Undo keeps the row', async () => {
-    const [a] = await seed()
+    const [a, b] = await seed()
     expect(await w('p_AAAAAAAAAAAAAAAAAAAAAA', 'dismissed', 0)).toEqual({ refused: 'not_found' })
     const first = await w(a.id, 'snoozed', 0)
     expect(first).toMatchObject({ ok: { reason: 'snoozed', rev: 1, by: MEMBER } })
+    expect(await w(b.id, 'dismissed', 3)).toEqual({ refused: 'not_found' }) // a rev with no row to hold it
     const again = await w(a.id, 'dismissed', 0)
     expect(again).toMatchObject({ conflict: { reason: 'snoozed', rev: 1 } })
     const stale = await w(a.id, 'dismissed', 5)

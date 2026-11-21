@@ -47,7 +47,7 @@ const NO_CHAT = 'c_e2e_nobody'
  */
 const NO_MEMORY = 'mem_e2eNobodyAAAAAAAAAAAAA'
 /** A Today item id of the right shape (`p_` + 22) that names nothing. */
-const NO_TODAY = 'p_e2eNobodyAAAAAAAAAAAA'
+const NO_TODAY = 'p_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
