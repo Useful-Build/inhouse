@@ -35,8 +35,8 @@ describe('grants and reads', () => {
 
   it('validates the request', async () => {
     const h = harness()
-    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ a }', apiVersion: '2026-11' }))).toBe('invalid_args')
-    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ a }', apiVersion: API, variables: [] as never }))).toBe('invalid_args')
+    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ shop { currencyCode } }', apiVersion: '2026-11' }))).toBe('invalid_args')
+    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ shop { currencyCode } }', apiVersion: API, variables: [] as never }))).toBe('invalid_args')
     expect(codeOf(await h.core.query(null as never))).toBe('invalid_args')
   })
 
@@ -45,7 +45,7 @@ describe('grants and reads', () => {
     await readQuery(h)
     const lines: string[] = []
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')))
-    expect(codeOf(await h.core.query({ accountId: 'shopify:other', document: '{ a }', apiVersion: API }))).toBe('internal')
+    expect(codeOf(await h.core.query({ accountId: 'shopify:other', document: '{ shop { currencyCode } }', apiVersion: API }))).toBe('internal')
     expect(codeOf(h.core.status('shopify:other'))).toBe('internal')
     expect(lines.some(l => l.includes('"hub_internal"'))).toBe(true)
   })
@@ -55,7 +55,7 @@ describe('grants and reads', () => {
     h.config.value = null
     expect(codeOf(await readQuery(h))).toBe('not_configured')
     const h2 = harness()
-    expect(codeOf(await h2.core.query({ accountId: 'shopify:nobody', document: '{ a }', apiVersion: API }))).toBe('not_configured')
+    expect(codeOf(await h2.core.query({ accountId: 'shopify:nobody', document: '{ shop { currencyCode } }', apiVersion: API }))).toBe('not_configured')
     for (const json of [undefined, '{}', JSON.stringify({ current: 'k1', keys: {} })]) {
       const h3 = harness({ ring: { json } })
       expect(codeOf(await readQuery(h3))).toBe('key_unavailable')
@@ -518,7 +518,7 @@ describe('the canary token (property 8)', () => {
           h.shop.nextToken = () => `${canary}x`
           h.shop.revokeAll()
           results.push(await readQuery(h))
-          results.push(await h.core.query({ accountId: 'shopify:other', document: '{ a }', apiVersion: API }))
+          results.push(await h.core.query({ accountId: 'shopify:other', document: '{ shop { currencyCode } }', apiVersion: API }))
           h.clock.ms += LIFETIME_S * 1000
           await h.core.alarm()
         },

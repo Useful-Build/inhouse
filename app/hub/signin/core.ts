@@ -43,6 +43,7 @@ import { open, sameEnvelope, seal, type Envelope, type EnvelopeField } from '../
 import type { KeyRing, KeyRingResult } from '../crypto/keyring'
 import { checkGrantedScopes, describeScopeMismatch } from '../scope/scopes'
 import { checkReadDocument } from '../scope/graphql'
+import { checkShopifyFields, FIELD_NOT_ALLOWED } from '../scope/fields'
 import { API_VERSION, requestGrant, sendRead, type ShopifyConfig, type Upstream } from './providers/shopify'
 
 export type SignInRecord = {
@@ -171,6 +172,8 @@ const COUNTER = 'cm:'
 export const EXPIRY_MARGIN_MS = 60_000
 export const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const
 export const MAX_PENDING_TTL_MS = 2 * 60 * 60_000
+/** W2's counters: the day cap lives until the next UTC midnight, at most a day. */
+export const MAX_COUNTER_TTL_MS = 24 * 60 * 60_000
 /**
  * After credentials_rejected, reads inside this window answer the stored error without a token call. One minute: the
  * first alarm backoff step, so a fixed secret is picked up within a minute, and a run hammering a dead account costs
@@ -452,6 +455,8 @@ export class SignInCore {
     // The read-only check comes before any token is opened.
     const doc = checkReadDocument(document)
     if (!doc.ok) return err(doc.code)
+    // P5 (p5-w2): the level 1 allowlist of fields, arguments, `query` keys and sort keys, for every document.
+    if (!checkShopifyFields(document as string, variables).ok) return err('invalid_args', FIELD_NOT_ALLOWED)
 
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')
@@ -573,6 +578,32 @@ export class SignInCore {
     })
     if (!item || nowMs >= item.expiresAtMs) return ok(null)
     return ok(item.data)
+  }
+
+  /**
+   * P5 (p5-w2): code mode's caps. One synchronous read-increment-write: past `limit` nothing is written and `ok` is
+   * false. A counter lives until `ttlMs` after its first bump (a later bump keeps that expiry); W1's alarm sweep clears it.
+   */
+  async bumpCounter(key: string, limit: number, ttlMs: number): Promise<HubResult<{ ok: boolean; count: number }>> {
+    if (typeof key !== 'string' || key.length === 0 || key.length > 300) return err('invalid_args')
+    if (!Number.isSafeInteger(limit) || limit < 1) return err('invalid_args', 'limit')
+    if (typeof ttlMs !== 'number' || !Number.isFinite(ttlMs) || ttlMs <= 0 || ttlMs > MAX_COUNTER_TTL_MS) return err('invalid_args', 'ttlMs')
+    const id = COUNTER + key
+    const nowMs = this.#d.now()
+    const out = this.#d.store.transactionSync(() => {
+      const found = this.#d.store.get<{ count: number; expiresAtMs: number }>(id)
+      const live = found && nowMs < found.expiresAtMs ? found : { count: 0, expiresAtMs: nowMs + ttlMs }
+      if (live.count >= limit) return { ok: false, count: live.count, expiresAtMs: live.expiresAtMs }
+      const next = { count: live.count + 1, expiresAtMs: live.expiresAtMs }
+      this.#d.store.put(id, next)
+      return { ok: true, ...next }
+    })
+    try {
+      await this.#ensureAlarmBy(out.expiresAtMs)
+    } catch {
+      log('hub_internal', { code: 'alarm_op' })
+    }
+    return ok({ ok: out.ok, count: out.count })
   }
 
   /** Expired one-time items under `pending:` and W2's `cm:`, for every record kind (P5's lock sweep). */

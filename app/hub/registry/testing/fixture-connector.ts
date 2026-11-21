@@ -11,7 +11,7 @@ const shopRead: ToolDef<Record<string, never>> = {
   description: 'Fixture: reads the shop name.',
   mode: 'read',
   input: z.strictObject({}),
-  run: (ctx) => ctx.shopify.graphql('query FixtureShop { shop { name } }'),
+  run: (ctx) => ctx.shopify.graphql('query FixtureShop { shop { currencyCode } }'),
 }
 
 /** Sends the document it's given, so tests can prove the SignIn document check refuses a mutation. */

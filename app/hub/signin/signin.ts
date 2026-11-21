@@ -179,6 +179,11 @@ export class SignIn extends DurableObject<Env> {
   mcpCall(req: McpCallRequest) {
     return this.#guard(() => this.#core.mcpCall(req))
   }
+  // ---- P5 (p5-w2) ----
+  /** Code mode's per-run and per-day script caps (cm: keys). */
+  bumpCounter(key: string, limit: number, ttlMs: number) {
+    return this.#guard(() => this.#core.bumpCounter(key, limit, ttlMs))
+  }
   override async alarm(): Promise<void> {
     await this.#core.alarm()
   }
