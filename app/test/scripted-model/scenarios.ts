@@ -43,21 +43,35 @@ const lastShape = (r: MessagesRequest): string => {
   return `the last message is ${last.role} (${blocks})`
 }
 
-/** The tool_result block for call `id` in the last message, when that message is the person's. */
+/** A message that only adds text after a tool's result: a `system` message, or a user message of text alone. */
+const textOnly = (m: MessagesRequest['messages'][number]): boolean =>
+  m.role === 'system' ||
+  (m.role === 'user' && (typeof m.content === 'string' || (Array.isArray(m.content) && m.content.every((b) => (b as { type?: unknown })?.type === 'text'))))
+
+/**
+ * The tool_result block for call `id` in the newest message that carries tool results, looking back past trailing
+ * text-only messages and never past the last assistant message. The real CLI can end a turn-1 request with a `system`
+ * message after the result: the budget line ("USD budget: $… remaining") whenever the run sets `maxBudgetUsd`, as every
+ * runner run does (fixtures/cli-requests.json, `write-output.turn1-budget`).
+ */
 const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown } | undefined => {
-  const last = r.messages.at(-1)
-  if (last?.role !== 'user' || !Array.isArray(last.content)) return undefined
-  return last.content.find((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id) as { is_error?: unknown } | undefined
+  for (let i = r.messages.length - 1; i >= 0; i--) {
+    const m = r.messages[i]!
+    if (textOnly(m)) continue
+    if (m.role !== 'user' || !Array.isArray(m.content)) return undefined
+    return m.content.find((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id) as { is_error?: unknown } | undefined
+  }
+  return undefined
 }
 
-/** The last user message carries the result of tool call `id`. */
-const resultOf =
+/** The newest tool-result message (past trailing text-only messages) carries the result of tool call `id`. */
+export const resultOf =
   (id: string): Check =>
   (r) =>
     resultBlock(r, id) !== undefined ? true : `no result for ${id}: ${lastShape(r)}`
 
 /**
- * The last user message carries the result of tool call `id`, and its `is_error` is what the scenario expects: `error: true`
+ * The newest tool-result message carries the result of tool call `id`, and its `is_error` is what the scenario expects: `error: true`
  * wants a refusal, `error: false` wants a call that went through (absent counts as false). A mismatch is a loud miss, so a
  * WebFetch the egress refused can't pass as an allowed one, nor the other way round.
  */
