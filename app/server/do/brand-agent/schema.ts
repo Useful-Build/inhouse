@@ -28,6 +28,10 @@
 // - PR 5 (the routine seams): `turns.output_format_json` (the run's structured-output format, into `RunStart`),
 //   `on_end_json` (the `{ kind, id }` task the turn's final step ensures), `structured_output_json` (the terminal
 //   event's value, at most 64 KiB); added to an older table by `ALTER TABLE` below.
+// - PR 6 (the P6 seams): `turns.resume_json` (a resume turn's `{ questionId, decision, toolUseId }`, for protocol v3's
+//   `RunStart.deferred`); `turns.abandoned` (a deferred turn whose wait was given up before it was final: its end fires
+//   `cancelled` with this reason, and no later checkpoint parks it again); `chat_state.waiting_json` now holds
+//   `{ questionId, turnId, toolUseId, toolName, input }` (no older shape exists on a deployed object: pre-launch).
 
 import { TURN_ROWS_TABLE } from './projection.ts'
 
@@ -54,12 +58,13 @@ export function createAgentTables(sql: SqlStorage): void {
     runner_cost_micro INTEGER, parts_n INTEGER NOT NULL DEFAULT 0,
     steps_n INTEGER NOT NULL DEFAULT 0, count_tokens_calls INTEGER NOT NULL DEFAULT 0,
     outcome TEXT, failure TEXT, cancel_why TEXT, output_format_json TEXT, on_end_json TEXT, structured_output_json TEXT,
+    resume_json TEXT, abandoned TEXT,
     pos_from INTEGER, pos_to INTEGER, d1_flushed INTEGER NOT NULL DEFAULT 0,
     created_at_ms INTEGER NOT NULL, claimed_at_ms INTEGER, started_at_ms INTEGER, ended_at_ms INTEGER,
     UNIQUE (chat_id, client_key))`)
-  // PR 5's columns on an object whose `turns` predates them (CREATE IF NOT EXISTS leaves an existing table as it is).
+  // PR 5's and PR 6's columns on an object whose `turns` predates them (CREATE IF NOT EXISTS leaves an existing table as it is).
   const have = new Set(sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('turns')").toArray().map(r => r.name))
-  for (const col of ['output_format_json', 'on_end_json', 'structured_output_json']) {
+  for (const col of ['output_format_json', 'on_end_json', 'structured_output_json', 'resume_json', 'abandoned']) {
     if (!have.has(col)) sql.exec(`ALTER TABLE turns ADD COLUMN ${col} TEXT`)
   }
   sql.exec('CREATE INDEX IF NOT EXISTS turns_run ON turns(run_id, state)')

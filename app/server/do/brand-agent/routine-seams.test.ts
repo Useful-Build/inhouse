@@ -19,7 +19,7 @@ import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { RunEventBody } from '../../../shared/protocol/index.ts'
-import { MEMBER, MIN, SEC, deferred, ev, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
+import { MEMBER, MIN, SEC, d1Chat, deferred, ev, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
 import type { Harness } from '../../testing/brand-agent/core-harness.ts'
 import type { InternalSubmit, Refusal } from './ports.ts'
 import type { TaskHandler } from './scheduler.ts'
@@ -141,6 +141,8 @@ describe('B: the end task on every final path, in the final step (failure 1)', (
   it('cancelled by removal (queued and live) and by cap_reached', () => inSeams(async h => {
     const seen = captureEnds(h)
     const person = { kind: 'person' as const, memberId: MEMBER }
+    // PR 6 (A7): an internal submit into a person's chat reads D1 first, so the chat is there, as route 23 leaves it.
+    await d1Chat(chatOf('k-rm-live'), MEMBER)
     const live = ok(await submit(h, chatOf('k-rm-live'), 'k-rm-live', { by: person })); await settle()
     const queued = ok(await submit(h, chatOf('k-rm-live'), 'k-rm-queu', { by: person, text: 'second' }))
     h.core.onMemberRemoved(MEMBER)

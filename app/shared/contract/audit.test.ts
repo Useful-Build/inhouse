@@ -34,6 +34,7 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'support.attach': { action: 'support.attach', grantId: g, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' },
   'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
+  'ops_task_revive': { action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA', result: 'revived', by: 'release' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))

@@ -265,6 +265,8 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'DELETE /api/ops/drain': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'POST /api/ops/warmup': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   'POST /api/chats/:id/session/reset': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Route 51 (W1 PR 6): revive one quarantined due task, release only.
+  'POST /api/ops/tasks/revive': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
@@ -323,7 +325,7 @@ const shadowProblems = (table: readonly { method: string; pattern: string }[]) =
 }
 
 /** The closed list of `open` rows (matrix.ts): the health check, and P3's drain and warm-up (p3-design section 3). */
-const OPEN_ROWS = ['GET /api/health', 'POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup']
+const OPEN_ROWS = ['GET /api/health', 'POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive']
 const openProblems = (rows: readonly AccessRow[]) => {
   const keys = rows.filter(x => x.class === 'open').map(x => `${x.method} ${x.pattern}`)
   return [...keys.filter(k => !OPEN_ROWS.includes(k)).map(k => `${k} is open`), ...OPEN_ROWS.filter(k => !keys.includes(k)).map(k => `${k} is not open`)]
@@ -355,7 +357,7 @@ describe('the invariant checks catch a bad row', () => {
   it('open on GET /api/members, or health, drain or warm-up not open', () => {
     const members = rowFor(DESIGN_ROWS, 'GET', '/api/members')!
     expect(openProblems(DESIGN_ROWS.map(r => (r === members ? { ...r, class: 'open' as const } : r)))).toEqual(['GET /api/members is open'])
-    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open', 'POST /api/ops/drain is not open', 'GET /api/ops/drain is not open', 'DELETE /api/ops/drain is not open', 'POST /api/ops/warmup is not open'])
+    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open', 'POST /api/ops/drain is not open', 'GET /api/ops/drain is not open', 'DELETE /api/ops/drain is not open', 'POST /api/ops/warmup is not open', 'POST /api/ops/tasks/revive is not open'])
     expect(openProblems(DESIGN_ROWS)).toEqual([])
   })
   it('a route that shadows another: GET /api/members/:id beside GET /api/members/invites', () => {
@@ -479,7 +481,7 @@ describe('canRowsProblems', () => {
 describe('P3 auth: release, smoke and ownerObject', () => {
   const key = (r: AccessRow) => `${r.method} ${r.pattern}`
   /** The rows the release job may call, and the ones smoke may call, as section 3's table lists them. */
-  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup']
+  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive']
   const SMOKE_ROWS = [
     'GET /api/me', 'GET /api/settings/personal', 'GET /api/settings/brand',
     'GET /api/chats', 'POST /api/chats', 'GET /api/chats/:id', 'POST /api/chats/:id/turns', 'GET /api/runs/active', 'GET /api/socket', 'GET /api/models',

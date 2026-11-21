@@ -2,7 +2,7 @@
 // and answers what a test sets. Token checks go through a real `RunTokens` when one is given (W3's scope property runs
 // on the real tokens.ts), else through `grants`, a map from token hash to grant.
 import type {
-  Actor, AdmitAnswer, BrandAgentRpc, RunScope, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PoolHealth, Refusal, RunsHealth,
+  Actor, AdmitAnswer, BrandAgentRpc, DeferDecision, RunScope, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer, PoolHealth, Refusal, RunsHealth,
   SubmitTurn,
 } from '../ports.ts'
 import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from '../tokens.ts'
@@ -101,4 +101,12 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   async writeToolCall(turnId: string, n: number, entry: AuditEntry) { this.log('writeToolCall', turnId, n, entry) }
   async poke(p: { kind: string; id: string; dueAtMs?: number }) { this.log('poke', p) }
   async revive(p: { kind: string; id: string }) { this.log('revive', p); return this.reviveAnswer }
+  async resumeDeferred(chatId: string, decision: DeferDecision, questionId: string): Promise<SendTurnResult | Refusal> {
+    this.log('resumeDeferred', { chatId, decision, questionId })
+    return { refused: { code: 'not_found' } }
+  }
+  async personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> {
+    this.log('personData', p)
+    return { busy: true }
+  }
 }
