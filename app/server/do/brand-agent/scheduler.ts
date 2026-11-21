@@ -69,6 +69,10 @@ export interface AgentTasks {
   watch(turnId: string): Promise<TaskResult>
   advanceTask(runId: string): Promise<TaskResult>
   leaseTask(turnId: string): Promise<TaskResult>
+  /** The `authority-sweep` task (authority.ts). */
+  authoritySweep(): Promise<TaskResult>
+  /** A `grant-expiry:<grantId>` task, by its task id (authority.ts). */
+  grantExpiry(taskId: string): Promise<TaskResult>
 }
 
 /** What a handler gets: the BrandAgent's parts. */

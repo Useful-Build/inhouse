@@ -43,6 +43,8 @@ const RULE_TEXT = {
   'pool-no-container': 'containers must be exactly one, for the Runner class',
   // P3 (p3-design 8.2): the gateway the egress calls must be named.
   'gateway-id-empty': 'vars.AI_GATEWAY_ID must name the AI Gateway',
+  'sbx-name': 'config.name carries inhouse-sbx-',
+  'sbx-host': 'config.vars.INHOUSE_ACCESS carries inhouse-sbx-',
 }
 
 describe('check-product-config', () => {

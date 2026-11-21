@@ -90,11 +90,13 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   async getTrace(id: string, scope: RunScope): Promise<Trace | null> { this.log('getTrace', id, scope); return null }
   async onMemberRemoved(memberId: string) { this.log('onMemberRemoved', memberId) }
   async onGrantEnded(grantId: string) { this.log('onGrantEnded', grantId) }
+  async onGrantCreated(grantId: string, endsAtMs: number) { this.log('onGrantCreated', grantId, endsAtMs) }
   async containerExited(runner: string, gen: number) { this.log('containerExited', runner, gen) }
   async poolHealth() { this.log('poolHealth'); return this.poolHealthAnswer }
   async runsHealth() { this.log('runsHealth'); return this.runsHealthAnswer }
   async drain() { this.log('drain'); return this.drainAnswer }
   async drainState() { this.log('drainState'); return this.drainAnswer }
+  async undrain() { this.log('undrain'); return this.drainAnswer }
   async warmup() { this.log('warmup'); return ok }
   async writeToolCall(turnId: string, n: number, entry: AuditEntry) { this.log('writeToolCall', turnId, n, entry) }
   async poke(p: { kind: string; id: string; dueAtMs?: number }) { this.log('poke', p) }

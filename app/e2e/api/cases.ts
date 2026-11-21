@@ -85,7 +85,8 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/turns/:turnId/stop': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/stop', json: {}, passes: 404 },
   'GET /api/runs/active': { design: owned(ALL, ['smoke']), path: '/api/runs/active', passes: 200 },
   'GET /api/traces/:id': { design: owned(ALL), path: '/api/traces/r_e2e_nobody', passes: 404 },
-  'GET /api/socket': { design: owned(ALL, ['smoke']), path: '/api/socket?v=1', passes: STUB },
+  // Route 34 is built (W1 PR 4): the sweep sends a plain GET, which this route answers 400 (it only upgrades).
+  'GET /api/socket': { design: owned(ALL, ['smoke']), path: '/api/socket?v=1', passes: 400 },
   'GET /api/pause': { design: d('baseline', ALL), path: '/api/pause', passes: 200 },
   // Item 19 (2026-11-20): the Inhouse team pauses and resumes too (an audited emergency pause), with no grant.
   'POST /api/pause': { design: d('baseline', ['admin', 'inhouse']), path: '/api/pause', json: {}, passes: 200 },
@@ -99,11 +100,14 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/memory': { design: d('brand_data', ALL), path: '/api/memory', passes: 200 },
   'PUT /api/memory/personal/:id/forgotten': { design: d('personal', PEOPLE), path: `/api/memory/personal/${NO_MEMORY}/forgotten`, json: { forgotten: true, ifRev: 1 }, passes: 404 },
   'PUT /api/memory/brand/:id/forgotten': { design: d('brand_data', ['admin', 'inhouse']), path: `/api/memory/brand/${NO_MEMORY}/forgotten`, json: { forgotten: true, ifRev: 1 }, passes: 404 },
-  // Routes 46-48 are built (W2 #162). The drain POST really drains the test build's brand for 30 minutes, and each
-  // matrix or origin pass extends it: a spec that admits a real turn must run on a fresh server or call the test-build
-  // undrain (follow-up). Warm-up can't prove a runner with no containers, so it answers 503 `unavailable`.
+  // Routes 46-48 are built (W2 #162). The drain POST really drains the test build's brand for 30 minutes; the test
+  // build's undrain (route 50, DELETE: swept right after the GET that follows the POST, and matrix.spec's and
+  // origin.spec's afterAll) clears it, so later specs and the next run see an undrained pool. Warm-up can't prove a
+  // runner with no containers: 503 `unavailable`.
   'POST /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', json: {}, passes: 200 },
   'GET /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: 200 },
+  // Route 50, the test build's undrain (W2): 200 here (the test build); the product build answers 404 (server/ops/drain.test.ts).
+  'DELETE /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: 200 },
   'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: 503 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }

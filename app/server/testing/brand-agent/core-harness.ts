@@ -18,6 +18,10 @@ import type { RunTokens } from '../../do/brand-agent/tokens.ts'
 import { FakeFileLedger } from '../../do/brand-agent/testing/fake-files.ts'
 import { FakeRunnerPool } from '../../do/brand-agent/testing/fake-pool.ts'
 import { FakeUsageLedger } from '../../do/brand-agent/testing/fake-usage.ts'
+import { FakeSocket } from '../../do/brand-agent/testing/fake-socket.ts'
+import { SocketHub } from '../../do/brand-agent/sockets.ts'
+import type { OpenAnswer, SocketPrincipal } from '../../do/brand-agent/sockets.ts'
+import { SWEEP_EVERY_MS, sweepBy } from '../../do/brand-agent/authority.ts'
 
 /** Far past the wall clock, so the runtime never fires an alarm itself. */
 export const T0 = 4_102_444_800_000
@@ -66,6 +70,15 @@ export interface Harness {
   modelsOff: Set<string>
   /** The start's settings read throws while `throws` is set. */
   modelCheck: { throws: boolean }
+  /** The socket hub (PR 4), its sockets (kept across a restart, as hibernated sockets are) and its audit write. */
+  hub: SocketHub
+  sockets: FakeSocket[]
+  /** `support.attach` writes: each one's run id; `gate` holds the write open, `fails` makes it throw. */
+  attachAudit: { lines: string[]; gate: Promise<void> | null; fails: boolean }
+  /** Route 34's upgrade for this principal: the socket when accepted, else the answer. */
+  connect(p: SocketPrincipal, v?: string | null): { ws: FakeSocket | null; answer: OpenAnswer }
+  /** The browser sends a message on the socket (an attach is answered before this resolves). */
+  say(ws: FakeSocket, msg: unknown): Promise<void>
 }
 
 let objects = 0
@@ -73,8 +86,8 @@ export const MEMBER = 'm_owner'
 export const OTHER = 'm_other'
 
 /** `handlers`: kinds a test adds to the real registry (the scheduler runs them; `runs.submit` and the seeds see them). */
-export async function inAgent(fn: (h: Harness) => Promise<void>, opts: { handlers?: Readonly<Record<string, TaskHandler>> } = {}): Promise<void> {
-  const registry: Readonly<Record<string, TaskHandler>> = { ...taskHandlers, ...opts.handlers }
+export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: number; handlers?: Readonly<Record<string, TaskHandler>> } = {}): Promise<void> {
+  const registry: Readonly<Record<string, TaskHandler>> = { ...taskHandlers, ...o.handlers }
   const stub = env.BRAND_AGENT.getByName(`core-${++objects}-${Math.random()}`)
   await runInDurableObject(stub, async (_i, state) => {
     const sql = state.storage.sql
@@ -101,11 +114,14 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, opts: { handler
     let sessions = 0
     const modelsOff = new Set<string>()
     const modelCheck = { throws: false }
+    const sockets: FakeSocket[] = []
+    const attachAudit: Harness['attachAudit'] = { lines: [], gate: null, fails: false }
     const build = (): Harness => {
       createAgentTables(sql)
       const now = () => clock.now
       const tokens = createRunTokens(sql, now)
       let core!: AgentCore
+      let hub!: SocketHub
       const sched: SqlScheduler = createScheduler<TaskContext>({
         sql, alarm, now, handlers: registry,
         context: (nowMs): TaskContext => ({
@@ -113,7 +129,18 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, opts: { handler
           runs: { submit: t => internalSubmit(core, registry, t) },
         }),
       })
+      hub = new SocketHub({
+        sql, now, burst: o.burst,
+        sockets: () => sockets.filter(ws => !ws.gone),
+        auditAttach: async (_p, runId) => {
+          attachAudit.lines.push(runId)
+          if (attachAudit.gate) await attachAudit.gate
+          if (attachAudit.fails) throw new Error('audit write failed')
+        },
+        wakeBy: atMs => sweepBy(sql, sched, Math.min(atMs, now() + SWEEP_EVERY_MS)),
+      })
       core = new AgentCore({
+        onEvent: e => hub.onEvent(e), sockets: hub,
         sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: env.DB,
         taskSeeds: registrySeeds(registry),
         newSessionId: () => `00000000-0000-4000-8000-${String(++sessions).padStart(12, '0')}`,
@@ -123,7 +150,16 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, opts: { handler
         },
       })
       const h: Harness = {
-        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck, registry,
+        core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck, registry, hub, sockets, attachAudit,
+        connect(p, v = '1') {
+          const answer = hub.open(JSON.stringify(p), v)
+          if (!('accept' in answer)) return { ws: null, answer }
+          const ws = new FakeSocket(`ws-${sockets.length + 1}`)
+          sockets.push(ws)
+          hub.accepted(ws, answer.accept)
+          return { ws, answer }
+        },
+        say: (ws, msg) => hub.message(ws, JSON.stringify(msg)),
         restart: () => { const n = build(); n.core.ensureSeeds(); return n },
         async tick(ms) {
           clock.now += ms
