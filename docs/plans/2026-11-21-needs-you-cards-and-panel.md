@@ -40,7 +40,9 @@ disagree, this spec wins.**
   `bg-destructive` (the sample data's `b23c22`); add an `isUrgent(sev)` helper next to `sevClass` in
   `app/src/ui/severity.ts`. Urgent problems get a red **Urgent** pill that leads the card's label. Anything else
   gets no marker: with two levels, no pill already means "not urgent". The dot inside a tinted pill said the same
-  thing three times and read as a template. `sevClass` stays for any other screen that uses it.
+  thing three times and read as a template. Keep `sevClass` as `isUrgent`'s source (these three components are its
+  only callers today) and drop the `Dot` imports that become unused. Approved and handled cards show no Urgent pill:
+  they no longer need anyone, and they stay muted.
 - **On Today, the draft is part of the card.** Each card shows the problem, then the drafted fix on a faint
   brand-tint sheet. In this app the brand blue means "your agent", so the tint marks the agent's work.
 - **Approvals keeps one card per item in a single column**, its current structure, with the same parts as Today.
@@ -61,7 +63,8 @@ Use existing tokens and components. Three new app tokens are needed. Register ea
 | `--app-draft-kind` | `#ffffff` | `#2a2c3c` | The small kind-icon tile on the draft sheet (with a 1px `border-border` edge) |
 | `--app-grid-cards-wide` | `repeat(auto-fill, minmax(min(420px, 100%), 1fr))` | same | The two-column Today grid, as a new `CardGrid` size `wide` in `app/src/ui/page.tsx` (`grid-cols-cards-wide`) |
 
-At Today's `page-wide` width (1000px) `wide` gives two columns, and one column on a phone.
+At Today's `page-wide` width (1000px) `wide` gives two columns, and one column on a phone. A desktop window whose
+content area is narrower than about 900px also gets one column: that's accepted, no extra breakpoint.
 
 Existing tokens and parts, mapped from the mockups:
 
@@ -216,7 +219,9 @@ the mock agent, all optional, with fallbacks so the UI ships without them:
 | `draft.items` (structured PO lines) | Olive, 400, $16, $6,400 | Render `lines` as key/value rows |
 
 The risk text these components show comes from a **new helper**, `riskLabel(dv)` in `app/src/state/derive.ts`:
-"Spends {amount}" for a spend, "Claims {amount}" for a claim, "Goes to customers", or null for low risk. Leave
+"Spends {amount}" for a spend, "Claims {amount}" for a claim, "Goes to customers", or null for low risk. A draft
+that isn't low risk but has none of those keeps today's "Needs review" tag on Approvals. Until PR 2 adds the
+direction, the payout draft still reads "Spends money". Leave
 `waitsLabel` as it is: the Activity row text reads it (`derive.ts`, the "Nothing has gone out…" line), and Activity
 is out of scope.
 
