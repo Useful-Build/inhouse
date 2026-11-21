@@ -18,6 +18,7 @@ import { ModelModeSchema } from '../../../shared/contract/model'
 import { CreateChatInputSchema } from '../../../shared/contract/requests'
 import { ActiveRunsSchema, ChatEventSchema, PauseStateSchema, SendTurnInputSchema, SendTurnResultSchema, SocketServerMsgSchema, acceptsChatVersion } from '../../../shared/contract/runs'
 import { TraceSchema } from '../../../shared/contract/trace'
+import { ToolConnectResultSchema, ToolDisconnectResultSchema, ToolPausedInputSchema, ToolPausedResultSchema, ToolsDataSchema } from '../../../shared/contract/tools'
 
 /** What each route answers with. */
 export const ANSWERS = {
@@ -29,6 +30,8 @@ export const ANSWERS = {
   chatList: ChatListSchema, chatPage: ChatPageSchema, chat: ChatSummarySchema, chatItems: z.object({ items: z.array(ChatSummarySchema) }),
   chatFile: UploadResultSchema, sendTurn: SendTurnResultSchema, ack: z.looseObject({}), activeRuns: ActiveRunsSchema, trace: TraceSchema, pause: PauseStateSchema,
   models: z.object({ default: z.string().nullable(), modes: z.array(ModelModeSchema) }),
+  // P5 (W3): the Tools page, routes C to E and W1's connect start.
+  tools: ToolsDataSchema, toolPaused: ToolPausedResultSchema, toolDisconnect: ToolDisconnectResultSchema, toolConnect: ToolConnectResultSchema,
 }
 
 /** What each write sends. */
@@ -37,6 +40,7 @@ export const BODIES = {
   grantEnd: GrantEndInputSchema, settingWrite: SettingWriteInputSchema,
   memoryForget: MemoryForgetInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
+  toolPaused: ToolPausedInputSchema,
 }
 
 /** What the socket sends the browser and the events inside its frames; `accepts` is whether this build reads a frame's version. */
