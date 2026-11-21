@@ -140,8 +140,8 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`, `app/server/auth/**` (auth), `app/server/migrations/` (the D1
-  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops), `app/hub/{signin,crypto,scope,testing}/` (the hub's sign-in, key handling, scopes and
-  test seam), `app/wrangler.hub.jsonc` and `app/wrangler.hub.test.jsonc` (hub Worker config) and the `check-hub-*`
+  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops), `app/hub/{signin,crypto,scope,testing}/` (P4, not built yet: the hub's sign-in, key handling, scopes and
+  test seam), `app/wrangler.hub.jsonc` and `app/wrangler.hub.test.jsonc` (P4, not built yet: hub Worker config) and the `check-hub-*`
   scripts in `app/scripts/` (`check-hub-build.mjs`, `check-hub-config.mjs` and their fixtures).
 - **The product Worker (P2).** `app/server/` is the product Worker (entry `server/index.ts`): every `/api/*` request is
   authenticated (Access JWT), then the `Origin` check, the route (`server/routes.ts`), its row in
