@@ -80,7 +80,9 @@
 //   - a name or host isn't exactly the eval deployment's (scripts/sandbox/names.mjs `evalNames()`: `inhouse-sbx-eval`,
 //     `-db`, `-files`, and hosts `-brand`, `-team` on SBX_ZONE), which no PR and not the candidate can carry;
 //   - `ai` isn't exactly `{ binding: <name> }`, or vars.AI_GATEWAY_ID isn't a gateway id;
-//   - vars.INHOUSE_TEST_BUILD or vars.INHOUSE_EVAL_BRAND isn't "1", or INHOUSE_ACCESS lists no app origins.
+//   - vars.INHOUSE_TEST_BUILD or vars.INHOUSE_EVAL_BRAND isn't "1", or INHOUSE_ACCESS lists no app origins;
+//   - `version_metadata` has no `binding` name (the eval build's version signal, like the test build's, reads green
+//     without one, so the deployment must carry it).
 // The generic product, per-PR and candidate rules are unchanged by it; checkPool's "no gateway on a test build" rule is
 // the one it lifts.
 import { existsSync, readFileSync } from 'node:fs'
@@ -477,6 +479,10 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in the eval deployment (the harness signs in through the test issuer)')
     if (config.vars?.INHOUSE_EVAL_BRAND !== '1') fail('vars.INHOUSE_EVAL_BRAND must be "1" in the eval deployment (the eval brand marker)')
     if (accessOrigins(config).length === 0) fail('vars.INHOUSE_ACCESS must list the eval hosts as its app origins')
+    // The eval build's version signal, like the test build's, reads green without version metadata (the test issuer is
+    // compiled in), so its deployment must carry the binding to report which version answers.
+    const vm = config.version_metadata
+    if (typeof vm?.binding !== 'string' || !vm.binding) fail('version_metadata needs a binding name in the eval deployment (its version signal would read green without one)')
   } else {
     for (const f of productRules(config)) if (!failures.includes(f)) fail(f)
   }

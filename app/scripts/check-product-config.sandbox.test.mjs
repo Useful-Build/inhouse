@@ -345,6 +345,10 @@ const EVAL_CASES = [
   ['the marker off', c => { c.vars.INHOUSE_EVAL_BRAND = 'true' }, 'vars.INHOUSE_EVAL_BRAND must be "1" in the eval deployment'],
   ['no test flag', c => { delete c.vars.INHOUSE_TEST_BUILD }, 'vars.INHOUSE_TEST_BUILD must be "1" in the eval deployment'],
   ['no INHOUSE_ACCESS', c => { delete c.vars.INHOUSE_ACCESS }, 'vars.INHOUSE_ACCESS must list the eval hosts as its app origins'],
+  // #236 review O2: the eval build reads green without version metadata (as the test build may), so its deployment must
+  // carry the binding.
+  ['no version metadata', c => { delete c.version_metadata }, 'version_metadata needs a binding name in the eval deployment'],
+  ['version metadata without a binding', c => { c.version_metadata = {} }, 'version_metadata needs a binding name in the eval deployment'],
   // The sandbox's own rules hold in eval mode too.
   ['another account', c => { c.account_id = 'fedcba9876543210fedcba9876543210' }, 'account_id is missing or is not the sandbox account'],
   ['3 containers', c => { c.containers[0].max_instances = 3 }, 'containers[0].max_instances must be 1 or 2'],
