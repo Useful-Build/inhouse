@@ -7,7 +7,6 @@
 //     once per accepted outcome, or a `state_invalid` writes anything;
 //  4. a forged state prefix changes anything but the redirect path;
 //  5. a row change lands without its audit line, or a line without its change (one batch).
-import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { AccountSummary, HubErrorCode, HubResult } from '../../hub/index/contract.ts'
@@ -131,23 +130,83 @@ describe('route B (failures 2 to 4)', () => {
     expect(JSON.stringify(await linesSince(db, 0))).not.toContain('access_denied')
   })
 
-  const outcomes: HubErrorCode[] = ['scope_mismatch', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'upstream_unavailable', 'rate_limited', 'internal']
-  test.prop([fc.constantFrom(...outcomes), fc.constantFrom('failed' as const, 'disconnected' as const, 'active' as const, 'empty' as const)], { numRuns: 20 })(
-    'an accepted state that failed: one row change and one line, never connecting, a closed-list code',
-    async (code, hubState) => {
-      await db.prepare('DELETE FROM connector_accounts').run()
-      const p = await inhouse()
-      const { hub } = fakeHub({ complete: { ok: false, error: { code, message: 'ignored upstream words' } }, state: hubState })
-      await start(p, hub)
-      const before = await lastLineId(db)
-      const res = await callback(p, hub, `code=c&state=${STATE}`)
-      expect(res.headers.get('Location')).toBe(`/tools/slack?connect_error=${code}`)
-      const expected = { active: 'connected', failed: 'failed', disconnected: 'disconnected', empty: 'never' }[hubState]
-      expect(await row()).toMatchObject({ last_state: expected, rev: 2 })
-      const lines = await linesSince(db, before)
-      expect(lines.map(l => JSON.parse(l.args_json))).toEqual([{ accountId: SLACK, outcome: code }])
-    },
-  )
+  // Review fold (#251): every accepted-state failure against every hub state, in a plain loop (7 x 4). `internal` is
+  // not among them: it doesn't prove the hub took the state, so it writes nothing (next test).
+  const accepted: HubErrorCode[] = ['scope_mismatch', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'upstream_unavailable', 'rate_limited', 'not_configured']
+  const states = ['failed', 'disconnected', 'active', 'empty'] as const
+  it('an accepted state that failed: one row change and one line, never connecting, a closed-list code (7 x 4)', async () => {
+    for (const code of accepted) {
+      for (const hubState of states) {
+        await db.prepare('DELETE FROM connector_accounts').run()
+        const p = await inhouse()
+        const { hub } = fakeHub({ complete: { ok: false, error: { code, message: 'ignored upstream words' } }, state: hubState })
+        await start(p, hub)
+        const before = await lastLineId(db)
+        const res = await callback(p, hub, `code=c&state=${STATE}`)
+        const at = `${code} with the hub ${hubState}`
+        expect(res.headers.get('Location'), at).toBe(`/tools/slack?connect_error=${code}`)
+        const expected = { active: 'connected', failed: 'failed', disconnected: 'disconnected', empty: 'never' }[hubState]
+        expect(await row(), at).toMatchObject({ last_state: expected, rev: 2 })
+        const lines = await linesSince(db, before)
+        expect(lines.map(l => JSON.parse(l.args_json)), at).toEqual([{ accountId: SLACK, outcome: code }])
+      }
+    }
+  })
+
+  it("the hub's internal, invalid_args and state_invalid answers write nothing, for a real or a forged prefix", async () => {
+    for (const code of ['internal', 'invalid_args', 'state_invalid'] as const) {
+      for (const state of [STATE, FORGED]) {
+        await db.prepare('DELETE FROM connector_accounts').run()
+        const p = await inhouse()
+        const { hub } = fakeHub({ complete: { ok: false, error: { code, message: 'x' } } })
+        const before = await lastLineId(db)
+        const res = await callback(p, hub, `code=c&state=${state}`)
+        expect(res.status).toBe(303)
+        expect(res.headers.get('Location')).toBe(`/tools/${state === STATE ? 'slack' : 'shopify'}?connect_error=${code}`)
+        expect(await db.prepare('SELECT COUNT(*) AS n FROM connector_accounts').first<number>('n'), `${code} ${state}`).toBe(0)
+        expect(await linesSince(db, before)).toEqual([])
+      }
+    }
+  })
+
+  it('a thrown completeConnect or failConnect still redirects (connect_error=internal) and writes nothing', async () => {
+    const p = await inhouse()
+    const { hub } = fakeHub()
+    const throwing: ConnectBinding = {
+      ...hub,
+      completeConnect: async () => {
+        throw new Error('rpc lost')
+      },
+      failConnect: async () => {
+        throw new Error('rpc lost')
+      },
+    }
+    const before = await lastLineId(db)
+    for (const q of [`code=c&state=${STATE}`, `error=access_denied&state=${STATE}`]) {
+      const res = await callback(p, throwing, q)
+      expect(res.status).toBe(303)
+      expect(res.headers.get('Location')).toBe('/tools/slack?connect_error=internal')
+    }
+    expect(await row()).toBeNull()
+    expect(await linesSince(db, before)).toEqual([])
+  })
+
+  it('a thrown listAccounts after an accepted failure records failed: the row and its line land, the redirect happens', async () => {
+    const p = await inhouse()
+    const { hub } = fakeHub({ complete: { ok: false, error: { code: 'scope_mismatch', message: 'x' } } })
+    await start(p, hub)
+    const throwing: ConnectBinding = {
+      ...hub,
+      listAccounts: async () => {
+        throw new Error('rpc lost')
+      },
+    }
+    const before = await lastLineId(db)
+    const res = await callback(p, throwing, `code=c&state=${STATE}`)
+    expect(res.headers.get('Location')).toBe('/tools/slack?connect_error=scope_mismatch')
+    expect(await row()).toMatchObject({ last_state: 'failed', rev: 2 })
+    expect((await linesSince(db, before)).map(l => JSON.parse(l.args_json))).toEqual([{ accountId: SLACK, outcome: 'scope_mismatch' }])
+  })
 
   it('a state the hub refuses writes nothing; an unreadable prefix redirects to /tools', async () => {
     const p = await inhouse()

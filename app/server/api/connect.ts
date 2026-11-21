@@ -83,9 +83,20 @@ export function stateAccountHint(state: string | null): string | null {
   }
 }
 
-/** The hub's state for an account as the row's `last_state` (`listAccounts`); `failed` when the hub can't say. */
+/** Hub answers that don't prove the state was accepted, so the unverified prefix never becomes a D1 key on them. */
+const UNPROVEN: ReadonlySet<ConnectOutcome> = new Set(['state_invalid', 'invalid_args', 'internal'])
+
+/**
+ * The hub's state for an account as the row's `last_state` (`listAccounts`); `failed` when the hub can't say, a thrown
+ * call included, so the row and its line still land and the browser still gets its redirect.
+ */
 async function hubLastState(c: ConnectCtx, accountId: string): Promise<Exclude<ConnectorLastState, 'connecting'>> {
-  const rows = await gateway(c).listAccounts(scope(c))
+  let rows: Awaited<ReturnType<ConnectBinding['listAccounts']>>
+  try {
+    rows = await gateway(c).listAccounts(scope(c))
+  } catch {
+    return 'failed'
+  }
   const row = rows.ok ? rows.value.find(r => r.accountId === accountId) : undefined
   if (!row) return 'failed'
   return ({ active: 'connected', failed: 'failed', disconnected: 'disconnected', empty: 'never' } as const)[row.status.state]
@@ -113,20 +124,27 @@ export async function connectCallback(c: ConnectCtx): Promise<Response> {
 
   let outcome: ConnectOutcome
   let confirmed: string | null = null
-  if (error !== null) {
-    const r = await hub.failConnect(scope(c), { state: state ?? '', memberId, error: error.slice(0, 512) })
-    if (r.ok && r.value.accountId) {
-      outcome = 'connect_refused'
-      confirmed = r.value.accountId
-    } else outcome = r.ok ? 'state_invalid' : asOutcome(r.error.code)
-  } else if (!state || !code) {
-    outcome = 'state_invalid'
-  } else {
-    const r = await hub.completeConnect(scope(c), { state, code, memberId })
-    outcome = r.ok ? 'ok' : asOutcome(r.error.code)
-    if (r.ok) confirmed = r.value.accountId
-    // Any answer but these means the hub took the state's item, which names the prefix's account.
-    else if (outcome !== 'state_invalid' && outcome !== 'invalid_args') confirmed = stateAccountHint(state)
+  try {
+    if (error !== null) {
+      const r = await hub.failConnect(scope(c), { state: state ?? '', memberId, error: error.slice(0, 512) })
+      if (r.ok && r.value.accountId) {
+        outcome = 'connect_refused'
+        confirmed = r.value.accountId
+      } else outcome = r.ok ? 'state_invalid' : asOutcome(r.error.code)
+    } else if (!state || !code) {
+      outcome = 'state_invalid'
+    } else {
+      const r = await hub.completeConnect(scope(c), { state, code, memberId })
+      outcome = r.ok ? 'ok' : asOutcome(r.error.code)
+      if (r.ok) confirmed = r.value.accountId
+      // Only an answer that proves the hub took the state's item (which names the prefix's account) makes the prefix
+      // a write key. `state_invalid`, `invalid_args` and `internal` prove nothing: a forged state could produce them.
+      else if (!UNPROVEN.has(outcome)) confirmed = stateAccountHint(state)
+    }
+  } catch {
+    // A thrown RPC (the hub unreachable mid-call): the browser still gets a redirect, never a 500 page. Nothing written.
+    outcome = 'internal'
+    confirmed = null
   }
 
   if (confirmed) {

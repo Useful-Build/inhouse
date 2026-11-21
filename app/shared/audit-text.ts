@@ -109,11 +109,6 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'support.attach': return { what: 'watched a live answer', detail: '' }
     case 'memory.forgotten': return { what: 'forgot a team memory', detail: '' }
     case 'memory.restored': return { what: 'brought back a team memory', detail: 'It waits for an admin’s OK' }
-    case 'tools.connect_start': return { what: 'started connecting a tool', detail: connectorName(args.accountId) }
-    case 'tools.connect':
-      return args.outcome === 'ok'
-        ? { what: 'connected a tool', detail: connectorName(args.accountId) }
-        : { what: 'couldn’t connect a tool', detail: `${connectorName(args.accountId)}: ${CONNECT_FAILED[args.outcome] ?? args.outcome}` }
     case 'ops_task_revive': return { what: 'restarted a stuck background task', detail: `${args.kind}: ${REVIVE[args.result]} (release job)` }
     // P4 (wave-4 PR0). Never a routine name, an instruction, a file name or an item title: the line holds none.
     case 'routine.created': return { what: 'set up a routine', detail: `Needs the ${NEED[args.need]} stage` }
@@ -126,5 +121,11 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'library.deleted': return { what: 'deleted Library files', detail: files(args.fileIds.length) }
     case 'library.restored': return { what: 'brought back Library files', detail: files(args.fileIds.length) }
     case 'today.set_aside': return args.reason === null ? { what: 'put back an item on Today', detail: '' } : { what: SET_ASIDE[args.reason], detail: '' }
+    // P5 (p5-w1)
+    case 'tools.connect_start': return { what: 'started connecting a tool', detail: connectorName(args.accountId) }
+    case 'tools.connect':
+      return args.outcome === 'ok'
+        ? { what: 'connected a tool', detail: connectorName(args.accountId) }
+        : { what: 'couldn’t connect a tool', detail: `${connectorName(args.accountId)}: ${CONNECT_FAILED[args.outcome] ?? args.outcome}` }
   }
 }

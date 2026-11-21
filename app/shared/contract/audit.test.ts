@@ -7,7 +7,8 @@
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { AuditActionSchema, AuditArgsSchema, LibraryTypeSchema } from './audit.ts'
-import type { AuditAction, AuditArgs } from './audit.ts'
+import type { AuditAction, AuditArgs, ConnectOutcome } from './audit.ts'
+import type { HubErrorCode } from '../../hub/index/contract.ts'
 import { settingSpec } from './settings.ts'
 import { FILE_CAPS } from '../../server/files-io/caps.ts'
 import { INHOUSE_BRAND_WRITES } from '../../server/testing/inhouse-brand-writes.ts'
@@ -334,4 +335,12 @@ describe('P5 (p5-w1): connect lines carry an account id and a closed outcome onl
     expect(ok({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok', code: 'abc' })).toBe(false)
     expect(ok({ action: 'tools.connect_start', accountId: 'slack:workspace', memberId: m, email: 'a@example.com' })).toBe(false)
   })
+})
+
+// Review fold (#251): ConnectOutcomeSchema is the hub's HubErrorCode plus `ok`, both ways, so a new hub code can't
+// silently become `internal` at route B. A type check: tsc fails here on any drift.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const outcomesAreHubCodes: Same<Exclude<ConnectOutcome, 'ok'>, HubErrorCode> = true
+describe('P5 (p5-w1): ConnectOutcomeSchema and HubErrorCode', () => {
+  it('match both ways (checked by the type above)', () => expect(outcomesAreHubCodes).toBe(true))
 })
