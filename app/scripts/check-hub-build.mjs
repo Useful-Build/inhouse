@@ -112,8 +112,17 @@ function open(dir, label) {
 }
 
 // ---------- the two parts: each returns what it found ----------
-/** 1. A canary in any output file (the script, its source map, anything else wrangler wrote). */
-const canary = value => ({ files }) => files.filter(f => read(f).includes(value)).map(f => `"${value}" in ${relative(root, f)}`)
+/**
+ * 1. A canary in any output file (the script, its source map, anything else wrangler wrote). Each file is read once and
+ * kept for every canary: re-reading the multi-MB bundle and map once per canary made node 26.13.1 hang at exit (a
+ * worker thread never joined, about 3 runs in 4), so the scan allocates each file's text one time.
+ */
+const texts = new Map()
+const textOf = f => {
+  if (!texts.has(f)) texts.set(f, read(f))
+  return texts.get(f)
+}
+const canary = value => ({ files }) => files.filter(f => textOf(f).includes(value)).map(f => `"${value}" in ${relative(root, f)}`)
 
 /**
  * 2. Forbidden modules in the metafile's inputs: an input counts when it resolves, from app/ or app/hub/, into a
