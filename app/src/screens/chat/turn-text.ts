@@ -6,7 +6,7 @@ import type { StoredMessage } from '../../../shared/contract/chats'
 import type { ChatMessage } from '../../agent/types'
 import { CANCEL, FAIL, NOTICE } from '../../../shared/contract/chat-codes'
 import { ATTACHMENT_NAME_TOO_LONG, MODEL_OFF_FAILED, MODEL_OFF_REFUSED, NOTICE_TEXT, RUN_FAILED, STOPPED_NOTE } from './notes'
-import { RATE_LIMITED, REASON } from '../../../shared/contract/error-codes'
+import { FILE_REFUSAL, RATE_LIMITED, REASON } from '../../../shared/contract/error-codes'
 
 /** Why a failed turn failed, in the person's words. */
 export const FAILURE_TEXT: Record<TurnFailure, string> = {
@@ -31,11 +31,11 @@ export const FAILURE_TEXT: Record<TurnFailure, string> = {
 export function fileRefusedText(name: string, reason: FileRefusalReason): string {
   const made = `Your Inhouse agent made ${name}, but`
   switch (reason) {
-    case 'too_large': return `${made} it wasn't saved because it's too big.`
-    case 'too_many': return `${made} it wasn't saved because this answer made too many files.`
-    case 'type_not_allowed': return `${made} it wasn't saved because your team doesn't allow that type of file.`
-    case 'save_failed': return `${made} it couldn't be saved. Ask again to try once more.`
-    case 'bad_name': return `${made} it wasn't saved because its name can't be used.`
+    case FILE_REFUSAL.tooLarge: return `${made} it wasn't saved because it's too big.`
+    case FILE_REFUSAL.tooMany: return `${made} it wasn't saved because this answer made too many files.`
+    case FILE_REFUSAL.typeNotAllowed: return `${made} it wasn't saved because your team doesn't allow that type of file.`
+    case FILE_REFUSAL.saveFailed: return `${made} it couldn't be saved. Ask again to try once more.`
+    case FILE_REFUSAL.badName: return `${made} it wasn't saved because its name can't be used.`
   }
 }
 
