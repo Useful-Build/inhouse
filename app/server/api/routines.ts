@@ -5,7 +5,7 @@
 import { RoutineIdSchema } from '../../shared/contract/audit.ts'
 import type { AgentErrorCode, Instant } from '../../shared/contract/common.ts'
 import type { RoutineDef, RoutineRun } from '../../shared/contract/routine.ts'
-import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutinesListSchema } from '../../shared/contract/routines.ts'
+import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../shared/contract/routines.ts'
 import { readBody, storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
@@ -13,9 +13,10 @@ import { apiError, apiJson } from '../http.ts'
 import type { HandlerContext } from '../routes.ts'
 import { freqAndDay } from '../routines/schedule.ts'
 import { nextSlot } from '../routines/slots.ts'
-import type { At, ListedRoutine, WriteOutcome } from '../routines/store.ts'
+import type { At, ListedOutcome, ListedRoutine } from '../routines/store.ts'
 import { resultWords } from '../routines/store.ts'
-import type { RoutineRow, SlotRow } from '../routines/rows.ts'
+import type { SlotRow } from '../routines/rows.ts'
+import { systemDescription } from '../routines/prompts.ts'
 
 /** How far ahead `next` looks: every schedule has a day within a week. */
 const NEXT_WITHIN_MS = 8 * 86_400_000
@@ -40,8 +41,8 @@ export function routineDef(r: ListedRoutine, tz: string, viewer: Viewer, nowMs: 
   return {
     id: r.id,
     name: r.name,
-    // The instruction's first 200 characters (a system routine's is ours).
-    what: r.instruction.slice(0, 200),
+    // A team routine's instruction, its first 200 characters; a system routine's fixed description (section 9).
+    what: r.origin === 'system' ? systemDescription(r.prompt_ref) : r.instruction.slice(0, 200),
     ...freqAndDay(r.days_mask),
     time: { hour: r.hour, minute: r.minute },
     next: instant(next.dueAtMs),
@@ -63,7 +64,10 @@ async function zoneOf(c: ApiCtx): Promise<string | Response> {
   return typeof tz === 'string' ? tz : apiError('unavailable')
 }
 
-const atOf = (c: ApiCtx): At => ({ ...writer(c), ...(c.principal.kind === 'inhouse' ? { inhouse: true as const } : {}) })
+const atOf = (c: ApiCtx): At => {
+  const p = c.principal
+  return { ...writer(c), ...(p.kind === 'inhouse' && p.grant ? { inhouseGrant: p.grant.id } : {}) }
+}
 
 /** Asks the tick to look now. A failure is logged and left: the heartbeat (at most 5 minutes) picks the write up. */
 async function poke(c: HandlerContext): Promise<void> {
@@ -76,15 +80,11 @@ async function poke(c: HandlerContext): Promise<void> {
 
 const routineIdOf = (c: ApiCtx): string | null => (RoutineIdSchema.safeParse(c.params.id).success ? c.params.id : null)
 
-/** A write's answer: the routine as it is now, its current copy on a stale `ifRev`, 404 or 403. */
-function answerWrite(o: WriteOutcome, tz: string, viewer: Viewer, nowMs: number): Response {
-  const def = (r: Parameters<typeof routineDef>[0]) => routineDef(r, tz, viewer, nowMs)
-  // A written row carries no last slot's fields; `last` comes back with the next list read.
-  const asListed = (r: RoutineRow): ListedRoutine => ({
-    ...r, last_state: null, last_ended_at_ms: null, last_result_text: null, last_failure: null, last_outcome: null, last_reason: null,
-  })
-  if ('ok' in o) return apiJson(def(asListed(o.ok)))
-  if ('conflict' in o) return apiError('conflict', { current: def(asListed(o.conflict)) })
+/** A write's answer: the routine as it is now and its switch (`RoutineState`), its current copy on a stale `ifRev`, 404 or 403. */
+function answerWrite(o: ListedOutcome, tz: string, viewer: Viewer, nowMs: number): Response {
+  const state = (r: ListedRoutine) => RoutineStateSchema.parse({ routine: routineDef(r, tz, viewer, nowMs), enabled: r.enabled === 1 })
+  if ('ok' in o) return apiJson(state(o.ok))
+  if ('conflict' in o) return apiError('conflict', { current: state(o.conflict) })
   if (o.refused === 'not_found') return apiError('not_found')
   return apiError('forbidden', { reason: 'not_owner' })
 }

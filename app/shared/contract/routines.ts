@@ -20,7 +20,14 @@ export const RoutinesListSchema = z.strictObject({
 })
 export type RoutinesList = z.infer<typeof RoutinesListSchema>
 
-/** Route 53, `PUT /api/routines/:id/enabled`: on or off, against the routine's `rev`. Answers the routine. */
+/**
+ * What routes 53, 55 and 56 answer (and a 409's `current`): the routine as it is now, and whether it's switched on (so a
+ * refused switch can show the server's value).
+ */
+export const RoutineStateSchema = z.strictObject({ routine: RoutineDefSchema, enabled: z.boolean() })
+export type RoutineState = z.infer<typeof RoutineStateSchema>
+
+/** Route 53, `PUT /api/routines/:id/enabled`: on or off, against the routine's `rev`. Answers `RoutineState`. */
 export const RoutineEnabledInputSchema = z.strictObject({ on: z.boolean(), ifRev: z.number().int().min(1) })
 export type RoutineEnabledInput = z.infer<typeof RoutineEnabledInputSchema>
 
@@ -29,6 +36,6 @@ export const RoutineRunInputSchema = z.strictObject({ clientKey: z.string().rege
 export type RoutineRunInput = z.infer<typeof RoutineRunInputSchema>
 export const RoutineRunAnswerSchema = RoutineRunSchema
 
-/** Routes 55 and 56, `POST /api/routines/:id/delete` and `/restore`: against the routine's `rev`. Answer the routine. */
+/** Routes 55 and 56, `POST /api/routines/:id/delete` and `/restore`: against the routine's `rev`. Answer `RoutineState`. */
 export const RoutineRevInputSchema = z.strictObject({ ifRev: z.number().int().min(1) })
 export type RoutineRevInput = z.infer<typeof RoutineRevInputSchema>

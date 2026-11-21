@@ -14,8 +14,7 @@ import { NotificationsListSchema, NotificationsReadInputSchema } from '../../../
 import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
 import { UsageDataSchema } from '../../../shared/contract/usage'
-import { RoutineDefSchema } from '../../../shared/contract/routine'
-import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutinesListSchema } from '../../../shared/contract/routines'
+import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../../shared/contract/routines'
 import { z } from 'zod'
 import { ChatIdsInputSchema, ChatListSchema, ChatPageSchema, ChatPinInputSchema, ChatRenameInputSchema, ChatSummarySchema } from '../../../shared/contract/chats'
 import { ModelModeSchema } from '../../../shared/contract/model'
@@ -36,7 +35,7 @@ export const ANSWERS = {
   // P4 (W4): Activity (route 59) and the bell (route 60; route 61 answers `ack`).
   activityPage: ActivityPageSchema, notifications: NotificationsListSchema,
   // P4 (W2): the Routines page (routes 52 to 56).
-  routines: RoutinesListSchema, routine: RoutineDefSchema, routineRun: RoutineRunAnswerSchema,
+  routines: RoutinesListSchema, routineState: RoutineStateSchema, routineRun: RoutineRunAnswerSchema,
 }
 
 /** What each write sends. */

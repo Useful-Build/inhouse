@@ -21,8 +21,11 @@ export interface At {
   actorId: string
   requestId: string
   nowMs: number
-  /** The Inhouse team under a live grant (the matrix checked it): may change any routine (OC 5). */
-  inhouse?: true
+  /**
+   * The Inhouse team's grant id: Inhouse may change any routine (OC 5) while that grant is live, checked again inside the
+   * write's statement (the matrix's check ran before the handler, and a grant can end in between).
+   */
+  inhouseGrant?: string
 }
 
 type Gate = { sql: string; params: (string | number)[] }
@@ -46,8 +49,10 @@ const personLine = (db: D1Database, template: ActivityTemplateId, at: At, key: s
   recordActivity(db, { template, fields: {}, kind: 'change', actorId: at.actorId, atMs: at.nowMs }, { source: 'routine', key }, guard)
 
 /** The Inhouse team under a grant, the creator, or an active Admin, inside the statement. Params: `manageParams(at)`. */
-const MAY_MANAGE = "(? = 1 OR creator_id = ? OR EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active'))"
-const manageParams = (at: At): (string | number)[] => [at.inhouse ? 1 : 0, at.actorId, at.actorId]
+const MAY_MANAGE = `(EXISTS (SELECT 1 FROM support_grants WHERE id = ? AND ended_at_ms IS NULL AND ends_at_ms > ?) OR creator_id = ?
+  OR EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active'))`
+/** No grant names the empty id, so a person's write never passes the grant arm. */
+const manageParams = (at: At): (string | number)[] => [at.inhouseGrant ?? '', at.nowMs, at.actorId, at.actorId]
 
 /** The row a write's `RETURNING *` gave back: no read after the commit, so a committed write never answers an error. */
 function written(r: D1Result, what: string): RoutineRow {
@@ -59,9 +64,12 @@ function written(r: D1Result, what: string): RoutineRow {
 export const readRoutine = (db: D1Database, id: string): Promise<RoutineRow | null> =>
   db.prepare('SELECT * FROM routines WHERE id = ?').bind(id).first<RoutineRow>()
 
-export async function mayManage(db: D1Database, r: RoutineRow, memberId: string, inhouse = false): Promise<boolean> {
-  if (inhouse || r.creator_id === memberId) return true
-  return (await db.prepare("SELECT 1 AS ok FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active'").bind(memberId).first()) !== null
+export async function mayManage(db: D1Database, r: RoutineRow, at: Pick<At, 'actorId' | 'inhouseGrant' | 'nowMs'>): Promise<boolean> {
+  if (r.creator_id === at.actorId) return true
+  return (await db.prepare(
+    `SELECT 1 AS ok WHERE EXISTS (SELECT 1 FROM support_grants WHERE id = ? AND ended_at_ms IS NULL AND ends_at_ms > ?)
+      OR EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active')`,
+  ).bind(at.inhouseGrant ?? '', at.nowMs, at.actorId).first()) !== null
 }
 
 export type WriteOutcome = { ok: RoutineRow } | { conflict: RoutineRow } | { refused: 'not_found' | 'not_allowed' | 'stage' }
@@ -71,7 +79,7 @@ async function whyNot(db: D1Database, id: string, ifRev: number, at: At, deleted
   const now = await readRoutine(db, id)
   if (!now || (deleted === 'live') !== (now.deleted_at_ms === null)) return { refused: 'not_found' }
   if (now.rev !== ifRev) return { conflict: now }
-  return (await mayManage(db, now, at.actorId, at.inhouse)) ? { conflict: now } : { refused: 'not_allowed' }
+  return (await mayManage(db, now, at)) ? { conflict: now } : { refused: 'not_allowed' }
 }
 
 export interface NewRoutine {
@@ -129,7 +137,7 @@ export async function updateRoutine(db: D1Database, id: string, ifRev: number, p
   const enabledChanged = next.enabled !== r.enabled
   if (changed.length === 0 && !enabledChanged) {
     if (r.rev !== ifRev) return { conflict: r }
-    return (await mayManage(db, r, at.actorId, at.inhouse)) ? { ok: r } : { refused: 'not_allowed' }
+    return (await mayManage(db, r, at)) ? { ok: r } : { refused: 'not_allowed' }
   }
   const stamp = writeStamp(at.requestId)
   const resetCursor = changed.includes('schedule') || enabledChanged ? 1 : 0
@@ -276,6 +284,29 @@ export async function isRoutineRun(db: D1Database, id: string): Promise<boolean>
   return hit !== null
 }
 
+type LastFields = Pick<ListedRoutine, 'last_state' | 'last_ended_at_ms' | 'last_result_text' | 'last_failure' | 'last_outcome' | 'last_reason'>
+const NO_LAST: LastFields = { last_state: null, last_ended_at_ms: null, last_result_text: null, last_failure: null, last_outcome: null, last_reason: null }
+
+/** A routine's last ended slot's fields, read before a write so its answer carries `last` with no read after the commit. */
+async function lastOf(db: D1Database, id: string): Promise<LastFields> {
+  return (await db.prepare(
+    `SELECT s.state AS last_state, s.ended_at_ms AS last_ended_at_ms, s.result_text AS last_result_text, s.failure AS last_failure,
+        s.outcome AS last_outcome, s.reason AS last_reason
+      FROM routines r JOIN routine_slots s ON s.slot_key = r.last_slot_key WHERE r.id = ?`,
+  ).bind(id).first<LastFields>()) ?? NO_LAST
+}
+
+export type ListedOutcome = { ok: ListedRoutine } | { conflict: ListedRoutine } | { refused: 'not_found' | 'not_allowed' | 'stage' }
+
+/** A route write with its routine's `last` (switching, deleting or restoring never changes which slot ended last). */
+async function withLast(db: D1Database, id: string, write: () => Promise<WriteOutcome>): Promise<ListedOutcome> {
+  const last = await lastOf(db, id)
+  const o = await write()
+  if ('ok' in o) return { ok: { ...o.ok, ...last } }
+  if ('conflict' in o) return { conflict: { ...o.conflict, ...last } }
+  return o
+}
+
 /** The routines slot of the D1 stores (server/db/stores.ts): data in, data out, for routes 33 and 52 to 56 and the signal. */
 export function routineStore({ db }: { db: D1Database }) {
   return {
@@ -283,10 +314,10 @@ export function routineStore({ db }: { db: D1Database }) {
     list: () => allRoutines(db),
     /** The brand's zone (or why it can't be used), for the routines' `next`. */
     zone: async () => (await brandFacts(db)).tz,
-    setEnabled: (id: string, on: boolean, ifRev: number, at: At) => updateRoutine(db, id, ifRev, { enabled: on }, at),
+    setEnabled: (id: string, on: boolean, ifRev: number, at: At) => withLast(db, id, () => updateRoutine(db, id, ifRev, { enabled: on }, at)),
     runNow: (id: string, clientKey: string, at: At) => runNow(db, id, clientKey, at),
-    remove: (id: string, ifRev: number, at: At) => deleteRoutine(db, id, ifRev, at),
-    restore: (id: string, ifRev: number, at: At) => restoreRoutine(db, id, ifRev, at),
+    remove: (id: string, ifRev: number, at: At) => withLast(db, id, () => deleteRoutine(db, id, ifRev, at)),
+    restore: (id: string, ifRev: number, at: At) => withLast(db, id, () => restoreRoutine(db, id, ifRev, at)),
     isRoutineRun: (id: string) => isRoutineRun(db, id),
   }
 }

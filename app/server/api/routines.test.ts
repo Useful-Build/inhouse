@@ -37,7 +37,7 @@ const inhouse = (live: boolean): Principal => ({ kind: 'inhouse', memberId: IH, 
 
 /** The BrandAgent stand-in: counts pokes, and answers traces by scope (a routine turn for `m_system`, Alex's own for Alex). */
 let pokes = 0
-const TRACES: Record<string, string> = { t_RoutineTurnAAAAAAAAAAA: 'm_system', t_AlexTurnAAAAAAAAAAAAAA: ALEX, t_OrphanTurnAAAAAAAAAAAA: 'm_system' }
+const TRACES: Record<string, string> = { r_RoutineRunAAAAAAAAAAAA: 'm_system', t_PersonSlotAAAAAAAAAAAA: ALEX,  t_RoutineTurnAAAAAAAAAAA: 'm_system', t_AlexTurnAAAAAAAAAAAAAA: ALEX, t_OrphanTurnAAAAAAAAAAAA: 'm_system' }
 const agent = {
   poke: async (p: { kind: string; id: string }) => {
     if (p.kind !== 'routine-tick' || p.id !== 'routine-poke') throw new Error('an unexpected poke')
@@ -70,6 +70,8 @@ beforeAll(async () => {
   await addPerson(SAM)
   await addPerson(ADMIN, 'admin')
   await db.prepare("INSERT INTO members (id, kind, status, name, subject, created_at_ms) VALUES (?, 'inhouse', 'active', 'Ian', 's-ih', 1) ON CONFLICT DO NOTHING").bind(IH).run()
+  // The grant Inhouse writes under (the write's statement checks it is live in the table, L6).
+  await db.prepare('INSERT INTO support_grants (id, created_by, created_at_ms, ends_at_ms) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING').bind(GRANT, ADMIN, NOW - 1000, NOW + 60_000).run()
 })
 afterAll(() => {
   vi.useRealTimers()
@@ -100,6 +102,13 @@ describe('route 52: the list', () => {
     expect((await list(person(ADMIN, 'admin'))).routines.every(r => r.canManage)).toBe(true)
   })
 
+  it('lists at most the 50 most recently deleted (L5)', async () => {
+    const ids: string[] = []
+    for (let i = 0; i < 51; i++) ids.push((await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW, deleted_at_ms: NOW - 100 + i }))).id)
+    const seen = await list(person(ALEX))
+    expect(seen.deleted.map(r => r.id)).toEqual(ids.slice(1).reverse())
+  })
+
   it('the Inhouse team reads only under a grant, after a support.access line', async () => {
     await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
     expect((await send(inhouse(false), 'GET', '/api/routines')).body).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
@@ -112,29 +121,34 @@ describe('route 52: the list', () => {
 })
 
 describe('routes 53, 55 and 56: switch, delete and restore', () => {
-  it('the creator, an Admin and Inhouse under a grant may; another member may not, and nothing changes', async () => {
+  /** Activity lines of one routine's writes. */
+  const routineLines = async (id: string) =>
+    (await db.prepare("SELECT template, actor_id, fields_json FROM activity_lines WHERE source = 'routine' AND source_key LIKE ? ORDER BY source_key").bind(`${id}|%`).all()).results
+
+  it('the creator, an Admin and Inhouse under a grant may; another member may not, and a refusal writes nothing', async () => {
     const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW - 3 * 86_400_000 }))
+    // The marker before the refused attempts: they must leave no audit or Activity line (L2).
+    const before = await lastLineId(db)
     const no = await send(person(SAM), 'PUT', `/api/routines/${r.id}/enabled`, { on: false, ifRev: 1 })
     expect(no).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'not_owner' } } })
-    for (const path of ['delete', 'restore']) expect((await send(person(SAM), 'POST', `/api/routines/${r.id}/${path}`, { ifRev: 1 })).status, path).not.toBe(200)
+    expect((await send(person(SAM), 'POST', `/api/routines/${r.id}/delete`, { ifRev: 1 })).status).toBe(403)
     expect(await row(r.id)).toMatchObject({ rev: 1, enabled: 1, deleted_at_ms: null })
+    expect(await actions(before)).toEqual([])
+    expect(await routineLines(r.id)).toEqual([])
     expect(pokes).toBe(0)
 
-    const before = await lastLineId(db)
     const off = await send(person(ALEX), 'PUT', `/api/routines/${r.id}/enabled`, { on: false, ifRev: 1 })
     expect(off.status).toBe(200)
-    expect(off.body).toMatchObject({ id: r.id, rev: 2, canManage: true })
+    expect(off.body).toMatchObject({ routine: { id: r.id, rev: 2, canManage: true }, enabled: false })
     const del = await send(person(ADMIN, 'admin'), 'POST', `/api/routines/${r.id}/delete`, { ifRev: 2 })
-    expect(del.body).toMatchObject({ rev: 3 })
+    expect(del.body).toMatchObject({ routine: { rev: 3 }, enabled: false })
     const back = await send(inhouse(true), 'POST', `/api/routines/${r.id}/restore`, { ifRev: 3 })
-    expect(back.body).toMatchObject({ rev: 4 })
-    // Restored with its cursor at now: no backfill of the days it was gone.
+    expect(back.body).toMatchObject({ routine: { rev: 4 } })
     expect(await row(r.id)).toMatchObject({ rev: 4, enabled: 0, deleted_at_ms: null, checked_until_ms: NOW })
     expect(await actions(before)).toEqual([
       ['routine.enabled', ALEX], ['routine.deleted', ADMIN], ['support.access', IH], ['routine.restored', IH],
     ])
-    const lines = (await db.prepare("SELECT template, actor_id, fields_json FROM activity_lines WHERE source = 'routine' AND source_key LIKE ? ORDER BY source_key").bind(`${r.id}|%`).all()).results
-    expect(lines).toEqual([
+    expect(await routineLines(r.id)).toEqual([
       { template: 'routine_changed', actor_id: ALEX, fields_json: '{}' },
       { template: 'routine_deleted', actor_id: ADMIN, fields_json: '{}' },
       { template: 'routine_restored', actor_id: IH, fields_json: '{}' },
@@ -143,14 +157,64 @@ describe('routes 53, 55 and 56: switch, delete and restore', () => {
     expect(pokes).toBe(2)
   })
 
-  it('Inhouse without a grant is refused before the handler; a stale ifRev is conflict with the routine as it is now', async () => {
+  it('a non-manager can\'t restore a deleted routine: 403, the row unchanged, no audit or Activity line (H3)', async () => {
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW - 86_400_000, deleted_at_ms: NOW - 1000 }))
+    const before = await lastLineId(db)
+    expect(await send(person(SAM), 'POST', `/api/routines/${r.id}/restore`, { ifRev: 1 })).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'not_owner' } } })
+    expect(await row(r.id)).toEqual({ rev: 1, enabled: 1, deleted_at_ms: NOW - 1000, checked_until_ms: NOW - 86_400_000 })
+    expect(await actions(before)).toEqual([])
+    expect(await routineLines(r.id)).toEqual([])
+    expect(pokes).toBe(0)
+  })
+
+  it('a restore whose cursor was old when it was deleted starts at now: no backfill (L3)', async () => {
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW - 5 * 86_400_000, deleted_at_ms: NOW - 4 * 86_400_000 }))
+    expect((await send(person(ALEX), 'POST', `/api/routines/${r.id}/restore`, { ifRev: 1 })).status).toBe(200)
+    expect(await row(r.id)).toMatchObject({ deleted_at_ms: null, checked_until_ms: NOW })
+  })
+
+  it('a write\'s answer keeps the routine\'s last run (H1)', async () => {
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    const key = `${r.id}|2026-06-01|06:00`
+    await db.batch([
+      db.prepare(
+        `INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key,
+            prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms, ended_at_ms, outcome, result_text)
+          VALUES (?, ?, 'scheduled', '2026-06-01', '06:00', 'America/New_York', 0, 0, 'ended', 'rc_last', 'rs_key', 'x', '{}', 1, ?, 0, ?, 'done', 'Found 3 things')`,
+      ).bind(key, r.id, ALEX, NOW - 60_000),
+      db.prepare('UPDATE routines SET last_slot_key = ? WHERE id = ?').bind(key, r.id),
+    ])
+    const last = { at: { iso: new Date(NOW - 60_000).toISOString(), ms: NOW - 60_000 }, result: 'Found 3 things' }
+    expect((await send(person(ALEX), 'PUT', `/api/routines/${r.id}/enabled`, { on: false, ifRev: 1 })).body.routine.last).toEqual(last)
+    expect((await send(person(ALEX), 'POST', `/api/routines/${r.id}/delete`, { ifRev: 2 })).body.routine.last).toEqual(last)
+    expect((await send(person(ALEX), 'POST', `/api/routines/${r.id}/restore`, { ifRev: 3 })).body.routine.last).toEqual(last)
+    expect((await send(person(ALEX), 'POST', `/api/routines/${r.id}/delete`, { ifRev: 1 })).body.error.current.routine.last).toEqual(last)
+  })
+
+  it('a grant that ended after the matrix check writes nothing (L6)', async () => {
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    // The principal still carries the grant as live (the check ran earlier); the table says it ended.
+    await db.prepare('UPDATE support_grants SET ended_at_ms = ?, ended_by = ? WHERE id = ?').bind(NOW - 1, ADMIN, GRANT).run()
+    try {
+      const before = await lastLineId(db)
+      const r1 = await send(inhouse(true), 'PUT', `/api/routines/${r.id}/enabled`, { on: false, ifRev: 1 })
+      expect(r1.status).toBe(403)
+      expect(await row(r.id)).toMatchObject({ rev: 1, enabled: 1 })
+      expect((await actions(before)).filter(([a]) => a !== 'support.access')).toEqual([])
+      expect(await routineLines(r.id)).toEqual([])
+    } finally {
+      await db.prepare('UPDATE support_grants SET ended_at_ms = NULL, ended_by = NULL WHERE id = ?').bind(GRANT).run()
+    }
+  })
+
+  it('Inhouse without a grant is refused before the handler; a stale ifRev is conflict with the routine and its switch as they are now', async () => {
     const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
     expect((await send(inhouse(false), 'PUT', `/api/routines/${r.id}/enabled`, { on: false, ifRev: 1 })).body).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
     await send(person(ALEX), 'PUT', `/api/routines/${r.id}/enabled`, { on: false, ifRev: 1 })
-    const stale = await send(person(ALEX), 'POST', `/api/routines/${r.id}/delete`, { ifRev: 1 })
+    const stale = await send(person(ALEX), 'PUT', `/api/routines/${r.id}/enabled`, { on: true, ifRev: 1 })
     expect(stale.status).toBe(409)
-    expect(stale.body.error).toMatchObject({ code: 'conflict', current: { id: r.id, rev: 2 } })
-    expect(await row(r.id)).toMatchObject({ rev: 2, deleted_at_ms: null })
+    expect(stale.body.error).toMatchObject({ code: 'conflict', current: { routine: { id: r.id, rev: 2 }, enabled: false } })
+    expect(await row(r.id)).toMatchObject({ rev: 2, enabled: 0, deleted_at_ms: null })
   })
 
   it('an unknown routine, a bad id or a bad body is refused and writes nothing', async () => {
@@ -191,11 +255,18 @@ describe('route 54: Run now', () => {
 
 describe('route 33: a routine run\'s trace (OC 6)', () => {
   beforeEach(async () => {
-    await db.prepare("DELETE FROM chats WHERE id IN ('rc_trace_routine', 'rc_trace_orphan')").run()
+    await db.prepare("DELETE FROM chats WHERE id IN ('rc_trace_routine', 'rc_trace_orphan', 'c_trace_person')").run()
     const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
     await db.batch([
       db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES ('rc_trace_routine', 'm_system', 'Check stock, 2026-06-01', 0, 0)"),
       db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES ('rc_trace_orphan', 'm_system', 'Orphan', 0, 0)"),
+      db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES ('c_trace_person', ?, 'Alex chat', 0, 0)").bind(ALEX),
+      // A slot row whose chat is a person's (not the routine principal's): the rule must not admit it.
+      db.prepare(
+        `INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key,
+            prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms, turn_id)
+          VALUES (?, ?, 'scheduled', '2026-06-02', '06:00', 'America/New_York', 0, 0, 'ended', 'c_trace_person', 'rs_key2', 'x', '{}', 1, ?, 0, 't_PersonSlotAAAAAAAAAAAA')`,
+      ).bind(`${r.id}|2026-06-02|06:00`, r.id, ALEX),
       db.prepare(
         `INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key,
             prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms, run_id, turn_id)
@@ -211,5 +282,9 @@ describe('route 33: a routine run\'s trace (OC 6)', () => {
     expect((await send(person(SAM), 'GET', '/api/traces/t_AlexTurnAAAAAAAAAAAAAA')).status).toBe(404)
     expect((await send(person(ALEX), 'GET', '/api/traces/t_AlexTurnAAAAAAAAAAAAAA')).status).toBe(200)
     expect((await send(person(SAM), 'GET', '/api/traces/t_OrphanTurnAAAAAAAAAAAA')).status).toBe(404)
+    // By its run id too (L4).
+    expect((await send(person(SAM), 'GET', '/api/traces/r_RoutineRunAAAAAAAAAAAA')).status).toBe(200)
+    // A slot row naming a person's chat is never admitted for another person (L4).
+    expect((await send(person(SAM), 'GET', '/api/traces/t_PersonSlotAAAAAAAAAAAA')).status).toBe(404)
   })
 })

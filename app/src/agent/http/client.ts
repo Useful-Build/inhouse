@@ -1150,15 +1150,30 @@ export class HttpAgent implements AgentClient {
   setAside = (_id: string, _reason: Parameters<AgentClient['setAside']>[1]) => this.refuse()
   // ----- routines (P4 W2, routes 53 to 56) -----
 
-  /** The list as the server said it: the routines, the deleted ones, each one's switch (`r:<id>`) and `routinesDeleted`. */
+  /**
+   * The list as the server said it: the routines, the deleted ones, each one's switch (`r:<id>`) and `routinesDeleted`. A
+   * routine with a write still on its way keeps what's on screen for it (its switch, its deleted mark): the write's own
+   * answer settles it, never a read that left before it.
+   */
   private withRoutines(s: Slices, live: RoutineDef[], gone: RoutineDef[], enabled: Record<string, boolean>): Slices {
-    const toggles = Object.fromEntries(Object.entries(s.state.toggles).filter(([key]) => !key.startsWith('r:')))
-    for (const [id, on] of Object.entries(enabled)) toggles[`r:${id}`] = on
-    const routinesDeleted = Object.fromEntries(gone.map(r => [r.id, true as const]))
+    const busy = (id: string) => this.depthOf(`r:${id}`) > 0 || this.depthOf(`routine:${id}`) > 0
+    const toggles = Object.fromEntries(Object.entries(s.state.toggles).filter(([key]) => !key.startsWith('r:') || busy(key.slice(2))))
+    for (const [id, on] of Object.entries(enabled)) if (!busy(id)) toggles[`r:${id}`] = on
+    const routinesDeleted: Record<string, true> = {}
+    for (const r of gone) if (!busy(r.id)) routinesDeleted[r.id] = true
+    for (const [id, v] of Object.entries(s.state.routinesDeleted)) if (busy(id) && v) routinesDeleted[id] = true
     return { ...s, routines: live, routinesGone: gone, state: { ...s.state, toggles, routinesDeleted } }
   }
-  /** One routine as the server answered it, in whichever list it belongs to now (`deleted`: it's in the trash). */
-  private withRoutine(s: Slices, r: RoutineDef, deleted: boolean): Slices {
+  private lastOf(s: Slices, id: string): RoutineDef['last'] {
+    return (s.routines.find(x => x.id === id) ?? s.routinesGone.find(x => x.id === id))?.last
+  }
+  /**
+   * One routine as the server answered it, in whichever list it belongs to now (`deleted`: it's in the trash). An answer
+   * without `last` keeps the one on screen (a write never changes which run ended last).
+   */
+  private withRoutine(s: Slices, answered: RoutineDef, deleted: boolean): Slices {
+    const last = answered.last ?? this.lastOf(s, answered.id)
+    const r: RoutineDef = { ...answered, ...(last ? { last } : {}) }
     const live = s.routines.filter(x => x.id !== r.id)
     const gone = s.routinesGone.filter(x => x.id !== r.id)
     const at = (list: RoutineDef[], old: RoutineDef[]) => { const i = old.findIndex(x => x.id === r.id); const out = [...list]; out.splice(i < 0 ? 0 : Math.min(i, out.length), 0, r); return out }
@@ -1176,23 +1191,38 @@ export class HttpAgent implements AgentClient {
     return { ...s, state: { ...s.state, toggles: { ...s.state.toggles, [`r:${id}`]: on } } }
   }
 
-  /** Route 53: a routine's switch, optimistic; a refusal takes it back, a stale rev puts the routine as it is now in. */
+  /**
+   * Route 53: a routine's switch, optimistic. A refusal takes it back; a stale rev puts in the routine and its switch as
+   * the server has them now.
+   */
   private putRoutineEnabled(k: Contract, id: string, on: boolean): Promise<void> {
     const found = this.routineOf(id)
     if (!found || found.deleted) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
     const was = this.s.state.toggles[`r:${id}`] ?? true
+    const take = (s: Slices, st: { routine: RoutineDef; enabled: boolean }, others: boolean) => {
+      const next = this.withRoutine(s, st.routine, false)
+      return others ? next : this.withToggle(next, id, st.enabled)
+    }
     return this.write({
       lane: `routine:${id}`,
       field: `r:${id}`,
       apply: s => this.withToggle(s, id, on),
+      // The rev as it is when the write leaves (an earlier write in this routine's lane may have moved it).
       send: () => setRoutineToggle(this.http, k, id, on, this.routineOf(id)?.r.rev ?? found.r.rev),
-      done: (s, r) => this.withRoutine(s, r, false),
+      done: (s, st, others) => take(s, st, others),
       undo: (s, _before, others) => (others ? s : this.withToggle(s, id, was)),
-      onConflict: (s, current) => {
-        const r = k.ANSWERS.routine.safeParse(current)
-        return r.success ? this.withRoutine(s, r.data, false) : s
+      onConflict: (s, current, others) => {
+        const st = k.ANSWERS.routineState.safeParse(current)
+        return st.success ? take(s, st.data, others) : s
       },
     })
+  }
+
+  /** Route 54's refusals in the page's words (section 9). */
+  private static runRefusal(e: AgentError): AgentError {
+    if (e.code === 'conflict' && e.reason === REASON.runOpen) return new AgentError('conflict', 'A run is still going. Try again when it finishes.', { reason: e.reason })
+    if (e.code === 'forbidden' && e.reason === REASON.stage) return new AgentError('forbidden', 'This routine runs from the Act stage. Ask an admin to move to Act.', { reason: e.reason })
+    return e
   }
 
   /** Route 54: one Run now; the run heads `routineRuns`. A retry of this call is a new run (a new key). */
@@ -1203,14 +1233,19 @@ export class HttpAgent implements AgentClient {
       this.commit({ ...this.s, state: { ...this.s.state, routineRuns: [run, ...this.s.state.routineRuns] } })
       return run
     } catch (e) {
-      throw this.fail(e)
+      throw this.fail(e instanceof AgentError ? HttpAgent.runRefusal(e) : e)
     }
   })())
 
-  /** Routes 55 and 56: delete and Undo, optimistic (`routinesDeleted`), against the routine's rev. */
+  /**
+   * Routes 55 and 56: delete and Undo, optimistic (`routinesDeleted`), against the routine's rev. Whether it may be deleted
+   * or restored is read from the screen's state (an Undo pressed while the delete is still on its way is a restore), and
+   * the write queues behind the delete in the routine's lane, sending the rev the delete's answer left.
+   */
   private routineRev(k: Contract, id: string, what: 'delete' | 'restore'): Promise<void> {
     const found = this.routineOf(id)
-    if (!found || found.deleted !== (what === 'restore')) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
+    const shownDeleted = this.s.state.routinesDeleted[id] === true
+    if (!found || shownDeleted !== (what === 'restore')) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
     const mark = (s: Slices, deleted: boolean): Slices => {
       const routinesDeleted = { ...s.state.routinesDeleted }
       if (deleted) routinesDeleted[id] = true; else delete routinesDeleted[id]
@@ -1220,13 +1255,14 @@ export class HttpAgent implements AgentClient {
       lane: `routine:${id}`,
       apply: s => mark(s, what === 'delete'),
       send: () => postRoutineRev(this.http, k, id, what, this.routineOf(id)?.r.rev ?? found.r.rev),
-      done: (s, r) => this.withRoutine(s, r, what === 'delete'),
+      done: (s, st) => this.withRoutine(s, st.routine, what === 'delete'),
       undo: (s, before) => mark(s, before.state.routinesDeleted[id] === true),
       // A restored routine goes back to its place in the server's order (newest first), which only the list knows.
       after: what === 'restore' ? () => this.loadRoutines(true) : undefined,
       onConflict: (s, current) => {
-        const r = k.ANSWERS.routine.safeParse(current)
-        return r.success ? this.withRoutine(s, r.data, found.deleted) : s
+        const st = k.ANSWERS.routineState.safeParse(current)
+        // Refused: it's still where it was before this write (deleted for a restore, live for a delete).
+        return st.success ? this.withRoutine(s, st.data.routine, what === 'restore') : s
       },
     })
   }

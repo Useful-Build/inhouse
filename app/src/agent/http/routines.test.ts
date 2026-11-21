@@ -14,13 +14,28 @@ const at = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 const def = (id: string, rev = 1, o: Record<string, unknown> = {}) => ({
   id, name: `Routine ${id}`, what: 'Check stock.', freq: 'Daily', day: '', time: { hour: 6, minute: 0 }, next: at(NOW + 3_600_000), need: 1, canManage: true, rev, ...o,
 })
-const LIST = { routines: [def('rt_a'), def('rt_b', 2)], deleted: [def('rt_gone', 3)], enabled: { rt_a: true, rt_b: false, rt_gone: true } }
+const LAST = { at: at(NOW - 60_000), result: 'Found 3 things' }
+const state = (r: Record<string, unknown>, enabled = true) => ({ routine: r, enabled })
+const LIST = { routines: [def('rt_a', 1, { last: LAST }), def('rt_b', 2)], deleted: [def('rt_gone', 3)], enabled: { rt_a: true, rt_b: false, rt_gone: true } }
 
 async function loaded(routes: Routes) {
   const s = server(routes)
   const agent = new HttpAgent({ fetch: s.fetch, now: () => NOW })
   await agent.whenLoaded()
   return { agent, ...s }
+}
+/** A client whose requests to `held` wait until `release()`: a write still on its way. */
+async function loadedHolding(routes: Routes, held: string) {
+  const s = server(routes)
+  let release!: () => void
+  const gate = new Promise<void>(r => { release = r })
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    if (new URL(String(input), 'http://x.test').pathname === held) await gate
+    return s.fetch(input, init)
+  }
+  const agent = new HttpAgent({ fetch, now: () => NOW })
+  await agent.whenLoaded()
+  return { agent, release, ...s }
 }
 const body = (r: Req) => JSON.parse(r.body ?? 'null') as Record<string, unknown>
 
@@ -41,20 +56,30 @@ describe('the client: routines', () => {
 
   test('the switch: optimistic, sent with the routine\'s rev, the answer\'s rev used next', async () => {
     let n = 0
-    const { agent, calls } = await loaded({ ...reads({ routines: LIST }), 'PUT /api/routines/rt_a/enabled': (r: Req) => ({ body: def('rt_a', (body(r).ifRev as number) + 1, { n: ++n }) }) })
+    const { agent, calls } = await loaded({ ...reads({ routines: LIST }), 'PUT /api/routines/rt_a/enabled': (r: Req) => ({ body: state(def('rt_a', (body(r).ifRev as number) + 1 + 0 * ++n), body(r).on as boolean) }) })
     const p = agent.setToggle('r:rt_a', false)
     expect(agent.getSnapshot().toggles['r:rt_a']).toBe(false)
     await p
     await agent.setToggle('r:rt_a', true)
     expect(calls.filter(c => c.method === 'PUT').map(body)).toEqual([{ on: false, ifRev: 1 }, { on: true, ifRev: 2 }])
     expect(agent.getSnapshot().toggles['r:rt_a']).toBe(true)
+    // The answers carry no `last` here: the one on screen stays (H1).
+    expect(agent.read().routines.find(r => r.id === 'rt_a')!.last).toEqual(LAST)
   })
 
-  test('a refused switch comes back; a stale rev takes the routine as it is now', async () => {
-    const { agent } = await loaded({ ...reads({ routines: LIST }), 'PUT /api/routines/rt_a/enabled': refusal(409, 'conflict', { current: def('rt_a', 5) }) })
-    await expect(agent.setToggle('r:rt_a', false)).rejects.toMatchObject({ code: 'conflict' })
-    expect(agent.getSnapshot().toggles['r:rt_a']).toBe(true)
+  test('a refused switch comes back; a stale rev takes the routine and its switch as the server has them (L8)', async () => {
+    const { agent } = await loaded({ ...reads({ routines: LIST }), 'PUT /api/routines/rt_a/enabled': refusal(409, 'conflict', { current: state(def('rt_a', 5), false) }) })
+    await expect(agent.setToggle('r:rt_a', true)).rejects.toMatchObject({ code: 'conflict' })
+    // The server says off now (someone switched it), whatever this client showed before.
+    expect(agent.getSnapshot().toggles['r:rt_a']).toBe(false)
     expect(agent.read().routines.find(r => r.id === 'rt_a')!.rev).toBe(5)
+    expect(agent.read().routines.find(r => r.id === 'rt_a')!.last).toEqual(LAST)
+  })
+
+  test('a plain refusal takes the switch back to what it was', async () => {
+    const { agent } = await loaded({ ...reads({ routines: LIST }), 'PUT /api/routines/rt_a/enabled': refusal(403, 'forbidden', { reason: 'not_owner' }) })
+    await expect(agent.setToggle('r:rt_a', false)).rejects.toMatchObject({ code: 'forbidden' })
+    expect(agent.getSnapshot().toggles['r:rt_a']).toBe(true)
   })
 
   test('delete and Undo: optimistic, each with the rev the last answer left; Undo re-reads the list for its order', async () => {
@@ -63,8 +88,8 @@ describe('the client: routines', () => {
     const { agent, calls } = await loaded({
       ...reads({ routines: LIST }),
       'GET /api/routines': () => ({ body: restored ? { routines: [def('rt_a'), def('rt_b', 4)], deleted: [def('rt_gone', 3)], enabled: { rt_a: true, rt_b: false, rt_gone: true } } : LIST }),
-      'POST /api/routines/rt_b/delete': (r: Req) => ({ body: def('rt_b', (body(r).ifRev as number) + 1) }),
-      'POST /api/routines/rt_b/restore': (r: Req) => { restored = true; return { body: def('rt_b', (body(r).ifRev as number) + 1) } },
+      'POST /api/routines/rt_b/delete': (r: Req) => ({ body: state(def('rt_b', (body(r).ifRev as number) + 1), false) }),
+      'POST /api/routines/rt_b/restore': (r: Req) => { restored = true; return { body: state(def('rt_b', (body(r).ifRev as number) + 1), false) } },
     })
     const p = agent.deleteRoutine('rt_b')
     expect(agent.getSnapshot().routinesDeleted.rt_b).toBe(true)
@@ -84,13 +109,62 @@ describe('the client: routines', () => {
     expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
   })
 
-  test('Run now sends a key the route takes, and the run heads routineRuns; run_open is refused with its text', async () => {
+  test('Run now sends a key the route takes, and the run heads routineRuns; run_open and stage are refused in the page\'s words (L1)', async () => {
     const run = { routine: 'rt_a', at: at(NOW) }
-    const { agent, calls } = await loaded({ ...reads({ routines: LIST }), 'POST /api/routines/rt_a/run': { body: run }, 'POST /api/routines/rt_b/run': refusal(409, 'conflict', { reason: 'run_open', current: run }) })
+    const { agent, calls } = await loaded({
+      ...reads({ routines: LIST }), 'POST /api/routines/rt_a/run': { body: run },
+      'POST /api/routines/rt_b/run': refusal(409, 'conflict', { reason: 'run_open', current: run }),
+      'POST /api/routines/rt_gone/run': refusal(403, 'forbidden', { reason: 'stage' }),
+    })
+    const heard: unknown[] = []
+    agent.onNotice(n => heard.push(n))
     expect(await agent.runRoutine('rt_a')).toEqual(run)
     expect(agent.getSnapshot().routineRuns[0]).toEqual(run)
     expect(body(calls.find(c => c.path === '/api/routines/rt_a/run')!).clientKey).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
-    await expect(agent.runRoutine('rt_b')).rejects.toMatchObject({ code: 'conflict', reason: 'run_open' })
+    await expect(agent.runRoutine('rt_b')).rejects.toMatchObject({ code: 'conflict', reason: 'run_open', message: 'A run is still going. Try again when it finishes.' })
+    await expect(agent.runRoutine('rt_gone')).rejects.toMatchObject({ code: 'forbidden', reason: 'stage', message: 'This routine runs from the Act stage. Ask an admin to move to Act.' })
+    expect(heard).toEqual([
+      { type: 'error', code: 'conflict', text: 'A run is still going. Try again when it finishes.' },
+      { type: 'error', code: 'forbidden', text: 'This routine runs from the Act stage. Ask an admin to move to Act.' },
+    ])
+    expect(agent.getSnapshot().routineRuns).toHaveLength(1)
+  })
+
+  test('Undo pressed while the delete is still on its way is a restore, sent after the delete answers with its rev (H2)', async () => {
+    let restored = false
+    const { agent, calls, release } = await loadedHolding({
+      ...reads({ routines: LIST }),
+      // The server's list once the restore landed (the Undo re-reads it).
+      'GET /api/routines': () => ({ body: restored ? { ...LIST, routines: [def('rt_a', 3, { last: LAST }), def('rt_b', 2)] } : LIST }),
+      'POST /api/routines/rt_a/delete': (r: Req) => ({ body: state(def('rt_a', (body(r).ifRev as number) + 1, { last: LAST })) }),
+      'POST /api/routines/rt_a/restore': (r: Req) => { restored = true; return { body: state(def('rt_a', (body(r).ifRev as number) + 1, { last: LAST })) } },
+    }, '/api/routines/rt_a/delete')
+    const pDelete = agent.deleteRoutine('rt_a')
+    expect(agent.getSnapshot().routinesDeleted.rt_a).toBe(true)
+    const pUndo = agent.restoreRoutine('rt_a')
+    expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
+    release()
+    await Promise.all([pDelete, pUndo])
+    expect(calls.filter(c => c.method === 'POST').map(c => [c.path, body(c)])).toEqual([
+      ['/api/routines/rt_a/delete', { ifRev: 1 }], ['/api/routines/rt_a/restore', { ifRev: 2 }],
+    ])
+    expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
+    expect(agent.read().routines.find(r => r.id === 'rt_a')).toMatchObject({ rev: 3, last: LAST })
+  })
+
+  test('the Undo re-read keeps another routine\'s switch that is still on its way (L8)', async () => {
+    const { agent, release } = await loadedHolding({
+      ...reads({ routines: LIST }),
+      'POST /api/routines/rt_gone/restore': (r: Req) => ({ body: state(def('rt_gone', (body(r).ifRev as number) + 1)) }),
+      'PUT /api/routines/rt_b/enabled': (r: Req) => ({ body: state(def('rt_b', (body(r).ifRev as number) + 1), body(r).on as boolean) }),
+    }, '/api/routines/rt_b/enabled')
+    const pSwitch = agent.setToggle('r:rt_b', true)
+    // The restore's re-read lists rt_b as off (the server hasn't had the switch yet): the switch on its way stays on screen.
+    await agent.restoreRoutine('rt_gone')
+    expect(agent.getSnapshot().toggles['r:rt_b']).toBe(true)
+    release()
+    await pSwitch
+    expect(agent.getSnapshot().toggles['r:rt_b']).toBe(true)
   })
 
   test('the Inhouse team is not asked on start; a 403 without a grant is nothing to show', async () => {
