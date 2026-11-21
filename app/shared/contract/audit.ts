@@ -89,7 +89,7 @@ export const SlotKeySchema = z.string().regex(new RegExp(`^(?:${ROUTINE_ID}\\|\\
 export const RoutineChangeSchema = z.enum(['instruction', 'schedule', 'missed'])
 /**
  * A Today item (p4-w3.md sections 3 and 5): `p_` + a 22-character hash of the problem key and date, or a status card's
- * `p_check_<local date>_<cause>_<hash>` (the slot key's hash; a `not_run` card has no slot and hashes
+ * `p_check_<local date>_<cause>_<hash>` (the slot key's hash; a `not_run` or an `off` card has no slot, so it hashes
  * `<routineId>|<local date>`). One tail shape for every cause.
  */
 export const TodayItemIdSchema = z.string().regex(new RegExp(`^p_(?:${RANDOM}|check_\\d{4}-\\d{2}-\\d{2}_(?:incomplete|failed|not_run|not_connected|off)_[A-Za-z0-9_-]{8,43})$`))
