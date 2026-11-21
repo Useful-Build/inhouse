@@ -22,6 +22,7 @@ import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
 import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
+import { runAlarmNow } from '@test-controls'
 import { createRunTokens } from './tokens.ts'
 import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
 import type { HubSocket, SocketPrincipal } from './sockets.ts'
@@ -77,6 +78,16 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
 
   async alarm(): Promise<void> {
     await this.sched.alarm()
+  }
+
+  /**
+   * The test build's alarm-now control (route 67, server/ops/alarm-now.ts; p4-w6.md OC 2): one scheduler pass, as
+   * `alarm()` runs it. Inside `blockConcurrencyWhile`, so no other event (the runtime's own alarm included) runs on the
+   * object until the pass ends, keeping the scheduler's "passes never overlap". Outside the test build `@test-controls`
+   * is the off module, which throws; route 67 answers 404 there before it gets here.
+   */
+  async testRunAlarm(): Promise<{ ran: true }> {
+    return this.ctx.blockConcurrencyWhile(() => runAlarmNow(() => this.sched.alarm()))
   }
 
   /**

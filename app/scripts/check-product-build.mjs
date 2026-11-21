@@ -23,6 +23,12 @@
 //      P3 PR0: the same for the scripted model (app/test/scripted-model/, `@scripted-model` in vite.config.ts): its canary
 //      (SCRIPTED_MODEL_CANARY) and its modules never in the deployable Worker. Its proof in the test build is required
 //      as soon as any server source imports `@scripted-model` (W3 wires it into the egress); until then it's a note.
+//      P4 wave 4: the same for the test-build controls (server/ops/test-controls.ts, `@test-controls`, route 67): their
+//      canary (TEST_CONTROLS_CANARY) and module never in the deployable Worker; their proof in the test build is required
+//      as soon as any server source imports `@test-controls`.
+//   5. The hub (P4, p4-h1.md OC 4): the connector hub is its own Worker, reached only through the HUB service binding. No
+//      module under hub/ in either Worker's graph, and a server source may name a hub file only as `import type` of
+//      hub/index/contract.ts (plain types, erased at build). The hub's own bundles keep their scan (check-hub-build.mjs).
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -145,12 +151,16 @@ const TEST_ISSUER_MODULE = /test-issuer/
 /** app/test/scripted-model/index.ts's SCRIPTED_MODEL_CANARY (check-product-build.test.mjs keeps the two equal). */
 const SCRIPTED_CANARY = 'inhouse-scripted-model-canary-7f3c9b21'
 const SCRIPTED_MODULE = /(^|\/)test\/scripted-model\//
+/** app/server/ops/test-controls.ts's TEST_CONTROLS_CANARY (check-product-build.test.mjs keeps the two equal). */
+const CONTROLS_CANARY = 'inhouse-test-controls-canary-5d81e0a7'
+/** The real controls module only: the off stand-in (test-controls-off.ts) is what the deployable Worker bundles. */
+const CONTROLS_MODULE = /(^|\/)server\/ops\/test-controls\.ts($|\?)/
+/** The server's own sources (tests aside). */
+const serverSources = () => (existsSync(serverDir) ? walk(serverDir).filter(f => /\.(ts|mts|js|mjs)$/.test(f) && !/\.test\.[a-z]+$/.test(f)) : [])
+/** Whether any server source imports this alias. */
+const serverImports = alias => serverSources().some(f => new RegExp(`(from\\s+|import\\s*\\(\\s*)['"]${alias}['"]`).test(readFileSync(f, 'utf8')))
 /** Whether any server source (tests aside) imports the scripted model through its alias. */
-function serverImportsScripted() {
-  if (!existsSync(serverDir)) return false
-  return walk(serverDir).filter(f => /\.(ts|mts|js|mjs)$/.test(f) && !/\.test\.[a-z]+$/.test(f))
-    .some(f => /(from\s+|import\s*\(\s*)['"]@scripted-model['"]/.test(readFileSync(f, 'utf8')))
-}
+const serverImportsScripted = () => serverImports('@scripted-model')
 /** The Worker folder of a product build: the one subfolder (not client/) holding a wrangler.json. */
 function workerDir(dir, label) {
   if (!existsSync(dir)) fail(`${label} build folder ${dir} doesn't exist. Run its build first.`)
@@ -167,21 +177,51 @@ function serverScan(dir) {
     const text = readFileSync(f, 'utf8')
     if (text.includes(SERVER_CANARY)) hits.push(`"${SERVER_CANARY}" in ${relative(root, f)}`)
     if (text.includes(SCRIPTED_CANARY)) hits.push(`"${SCRIPTED_CANARY}" in ${relative(root, f)}`)
+    if (text.includes(CONTROLS_CANARY)) hits.push(`"${CONTROLS_CANARY}" in ${relative(root, f)}`)
   }
   const list = join(dir, '..', 'server-modules.json')
   if (!existsSync(list)) fail(`${relative(root, list)} is missing. vite.config.ts's writeServerModuleList writes it in product builds.`)
   const modules = JSON.parse(readFileSync(list, 'utf8'))
   if (!Array.isArray(modules) || !modules.some(id => /(^|\/)server\/index\.ts$/.test(id))) fail(`${relative(root, list)} doesn't list server/index.ts: it's not the product Worker's graph.`)
-  for (const id of modules) if (TEST_ISSUER_MODULE.test(id) || SCRIPTED_MODULE.test(id)) hits.push(`module ${id}`)
+  for (const id of modules) if (TEST_ISSUER_MODULE.test(id) || SCRIPTED_MODULE.test(id) || CONTROLS_MODULE.test(id)) hits.push(`module ${id}`)
   return hits
 }
+/** Hub modules in a Worker's graph (ids are relative to app/, so the hub's files start with hub/). */
+const HUB_MODULE = /^hub\//
+const hubModules = dir => JSON.parse(readFileSync(join(dir, '..', 'server-modules.json'), 'utf8')).filter(id => HUB_MODULE.test(id)).map(id => `module ${id}`)
+/** The only hub file a server source may name, and only as `import type`. */
+const HUB_CONTRACT = /(^|\/)hub\/index\/contract(\.ts)?$/
+/** Every import or re-export of a hub file in the server's sources but `import type` of hub/index/contract.ts. */
+function hubImports() {
+  const found = []
+  const statement = /\b(import|export)\s+(type\s+)?(?:[^'";]*?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]/g
+  for (const f of serverSources()) {
+    for (const m of readFileSync(f, 'utf8').matchAll(statement)) {
+      const spec = m[3] ?? m[4]
+      if (!/(^|\/)hub\//.test(spec)) continue
+      if (m[1] === 'import' && m[2] && HUB_CONTRACT.test(spec)) continue
+      found.push(`${relative(root, f)}: ${m[0].replace(/\s+/g, ' ')}`)
+    }
+  }
+  return found
+}
 const productWorker = workerDir(productDir, 'product')
+const hubIn = [...hubImports(), ...hubModules(productWorker)]
+if (hubIn.length) {
+  bad = true
+  console.error(`FAIL  hub: the product Worker reaches hub code other than \`import type\` of hub/index/contract.ts:\n${show(hubIn)}`)
+} else console.log('ok    hub: no hub module in the deployable Worker, and the server names hub/index/contract.ts as types only.')
 const inServer = serverScan(productWorker)
 if (inServer.length) {
   bad = true
-  console.error(`FAIL  server bundle: the deployable Worker (${relative(root, productWorker)}) has the test issuer or the scripted model:\n${show(inServer)}`)
-} else console.log(`ok    server bundle: no test issuer and no scripted model in the deployable Worker (${relative(root, productWorker)}).`)
+  console.error(`FAIL  server bundle: the deployable Worker (${relative(root, productWorker)}) has the test issuer, the scripted model or the test controls:\n${show(inServer)}`)
+} else console.log(`ok    server bundle: no test issuer, no scripted model and no test controls in the deployable Worker (${relative(root, productWorker)}).`)
 const testWorker = workerDir(productTestDir, 'product-test')
+const hubInTest = hubModules(testWorker)
+if (hubInTest.length) {
+  bad = true
+  console.error(`FAIL  hub: the test build's product Worker bundles hub modules (the hub runs as its own Worker):\n${show(hubInTest)}`)
+}
 const inTest = serverScan(testWorker)
 // The proof is always required: the test build must carry the canary, or the scan proves nothing.
 if (!inTest.some(h => h.includes(SERVER_CANARY))) {
@@ -194,5 +234,11 @@ if (serverImportsScripted()) {
     console.error(`FAIL  server bundle: the server imports @scripted-model but the test build (${relative(root, testWorker)}) has no "${SCRIPTED_CANARY}", so the scan proves nothing.`)
   } else console.log('ok    server bundle: caught the scripted model in the test build.')
 } else console.log('note  scripted model: no server source imports @scripted-model yet, so the test build need not carry its canary.')
+if (serverImports('@test-controls')) {
+  if (!inTest.some(h => h.includes(CONTROLS_CANARY))) {
+    bad = true
+    console.error(`FAIL  server bundle: the server imports @test-controls but the test build (${relative(root, testWorker)}) has no "${CONTROLS_CANARY}", so the scan proves nothing.`)
+  } else console.log('ok    server bundle: caught the test controls in the test build.')
+} else console.log('note  test controls: no server source imports @test-controls, so the test build need not carry their canary.')
 
 process.exit(bad ? 1 : 0)

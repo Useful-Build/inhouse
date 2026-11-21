@@ -32,6 +32,8 @@ const alias = {
   '@test-issuer': fileURLToPath(new URL('./server/auth/test-issuer.ts', import.meta.url)),
   // The scripted model (P3), as in the test build (vite.config.ts).
   '@scripted-model': fileURLToPath(new URL('./test/scripted-model/index.ts', import.meta.url)),
+  // P4's test-build controls (server/ops/test-controls.ts), as in the test build (vite.config.ts).
+  '@test-controls': fileURLToPath(new URL('./server/ops/test-controls.ts', import.meta.url)),
   '@': fileURLToPath(new URL('./src', import.meta.url)),
 }
 
@@ -71,6 +73,10 @@ export default defineConfig({
             miniflare: {
               compatibilityDate: '2026-11-11',
               bindings: { TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL('./server/migrations', import.meta.url))) },
+              // P4: wrangler.test.jsonc binds the hub's ReadGateway as HUB (p4-h1.md OC 4), and workerd refuses to start
+              // with a binding to a Worker it doesn't run. The server tests never reach the hub (H1's route takes a
+              // `ReadGatewayLike` it's handed), so HUB here is a stand-in that answers 503 and names itself.
+              serviceBindings: { HUB: () => new Response('HUB is a stand-in in the server tests (vitest.config.ts)', { status: 503 }) },
             },
           })),
         ],

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { checkPool, stripJsonc } from './check-product-config.mjs'
+import { checkHub, checkPool, stripJsonc } from './check-product-config.mjs'
 
 const script = fileURLToPath(new URL('./check-product-config.mjs', import.meta.url))
 const fixtures = fileURLToPath(new URL('./check-product-config-fixtures/', import.meta.url))
@@ -43,6 +43,12 @@ const RULE_TEXT = {
   'pool-no-container': 'containers must be exactly one, for the Runner class',
   // P3 (p3-design 8.2): the gateway the egress calls must be named.
   'gateway-id-empty': 'vars.AI_GATEWAY_ID must name the AI Gateway',
+  // P4 (p4-h1.md OC 4): the hub's ReadGateway, once, and nothing more.
+  'hub-server-gateway': "services[0] binds ServerGateway: in P4 the product Worker binds the hub's ReadGateway only",
+  'hub-no-entrypoint': 'services[0] binds inhouse-hub with no entrypoint (its default export): bind ReadGateway',
+  'hub-other-entrypoint': 'services[0].entrypoint must be ReadGateway, not "Admin"',
+  'hub-second-entry': 'services must name inhouse-hub exactly once (found 2)',
+  'hub-missing': 'services must name inhouse-hub exactly once (found 0)',
   'sbx-name': 'config.name carries inhouse-sbx-',
   'sbx-host': 'config.vars.INHOUSE_ACCESS carries inhouse-sbx-',
 }
@@ -149,6 +155,26 @@ describe('check-product-config', () => {
       expect(c.migrations).toEqual([{ tag: 'p3-v1', new_sqlite_classes: ['BrandAgent', 'Runner'] }])
       expect(c.dev).toEqual({ enable_containers: false })
     }
+  })
+
+  // P4 (p4-h1.md OC 4): both Worker configs bind the hub's ReadGateway as HUB, and only that.
+  const HUB = [{ binding: 'HUB', service: 'inhouse-hub', entrypoint: 'ReadGateway' }]
+  test('the two Worker configs bind the hub once, to ReadGateway, and the hub rule passes both', () => {
+    for (const c of [testConfig(), JSON.parse(stripJsonc(readFileSync(template, 'utf8')))]) {
+      expect(c.services).toEqual(HUB)
+      expect(checkHub(c)).toEqual([])
+    }
+  })
+  test('the hub rule names a ServerGateway entry on any service, and a services value that is not a list', () => {
+    expect(checkHub({ services: [...HUB, { binding: 'HUB_SERVER', service: 'inhouse-hub', entrypoint: 'ServerGateway' }] })).toEqual([
+      "services[1] binds ServerGateway: in P4 the product Worker binds the hub's ReadGateway only",
+      'services must name inhouse-hub exactly once (found 2)',
+    ])
+    expect(checkHub({ services: [...HUB, { binding: 'OTHER', service: 'renamed-hub', entrypoint: 'ServerGateway' }] })).toEqual([
+      "services[1] binds ServerGateway: in P4 the product Worker binds the hub's ReadGateway only",
+    ])
+    expect(checkHub({ services: [...HUB, { binding: 'OTHER', service: 'other-worker' }] })).toEqual([])
+    expect(checkHub({ services: { HUB: 'inhouse-hub' } })).toEqual(['services must be a list'])
   })
 
   test('usage and an unreadable file exit 2', () => {

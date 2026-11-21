@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { SCRIPTED_MODEL_CANARY } from '../test/scripted-model/index.ts'
+import { TEST_CONTROLS_CANARY } from '../server/ops/test-controls.ts'
 
 const script = fileURLToPath(new URL('./check-product-build.mjs', import.meta.url))
 const CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
@@ -70,7 +71,8 @@ test.each([
   ['its module in the deployable Worker\'s graph', { serverModules: ['server/index.ts', 'test/scripted-model/index.ts'] }],
 ])('the scripted model ships: %s fails the check', (_name, product) => {
   const r = run({ ...ISSUER_OK, product })
-  expect(r.stderr).toContain('has the test issuer or the scripted model')
+  // P4 wave 4: the message names the test controls too (was "has the test issuer or the scripted model").
+  expect(r.stderr).toContain('has the test issuer, the scripted model or the test controls')
   expect(r.status).toBe(1)
 })
 
@@ -91,4 +93,66 @@ test('nothing imports @scripted-model yet: a note, and a test build without its 
   // A test file importing it doesn't count: only what the Worker can bundle.
   const testOnly = run({ ...ISSUER_OK, server: { ...ISSUER_OK.server, 'egress/model.test.ts': "import { x } from '@scripted-model'" } })
   expect(testOnly.status).toBe(0)
+})
+
+// P4 wave 4 (p4-w6.md OC 2): the test-build controls (server/ops/test-controls.ts, `@test-controls`, route 67) never ship,
+// and once the server imports them the test build must carry their canary. The canary is written out here.
+const CONTROLS = 'inhouse-test-controls-canary-5d81e0a7'
+const IMPORTS_CONTROLS = { ...ISSUER_OK.server, 'ops/alarm-now.ts': "import { runAlarmNow } from '@test-controls'" }
+
+test('the controls canary is the module\'s and the script\'s', () => {
+  expect(TEST_CONTROLS_CANARY).toBe(CONTROLS)
+  expect(readFileSync(script, 'utf8')).toContain(`const CONTROLS_CANARY = '${CONTROLS}'`)
+})
+
+test.each([
+  ['its canary in the deployable Worker', { workerJs: `const c = '${CONTROLS}'` }],
+  ['its module in the deployable Worker\'s graph', { serverModules: ['server/index.ts', 'server/ops/test-controls.ts'] }],
+])('the test controls ship: %s fails the check', (_name, product) => {
+  const r = run({ ...ISSUER_OK, product })
+  expect(r.stderr).toContain('has the test issuer, the scripted model or the test controls')
+  expect(r.status).toBe(1)
+})
+
+test('the off stand-in in the deployable Worker\'s graph passes', () => {
+  const r = run({ ...ISSUER_OK, product: { serverModules: ['server/index.ts', 'server/ops/test-controls-off.ts'] } })
+  expect(r.stderr).toBe('')
+  expect(r.status).toBe(0)
+})
+
+test('the server imports @test-controls: the test build must carry their canary', () => {
+  const without = run({ ...ISSUER_OK, server: IMPORTS_CONTROLS })
+  expect(without.stderr).toContain('the server imports @test-controls but the test build')
+  expect(without.status).toBe(1)
+  const withIt = run({ server: IMPORTS_CONTROLS, productTest: { workerJs: `const c = '${CANARY}'; const t = '${CONTROLS}'` } })
+  expect(withIt.stdout).toContain('ok    server bundle: caught the test controls in the test build.')
+  expect(withIt.status).toBe(0)
+})
+
+// P4 (p4-h1.md OC 4): the hub is its own Worker. The product Worker names hub/index/contract.ts as types only.
+test.each([
+  ['a hub module in the deployable Worker\'s graph', { product: { serverModules: ['server/index.ts', 'hub/index/contract.ts'] } }, 'the product Worker reaches hub code'],
+  ['a hub module in the test build\'s graph', { productTest: { workerJs: `const c = '${CANARY}'`, serverModules: ['server/index.ts', 'hub/signin/index.ts'] } }, "the test build's product Worker bundles hub modules"],
+  ['a value import of the contract', { server: { 'egress/hub.ts': "import { ReadGateway } from '../../hub/index/contract.ts'" } }, "egress/hub.ts: import { ReadGateway } from '../../hub/index/contract.ts'"],
+  ['an inline type import of the contract (kept as an import)', { server: { 'egress/hub.ts': "import { type ReadGateway } from '../../hub/index/contract.ts'" } }, 'egress/hub.ts: import { type ReadGateway }'],
+  ['a type import of another hub file', { server: { 'egress/hub.ts': "import type { HubError } from '../../hub/index/errors.ts'" } }, 'hub/index/errors.ts'],
+  ['a type re-export of the contract', { server: { 'egress/hub.ts': "export type { ReadGateway } from '../../hub/index/contract.ts'" } }, 'export type { ReadGateway }'],
+  ['a dynamic import of a hub file', { server: { 'egress/hub.ts': "const m = await import('../../hub/index/index.ts')" } }, "import('../../hub/index/index.ts'"],
+])('the hub: %s fails the check', (_name, setup, says) => {
+  const r = run({ ...ISSUER_OK, ...setup, server: { ...ISSUER_OK.server, ...setup.server } })
+  expect(r.stderr).toContain(says)
+  expect(r.status).toBe(1)
+})
+
+test('the hub: `import type` of hub/index/contract.ts (with or without .ts, over lines) passes', () => {
+  const server = {
+    ...ISSUER_OK.server,
+    'egress/hub.ts': "import type { ReadGateway } from '../../hub/index/contract.ts'",
+    'egress/hub-two.ts': "import type {\n  CallerScope,\n  HubResult,\n} from '../../hub/index/contract'",
+    'egress/hub.test.ts': "import { x } from '../../hub/index/index.ts'",
+  }
+  const r = run({ ...ISSUER_OK, server })
+  expect(r.stderr).toBe('')
+  expect(r.stdout).toContain('ok    hub: no hub module in the deployable Worker')
+  expect(r.status).toBe(0)
 })
