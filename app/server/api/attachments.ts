@@ -10,8 +10,7 @@ import { ChatIdSchema, FileIdSchema } from '../../shared/contract/chat-ids.ts'
 import { badFileName } from '../../shared/files/names.ts'
 import { storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
-import { FILE_CAPS, downloadName, typeAllowed } from '../files-io/caps.ts'
-import { readFileBody } from '../files-io/bytes.ts'
+import { downloadName, typeAllowed } from '../files-io/caps.ts'
 import type { StoredFile } from '../files-io/store.ts'
 import { PHOTO_RESPONSE_HEADERS, apiError, apiJson } from '../http.ts'
 import type { Handler } from '../routes.ts'
@@ -47,10 +46,8 @@ export const uploadAttachment: Handler = async c => {
   a.access.requireObject({ ownerId: owner })
   const name = fileName(a.request.headers.get(FILE_NAME_HEADER))
   if (name === null) return apiError('invalid', { reason: 'bad_name' })
-  const bytes = await readFileBody(a.request, FILE_CAPS.maxFileBytes)
-  if ('refused' in bytes) return apiError('invalid', { reason: bytes.refused })
-  const saved = await stores.files.saveInput({ chatId: chatId.data, name, bytes, createdBy: at.actorId, nowMs: a.nowMs })
-  if ('refused' in saved) return apiError('invalid', { reason: 'type_not_allowed' })
+  const saved = await stores.files.saveInput({ chatId: chatId.data, name, request: a.request, createdBy: at.actorId, nowMs: a.nowMs })
+  if ('refused' in saved) return apiError('invalid', { reason: saved.refused })
   return apiJson(item(saved), 201)
 }
 

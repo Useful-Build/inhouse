@@ -8,7 +8,7 @@
 //  5. a listing shows pending or superseded rows, or the wrong order.
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { checkFile } from './bytes.ts'
+import { streamFile } from './bytes.ts'
 import { fileStore } from './store.ts'
 
 const db = env.DB
@@ -18,6 +18,7 @@ const bytesOf = (s: string) => enc.encode(s) as Uint8Array<ArrayBuffer>
 const sha = async (b: Uint8Array<ArrayBuffer>) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map(x => x.toString(16).padStart(2, '0')).join('')
 let n = 0
 const uniq = () => `${++n}-${Math.random().toString(36).slice(2, 8)}`
+const body = (b: Uint8Array<ArrayBuffer>) => new Request('https://files.test/', { method: 'POST', body: b, headers: { 'content-length': String(b.length) } })
 
 beforeAll(async () => {
   await db.prepare("INSERT OR IGNORE INTO members (id, kind, role, status, name, email_norm, created_at_ms) VALUES ('m_files_owner', 'person', 'member', 'active', 'Ada', 'files-owner@example.com', 1)").run()
@@ -60,9 +61,10 @@ describe('byte fixtures (failure 4)', () => {
   ]
   for (const [name, bytes, file, expected] of cases) {
     it(`${name}: ${expected ?? 'refused'}`, async () => {
-      const r = await checkFile(bytes, file)
+      const request = new Request('https://files.test/', { method: 'PUT', body: bytes, headers: { 'content-length': String(bytes.length) } })
+      const r = await streamFile(request, file, { max: 20_971_520, put: body => new Response(body).arrayBuffer() })
       if (expected === null) expect(r).toEqual({ refused: 'type_not_allowed' })
-      else expect(r).toEqual({ contentType: expected, sha256: await sha(bytes) })
+      else expect(r).toEqual({ contentType: expected, sha256: await sha(bytes), bytes: bytes.length })
     })
   }
 })
@@ -148,8 +150,8 @@ describe('confirm after a retried PUT (one saved row, the duplicate slot freed)'
 describe('uploads (failures 3, 5)', () => {
   it('two uploads with one name both survive; inputs list before outputs, newest first', async () => {
     const chatId = await newChat()
-    const a = await files.saveInput({ chatId, name: 'notes.md', bytes: bytesOf('# one'), createdBy: 'm_files_owner', nowMs: 1 })
-    const b = await files.saveInput({ chatId, name: 'notes.md', bytes: bytesOf('# two'), createdBy: 'm_files_owner', nowMs: 2 })
+    const a = await files.saveInput({ chatId, name: 'notes.md', request: body(bytesOf('# one')), createdBy: 'm_files_owner', nowMs: 1 })
+    const b = await files.saveInput({ chatId, name: 'notes.md', request: body(bytesOf('# two')), createdBy: 'm_files_owner', nowMs: 2 })
     if ('refused' in a || 'refused' in b) throw new Error('refused')
     expect(a.path).toBe(`inputs/${a.id}-notes.md`)
     expect(a.path).not.toBe(b.path)
@@ -161,16 +163,18 @@ describe('uploads (failures 3, 5)', () => {
     expect((await files.listCurrent(chatId)).map(f => f.id)).toEqual([b.id, a.id, out])
     expect(await new Response(await files.readBytes(a)).text()).toBe('# one')
     expect(await new Response(await files.readBytes(b)).text()).toBe('# two')
-    expect((await env.FILES.head(a.r2Key))?.checksums.sha256).toBeDefined()
+    // An upload's hash is known only once its bytes are in: the row keeps it, R2 its own MD5 (single-part put).
+    expect(a.sha256).toBe('440f87a565a26f2760a3506c12b2deb62d46bf97c1c4387526cf1db6237755b1')
+    expect((await env.FILES.head(a.r2Key))?.checksums.md5).toBeDefined()
     // The rows, in the order asked.
     expect(await files.inputsOf(chatId, [b.id, a.id])).toEqual({ ok: true, files: [b, a] })
     expect(await files.inputsOf(chatId, [])).toEqual({ ok: true, files: [] })
     expect(await files.inputsOf(chatId, [a.id, out, 'f_missing'])).toEqual({ missing: [out, 'f_missing'] })
     // Another chat's input is not this chat's.
     const other = await newChat()
-    const c = await files.saveInput({ chatId: other, name: 'c.md', bytes: bytesOf('# c'), createdBy: 'm_files_owner', nowMs: 6 })
+    const c = await files.saveInput({ chatId: other, name: 'c.md', request: body(bytesOf('# c')), createdBy: 'm_files_owner', nowMs: 6 })
     if ('refused' in c) throw new Error('refused')
     expect(await files.inputsOf(chatId, [a.id, c.id])).toEqual({ missing: [c.id] })
-    expect(await files.saveInput({ chatId, name: 'x.html', bytes: bytesOf('<html>'), createdBy: 'm_files_owner', nowMs: 5 })).toEqual({ refused: 'type_not_allowed' })
+    expect(await files.saveInput({ chatId, name: 'x.html', request: body(bytesOf('<html>')), createdBy: 'm_files_owner', nowMs: 5 })).toEqual({ refused: 'type_not_allowed' })
   })
 })
