@@ -14,6 +14,8 @@ export interface CaseResult {
   failure: string | null
   resultText: string | null
   ms: number
+  /** A timed-out case only: whether its manual slot reached a terminal state before the next case (false: the next Run now meets `run_open`). */
+  settled?: boolean
 }
 
 export interface ResultFile {
@@ -22,6 +24,10 @@ export interface ResultFile {
   model: string
   summary: Summary
   cases: CaseResult[]
+  /** The cases a stopped run never ran (empty for a run that went through). */
+  notRun: string[]
+  /** Set when the run stopped early: where and why. */
+  stopped?: { at: string; reason: string }
 }
 
 /** `<dir>/<date>-<sha>.json`, or `<date>-<sha>-2.json` and on when it exists: a result is never overwritten. */

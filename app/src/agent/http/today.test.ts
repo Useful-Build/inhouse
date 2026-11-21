@@ -103,7 +103,11 @@ describe('setting a card aside', () => {
 
   test('declined is refused without a request, and a card the client doesn\'t hold is not found', async () => {
     const { agent, calls } = await start()
-    await expect(agent.setAside(ID('a'), 'declined')).rejects.toBeDefined()
+    const declined = agent.setAside(ID('a'), 'declined')
+    // Nothing hides while it is refused: the cards and the records are as they were the moment it is called.
+    expect(ids(agent)).toEqual([ID('a'), ID('b'), ID('c')])
+    expect(agent.getSnapshot().setAside).toEqual({})
+    await expect(declined).rejects.toBeDefined()
     await expect(agent.setAside('p_nobodyxxxxxxxxxxxxxxxx', 'snoozed')).rejects.toMatchObject({ code: 'not_found' })
     expect(calls.filter(c => c.method === 'PUT')).toEqual([])
     expect(ids(agent)).toEqual([ID('a'), ID('b'), ID('c')])

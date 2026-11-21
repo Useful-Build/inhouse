@@ -18,6 +18,9 @@ export interface Verdict {
 }
 
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === new Set(a).size && a.length === b.length && a.every(x => b.includes(x))
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** `name` shown whole in a source's `n`: "#2001" is in "Order #2001" but not in "#20011" (a name is never a prefix of a longer one). */
+export const showsName = (n: string, name: string): boolean => new RegExp(`(?<![A-Za-z0-9#-])${escape(name)}(?![A-Za-z0-9-])`, 'i').test(n)
 const isFixtureTool = (name: string) => /(^|__)fixture_/.test(name)
 
 export function grade(c: MorningCaseMeta, o: Observed): Verdict {
@@ -44,7 +47,7 @@ export function grade(c: MorningCaseMeta, o: Observed): Verdict {
     }
     for (const name of exp.sources) {
       const names = typeof name === 'string' ? [name] : name
-      if (!names.some(n => item.sources.some(s => s.includes(n)))) {
+      if (!names.some(n => item.sources.some(s => showsName(s, n)))) {
         checks.sources = false
         reasons.push(`${item.key}: no source shows ${names.join(' or ')}`)
       }
