@@ -32,10 +32,13 @@ export type ApprovalSort = 'oldest' | 'newest' | 'stake'
  *  the agent's. `at` is when it was last active: the lists show it and group by its day. */
 export interface ChatEntry { id: string; title: string; at: Instant; pinned?: boolean }
 
-/** Every chat that wasn't deleted, newest first (the ones started here, then the agent's), with the person's titles. */
-const liveChats = (data: AgentData, started: ChatEntry[], st: AgentState): ChatEntry[] =>
-  [...started, ...data.chat.chats].filter(c => !st.chatDeleted[c.id])
+/** Every chat that wasn't deleted, newest first (the ones started here, then the agent's), with the person's titles. A chat
+ *  started here that the agent lists too (the real client lists it once saved) is listed once, as the agent's. */
+const liveChats = (data: AgentData, started: ChatEntry[], st: AgentState): ChatEntry[] => {
+  const agents = new Set(data.chat.chats.map(c => c.id))
+  return [...started.filter(c => !agents.has(c.id)), ...data.chat.chats].filter(c => !st.chatDeleted[c.id])
     .map(c => ({ id: c.id, title: st.chatTitles[c.id] ?? c.title, at: c.at, pinned: !!st.chatPinned[c.id] }))
+}
 
 /** The chat list the sidebar, See all and the top bar read: deleted chats hidden, pinned ones first, then newest first. */
 export const chatEntries = (data: AgentData, started: ChatEntry[], st: AgentState): ChatEntry[] => {
