@@ -27,7 +27,7 @@ export const attachmentNameTooLong = (name: string): boolean => {
   try { encodeURIComponent(name); return false } catch { return true }
 }
 /** Why a name is refused: said on the file's chip and when the agent refuses a send with it (about 76 characters of Chinese, Japanese or Korean at 3 bytes each). */
-export const ATTACHMENT_NAME_TOO_LONG = 'The name is too long. Keep it under 230 letters or numbers, or about 76 characters in Chinese, Japanese or Korean.'
+export const ATTACHMENT_NAME_TOO_LONG = 'The name is too long. Keep it under 200 letters or numbers, or about 76 characters in Chinese, Japanese or Korean.'
 export const NO_MODEL_NOTE = 'No model yet. An Admin turns one on in Settings.'
 
 /** What a turn says when its model was switched off: the failed turn and the refused send (turn-text.ts). The failed line offers "Pick another model" when its text is one of these. */
