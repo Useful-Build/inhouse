@@ -72,6 +72,10 @@ export const accessMatrix: readonly AccessRow[] = [
   // one; a top-level redirect carries it), so no open row. Its CSRF guard is the state's member binding at the hub.
   /* 68 */ { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
   /* 69 */ { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },
+  // P5 W3 (p5-w3.md): the Tools page. Everyone reads; only the Inhouse team pauses, resumes and disconnects (an Admin's write is read-only).
+  /* 70 */ { method: 'GET', pattern: '/api/tools', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
+  /* 71 */ { method: 'PUT', pattern: '/api/tools/:accountId/paused', class: 'technical', allow: ['inhouse'] },
+  /* 72 */ { method: 'POST', pattern: '/api/tools/:accountId/disconnect', class: 'technical', allow: ['inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

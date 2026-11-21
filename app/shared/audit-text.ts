@@ -149,6 +149,10 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
       return args.outcome === 'ok'
         ? { what: 'connected a tool', detail: connectorName(args.accountId) }
         : { what: 'couldn’t connect a tool', detail: `${connectorName(args.accountId)}: ${CONNECT_FAILED[args.outcome] ?? args.outcome}` }
+    // P5 (p5-w3)
+    case 'tools.pause': return { what: args.paused ? 'paused a tool' : 'resumed a tool', detail: connectorName(args.accountId) }
+    case 'tools.disconnect':
+      return { what: 'disconnected a tool', detail: args.revoked ? connectorName(args.accountId) : `${connectorName(args.accountId)}: its access wasn’t removed on the tool’s side, so remove the app there too` }
     // P5 (p5-w4). Never the notice's text or title: the line holds neither.
     case 'notify.send': {
       const where = args.kind === 'slack' ? 'Slack' : args.target === 'admins' ? 'the admins’ bell' : `${who(args.target)}’s bell`

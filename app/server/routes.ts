@@ -30,6 +30,10 @@ import { listActivity } from './api/activity.ts'
 import { listNotifications, markNotificationsRead } from './api/bell.ts'
 // P5 (p5-w1 section 9): the Inhouse team connects an OAuth tool through the hub's ConnectGateway.
 import { connectCallback, startConnect } from './api/connect.ts'
+import { toolsHandlers } from './api/tools.ts'
+import type { ToolsGateway } from './api/tools.ts'
+import { toolsAccounts } from './api/tools-accounts.ts'
+import { storesOf } from './db/handler-kit.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -100,6 +104,9 @@ export async function reportClientError(request: Request): Promise<Response> {
   }
 }
 
+/** P5 W3's Tools handlers: the hub's `HUB_CONNECT` binding (typed from its contract, as connect.ts does) and W1's connector store. */
+const tools = toolsHandlers(c => ({ gateway: c.env.HUB_CONNECT as unknown as ToolsGateway, accounts: toolsAccounts(storesOf(c).connectors) }))
+
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [
   /* 1 */ { method: 'GET', pattern: '/api/health', handler: health },
@@ -163,6 +170,10 @@ export const routes: readonly Route[] = [
   // P5 W1 (p5-w1.md section 9): connect start and the OAuth callback. P5's rows start at 68.
   /* 68 */ { method: 'POST', pattern: '/api/connect/:accountId/start', handler: startConnect },
   /* 69 */ { method: 'GET', pattern: '/api/connect/callback', handler: connectCallback },
+  // P5 W3: the Tools page (route C reads, D pauses or resumes, E disconnects), over W1's ConnectGateway and connector store.
+  /* 70 */ { method: 'GET', pattern: '/api/tools', handler: tools.listTools },
+  /* 71 */ { method: 'PUT', pattern: '/api/tools/:accountId/paused', handler: tools.setToolPaused },
+  /* 72 */ { method: 'POST', pattern: '/api/tools/:accountId/disconnect', handler: tools.disconnectTool },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */
