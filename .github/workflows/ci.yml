@@ -350,7 +350,7 @@ jobs:
           retention-days: 7
       # As e2e shard 1: the product build ships no demo code, and the deployable Worker no test issuer.
       - if: ${{ !cancelled() }}
-        run: npm run build:product && npm run build:product-test && node scripts/check-product-build.mjs
+        run: npm run build:product && npm run build:product-test && npm run build:product-eval && node scripts/check-product-build.mjs
       # As the test-build job: every migration on an empty local D1 (the fresh install), so a broken migration shows on
       # its own fleet PR, not a few merges later.
       - name: Migrations, fresh install
