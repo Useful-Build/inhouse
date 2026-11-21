@@ -177,6 +177,20 @@ describe('a failed or never-run turn keeps its end (failure 5)', () => {
     })
   })
 
+  it('a turn that finished and was then paused in the grace window keeps no paused note (it was answered)', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      const d = await send(h, c, 'key-proj27'); await settle()
+      h.push(d.turnId, ev.started(), ev.text('answered'), ev.checkpoint(2, null, null), ev.success())
+      h.core.pause({ kind: 'person', memberId: 'm_admin' })
+      h.push(d.turnId, ev.released({ mainEntries: 2, lastUuid: null, lastUuidIndex: null }))
+      await h.tick(MIN); await h.tick(MIN)
+      // The fence keeps the outcome and still writes its own reason on the row; that reason is not this turn's end.
+      expect(h.turn(d.turnId)).toMatchObject({ state: 'ended', outcome: 'done', cancel_why: 'paused' })
+      expect((await d1Rows(c)).map(r => r.id)).toEqual([`${d.turnId}.u`, `${d.turnId}.0`])
+    })
+  })
+
   it('an interrupted turn (asked to stop, then success) keeps its stopped note as `.x` { outcome: interrupted }', async () => {
     const c = await chat()
     await inAgent(async h => {

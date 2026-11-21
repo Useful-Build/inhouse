@@ -469,3 +469,18 @@ describe('refreshMemory: a fact saved after boot shows when the Memory page open
     expect(agent.read().memory.personal.map(l => l.text)).toEqual(['We restock on Fridays'])
   })
 })
+
+describe('a chat past the first page of the list (route 24 finds it)', () => {
+  test('getChat adds the chat to the list, so a deep link to an older chat is known', async () => {
+    const { agent } = await loaded({ ...reads({ chats: [chatRow('c1')] }), 'GET /api/chats/c_old': { body: { chat: chatRow('c_old', { title: 'An older chat' }), messages: [], nextCursor: null, runs: [] } } })
+    expect(agent.allChatIds()).toEqual(['c1'])
+    await agent.getChat('c_old')
+    expect(agent.allChatIds().sort()).toEqual(['c1', 'c_old'])
+  })
+
+  test('a chat the server does not have is a 404 and stays out of the list', async () => {
+    const { agent } = await loaded({ ...reads({ chats: [chatRow('c1')] }), 'GET /api/chats/c_nope': refusal(404, 'not_found') })
+    expect(await errorOf(agent.getChat('c_nope'))).toMatchObject({ code: 'not_found' })
+    expect(agent.allChatIds()).toEqual(['c1'])
+  })
+})

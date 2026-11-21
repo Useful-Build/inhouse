@@ -7,11 +7,18 @@
 import { describe, expect, test } from 'vitest'
 import { isChatUnknown } from './chat-known'
 
-const base = { page: 'chats', chatList: false, openKey: 'c_x', ids: ['c_a'], serverList: 'ready' as 'loading' | 'ready' | 'error' | null }
+const base = { page: 'chats', chatList: false, openKey: 'c_x', ids: ['c_a'], serverList: 'ready' as 'loading' | 'ready' | 'error' | null, looked: true }
 
 describe('isChatUnknown', () => {
   test('a link to a chat the list lacks is unknown once the list has loaded', () => {
     expect(isChatUnknown(base)).toBe(true)
+  })
+  test('a chat the list lacks may be past its first page: it is not judged until route 24 has been asked about it', () => {
+    expect(isChatUnknown({ ...base, looked: false })).toBe(false)
+    expect(isChatUnknown({ ...base, looked: true })).toBe(true)
+  })
+  test('a chat route 24 found is in the list by then, so it is known', () => {
+    expect(isChatUnknown({ ...base, ids: ['c_a', 'c_x'], looked: true })).toBe(false)
   })
   test('a link to a chat the list has is known', () => {
     expect(isChatUnknown({ ...base, openKey: 'c_a' })).toBe(false)
@@ -23,7 +30,7 @@ describe('isChatUnknown', () => {
     expect(isChatUnknown({ ...base, ids: [], serverList: 'error' })).toBe(false)
   })
   test('with no server list (the demo) it is judged by the entries alone, loading or not', () => {
-    expect(isChatUnknown({ ...base, serverList: null })).toBe(true)
+    expect(isChatUnknown({ ...base, serverList: null, looked: false })).toBe(true)
   })
   test('other pages, the list of chats and a new chat are never unknown', () => {
     expect(isChatUnknown({ ...base, page: 'today' })).toBe(false)

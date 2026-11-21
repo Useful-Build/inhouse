@@ -66,7 +66,8 @@ export const SILENT_CANCELS: readonly string[] = [CANCEL.removed, CANCEL.deleted
 function endRow(t: TurnForRows): { id: string; extra: Record<string, string> } | null {
   if (t.outcome === 'failed') return { id: `${t.turn_id}.f`, extra: { failure: t.failure ?? 'unknown', retryQuestion: t.text } }
   if (t.outcome === 'stopped' || t.outcome === 'interrupted') return { id: `${t.turn_id}.x`, extra: { outcome: t.outcome } }
-  if (t.cancel_why !== null && !SILENT_CANCELS.includes(t.cancel_why)) return { id: `${t.turn_id}.x`, extra: { why: t.cancel_why } }
+  // A turn that was answered and then fenced (a pause in the grace window) keeps its outcome and still writes a reason: not a cancel.
+  if (t.cancel_why !== null && (t.outcome === null || t.outcome === 'cancelled') && !SILENT_CANCELS.includes(t.cancel_why)) return { id: `${t.turn_id}.x`, extra: { why: t.cancel_why } }
   return null
 }
 
