@@ -188,6 +188,9 @@ const WEBFETCH_PROMPT = 'Summarise the page (scenario:webfetch-allowed)'
 const pageSummary = (r: MessagesRequest): boolean =>
   Array.isArray(r.tools) && r.tools.length === 0 && r.messages.length === 1 && firstUserText(r).includes('Web page content:') && firstUserText(r).includes(WEBFETCH_PROMPT)
 
+/** The fact the `memory-save-team` scenario saves (the team's, waiting for an admin). */
+export const MEMORY_SAVE_TEAM_TEXT = 'We restock on Fridays.'
+
 /** How long the `slow-bash` scenario's one Bash call sleeps: long enough to act on the live turn, short enough to end on its own. */
 export const SLOW_BASH_SECONDS = 20
 
@@ -217,6 +220,14 @@ export const SCENARIOS: Record<string, Scenario> = {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_memory', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_SAVE_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
       { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory')) },
+    ],
+  },
+
+  /** Saves one fact for the whole team: it waits for an admin's OK, so no page lists it yet (the ship spec's S7). */
+  'memory-save-team': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_team', name: 'mcp__inhouse__memory_save', input: { scope: 'brand', text: MEMORY_SAVE_TEAM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
+      { content: [{ type: 'text', text: 'Saved for the team.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_team')) },
     ],
   },
 
