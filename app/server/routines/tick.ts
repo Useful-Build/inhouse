@@ -14,8 +14,9 @@ import { renderSlot, submitOf } from './render.ts'
 import { alertStatement, inState, slotInsert, slotLine } from './rows.ts'
 import type { NewSlot, RoutineRow, SlotRow } from './rows.ts'
 import { nextSlot, slotsDue } from './slots.ts'
-import { BACKSTOP_MS } from './limits.ts'
+import { BACKSTOP_MS, ON_TIME_MS } from './limits.ts'
 import type { Slot } from './slots.ts'
+import { afterTickBatch } from '@test-controls'
 
 export const TICK_KIND = 'routine-tick'
 export const TICK_ID = 'routine-tick'
@@ -24,8 +25,8 @@ export const POKE_ID = 'routine-poke'
 const MIN = 60_000
 /** The heartbeat's longest gap. */
 export const HEARTBEAT_MS = 5 * MIN
-/** A slot is on time within this of its due instant (OC 2). */
-export const ON_TIME_MS = 10 * MIN
+// ON_TIME_MS (OC 2) lives in limits.ts, beside BACKSTOP_MS: the store imports it without the tick's test-build controls.
+export { ON_TIME_MS } from './limits.ts'
 /** A started slot with no end after this, whose chat neither waits nor runs, is lost (OC 8). */
 export const LOST_AFTER_MS = 45 * MIN
 export { BACKSTOP_MS } from './limits.ts'
@@ -93,6 +94,8 @@ async function runPass(ctx: TickContext, now: number): Promise<PassResult> {
   ).bind(ROUTINES_READ_MAX).all<RoutineRow>()).results
 
   const decided = await decideAll(db, brand, routines, now)
+  // The test build's stop-after-batch control (server/ops/test-controls.ts, route 67); nothing in every other build.
+  afterTickBatch()
   const swept = await sweepStarted(db, ctx, now)
   const worked = await workClaimed(db, ctx, now)
 

@@ -67,6 +67,12 @@ export const ACTIVITY_TEMPLATES = {
     text: '{actor} deleted a routine', why: '{actor} asked for it', result: 'It won\'t run again', who: '{actor}',
     fields: {},
   },
+  // P4 W2 PR 2 (route 56, an orchestrator line): a deleted routine brought back.
+  routine_restored: {
+    kind: 'change', source: 'routine',
+    text: '{actor} brought back a routine', why: '{actor} undid the delete', result: 'It runs on its schedule again', who: '{actor}',
+    fields: {},
+  },
   // W3 (p4-w3.md 6): "<person> set aside an item on Today", the person as `actorId`.
   today_set_aside: {
     kind: 'change', source: 'today-aside',

@@ -5,6 +5,8 @@
 export { ErrorBodySchema } from '../../../shared/contract/common'
 import { UploadResultSchema } from '../../../shared/contract/attachments'
 import { ActivityPageSchema } from '../../../shared/contract/activity'
+import { LibraryFilesSchema, LibraryPageSchema, LibraryWriteSchema } from '../../../shared/contract/files'
+import { LibraryFileSchema } from '../../../shared/contract/library'
 import { AuditPageSchema } from '../../../shared/contract/audit'
 import { GrantCreateInputSchema, GrantEndInputSchema, GrantsListSchema, SupportGrantSchema } from '../../../shared/contract/grants'
 import { MeSchema } from '../../../shared/contract/me'
@@ -14,6 +16,7 @@ import { NotificationsListSchema, NotificationsReadInputSchema } from '../../../
 import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
 import { UsageDataSchema } from '../../../shared/contract/usage'
+import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../../shared/contract/routines'
 import { z } from 'zod'
 import { ChatIdsInputSchema, ChatListSchema, ChatPageSchema, ChatPinInputSchema, ChatRenameInputSchema, ChatSummarySchema } from '../../../shared/contract/chats'
 import { ModelModeSchema } from '../../../shared/contract/model'
@@ -33,6 +36,10 @@ export const ANSWERS = {
   models: z.object({ default: z.string().nullable(), modes: z.array(ModelModeSchema) }),
   // P4 (W4): Activity (route 59) and the bell (route 60; route 61 answers `ack`).
   activityPage: ActivityPageSchema, notifications: NotificationsListSchema,
+  // P4 (W5): the Library (rows 62, 63, 65 and 66).
+  libraryPage: LibraryPageSchema, libraryFile: LibraryFileSchema, libraryFiles: LibraryFilesSchema,
+  // P4 (W2): the Routines page (routes 52 to 56).
+  routines: RoutinesListSchema, routineState: RoutineStateSchema, routineRun: RoutineRunAnswerSchema,
 }
 
 /** What each write sends. */
@@ -41,6 +48,8 @@ export const BODIES = {
   grantEnd: GrantEndInputSchema, settingWrite: SettingWriteInputSchema,
   memoryForget: MemoryForgetInputSchema,
   notificationsRead: NotificationsReadInputSchema,
+  libraryWrite: LibraryWriteSchema,
+  routineEnabled: RoutineEnabledInputSchema, routineRun: RoutineRunInputSchema, routineRev: RoutineRevInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
 }
 

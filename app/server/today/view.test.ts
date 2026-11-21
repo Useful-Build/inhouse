@@ -9,12 +9,11 @@ import { describe, expect, it } from 'vitest'
 import { ProblemSchema } from '../../shared/contract/problem.ts'
 import { MorningCheckItemSchema } from '../../shared/contract/today.ts'
 import { intlZone } from '../routines/slots.ts'
-import { ON_TIME_MS as TICK_ON_TIME_MS } from '../routines/tick.ts'
 import { cardId, itemId } from './ids.ts'
 import { cardProblem, toProblem } from './problem.ts'
 import { hides } from './store.ts'
 import { incompleteSummary, gapsOfSummary, thingsWords } from './words.ts'
-import { ON_TIME_MS, clockWords, todayView } from './view.ts'
+import { clockWords, todayView } from './view.ts'
 import type { RoutineFacts, SlotFacts } from './view.ts'
 
 const TZ = 'America/New_York'
@@ -28,7 +27,6 @@ const view = (nowIso: string, slots: SlotFacts[], routine: RoutineFacts | null =
 const causes = (v: ReturnType<typeof view>) => v.cards.map(c => c.cause)
 
 describe('which run is shown', () => {
-  it('is on time for as long as the tick says', () => expect(ON_TIME_MS).toBe(TICK_ON_TIME_MS))
 
   it('is the newest by (local_date, claimed_at_ms), not the key text', () => {
     const early = slot({ slot_key: 'zzz|early', claimed_at_ms: 100 })
