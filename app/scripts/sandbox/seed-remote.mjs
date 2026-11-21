@@ -1,10 +1,11 @@
-// Seeds a sandbox D1 with the invented brand (server/seed/), for a per-PR test deployment or the candidate. Run in app/,
+// Seeds a sandbox D1 with the invented brand (server/seed/), for a per-PR test deployment, the candidate or the eval
+// deployment. Run in app/,
 // after `wrangler d1 migrations apply <name> --remote`:
-//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/sandbox/seed-remote.mjs (--per-pr <N> | --candidate) \
+//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/sandbox/seed-remote.mjs (--per-pr <N> | --candidate | --eval) \
 //     --config <sandbox config> --database <name>
 // The caller states the mode, as for the config check. In order, and nothing remote before the checks pass:
-//   1. <name> must be PR N's D1 name (names.mjs's perPrNames), or for the candidate a sandbox name that is no PR's,
-//      before anything else runs;
+//   1. <name> must be PR N's D1 name (names.mjs's perPrNames), for the eval deployment exactly its D1 name (evalNames),
+//      or for the candidate a sandbox name that is no PR's and not the eval deployment's, before anything else runs;
 //   2. the config must pass check-product-config.mjs --sandbox in the same mode, and bind <name> as a D1 database. The
 //      config's path is made absolute once, and that one path goes to the lock and to wrangler; the config is read as
 //      plain JSON, as the lock reads it;
@@ -25,7 +26,7 @@ import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { checkSandboxConfig, parseSandboxMode, readSandboxConfig } from '../check-product-config.mjs'
-import { SandboxNameError, assertCandidateName, perPrNames } from './names.mjs'
+import { SandboxNameError, assertCandidateName, evalNames, perPrNames } from './names.mjs'
 
 const appDir = fileURLToPath(new URL('../../', import.meta.url))
 const MIGRATIONS = join(appDir, 'server/migrations')
@@ -112,7 +113,7 @@ export async function renderSeedSql({ hashKey, nowMs }) {
   return { sql: writes.map(w => renderStmt(w)), seeded, db }
 }
 
-const usageText = 'usage: CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/sandbox/seed-remote.mjs (--per-pr <N> | --candidate) --config <sandbox config> --database <name>'
+const usageText = 'usage: CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/sandbox/seed-remote.mjs (--per-pr <N> | --candidate | --eval) --config <sandbox config> --database <name>'
 class Usage extends Error {}
 class Refused extends Error {}
 
@@ -150,6 +151,8 @@ async function main(argv) {
   // 1. The name first: nothing else runs for a name outside this mode's.
   if (mode.perPr !== undefined) {
     if (database !== perPrNames(mode.perPr).d1) throw new Refused(`${JSON.stringify(database)} is not PR ${mode.perPr}'s D1 name (${perPrNames(mode.perPr).d1})`)
+  } else if (mode.eval === true) {
+    if (database !== evalNames().d1) throw new Refused(`${JSON.stringify(database)} is not the eval deployment's D1 name (${evalNames().d1})`)
   } else {
     try { assertCandidateName(database) } catch (err) {
       if (err instanceof SandboxNameError) throw new Refused(err.message)
