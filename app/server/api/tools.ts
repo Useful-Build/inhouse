@@ -103,8 +103,10 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     }
     if (connecting) beingConnected.push(e.key)
 
-    // Details only for a tool that is connected or being connected (the UI's rule); a catalog tool has none.
-    if (!isConnected && !connecting) continue
+    // Details for a tool with a history: connected, being connected, or that has an account row or a hub state of its own
+    // (failed or refused first connect, disconnected, a failed revoke). A tool the Inhouse team never touched has none: it
+    // is a catalog entry only, and the UI has no page for it.
+    if (!isConnected && !connecting && s.state === 'empty' && row === undefined) continue
     const d: ToolDetail = { accountId: e.accountId, name: e.name, desc: e.desc, ex: e.ex, read: e.read, draft: e.draft, run: e.run, conn: e.conn, site: e.site }
     if (isConnected && connectedAtMs !== null) d.since = instant(connectedAtMs)
     if (connecting && row) d.liveBy = instant(row.lastStateAtMs + CONNECT_STATE_TTL_MS)

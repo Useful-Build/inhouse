@@ -1341,12 +1341,15 @@ describe('tools (routes C to E and the connect start)', () => {
     let reads_ = 0
     const { agent, calls } = await loaded({
       ...reads(),
-      'GET /api/tools': () => { reads_ += 1; return { body: reads_ === 1 ? TOOLS : { ...TOOLS, connected: [], details: {} } } },
+      'GET /api/tools': () => { reads_ += 1; return { body: reads_ === 1 ? TOOLS : { ...TOOLS, connected: [], details: { slack: { ...TOOLS.details.slack, paused: undefined, canDisconnect: false, revokeFailed: true } } } } },
       [`POST /api/tools/${SLACK}/disconnect`]: { body: { revoked: false } },
     })
     expect(await agent.disconnectTool('slack')).toEqual({ revoked: false })
     expect(calls.filter(c => c.method === 'POST').map(c => c.path)).toEqual([`/api/tools/${SLACK}/disconnect`])
     expect(agent.read().tools.connected).toEqual([])
+    // The open tool page stays: its details are kept, with the failed revoke, so nothing bounces to the list.
+    expect(agent.read().tools.details.slack).toMatchObject({ canDisconnect: false, revokeFailed: true })
+    expect(agent.getSnapshot().toolPaused).toEqual({})
   })
 
   test('a refused disconnect rejects with the code and tells once', async () => {

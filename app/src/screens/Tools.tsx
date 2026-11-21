@@ -9,6 +9,7 @@ import { useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { ToolChannel } from '../agent/types'
 import { fmtDay } from '../lib/format'
+import { toolRoute } from '../shell/tool-route'
 import { display } from '../state/display'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -19,7 +20,7 @@ const AMBER_DOT = 'bg-warning'
 const GREY_DOT = 'bg-faint'
 const INK_DOT = 'bg-foreground'
 /** A tool's dot: amber while it can't be read (being connected, login expired), grey while a person paused it. */
-const DOT_OF: Record<ToolState, string> = { connecting: AMBER_DOT, disconnected: AMBER_DOT, paused: GREY_DOT, connected: INK_DOT }
+const DOT_OF: Record<ToolState, string> = { connecting: AMBER_DOT, disconnected: AMBER_DOT, paused: GREY_DOT, connected: INK_DOT, off: GREY_DOT }
 
 const SECTION_HEAD = 'mb-1.5'
 // A section with one item gives it the full width, so its status sits at the right edge like the rows above and below.
@@ -39,20 +40,26 @@ const CARD = 'rounded-2xl border border-border bg-card'
 function useToolControls() {
   const me = useSyncExternalStore(agent.subscribe, agent.me)
   const manage = demo !== null || !!me?.can.editTechnical
-  return { manage, adminLine: !manage && me?.role === 'admin' }
+  // The Admin's line: a person who edits the brand's settings but not the technical ones (`can`, never the role's name).
+  return { manage, adminLine: !manage && !!me?.can.editBrandSettings }
 }
 
 /**
  * Starts signing in at a tool and goes there. The agent has already told the person if it failed. In the demo the address is
  * this app's own: nothing to go to, so it says so, as every other action that isn't connected in the demo does.
  */
-async function connectTool(key: string, label: string, say: (text: string) => void) {
+const CONNECT_FAILED = "We couldn't connect the tool. Try again."
+/** Resolves true when the browser is on its way to the tool (stay disabled), false when there is nothing to wait for. */
+async function connectTool(key: string, label: string, say: (text: string) => void): Promise<boolean> {
   try {
     const { authorizeUrl } = await agent.connectTool(key)
-    if (authorizeUrl.startsWith('/')) { say(`${label} isn't connected in this demo.`); return }
-    if (new URL(authorizeUrl).protocol !== 'https:') return
+    if (authorizeUrl.startsWith('/')) { say(`${label} isn't connected in this demo.`); return false }
+    let https = false
+    try { https = new URL(authorizeUrl).protocol === 'https:' } catch { /* not an address */ }
+    if (!https) { say(CONNECT_FAILED); return false }
     location.assign(authorizeUrl)
-  } catch { /* told by the agent's notice */ }
+    return true
+  } catch { return false /* told by the agent's notice */ }
 }
 
 export function Tools() {
@@ -83,6 +90,8 @@ export function Tools() {
   const channels = tools.channels.filter(c => hit(c.name, c.desc))
   const requestCustom = () => openTeam('tool')
   const { manage } = useToolControls()
+  const [connecting, setConnecting] = useState<string | null>(null)
+  const connect = async (k: string) => { setConnecting(k); if (!(await connectTool(k, 'Connect', say))) setConnecting(null) }
   const say = (text: string) => { showToast(text, { icon: 'info', ms: 4000 }) }
 
   return (
@@ -184,7 +193,7 @@ export function Tools() {
                 <div className={DESC}>{c.desc}</div>
               </div>
               {manage && c.accountId
-                ? <Button variant="outline" onClick={() => { void connectTool(c.k, 'Connect', say) }} className={cn('flex-none', tap)}>Connect</Button>
+                ? <Button variant="outline" disabled={connecting !== null} onClick={() => { void connect(c.k) }} className={cn('flex-none', tap)}>Connect</Button>
                 : <Button variant={req ? 'requested' : 'outline'} disabled={req} onClick={ask} className={cn('flex-none', tap)}>
                     {req && <Icon name="check" size={17} />}{req ? 'Requested' : 'Request'}
                   </Button>}
@@ -203,15 +212,28 @@ const accessOf = (state: ToolState, S: number, paused: boolean) => {
   if (state === 'disconnected') return paused ? 'None. A person paused it, and the login needs renewing.' : 'None until the login is renewed.'
   if (state === 'paused') return 'None. A person paused it.'
   if (state === 'connecting') return 'None yet. Being connected.'
+  if (state === 'off') return "None. It isn't connected."
   return ['Read only', 'Read, plus drafts you approve', 'Read, drafts and agreed jobs within limits'][S]
 }
 
 export function ToolPage() {
   const key = useUi(s => s.appKey)
-  const { channels, details } = useCtx().data.tools
+  const { data } = useCtx()
+  const { channels, details } = data.tools
   const channel = channels.find(c => c.key === key)
+  // A link to a tool that arrives before the tools have been read (the sign-in's return) waits for them, not for a redirect.
+  if (toolRoute(data.tools, key, data.resources.tools.status) === 'wait') return <ToolsLoading />
   // A channel that is also a tool the agent reads (Slack) gets the tool page, which carries the controls.
   return channel && !Object.hasOwn(details, key) ? <ChannelPage channel={channel} /> : <ToolDetailPage />
+}
+
+function ToolsLoading() {
+  return (
+    <Page className="pt-4.5">
+      <PageHeader title="Tools" description="The tools your Inhouse agent works with." />
+      <EmptyState className="mt-6" variant="inline">Loading your tools.</EmptyState>
+    </Page>
+  )
 }
 
 /** A channel's page (Slack): where the team hears from the agent. Not a tool it reads, so no abilities or questions (D6). */
@@ -258,13 +280,18 @@ function ToolDetailPage() {
   const A = toolDetail(data, key)
   const { manage, adminLine } = useToolControls()
   const [confirming, setConfirming] = useState(false)
+  const [signingIn, setSigningIn] = useState(false)
   // Status, abilities, last read and suggested questions all follow the tool's state (M17).
   const view = toolView(ctx, key)
   const bad = view.state === 'disconnected'
   // A person's pause, even while the login is also broken: Pause access and Resume access follow it.
   const off = !!st.toolPaused[key]
   const pauseLabel = off ? 'Resume access' : 'Pause access'
-  const reconnect = () => { void connectTool(key, 'Reconnect', text => showToast(text, { icon: 'info', ms: 4000 })) }
+  const connectLabel = bad ? 'Reconnect' : 'Connect'
+  const reconnect = async () => {
+    setSigningIn(true)
+    if (!(await connectTool(key, connectLabel, text => showToast(text, { icon: 'info', ms: 4000 })))) setSigningIn(false)
+  }
   const disconnect = async () => {
     setConfirming(false)
     try {
@@ -348,13 +375,13 @@ function ToolDetailPage() {
         </div>
         {manage && (
           <div className="flex flex-wrap gap-2">
-            {bad && <Button size="lg" className={tap} onClick={reconnect}>Reconnect</Button>}
-            <Button variant="secondary" size="lg" className={tap} onClick={onPause}>{pauseLabel}</Button>
+            {(bad || view.state === 'off') && <Button size="lg" className={tap} disabled={signingIn} onClick={() => { void reconnect() }}>{connectLabel}</Button>}
+            {(view.state === 'connected' || view.state === 'paused' || bad) && <Button variant="secondary" size="lg" className={tap} onClick={onPause}>{pauseLabel}</Button>}
             {A.canDisconnect && <Button variant="outline" size="lg" className={tap} onClick={() => setConfirming(true)}>Disconnect</Button>}
           </div>
         )}
         {adminLine && <div className={`basis-full ${DESC}`}>Your Inhouse team manages tools.</div>}
-        {bad && manage && A.canDisconnect && <div className={`basis-full ${DESC}`}>If Reconnect doesn't work, the tool's permissions may have changed. Disconnect it, then connect again.</div>}
+        {bad && manage && A.canDisconnect && <div className={`basis-full ${DESC}`}>The tool's permissions changed. Disconnect it, then connect again.</div>}
         {A.revokeFailed && <div className="basis-full text-sm text-pretty text-warning-text">{`${A.name}'s access wasn't removed on its side when it was last disconnected. Remove the app there too.`}</div>}
       </div>
       {confirming && (

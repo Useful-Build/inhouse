@@ -14,6 +14,7 @@ describe('parseConnectReturn', () => {
     expect(line('state_invalid')).toBe('That sign-in link has expired. Start the connection again.')
     expect(line('workspace_mismatch')).toBe("That's a different Slack workspace. Sign in to the brand's workspace.")
     expect(line('scope_mismatch')).toBe("The app's permissions don't match what we asked for. Check the app's scopes, then reconnect.")
+    expect(line('connect_refused')).toBe("The connection was declined. Start it again when you're ready.")
     expect(line('connect_stale')).toBe('Something changed while you signed in. Start the connection again.')
   })
   test('any other code, listed or not, gets the plain line and is never echoed', () => {

@@ -198,6 +198,15 @@ describe('checkAccess cases', () => {
     const granted = canFor(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(granted).toMatchObject({ grantSupport: false, viewAudit: true, exportAudit: true })
   })
+  it('P5 W3: the Tools page shows its controls on `can.editTechnical`, which is true exactly for the principals that may write routes 71 and 72', () => {
+    const writes = [r('PUT', '/api/tools/:accountId/paused'), r('POST', '/api/tools/:accountId/disconnect')]
+    for (const [who, p] of [['member', principals.member()], ['admin', principals.admin()], ['inhouse', principals.inhouse()], ['inhouse under a grant', principals.inhouse({ id: 'g', endsAtMs: NOW + 1 })]] as const) {
+      const mayWrite = writes.every(row => ok(checkAccess(p, row, undefined, NOW)))
+      const mayWriteAny = writes.some(row => ok(checkAccess(p, row, undefined, NOW)))
+      expect(mayWriteAny, `${who}: the two write rows agree`).toBe(mayWrite)
+      expect(canFor(p, accessMatrix, committedCanRows, NOW).editTechnical, who).toBe(mayWrite)
+    }
+  })
 })
 
 /**

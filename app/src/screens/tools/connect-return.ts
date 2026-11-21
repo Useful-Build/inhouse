@@ -8,6 +8,7 @@ const MESSAGE: Record<string, string> = {
   state_invalid: 'That sign-in link has expired. Start the connection again.',
   workspace_mismatch: "That's a different Slack workspace. Sign in to the brand's workspace.",
   scope_mismatch: "The app's permissions don't match what we asked for. Check the app's scopes, then reconnect.",
+  connect_refused: "The connection was declined. Start it again when you're ready.",
   // Neutral: the cause is a disconnect landing while the person signed in.
   connect_stale: 'Something changed while you signed in. Start the connection again.',
 }
