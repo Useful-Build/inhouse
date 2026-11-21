@@ -30,3 +30,5 @@ export * from './requests.ts'
 export * from './runs.ts'
 export * from './chats.ts'
 export * from './attachments.ts'
+// P5 (p5-w4): the Slack channels listed for notices.
+export * from './notify-slack.ts'
