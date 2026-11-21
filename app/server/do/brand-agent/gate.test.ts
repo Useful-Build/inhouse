@@ -838,7 +838,7 @@ describe('#159 round 1 lows', () => {
     await settle()
     expect(c5.v).toBeUndefined()
     h.pool.runnerTurns.set('runner-0', [t])
-    h.core.containerExited('runner-0', 1)
+    h.core.containerExited('runner-0', 1, true)
     await settle()
     expect(h.turn(t)).toMatchObject({ requeues: 1 })
     expect(c5.v).toEqual(BUSY)

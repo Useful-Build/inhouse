@@ -1,5 +1,7 @@
 // P3's pool signals (W2, p3-design section 7): `pool_protocol` (a runner with no shared protocol version),
-// `pool_restarts` (a runner's container exited more than 3 times in an hour), `pool_shortfall` (a turn queued over 30 s,
+// `pool_restarts` (a runner's containers exited more than 3 times in an hour; a start that never answered during a drain,
+// warm-up's retries, isn't counted),
+// `pool_shortfall` (a turn queued over 30 s,
 // or a `pool_full`, in 15 minutes). Counts only. Each asks the BrandAgent (pool.ts `health`).
 import { brandAgent } from '../../do/brand-agent/client.ts'
 import type { PoolHealth } from '../../do/brand-agent/ports.ts'

@@ -242,7 +242,7 @@ describe('B: a turn that already ended keeps its own outcome in the payload (#16
     const seen = captureEnds(h)
     const a = await doneThen(h, 'k-donec-01')
     h.pool.runnerTurns.set('runner-0', [a.turnId])
-    h.core.containerExited('runner-0', 1)
+    h.core.containerExited('runner-0', 1, true)
     for (let i = 0; i < 5 && h.turn(a.turnId).state !== 'ended'; i++) await h.tick(MIN)
     expect(seen.get(a.turnId)!.map(x => x!.payload)).toEqual([done('k-donec-01', a)])
   }))

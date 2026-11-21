@@ -70,8 +70,11 @@ export interface RunnerDeps<B> {
   container: ContainerPort<B>
   state: RunnerState
   bindings: { egress(props: EgressProps): B; web(props: EgressProps): B; deny(props: EgressProps): B }
-  /** Tells the BrandAgent the container of generation `gen` exited (`containerExited`). */
-  exited(runner: string, gen: number): Promise<void>
+  /**
+   * Tells the BrandAgent the container of generation `gen` exited (`containerExited`); `cameUp`: it had answered
+   * `/protocol` (a start that never did is a failed start, not a restart).
+   */
+  exited(runner: string, gen: number, cameUp: boolean): Promise<void>
   /** The versions this Worker speaks (the protocol's own list; a test injects another). */
   accepted?: readonly number[]
   timeout?(ms: number): AbortSignal
@@ -363,10 +366,12 @@ export class RunnerCore<B> {
     const s = this.#d.state
     if (s.exitReported() >= gen) return
     s.setExitReported(gen)
+    // Read before it's cleared: a generation that answered /protocol came up (a version, or null for no shared one).
+    const cameUp = s.protocol(gen) !== undefined
     if (s.gen() === gen) s.setProtocol(gen, undefined)
-    this.#log({ event: 'container_exited', gen, how: errorText(how) })
+    this.#log({ event: 'container_exited', gen, cameUp, how: errorText(how) })
     try {
-      await this.#d.exited(this.#d.name, gen)
+      await this.#d.exited(this.#d.name, gen, cameUp)
     } catch (e) {
       // The BrandAgent's turn-watch still finds the turns (status: unreachable with the container gone).
       this.#log({ event: 'container_exit_report_failed', gen, error: errorText(e) })
