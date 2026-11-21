@@ -16,6 +16,7 @@ import type { NewSlot, RoutineRow, SlotRow } from './rows.ts'
 import { nextSlot, slotsDue } from './slots.ts'
 import { BACKSTOP_MS } from './limits.ts'
 import type { Slot } from './slots.ts'
+import { afterTickBatch } from '@test-controls'
 
 export const TICK_KIND = 'routine-tick'
 export const TICK_ID = 'routine-tick'
@@ -93,6 +94,8 @@ async function runPass(ctx: TickContext, now: number): Promise<PassResult> {
   ).bind(ROUTINES_READ_MAX).all<RoutineRow>()).results
 
   const decided = await decideAll(db, brand, routines, now)
+  // The test build's stop-after-batch control (server/ops/test-controls.ts, route 67); nothing in every other build.
+  afterTickBatch()
   const swept = await sweepStarted(db, ctx, now)
   const worked = await workClaimed(db, ctx, now)
 
