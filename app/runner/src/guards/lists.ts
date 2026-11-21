@@ -30,7 +30,7 @@ export const BUILT_IN_TOOLS = [
   'WaitForMcpServers',
 ] as const
 
-/** The one MCP server the agent gets: ours. Its tools are `mcp__inhouse__*`. */
+/** Our own MCP server; its tools are `mcp__inhouse__*`. The agent's other one is the hub's `apps` (src/session/mcp-servers.ts). */
 export const INHOUSE_MCP_SERVER = 'inhouse'
 
 /** The bundled skill we keep (its licence keeps it inside the engine, so it's allowlisted by name). */

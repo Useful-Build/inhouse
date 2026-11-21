@@ -1,7 +1,8 @@
 // The egress (`egress.internal`, p3-design 8.1): the container's one way out, per call. Every call: the host, the route
-// (`model|mcp|store|files|events|audit`, else 404), the run token hashed and checked by the BrandAgent (refused: 401,
-// or 410 for a closed `events` route), the token header never forwarded, ids only from the grant, request and response
-// headers by allowlist, no redirects followed, pinned upstreams, logs without tokens, hashes, keys or bodies.
+// (`model|mcp|store|files|events|audit`, plus P4 H1's `hub` checked on the `mcp` grant, else 404), the run token hashed
+// and checked by the BrandAgent (refused: 401, or 410 for a closed `events` route), the token header never forwarded,
+// ids only from the grant, request and response headers by allowlist, no redirects followed, pinned upstreams, logs
+// without tokens, hashes, keys or bodies.
 import { WorkerEntrypoint } from 'cloudflare:workers'
 import { EGRESS_ROUTES, hashRunToken } from '../do/brand-agent/tokens.ts'
 import type { EgressRoute } from '../do/brand-agent/tokens.ts'
@@ -13,6 +14,7 @@ import type { EgressDeps, EgressRpc } from './deps.ts'
 import { eventsRoute } from './events.ts'
 import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
+import { handleHub, hubRouteDeps, type ReadGatewayLike } from './hub.ts'
 import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
 import { modelRoute } from './model.ts'
@@ -43,16 +45,20 @@ export async function handleEgress(request: Request, d: EgressDeps): Promise<Res
   const url = new URL(request.url)
   if (url.hostname !== EGRESS_HOST) return jsonAnswer({ error: 'not_found' }, 404)
   const name = /^\/([a-z]+)\//.exec(url.pathname)?.[1]
-  if (!name || !(EGRESS_ROUTES as readonly string[]).includes(name)) return jsonAnswer({ error: 'not_found' }, 404)
-  const route = name as EgressRoute
+  // `/hub/` (P4 H1): the hub's read tools, the turn's second MCP server, on the grant's `mcp` route (it closes with `mcp`).
+  const hub = name === 'hub' ? d.hub : undefined
+  if (!name || !(hub !== undefined || (EGRESS_ROUTES as readonly string[]).includes(name))) return jsonAnswer({ error: 'not_found' }, 404)
+  const route = (hub !== undefined ? 'mcp' : name) as EgressRoute
 
   const token = request.headers.get(RUN_TOKEN_HEADER)
   const checked = token ? await d.rpc.checkRunToken(await hashRunToken(token), route) : { refused: 'unknown' as const }
   if ('refused' in checked) {
-    d.log({ event: 'egress_refused', route, why: checked.refused, runner: d.runner })
+    // `path: 'hub'` tells a refused `/hub/` call from a refused `/mcp/` one (both check the `mcp` route).
+    d.log({ event: 'egress_refused', route, ...(hub !== undefined ? { path: 'hub' } : {}), why: checked.refused, runner: d.runner })
     return refusal(route, route === 'events' && checked.refused === 'closed' ? 410 : 401)
   }
   const grant = checked
+  if (hub !== undefined) return handleHub(withoutToken(request), grant, hub)
   const path = url.pathname
   switch (route) {
     case 'model':
@@ -100,6 +106,8 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     newFileId,
     // W6's `inhouse` MCP server (server/mcp/server/index.ts), acting as the grant's member only.
     mcp: mcpHandler({ db: env.DB }),
+    // The hub's ReadGateway (P4 H1, OC 4: the only hub entrypoint the product Worker binds).
+    hub: hubRouteDeps(env.HUB as unknown as ReadGatewayLike, entry => console.log(entry)),
     waitUntil: p => ctx.waitUntil(p),
     setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: t => clearInterval(t),
