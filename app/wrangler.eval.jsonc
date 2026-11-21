@@ -5,11 +5,12 @@
  * dist-product-eval/ (vite.config.ts). Deployed only to the sandbox, from main, by the private ops repo, which fills the
  * names, hosts, Access values and gateway id and passes TEST_ISSUER_JWKS; the result must pass
  * `check-product-config.mjs --sandbox --eval`. As it stands it never deploys: the product check refuses it (the test
- * issuer is on). Made-up and empty values only.
+ * issuer is on). Made-up and empty values only, and placeholder names of its own (inhouse-eval, inhouse-eval-files),
+ * never the house's, so a mis-aimed deploy of the unfilled template can't land on a house resource.
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "inhouse-product",
+	"name": "inhouse-eval",
 	"main": "server/index.ts",
 	"compatibility_date": "2026-11-13",
 	// `request.signal` fires when the caller disconnects (the egress closes a model call on it, p3-design 8.2); the default
@@ -24,12 +25,12 @@
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "inhouse",
+			"database_name": "inhouse-eval",
 			// No database_id: the ops repo fills it per account.
 			"migrations_dir": "server/migrations"
 		}
 	],
-	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-files" }],
+	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-eval-files" }],
 	// Workers AI, for the AI Gateway binding the egress calls the model through (`env.AI.gateway(AI_GATEWAY_ID)`,
 	// p3-design 8.2). The eval build always takes it (server/egress/index.ts `usesScriptedModel`); only the sandbox's
 	// eval mode allows it beside the test issuer (check-product-config.mjs --sandbox --eval).

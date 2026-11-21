@@ -203,7 +203,9 @@ if (serverImportsScripted()) {
 // ---------- 5. the eval trace ----------
 /** app/server/eval-trace/on.ts's EVAL_TRACE_CANARY (check-product-build.test.mjs keeps the two equal). */
 const EVAL_CANARY = 'inhouse-eval-trace-canary-5d1e8a40'
-const EVAL_MODULE = /(^|\/)server\/eval-trace\/on\.[cm]?[jt]s($|\?)/
+/** vite.config.ts's `@eval-trace` target in the eval build (check-product-build.test.mjs pins it to the real file and the alias). */
+const EVAL_MODULE_PATH = 'server/eval-trace/on.ts'
+const EVAL_MODULE = new RegExp('(^|/)' + escapeRe(EVAL_MODULE_PATH) + '($|\\?)')
 /** Eval-trace canary hits in a Worker's files, eval-trace modules in its graph, and the same for the scripted model. */
 function evalScan(dir) {
   const trace = []

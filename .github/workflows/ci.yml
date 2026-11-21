@@ -162,17 +162,24 @@ jobs:
             exit 1
           fi
           echo "check-product-config.mjs refused wrangler.test.jsonc (exit 1), as it must."
-      # The eval build's template the same way: the test issuer is on in it, so as a product config it must be refused.
+      # The eval build's template the same way, and for the reason it's there: the test issuer is on in it, so as a
+      # product config it must be refused on that rule (the template also fails on its empty INHOUSE_ACCESS, which
+      # alone would keep exit 1 if the test-issuer rule went).
       - name: The config check refuses wrangler.eval.jsonc
         if: ${{ !cancelled() }}
         run: |
           rc=0
-          node scripts/check-product-config.mjs wrangler.eval.jsonc || rc=$?
+          out=$(node scripts/check-product-config.mjs wrangler.eval.jsonc 2>&1) || rc=$?
+          printf '%s\n' "$out"
           if [ "$rc" -ne 1 ]; then
             echo "::error::check-product-config.mjs exited $rc on wrangler.eval.jsonc; it must refuse it with exit code 1 (0 = passed a config that must never deploy, 2 = usage or a crash)."
             exit 1
           fi
-          echo "check-product-config.mjs refused wrangler.eval.jsonc (exit 1), as it must."
+          if ! grep -qF 'vars.INHOUSE_TEST_BUILD is set: the test issuer must never be on in a deployable config' <<< "$out"; then
+            echo "::error::check-product-config.mjs refused wrangler.eval.jsonc, but not on the test-issuer rule it must name."
+            exit 1
+          fi
+          echo "check-product-config.mjs refused wrangler.eval.jsonc on the test-issuer rule (exit 1), as it must."
       # The api and real projects. Their web server migrates and seeds a fresh local D1 first (prepare.mjs).
       - name: Playwright, api and real
         if: ${{ !cancelled() }}

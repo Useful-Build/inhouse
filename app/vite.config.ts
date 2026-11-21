@@ -36,7 +36,8 @@ const PRODUCT_TEST_OUT_DIR = 'dist-product-test'
 const PRODUCT_EVAL_OUT_DIR = 'dist-product-eval'
 /** The Worker config each product mode builds `server/index.ts` from; the demo builds worker/ from wrangler.jsonc. */
 const PRODUCT_CONFIG: Record<string, string> = { [PRODUCT]: 'wrangler.product.jsonc', [PRODUCT_TEST]: 'wrangler.test.jsonc', [PRODUCT_EVAL]: 'wrangler.eval.jsonc' }
-const PRODUCT_OUT: Record<string, string> = { [PRODUCT]: PRODUCT_OUT_DIR, [PRODUCT_TEST]: PRODUCT_TEST_OUT_DIR, [PRODUCT_EVAL]: PRODUCT_EVAL_OUT_DIR }
+/** Every product mode's output folder: keepDemoDeployRedirect restores a pointer into any of them (build-support/vite-config.test.ts). */
+export const PRODUCT_OUT: Record<string, string> = { [PRODUCT]: PRODUCT_OUT_DIR, [PRODUCT_TEST]: PRODUCT_TEST_OUT_DIR, [PRODUCT_EVAL]: PRODUCT_EVAL_OUT_DIR }
 /** The client entry `src/agent/index.ts` imports as `@client`, picked by mode (tsconfig.app.json and vitest.config.ts name the demo one). */
 const clientEntry = (product: boolean) =>
   fileURLToPath(new URL(product ? './src/agent/client.product.ts' : './src/agent/client.demo.ts', import.meta.url))
@@ -172,7 +173,7 @@ function keepDemoDeployRedirect(): Plugin {
   let snapshot: RedirectSnapshot | null = null
   const restore = () => {
     if (!snapshot) return
-    for (const outDir of [PRODUCT_OUT_DIR, PRODUCT_TEST_OUT_DIR, PRODUCT_EVAL_OUT_DIR]) restoreRedirect(snapshot, outDir)
+    for (const outDir of Object.values(PRODUCT_OUT)) restoreRedirect(snapshot, outDir)
   }
   return {
     name: 'inhouse:keep-demo-deploy-redirect',

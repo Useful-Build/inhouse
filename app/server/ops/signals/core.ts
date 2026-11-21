@@ -23,17 +23,20 @@ export function versionOf(env: HandlerEnv): string | null {
  * but `product`). A release's config has the `version_metadata` binding (wrangler.product.jsonc), so a Worker without it
  * is misconfigured and fails. A test or eval bundle runs only with its runtime switch on (`INHOUSE_TEST_BUILD === '1'`,
  * as the test issuer does): without it, it's that bundle under a product config, and fails. With it, it may run without
- * version metadata, and its detail says so. `compiledTestBuild` and `evalFlavor` are seams for the unit tests (vitest
- * compiles neither in).
+ * version metadata, and its detail says so. An eval build whose `@eval-trace` gave no flavor (the define and the alias
+ * disagree) fails, never reading as a test bundle. `compiledTestBuild`, `compiledEval` and `evalFlavor` are seams for
+ * the unit tests (vitest compiles neither build in, and points `@eval-trace` at on.ts).
  */
 export function versionSignal(
   compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__,
-  evalFlavor: string | null = __INHOUSE_EVAL_BUILD__ ? EVAL_BUILD_FLAVOR : null,
+  compiledEval: boolean = __INHOUSE_EVAL_BUILD__,
+  evalFlavor: string | null = EVAL_BUILD_FLAVOR,
 ): Signal {
-  const flavor = evalFlavor ?? (compiledTestBuild ? 'test' : 'product')
+  const flavor = compiledEval ? evalFlavor : compiledTestBuild ? 'test' : 'product'
   return {
     name: 'version',
     async check({ env }) {
+      if (flavor === null) return { ok: false, detail: 'eval build without the eval trace (the build\'s define and alias disagree)' }
       const id = versionOf(env)
       const switchedOn = (env as { INHOUSE_TEST_BUILD?: unknown }).INHOUSE_TEST_BUILD === '1'
       if (compiledTestBuild && !switchedOn) return { ok: false, detail: `${id ?? 'no version metadata'} · ${flavor} build without its switch` }

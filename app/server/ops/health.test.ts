@@ -69,7 +69,7 @@ describe('the health route', () => {
   })
   it('names the flavor, and fails a test or eval bundle without its runtime switch (failure 7)', async () => {
     const ON = { INHOUSE_TEST_BUILD: '1' }
-    const evalBuild = versionSignal(true, 'eval (canary)')
+    const evalBuild = versionSignal(true, true, 'eval (canary)')
     expect(await evalBuild.check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · eval (canary) build' })
     expect(await evalBuild.check({ env: ON as unknown as HandlerEnv, stores })).toEqual({ ok: true, detail: 'no version metadata (eval (canary) build)' })
     // A test or eval bundle under a product config (version metadata, no switch) is red: that bundle must never answer there.
@@ -77,6 +77,12 @@ describe('the health route', () => {
     expect(await versionSignal(true).check({ env: VERSIONED, stores })).toEqual({ ok: false, detail: 'v-123 · test build without its switch' })
     // The product build reads the runtime switch as nothing (the test issuer isn't in it).
     expect(await versionSignal(false).check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · product build' })
+    // The eval define on but the alias gave the off module (no flavor): red, never read as a test bundle.
+    for (const env of [{ ...VERSIONED, ...ON }, ON]) {
+      expect(await versionSignal(true, true, null).check({ env: env as unknown as HandlerEnv, stores })).toEqual({ ok: false, detail: 'eval build without the eval trace (the build\'s define and alias disagree)' })
+    }
+    // Not the eval build: a flavor from the alias is ignored (vitest points @eval-trace at on.ts).
+    expect(await versionSignal(true, false, 'eval (canary)').check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · test build' })
     // This compile (vitest, as the product build): the defaults name the product flavor.
     expect(await versionSignal().check({ env: VERSIONED, stores })).toEqual({ ok: true, detail: 'v-123 · product build' })
   })

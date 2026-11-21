@@ -1,7 +1,7 @@
 // scripts/check-product-build.mjs part 4: the test-build proof is always hard (exit 1 when the test build has no canary),
 // whatever the server folder holds. Part 5: the eval trace in the eval build only. Builds are fixtures in temp dirs.
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -108,10 +108,19 @@ test('nothing imports @scripted-model yet: a note, and a test build without its 
 //  3. the eval build has no canary or no module, so the scan proves nothing (it scanned the wrong folder, or the alias
 //     stopped resolving to on.ts);
 //  4. the eval build carries the scripted model (a paid eval would grade it);
-//  5. the canary written here drifts from the module's and the script's.
+//  5. the canary or module path written here drifts from the module's, the script's and vite.config.ts's alias.
 test('the eval canary is the module\'s and the script\'s (failure 5)', () => {
   expect(EVAL_TRACE_CANARY).toBe(EVAL)
   expect(readFileSync(script, 'utf8')).toContain(`const EVAL_CANARY = '${EVAL}'`)
+})
+
+test('the eval module path is the real file and the one vite.config.ts aliases (failure 5)', () => {
+  const source = readFileSync(script, 'utf8')
+  const path = /const EVAL_MODULE_PATH = '([^']+)'/.exec(source)?.[1]
+  expect(path).toBe(EVAL_MODULE)
+  const app = fileURLToPath(new URL('..', import.meta.url))
+  expect(existsSync(join(app, path))).toBe(true)
+  expect(readFileSync(join(app, 'vite.config.ts'), 'utf8')).toContain(`'./${path}'`)
 })
 
 test('the eval build carries the eval trace and the others don\'t: the check passes', () => {
