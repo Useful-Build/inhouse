@@ -14,13 +14,19 @@
 @font-face { font-family: "Material Symbols Rounded"; src: url("/fonts/material-symbols-rounded.woff2") format("woff2"); font-weight: 300 500; font-style: normal; font-display: block; }
 
 /*
- * The override block: only the tokens whose value differs from ui-base.css. Fonts don't change by theme, so .dark
- * has nothing to override. Inhouse self-hosts Geist (the @font-face above), so the stacks name it, not the
- * "Geist Variable" of the @fontsource packages.
+ * The override block: only the tokens whose value differs from ui-base.css. Inhouse self-hosts Geist (the @font-face
+ * above), so the stacks name it, not the "Geist Variable" of the @fontsource packages. The light page is a lighter grey
+ * than the base's #f3f3f3, so white cards and the white sidebar still sit one clear step above it without extra shadow
+ * (pure white was tried and rejected: cards and the sidebar went flat); the dots step to #d4d4d4 so they keep the same
+ * presence on the lighter ground.
+ * Cascade trap: this block comes after ui-base's .dark block with the same specificity, so the .dark block below
+ * re-states the dark page and dots, or dark mode would take this light grey.
  */
 :root {
   --font-sans: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
+  --background: #fafafa;
+  --dots: #d4d4d4;
 }
 
 /*
@@ -34,6 +40,8 @@
  * 4.5:1 on hover; on a selected row it steps up to text-foreground-3.
  */
 .dark {
+  --background: #111111;  /* unchanged from ui-base: re-stated because the :root override above would win otherwise */
+  --dots: #2c2c2c;
   --popover: #242424;
   --accent: #303030;
   --fill-hover: #383838;
@@ -57,7 +65,7 @@
   --app-settings-nav: 274px;
   --app-library-nav: 236px;
   --app-today-column: 720px;      /* Today's column and its composer */
-  --app-chat-column: 780px;       /* a chat and its composer */
+  --app-chat-column: 880px;       /* a chat and its composer */
   --app-page-narrow: 800px;       /* a Settings page's column, beside its menu */
   --app-page-default: 900px;      /* page width steps (Page): every list page shares this one content edge */
   --app-page-wide: 1000px;        /* Today, Usage, the top banner */
@@ -115,11 +123,14 @@
   --app-menu-muted: var(--muted-foreground);           /* muted text inside them, 4.5:1 on the cursor */
   --app-tag-edge-strong: var(--border-strong);         /* a stage tag's outline on a selected row */
   --app-picked-muted: var(--muted-foreground);         /* muted text on a picked segment (Segmented sets it) */
+  --app-draft-sheet: #f5f6fe;                          /* the agent's drafted fix: a faint brand tint (Today's draft sheet, Approvals' draft text) */
+  --app-draft-kind: #ffffff;                           /* the small kind-icon tile on the draft sheet */
 
   /* card grids (CardGrid sizes): the narrowest a card gets before the row wraps */
   --app-grid-cards-sm: repeat(auto-fill, minmax(min(200px, 100%), 1fr));   /* Library */
-  --app-grid-cards: repeat(auto-fill, minmax(min(280px, 100%), 1fr));      /* Today */
+  --app-grid-cards: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   --app-grid-cards-lg: repeat(auto-fill, minmax(min(360px, 100%), 1fr));   /* Tools, Skills, Usage */
+  --app-grid-cards-wide: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); /* Today's Needs you cards: two columns at page-wide */
   --app-grid-library-list: minmax(0, 2.6fr) 52px minmax(0, 1fr) 72px 136px;
   --app-grid-usage-totals: repeat(auto-fit, minmax(130px, 1fr));
   --app-grid-trace-stats: repeat(auto-fit, minmax(110px, 1fr));
@@ -206,6 +217,8 @@
   --app-tag-edge-strong: #828282;     /* 3.05:1 on the #383838 selected row, so the tag keeps its pill shape */
   --app-preview-dim: 0.82;            /* PR 6: a white page or poster no longer glares on the #1a1a1a card */
   --app-picked-muted: var(--foreground-3); /* muted text on a picked segment: 4.9:1 on #383838 (the base's muted is 4.0:1) */
+  --app-draft-sheet: #1d1f2e;
+  --app-draft-kind: #2a2c3c;
 }
 
 /* A menu or pop-up (the command palette too) is lifted in dark, so the soft fills inside it (icon tiles, chips, soft
@@ -293,6 +306,8 @@
   --color-on-destructive: var(--app-on-destructive);
   --color-switch-off: var(--app-switch-off);
   --color-window-surface: var(--app-window-surface);
+  --color-draft-sheet: var(--app-draft-sheet);
+  --color-draft-kind: var(--app-draft-kind);
   --color-tag-edge-strong: var(--app-tag-edge-strong);
   --spacing-select-height: min(288px, var(--radix-select-content-available-height));
   --spacing-below-topbar: var(--app-screen-below-topbar);
@@ -315,6 +330,7 @@
   --grid-template-columns-cards-sm: var(--app-grid-cards-sm);
   --grid-template-columns-cards: var(--app-grid-cards);
   --grid-template-columns-cards-lg: var(--app-grid-cards-lg);
+  --grid-template-columns-cards-wide: var(--app-grid-cards-wide);
   --grid-template-columns-library-list: var(--app-grid-library-list);
   --grid-template-columns-usage-totals: var(--app-grid-usage-totals);
   --grid-template-columns-trace-stats: var(--app-grid-trace-stats);
@@ -349,9 +365,10 @@
 :root {
   --app-composer-fade: linear-gradient(to bottom, transparent 0, black 18px); /* the composer field's top edge once it scrolls */
   --app-selection-room: calc(var(--app-toast-bottom) + 88px); /* room under a list in Select mode: the bar, its gap and a phone's home bar */
-  --app-prose-measure: 32.5rem; /* an answer's text, tables and insets, and your bubble: about 72 characters a line at 15px Geist */
+  --app-prose-measure: 32.5rem; /* tables and insets, and your bubble: about 72 characters a line at 15px Geist */
   --app-sheet-fade: linear-gradient(to bottom, transparent, var(--app-window-surface)); /* the foot of a window's scrolling list on a phone */
   --app-bubble: var(--fill-hover); /* your message's bubble: the soft grey (#e9e9e9) in light */
+  --app-answer-measure: 38.75rem; /* an answer's text: about 620px, wider than your bubble (prose-measure) */
 }
 .dark {
   --app-bubble: #171717;        /* just under the answer card (#1a1a1a), so the card leads; still apart from the #111 page; ~15:1 for text (#ededed) */
@@ -359,6 +376,7 @@
 @theme inline {
   --spacing-selection-room: var(--app-selection-room);
   --container-prose-measure: var(--app-prose-measure);
+  --container-answer-measure: var(--app-answer-measure);
   --color-bubble: var(--app-bubble);
   --background-image-sheet-fade: var(--app-sheet-fade);
 }
@@ -369,6 +387,8 @@
   --animate-mark-1: m1 4.62s var(--ease-in-out) infinite;
   --animate-mark-2: m2 4.62s var(--ease-in-out) infinite;
   --animate-mark-3: m3 4.62s var(--ease-in-out) infinite;
+  --animate-step-in: ih-step-in 300ms var(--ease-out) both;   /* the working line's new text fades up */
+  --animate-word-in: ih-word-in 300ms var(--ease-out) both;   /* a streamed answer's new words fade in */
 }
 
 /* App font sizes. After the block above, whose --text-*: initial would clear them. */
@@ -402,6 +422,19 @@
 @utility agent-dot-2 { top: 10.5px; left: 10.5px; width: 3px; height: 3px; }
 @utility agent-dot-3 { top: 9.5px; left: 17.5px; width: 5px; height: 5px; }
 @utility goo { filter: url(#goo); }
+/* The working line's text: a light highlight sweeps across muted text. Plain muted text for reduced motion. */
+@utility shimmer-text {
+  background-image: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%);
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: ih-shimmer 2.2s linear infinite;
+  @media (prefers-reduced-motion: reduce) { background-image: none; animation: none; color: var(--muted-foreground); }
+}
+@keyframes ih-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@keyframes ih-step-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes ih-word-in { from { opacity: 0; filter: blur(3px); } to { opacity: 1; filter: blur(0); } }
 @keyframes m1{0%{transform:translate(8px,0) scale(1.067)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(2.2px,0) scale(1)}16.88%{transform:translate(4.6px,.5px) scale(1.022)}17.53%{transform:translate(2.4px,-.2px) scale(.733)}21%{transform:translate(.1px,.1px) scale(.822)}23.16%{transform:translate(-.2px,1.2px) scale(.956)}29.22%{transform:translate(6.9px,5.6px) scale(1.111)}35.06%{transform:translate(16px,1.1px) scale(1.022)}37.45%{transform:translate(16.4px,.2px) scale(.867)}42.64%{transform:translate(13px,.1px) scale(.756)}46.1%{transform:translate(13px,.1px) scale(.756)}49.78%{transform:translate(8.7px,.1px) scale(.644)}52.16%{transform:translate(8.7px,.1px) scale(.644)}56.06%{transform:translate(7.1px,-.6px) scale(.978)}56.71%{transform:translate(8.2px,-.1px) scale(1.489)}60.17%{transform:translate(8px,0) scale(0)}61.26%{transform:translate(8px,0) scale(0)}62.77%{transform:translate(8px,0) scale(.578)}66.23%{transform:translate(8px,0) scale(1.178)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(4.1px,0) scale(1.022)}80.09%{transform:translate(8.1px,0) scale(1.422)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(3.6px,0) scale(.889)}94.59%{transform:translate(8.1px,0) scale(1.044)}98.27%{transform:translate(8px,0) scale(.267)}100%{transform:translate(8px,0) scale(1.067)}}
 @keyframes m2{0%{transform:translate(0,0) scale(1.6)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(-4.8px,0) scale(1.5)}16.88%{transform:translate(-2.4px,.6px) scale(1.533)}17.53%{transform:translate(-1.1px,1px) scale(1.733)}21%{transform:translate(4.5px,1.3px) scale(1.733)}23.16%{transform:translate(7.6px,2.4px) scale(1.567)}29.22%{transform:translate(7.2px,-1.6px) scale(1.133)}35.06%{transform:translate(.4px,-1.1px) scale(.967)}37.45%{transform:translate(-2.2px,-.6px) scale(.967)}42.64%{transform:translate(-7.4px,.1px) scale(1.167)}46.1%{transform:translate(-7.4px,.1px) scale(1.167)}49.78%{transform:translate(-8.2px,0) scale(1.467)}52.16%{transform:translate(-8.2px,0) scale(1.467)}56.06%{transform:translate(-1.3px,-.6px) scale(1.467)}56.71%{transform:translate(.2px,-.1px) scale(2.233)}60.17%{transform:translate(0,0) scale(0)}61.26%{transform:translate(0,0) scale(0)}62.77%{transform:translate(0,0) scale(.867)}66.23%{transform:translate(0,0) scale(1.767)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(-3.2px,0) scale(1.533)}80.09%{transform:translate(.1px,0) scale(2.133)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(.1px,0) scale(1)}94.59%{transform:translate(.1px,0) scale(1.567)}98.27%{transform:translate(0,0) scale(.4)}100%{transform:translate(0,0) scale(1.6)}}
 @keyframes m3{0%{transform:translate(-8px,0) scale(.96)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(.3px,0) scale(.86)}16.88%{transform:translate(-.6px,-.2px) scale(.7)}17.53%{transform:translate(-1.2px,-.4px) scale(.68)}21%{transform:translate(-3px,1px) scale(.68)}23.16%{transform:translate(-6.7px,-2.5px) scale(.62)}29.22%{transform:translate(-13.5px,-2.4px) scale(.66)}35.06%{transform:translate(-16.1px,.8px) scale(.88)}37.45%{transform:translate(-14.3px,.8px) scale(1)}42.64%{transform:translate(-5px,.1px) scale(1.08)}46.1%{transform:translate(-5px,.1px) scale(1.08)}49.78%{transform:translate(0,0) scale(.92)}52.16%{transform:translate(0,0) scale(.92)}56.06%{transform:translate(-4.9px,.4px) scale(.7)}56.71%{transform:translate(-7.8px,-.1px) scale(1.34)}60.17%{transform:translate(-8px,0) scale(0)}61.26%{transform:translate(-8px,0) scale(0)}62.77%{transform:translate(-8px,0) scale(.52)}66.23%{transform:translate(-8px,0) scale(1.06)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(-1.9px,0) scale(.82)}80.09%{transform:translate(-7.9px,0) scale(1.28)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(-3.4px,0) scale(.84)}94.59%{transform:translate(-7.9px,0) scale(.94)}98.27%{transform:translate(-8px,0) scale(.24)}100%{transform:translate(-8px,0) scale(.96)}}

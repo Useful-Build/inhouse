@@ -10,7 +10,8 @@ import { libraryTables } from './library.ts'
 import { memoryTables } from './memory.ts'
 import { noticeTables } from './notices.ts'
 import { poolTables } from './pool.ts'
+import { routineTables } from './routines.ts'
 import type { TableEntry } from './types.ts'
 import { usageTables } from './usage.ts'
 
-export const tables: readonly TableEntry[] = [...coreTables, ...chatTables, ...filesTables, ...usageTables, ...memoryTables, ...poolTables, ...activityTables, ...noticeTables, ...libraryTables]
+export const tables: readonly TableEntry[] = [...coreTables, ...chatTables, ...filesTables, ...usageTables, ...memoryTables, ...poolTables, ...activityTables, ...noticeTables, ...routineTables, ...libraryTables]

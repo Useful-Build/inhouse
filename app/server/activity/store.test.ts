@@ -3,9 +3,11 @@
 //  2. a producer's batch that fails leaves its Activity line behind (the line must commit with the change or not at all);
 //  3. a refused line is written, or a line holds a member's name (a raw dump scan, with the seeded names as the oracle);
 //  4. a CHECK or NOT NULL failure is swallowed (the batch must abort), as INSERT OR IGNORE would.
+//  5. (P4 W2, #250) a guarded line is written when its guard is false, missing when it is true, or left behind by a
+//     failed batch; or the guard's params shift the line's own values.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
-import { ACTIVITY_INSERT_SQL, recordActivity } from './store.ts'
+import { ACTIVITY_INSERT_SQL, guardedInsertSql, recordActivity } from './store.ts'
 
 const db = env.DB
 const NAME = 'Dana Fixture-Kim'
@@ -58,5 +60,29 @@ describe('activity_lines', () => {
     expect(dump).not.toContain('Dana')
     const row = await db.prepare("SELECT min_stage, trace, fields_json, actor_id FROM activity_lines WHERE source_key = 'k-ok'").first()
     expect(row).toEqual({ min_stage: 1, trace: 'r_1', fields_json: '{"code":"run_failed"}', actor_id: null })
+  })
+
+  it('a guarded line follows its guard, in the same batch (failure 5)', async () => {
+    await seed()
+    await db.prepare('CREATE TABLE IF NOT EXISTS guard_probe (id TEXT PRIMARY KEY, n INTEGER NOT NULL)').run()
+    const line = { template: 'routine_changed', fields: {}, kind: 'change', actorId: 'm_dana', atMs: 20 } as const
+    const keyed = async (key: string) => (await db.prepare("SELECT template, actor_id, at_ms, source_key FROM activity_lines WHERE source = 'routine' AND source_key = ?").bind(key).all()).results
+    const guard = { sql: 'EXISTS (SELECT 1 FROM guard_probe WHERE id = ? AND n = ?)', params: ['p1', 2] }
+    // The write matches a row: the line is there, with its own values (the guard's params come after them).
+    await db.prepare("INSERT INTO guard_probe (id, n) VALUES ('p1', 1)").run()
+    await db.batch([db.prepare("UPDATE guard_probe SET n = 2 WHERE id = 'p1' AND n = 1"), recordActivity(db, line, { source: 'routine', key: 'g-hit' }, guard)])
+    expect(await keyed('g-hit')).toEqual([{ template: 'routine_changed', actor_id: 'm_dana', at_ms: 20, source_key: 'g-hit' }])
+    // A 0-row write: no line.
+    await db.batch([db.prepare("UPDATE guard_probe SET n = 2 WHERE id = 'p1' AND n = 99"), recordActivity(db, line, { source: 'routine', key: 'g-miss' }, { ...guard, params: ['p1', 3] })])
+    expect(await keyed('g-miss')).toEqual([])
+    // A failed batch leaves neither the change nor the line.
+    await expect(db.batch([
+      db.prepare("UPDATE guard_probe SET n = 3 WHERE id = 'p1'"),
+      recordActivity(db, line, { source: 'routine', key: 'g-fail' }, { ...guard, params: ['p1', 3] }),
+      db.prepare("INSERT INTO members (id, kind, status, created_at_ms) VALUES ('m_bad2', 'nope', 'active', 1)"),
+    ])).rejects.toThrow()
+    expect(await keyed('g-fail')).toEqual([])
+    expect(await db.prepare("SELECT n FROM guard_probe WHERE id = 'p1'").first('n')).toBe(2)
+    expect(guardedInsertSql('1 = 1')).toMatch(/ SELECT \?(, \?){10} WHERE 1 = 1 ON CONFLICT \(source, source_key\) DO NOTHING$/)
   })
 })

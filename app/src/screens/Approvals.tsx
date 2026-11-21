@@ -1,5 +1,5 @@
-import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, userName, visibleProblems } from '../state/derive'
-import { sevClass } from '../ui/severity'
+import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, riskLabel, userName, visibleProblems } from '../state/derive'
+import { isUrgent } from '../ui/severity'
 import { fmtMoney, fmtTime } from '../lib/format'
 import { display } from '../state/display'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -9,7 +9,7 @@ import type { ApprovalSort } from '../state/store'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { Avatar, Button, DetailList, Dot, EmptyState, Icon, IconButton, IconTile, MenuItem, Page, PageHeader, SectionHeader } from '../ui'
+import { Avatar, Button, DetailList, EmptyState, Icon, IconButton, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader } from '../ui'
 import { Select, TAP } from '../ui/fields'
 
 const SORTS: [ApprovalSort, string][] = [['oldest', 'Oldest first'], ['newest', 'Newest first'], ['stake', 'Most at stake']]
@@ -49,7 +49,7 @@ export function Approvals() {
 
   const approveAll = lowRisk.length >= 2 && (
     <Button variant="outline" size="sm" className={tap} onClick={() => approveMany(lowRisk)}>
-      <Icon name="done_all" size={16} />Approve all low-risk
+      <Icon name="done_all" size={16} />Approve all low-risk<span className="font-normal text-muted-foreground tabular-nums">{lowRisk.length}</span>
     </Button>
   )
   const waitingActions = (
@@ -108,26 +108,56 @@ export function Approvals() {
           <div className="flex flex-col gap-3">
             {pending.map(id => {
               const dv = draftView(ctx, id)
-              // Low risk (no money, no customers): one-tap Approve. Anything else: Review, which opens the panel.
+              const p = dv.problem
+              // Low risk (no money, no customers): one-tap Approve. Anything else: Review draft, which opens the panel.
               const low = lowRisk.includes(id)
+              // The usual approver's first sentence, their name in semibold: "Leo Park usually signs off customer emails."
+              const approver = dv.approverNote ? dv.approverNote.split('. ')[0].replace(/\.?$/, '.') : null
+              const approverName = approver ? memberFor(ctx.data, approver, userName(ctx))?.name : undefined
+              const named = approverName && approver?.startsWith(approverName) ? approverName : null
+              const urgent = isUrgent(p.sev) && <Badge variant="destructive" size="lg">Urgent</Badge>
+              const risk = <Badge variant={low ? 'muted' : 'warning'} size="lg">{low ? 'Low risk' : riskLabel(dv) ?? 'Needs review'}</Badge>
+              const when = <span className="text-sm whitespace-nowrap text-muted-foreground">{p.area} · {fmtTime(p.draftedAt, display())}</span>
+              const sources = (
+                <span className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+                  {p.logos.length > 0 && (
+                    <span className="flex flex-none">{p.logos.map(l => <LogoTile key={l} k={l} size="sm" round className="-mr-1.25 last:mr-0" />)}</span>
+                  )}
+                  <span className="min-w-0">From {dv.sourceNames}</span>
+                </span>
+              )
               return (
                 <Card key={id} className="gap-0 overflow-hidden rounded-2xl border-border py-0 shadow-card">
-                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-divider px-4.5 py-3.5">
-                    <Dot className={sevClass(dv.problem.sev)} />
-                    <h2 className="min-w-40 flex-1 text-base font-semibold">{dv.draftTitle}</h2>
-                    <Badge variant={low ? 'muted' : 'warning'}>{low ? 'Low risk' : dv.waitsLabel ?? 'Needs review'}</Badge>
-                    <span className="text-xs text-muted-foreground">{dv.problem.area} · {fmtTime(dv.problem.draftedAt, display())}</span>
-                  </div>
-                  <DetailList variant="ruled" strong items={dv.lines} className="px-4.5 py-1 text-sm" />
+                  {phone ? (
+                    <div className="border-b border-divider px-4.5 py-3.5">
+                      <div className="flex flex-wrap items-center gap-2">{urgent}{risk}<span className="flex-1" />{when}</div>
+                      <h2 className="mt-2 text-lg font-semibold">{dv.draftTitle}</h2>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-divider px-4.5 py-3.5">
+                      {urgent}
+                      <h2 className="min-w-40 flex-1 text-lg font-semibold">{dv.draftTitle}</h2>
+                      {risk}{when}
+                    </div>
+                  )}
+                  <DetailList variant={phone ? 'relaxed' : 'ruled'} strong items={dv.lines} className={cn('px-4.5 py-1 text-base', phone && 'divide-y divide-divider')} />
                   {dv.body && (
-                    <div className="mx-4.5 mt-2.5 rounded-lg bg-dialog px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">
-                      <div className="mono-label mb-1.5 tracking-caps">{dv.bodyLabel}</div>
+                    <div className="mx-4.5 mt-3 rounded-xl bg-draft-sheet px-4 py-3.5 text-base leading-prose text-foreground-2 wrap-anywhere">
+                      <div className="mb-1 text-sm text-muted-foreground">{dv.bodyLabel}</div>
                       {dv.body}
                     </div>
                   )}
-                  <p className="m-0 px-4.5 pt-3 text-xs text-muted-foreground">{dv.footNote}</p>
-                  <div className="flex items-center gap-2 px-4.5 pt-3 pb-4">
-                    <Button size="lg" className={tap} onClick={low ? () => approve(id) : () => openProblem(id)}>{low ? dv.cta : 'Review'}</Button>
+                  {approver && (
+                    <div className="mx-4.5 mt-3.5 flex items-center gap-2 text-sm text-muted-foreground">
+                      {named ? <Avatar who={named} size={24} fontSize={9} /> : <Icon name="person" size={16} />}
+                      <span className="min-w-0 flex-1">{named ? <><b className="font-semibold text-foreground-2">{named}</b>{approver.slice(named.length)}</> : approver}</span>
+                    </div>
+                  )}
+                  {phone && <div className="px-4.5 pt-3.5">{sources}</div>}
+                  <div className="flex items-center gap-2 px-4.5 pt-3.5 pb-4">
+                    <Button size="lg" className={cn('whitespace-nowrap', phone && 'min-w-0 flex-1', tap)} onClick={low ? () => approve(id) : () => openProblem(id)}>
+                      {low ? <><Icon name="check" size={16} />{dv.cta}</> : <>Review draft<Icon name="arrow_forward" size={16} /></>}
+                    </Button>
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
                         <IconButton icon="more_horiz" label={`More actions for ${dv.draftTitle}`} size={18} variant="card" box="icon-lg" className={tap} />
@@ -146,6 +176,7 @@ export function Approvals() {
                         </MenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    {!phone && <span className="ml-auto flex min-w-0 justify-end pl-2">{sources}</span>}
                   </div>
                 </Card>
               )

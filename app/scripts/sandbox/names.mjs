@@ -5,12 +5,17 @@
 //     per-PR deploy or the cleanup may create or delete.
 //   - sandbox-wide rule: `inhouse-sbx-<lowercase letters, digits, hyphens>`. Admits the per-PR names and the shared
 //     sandbox resources (the candidate Worker, its D1 and R2), never a live product's name.
+//   - eval rule (p3-eval-observability rev 2, rec 2): exactly the eval deployment's names, `inhouse-sbx-eval` and
+//     `inhouse-sbx-eval-<db|files|brand|team>`. Disjoint from the per-PR rule (no `pr<N>`) and refused by the candidate
+//     rule, so neither a PR's deploy or cleanup nor the candidate ever names the eval brand's resources. Its host rule
+//     takes only the two host names (`-brand`, `-team`).
 //   - host rule: `<name>.<zone>`, where <name> passes the rule asked for and <zone> is exactly the sandbox zone (one
 //     label; a deeper host, the bare zone or another zone fails).
 // JavaScript's `$` (no `m` flag) matches only at the very end, so a trailing newline fails; tests pin that.
 
 export const PER_PR = /^inhouse-sbx-pr([1-9][0-9]{0,5})(-[a-z]+)?$/
 export const SANDBOX_WIDE = /^inhouse-sbx-[a-z0-9-]+$/
+const EVAL_WORKER = 'inhouse-sbx-eval'
 /** A zone name as the sandbox's own variable gives it: lowercase labels, at least one dot, no trailing dot. */
 const ZONE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/
 
@@ -25,6 +30,19 @@ const show = v => JSON.stringify(v) ?? String(v)
 
 export const isPerPrName = name => typeof name === 'string' && PER_PR.test(name)
 export const isSandboxName = name => typeof name === 'string' && SANDBOX_WIDE.test(name)
+
+/** The eval deployment's exact names (the same keys as perPrNames; the ops repo's eval deploy uses these). */
+export function evalNames() {
+  const worker = EVAL_WORKER
+  return { worker, d1: `${worker}-db`, r2: `${worker}-files`, container: worker, image: worker, brand: `${worker}-brand`, team: `${worker}-team` }
+}
+export const isEvalName = name => typeof name === 'string' && Object.values(evalNames()).includes(name)
+
+/** Throws unless `name` is one of the eval deployment's names. Returns the name. */
+export function assertEvalName(name) {
+  if (!isEvalName(name)) throw new SandboxNameError(`${show(name)} is not one of the eval deployment's names (${EVAL_WORKER}[-db|-files|-brand|-team])`)
+  return name
+}
 
 /** The PR number a per-PR name belongs to, or null when it isn't one. */
 export function prNumberOf(name) {
@@ -54,10 +72,11 @@ export function perPrNames(pr) {
   return { worker, d1: `${worker}-db`, r2: `${worker}-files`, container: worker, image: worker, brand: `${worker}-brand`, team: `${worker}-team` }
 }
 
-/** Throws unless `name` is a shared sandbox name: sandbox-wide but no PR's. Returns the name. */
+/** Throws unless `name` is a shared sandbox name: sandbox-wide but no PR's and not the eval deployment's. Returns the name. */
 export function assertCandidateName(name) {
   assertSandboxName(name)
   if (isPerPrName(name)) throw new SandboxNameError(`${show(name)} is a per-PR name, not the candidate's`)
+  if (isEvalName(name)) throw new SandboxNameError(`${show(name)} is the eval deployment's name, not the candidate's`)
   return name
 }
 
@@ -74,8 +93,9 @@ export function assertZone(zone) {
 }
 
 /**
- * Throws unless `host` is `<name>.<zone>` with <name> passing `rule` ('per-pr', optionally for PR `pr`; 'sandbox'; or
- * 'candidate', a sandbox name that is no PR's).
+ * Throws unless `host` is `<name>.<zone>` with <name> passing `rule` ('per-pr', optionally for PR `pr`; 'sandbox';
+ * 'candidate', a sandbox name that is no PR's and not the eval deployment's; or 'eval', the eval deployment's brand or
+ * team host name).
  * Returns the host.
  */
 export function assertSandboxHost(host, zone, rule, pr) {
@@ -87,6 +107,10 @@ export function assertSandboxHost(host, zone, rule, pr) {
     if (rule === 'per-pr') assertPerPrName(label, pr)
     else if (rule === 'sandbox') assertSandboxName(label)
     else if (rule === 'candidate') assertCandidateName(label)
+    else if (rule === 'eval') {
+      const { brand, team } = evalNames()
+      if (label !== brand && label !== team) throw new SandboxNameError(`${show(label)} is not one of the eval deployment's hosts (${brand}, ${team})`)
+    }
     else throw new Error(`assertSandboxHost: unknown rule ${show(rule)}`)
   } catch (err) {
     if (err instanceof SandboxNameError) throw new SandboxNameError(`host ${show(host)}: ${err.message}`)
