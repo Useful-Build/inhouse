@@ -11,7 +11,7 @@ import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError, CHAT_TITLE_MAX } from '../types'
 import type {
   ActivityLine, AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AuditLine, LinkState, ErrorReason, Instant, LibraryFile, Me,
-  MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, ResourceKey, ResourceStatus, RoutineRun, SupportGrant, Trace, UsageData,
+  MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, ResourceKey, ResourceStatus, RoutineRun, SupportGrant, ToolsData, Trace, UsageData,
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
@@ -24,6 +24,7 @@ import { readPause, setPause } from './pause'
 import { postTurn, postTurnAction, readActiveRuns, readTrace } from './runs'
 import { ChatSocket } from './stream/socket'
 import type { SocketLike, SocketParts } from './stream/socket'
+import { postToolConnect, postToolDisconnect, putToolPaused, readTools } from './tools'
 import { readUsage, readUsageMonths } from './usage'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
@@ -31,8 +32,8 @@ import type { Contract, TransportOptions } from './transport'
 const UNAVAILABLE = 'Not connected yet.'
 
 /** The resources this client reads. Every other key has nothing to read until its phase, so it reads as ready and empty. */
-type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications'
-const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications'] satisfies readonly Loaded[]
+type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'tools'
+const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'tools'] satisfies readonly Loaded[]
 
 export interface HttpAgentOptions extends TransportOptions {
   /** Epoch ms. The real clock by default; the contract target moves it on (`advance`). */
@@ -135,6 +136,8 @@ interface Slices {
   /** Route 42: this month's usage, and each month the server lists (this one first). */
   usage: UsageData | null
   usageMonths: UsageData[]
+  /** Route C (`GET /api/tools`): null until read. The pause in `state.toolPaused` follows it. */
+  tools: ToolsData | null
   /** Route 35. */
   pause: PauseState
   /** Route 59, the first page: Activity's lines, newest first (split into today and earlier when `read()` builds the data). */
@@ -161,6 +164,11 @@ const decode = (b64: string): Uint8Array | null => {
 const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('')
 const ROLE_LABEL = { member: 'Member', admin: 'Admin', inhouse: 'Inhouse team' } as const
 const isLive = (g: SupportGrant, now: number) => g.endedAt === null && g.endsAt.ms > now
+/** Which tools a person paused, from the Tools read: the server's `details[k].paused` (route C), the one source of a pause. */
+const pausedOf = (t: ToolsData | null): Record<string, true> => Object.fromEntries(Object.entries(t?.details ?? {}).filter(([, d]) => d.paused === true).map(([k]) => [k, true as const]))
+/** `t` with tool `key`'s pause set (a tool the read doesn't list is left as it is). */
+const withPaused = (t: ToolsData | null, key: string, paused: boolean): ToolsData | null =>
+  t && t.details[key] ? { ...t, details: { ...t.details, [key]: { ...t.details[key], paused } } } : t
 const replaceById = (list: MemberRecord[], m: MemberRecord) => (list.some(x => x.id === m.id) ? list.map(x => (x.id === m.id ? m : x)) : [...list, m])
 
 export class HttpAgent implements AgentClient {
@@ -170,7 +178,7 @@ export class HttpAgent implements AgentClient {
   private readonly now: () => number
   private s: Slices = {
     me: null, members: [], membersNext: null, audit: [], auditNext: null, grant: null, memory: EMPTY_DATA.memory, chats: [], chatsNext: null, served: null, modelList: [],
-    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
+    usage: null, usageMonths: [], tools: null, pause: { paused: false, at: null, by: null }, activity: [], notifications: [], revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
   }
   private readonly socket: ChatSocket
   private readonly origin: string
@@ -238,6 +246,7 @@ export class HttpAgent implements AgentClient {
   private commit(next: Slices) {
     // What follows from the chats, the pause and the settings is worked out here, so every change to them (a read, a write, a
     // refusal taking one back) keeps it in step.
+    if (next.tools !== this.s.tools) next = { ...next, state: { ...next.state, toolPaused: pausedOf(next.tools) } }
     if (next.chats !== this.s.chats || next.pause !== this.s.pause) next = { ...next, state: chatState(next) }
     if (next.served !== this.s.served || next.state.settings !== this.s.state.settings) {
       const modelList = listedModels(next.served, next.state.settings)
@@ -256,7 +265,7 @@ export class HttpAgent implements AgentClient {
     if (hit && hit.live === live) return hit.data
     // A change to what read() doesn't carry (a setting, a switch) leaves its object alone, so nothing re-renders for it.
     const last = this.lastBuilt
-    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'res'] as const).every(k => last.s[k] === this.s[k])
+    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'tools', 'res'] as const).every(k => last.s[k] === this.s[k])
     const data = same ? last.data : this.build(live)
     this.dataCache.set(this.s, { live, data })
     this.lastBuilt = { s: this.s, live, data }
@@ -276,6 +285,7 @@ export class HttpAgent implements AgentClient {
       activity: splitActivity(this.s.activity, this.now(), { timeZone: this.s.state.settings['g:tz'] ?? deviceTimeZone(), locale: 'en-US' }),
       ...(this.s.usage ? { usage: this.s.usage, usageMonths: this.s.usageMonths } : {}),
       models: this.s.modelList,
+      tools: this.s.tools ?? EMPTY_DATA.tools,
       defaultModel: this.s.served?.default ?? '',
       chat: { chats: this.s.chats.map(c => ({ id: c.id, title: c.title, at: c.at, turns: [] })), recentCount: Math.min(this.s.chats.length, RECENT_CHATS), suggestions: [] },
       more: { audit: this.s.auditNext !== null, members: this.s.membersNext !== null },
@@ -303,7 +313,7 @@ export class HttpAgent implements AgentClient {
 
   private async loadAll() {
     if (!(await this.loadMeta())) return
-    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications()])
+    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadTools()])
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
@@ -451,6 +461,11 @@ export class HttpAgent implements AgentClient {
     }
   }
 
+  /** Route C: the tools, with each one's pause. */
+  private async loadTools() {
+    try { this.patch({ tools: await readTools(this.http), res: { ...this.s.res, tools: { status: 'ready' } } }) } catch (e) { this.failStatus('tools', e) }
+  }
+
   /** Route 38. */
   private async loadModels() {
     try { this.patch({ served: await readModels(this.http), res: { ...this.s.res, models: { status: 'ready' } } }) } catch (e) { this.failStatus('models', e) }
@@ -483,7 +498,7 @@ export class HttpAgent implements AgentClient {
    * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
    */
   retry = (resource: ResourceKey): Promise<void> => {
-    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications() }[resource as Loaded] as (() => Promise<unknown>) | undefined
+    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), tools: () => this.loadTools() }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
     const running = this.retrying.get(resource)
     if (running) return running
@@ -493,7 +508,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private async reloadMeta() {
-    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications()])
+    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadTools()])
   }
 
   /** The next page of a list. A second call while one is in flight for the same list does nothing. */
@@ -1095,7 +1110,38 @@ export class HttpAgent implements AgentClient {
 
   requestTool = (_key: string, _on: boolean) => this.refuse()
   requestSkill = (_name: string) => this.refuse()
-  setToolPaused = (_key: string, _paused: boolean) => this.refuse()
+  /** Route D. The tool's hub account id comes from the Tools read; a key the read doesn't list is refused. */
+  setToolPaused = (key: string, paused: boolean): Promise<void> => {
+    const id = this.s.tools?.details[key]?.accountId
+    if (!id) return guard(Promise.reject(new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND])))
+    const was = this.s.tools?.details[key]?.paused ?? false
+    return this.write({
+      lane: `tool:${id}`,
+      apply: s => ({ ...s, tools: withPaused(s.tools, key, paused) }),
+      send: async () => putToolPaused(this.http, await this.http.contract(), id, paused),
+      done: (s, r) => ({ ...s, tools: withPaused(s.tools, key, r.paused) }),
+      undo: s => ({ ...s, tools: withPaused(s.tools, key, was) }),
+    })
+  }
+  /** The hub account id a tool key names: a connected or being-connected tool's detail, or a catalog tool's. */
+  private accountIdOf(key: string): string | undefined {
+    return this.s.tools?.details[key]?.accountId ?? this.s.tools?.catalog.find(c => c.k === key)?.accountId
+  }
+  /** W1's route A: the address the browser goes to to sign in to the tool. The page navigates there. */
+  connectTool = async (key: string): Promise<{ authorizeUrl: string }> => {
+    const id = this.accountIdOf(key)
+    if (!id) throw this.fail(new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND]))
+    try { return await postToolConnect(this.http, id) } catch (e) { throw this.fail(e) }
+  }
+  /** Route E, then the tools are read again (the tool leaves the connected list). `revoked: false`: the team removes the app at the tool too. */
+  disconnectTool = async (key: string): Promise<{ revoked: boolean }> => {
+    const id = this.accountIdOf(key)
+    if (!id) throw this.fail(new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND]))
+    let r: { revoked: boolean }
+    try { r = await postToolDisconnect(this.http, id) } catch (e) { throw this.fail(e) }
+    await this.loadTools()
+    return r
+  }
   sendTeamRequest = (_req: Parameters<AgentClient['sendTeamRequest']>[0]) => this.refuse()
   listNotifications = () => this.s.notifications
   /**

@@ -151,6 +151,10 @@ export interface AgentClient {
   requestTool(key: string, on: boolean): Promise<void>
   requestSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
+  /** The Inhouse team connects (or reconnects) a tool: resolves to the address the page navigates to, to sign in at the tool. */
+  connectTool(key: string): Promise<{ authorizeUrl: string }>
+  /** The Inhouse team disconnects an OAuth tool. `revoked: false`: its access wasn't removed at the tool, so the team removes the app there too. */
+  disconnectTool(key: string): Promise<{ revoked: boolean }>
   forgetMemory(key: string, forgotten: boolean): Promise<void>
   /** A settings dropdown or text field. Null puts it back to the default. Rejects with `invalid` for a key or value the settings registry (shared/contract/settings.ts) refuses. */
   setSetting(key: string, value: string | null): Promise<void>

@@ -57,16 +57,19 @@ describe('route C: the merge', () => {
   it('a configured account the Inhouse team has not connected is in the catalog, not in connected', () => {
     const d = buildToolsData({ accounts: [acct('slack:workspace', { state: 'empty' })], rows: [], nowMs: NOW })
     expect(d.connected).toEqual([])
-    expect(d.catalog.map(c => c.k)).toEqual(['slack'])
+    expect(d.catalog).toEqual([{ k: 'slack', name: 'Slack', desc: 'Team conversations in the channels your agent can see', need: 0, accountId: 'slack:workspace' }])
     expect(d.channels).toEqual([])
-    expect(d.details.slack!.canDisconnect).toBe(false)
+    // A catalog tool has no details (the UI's rule: details are for tools connected or being connected).
+    expect(d.details).toEqual({})
   })
   it('a connecting row 2 minutes old is being connected; one 11 minutes old is not; exactly 10 minutes still is', () => {
     const at = (ageMs: number) => buildToolsData({ accounts: [acct('slack:workspace', { state: 'empty' })], rows: [row('slack:workspace', 'connecting', NOW - ageMs)], nowMs: NOW })
     expect(at(2 * MIN).beingConnected).toEqual(['slack'])
+    expect(at(2 * MIN).catalog).toEqual([])
+    expect(at(11 * MIN).catalog.map(c => c.k)).toEqual(['slack'])
+    expect(at(11 * MIN).details).toEqual({})
     expect(at(2 * MIN).details.slack!.liveBy).toEqual(inst(NOW - 2 * MIN + 10 * MIN))
     expect(at(11 * MIN).beingConnected).toEqual([])
-    expect(at(11 * MIN).details.slack!.liveBy).toBeUndefined()
     expect(at(10 * MIN).beingConnected).toEqual(['slack'])
     expect(CONNECT_STATE_TTL_MS).toBe(10 * MIN)
   })

@@ -12,7 +12,7 @@ import { realTargets } from './targets/real/index'
 /** Every client method that writes and returns a promise: the ones `injectError` can fail. */
 export type WriteMethod =
   | 'approve' | 'undo' | 'editDraft' | 'undoHandled' | 'redoHandled' | 'createChat' | 'pause' | 'resume' | 'setToggle'
-  | 'requestTool' | 'requestSkill' | 'setToolPaused' | 'forgetMemory' | 'setSetting' | 'setPhoto' | 'sendTeamRequest'
+  | 'requestTool' | 'requestSkill' | 'setToolPaused' | 'connectTool' | 'disconnectTool' | 'forgetMemory' | 'setSetting' | 'setPhoto' | 'sendTeamRequest'
   | 'markNoticesRead' | 'deleteFiles' | 'restoreFiles' | 'setAside' | 'runRoutine' | 'deleteRoutine' | 'restoreRoutine'
   | 'renameChat' | 'pinChat' | 'deleteChats' | 'restoreChats'
   | 'inviteMember' | 'setMemberRole' | 'removeMember' | 'grantSupport' | 'endSupportGrant'
@@ -167,7 +167,7 @@ const MOCK_STORAGE_KEY = 'inhouse.demo.v2'
 
 const WRITE_METHODS: ReadonlySet<string> = new Set<WriteMethod>([
   'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool',
-  'requestSkill', 'setToolPaused', 'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles',
+  'requestSkill', 'setToolPaused', 'connectTool', 'disconnectTool', 'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles',
   'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine', 'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats',
   'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
 ])

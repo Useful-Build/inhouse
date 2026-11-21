@@ -16,7 +16,8 @@ import { StartError } from './shell/StartError'
 import { startScreen } from './shell/start-screen'
 import type { StartScreen } from './shell/start-screen'
 import { createHashSync } from './shell/route-sync'
-import { hashBar } from './shell/hash-bar'
+import { hashBar, leaveSignInReturn } from './shell/hash-bar'
+import { parseConnectReturn } from './screens/tools/connect-return'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -198,8 +199,16 @@ function applyRoute(r: Route, first: boolean) {
 }
 
 // Apply a deep link before the first render.
-const initialRoute = fromHash(location.hash)
+// The sign-in at a tool sends the browser back to /tools/<tool>?connected=1 (or ?connect_error=<code>): open that tool, say what
+// happened from a closed list of lines, and drop the query from the address.
+const connectReturn = parseConnectReturn(location.pathname, location.search)
+const initialRoute: Route | null = fromHash(location.hash) ?? (connectReturn ? (connectReturn.key ? { page: 'app', appKey: connectReturn.key } : { page: 'apps' }) : null)
 if (initialRoute) applyRoute(initialRoute, true)
+if (connectReturn) {
+  leaveSignInReturn(connectReturn.key ? `#/tools/${connectReturn.key}` : '#/tools')
+  hashBar.adopt()
+  useUi.getState().showToast(connectReturn.text, connectReturn.ok ? { key: 'connect-return' } : { icon: 'error', key: 'connect-return' })
+}
 /** The first link named a page that doesn't exist: App says so once it has mounted. */
 const bootUnknownPage = !initialRoute && hasSlug(location.hash)
 

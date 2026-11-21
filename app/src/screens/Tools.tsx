@@ -1,11 +1,11 @@
 // Tools list and the single tool page.
 import { cn } from '@/lib/utils'
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, toolCounts, toolDetail, toolView } from '../state/derive'
 import type { ToolState } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { ToolChannel } from '../agent/types'
 import { fmtDay } from '../lib/format'
@@ -13,7 +13,7 @@ import { display } from '../state/display'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Button, CardGrid, DetailList, Dot, EmptyState, Icon, LogoTile, Page, PageHeader, SectionHeader, StageTag } from '../ui'
-import { SearchBox, TAP } from '../ui/fields'
+import { Confirm, SearchBox, TAP } from '../ui/fields'
 
 const AMBER_DOT = 'bg-warning'
 const GREY_DOT = 'bg-faint'
@@ -30,6 +30,30 @@ const DESC = 'text-sm text-pretty text-muted-foreground'
 const ROW = 'flex w-full items-center gap-3.5 rounded-xl p-3 text-left transition-colors hover:bg-card'
 const LABEL = 'mt-7 mb-2.5'
 const CARD = 'rounded-2xl border border-border bg-card'
+
+/**
+ * Who may change a tool here. The Inhouse team alone connects, pauses and disconnects (the server refuses every other role,
+ * and `me().can.editTechnical` is its row's answer); an Admin sees the page with no controls and a line saying so; a Member
+ * reads it. The demo shows the controls to everyone, as its sample Admin may do everything.
+ */
+function useToolControls() {
+  const me = useSyncExternalStore(agent.subscribe, agent.me)
+  const manage = demo !== null || !!me?.can.editTechnical
+  return { manage, adminLine: !manage && me?.role === 'admin' }
+}
+
+/**
+ * Starts signing in at a tool and goes there. The agent has already told the person if it failed. In the demo the address is
+ * this app's own: nothing to go to, so it says so, as every other action that isn't connected in the demo does.
+ */
+async function connectTool(key: string, label: string, say: (text: string) => void) {
+  try {
+    const { authorizeUrl } = await agent.connectTool(key)
+    if (authorizeUrl.startsWith('/')) { say(`${label} isn't connected in this demo.`); return }
+    if (new URL(authorizeUrl).protocol !== 'https:') return
+    location.assign(authorizeUrl)
+  } catch { /* told by the agent's notice */ }
+}
 
 export function Tools() {
   const ctx = useCtx()
@@ -58,6 +82,8 @@ export function Tools() {
   // Where the team hears from the agent (Slack, from Act): connected, but not a tool it reads (decision D6).
   const channels = tools.channels.filter(c => hit(c.name, c.desc))
   const requestCustom = () => openTeam('tool')
+  const { manage } = useToolControls()
+  const say = (text: string) => { showToast(text, { icon: 'info', ms: 4000 }) }
 
   return (
     <Page>
@@ -157,9 +183,11 @@ export function Tools() {
                 <div className={`flex items-center gap-2 ${NAME} ${locked ? 'text-foreground-3' : ''}`}>{c.name}{locked && <StageTag tag={STAGE_TAGS[need]} />}</div>
                 <div className={DESC}>{c.desc}</div>
               </div>
-              <Button variant={req ? 'requested' : 'outline'} disabled={req} onClick={ask} className={cn('flex-none', tap)}>
-                {req && <Icon name="check" size={17} />}{req ? 'Requested' : 'Request'}
-              </Button>
+              {manage && c.accountId
+                ? <Button variant="outline" onClick={() => { void connectTool(c.k, 'Connect', say) }} className={cn('flex-none', tap)}>Connect</Button>
+                : <Button variant={req ? 'requested' : 'outline'} disabled={req} onClick={ask} className={cn('flex-none', tap)}>
+                    {req && <Icon name="check" size={17} />}{req ? 'Requested' : 'Request'}
+                  </Button>}
             </div>
           )
         })}
@@ -180,8 +208,10 @@ const accessOf = (state: ToolState, S: number, paused: boolean) => {
 
 export function ToolPage() {
   const key = useUi(s => s.appKey)
-  const channel = useCtx().data.tools.channels.find(c => c.key === key)
-  return channel ? <ChannelPage channel={channel} /> : <ToolDetailPage />
+  const { channels, details } = useCtx().data.tools
+  const channel = channels.find(c => c.key === key)
+  // A channel that is also a tool the agent reads (Slack) gets the tool page, which carries the controls.
+  return channel && !Object.hasOwn(details, key) ? <ChannelPage channel={channel} /> : <ToolDetailPage />
 }
 
 /** A channel's page (Slack): where the team hears from the agent. Not a tool it reads, so no abilities or questions (D6). */
@@ -226,13 +256,22 @@ function ToolDetailPage() {
   const clearToast = useUi(s => s.clearToast)
   const tap = useUi(s => s.phone) ? TAP : undefined
   const A = toolDetail(data, key)
+  const { manage, adminLine } = useToolControls()
+  const [confirming, setConfirming] = useState(false)
   // Status, abilities, last read and suggested questions all follow the tool's state (M17).
   const view = toolView(ctx, key)
   const bad = view.state === 'disconnected'
   // A person's pause, even while the login is also broken: Pause access and Resume access follow it.
   const off = !!st.toolPaused[key]
   const pauseLabel = off ? 'Resume access' : 'Pause access'
-  const reconnect = () => showToast("Reconnect isn't connected in this demo.", { icon: 'info', ms: 4000 })
+  const reconnect = () => { void connectTool(key, 'Reconnect', text => showToast(text, { icon: 'info', ms: 4000 })) }
+  const disconnect = async () => {
+    setConfirming(false)
+    try {
+      const { revoked } = await agent.disconnectTool(key)
+      showToast(revoked ? `${A.name} is disconnected.` : `${A.name} is disconnected, but its access wasn't removed on its side. Remove the app there too.`, revoked ? undefined : { icon: 'info', ms: 8000 })
+    } catch { /* told by the agent's notice */ }
+  }
   const onPause = () => {
     // The agent has already sent the person a notice if the save failed; this only keeps the rejection from going unhandled.
     agent.setToolPaused(key, !off).catch(() => {})
@@ -307,11 +346,22 @@ function ToolDetailPage() {
           <div className={NAME}>{A.conn}</div>
           <div className={DESC}>The login stays in your account. Remove access any time and your Inhouse agent stops.</div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {bad && <Button size="lg" className={tap} onClick={reconnect}>Reconnect</Button>}
-          <Button variant="secondary" size="lg" className={tap} onClick={onPause}>{pauseLabel}</Button>
-        </div>
+        {manage && (
+          <div className="flex flex-wrap gap-2">
+            {bad && <Button size="lg" className={tap} onClick={reconnect}>Reconnect</Button>}
+            <Button variant="secondary" size="lg" className={tap} onClick={onPause}>{pauseLabel}</Button>
+            {A.canDisconnect && <Button variant="outline" size="lg" className={tap} onClick={() => setConfirming(true)}>Disconnect</Button>}
+          </div>
+        )}
+        {adminLine && <div className={`basis-full ${DESC}`}>Your Inhouse team manages tools.</div>}
+        {bad && manage && A.canDisconnect && <div className={`basis-full ${DESC}`}>If Reconnect doesn't work, the tool's permissions may have changed. Disconnect it, then connect again.</div>}
+        {A.revokeFailed && <div className="basis-full text-sm text-pretty text-warning-text">{`${A.name}'s access wasn't removed on its side when it was last disconnected. Remove the app there too.`}</div>}
       </div>
+      {confirming && (
+        <Confirm label={`Disconnect ${A.name}`} title={`Disconnect ${A.name}?`} action="Disconnect" onCancel={() => setConfirming(false)} onConfirm={() => { void disconnect() }}>
+          Your Inhouse agent stops reading {A.name} and its access is removed. You can connect it again any time.
+        </Confirm>
+      )}
 
       <SectionHeader title="Details" className={LABEL} />
       <DetailList variant="relaxed" items={info} className={`${CARD} px-5 py-2.5 text-base`} />

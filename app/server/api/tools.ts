@@ -98,11 +98,13 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
       } else if (s.state === 'active' && !s.paused) {
         readable += 1
       }
-    } else {
-      catalog.push({ k: e.key, name: e.name, desc: e.desc, need: e.need })
+    } else if (!connecting) {
+      catalog.push({ k: e.key, name: e.name, desc: e.desc, need: e.need, accountId: e.accountId })
     }
     if (connecting) beingConnected.push(e.key)
 
+    // Details only for a tool that is connected or being connected (the UI's rule); a catalog tool has none.
+    if (!isConnected && !connecting) continue
     const d: ToolDetail = { accountId: e.accountId, name: e.name, desc: e.desc, ex: e.ex, read: e.read, draft: e.draft, run: e.run, conn: e.conn, site: e.site }
     if (isConnected && connectedAtMs !== null) d.since = instant(connectedAtMs)
     if (connecting && row) d.liveBy = instant(row.lastStateAtMs + CONNECT_STATE_TTL_MS)
