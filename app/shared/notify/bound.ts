@@ -30,8 +30,8 @@ export function cleanChars(s: string, format: NoticeFormat): string {
 const ODD_DOT = /[\uFF0E\u3002\uFF61\u2024\uFE52]/g
 const WRAPPED_DOT = /\s*[[({]\s*(?:\.|dot)\s*[\])}]\s*/giu
 
-/** Schemes that open something without `//`. */
-const BARE_SCHEME = /(?<![a-z0-9])(?:mailto|tel|sms|slack|data|javascript|vbscript|file|callto|skype|ftp|https?):/i
+/** Schemes that open something without `//`, with something right after the colon ("Raw data: 5 rows" stays). */
+const BARE_SCHEME = /(?<![a-z0-9])(?:mailto|tel|sms|slack|data|javascript|vbscript|file|callto|skype|ftp|https?):(?=\S)/i
 /**
  * A host: `label(.label)+.tld`. Deliberately wide (it over-removes rather than miss one): a label is any run of letters,
  * digits, `-`, `_` or non-ASCII characters (IDNs, look-alikes, unassigned code points), and the last label is at least

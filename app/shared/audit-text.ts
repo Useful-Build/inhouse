@@ -95,6 +95,7 @@ const NOTIFY_DETAIL: Record<string, string> = {
   to_bell: 'sent to the bell until the Act stage',
   no_alerts_channel: 'no alerts channel is set',
   below_act: 'Slack posts start at the Act stage',
+  app_origin_missing: 'the app link isn’t set up at the hub',
 }
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 

@@ -43,9 +43,21 @@
                   "**/tools/notifications/send",
                   "**/tools/notifications/send.ts",
                   "**/tools/notifications/index",
-                  "**/tools/notifications/index.ts"
+                  "**/tools/notifications/index.ts",
+                  "**/tools/notifications",
+                  "**/tools/notifications/"
                 ],
                 "message": "P5 import boundary (p5-orchestrator.md section 2): the runner's egress never reaches the connect, tools or Slack delivery server code. From the notifications tool, only its deps.ts factory (notifyDeps) is allowed."
+              },
+              {
+                "group": [
+                  "**/tools/notifications/deps",
+                  "**/tools/notifications/deps.ts"
+                ],
+                "importNames": [
+                  "deliveryOf"
+                ],
+                "message": "P5 import boundary: from the notifications tool's deps.ts the egress takes only notifyDeps, never deliveryOf."
               },
               {
                 "group": [

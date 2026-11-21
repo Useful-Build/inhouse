@@ -41,6 +41,8 @@ export const WEB_CHANNELS: readonly FakeChannel[] = [
   { ...base, id: 'C0TEST0004', name: 'old-launch', is_archived: true },
   { ...base, id: 'C0TEST0005', name: 'design', is_member: false },
   { ...base, id: 'C0TEST0006', name: 'leadership', is_private: true },
+  // Slack Connect seen from our side only: `is_ext_shared` alone, without `is_shared` (review round 1).
+  { ...base, id: 'C0TEST0008', name: 'vendor-connect', is_ext_shared: true },
 ]
 
 export type WebRequest = { path: string; method: string; params: Record<string, string>; authorized: boolean }

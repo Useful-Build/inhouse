@@ -1347,10 +1347,9 @@ export class SignInCore {
     if (typeof req !== 'object' || req === null) return err('invalid_args')
     if (typeof req.channelId !== 'string' || !POSTABLE_CHANNEL.test(req.channelId)) return err('invalid_args', 'channelId')
     if (typeof req.title !== 'string' || typeof req.text !== 'string') return err('invalid_args')
-    const g = await this.#slackGate(accountId)
-    if (!g.ok) return g
-    // Steps 1 and 2 again (idempotent on the server's output), then the escape, once. `report` keeps the line breaks
-    // the server left; a `message` already arrives on one line.
+    // The pure steps first, so a doomed post costs no token read, refresh or Slack call. Steps 1 and 2 again
+    // (idempotent on the server's output), then the escape, once. `report` keeps the line breaks the server left; a
+    // `message` already arrives on one line.
     const b = boundNotice({ title: req.title, text: req.text, format: 'report' }, { escape: true })
     if (!b.ok) return err('invalid_args', b.reason)
     let appLink: { origin: string; path: string } | null = null
@@ -1364,6 +1363,8 @@ export class SignInCore {
         appLink = { origin, path }
       }
     }
+    const g = await this.#slackGate(accountId)
+    if (!g.ok) return g
     const info = await this.#channelInfo(g.value.token, g.value.upstream, req.channelId)
     if (!info.ok) return info
     const refused = refusalFor(info.value)

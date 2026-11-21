@@ -145,6 +145,51 @@ describe('test 4: fixed parameters, by construction', () => {
   })
 })
 
+describe('review round 1: each refusal on its own, and only the four keys forwarded', () => {
+  it.each(['is_shared', 'is_ext_shared', 'is_org_shared', 'is_pending_ext_shared'] as const)('a channel with only %s set is refused as shared', async flag => {
+    const w = await connected()
+    const c = w.web.channels.get('C0TEST0002')!
+    c[flag] = true
+    const r = await postToSlack(w.stub, { channelId: 'C0TEST0002', title: 'T', text: 'x' })
+    expect([code(r), message(r)]).toEqual(['connect_refused', 'connect refused by the provider: shared_channel'])
+    expect(w.web.posts).toEqual([])
+  })
+
+  it('the fixture channel with only is_ext_shared is refused', async () => {
+    const w = await connected()
+    expect(message(await postToSlack(w.stub, { channelId: 'C0TEST0008', title: 'T', text: 'x' }))).toBe('connect refused by the provider: shared_channel')
+    expect(w.web.posts).toEqual([])
+  })
+
+  it.each([
+    ['C0TEST0004', 'is_archived', 'archived'],
+    ['C0TEST0005', 'is_member false', 'not_member'],
+  ])('%s (%s) is refused as %s, nothing posted', async (channelId, _, detail) => {
+    const w = await connected()
+    expect(message(await postToSlack(w.stub, { channelId, title: 'T', text: 'x' }))).toBe(`connect refused by the provider: ${detail}`)
+    expect(w.web.posts).toEqual([])
+  })
+
+  it('postToSlack hands the SignIn exactly channelId, title, text and link, never the caller object', async () => {
+    const seen: unknown[] = []
+    const stub = { slackPost: async (_a: string, req: unknown) => { seen.push(req); return { ok: true as const, value: { ts: '1.1' } } } }
+    const raw = { channelId: 'C0TEST0001', title: 'T', text: 'x', link: { kind: 'today' as const }, link_names: '1', blocks: '[]' }
+    await postToSlack(stub, raw as never)
+    await postToSlack(stub, { channelId: 'C0TEST0001', title: 'T', text: 'x' })
+    expect(seen).toEqual([{ channelId: 'C0TEST0001', title: 'T', text: 'x', link: { kind: 'today' } }, { channelId: 'C0TEST0001', title: 'T', text: 'x' }])
+    expect(seen[0]).not.toBe(raw)
+  })
+
+  it('the bounds run before the readiness read: a doomed post costs no Slack call, connected or not', async () => {
+    const w = deliveryWorld()
+    expect(code(await postToSlack(w.stub, { channelId: 'C0TEST0001', title: 'T', text: 'y'.repeat(1501) }))).toBe('invalid_args')
+    const c = await connected()
+    const before = c.mcp.requests.length
+    expect(message(await postToSlack(c.stub, { channelId: 'C0TEST0001', title: 'T', text: 'y'.repeat(1501) }))).toBe('invalid arguments: too_long')
+    expect([c.web.requests.length, c.mcp.requests.length - before]).toEqual([0, 0])
+  })
+})
+
 describe('test 5: the channel is re-checked at Slack on every post', () => {
   it('a channel that became shared after it was listed is refused', async () => {
     const w = await connected()
@@ -242,7 +287,7 @@ describe('listChannels and checkChannel', () => {
       if (!r.value.nextCursor) break
       cursor = r.value.nextCursor
     }
-    expect(ids).toEqual(['C0TEST0001:ok:member', 'C0TEST0002:ok:member', 'C0TEST0003:shared:member', 'C0TEST0005:ok:out'])
+    expect(ids).toEqual(['C0TEST0001:ok:member', 'C0TEST0002:ok:member', 'C0TEST0003:shared:member', 'C0TEST0005:ok:out', 'C0TEST0008:shared:member'])
     const sent = w.web.requests.filter(q => q.path === '/api/conversations.list')[0]!.params
     expect([sent.types, sent.exclude_archived, sent.limit]).toEqual(['public_channel', 'true', '200'])
   })

@@ -28,6 +28,7 @@ export const NotificationSendInput = z.strictObject({
 const REASON: Record<string, string> = {
   run_cap: 'run_cap (3 Slack posts per run)',
   rate_limited: 'slack_unavailable',
+  app_origin_missing: "app_origin_missing (the app link isn't set up: send it without `link`, and tell the Inhouse team)",
 }
 
 function lineFor(r: RecipientOutcome, listed: string[]): string {

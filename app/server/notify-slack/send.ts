@@ -38,7 +38,7 @@ export interface NotifyCtx {
 export type Detail =
   | 'not_listed' | 'shared_channel' | 'archived' | 'not_public' | 'not_member' | 'not_found' | 'run_cap' | 'day_cap'
   | 'too_long' | 'empty' | 'unknown_member' | 'slack_not_connected' | 'slack_unavailable' | 'rate_limited' | 'to_bell'
-  | 'no_alerts_channel' | 'below_act'
+  | 'no_alerts_channel' | 'below_act' | 'app_origin_missing'
 
 /** One recipient's outcome. `skipped`: nothing reserved or sent for it (the Slack part with no alerts channel). */
 export type RecipientOutcome = {
@@ -117,6 +117,8 @@ export function fromHubError(e: { code: string; message: string }): { outcome: '
   const suffix = e.message.includes(': ') ? e.message.slice(e.message.lastIndexOf(': ') + 2) : ''
   if (e.code === 'connect_refused' && CHANNEL_REFUSALS.has(suffix as Detail)) return { outcome: 'refused', detail: suffix as Detail }
   if (e.code === 'invalid_args' && (suffix === 'too_long' || suffix === 'empty')) return { outcome: 'refused', detail: suffix }
+  // The hub's APP_ORIGIN is unset or malformed: the linked post is refused (fail loud), and it says so, not "not connected".
+  if (e.code === 'not_configured' && suffix === 'APP_ORIGIN') return { outcome: 'refused', detail: 'app_origin_missing' }
   if (['paused', 'scope_mismatch', 'not_configured', 'credentials_rejected', 'key_unavailable'].includes(e.code)) return { outcome: 'refused', detail: 'slack_not_connected' }
   if (e.code === 'rate_limited') return { outcome: 'failed', detail: 'rate_limited' }
   return { outcome: 'failed', detail: 'slack_unavailable' }
