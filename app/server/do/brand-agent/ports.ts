@@ -165,6 +165,11 @@ export interface ModelCallUsage {
   cacheReadTokens: number
   webSearches: number
   micro: number
+  /**
+   * Set only on the close of a call the model service answered with its own error (`{ type: 'error' }`, any status):
+   * nothing ran and nothing is billed, so the usage is zero. The trace shows it as refused, not as a zero-token step.
+   */
+  refused?: true
 }
 
 /** `granted`: send the upstream call after one confirming renew; `refused`: answer 400; `busy`: answer 503 for this call. */

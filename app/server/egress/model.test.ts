@@ -88,6 +88,21 @@ describe('a noisy upstream (failure 2)', () => {
     h.answer = async () => Response.json([{ code: 2044, message: 'account acct-test has no key' }], { status: 400 })
     expect(await json(await call(h))).toEqual({ type: 'error', error: { type: 'invalid_request_error', message: 'The model refused the request.' } })
   })
+  // Ways it could fail: the model service's own error closes without the `refused` marker (the trace then shows a
+  // zero-token step), or with any usage but zero; another error body (may follow a billed generation) is marked refused.
+  it("the model service's own error closes at zero marked refused; another error body is cut, unmarked", async () => {
+    const h = await harness()
+    h.answer = async () => Response.json({ type: 'error', error: { type: 'invalid_request_error', message: 'scripted model miss' } }, { status: 400 })
+    expect((await call(h)).status).toBe(400)
+    await settle(h)
+    expect(h.rpc.callsOf('releaseModelCall').map(c => c.args[2])).toEqual([{ usage: { inputTokens: 0, outputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0, webSearches: 0, micro: 0, refused: true }, cut: false }])
+    const g = await harness()
+    g.answer = async () => Response.json([{ code: 2044, message: 'no key' }], { status: 400 })
+    expect((await call(g)).status).toBe(400)
+    await settle(g)
+    const end = g.rpc.callsOf('releaseModelCall').map(c => c.args[2] as { usage: { refused?: true }; cut: boolean })
+    expect(end.map(e => [e.cut, 'refused' in e.usage])).toEqual([[true, false]])
+  })
   it('a 3xx is a 502, and the call closes at zero', async () => {
     const h = await harness()
     h.answer = async () => new Response(null, { status: 302, headers: { location: 'https://elsewhere.example.test/' } })
@@ -396,5 +411,32 @@ describe('the test build hook', () => {
     const res = await up('/v1/messages', { body, headers: new Headers(), signal: new AbortController().signal })
     expect(((await res.json()) as { content: unknown }).content).toEqual([{ type: 'text', text: 'Hello from the scripted model.' }])
     expect((await up('/v1/messages/count_tokens', { body, headers: new Headers(), signal: new AbortController().signal })).status).toBe(400)
+  })
+
+  // Q2 on a sandbox deploy: a resumed session's resend (`scenario:hello`) played the first prompt's `ask` at turn 2 and
+  // missed. Ways it could fail: the first marker wins over the newest; the turn counts from the session's start, not the
+  // new prompt; a tool result (no marker) drops the loop back to the default scenario.
+  it("a resumed session's newest prompt picks the scenario and its turns count from there; a tool loop keeps its own", async () => {
+    const { scenarioOf, scriptedUpstream } = await import('./gateway.ts')
+    const up = scriptedUpstream()
+    const ask = (text: string) => ({ role: 'user' as const, content: [{ type: 'text', text }] })
+    const asked = { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'toolu_scripted_ask', name: 'mcp__inhouse__question_ask', input: { question: 'Restock on Friday?' } }] }
+    const result = (id: string) => ({ role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: id, content: 'not yet', is_error: true }] })
+    const said = (text: string) => ({ role: 'assistant' as const, content: [{ type: 'text', text }] })
+    const send = async (messages: unknown[]) => {
+      const body = JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 10, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }], messages })
+      const res = await up('/v1/messages', { body, headers: new Headers(), signal: new AbortController().signal })
+      return { status: res.status, content: ((await res.json()) as { content?: unknown }).content }
+    }
+    const firstRun = [ask('please scenario:ask now'), asked, result('toolu_scripted_ask'), said('Noted, thanks.')]
+    expect(scenarioOf({ model: 'm', messages: [...firstRun, ask('scenario:hello')] })).toBe('hello')
+    expect(await send([...firstRun, ask('scenario:hello')])).toEqual({ status: 200, content: [{ type: 'text', text: 'Hello from the scripted model.' }] })
+    expect(await send(firstRun.slice(0, 3))).toEqual({ status: 200, content: [{ type: 'text', text: 'Noted, thanks.' }] })
+    const write = { role: 'assistant' as const, content: [{ type: 'text', text: 'Writing the table.' }, { type: 'tool_use', id: 'toolu_scripted_write', name: 'Bash', input: {} }] }
+    expect(await send([...firstRun, ask('scenario:write-output'), write, result('toolu_scripted_write')])).toEqual({ status: 200, content: [{ type: 'text', text: 'Saved outputs/table.csv.' }] })
+    // A tool's output that quotes a marker is not a prompt: the loop stays on write-output.
+    const quoting = { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'toolu_scripted_write', content: 'file says scenario:hello' }] }
+    expect(scenarioOf({ model: 'm', messages: [ask('scenario:write-output go'), write, quoting] })).toBe('write-output')
+    expect(await send([ask('scenario:write-output go'), write, quoting])).toEqual({ status: 200, content: [{ type: 'text', text: 'Saved outputs/table.csv.' }] })
   })
 })
