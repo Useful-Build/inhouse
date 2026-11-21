@@ -162,7 +162,7 @@ function realTarget(origin: string): ContractTarget {
     // Each property run resets the team, the Admin's grants and the settings the cases write, and makes several HTTP round trips; 20 runs keep a property inside the 25 s timeout.
     propertyRuns: 20,
     failedSaveNotice: 'error',
-    capabilities: { agentWritesSaveInClient: false, pagesLists: true, adminCanDoEverything: false },
+    capabilities: { agentWritesSaveInClient: false, pagesLists: true, adminCanDoEverything: false, keepsFiles: true },
     async setup() { /* a server's clock isn't ours to take: `advance` moves the client's own */ },
     async teardown() { /* nothing to give back */ },
     async settle() { await agent.whenLoaded() },
