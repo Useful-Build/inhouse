@@ -87,9 +87,11 @@ export class Tab {
   /** Resolves once `ok()` holds (checked on every message and close), or fails after `ms`. */
   async until(ok: () => boolean, what: string, ms = 60_000): Promise<void> {
     if (ok()) return
+    const signal = AbortSignal.timeout(ms)
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { this.listeners.delete(check); reject(new Error(`timed out waiting for ${what}`)) }, ms)
-      const check = () => { if (ok()) { clearTimeout(timer); this.listeners.delete(check); resolve() } }
+      const onAbort = () => { this.listeners.delete(check); reject(new Error(`timed out waiting for ${what}`)) }
+      const check = () => { if (ok()) { signal.removeEventListener('abort', onAbort); this.listeners.delete(check); resolve() } }
+      signal.addEventListener('abort', onAbort, { once: true })
       this.listeners.add(check)
     })
   }
