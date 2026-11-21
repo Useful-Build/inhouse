@@ -201,6 +201,9 @@ describe('routes 32 and 33: active runs and traces (failure 6)', () => {
   const runsOf = (r: { body: Record<string, unknown> }) => (r.body.runs as { runId: string }[]).map(x => x.runId)
 
   it("each person sees their own runs only; Inhouse under a live grant sees every chat's; smoke its own", async () => {
+    // A monthly cap, so each turn reserves and its run stays live: an ended run whose turns are in D1 isn't active
+    // (PR 3's projection flushes them; without a cap every turn ends `cap_reached` at once).
+    await setting('s:cap', '$320')
     const ids: Record<string, string> = {}
     for (const [who, label] of [[alice, 'a'], [bob, 'b'], [admin, 'd']] as const) {
       const id = `c-${uniq()}`

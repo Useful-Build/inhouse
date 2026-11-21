@@ -5,8 +5,7 @@
 //  3. `smoke` writes or reads a chat that isn't its own;
 //  4. on an `ownerObject` row, another member's chat answers anything but 404 when the handler prefilters by owner, or
 //     a handler that skips `requireObject` answers 2xx (must be 500), or one that passes another owner answers 2xx (403);
-//  5. Inhouse under a live grant can't read an `ownerObject` row without naming an owner, or reads it without a grant;
-//  6. a P3 route stub answers anything but 503 `not_built` to a caller the matrix lets through.
+//  5. Inhouse under a live grant can't read an `ownerObject` row without naming an owner, or reads it without a grant.
 // Expected rows and statuses are literals here, never read from the matrix.
 import { env as baseEnv } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
@@ -173,23 +172,15 @@ describe('ownerObject rows (failures 4 and 5)', () => {
   })
 })
 
-describe('the committed P3 routes are PR0 stubs (failure 6)', () => {
-  it('every route 22 to 49 not yet built answers 503 not_built to a caller the matrix lets through (W1 PR 2 built 29-33, 35-37, 49; W1 PR 4 built 34; W2 built 46-48; W3 built 38-41)', async () => {
+describe('the built chat reads refuse Inhouse without a grant (failure 5)', () => {
+  it('routes 22 and 24, as routed, answer 403 grant_required before their handlers', async () => {
     quiet()
-    const { call } = setup({ table: routes, rows: accessMatrix })
-    const member = { 'Cf-Access-Jwt-Assertion': await person('member'), Origin: BRAND.origin }
-    const P3 = [
-      ['GET', '/api/chats', member], ['POST', '/api/chats', member], ['GET', '/api/chats/c1', member], ['PUT', '/api/chats/c1/title', member],
-      ['PUT', '/api/chats/c1/pin', member], ['POST', '/api/chats/delete', member], ['POST', '/api/chats/restore', member],
-    ] as const
-    // Built and so off this list: 38-41 (W3), 42 (W4 PR 1), 43-45 (W6), 29-33, 35-37 and 49 (W1 PR 2,
-    // server/api/runs.test.ts), 46-48 (W2 built routes 46-48: server/ops/drain.test.ts) and 34 (W1 PR 4,
-    // server/api/socket.test.ts).
-    expect(P3).toHaveLength(7)
-    for (const [method, path, headers] of P3) {
-      const res = await call(BRAND.origin, path, { method, headers })
-      expect(res.status, `${method} ${path}`).toBe(503)
-      expect(await bodyOf(res), `${method} ${path}`).toEqual({ error: { code: 'unavailable', reason: 'not_built' } })
+    const { call } = setup({ table: routes, rows: accessMatrix, grant: false })
+    const h = { 'Cf-Access-Jwt-Assertion': await person('inhouse') }
+    for (const path of ['/api/chats', '/api/chats/c_member']) {
+      const res = await call(INHOUSE.origin, path, { headers: h })
+      expect(res.status, path).toBe(403)
+      expect(await bodyOf(res), path).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
     }
     vi.restoreAllMocks()
   })
