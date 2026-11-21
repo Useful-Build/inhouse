@@ -6,9 +6,10 @@
 //  4. an action has no shape (the closed list and the union drift apart).
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
-import { AuditActionSchema, AuditArgsSchema } from './audit.ts'
+import { AuditActionSchema, AuditArgsSchema, LibraryTypeSchema } from './audit.ts'
 import type { AuditAction, AuditArgs } from './audit.ts'
 import { settingSpec } from './settings.ts'
+import { FILE_CAPS } from '../../server/files-io/caps.ts'
 
 const m = 'm_0123456789abcdef0123456789abcdef'
 const g = 'g_0123456789abcdef'
@@ -35,6 +36,16 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'ops_task_revive': { action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA', result: 'revived', by: 'release' },
+  'routine.created': { action: 'routine.created', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA', need: 1 },
+  'routine.updated': { action: 'routine.updated', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA', changed: ['schedule'] },
+  'routine.enabled': { action: 'routine.enabled', routineId: 'routine-morning-check', on: false },
+  'routine.deleted': { action: 'routine.deleted', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA' },
+  'routine.restored': { action: 'routine.restored', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA' },
+  'routine.run_now': { action: 'routine.run_now', routineId: 'rt_AAAAAAAAAAAAAAAAAAAAAA', slotKey: 'now|rt_AAAAAAAAAAAAAAAAAAAAAA|ck_12345678' },
+  'library.uploaded': { action: 'library.uploaded', fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', contentType: 'application/pdf', bytes: 2048 },
+  'library.deleted': { action: 'library.deleted', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
+  'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA', 'f_BBBBBBBBBBBBBBBBBBBBBB'] },
+  'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -142,5 +153,111 @@ describe('P3 memory lines (W6, item 19)', () => {
       expect(ok({ action, memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', text: 'We restock on Fridays' })).toBe(false)
       expect(ok({ action, memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', memberId: m })).toBe(false)
     }
+  })
+})
+
+// P4 (wave-4 PR0, p4-orchestrator.md section 2). Ways it can fail, written down first:
+//  5. a P4 brand_data GET pattern is missing (Inhouse under a live grant then gets 503, "no line, no data"), or a
+//     concrete path, a write pattern or a query gets in;
+//  6. a P4 line takes a name, a routine name, an instruction, a file name or an item title where an id, a count or a
+//     closed list belongs (failure 1 covers names and emails; these are the P4-shaped texts);
+//  7. a count or a list goes out of its bounds (need 0 to 2, 1 to 3 changes each once, 1 to 100 files, bytes 1 to the cap);
+//  8. the Library's type list drifts from P3's chat file type list.
+describe('P4 lines (wave-4 PR0)', () => {
+  const P4_GET = ['/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download']
+  const rt = 'rt_AAAAAAAAAAAAAAAAAAAAAA'
+  const f = 'f_AAAAAAAAAAAAAAAAAAAAAA'
+  const texts = ['Morning check', 'Check refunds every morning and tell me', 'Q3 invoices.pdf', 'Refund spike on order 1001', 'routine morning check']
+
+  it('support.access takes the five P4 read patterns with GET only, and nothing concrete (failure 5)', () => {
+    for (const route of P4_GET) {
+      expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(true)
+      expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route }), route).toBe(false)
+    }
+    for (const route of ['/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA', '/api/library/f_AAAAAAAAAAAAAAAAAAAAAA/download', '/api/library?kind=images', '/api/routines/:id', '/api/library/:id', '/api/today/items/:id/set-aside']) {
+      expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(false)
+    }
+  })
+
+  it('routine lines take a routine id (rt_ or a system id), never its name or instruction (failure 6)', () => {
+    for (const routineId of [rt, 'routine-morning-check']) expect(ok({ action: 'routine.deleted', routineId }), routineId).toBe(true)
+    for (const routineId of [...texts, 'rt_short', 'Routine-morning-check', 'routine-', `rt_${'A'.repeat(23)}`, '']) {
+      for (const action of ['routine.deleted', 'routine.restored']) expect(ok({ action, routineId }), `${action} ${routineId}`).toBe(false)
+    }
+    expect(ok({ action: 'routine.created', routineId: rt, need: 0, name: 'Morning check' })).toBe(false)
+    expect(ok({ action: 'routine.updated', routineId: rt, changed: ['instruction'], instruction: 'Check refunds' })).toBe(false)
+  })
+
+  it('routine.created: need is a whole number 0 to 2 (failure 7)', () => {
+    for (const need of [0, 1, 2]) expect(ok({ action: 'routine.created', routineId: rt, need }), String(need)).toBe(true)
+    for (const need of [-1, 3, 1.5, '1', null]) expect(ok({ action: 'routine.created', routineId: rt, need }), String(need)).toBe(false)
+  })
+
+  it('routine.updated: changed is 1 to 3 of instruction, schedule and missed, each once (failure 7)', () => {
+    for (const changed of [['instruction'], ['schedule', 'missed'], ['missed', 'instruction', 'schedule']]) {
+      expect(ok({ action: 'routine.updated', routineId: rt, changed }), changed.join()).toBe(true)
+    }
+    for (const changed of [[], ['name'], ['schedule', 'schedule'], ['instruction', 'schedule', 'missed', 'instruction'], 'schedule']) {
+      expect(ok({ action: 'routine.updated', routineId: rt, changed }), String(changed)).toBe(false)
+    }
+  })
+
+  it('routine.enabled takes a boolean; routine.run_now a slot key of either shape, never free text', () => {
+    expect(ok({ action: 'routine.enabled', routineId: rt, on: true })).toBe(true)
+    for (const on of ['true', 1, null]) expect(ok({ action: 'routine.enabled', routineId: rt, on }), String(on)).toBe(false)
+    for (const slotKey of [`${rt}|2026-11-21|06:00`, 'routine-morning-check|2026-11-21|06:00', `now|${rt}|ck_12345678`, 'now|routine-morning-check|AbC-123_xyz']) {
+      expect(ok({ action: 'routine.run_now', routineId: rt, slotKey }), slotKey).toBe(true)
+    }
+    for (const slotKey of [...texts, `${rt}|21-11-2026|06:00`, `${rt}|2026-11-21`, `now|${rt}|short`, `now|${rt}|has space here`, `now|Morning check|ck_12345678`, `${rt}|2026-11-21|06:00|x`]) {
+      expect(ok({ action: 'routine.run_now', routineId: rt, slotKey }), slotKey).toBe(false)
+    }
+  })
+
+  it('library.uploaded: a file id, a type from the list and bytes 1 to 20 MiB; never a file name (failures 6 and 7)', () => {
+    for (const bytes of [1, 20_971_520]) expect(ok({ action: 'library.uploaded', fileId: f, contentType: 'text/csv', bytes }), String(bytes)).toBe(true)
+    for (const bytes of [0, 20_971_521, 2.5, '2048']) expect(ok({ action: 'library.uploaded', fileId: f, contentType: 'text/csv', bytes }), String(bytes)).toBe(false)
+    for (const contentType of ['text/html', 'image/svg+xml', 'application/octet-stream', 'video/mp4', 'TEXT/CSV']) {
+      expect(ok({ action: 'library.uploaded', fileId: f, contentType, bytes: 10 }), contentType).toBe(false)
+    }
+    for (const fileId of ['Q3 invoices.pdf', 'library/f_AAAAAAAAAAAAAAAAAAAAAA', 'f_short']) expect(ok({ action: 'library.uploaded', fileId, contentType: 'text/csv', bytes: 10 }), fileId).toBe(false)
+    expect(ok({ action: 'library.uploaded', fileId: f, contentType: 'text/csv', bytes: 10, name: 'Q3 invoices.pdf' })).toBe(false)
+  })
+
+  it('library.deleted and library.restored: 1 to 100 file ids (failure 7)', () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `f_${String(i).padStart(22, 'A')}`)
+    for (const action of ['library.deleted', 'library.restored']) {
+      expect(ok({ action, fileIds: ids(1) }), action).toBe(true)
+      expect(ok({ action, fileIds: ids(100) }), action).toBe(true)
+      expect(ok({ action, fileIds: [] }), action).toBe(false)
+      expect(ok({ action, fileIds: ids(101) }), action).toBe(false)
+      expect(ok({ action, fileIds: ['Q3 invoices.pdf'] }), action).toBe(false)
+      expect(ok({ action, fileIds: f }), action).toBe(false)
+    }
+  })
+
+  it('today.set_aside: an item id (problem or status card) and a closed reason or null, never the item title (failure 6)', () => {
+    for (const itemId of ['p_AAAAAAAAAAAAAAAAAAAAAA', 'p_check_2026-11-21_incomplete_AbCdEfGh', 'p_check_2026-11-21_failed_AAAAAAAAAAAAAAAAAAAAAA', 'p_check_2026-11-21_off_A1b2C3d4']) {
+      expect(ok({ action: 'today.set_aside', itemId, reason: 'dismissed' }), itemId).toBe(true)
+    }
+    for (const itemId of [...texts, 'p_short', 'p_check_2026-11-21_unknown_AbCdEfGh', 'p_check_today_failed_AbCdEfGh', 'p_check_2026-11-21_failed_x']) {
+      expect(ok({ action: 'today.set_aside', itemId, reason: 'dismissed' }), itemId).toBe(false)
+    }
+    for (const reason of ['snoozed', 'dismissed', 'declined', null]) expect(ok({ action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason }), String(reason)).toBe(true)
+    for (const reason of ['done', 'Snoozed', undefined, '']) expect(ok({ action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason }), String(reason)).toBe(false)
+    expect(ok({ action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: null, title: 'Refund spike' })).toBe(false)
+  })
+
+  it("the Library's type list is P3's chat file type list (failure 8)", () => {
+    expect([...LibraryTypeSchema.options].sort()).toEqual([...FILE_CAPS.allowedTypes].sort())
+  })
+
+  it('appends its block after P3\'s, in this order', () => {
+    const all = AuditActionSchema.options
+    expect(all.slice(all.indexOf('ops_task_revive'))).toEqual([
+      'ops_task_revive',
+      'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
+      'library.uploaded', 'library.deleted', 'library.restored',
+      'today.set_aside',
+    ])
   })
 })

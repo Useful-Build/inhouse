@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { pageOf } from './paging.ts'
 import { GrantHoursSchema, GrantIdSchema } from './grants.ts'
-import { RunIdSchema } from './chat-ids.ts'
+import { FileIdSchema, RunIdSchema } from './chat-ids.ts'
 import { MemberIdSchema, MemberRoleSchema } from './members.ts'
 import { SettingKeySchema, SettingScopeSchema, SettingValueSchema, settingSpec } from './settings.ts'
 
@@ -23,6 +23,11 @@ export const AuditActionSchema = z.enum([
   'memory.forgotten', 'memory.restored',
   // P3 W1 PR 6 (route 51): the release job revived one quarantined due task (P4's and P6's runbooks).
   'ops_task_revive',
+  // P4 (p4-orchestrator.md section 2, wave-4 PR0): routines (W2), the Library (W5) and Today's set-aside (W3). The
+  // actor is the member who acted. P5 appends its own block after this one.
+  'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
+  'library.uploaded', 'library.deleted', 'library.restored',
+  'today.set_aside',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -35,6 +40,9 @@ const RoutePatternSchema = z.enum([
   // P3's brand_data GET routes (p3-design section 3: rows 22, 24, 32, 33, 34, 40, 41, 43).
   '/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files',
   '/api/files/:fileId', '/api/memory',
+  // P4's brand_data GET routes (Sonnet M-4): the Routines page, Today, Activity and the Library, so Inhouse under a live
+  // grant gets data, not 503 ("no line, no data").
+  '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download',
 ])
 /**
  * The `brand_data` write routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
@@ -51,6 +59,38 @@ const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
 export const TaskKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 export const TaskIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}(:[A-Za-z0-9_:.-]{1,200})?$/)
 export const ReviveResultSchema = z.enum(['revived', 'not_quarantined', 'not_found'])
+
+// ---------- P4's argument shapes (ids the server makes, counts and closed lists; never a name or a text) ----------
+/** 128 random bits as base64url without padding: 22 characters (chat-ids.ts's rule). */
+const RANDOM = '[A-Za-z0-9_-]{22}'
+/** A routine: `rt_` + 128 random bits (a team routine), or a system routine's fixed id (`routine-morning-check`). */
+const ROUTINE_ID = `(?:rt_${RANDOM}|routine-[a-z0-9]+(?:-[a-z0-9]+){0,7})`
+export const RoutineIdSchema = z.string().regex(new RegExp(`^${ROUTINE_ID}$`))
+/**
+ * A routine slot (p4-w2.md section 1): `<routineId>|<YYYY-MM-DD>|<HH:MM>` for a scheduled one, `now|<routineId>|<clientKey>`
+ * for a Run now (`clientKey` the client's turn key shape, runs.ts).
+ */
+export const SlotKeySchema = z.string().regex(new RegExp(`^(?:${ROUTINE_ID}\\|\\d{4}-\\d{2}-\\d{2}\\|\\d{2}:\\d{2}|now\\|${ROUTINE_ID}\\|[A-Za-z0-9_-]{8,64})$`))
+/** What a routine edit changed (never the new text). */
+export const RoutineChangeSchema = z.enum(['instruction', 'schedule', 'missed'])
+/**
+ * A Today item (p4-w3.md sections 3 and 5): `p_` + a 22-character hash of the problem key and date, or a status card's
+ * `p_check_<local date>_<cause>_<slot hash>`.
+ */
+export const TodayItemIdSchema = z.string().regex(new RegExp(`^p_(?:${RANDOM}|check_\\d{4}-\\d{2}-\\d{2}_(?:incomplete|failed|off)_[A-Za-z0-9_-]{8,43})$`))
+/**
+ * P3's chat file type list (server/files-io/caps.ts `FILE_CAPS.allowedTypes`; audit.test.ts keeps the two equal): the
+ * sniffer's type of a Library upload. HTML and SVG are never here.
+ */
+export const LibraryTypeSchema = z.enum([
+  'application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'text/csv', 'text/plain', 'text/markdown', 'application/json',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+])
+/** P3's chat file cap (20 MiB, caps.ts `maxFileBytes`). */
+const LIBRARY_MAX_BYTES = 20_971_520
+const FileIdsSchema = z.array(FileIdSchema).min(1).max(100)
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
@@ -95,6 +135,23 @@ const otherLines = [
    * release token has no member row, so the line's actor is `m_system`.
    */
   line('ops_task_revive', { kind: TaskKindSchema, id: TaskIdSchema, result: ReviveResultSchema, by: z.literal('release') }),
+  // P4 (wave-4 PR0). Ids, counts and closed lists only: no routine name, instruction, file name or item title.
+  /** `need`: the stage the routine needs (0 Watch, 1 Act, 2 Run; p4-w2.md section 2). */
+  line('routine.created', { routineId: RoutineIdSchema, need: z.number().int().min(0).max(2) }),
+  /** `changed`: which parts an edit changed, each once. */
+  line('routine.updated', {
+    routineId: RoutineIdSchema,
+    changed: z.array(RoutineChangeSchema).min(1).max(3).refine(c => new Set(c).size === c.length, 'Each part once'),
+  }),
+  line('routine.enabled', { routineId: RoutineIdSchema, on: z.boolean() }),
+  line('routine.deleted', { routineId: RoutineIdSchema }),
+  line('routine.restored', { routineId: RoutineIdSchema }),
+  line('routine.run_now', { routineId: RoutineIdSchema, slotKey: SlotKeySchema }),
+  line('library.uploaded', { fileId: FileIdSchema, contentType: LibraryTypeSchema, bytes: z.number().int().min(1).max(LIBRARY_MAX_BYTES) }),
+  line('library.deleted', { fileIds: FileIdsSchema }),
+  line('library.restored', { fileIds: FileIdsSchema }),
+  /** `reason: null`: the item was put back (a snooze or a dismissal undone). */
+  line('today.set_aside', { itemId: TodayItemIdSchema, reason: z.enum(['snoozed', 'dismissed', 'declined']).nullable() }),
 ] as const
 
 /**
