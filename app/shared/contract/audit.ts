@@ -45,10 +45,24 @@ const RoutePatternSchema = z.enum([
   '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download',
 ])
 /**
- * The `brand_data` write routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
- * a team fact. `support.access` pairs `PUT` with these only, and `GET` with `RoutePatternSchema` only.
+ * The `brand_data` PUT routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
+ * a team fact; P4: turning a routine on or off and setting aside an item on Today. `support.access` pairs `PUT` with
+ * these only, `POST` with `PostPatternSchema` only and `GET` with `RoutePatternSchema` only.
  */
-const WritePatternSchema = z.enum(['/api/memory/brand/:id/forgotten'])
+const WritePatternSchema = z.enum([
+  '/api/memory/brand/:id/forgotten',
+  // P4 (p4-w2.md route 51, p4-w3.md route 56).
+  '/api/routines/:id/enabled', '/api/today/:id/aside',
+])
+/**
+ * The `brand_data` POST routes the Inhouse team may use under a live grant, one block per phase, appended in phase
+ * order (P6 adds `/api/approvals/:id/check` after P4's). P4: a routine's Run now, delete and restore (p4-w2.md routes
+ * 52 to 54) and the Library's delete and restore (p4-w5.md routes 63 and 64; the upload is people only).
+ */
+const PostPatternSchema = z.enum([
+  // P4.
+  '/api/routines/:id/run', '/api/routines/:id/delete', '/api/routines/:id/restore', '/api/library/delete', '/api/library/restore',
+])
 const MemoryIdArgSchema = z.string().regex(/^mem_[A-Za-z0-9_-]{22}$/)
 const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
 /**
@@ -75,9 +89,10 @@ export const SlotKeySchema = z.string().regex(new RegExp(`^(?:${ROUTINE_ID}\\|\\
 export const RoutineChangeSchema = z.enum(['instruction', 'schedule', 'missed'])
 /**
  * A Today item (p4-w3.md sections 3 and 5): `p_` + a 22-character hash of the problem key and date, or a status card's
- * `p_check_<local date>_<cause>_<slot hash>`.
+ * `p_check_<local date>_<cause>_<hash>` (the slot key's hash; a `not_run` card has no slot and hashes
+ * `<routineId>|<local date>`). One tail shape for every cause.
  */
-export const TodayItemIdSchema = z.string().regex(new RegExp(`^p_(?:${RANDOM}|check_\\d{4}-\\d{2}-\\d{2}_(?:incomplete|failed|off)_[A-Za-z0-9_-]{8,43})$`))
+export const TodayItemIdSchema = z.string().regex(new RegExp(`^p_(?:${RANDOM}|check_\\d{4}-\\d{2}-\\d{2}_(?:incomplete|failed|not_run|not_connected|off)_[A-Za-z0-9_-]{8,43})$`))
 /**
  * P3's chat file type list (server/files-io/caps.ts `FILE_CAPS.allowedTypes`; audit.test.ts keeps the two equal): the
  * sniffer's type of a Library upload. HTML and SVG are never here.
@@ -117,10 +132,10 @@ const otherLines = [
   line('grant.created', { grantId: GrantIdSchema, hours: GrantHoursSchema }),
   line('grant.ended', { grantId: GrantIdSchema }),
   line('grant.expired', { grantId: GrantIdSchema }),
-  line('support.access', { grantId: GrantIdSchema, method: z.enum(['GET', 'PUT']), route: z.union([RoutePatternSchema, WritePatternSchema]) })
+  line('support.access', { grantId: GrantIdSchema, method: z.enum(['GET', 'PUT', 'POST']), route: z.union([RoutePatternSchema, WritePatternSchema, PostPatternSchema]) })
     .superRefine((a, ctx) => {
       // Runs even when a field above failed (zod 4), so it checks each value's type before using it.
-      const pattern = a.method === 'GET' ? RoutePatternSchema : a.method === 'PUT' ? WritePatternSchema : null
+      const pattern = a.method === 'GET' ? RoutePatternSchema : a.method === 'PUT' ? WritePatternSchema : a.method === 'POST' ? PostPatternSchema : null
       if (pattern && !pattern.safeParse(a.route).success) ctx.addIssue({ code: 'custom', path: ['route'], message: 'Not a route for this method' })
     }),
   line('agent.paused', {}),
@@ -146,7 +161,12 @@ const otherLines = [
   line('routine.enabled', { routineId: RoutineIdSchema, on: z.boolean() }),
   line('routine.deleted', { routineId: RoutineIdSchema }),
   line('routine.restored', { routineId: RoutineIdSchema }),
-  line('routine.run_now', { routineId: RoutineIdSchema, slotKey: SlotKeySchema }),
+  /** The slot key names the same routine as `routineId` (a manual key `now|<id>|...`, or a scheduled `<id>|...`). */
+  line('routine.run_now', { routineId: RoutineIdSchema, slotKey: SlotKeySchema }).superRefine((a, ctx) => {
+    if (typeof a.slotKey !== 'string' || typeof a.routineId !== 'string') return
+    const parts = a.slotKey.split('|')
+    if ((parts[0] === 'now' ? parts[1] : parts[0]) !== a.routineId) ctx.addIssue({ code: 'custom', path: ['slotKey'], message: "Not this routine's slot" })
+  }),
   line('library.uploaded', { fileId: FileIdSchema, contentType: LibraryTypeSchema, bytes: z.number().int().min(1).max(LIBRARY_MAX_BYTES) }),
   line('library.deleted', { fileIds: FileIdsSchema }),
   line('library.restored', { fileIds: FileIdsSchema }),

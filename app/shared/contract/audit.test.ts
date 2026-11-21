@@ -10,6 +10,7 @@ import { AuditActionSchema, AuditArgsSchema, LibraryTypeSchema } from './audit.t
 import type { AuditAction, AuditArgs } from './audit.ts'
 import { settingSpec } from './settings.ts'
 import { FILE_CAPS } from '../../server/files-io/caps.ts'
+import { INHOUSE_BRAND_WRITES } from '../../server/testing/inhouse-brand-writes.ts'
 
 const m = 'm_0123456789abcdef0123456789abcdef'
 const g = 'g_0123456789abcdef'
@@ -174,7 +175,7 @@ describe('P4 lines (wave-4 PR0)', () => {
       expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(true)
       expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route }), route).toBe(false)
     }
-    for (const route of ['/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA', '/api/library/f_AAAAAAAAAAAAAAAAAAAAAA/download', '/api/library?kind=images', '/api/routines/:id', '/api/library/:id', '/api/today/items/:id/set-aside']) {
+    for (const route of ['/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA', '/api/library/f_AAAAAAAAAAAAAAAAAAAAAA/download', '/api/library?kind=images', '/api/routines/:id', '/api/library/:id', '/api/today/:id/aside']) {
       expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(false)
     }
   })
@@ -205,10 +206,20 @@ describe('P4 lines (wave-4 PR0)', () => {
   it('routine.enabled takes a boolean; routine.run_now a slot key of either shape, never free text', () => {
     expect(ok({ action: 'routine.enabled', routineId: rt, on: true })).toBe(true)
     for (const on of ['true', 1, null]) expect(ok({ action: 'routine.enabled', routineId: rt, on }), String(on)).toBe(false)
-    for (const slotKey of [`${rt}|2026-11-21|06:00`, 'routine-morning-check|2026-11-21|06:00', `now|${rt}|ck_12345678`, 'now|routine-morning-check|AbC-123_xyz']) {
-      expect(ok({ action: 'routine.run_now', routineId: rt, slotKey }), slotKey).toBe(true)
+    for (const [routineId, slotKey] of [
+      [rt, `${rt}|2026-11-21|06:00`], ['routine-morning-check', 'routine-morning-check|2026-11-21|06:00'],
+      [rt, `now|${rt}|ck_12345678`], ['routine-morning-check', 'now|routine-morning-check|AbC-123_xyz'],
+    ]) {
+      expect(ok({ action: 'routine.run_now', routineId, slotKey }), slotKey).toBe(true)
     }
     for (const slotKey of [...texts, `${rt}|21-11-2026|06:00`, `${rt}|2026-11-21`, `now|${rt}|short`, `now|${rt}|has space here`, `now|Morning check|ck_12345678`, `${rt}|2026-11-21|06:00|x`]) {
+      expect(ok({ action: 'routine.run_now', routineId: rt, slotKey }), slotKey).toBe(false)
+    }
+  })
+
+  it("routine.run_now: the slot key names the line's own routine (review fold)", () => {
+    const other = 'rt_BBBBBBBBBBBBBBBBBBBBBB'
+    for (const slotKey of [`now|${other}|ck_12345678`, `${other}|2026-11-21|06:00`, 'routine-morning-check|2026-11-21|06:00', 'now|routine-morning-check|ck_12345678']) {
       expect(ok({ action: 'routine.run_now', routineId: rt, slotKey }), slotKey).toBe(false)
     }
   })
@@ -236,10 +247,14 @@ describe('P4 lines (wave-4 PR0)', () => {
   })
 
   it('today.set_aside: an item id (problem or status card) and a closed reason or null, never the item title (failure 6)', () => {
-    for (const itemId of ['p_AAAAAAAAAAAAAAAAAAAAAA', 'p_check_2026-11-21_incomplete_AbCdEfGh', 'p_check_2026-11-21_failed_AAAAAAAAAAAAAAAAAAAAAA', 'p_check_2026-11-21_off_A1b2C3d4']) {
+    for (const itemId of [
+      'p_AAAAAAAAAAAAAAAAAAAAAA', 'p_check_2026-11-21_incomplete_AbCdEfGh', 'p_check_2026-11-21_failed_AAAAAAAAAAAAAAAAAAAAAA', 'p_check_2026-11-21_off_A1b2C3d4',
+      // Review fold: the not_run card (its tail hashes `<routineId>|<local date>`) and the quiet not_connected card.
+      'p_check_2026-11-21_not_run_Zz09-_Zz', 'p_check_2026-11-21_not_connected_AbCdEfGhIjKlMnOpQrStUv',
+    ]) {
       expect(ok({ action: 'today.set_aside', itemId, reason: 'dismissed' }), itemId).toBe(true)
     }
-    for (const itemId of [...texts, 'p_short', 'p_check_2026-11-21_unknown_AbCdEfGh', 'p_check_today_failed_AbCdEfGh', 'p_check_2026-11-21_failed_x']) {
+    for (const itemId of [...texts, 'p_short', 'p_check_2026-11-21_unknown_AbCdEfGh', 'p_check_today_failed_AbCdEfGh', 'p_check_2026-11-21_failed_x', 'p_check_2026-11-21_not_run_short', 'p_check_2026-11-21_notrun_AbCdEfGh', 'p_check_2026-11-21_not_connected_has space']) {
       expect(ok({ action: 'today.set_aside', itemId, reason: 'dismissed' }), itemId).toBe(false)
     }
     for (const reason of ['snoozed', 'dismissed', 'declined', null]) expect(ok({ action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason }), String(reason)).toBe(true)
@@ -259,5 +274,44 @@ describe('P4 lines (wave-4 PR0)', () => {
       'library.uploaded', 'library.deleted', 'library.restored',
       'today.set_aside',
     ])
+  })
+})
+
+// Review fold (#237, high 2): Inhouse writes P4's brand data under a live grant, so support.access takes P4's write rows
+// as closed pairs (PUT with the PUT list, POST with the POST list) or the request answers 503 ("no line, no data").
+describe('support.access write pairs (P4 review fold)', () => {
+  const access = (method: unknown, route: unknown) => ok({ action: 'support.access', grantId: g, method, route })
+  /** Every write pair, written out here: P3's forget, then P4's from the briefs' route tables. */
+  const WRITES = [
+    ['PUT', '/api/memory/brand/:id/forgotten'],
+    ['PUT', '/api/routines/:id/enabled'], ['POST', '/api/routines/:id/run'], ['POST', '/api/routines/:id/delete'], ['POST', '/api/routines/:id/restore'],
+    ['PUT', '/api/today/:id/aside'],
+    ['POST', '/api/library/delete'], ['POST', '/api/library/restore'],
+  ] as const
+  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download']
+
+  it('takes each write pair, and its route with no other method', () => {
+    for (const [method, route] of WRITES) {
+      expect(access(method, route), `${method} ${route}`).toBe(true)
+      for (const other of ['GET', 'PUT', 'POST'].filter(m => m !== method)) expect(access(other, route), `${other} ${route}`).toBe(false)
+    }
+  })
+
+  it('POST pairs with no other route: no read, no PUT route, no upload, no concrete path', () => {
+    for (const route of [...READS, '/api/memory/brand/:id/forgotten', '/api/routines/:id/enabled', '/api/today/:id/aside', '/api/library/uploads', '/api/routines', '/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA/run', '/api/approvals/:id/check']) {
+      expect(access('POST', route), route).toBe(false)
+    }
+  })
+
+  it('GET and PUT pairings are otherwise unchanged', () => {
+    for (const route of READS) {
+      expect(access('GET', route), route).toBe(true)
+      expect(access('PUT', route), route).toBe(false)
+    }
+    for (const method of ['DELETE', 'PATCH', 'post', null]) expect(access(method, '/api/library/delete'), String(method)).toBe(false)
+  })
+
+  it('INHOUSE_BRAND_WRITES is exactly the write pairs support.access takes', () => {
+    expect([...INHOUSE_BRAND_WRITES].sort()).toEqual(WRITES.map(([m, r]) => `${m} ${r}`).sort())
   })
 })

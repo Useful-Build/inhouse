@@ -151,3 +151,14 @@ describe('P4 lines (wave-4 PR0): literal texts, and no id in any of them', () =>
     }
   })
 })
+
+describe('support.access writes (P4 review fold): a write reads as a change, never a look', () => {
+  it('names each P4 write route', () => {
+    for (const [method, route, detail] of [
+      ['PUT', '/api/routines/:id/enabled', 'A routine'], ['POST', '/api/routines/:id/run', 'A routine'],
+      ['POST', '/api/routines/:id/delete', 'A routine'], ['POST', '/api/routines/:id/restore', 'A routine'],
+      ['PUT', '/api/today/:id/aside', 'An item on Today'],
+      ['POST', '/api/library/delete', 'The Library'], ['POST', '/api/library/restore', 'The Library'],
+    ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method, route }, names), `${method} ${route}`).toEqual({ what: 'changed brand data', detail })
+  })
+})

@@ -81,8 +81,8 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
       const line = auditInsert({
         atMs: at.nowMs,
         actorId: principal.memberId,
-        // The schema checks the pair (GET with a read route, PUT with a write route Inhouse may use) and throws otherwise.
-        args: { action: 'support.access', grantId: principal.grant.id, method: at.method as 'GET' | 'PUT', route: at.route as '/api/members' },
+        // The schema checks the pair (GET with a read route, PUT or POST with a write route Inhouse may use) and throws otherwise.
+        args: { action: 'support.access', grantId: principal.grant.id, method: at.method as 'GET' | 'PUT' | 'POST', route: at.route as '/api/members' },
         target: { kind: 'grant', id: principal.grant.id },
         requestId: principal.requestId,
       }, null)

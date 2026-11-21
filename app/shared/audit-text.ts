@@ -33,6 +33,13 @@ const ROUTE: Record<string, string> = {
   '/api/activity': 'Activity',
   '/api/library': 'The Library',
   '/api/library/:id/download': 'A Library file',
+  '/api/routines/:id/enabled': 'A routine',
+  '/api/routines/:id/run': 'A routine',
+  '/api/routines/:id/delete': 'A routine',
+  '/api/routines/:id/restore': 'A routine',
+  '/api/today/:id/aside': 'An item on Today',
+  '/api/library/delete': 'The Library',
+  '/api/library/restore': 'The Library',
 }
 
 /** P4: what a routine edit changed, in a fixed order whatever order the line lists them. */
@@ -83,7 +90,7 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'grant.created': return { what: 'gave the Inhouse team access', detail: hours(args.hours) }
     case 'grant.ended': return { what: 'ended the Inhouse team’s access', detail: '' }
     case 'grant.expired': return { what: 'Inhouse team access ended', detail: 'Its time ran out' }
-    case 'support.access': return { what: args.method === 'PUT' ? 'changed brand data' : 'looked at brand data', detail: ROUTE[args.route] ?? args.route }
+    case 'support.access': return { what: args.method === 'GET' ? 'looked at brand data' : 'changed brand data', detail: ROUTE[args.route] ?? args.route }
     case 'agent.paused': return { what: 'paused the agent', detail: '' }
     case 'agent.resumed': return { what: 'resumed the agent', detail: '' }
     case 'support.attach': return { what: 'watched a live answer', detail: '' }
