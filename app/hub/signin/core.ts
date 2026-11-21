@@ -458,8 +458,10 @@ export class SignInCore {
     if (!doc.ok) return err(doc.code)
     // P5 (p5-w2): variables are plain JSON within 16 KiB, and the level 1 allowlist of fields, arguments, `query` keys and
     // sort keys holds, for every document.
-    if (!checkVariables(variables).ok) return err('invalid_args', 'variables')
-    if (!checkShopifyFields(document as string, variables).ok) return err('invalid_args', FIELD_NOT_ALLOWED)
+    // Only the plain copy is used from here on: the input itself is never serialised.
+    const vars = checkVariables(variables)
+    if (!vars.ok) return err('invalid_args', 'variables')
+    if (!checkShopifyFields(document as string, vars.value).ok) return err('invalid_args', FIELD_NOT_ALLOWED)
 
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')
@@ -473,7 +475,7 @@ export class SignInCore {
     const first = await this.#acquire(accountId, ring.ring, true)
     if (!first.ok) return err(first.code, first.detail)
     const upstream = await this.#d.upstream()
-    const sent = await sendRead(upstream, config, first.token, apiVersion, document as string, variables)
+    const sent = await sendRead(upstream, config, first.token, apiVersion, document as string, vars.value)
     if (sent.kind === 'result') return sent.result
 
     // A 401: grant once if the token we used is still the current one, then re-send once. Only reads are re-sent.
@@ -485,7 +487,7 @@ export class SignInCore {
     }
     const second = await this.#acquire(accountId, ring.ring, false)
     if (!second.ok) return err(second.code, second.detail)
-    const resent = await sendRead(upstream, config, second.token, apiVersion, document as string, variables)
+    const resent = await sendRead(upstream, config, second.token, apiVersion, document as string, vars.value)
     if (resent.kind === 'result') return resent.result
     // A second 401: rejected. The token is deleted under the generation check.
     this.#grantFailed(accountId, second.generation, 'credentials_rejected')

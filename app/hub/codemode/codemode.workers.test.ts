@@ -190,6 +190,22 @@ describe('A.7.5 read-only and level 1 at runtime', () => {
       expect(seen.graphql).toBe(0)
     })
   }
+  // Review round 2 (H1b, L2): cases only checkVariables catches. A `toJSON` on an array (named own props survive RPC)
+  // or on a declared but unused variable passes the field check, so without checkVariables the hub's JSON.stringify
+  // would call it back into the sandbox.
+  const UNUSED = 'query Q($q: String, $z: [String]) { orders(first: 1, query: $q) { nodes { id } } }'
+  for (const [label, vars] of [
+    ['an array with a toJSON, top level', `Object.assign(['a'], { toJSON() { globalThis.called = true; return {} } })`],
+    ['an array with a toJSON, nested in a declared unused variable', `{ q: 'sku:"a"', z: Object.assign(['a'], { toJSON() { globalThis.called = true; return ['a'] } }) }`],
+    ['a toJSON on a declared unused variable', `{ q: 'sku:"a"', z: { toJSON() { globalThis.called = true; return ['a'] } } }`],
+  ] as const) {
+    it(`${label} is refused, never called, nothing upstream`, async () => {
+      const r = await script(`globalThis.called = false; let msg = 'reached'; try { await shop.graphql(${JSON.stringify(UNUSED)}, ${vars}) } catch (e) { msg = e.message } return { msg, called: globalThis.called }`)
+      expect(r.result).toEqual({ msg: 'invalid_args: invalid arguments', called: false })
+      expect(seen.graphql).toBe(0)
+    })
+  }
+
   it('a toJSON callback is never called back from the hub', async () => {
     const doc = 'query Q($q: String) { orders(first: 1, query: $q) { nodes { id } } }'
     const r = await script(`try { await shop.graphql(${JSON.stringify(doc)}, { q: { toJSON() { globalThis.called = true; return 'sku:"a"' } } }) } catch {} return globalThis.called === true`)
@@ -243,6 +259,13 @@ describe('A.7.6 caps', () => {
     expect(r.error).toBeUndefined()
     expect(typeof r.result).toBe('number')
     expect(asked).toEqual([{ name: 'Script', options: { limits: { cpuMs: 1_000, subRequests: 20 } } }])
+  })
+
+  it('the wrapper refuses a big or non-string return inside the sandbox, before it crosses (review L1/L3)', async () => {
+    for (const code of [`return 'x'.repeat(9000)`, 'return () => 1']) {
+      const { out } = await direct(code)
+      expect(out, code).toMatchObject({ outcome: 'error', error: `Error: ${BAD_RETURN}` })
+    }
   })
 
   it('a return over 8 KiB and non-JSON returns are refused', async () => {

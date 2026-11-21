@@ -138,6 +138,47 @@ describe('ScriptApi', () => {
     expect(c.calls).toBe(1)
   })
 
+  it('variables: arrays with named props, Proxies and depth 40 are refused, nothing called, nothing upstream (review round 2)', async () => {
+    let upstream = 0
+    const c = { async graphql() { upstream++; return { ok: true as const, value: { data: null } } } }
+    let called = false
+    const toJSON = () => {
+      called = true
+      return {}
+    }
+    const throwing = new Proxy({}, { ownKeys: () => { throw new Error('trap') } })
+    const revocable = Proxy.revocable({}, {})
+    revocable.revoke()
+    let deep: unknown = 'x'
+    for (let i = 0; i < 40; i++) deep = { d: deep }
+    const refused: unknown[] = [
+      { a: Object.assign(['a'], { toJSON }) },
+      { a: { b: [Object.assign([1], { extra: 1 })] } },
+      { a: [1, , 3] },
+      throwing,
+      { nested: throwing },
+      revocable.proxy,
+      { nested: [revocable.proxy] },
+      new Proxy({ f: () => 1 }, {}),
+      { nested: new Proxy({ toJSON }, {}) },
+      deep,
+      { [Symbol('s')]: 1 },
+    ]
+    // A fresh object per case: the 10-call cap would otherwise answer first.
+    for (const [i, v] of refused.entries()) await expect(new ScriptApi(c, '2026-10').graphql('{ a }', v), `case ${i}`).rejects.toThrow(/^invalid_args: /)
+    expect(called).toBe(false)
+    expect(upstream).toBe(0)
+  })
+
+  it('a __proto__ key stays a plain key on the copy', async () => {
+    const seen: unknown[] = []
+    const c = { async graphql(_d: string, v?: Record<string, unknown>) { seen.push(v); return { ok: true as const, value: { data: null } } } }
+    await new ScriptApi(c, '2026-10').graphql('{ a }', JSON.parse('{"__proto__": {"polluted": 1}, "q": "x"}'))
+    const v = seen[0] as Record<string, unknown>
+    expect(Object.getPrototypeOf(v)).toBe(Object.prototype)
+    expect(JSON.stringify(v)).toBe('{"__proto__":{"polluted":1},"q":"x"}')
+  })
+
   it('variables: functions, toJSON callbacks, class instances and over 16 KiB never reach the client; the client gets a plain copy (review H1)', async () => {
     const seen: unknown[] = []
     const c = { async graphql(_d: string, v?: Record<string, unknown>) { seen.push(v); return { ok: true as const, value: { data: null } } } }
