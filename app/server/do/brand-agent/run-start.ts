@@ -45,6 +45,7 @@ export function buildStart(i: StartInput): StartWithoutToken {
     expect: i.expect,
     effort: i.effort,
     maxTurns: i.maxTurns,
+    // Per query() call, never the resumed session's earlier spend (SDK 0.3.328 sdk.d.ts:6252; agent-sdk/cost-tracking, read 2026-11-21).
     maxBudgetUsd: ceiling / 1_000_000,
     webFetchDomains: i.webFetchDomains,
     fileCaps: FILE_CAPS,
