@@ -71,7 +71,7 @@ export const META: readonly MorningCaseMeta[] = [
   // `refund-spike` names 21 orders and a card holds at most 10 sources, so it requires none.
   {
     id: 'fixture', group: 'graded', builder: 'fixtureStore', ...complete,
-    items: [{ key: 'late-orders', sev: AMBER, sources: ['#1001'] }, { key: 'refund-spike', sev: RED, sources: [] }, { key: 'oversold', sev: RED, sources: ['P4-0038'] }],
+    items: [{ key: 'late-orders', sev: AMBER, sources: ['#1001'] }, { key: 'refund-spike', sev: RED, sources: [] }, { key: 'oversold', sev: RED, sources: [['P4-0038', 'Trail Rain Jacket']] }],
   },
   // Clean stores: no problem, zero items, coverage complete.
   { id: 'clean-old-orders', group: 'clean', builder: 'cleanOldOrders', ...complete, items: [] },

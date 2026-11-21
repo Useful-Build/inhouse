@@ -23,6 +23,9 @@ export function gapsOfSummary(text: string | null): { areas: (typeof GAP_AREAS)[
   return { areas: GAP_AREAS.filter(a => named.includes(a)), tooMany: t.includes(`more than ${ITEMS_MAX} things`) }
 }
 
+/** A summary without its tail of fixed counts: the product's own words (the counts stay in the stored text for the runner). */
+export const stripFixed = (text: string): string => text.replace(/ \(fixed: [^)]*\)$/, '')
+
 /** What the normaliser fixed, in fixed words, for the summary's tail (empty when it fixed nothing): ` (fixed: 1 cut, 2 dropped)`. */
 export function fixedWords(c: { truncated: number; dropped: number; deduped: number; overflow: number }): string {
   const parts = [[c.truncated, 'cut'], [c.dropped, 'dropped'], [c.deduped, 'repeated'], [c.overflow, 'over the cap']].filter(([n]) => (n as number) > 0).map(([n, w]) => `${n} ${w}`)
