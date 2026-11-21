@@ -66,6 +66,14 @@ export const CANCELLED_TEXT: Record<(typeof CANCEL)[keyof typeof CANCEL], string
 }
 
 /**
+ * What a cancel says. A turn that had already streamed part of its answer when the pause stopped it says the answer stopped; one
+ * that never produced anything says the question was not asked. The live view and a reload both ask this with the same fact
+ * (the turn has an agent message), so they read alike and, with the same id, show once.
+ */
+export const cancelledText = (why: keyof typeof CANCELLED_TEXT, streamed: boolean): string | null =>
+  why === CANCEL.paused && streamed ? 'Your Inhouse agent was paused, so this answer stopped.' : CANCELLED_TEXT[why]
+
+/**
  * A stored history page in the words the live stream used. A turn's end row (the server's projection.ts) becomes the
  * message its live `turn.finished` or `turn.cancelled` showed (view.ts: the failure, the stopped note or the cancel note), with the same id, so the two show once; one with
  * nothing to say is left out. Every other message is kept as it is.
@@ -80,7 +88,7 @@ export function historyMessages(page: readonly StoredMessage[]): ChatMessage[] {
     } else if ('outcome' in m.end) {
       out.push({ id: m.id, role: 'event', text: STOPPED_NOTE })
     } else {
-      const text = CANCELLED_TEXT[m.end.why]
+      const text = cancelledText(m.end.why, page.some(x => x.role === 'agent' && x.turnId === m.turnId))
       if (text != null) out.push({ id: m.id, role: 'event', text })
     }
   }

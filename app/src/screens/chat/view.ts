@@ -9,7 +9,7 @@ import type { Attachment, AttachmentRef, ChatMessage, Instant } from '../../agen
 import type { ChatEvent, TurnFailure } from '../../../shared/contract/runs'
 import { NOTICE } from '../../../shared/contract/chat-codes'
 import { NOTICE_TEXT, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from './notes'
-import { CANCELLED_TEXT, FAILURE_TEXT, fileRefusedText, filesLeftOutText } from './turn-text'
+import { FAILURE_TEXT, cancelledText, fileRefusedText, filesLeftOutText } from './turn-text'
 
 export type NoticeCode = Extract<ChatEvent, { type: 'notice' }>['code']
 
@@ -121,7 +121,7 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       const t = v.turns[ev.turnId]
       // A turn still waiting, or one that went live and was stopped by the cancel (a pause): both say why, once.
       if (!t || (t.state !== 'queued' && t.state !== 'live')) return v
-      const text = CANCELLED_TEXT[ev.why]
+      const text = cancelledText(ev.why, v.messages.some(x => x.role === 'agent' && x.trace === ev.turnId))
       let messages = v.messages
       if (text !== null) {
         messages = upsert(messages, userMessage(t, v.queued.find(x => x.turnId === ev.turnId)?.messageId ?? `${ev.turnId}.u`))
