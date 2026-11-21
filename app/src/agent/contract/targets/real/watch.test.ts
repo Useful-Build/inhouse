@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
+import { WATCH_READ_PATH, seedUnreadNotice, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
 import type { Signer } from './me'
 
 describe('the real target\'s P4 parts', () => {
@@ -75,3 +75,45 @@ describe('the real target\'s P4 parts', () => {
     expect(seen).toEqual(['delete r1', 'restore r1', 'restore r2', 'delete r2'])
   })
 })
+
+describe('seeding an unread notice', () => {
+  // Node's modules by name (this program has no Node types).
+  const load = async <T>(name: string): Promise<T> => (await import(/* @vite-ignore */ name)) as T
+  type Db = { exec(sql: string): void; prepare(sql: string): { all(...p: unknown[]): Record<string, unknown>[] }; close(): void }
+  const make = async (files: Record<string, string>) => {
+    const fs = await load<{ mkdtempSync(p: string): string; mkdirSync(p: string, o: { recursive: true }): void }>('node:fs')
+    const os = await load<{ tmpdir(): string }>('node:os')
+    const { DatabaseSync } = await load<{ DatabaseSync: new (f: string) => Db }>('node:sqlite')
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/w6-seed-`)
+    fs.mkdirSync(`${dir}/v3/d1`, { recursive: true })
+    for (const [name, sql] of Object.entries(files)) {
+      const db = new DatabaseSync(`${dir}/v3/d1/${name}.sqlite`)
+      db.exec(sql)
+      db.close()
+    }
+    const rows = (name: string, q: string) => {
+      const db = new DatabaseSync(`${dir}/v3/d1/${name}.sqlite`)
+      try { return db.prepare(q).all() } finally { db.close() }
+    }
+    return { dir, rows }
+  }
+  const NOTICES = 'CREATE TABLE notices (id TEXT PRIMARY KEY, audience TEXT NOT NULL, audience_member_id TEXT, template TEXT NOT NULL, fields_json TEXT NOT NULL, body TEXT, icon TEXT NOT NULL, person_id TEXT, at_ms INTEGER NOT NULL, waiting INTEGER NOT NULL DEFAULT 0, link_json TEXT NOT NULL, source TEXT NOT NULL)'
+
+  it('inserts one team notice with the morning check\'s template into the database that has the table, and leaves the others alone', async () => {
+    const { dir, rows } = await make({ other: 'CREATE TABLE unrelated (x TEXT)', brand: NOTICES })
+    const id = await seedUnreadNotice({ dir, now: 1234 })
+    expect(rows('brand', 'SELECT * FROM notices')).toEqual([
+      { id, audience: 'team', audience_member_id: null, template: 'morning_check_found', fields_json: '{"items":1}', body: null, icon: 'sun', person_id: null, at_ms: 1234, waiting: 0, link_json: '{"to":"page","page":"today"}', source: 'morning-check' },
+    ])
+    expect(rows('other', 'SELECT name FROM sqlite_master')).toEqual([{ name: 'unrelated' }])
+  })
+  it('gives each call its own id', async () => {
+    const { dir } = await make({ brand: NOTICES })
+    expect(new Set([await seedUnreadNotice({ dir }), await seedUnreadNotice({ dir })]).size).toBe(2)
+  })
+  it('fails loud when no database holds a notices table', async () => {
+    const { dir } = await make({ other: 'CREATE TABLE unrelated (x TEXT)' })
+    await expect(seedUnreadNotice({ dir })).rejects.toThrow(/no local D1 with a notices table/)
+  })
+})
+

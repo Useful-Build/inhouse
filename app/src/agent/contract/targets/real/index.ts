@@ -15,6 +15,7 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
+import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, seedUnreadNotice, watchRoute } from './watch'
 
 /** The P2 methods: what this target's client serves over HTTP. */
 /** How many live Library files `reset()` leaves (the shared Library cases delete one or two). */
@@ -25,6 +26,8 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'setSetting', 'setToggle', 'setPhoto',
   // P4 W5 (p4-w5.md addendum, #256 review): the Library.
   'listFiles', 'deleteFiles', 'restoreFiles', 'uploadFiles', 'fileDownloadUrl',
+  // P4 W6 (watch.ts): the routines, the bell and Today's set-aside.
+  ...WATCH_SERVED,
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
@@ -39,7 +42,7 @@ function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path:
   switch (method) {
     case 'setSetting': case 'setToggle': {
       const row = settingRow(String(args[0]))
-      return row ? { verbs: ['PUT'], path: `/api/settings/${row.scope}/${enc(args[0])}` } : null
+      return row ? { verbs: ['PUT'], path: `/api/settings/${row.scope}/${enc(args[0])}` } : watchRoute(method, args)
     }
     case 'setPhoto': return { verbs: ['PUT', 'DELETE'], path: '/api/photo' }
     case 'inviteMember': return { verbs: ['POST'], path: '/api/members/invites' }
@@ -49,7 +52,7 @@ function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path:
     case 'endSupportGrant': return { verbs: ['POST'], path: `/api/grants/${enc(args[0])}/end` }
     case 'deleteFiles': return { verbs: ['POST'], path: '/api/library/delete' }
     case 'restoreFiles': return { verbs: ['POST'], path: '/api/library/restore' }
-    default: return null
+    default: return watchRoute(method, args)
   }
 }
 
@@ -82,7 +85,7 @@ function realTarget(origin: string): ContractTarget {
     if (forced !== null && forced.verbs.includes(method) && forced.path === url.pathname) { const code = forced.code; forced = null; return refusal(code) }
     if (method === 'GET') {
       for (const resource of armedReads) {
-        if (READ_PATH[resource] === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
+        if ((READ_PATH[resource] ?? WATCH_READ_PATH[resource]) === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
       }
     }
     if (staleGrantEnd && method === 'POST' && /^\/api\/grants\/[^/]+\/end$/.test(url.pathname) && typeof init?.body === 'string') {
@@ -179,6 +182,8 @@ function realTarget(origin: string): ContractTarget {
       await resetTeam(s)
       await endLiveGrant(s)
       await resetSettings(s)
+      await resetRoutines(s)
+      await seedUnreadNotice()
       this.fixtures.personId = seeded.admin
       this.fixtures.photoAfterSet = new RegExp(`^/api/members/${seeded.admin}/photo\\?v=[0-9a-f]{32}$`) // a member id is base64url: nothing to escape
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }
@@ -215,10 +220,12 @@ function realTarget(origin: string): ContractTarget {
         // A delete and a restore in the other session: the file is as it was, two revisions on.
         await other.deleteFiles([record.id])
         await other.restoreFiles([record.id])
-      } else throw new Error(`The real target has no ${record.kind} to change elsewhere in P2.`)
+      } else if (record.kind === 'routine') {
+        await changeRoutineElsewhere(other, record.id)
+      } else throw new Error(`The real target has no ${record.kind} to change elsewhere.`)
     },
     async failRead(resource) {
-      if (!READ_PATH[resource]) throw new Error(`The real client reads no "${resource}" resource in P2, so none can fail.`)
+      if (!READ_PATH[resource] && !WATCH_READ_PATH[resource]) throw new Error(`The real client reads no "${resource}" resource in P2, so none can fail.`)
       armedReads.add(resource)
       await agent.retry(resource)
     },

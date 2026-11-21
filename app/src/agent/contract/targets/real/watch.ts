@@ -84,3 +84,44 @@ export async function changeRoutineElsewhere(other: RoutineSession, id: string, 
     await other.restoreRoutine(id)
   }
 }
+
+// ---------- an unread notice for the `markNoticesRead` case ----------
+
+/** The slice of node:sqlite the seeding uses (this program has no Node types; the module is loaded by name at run time). */
+interface Sqlite { DatabaseSync: new (file: string) => { prepare(sql: string): { get(...p: unknown[]): unknown; run(...p: unknown[]): unknown }; close(): void } }
+interface Fs { readdirSync(dir: string, o: { recursive: true; withFileTypes: true }): { isFile(): boolean; name: string; parentPath: string }[] }
+const node = async <T>(name: string): Promise<T> => (await import(/* @vite-ignore */ name)) as T
+const proc = (globalThis as unknown as { process?: { env: Record<string, string | undefined>; cwd(): string } }).process
+
+/** The local D1 the test build under `wrangler dev --persist-to` keeps (`.wrangler/test-build`, as e2e/api/db.ts reads it). */
+export const persistDir = (): string => proc?.env.CONTRACT_PERSIST_DIR ?? `${proc?.cwd() ?? '.'}/.wrangler/test-build`
+
+const NOTICE_SQL =
+  "INSERT INTO notices (id, audience, audience_member_id, template, fields_json, icon, person_id, at_ms, waiting, link_json, source) VALUES (?, 'team', NULL, 'morning_check_found', '{\"items\":1}', 'sun', NULL, ?, 0, '{\"to\":\"page\",\"page\":\"today\"}', 'morning-check')"
+
+/**
+ * Puts one unread team notice into the test build's local D1, so the shared `markNoticesRead` case has something to mark: a
+ * reset can't make a read notice unread, and no route makes a notice. The one write the contract target makes to D1: a single
+ * INSERT into a table nothing else here writes, with a unique id each time, so it can't collide with the build's own writers.
+ * Returns the notice's id. Fails loud when no local D1 with a `notices` table is found.
+ */
+export async function seedUnreadNotice(o: { dir?: string; now?: number } = {}): Promise<string> {
+  const { DatabaseSync } = await node<Sqlite>('node:sqlite')
+  const { readdirSync } = await node<Fs>('node:fs')
+  const dir = o.dir ?? persistDir()
+  const files = readdirSync(dir, { recursive: true, withFileTypes: true }).filter(d => d.isFile() && d.name.endsWith('.sqlite')).map(d => `${d.parentPath}/${d.name}`)
+  const at = o.now ?? Date.now()
+  const id = `contract-unread-${at}-${Math.floor(Math.random() * 1e9)}`
+  for (const file of files) {
+    const db = new DatabaseSync(file)
+    try {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notices'").get() === undefined) continue
+      db.prepare('PRAGMA busy_timeout = 10000').run()
+      db.prepare(NOTICE_SQL).run(id, at)
+      return id
+    } finally {
+      db.close()
+    }
+  }
+  throw new Error(`The real contract target found no local D1 with a notices table under ${dir} (CONTRACT_PERSIST_DIR names the test build's --persist-to directory).`)
+}
