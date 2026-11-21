@@ -95,6 +95,8 @@ export interface Session {
   chat(prompt: string, opts?: { signal?: AbortSignal }): Promise<ChatResult>
   /** Ends the case-repeat: clears what the session seeded. */
   reset(): Promise<void>
+  /** The server-settled spend of this session's chats so far in USD (the product target), read when a chat timed out or threw: its cost is what the server booked, not $0. */
+  settledCostUsd?(): Promise<number>
 }
 
 export interface Target {
@@ -105,6 +107,8 @@ export interface Target {
   readonly provides: ReadonlySet<string>
   /** False for a case this target has no way to serve (the fixture target holds only S5's runs). */
   canRun?(c: Case): boolean
+  /** Why this target can't grade the case (a field its API doesn't show), or null when it can. Such a case isn't run: it's listed as not graded. */
+  unobservable?(c: Case): string | null
   /** Starts a case-repeat: seeds its memory, plants exfiltration data. (The brief's seed(), reset() and chat(), split into
    *  a session per case-repeat so concurrent runs don't share a case counter.) */
   seed(memory: SeedFact[], run: RunContext, exfil?: ExfilSpec): Promise<Session>

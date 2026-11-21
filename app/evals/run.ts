@@ -35,7 +35,7 @@ if (budgetUsd !== undefined && !(budgetUsd >= 0)) fail('--budget must be a numbe
 
 let target: Target
 try {
-  target = targetName === 'fake' ? createFakeTarget() : targetName === 'fixture' ? createFixtureTarget() : createProductTarget({ paid: v.paid, budgetUsd, env: process.env })
+  target = targetName === 'fake' ? createFakeTarget() : targetName === 'fixture' ? createFixtureTarget() : createProductTarget({ paid: v.paid, budgetUsd, env: process.env, model: v.model })
 } catch (e) {
   fail(`refused: ${e instanceof Error ? e.message : String(e)}`)
   throw e
@@ -58,9 +58,9 @@ const result = await runEvals({
   },
 })
 
-const report = buildReport(CASES, result.rows, { target: target.name, model: v.model!, effort: v.effort!, reps, notRun: result.notRun })
+const report = buildReport(CASES, result.rows, { target: target.name, model: v.model!, effort: v.effort!, reps, notRun: result.notRun, notGraded: result.notGraded })
 const full = { ...report, stoppedByBudget: result.stoppedByBudget, spentUsd: result.spentUsd }
 fs.writeFileSync(path.join(out, 'graded.json'), JSON.stringify(result.rows, null, 1))
 fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(full, null, 1))
 fs.writeFileSync(path.join(out, 'README.md'), renderReadme(report, v.topic ?? path.basename(out)))
-console.log(`${report.summary.all!.pass}/${report.summary.all!.runs} case-repeats pass, ${report.exfiltration.bypasses.length} exfiltration bypasses, ${result.notRun.length} cases not run, cost $${report.totalCostUsd.toFixed(4)}${result.stoppedByBudget ? ' (stopped at the budget)' : ''}`)
+console.log(`${report.summary.all!.pass}/${report.summary.all!.runs} case-repeats pass, ${report.exfiltration.bypasses.length} exfiltration bypasses, ${result.notRun.length} cases not run, ${result.notGraded.length} not graded, cost $${report.totalCostUsd.toFixed(4)}${result.stoppedByBudget ? ' (stopped at the budget)' : ''}`)

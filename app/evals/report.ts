@@ -20,12 +20,12 @@ export interface Row {
   err?: string
 }
 
-export function toRow(c: Case, rep: number, chat: number, result: ChatResult | null, g: CheckVerdict, extra: { exfil?: ExfilVerdict; canary?: string; err?: string } = {}): Row {
+export function toRow(c: Case, rep: number, chat: number, result: ChatResult | null, g: CheckVerdict, extra: { exfil?: ExfilVerdict; canary?: string; err?: string; costUsd?: number } = {}): Row {
   const exfilOk = extra.exfil ? extra.exfil.bypasses.length === 0 : true
   return {
     caseId: c.id, cat: c.cat, pair: c.pair ?? null, rep, chat,
     pass: g.pass && exfilOk, checks: g.checks, called: g.called, toolSearches: g.toolSearches,
-    answer: (result?.answer ?? '').slice(0, 300), costUsd: result?.costUsd ?? 0, runOk: g.runOk,
+    answer: (result?.answer ?? '').slice(0, 300), costUsd: extra.costUsd ?? result?.costUsd ?? 0, runOk: g.runOk,
     ...(extra.canary ? { canary: extra.canary } : {}), ...(extra.exfil ? { exfil: extra.exfil } : {}), ...(extra.err ? { err: extra.err } : {}),
   }
 }
@@ -46,7 +46,7 @@ export function costStats(costs: number[]): CostStats {
 
 interface CaseRepeat { id: string; cat: Category; rep: number; pass: boolean; cost: number; n: number }
 export interface CatSummary { runs: number; pass: number; pct: number; rate: number; perRep: number[]; cost: number }
-export interface ReportMeta { target: string; model: string; effort: string; reps: number; notRun: { id: string; needs: string[] }[] }
+export interface ReportMeta { target: string; model: string; effort: string; reps: number; notRun: { id: string; needs: string[] }[]; notGraded?: { id: string; why: string }[] }
 
 export function buildReport(cases: Case[], rows: Row[], meta: ReportMeta) {
   const byId = new Map(cases.map((c) => [c.id, c]))
@@ -145,7 +145,8 @@ export function renderReadme(r: Report, topic: string): string {
     `# ${topic}`, '',
     '## Question', '', '(the orchestrator fills this in)', '',
     '## What ran', '', `Target \`${r.target}\`, model \`${r.model}\` at \`${r.effort}\` effort, ${r.reps} repeats, ${r.chats} chats (${r.failedChats} did not run to an answer).`,
-    r.notRun.length ? `Not run (phase P4/P5): ${r.notRun.map((n) => `${n.id} (needs ${n.needs.join(', ')})`).join('; ')}.` : 'Every selected case ran.', '',
+    r.notRun.length ? `Not run (phase P4/P5): ${r.notRun.map((n) => `${n.id} (needs ${n.needs.join(', ')})`).join('; ')}.` : 'Every selected case ran.',
+    ...(r.notGraded?.length ? [`Not graded on this target (its API doesn't show a field the case needs): ${r.notGraded.map((n) => `${n.id} (${n.why})`).join('; ')}.`] : []), '',
     '## Cost', '', `Total $${r.totalCostUsd.toFixed(4)}. Per conversation (one case-repeat, ${cpc.n}): median $${cpc.median.toFixed(4)}, p95 $${cpc.p95.toFixed(4)}, mean $${cpc.mean.toFixed(4)}.`, '',
     '## Numbers', '', '| Category | Pass | Per repeat (%) | Cost |', '|---|---|---|---|', ...lines, '',
     `Recall split (n ${r.recallSplit.n}): memory searched ${r.recallSplit.searched}%, answer right ${r.recallSplit.answer}%.`,
