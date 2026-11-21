@@ -360,6 +360,27 @@ function productSession(d: SessionDeps): Session {
   }
 }
 
+/**
+ * The test issuer's private key from its file. Refusals carry a fixed message: a JSON parse error quotes a slice of its
+ * input, and GitHub masks only the whole secret, so a malformed key must never reach the log (ops#14 review N1).
+ */
+export function readIssuerKey(file: string): JWK {
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    throw new ProductTargetRefusal(`refusing: the test issuer's private key file (${EVAL_ISSUER_JWK_FILE}) can't be read`)
+  }
+  let key: unknown
+  try {
+    key = JSON.parse(text)
+  } catch {
+    throw new ProductTargetRefusal('refusing: the test issuer\'s private key file is not valid JSON')
+  }
+  if (typeof key !== 'object' || key === null || Array.isArray(key)) throw new ProductTargetRefusal('refusing: the test issuer\'s private key file is not a JWK object')
+  return key as JWK
+}
+
 /** Signs in with a test-issuer token minted from the deployment's private key (a file), the way the e2e specs do. */
 function defaultSignIn(env: Record<string, string | undefined>): (key: PersonKey) => Promise<Record<string, string>> {
   return async (key) => {
@@ -367,7 +388,7 @@ function defaultSignIn(env: Record<string, string | undefined>): (key: PersonKey
     const aud = env[EVAL_AUD_VAR]
     if (!file || !aud) throw new ProductTargetRefusal(`refusing: ${EVAL_ISSUER_JWK_FILE} and ${EVAL_AUD_VAR} are not both set, so the eval people can't sign in`)
     const who = EVAL_PEOPLE[key]
-    const token = await mintPerson({ sub: who.sub, email: who.email, key: JSON.parse(readFileSync(file, 'utf8')) as JWK, aud })
+    const token = await mintPerson({ sub: who.sub, email: who.email, key: readIssuerKey(file), aud })
     return { 'Cf-Access-Jwt-Assertion': token }
   }
 }

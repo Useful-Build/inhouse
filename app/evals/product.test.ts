@@ -5,7 +5,10 @@
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
 import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './targets/door.ts'
-import { createProductTarget, onExampleTest, ProductTargetRefusal, unobservableReason, writesFromRows } from './targets/product.ts'
+import { createProductTarget, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, writesFromRows } from './targets/product.ts'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { CapReachedError } from './types.ts'
 import { runEvals } from './runner.ts'
 import { buildReport, renderReadme } from './report.ts'
@@ -477,5 +480,29 @@ describe('the README and the cap', () => {
     const text = renderReadme(report, 't', { capStop: { caseId: 'R07', rep: 2, why: 'would cross the cap', spentUsd: 39.9, capUsd: 40, estimateUsd: 0.25 } })
     expect(text).toContain('Stopped by the brand\'s Spending cap at R07 r2: would cross the cap ($39.90 spent of $40.00, the case needs about $0.25).')
     expect(renderReadme(report, 't')).not.toMatch(/Spending cap at/)
+  })
+})
+
+// ops#14 review N1: a malformed private key file must not put any slice of itself in the log. Ways it could fail: the
+// parse error's own message (which quotes the input) reaches the refusal; a file that parses to a non-object passes.
+describe('the test issuer\'s key file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-key-'))
+  const file = (name: string, text: string) => { const p = join(dir, name); writeFileSync(p, text); return p }
+  it('refuses a malformed file with a fixed message that quotes none of it', () => {
+    for (const [name, text] of [['cut', '{"kty":"EC","d":"SECRETSLICEd8f3'], ['junk', 'SECRETSLICE not json at all'], ['trail', '{"d":"SECRETSLICE"} x']]) {
+      let err: unknown
+      try { readIssuerKey(file(name, text)) } catch (e) { err = e }
+      expect(err, name).toBeInstanceOf(ProductTargetRefusal)
+      expect((err as Error).message, name).toBe('refusing: the test issuer\'s private key file is not valid JSON')
+      expect(String((err as Error).stack), name).not.toContain('SECRETSLICE')
+      expect((err as { cause?: unknown }).cause, name).toBeUndefined()
+    }
+  })
+  it('refuses JSON that is not a JWK object, and a missing file, without quoting', () => {
+    for (const text of ['"SECRETSLICE"', '[1]', 'null', '42']) expect(() => readIssuerKey(file('other', text))).toThrow(/^refusing: the test issuer's private key file is not a JWK object$/)
+    expect(() => readIssuerKey(join(dir, 'missing.json'))).toThrow(/can't be read$/)
+  })
+  it('returns the key from a valid file', () => {
+    expect(readIssuerKey(file('ok', '{"kty":"EC","crv":"P-256"}'))).toEqual({ kty: 'EC', crv: 'P-256' })
   })
 })
