@@ -34,8 +34,8 @@ import type { ActivityReader } from '../activity/read.ts'
 import { noticeReader } from '../notices/read.ts'
 import type { NoticeReader } from '../notices/read.ts'
 
-import { routinesSignal } from '../routines/signal.ts'
-import type { SignalResult } from '../ops/signals/types.ts'
+import { routineStore } from '../routines/store.ts'
+import type { RoutineStore } from '../routines/store.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -68,8 +68,8 @@ export interface Stores extends AuthStores {
   activity: ActivityReader
   notices: NoticeReader
 
-  /** P4 W2 (p4-w2.md section 11): the routines signal's read. */
-  routines: { signal(nowMs: number): Promise<SignalResult> }
+  /** P4 W2 (p4-w2.md sections 9 to 11): routes 33 and 52 to 56, and the routines signal's read. */
+  routines: RoutineStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -133,6 +133,6 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     activity: activityReader({ db }),
     notices: noticeReader({ db }),
 
-    routines: { signal: nowMs => routinesSignal(db, nowMs) },
+    routines: routineStore({ db }),
   }
 }

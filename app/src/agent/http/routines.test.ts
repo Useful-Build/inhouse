@@ -1,0 +1,103 @@
+// The Routines page over a fake `fetch` (P4 W2, routes 52 to 56). Ways it could show a person the wrong thing, written
+// down first:
+//  - a routine's switch not read from the server (`r:<id>` missing), or lost when the settings reload;
+//  - a switch, a delete or an Undo that the server refused left on screen; a stale rev not taken in from the conflict;
+//  - a write sent with a rev older than the last answer's; a Run now sent with a key the route refuses (a ".");
+//  - the Inhouse team asked for the list on start (a grant would log every read).
+import { describe, expect, test } from 'vitest'
+import { HttpAgent } from './client'
+import { me, reads, record, refusal, server } from './testing/fake-server'
+import type { Req, Routes } from './testing/fake-server'
+
+const NOW = Date.UTC(2026, 5, 1, 12)
+const at = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
+const def = (id: string, rev = 1, o: Record<string, unknown> = {}) => ({
+  id, name: `Routine ${id}`, what: 'Check stock.', freq: 'Daily', day: '', time: { hour: 6, minute: 0 }, next: at(NOW + 3_600_000), need: 1, canManage: true, rev, ...o,
+})
+const LIST = { routines: [def('rt_a'), def('rt_b', 2)], deleted: [def('rt_gone', 3)], enabled: { rt_a: true, rt_b: false, rt_gone: true } }
+
+async function loaded(routes: Routes) {
+  const s = server(routes)
+  const agent = new HttpAgent({ fetch: s.fetch, now: () => NOW })
+  await agent.whenLoaded()
+  return { agent, ...s }
+}
+const body = (r: Req) => JSON.parse(r.body ?? 'null') as Record<string, unknown>
+
+describe('the client: routines', () => {
+  test('boots with the list, each switch as an r: toggle, and the deleted ones marked', async () => {
+    const { agent } = await loaded(reads({ routines: LIST }))
+    expect(agent.read().routines.map(r => r.id)).toEqual(['rt_a', 'rt_b'])
+    expect(agent.read().resources.routines).toEqual({ status: 'ready' })
+    expect(agent.getSnapshot().toggles).toMatchObject({ 'r:rt_a': true, 'r:rt_b': false })
+    expect(agent.getSnapshot().routinesDeleted).toEqual({ rt_gone: true })
+  })
+
+  test('a settings reload keeps the routines\' switches', async () => {
+    const { agent } = await loaded({ ...reads({ routines: LIST }), 'GET /api/settings/technical': { body: { items: [record('t:tone', 'Plain and direct', 1)] } } })
+    await agent.retry('meta')
+    expect(agent.getSnapshot().toggles).toMatchObject({ 'r:rt_a': true, 'r:rt_b': false })
+  })
+
+  test('the switch: optimistic, sent with the routine\'s rev, the answer\'s rev used next', async () => {
+    let n = 0
+    const { agent, calls } = await loaded({ ...reads({ routines: LIST }), 'PUT /api/routines/rt_a/enabled': (r: Req) => ({ body: def('rt_a', (body(r).ifRev as number) + 1, { n: ++n }) }) })
+    const p = agent.setToggle('r:rt_a', false)
+    expect(agent.getSnapshot().toggles['r:rt_a']).toBe(false)
+    await p
+    await agent.setToggle('r:rt_a', true)
+    expect(calls.filter(c => c.method === 'PUT').map(body)).toEqual([{ on: false, ifRev: 1 }, { on: true, ifRev: 2 }])
+    expect(agent.getSnapshot().toggles['r:rt_a']).toBe(true)
+  })
+
+  test('a refused switch comes back; a stale rev takes the routine as it is now', async () => {
+    const { agent } = await loaded({ ...reads({ routines: LIST }), 'PUT /api/routines/rt_a/enabled': refusal(409, 'conflict', { current: def('rt_a', 5) }) })
+    await expect(agent.setToggle('r:rt_a', false)).rejects.toMatchObject({ code: 'conflict' })
+    expect(agent.getSnapshot().toggles['r:rt_a']).toBe(true)
+    expect(agent.read().routines.find(r => r.id === 'rt_a')!.rev).toBe(5)
+  })
+
+  test('delete and Undo: optimistic, each with the rev the last answer left; Undo re-reads the list for its order', async () => {
+    // The server's list after the restore (newest first: rt_a, then rt_b).
+    let restored = false
+    const { agent, calls } = await loaded({
+      ...reads({ routines: LIST }),
+      'GET /api/routines': () => ({ body: restored ? { routines: [def('rt_a'), def('rt_b', 4)], deleted: [def('rt_gone', 3)], enabled: { rt_a: true, rt_b: false, rt_gone: true } } : LIST }),
+      'POST /api/routines/rt_b/delete': (r: Req) => ({ body: def('rt_b', (body(r).ifRev as number) + 1) }),
+      'POST /api/routines/rt_b/restore': (r: Req) => { restored = true; return { body: def('rt_b', (body(r).ifRev as number) + 1) } },
+    })
+    const p = agent.deleteRoutine('rt_b')
+    expect(agent.getSnapshot().routinesDeleted.rt_b).toBe(true)
+    await p
+    expect(agent.read().routines.map(r => r.id)).toEqual(['rt_a'])
+    await agent.restoreRoutine('rt_b')
+    expect(agent.getSnapshot().routinesDeleted.rt_b).toBeUndefined()
+    expect(agent.read().routines.map(r => [r.id, r.rev])).toEqual([['rt_a', 1], ['rt_b', 4]])
+    expect(calls.filter(c => c.method === 'POST').map(c => [c.path, body(c)])).toEqual([
+      ['/api/routines/rt_b/delete', { ifRev: 2 }], ['/api/routines/rt_b/restore', { ifRev: 3 }],
+    ])
+  })
+
+  test('a refused delete puts the routine back', async () => {
+    const { agent } = await loaded({ ...reads({ routines: LIST }), 'POST /api/routines/rt_a/delete': refusal(403, 'forbidden', { reason: 'not_owner' }) })
+    await expect(agent.deleteRoutine('rt_a')).rejects.toMatchObject({ code: 'forbidden' })
+    expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
+  })
+
+  test('Run now sends a key the route takes, and the run heads routineRuns; run_open is refused with its text', async () => {
+    const run = { routine: 'rt_a', at: at(NOW) }
+    const { agent, calls } = await loaded({ ...reads({ routines: LIST }), 'POST /api/routines/rt_a/run': { body: run }, 'POST /api/routines/rt_b/run': refusal(409, 'conflict', { reason: 'run_open', current: run }) })
+    expect(await agent.runRoutine('rt_a')).toEqual(run)
+    expect(agent.getSnapshot().routineRuns[0]).toEqual(run)
+    expect(body(calls.find(c => c.path === '/api/routines/rt_a/run')!).clientKey).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
+    await expect(agent.runRoutine('rt_b')).rejects.toMatchObject({ code: 'conflict', reason: 'run_open' })
+  })
+
+  test('the Inhouse team is not asked on start; a 403 without a grant is nothing to show', async () => {
+    const staff = await loaded({ ...reads({ routines: LIST }), 'GET /api/me': { body: me({ role: 'inhouse' }) } })
+    expect(staff.calls.map(c => c.path)).not.toContain('/api/routines')
+    const refused = await loaded({ ...reads(), 'GET /api/me': { body: me({ role: 'inhouse' }) }, 'GET /api/routines': refusal(403, 'forbidden', { reason: 'grant_required' }) })
+    await refused.agent.retry('routines')
+    expect(refused.agent.read().resources.routines).toEqual({ status: 'ready' })
+  })
+})

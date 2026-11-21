@@ -11,12 +11,13 @@ import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError, CHAT_TITLE_MAX } from '../types'
 import type {
   ActivityLine, AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AuditLine, LinkState, ErrorReason, Instant, LibraryFile, Me,
-  MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, ResourceKey, ResourceStatus, RoutineRun, SupportGrant, Trace, UsageData,
+  MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SupportGrant, Trace, UsageData,
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
 import { ACTIVITY_PAGE, readActivityPage, splitActivity } from './activity'
 import { postNoticesRead, readNotifications } from './bell'
+import { newRunKey, postRoutineRev, postRoutineRun, readRoutines, setRoutineToggle } from './routines'
 import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -31,8 +32,8 @@ import type { Contract, TransportOptions } from './transport'
 const UNAVAILABLE = 'Not connected yet.'
 
 /** The resources this client reads. Every other key has nothing to read until its phase, so it reads as ready and empty. */
-type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications'
-const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications'] satisfies readonly Loaded[]
+type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'routines'
+const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'routines'] satisfies readonly Loaded[]
 
 export interface HttpAgentOptions extends TransportOptions {
   /** Epoch ms. The real clock by default; the contract target moves it on (`advance`). */
@@ -141,6 +142,9 @@ interface Slices {
   activity: ActivityLine[]
   /** Route 60: the bell's notifications, newest first. Replaced, never changed in place, so `listNotifications()` is stable between changes. */
   notifications: AgentNotification[]
+  /** Route 52: the routines (each one's switch is the `r:<id>` toggle in `state`), and the deleted ones (Undo restores them by their rev). */
+  routines: RoutineDef[]
+  routinesGone: RoutineDef[]
   /** The record revision last read for each setting key (a key never set is absent: rev 0). */
   revs: Record<string, number>
   state: AgentState
@@ -170,7 +174,7 @@ export class HttpAgent implements AgentClient {
   private readonly now: () => number
   private s: Slices = {
     me: null, members: [], membersNext: null, audit: [], auditNext: null, grant: null, memory: EMPTY_DATA.memory, chats: [], chatsNext: null, served: null, modelList: [],
-    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
+    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], routines: [], routinesGone: [], revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
   }
   private readonly socket: ChatSocket
   private readonly origin: string
@@ -256,7 +260,7 @@ export class HttpAgent implements AgentClient {
     if (hit && hit.live === live) return hit.data
     // A change to what read() doesn't carry (a setting, a switch) leaves its object alone, so nothing re-renders for it.
     const last = this.lastBuilt
-    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'res'] as const).every(k => last.s[k] === this.s[k])
+    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'routines', 'res'] as const).every(k => last.s[k] === this.s[k])
     const data = same ? last.data : this.build(live)
     this.dataCache.set(this.s, { live, data })
     this.lastBuilt = { s: this.s, live, data }
@@ -273,6 +277,7 @@ export class HttpAgent implements AgentClient {
       people: { ...EMPTY_DATA.people, members, supportGrant: grant ? { ...grant, live } : null },
       auditLog: this.s.audit,
       memory: this.s.memory,
+      routines: this.s.routines,
       activity: splitActivity(this.s.activity, this.now(), { timeZone: this.s.state.settings['g:tz'] ?? deviceTimeZone(), locale: 'en-US' }),
       ...(this.s.usage ? { usage: this.s.usage, usageMonths: this.s.usageMonths } : {}),
       models: this.s.modelList,
@@ -303,7 +308,7 @@ export class HttpAgent implements AgentClient {
 
   private async loadAll() {
     if (!(await this.loadMeta())) return
-    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications()])
+    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadRoutines()])
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
@@ -335,6 +340,8 @@ export class HttpAgent implements AgentClient {
         else if (typeof r.value === 'boolean') toggles[r.key] = r.value
       }
       // The resources this client has nothing for yet are ready and empty, as `meta` is.
+      // A routine's switch (`r:<id>`) comes from route 52, not the settings: a settings reload keeps it.
+      for (const [key, on] of Object.entries(this.s.state.toggles)) if (key.startsWith('r:')) toggles[key] = on
       this.patch({ revs, state: { ...this.s.state, settings, toggles }, res: { ...this.s.res, ...NOTHING_TO_READ, meta: { status: 'ready' } } })
       return true
     } catch (e) {
@@ -440,6 +447,22 @@ export class HttpAgent implements AgentClient {
     }
   }
 
+  /**
+   * Route 52. Like Activity, the Inhouse team reads it only when asked (each read under a grant writes a support.access
+   * line); without a live grant it's refused: nothing to show.
+   */
+  private async loadRoutines(asked = false) {
+    if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('routines', { status: 'ready' })
+    try {
+      const list = await readRoutines(this.http)
+      this.commit(this.withRoutines(this.s, list.routines, list.deleted, list.enabled))
+      this.setStatus('routines', { status: 'ready' })
+    } catch (e) {
+      if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('routines', { status: 'ready' })
+      this.failStatus('routines', e)
+    }
+  }
+
   /** Route 60. The Inhouse team has no bell (the route is the brand team's), so it isn't asked. */
   private async loadNotifications() {
     if (this.s.me?.role === 'inhouse') return this.setStatus('notifications', { status: 'ready' })
@@ -483,7 +506,7 @@ export class HttpAgent implements AgentClient {
    * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
    */
   retry = (resource: ResourceKey): Promise<void> => {
-    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications() }[resource as Loaded] as (() => Promise<unknown>) | undefined
+    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), routines: () => this.loadRoutines(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
     const running = this.retrying.get(resource)
     if (running) return running
@@ -493,7 +516,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private async reloadMeta() {
-    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications()])
+    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadRoutines()])
   }
 
   /** The next page of a list. A second call while one is in flight for the same list does nothing. */
@@ -637,7 +660,8 @@ export class HttpAgent implements AgentClient {
 
   private putSetting(k: Contract, key: string, raw: SettingValue, kind: 'text' | 'switch'): Promise<void> {
     const row = settingRow(key)
-    // `r:` (a routine) and `s:` (a skill) switches belong to P4 and P5.
+    // `r:` is a routine's switch (route 53, P4 W2); `s:` (a skill) belongs to P5.
+    if (kind === 'switch' && /^r:./.test(key) && !row && typeof raw === 'boolean') return this.putRoutineEnabled(k, key.slice(2), raw)
     if (kind === 'switch' && /^[rs]:./.test(key) && !row) return this.refuse()
     if (!row) return this.refuseLocal('invalid', `"${key}" isn't a setting.`, REASON.wrongScope)
     if (raw !== null && !meetsRule(row.rule, raw)) return this.refuseLocal('invalid', `That isn't a value for "${key}".`, REASON.badType)
@@ -1124,8 +1148,89 @@ export class HttpAgent implements AgentClient {
   restoreFiles = (_ids: string[]) => this.refuse()
 
   setAside = (_id: string, _reason: Parameters<AgentClient['setAside']>[1]) => this.refuse()
-  runRoutine = (_id: string) => this.refuse<RoutineRun>()
-  deleteRoutine = (_id: string) => this.refuse()
-  restoreRoutine = (_id: string) => this.refuse()
+  // ----- routines (P4 W2, routes 53 to 56) -----
+
+  /** The list as the server said it: the routines, the deleted ones, each one's switch (`r:<id>`) and `routinesDeleted`. */
+  private withRoutines(s: Slices, live: RoutineDef[], gone: RoutineDef[], enabled: Record<string, boolean>): Slices {
+    const toggles = Object.fromEntries(Object.entries(s.state.toggles).filter(([key]) => !key.startsWith('r:')))
+    for (const [id, on] of Object.entries(enabled)) toggles[`r:${id}`] = on
+    const routinesDeleted = Object.fromEntries(gone.map(r => [r.id, true as const]))
+    return { ...s, routines: live, routinesGone: gone, state: { ...s.state, toggles, routinesDeleted } }
+  }
+  /** One routine as the server answered it, in whichever list it belongs to now (`deleted`: it's in the trash). */
+  private withRoutine(s: Slices, r: RoutineDef, deleted: boolean): Slices {
+    const live = s.routines.filter(x => x.id !== r.id)
+    const gone = s.routinesGone.filter(x => x.id !== r.id)
+    const at = (list: RoutineDef[], old: RoutineDef[]) => { const i = old.findIndex(x => x.id === r.id); const out = [...list]; out.splice(i < 0 ? 0 : Math.min(i, out.length), 0, r); return out }
+    const routinesDeleted = { ...s.state.routinesDeleted }
+    if (deleted) routinesDeleted[r.id] = true; else delete routinesDeleted[r.id]
+    return { ...s, routines: deleted ? live : at(live, s.routines), routinesGone: deleted ? at(gone, s.routinesGone) : gone, state: { ...s.state, routinesDeleted } }
+  }
+  private routineOf(id: string): { r: RoutineDef; deleted: boolean } | null {
+    const live = this.s.routines.find(x => x.id === id)
+    if (live) return { r: live, deleted: false }
+    const gone = this.s.routinesGone.find(x => x.id === id)
+    return gone ? { r: gone, deleted: true } : null
+  }
+  private withToggle(s: Slices, id: string, on: boolean): Slices {
+    return { ...s, state: { ...s.state, toggles: { ...s.state.toggles, [`r:${id}`]: on } } }
+  }
+
+  /** Route 53: a routine's switch, optimistic; a refusal takes it back, a stale rev puts the routine as it is now in. */
+  private putRoutineEnabled(k: Contract, id: string, on: boolean): Promise<void> {
+    const found = this.routineOf(id)
+    if (!found || found.deleted) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
+    const was = this.s.state.toggles[`r:${id}`] ?? true
+    return this.write({
+      lane: `routine:${id}`,
+      field: `r:${id}`,
+      apply: s => this.withToggle(s, id, on),
+      send: () => setRoutineToggle(this.http, k, id, on, this.routineOf(id)?.r.rev ?? found.r.rev),
+      done: (s, r) => this.withRoutine(s, r, false),
+      undo: (s, _before, others) => (others ? s : this.withToggle(s, id, was)),
+      onConflict: (s, current) => {
+        const r = k.ANSWERS.routine.safeParse(current)
+        return r.success ? this.withRoutine(s, r.data, false) : s
+      },
+    })
+  }
+
+  /** Route 54: one Run now; the run heads `routineRuns`. A retry of this call is a new run (a new key). */
+  runRoutine = (id: string): Promise<RoutineRun> => guard((async () => {
+    if (!this.routineOf(id)) throw this.fail(new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND]))
+    try {
+      const run = await postRoutineRun(this.http, await this.http.contract(), id, newRunKey())
+      this.commit({ ...this.s, state: { ...this.s.state, routineRuns: [run, ...this.s.state.routineRuns] } })
+      return run
+    } catch (e) {
+      throw this.fail(e)
+    }
+  })())
+
+  /** Routes 55 and 56: delete and Undo, optimistic (`routinesDeleted`), against the routine's rev. */
+  private routineRev(k: Contract, id: string, what: 'delete' | 'restore'): Promise<void> {
+    const found = this.routineOf(id)
+    if (!found || found.deleted !== (what === 'restore')) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
+    const mark = (s: Slices, deleted: boolean): Slices => {
+      const routinesDeleted = { ...s.state.routinesDeleted }
+      if (deleted) routinesDeleted[id] = true; else delete routinesDeleted[id]
+      return { ...s, state: { ...s.state, routinesDeleted } }
+    }
+    return this.write({
+      lane: `routine:${id}`,
+      apply: s => mark(s, what === 'delete'),
+      send: () => postRoutineRev(this.http, k, id, what, this.routineOf(id)?.r.rev ?? found.r.rev),
+      done: (s, r) => this.withRoutine(s, r, what === 'delete'),
+      undo: (s, before) => mark(s, before.state.routinesDeleted[id] === true),
+      // A restored routine goes back to its place in the server's order (newest first), which only the list knows.
+      after: what === 'restore' ? () => this.loadRoutines(true) : undefined,
+      onConflict: (s, current) => {
+        const r = k.ANSWERS.routine.safeParse(current)
+        return r.success ? this.withRoutine(s, r.data, found.deleted) : s
+      },
+    })
+  }
+  deleteRoutine = this.needs((k, id: string) => this.routineRev(k, id, 'delete'))
+  restoreRoutine = this.needs((k, id: string) => this.routineRev(k, id, 'restore'))
 }
 

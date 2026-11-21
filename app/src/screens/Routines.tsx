@@ -108,7 +108,8 @@ export function Routines() {
                 {!phone && <div className="text-xs text-muted-foreground">Next run<span className={`block text-sm font-medium ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
                 <div className="flex items-center gap-1.5">
                   {!locked && <RoutineMenu item={it} phone={phone} paused={paused} actions={actions} />}
-                  <Switch on={on && !paused} label={`${r.name} on or off`} onChange={locked ? undefined : () => agent.setToggle(it.key, !on)} />
+                  {/* The server says who may switch it (`canManage`: its creator, an Admin, the Inhouse team); absent means yes. */}
+                  <Switch on={on && !paused} label={`${r.name} on or off`} onChange={locked || r.canManage === false ? undefined : () => agent.setToggle(it.key, !on)} />
                 </div>
               </div>
               {/* A phone has no room beside the switch: the last run and the next run take the row's full width under it. */}

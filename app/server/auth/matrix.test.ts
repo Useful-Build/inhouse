@@ -273,6 +273,12 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/activity': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'GET /api/notifications': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/notifications/read': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 52 to 56 (P4 W2): brand data for every person; the Inhouse team reads and writes only under a live grant.
+  'GET /api/routines': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'PUT /api/routines/:id/enabled': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/run': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
