@@ -5,7 +5,13 @@
 //   (options.ts, fetchHostRefusal), and, best effort, when the name resolves here to a loopback, private, link-local,
 //   CGNAT or other reserved address or to this container (`127.0.0.1.nip.io`). Best effort only: DNS can answer
 //   differently between this check and the fetch, and a failed or slow lookup lets the call through. The real check is
-//   the Worker egress's (design 8.8); a fetch pinned to the checked address is a P3 "Later" item;
+//   the Worker egress's (design 8.8); a fetch pinned to the checked address is a P3 "Later" item. In our container the
+//   lookup can't see the real address at all: started with `enableInternet: false` and a `*` HTTPS intercept
+//   (server/do/runner/runner.ts), "A and AAAA lookups for an intercepted hostname return a placeholder address that
+//   routes the request to the intercept", and a `*` target makes "every hostname resolve, including hostnames that do not
+//   exist" (https://developers.cloudflare.com/durable-objects/api/container/, read 2026-11-21). So the check first asks
+//   for a name real DNS never answers (`.invalid`, RFC 6761); when that resolves, DNS is the intercept's, every fetch goes
+//   through the egress's own DoH check, and the lookup is skipped (it would refuse every public host);
 // - a list: only those hosts, exactly;
 // - `[]`: none.
 // Three layers:
@@ -20,6 +26,11 @@ import { isIP } from 'node:net'
 import type { HookCallbackMatcher, HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk'
 import { WEBFETCH_DENY } from '../../../shared/protocol/webfetch-denials.ts'
 import { fetchHostRefusal } from './options.ts'
+
+/** A name real DNS never answers (RFC 6761 reserves `.invalid`): if it resolves, the answers are synthetic. */
+export const DNS_PROBE_HOST = 'inhouse-dns-probe.invalid'
+/** The most resolved addresses a deny reason lists. */
+export const DENY_ADDRESSES_MAX = 4
 
 /** Resolves a name to its addresses (all families). */
 export type Resolve = (host: string) => Promise<string[]>
@@ -103,25 +114,48 @@ const deny = (reason: string): HookJSONOutput => ({
   hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason },
 })
 
-/**
- * Best effort: whether `host` resolves to a reserved address or this container's own. A failed or slow lookup is
- * `false` (the Worker's egress still checks).
- */
-export async function resolvesToReserved(host: string, own: readonly string[], resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<boolean> {
+/** The lookup's answer within `timeoutMs`, or null when it fails or is slow. */
+async function lookupWithin(host: string, resolve: Resolve, timeoutMs: number): Promise<string[] | null> {
   let timer: NodeJS.Timeout | undefined
   try {
-    const addresses = await Promise.race([resolve(host), new Promise<null>((r) => (timer = setTimeout(() => r(null), timeoutMs)))])
-    return addresses !== null && addresses.some((a) => reservedAddress(a) || own.includes(a))
+    return await Promise.race([resolve(host), new Promise<null>((r) => (timer = setTimeout(() => r(null), timeoutMs)))])
   } catch {
-    return false
+    return null
   } finally {
     clearTimeout(timer)
   }
 }
 
+/**
+ * Best effort: the reserved or own addresses `host` resolves to (empty when none, or when the lookup fails or is slow:
+ * the Worker's egress still checks).
+ */
+export async function reservedResolution(host: string, own: readonly string[], resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<string[]> {
+  const addresses = await lookupWithin(host, resolve, timeoutMs)
+  return addresses === null ? [] : addresses.filter((a) => reservedAddress(a) || own.includes(a))
+}
+
+/** Best effort: whether `host` resolves to a reserved address or this container's own. */
+export async function resolvesToReserved(host: string, own: readonly string[], resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<boolean> {
+  return (await reservedResolution(host, own, resolve, timeoutMs)).length > 0
+}
+
+/** Whether this process's DNS is synthetic (the container intercept's): the never-answered probe name resolves. */
+export async function dnsIsSynthetic(resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<boolean> {
+  const addresses = await lookupWithin(DNS_PROBE_HOST, resolve, timeoutMs)
+  return addresses !== null && addresses.length > 0
+}
+
 export function webFetchHook(domains: readonly string[] | null, hostAddresses: readonly string[] = [], resolve: Resolve = systemResolve): HookCallbackMatcher {
   const listed = domains === null ? null : [...domains]
   const own = [...hostAddresses]
+  // Asked once a yes is seen: the container's DNS stays the intercept's for its life. A no is asked again (cheap: real
+  // DNS answers `.invalid` at once with NXDOMAIN).
+  let synthetic = false
+  const reservedHere = async (host: string): Promise<string[]> => {
+    if (!synthetic) synthetic = await dnsIsSynthetic(resolve)
+    return synthetic ? [] : reservedResolution(host, own, resolve)
+  }
   return {
     matcher: 'WebFetch',
     onFailure: 'block',
@@ -130,8 +164,11 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
         if (input.hook_event_name !== 'PreToolUse' || input.tool_name !== 'WebFetch') return {}
         const url = (input.tool_input as { url?: unknown } | null)?.url
         const host = allowedFetchHost(url, listed, own)
-        if (host !== null && (listed !== null || !(await resolvesToReserved(host, own, resolve)))) return {}
-        if (listed === null) return deny(WEBFETCH_DENY.publicOnly)
+        if (host !== null && listed !== null) return {}
+        const reserved = host === null ? [] : await reservedHere(host)
+        if (host !== null && reserved.length === 0) return {}
+        // The addresses a public name resolved to here (capped), so a run's visible refusal shows what DNS answered.
+        if (listed === null) return deny(reserved.length === 0 ? WEBFETCH_DENY.publicOnly : `${WEBFETCH_DENY.publicOnly} (${host} resolved here to ${reserved.slice(0, DENY_ADDRESSES_MAX).join(', ')}${reserved.length > DENY_ADDRESSES_MAX ? ', ...' : ''})`)
         return deny(listed.length === 0 ? WEBFETCH_DENY.off : WEBFETCH_DENY.notListed)
       },
     ],
