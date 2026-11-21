@@ -14,6 +14,8 @@ export type LogEvent =
   | 'connect_complete'
   | 'revoke_failed'
   | 'mcp_call'
+  // P5 (p5-w4)
+  | 'hub_delivery'
 
 export type LogFields = {
   accountId?: string
@@ -30,6 +32,8 @@ export type LogFields = {
   memberId?: string
   upstreamTool?: string
   parts?: number
+  // P5 (p5-w4): the first 12 hex of SHA-256 of a channel id, never the id or the text.
+  channelHash?: string
 }
 
 const ALLOWED: readonly (keyof LogFields)[] = [
@@ -47,6 +51,8 @@ const ALLOWED: readonly (keyof LogFields)[] = [
   'memberId',
   'upstreamTool',
   'parts',
+  // P5 (p5-w4)
+  'channelHash',
 ]
 
 export function log(event: LogEvent, fields: LogFields = {}): void {
