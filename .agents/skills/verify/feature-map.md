@@ -15,7 +15,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
 - Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; `e2e/real/sign-out.spec.ts` checks the account menu goes to that path on the test build (no Access there); the real Access logout is checked on the candidate deploy (pending).
-- The WebSocket under the enforced CSP is P3's: P2 has no WebSocket route, so `connect-src 'self'` is checked for fetch only (`e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo).
+- The chat WebSocket under the enforced CSP (`e2e/real/socket-csp.spec.ts`) needs a run, so it is checked on the sandbox deploy (`E2E_TEST_BUILD_REMOTE=1`), not on the local test build, which has no container. `e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo on both.
 - A failed or never-run chat turn's words after a reload (its stored end row, P3) and a trace's "up to" cost while a model call is open are proven only by unit tests (`server/do/brand-agent/projection.test.ts`, `src/screens/chat/history.test.ts`, `src/lib/trace-cost.test.ts`): the test build has no container and no way to force a placement failure or hold a call open without new test code in the deployable bundle.
 - "A failed audit write leaves no change" (Acceptance 6) is proven only by the server unit tests on the vitest workerd (compat 2026-11-11), not on the test build's: forcing an audit write to fail there needs test code in the deployable bundle.
 
@@ -91,6 +91,8 @@ Toasts
 
 ## Chats and conversation
 
+The entries below are the demo's chat (the mock agent). The product's chat, on the real client, is the last entry of this section.
+
 Chat: ask a question
   Path:     Today or a chat -> composer -> Send
   Selector: composer field, Send, Stop
@@ -150,6 +152,12 @@ Chat: mock answers
   Selector: routine row, suggestion chips
   Expected: a schedule and a time make one routine; an off-script question gets "can't answer from your tools yet" with chips
   Covered:  e2e/mock-behaviour.spec.ts
+
+Chat: the product's chat (real client)
+  Path:     product build on the test build or the sandbox deploy -> sign in as a seeded member -> a chat -> send, reload, open a second tab
+  Selector: composer, Send, Stop, the pause control, `#/usage`
+  Expected: the answer streams from the scripted model; a reload or second tab reattaches to the live run from its cursor; send, interrupt and stop act on the turn by id; one writer per chat; pause stops new and live runs and resume starts nothing; history, search, memory notes and attached files come from the server; the Usage page matches the ledger and a reached cap refuses the turn; a socket without a valid session, a wrong `Origin`, or a removed member is closed
+  Covered:  e2e/api/chats.spec.ts, e2e/api/runs.spec.ts, e2e/api/socket.spec.ts, e2e/api/live-turns.spec.ts, e2e/api/pause.spec.ts, e2e/api/attachments.spec.ts, e2e/api/memory.spec.ts, e2e/api/usage.spec.ts, e2e/real/socket-csp.spec.ts, e2e/real/composer-no-models.spec.ts, e2e/real/start-errors.spec.ts (the specs that need a run: the sandbox deploy only)
 
 ## Library
 

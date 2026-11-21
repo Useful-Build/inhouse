@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Final, Today cards</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2d3bea}a:hover{color:#1f2aa8}
+.t-light{--page:#f2f2f2;--card:#ffffff;--sheet:#f5f6fe;--ink:#171717;--ink-2:#2e2e2e;--ink-3:#545454;--muted:#696969;--brand:#2d3bea;--red:#b23c22;--red-tint:#fcebe6;--red-text:#a3321b;--amber:#b97a14;--amber-text:#7d4b00;--primary:#171717;--on-primary:#ffffff;--primary-sheen:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,0));--ghost-hover:#ececec;--soft:#f0f0f0;--logo-tile:#ffffff;--logo-edge:rgba(0,0,0,.08);--kind:#ffffff;--kind-edge:rgba(0,0,0,.07);--dot:rgba(0,0,0,.085);--lift:0 0 0 1px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.04),0 8px 24px -10px rgba(0,0,0,.08);--lift-hover:0 0 0 1px rgba(0,0,0,.07),0 2px 4px rgba(0,0,0,.04),0 20px 44px -16px rgba(0,0,0,.16);--btn-shadow:0 1px 2px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.08);color-scheme:light}
+.t-dark{--page:#0f0f0f;--card:#191919;--sheet:#1d1f2e;--ink:#ededed;--ink-2:#dcdcdc;--ink-3:#b3b3b3;--muted:#959595;--brand:#7f87ff;--red:#e8765f;--red-tint:#3a1b14;--red-text:#f09a86;--amber:#e2a640;--amber-text:#f0c983;--primary:#ededed;--on-primary:#111111;--primary-sheen:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0));--ghost-hover:#262626;--soft:#262626;--logo-tile:#f2f2f2;--logo-edge:rgba(0,0,0,0);--kind:#2a2c3c;--kind-edge:rgba(255,255,255,.06);--dot:rgba(255,255,255,.06);--lift:0 0 0 1px rgba(255,255,255,.06),inset 0 1px 0 rgba(255,255,255,.035),0 10px 28px -12px rgba(0,0,0,.7);--lift-hover:0 0 0 1px rgba(255,255,255,.1),inset 0 1px 0 rgba(255,255,255,.05),0 22px 48px -16px rgba(0,0,0,.85);--btn-shadow:0 1px 2px rgba(0,0,0,.5);color-scheme:dark}
+.half{background-color:var(--page);background-image:radial-gradient(var(--dot) 1px,transparent 1.2px);background-size:24px 24px;color:var(--ink);font-family:Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.card{transition:box-shadow .22s ease,transform .22s ease}
+.card:hover{box-shadow:var(--lift-hover);transform:translateY(-2px)}
+.btn{font:inherit;border:0;cursor:pointer;transition:background .15s ease,filter .15s ease}
+.btn-primary{background-image:var(--primary-sheen)}
+.btn-primary:hover{filter:brightness(1.18)}
+.t-dark .btn-primary:hover{filter:brightness(.92)}
+.icon-btn:hover,.btn-ghost:hover{background:var(--ghost-hover)!important}
+.btn:focus-visible,.icon-btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.lt{width:24px;height:24px;border-radius:999px;background:var(--logo-tile);box-shadow:0 0 0 2px var(--card),inset 0 0 0 1px var(--logo-edge);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.lt+.lt{margin-left:-5px}
+.lt img{width:13px;height:13px;object-fit:contain;display:block}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+@media (prefers-reduced-motion:reduce){.card,.btn{transition:none}.card:hover{transform:none}}
+</style>
+</helmet>
+<div style="width:2360px;height:1640px;display:flex">
+<sc-for list="{{themes}}" as="t" hint-placeholder-count="2">
+<div class="{{t.cls}}" style="flex:1;min-width:0;height:100%;box-sizing:border-box;padding:28px 42px 48px;display:flex;flex-direction:column">
+  <div class="mono" style="color:var(--muted)">{{t.label}}</div>
+
+  <div style="width:1040px;margin:40px auto 0;display:flex;flex-direction:column">
+    <h1 style="margin:0;text-align:center;font-size:44px;line-height:1.1;font-weight:600;letter-spacing:-0.035em">Good morning, Sam.</h1>
+    <p style="margin:6px 0 0;text-align:center;font-size:44px;line-height:1.1;font-weight:500;letter-spacing:-0.035em;color:var(--muted)">6 things need you. A fix is drafted for each.</p>
+
+    <div style="width:800px;margin:34px auto 0;border-radius:24px;background:var(--card);box-shadow:var(--lift);padding:18px 14px 12px 22px;box-sizing:border-box">
+      <div style="font-size:16px;color:var(--muted);padding:2px 0 22px">Ask about orders, stock, customers or numbers…</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="icon-btn" aria-label="Add" style="width:36px;height:36px;border-radius:999px;border:0;background:var(--soft);color:var(--ink-2);display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg></button>
+        <span style="display:flex;align-items:center;margin-left:4px"><span class="lt"><img src="/_blob/926fa2db406968a63fc06cc9db4f65c2" alt=""></span><span class="lt"><img src="/_blob/45226e2f78291c36a2d12cd21717cae2" alt=""></span><span class="lt"><img src="/_blob/610f9552eaa837eba0daab0177ceee07" alt=""></span><span class="lt" style="background:var(--soft);font-size:10.5px;font-weight:600;color:var(--ink-3)">+3</span></span>
+        <span style="font-size:13.5px;color:var(--muted)">6 tools connected</span>
+        <span style="flex:1"></span>
+        <button class="btn btn-ghost" style="height:34px;padding:0 10px 0 12px;border-radius:10px;background:transparent;color:var(--ink-2);font-size:14px;display:flex;align-items:center;gap:4px">Smart<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5L8 10l3.5-3.5"></path></svg></button>
+        <button class="icon-btn" aria-label="Dictate" style="width:36px;height:36px;border-radius:999px;border:0;background:var(--soft);color:var(--ink-2);display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><rect x="6" y="2" width="4" height="7.5" rx="2"></rect><path d="M3.8 7.5a4.2 4.2 0 008.4 0M8 11.7V14"></path></svg></button>
+        <button class="icon-btn" aria-label="Send" style="width:36px;height:36px;border-radius:999px;border:0;background:var(--soft);color:var(--muted);display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4"></path></svg></button>
+      </div>
+    </div>
+
+    <div style="margin-top:52px;display:flex;align-items:baseline;gap:10px;padding:0 2px">
+      <h2 style="margin:0;font-size:17px;font-weight:600;letter-spacing:-0.012em">Needs you</h2>
+      <span style="font-size:14px;color:var(--muted)">6 fixes drafted</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost" style="height:32px;padding:0 10px;border-radius:10px;background:transparent;color:var(--ink-3);font-size:13.5px;display:flex;align-items:center;gap:6px">Most urgent first<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6l3-3 3 3M5 10l3 3 3-3"></path></svg></button>
+    </div>
+
+    <div style="margin-top:16px;display:grid;grid-template-columns:repeat({{cols}},minmax(0,1fr));gap:20px">
+      <sc-for list="{{cards}}" as="c" hint-placeholder-count="6">
+      <article class="card" style="display:flex;flex-direction:column;border-radius:22px;background:var(--card);box-shadow:var(--lift)">
+        <div style="padding:18px 16px 0 22px;display:flex;flex-direction:column;flex:1">
+          <div style="display:flex;align-items:center;gap:7px;height:28px">
+            <sc-if value="{{c.urgent}}" hint-placeholder-val="{{ true }}">
+              <span style="display:inline-flex;align-items:center;height:24px;padding:0 10px;margin-left:-3px;margin-right:2px;border-radius:999px;background:var(--red-tint);color:var(--red-text);font-size:12.5px;font-weight:600">Urgent</span>
+            </sc-if>
+            <span style="font-size:13px;font-weight:500;color:var(--ink-3)">{{c.area}}</span>
+            <span style="flex:1"></span>
+            <span style="display:flex;margin-right:4px"><sc-for list="{{c.logos}}" as="l" hint-placeholder-count="2"><span class="lt" title="{{l.name}}"><img src="{{l.src}}" alt=""></span></sc-for></span>
+            <button class="icon-btn" aria-label="More actions" style="width:30px;height:30px;border-radius:9px;border:0;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" fill="currentColor"></circle><circle cx="8" cy="8" r="1.2" fill="currentColor"></circle><circle cx="12.5" cy="8" r="1.2" fill="currentColor"></circle></svg></button>
+          </div>
+          <h3 style="margin:14px 6px 0 0;font-size:17.5px;line-height:1.3;font-weight:600;letter-spacing:-0.018em;text-wrap:pretty">{{c.title}}</h3>
+          <p style="margin:6px 6px 0 0;font-size:14px;line-height:1.5;color:var(--ink-3);text-wrap:pretty">{{c.sub}}</p>
+          <div style="flex:1;min-height:14px"></div>
+          <div style="display:flex;align-items:baseline;gap:7px;padding-bottom:16px"><span class="num" style="font-size:22px;line-height:1;font-weight:600;letter-spacing:-0.035em">{{c.cost}}</span><span style="font-size:13px;color:var(--muted)">{{c.costNote}}</span></div>
+        </div>
+
+        <div style="margin:0 8px 8px;border-radius:16px;background:var(--sheet);padding:14px">
+          <div style="display:flex;align-items:center;gap:8px;height:22px;font-size:12.5px;color:var(--muted)">
+            <span style="width:22px;height:22px;border-radius:7px;background:var(--kind);box-shadow:0 0 0 1px var(--kind-edge),0 1px 1px rgba(0,0,0,.04);display:flex;align-items:center;justify-content:center;color:var(--ink-3);flex:none">
+              <sc-if value="{{c.isMail}}" hint-placeholder-val="{{ true }}"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.8"></rect><path d="M2.5 4.5L8 8.5l5.5-4"></path></svg></sc-if>
+              <sc-if value="{{c.isPo}}" hint-placeholder-val="{{ false }}"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5L8 2.5 13.5 5v6L8 13.5 2.5 11z"></path><path d="M2.5 5L8 7.5 13.5 5M8 7.5v6"></path></svg></sc-if>
+              <sc-if value="{{c.isCase}}" hint-placeholder-val="{{ false }}"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 2h8v12l-2-1.2L8 14l-2-1.2L4 14z"></path><path d="M6 5.5h4M6 8h4"></path></svg></sc-if>
+              <sc-if value="{{c.isShop}}" hint-placeholder-val="{{ false }}"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M3 6h10l-.8 7.5H3.8z"></path><path d="M5.5 6V4.5a2.5 2.5 0 015 0V6"></path></svg></sc-if>
+            </span>
+            <span>Draft · {{c.kind}}</span>
+            <span style="flex:1"></span>
+            <sc-if value="{{c.risk}}" hint-placeholder-val="{{ false }}"><span class="num" style="font-weight:600;color:var(--amber-text)">{{c.risk}}</span></sc-if>
+          </div>
+          <div style="margin-top:10px;font-size:14.5px;line-height:1.4;font-weight:500;color:var(--ink-2);letter-spacing:-0.006em">{{c.draft}}</div>
+          <div style="margin-top:3px;font-size:12.5px;line-height:1.45;color:var(--muted);text-wrap:pretty">{{c.meta}}</div>
+          <div style="margin-top:12px;display:flex;align-items:center">
+            <button class="btn btn-primary" style="height:36px;padding:0 14px;border-radius:11px;background-color:var(--primary);color:var(--on-primary);box-shadow:var(--btn-shadow);font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:7px">
+              <sc-if value="{{c.quick}}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"></path></svg></sc-if>
+              {{c.cta}}
+              <sc-if value="{{c.review}}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8h9M9 4.5L12.5 8 9 11.5"></path></svg></sc-if>
+            </button>
+          </div>
+        </div>
+      </article>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"columns":{"editor":"enum","options":["2","3"],"default":"2"},"$preview":{"width":2360,"height":1640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var L = {
+      shopify: { src: '/_blob/926fa2db406968a63fc06cc9db4f65c2', name: 'Shopify' },
+      amazon: { src: '/_blob/45226e2f78291c36a2d12cd21717cae2', name: 'Amazon' },
+      shipbob: { src: '/_blob/610f9552eaa837eba0daab0177ceee07', name: 'ShipBob' },
+      xero: { src: '/_blob/8ace3dafbfca297fbcb9e3dbf873daa2', name: 'Xero' }
+    };
+    function k(type, quick) { return { isMail: type === 'mail', isPo: type === 'po', isCase: type === 'case', isShop: type === 'shop', quick: quick, review: !quick }; }
+    var cards = [
+      Object.assign({ area: 'Orders', urgent: true, logos: [L.shopify, L.shipbob], title: 'Trail Shell Jacket (M, Olive) is oversold by 5', sub: '14 open orders on Shopify, 9 units at ShipBob.', cost: '$1,190', costNote: 'in orders at risk', kind: 'Shopify and 5 emails', draft: 'Pause the variant and email 5 customers', meta: 'Offers each a new ship date, Tue, Dec 8, or a refund.', risk: 'Goes to customers', cta: 'Review draft' }, k('mail', false)),
+      Object.assign({ area: 'Money', urgent: true, logos: [L.amazon, L.xero], title: 'Amazon paid out $1,240 less than expected', sub: '18 orders charged fees above your rate card.', cost: '$1,240', costNote: 'missing from the payout', kind: 'Amazon case', draft: 'Open a reimbursement case', meta: 'Claims back the large-item fee on 18 orders.', risk: 'Claims $1,240', cta: 'Review draft' }, k('case', false)),
+      Object.assign({ area: 'Stock', urgent: false, logos: [L.shopify], title: 'Ridge 30L Pack runs out in 9 days', sub: '190 left, selling 21 a day. Kestrel needs 14 days to deliver.', cost: '$8,400', costNote: 'in sales at risk', kind: 'Purchase order', draft: 'Reorder 600 Ridge 30L Packs', meta: 'To Kestrel Supply as a PDF. 400 Olive, 200 Black.', risk: 'Spends $9,600', cta: 'Review draft' }, k('po', false)),
+      Object.assign({ area: 'Stock', urgent: false, logos: [], title: 'PO-1187 from Kestrel is 6 days late', sub: '420 Summit Fleece, promised for Nov 10.', cost: '$5,100', costNote: 'of stock on order', kind: 'Email', draft: 'Chase Kestrel for a new ship date', meta: 'To Mei Chen at Kestrel. “PO-1187: new ship date?”', risk: '', cta: 'Approve and send' }, k('mail', true)),
+      Object.assign({ area: 'Orders', urgent: false, logos: [L.shipbob, L.shopify], title: '11 returns are not restocked', sub: 'Back at ShipBob 3+ days, still unavailable on Shopify.', cost: '$1,030', costNote: 'of stock you can’t sell', kind: 'Shopify change', draft: 'Restock 11 units on Shopify', meta: 'Puts 11 sellable returns back on sale.', risk: '', cta: 'Approve and restock' }, k('shop', true)),
+      Object.assign({ area: 'Orders', urgent: false, logos: [L.shopify, L.shipbob], title: 'Order #4821 is stuck for 4 days', sub: 'Paid Thursday, not picked at ShipBob. Repeat customer.', cost: '$312', costNote: 'order value', kind: 'ShipBob ticket', draft: 'Ask ShipBob why #4821 hasn’t shipped', meta: 'A new support ticket asking them to ship it today.', risk: '', cta: 'Approve and send' }, k('mail', true))
+    ];
+    cards.forEach(function (c) { c.calm = !c.urgent; });
+    return {
+      themes: [{ cls: 'half t-light', label: 'Light' }, { cls: 'half t-dark', label: 'Dark' }],
+      cols: this.props.columns ?? '2',
+      cards: cards
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -425,6 +425,24 @@ describe('the authority sweep and grant expiry (4.10, D1)', () => {
     expect(h.dueTasks().map(t => t.id)).not.toContain(`grant-expiry:${g}`)
   }))
 
+  // P3 acceptance items 2 and 6: the grant-expiry task alone closes the socket. The grant's end in D1 (T0 + 31 min)
+  // is before the end the socket was issued with (T0 + 2 h, as when a grant is shortened), so its own lease can't, and
+  // T0 + 31 min falls between two 5-minute sweeps, so the sweep can't either.
+  it('the grant-expiry task, fired by the clock at the grant\'s end in D1, closes the Inhouse socket 4403', () => inAgent(async h => {
+    const g = `g_task${Math.random().toString(36).slice(2, 8)}`
+    await grant(g, T0 + 31 * MIN, null)
+    const ws = accepted(h, { ...inhouse, grantId: g, grantEndsAtMs: T0 + 2 * HOUR })
+    h.core.onGrantCreated(g, T0 + 31 * MIN)
+    expect(h.dueTasks().find(t => t.id === `grant-expiry:${g}`)?.due_at_ms).toBe(T0 + 31 * MIN)
+    await h.tick(31 * MIN - 1)
+    expect(ws.closed).toBeNull()
+    expect(inSet(h, 'grant')).not.toContain(g)
+    await h.tick(1)
+    expect(ws.closed).toEqual({ code: 4403, reason: 'grant_ended' })
+    expect(inSet(h, 'grant')).toContain(g)
+    expect(h.dueTasks().map(t => t.id)).not.toContain(`grant-expiry:${g}`)
+  }))
+
   it('onGrantCreated schedules grant-expiry at the end; an early run waits for D1\'s end', () => inAgent(async h => {
     const g = `g_made${Math.random().toString(36).slice(2, 8)}`
     await grant(g, T0 + HOUR, null)

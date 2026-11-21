@@ -32,7 +32,7 @@ const webReq = (messages: Msg[]) =>
 const memoryReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_save' }] })
 /** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`. */
-const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name === 'memory-save' ? memoryReq : mainReq)
+const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name.startsWith('memory-save') ? memoryReq : mainReq)
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
@@ -148,6 +148,17 @@ describe('the scripted model', () => {
     const res = await model.handle(mainReq([{ role: 'user', content: 'q' }, asked, toolResult('toolu_scripted_slow')]), 'slow-bash')
     expect(res.status).toBe(200)
     expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe('Done waiting.')
+  })
+
+  it('memory-save-team: turn 0 saves the literal team fact (scope brand); turn 1 answers only a request carrying the save\'s result', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const first = (await (await model.handle(memoryReq(convo(0)), 'memory-save-team')).json()) as { content: { type: string; name?: string; input?: unknown }[] }
+    expect(first.content).toEqual([expect.objectContaining({ type: 'tool_use', name: 'mcp__inhouse__memory_save', input: { scope: 'brand', text: 'We restock on Fridays.' } })])
+    const asked: Msg = { role: 'assistant', content: SCENARIOS['memory-save-team']!.turns[0]!.content }
+    expect((await model.handle(memoryReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: 'go on' }]), 'memory-save-team')).status).toBe(400)
+    const res = await model.handle(memoryReq([{ role: 'user', content: 'q' }, asked, toolResult('toolu_scripted_memory_team')]), 'memory-save-team')
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe('Saved for the team.')
   })
 
   it("ask: the resume (turn 1) answers only a request whose last user message carries the question's result", async () => {
@@ -343,6 +354,16 @@ describe("the real CLI's requests", () => {
     expect(await answer(model, captured['write-output']!.turn0!, 'slow-bash')).toEqual({ status: 200, content: ['Waiting a while.', 'Bash'] })
     expect(await answer(model, turn1, 'slow-bash')).toEqual({ status: 200, content: ['Done waiting.'] })
     expect(model.misses).toEqual([])
+  })
+
+  it("memory-save-team: the real CLI's memory-save requests (the same tool call), with the call id renamed, get its two answers, also past the trailing budget line", async () => {
+    const rename = (r: MessagesRequest) => JSON.parse(JSON.stringify(r).replaceAll('toolu_scripted_memory', 'toolu_scripted_memory_team')) as MessagesRequest
+    for (const key of ['turn1', 'turn1-budget'] as const) {
+      const model = createScriptedModel(SCENARIOS)
+      expect(await answer(model, captured['memory-save']!.turn0!, 'memory-save-team')).toEqual({ status: 200, content: ['mcp__inhouse__memory_save'] })
+      expect(await answer(model, rename(captured['memory-save']![key]!), 'memory-save-team')).toEqual({ status: 200, content: ['Saved for the team.'] })
+      expect(model.misses).toEqual([])
+    }
   })
 
   it("webfetch-allowed: WebFetch's page summary (its own side request, the prompt's marker in it) gets an answer", async () => {
