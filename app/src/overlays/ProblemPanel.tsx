@@ -50,7 +50,7 @@ export function ProblemPanel() {
   const facts = p.facts?.length ? p.facts : null
   const risk = riskLabel(dv)
   // A purchase order with structured lines renders as a table; every other draft as key and value rows.
-  const items = p.draft.items ?? null
+  const items = p.draft.items?.length ? p.draft.items : null
   const to = p.draft.to ?? null
   const itemTotal = items && { minor: items.reduce((n, it) => n + it.each.minor * it.qty, 0), currency: items[0].each.currency }
   const units = items?.reduce((n, it) => n + it.qty, 0)
@@ -190,7 +190,8 @@ export function ProblemPanel() {
                 <div className="flex min-h-8 flex-wrap items-center gap-x-2.5 gap-y-1.5">
                   <span className="mono-label">{dv.kind}</span>
                   <Badge variant="muted">Draft</Badge>
-                  {risk && <Badge variant="warning">{risk}</Badge>}
+                  {/* On a phone the risk takes the second row, so Edit keeps its place at the end of the first. */}
+                  {risk && <Badge variant="warning" className={phone ? 'order-last' : undefined}>{risk}</Badge>}
                   <div className="flex-1" />
                   <Button variant="ghost" size="sm" className={cn('-mr-2', tap)} onClick={() => patch({ editing: isEditing ? null : openId })}>
                     <Icon name="edit" size={15} />{isEditing ? 'Done' : 'Edit'}
@@ -307,7 +308,7 @@ export function ProblemPanel() {
               {/* A problem already set aside keeps its reason: Undo would otherwise restore it as declined. */}
               {!phone && dontSend}
               <Button variant="primary" size="lg" className="h-auto min-h-11.5 min-w-0 flex-1 py-2 text-md whitespace-nowrap" onClick={() => approve(openId)}>
-                {dv.cta}{p.draft.amount && <span className="font-normal tabular-nums">{fmtMoney(p.draft.amount.money, display())}</span>}
+                {dv.cta}{p.draft.amount && p.draft.money && <span className="font-normal tabular-nums">{fmtMoney(p.draft.amount.money, display())}</span>}
               </Button>
               {phone && dontSend}
             </div>
