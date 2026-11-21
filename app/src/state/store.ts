@@ -5,7 +5,7 @@ import { create } from 'zustand'
 import { agent, demo as demoControls, now } from '../agent'
 import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, Stage } from '../agent/types'
 import { AgentError, SCENARIOS, STAGES, stageIndex } from '../agent/types'
-import { REASON } from '../../shared/contract/error-codes'
+import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ChatView } from '../screens/chat/view'
 import { NO_MODEL_TEXT, RELOAD_NOTE, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from '../screens/chat/notes'
 import { productStage } from './stage'
@@ -78,6 +78,9 @@ export const openRun = (s: Pick<UiState, 'fresh' | 'chatId' | 'runs'>): ChatRun 
   return key === null ? undefined : own(s.runs, key)
 }
 
+/** A chat's stored messages in the order the agent stored them (by position), and where the page before them starts. */
+export interface ChatHistory { messages: ChatMessage[]; next: string | null; state: 'loading' | 'ready' | 'error' }
+
 export interface UiState {
   // demo switches (dev only)
   stage: Stage
@@ -130,6 +133,8 @@ export interface UiState {
   runs: Record<string, ChatRun>
   /** What each chat's run events built (queued turns, notices, a damaged session). Not saved: a reload attaches again. */
   views: Record<string, ChatView>
+  /** What the agent holds of a chat's past (`getChat`), by chat id: read when a chat that has no seed turns opens. Not saved. */
+  history: Record<string, ChatHistory>
   /** Messages waiting for a chat's answer to end, by chat id, oldest first. Saved (D7): after a reload they wait paused. */
   queued: Record<string, QueuedMsg[]>
   /** The question being edited in the composer, or null. */
@@ -226,6 +231,10 @@ export interface UiActions {
   pinChat(id: string, pinned: boolean): void
   /** Copies the chat's full URL. */
   copyChatLink(id: string): void
+  /** Asks the composer to open its model menu (a switched-off model's failed answer offers it). */
+  openModelMenu(): void
+  /** Reads a chat's history (the newest page, or with `more` the page before what is shown). A chat with seed turns has none to read. */
+  loadHistory(chatId: string, more?: boolean): void
   /** The recovery for a chat whose session is damaged: the history stays and the next message starts fresh. */
   resetSession(chatId: string): void
   /** Deletes with an Undo toast. Deleting the open chat opens the newest one left, or a new chat. */
@@ -355,6 +364,8 @@ export interface UiState {
   drafts: Record<string, ComposerDraft>
   /** Bumped to ask the open composer to take focus (setComposerText with focus). */
   composerFocus: number
+  /** Bumped to ask the chat's composer to open its model menu. */
+  modelMenuAsk: number
 }
 export interface UiActions {
   /** Puts text into the open composer (Today's, or the open chat's), replacing its draft. `focus` focuses it, caret at the end. */
@@ -575,9 +586,9 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
   team: { type: 'tool', text: '', shot: true }, traceId: null, toasts: [], phone: false, sideOpen: false,
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
   chatId: null, chatList: false, fresh: false, extras: [], hidden: {}, stash: {}, started: [], replyTo: null,
-  runs: {}, views: {}, queued: {}, editMsg: null, libraryView: 'masonry',
+  runs: {}, views: {}, history: {}, queued: {}, editMsg: null, libraryView: 'masonry',
   actFilter: 'all', actOpen: null, usageTab: 'person', usageMonth: 0, skillTab: 'all', todaySort: 'default',
-  drafts: {}, composerFocus: 0,
+  drafts: {}, composerFocus: 0, modelMenuAsk: 0,
   feedback: {},
   approvalSort: 'oldest',
   setMenu: false,
@@ -658,6 +669,16 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     // A stale save: the Settings screen follows with what the record is now, in this same toast (key `conflict`).
     else if (n.type === 'error') showToast(n.text, { icon: 'error', ...(n.code === 'conflict' ? { key: 'conflict' } : {}) })
     else showToast(n.text, { icon: 'info' })
+  })
+
+  let historyEpoch = 0
+  // A support grant ended (close 4403): what the grant showed is dropped, the chats' messages and runs with it. The agent client
+  // already dropped its own copy and detached every run.
+  agent.onLink(state => {
+    if (state !== 'grantEnded') return
+    // A history read still on its way when the grant ended must not write what it read back.
+    historyEpoch++
+    set({ runs: {}, views: {}, history: {}, extras: [], hidden: {}, stash: {}, queued: {}, started: [] })
   })
 
   // ---------- runs ----------
@@ -781,7 +802,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   // Answers still being written on the agent's side (the page reloaded, or another tab sent): follow each from its first event.
   // Messages are keyed by id, so what the history already shows isn't added twice. The reload note was about a run that
   // stopped; this one didn't, so its note goes.
-  void agent.activeRuns().then(async list => {
+  /** Follows each run from its first event, unless its chat is already answering here or isn't one the agent has. */
+  const followRuns = async (list: readonly { runId: string; chatId: string }[]) => {
     if (list.length) await loadChat()
     const known = new Set(agent.allChatIds())
     for (const r of list) {
@@ -791,7 +813,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       updateChat(r.chatId, c => ({ ...c, extras: c.extras.filter(m => !(m.role === 'event' && m.text === RELOAD_NOTE)) }))
       follow(r.chatId, token, r.runId)
     }
-  }, logFailure('could not read the answers being written'))
+  }
+  void agent.activeRuns().then(followRuns, logFailure('could not read the answers being written'))
 
   /** Sends `q` into chat `cid`, open or not: a new run, or a turn queued in the chat's live run. Synchronous up to and including
    *  adding the person's message (when it starts a run): regenerate() reads it right after calling ask(). */
@@ -1122,6 +1145,35 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     pinChat: (id, pinned) => {
       agent.pinChat(id, pinned).catch(logFailure('could not pin the chat'))
       showToast(pinned ? 'Chat pinned' : 'Chat unpinned', { icon: 'keep', ms: 4000 })
+    },
+    openModelMenu: () => set(s => ({ modelMenuAsk: s.modelMenuAsk + 1 })),
+    loadHistory: (chatId, more = false) => {
+      const have = own(get().history, chatId)
+      if (have?.state === 'loading' || (have && have.state !== 'error' && !more) || (more && (!have || have.next === null))) return
+      const cursor = more ? have?.next ?? undefined : undefined
+      const epoch = historyEpoch
+      set(s => ({ history: { ...s.history, [chatId]: { messages: have?.messages ?? [], next: have?.next ?? null, state: 'loading' } } }))
+      agent.getChat(chatId, cursor).then(page => {
+        if (epoch !== historyEpoch) return
+        // `runs`: the live run and any ended run whose turns aren't all stored yet (route 24). Each is replayed from its first event;
+        // what the history already holds shows once (stable ids).
+        void followRuns(page.runs).catch(logFailure('could not follow the answers being written'))
+        // The page is newest first; the thread reads oldest first, by stored position.
+        const older = [...page.messages].sort((a, b) => a.pos - b.pos)
+        set(s => {
+          const cur = own(s.history, chatId)
+          return { history: { ...s.history, [chatId]: { messages: more ? [...older, ...(cur?.messages ?? [])] : older, next: page.nextCursor, state: 'ready' } } }
+        })
+      }, (e: unknown) => {
+        if (epoch !== historyEpoch) return
+        // A chat this tab just started whose save failed (or never reached the agent) has no history: it reads as empty, not as an error.
+        if (e instanceof AgentError && e.code === NOT_FOUND && get().started.some(c => c.id === chatId)) {
+          set(s => ({ history: { ...s.history, [chatId]: { messages: [], next: null, state: 'ready' } } }))
+          return
+        }
+        console.warn('Inhouse: could not read the chat history.', e)
+        set(s => ({ history: { ...s.history, [chatId]: { messages: have?.messages ?? [], next: have?.next ?? null, state: 'error' } } }))
+      })
     },
     resetSession: chatId => {
       agent.resetSession(chatId).then(() => {

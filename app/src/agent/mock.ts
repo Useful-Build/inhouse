@@ -1213,6 +1213,7 @@ export class MockAgent implements AgentClient {
 
   auditExportUrl = (): string | null => null
   signOutUrl = (): string | null => null
+  disconnect = (): void => undefined
 
   // ----- traces -----
 

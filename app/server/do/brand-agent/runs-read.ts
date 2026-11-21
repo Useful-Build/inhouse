@@ -18,7 +18,7 @@
 //   due tasks. Counts only.
 import type { ActiveRun } from '../../../shared/contract/runs.ts'
 import type { Trace, TraceStep } from '../../../shared/contract/trace.ts'
-import type { RunScope, RunsHealth } from './ports.ts'
+import type { ModelCallUsage, RunScope, RunsHealth } from './ports.ts'
 import { callsMicro } from './turn-calls.ts'
 
 const HOUR_MS = 3_600_000
@@ -89,14 +89,18 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
     const calls = sql.exec<{ model: string; granted_at_ms: number; closed_at_ms: number | null; state: string; usage_json: string | null }>(
       'SELECT model, granted_at_ms, closed_at_ms, state, usage_json FROM model_calls WHERE turn_id = ? AND granted_at_ms IS NOT NULL ORDER BY n', t.turn_id).toArray()
     for (const c of calls) {
-      const u = c.usage_json === null ? null : JSON.parse(c.usage_json) as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWrite5mTokens: number; cacheWrite1hTokens: number }
+      const u = c.usage_json === null ? null : JSON.parse(c.usage_json) as Pick<ModelCallUsage, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWrite5mTokens' | 'cacheWrite1hTokens' | 'refused'>
       const input = u ? u.inputTokens + u.cacheReadTokens + u.cacheWrite5mTokens + u.cacheWrite1hTokens : 0
       const output = u ? u.outputTokens : 0
       tokens += input + output
-      steps.push({
-        label: c.model, kind: 'model', startMs: at(c.granted_at_ms), endMs: at(c.closed_at_ms ?? nowMs), depth: 1,
-        detail: `${input} in · ${output} out${c.state === 'cut' ? ' · cut' : ''}`,
-      })
+      // A refused call never ran (the model service's own error, closed at zero); an open one (no close yet) carries only
+      // its last renew's running usage, so neither reads as a finished zero-token step. Both lead with the model, as the
+      // trace window's plain view reads a model step's detail after its first ` · `.
+      const counts = `${input} in · ${output} out`
+      const detail = u?.refused === true ? `${c.model} · refused by the model service`
+        : c.closed_at_ms === null ? `${c.model} · in progress${input + output > 0 ? ` · ${counts} so far` : ''}`
+        : `${counts}${c.state === 'cut' ? ' · cut' : ''}`
+      steps.push({ label: c.model, kind: 'model', startMs: at(c.granted_at_ms), endMs: at(c.closed_at_ms ?? nowMs), depth: 1, detail })
     }
   }
   // Stable: records of one moment keep their order (steps, then hooks, then calls).
