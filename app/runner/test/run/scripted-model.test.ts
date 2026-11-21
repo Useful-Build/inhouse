@@ -356,6 +356,16 @@ describe("the real CLI's requests", () => {
     expect(model.misses).toEqual([])
   })
 
+  it("memory-save-team: the real CLI's memory-save requests (the same tool call), with the call id renamed, get its two answers, also past the trailing budget line", async () => {
+    const rename = (r: MessagesRequest) => JSON.parse(JSON.stringify(r).replaceAll('toolu_scripted_memory', 'toolu_scripted_memory_team')) as MessagesRequest
+    for (const key of ['turn1', 'turn1-budget'] as const) {
+      const model = createScriptedModel(SCENARIOS)
+      expect(await answer(model, captured['memory-save']!.turn0!, 'memory-save-team')).toEqual({ status: 200, content: ['mcp__inhouse__memory_save'] })
+      expect(await answer(model, rename(captured['memory-save']![key]!), 'memory-save-team')).toEqual({ status: 200, content: ['Saved for the team.'] })
+      expect(model.misses).toEqual([])
+    }
+  })
+
   it("webfetch-allowed: WebFetch's page summary (its own side request, the prompt's marker in it) gets an answer", async () => {
     const summary = captured['webfetch-allowed']!['page-summary']!
     expect(JSON.stringify(summary.messages)).toContain('scenario:webfetch-allowed')

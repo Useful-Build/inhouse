@@ -11,9 +11,10 @@
 // Honest limits (also in the PR body): the test build's seeded stage is Watch, where the top bar shows the Pause pill only while
 // paused, so an Admin pauses through the API and the spec drives the UI from there (the pill, its Resume button, the refusal).
 // The Memory pages list active facts only, so S7 can show the person's own fact and the team fact's absence, not the agent
-// "relying" on a fact (a scripted model can't). The scripted model's spend is far under the smallest cap ($0.01), so S9 can't reach
-// "cap reached" on Usage by spending; it proves the refusal the person sees and the cap on Usage. The chat has no download
-// button until the route 41 UI lands: S10's download test is fixme until SHIP_CHAT_DOWNLOAD=1.
+// "relying" on a fact (a scripted model can't); the waiting save itself is covered by tools.test.ts. S9 sets the smallest cap
+// ($0.01): the server judges the cap reached once less than a start hold ($0.25) is left, so Usage reads at the cap without any
+// spending. The chat has no UI for output files yet (route 40 is S10's oracle), and no download button until the route 41 UI
+// lands: S10's download test is fixme until SHIP_CHAT_DOWNLOAD=1.
 //
 // Run (the Q2 specs job, with the test issuer key it holds):
 //   E2E_TEST_BUILD_REMOTE=1 SHIP=1 BASE_URL=... TEST_BUILD_INHOUSE_URL=... TEST_ISSUER_PRIVATE_JWK_FILE=...
@@ -239,11 +240,16 @@ test('S5: All chats lists the server\'s chats; rename and pin survive a reload',
   await expect(chatRow(page, a)).toBeVisible()
   await expect(chatRow(page, b)).toBeVisible()
   const renamed = `Ship S5 ${uid()} renamed`
+  // Each change is saved by the server before the reload: wait for its answer.
+  const renameSaved = page.waitForResponse(r => r.request().method() === 'PUT' && r.url().endsWith('/title') && r.status() === 200)
   await rowMenu(page, a, 'Rename')
   const field = main(page).getByRole('textbox', { name: 'Chat title' })
   await field.fill(renamed)
   await field.press('Enter')
+  await renameSaved
+  const pinSaved = page.waitForResponse(r => r.request().method() === 'PUT' && r.url().endsWith('/pin') && r.status() === 200)
   await rowMenu(page, b, 'Pin')
+  await pinSaved
   await expect(chatRow(page, renamed)).toBeVisible()
   await shot(page, 'S5-renamed-and-pinned')
   await page.reload()
@@ -255,6 +261,10 @@ test('S5: All chats lists the server\'s chats; rename and pin survive a reload',
   await pinned.hover()
   await pinned.getByRole('button', { name: 'Chat actions' }).click()
   await expect(page.getByRole('menu', { name: 'Chat actions' }).getByRole('menuitem', { name: 'Unpin', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  // The renamed chat opens after the reload, under its new title. (Its full history after a reload is S1's and S2's, in a container.)
+  await chatRow(page, renamed).getByRole('button', { name: renamed, exact: true }).click()
+  await expect(page.getByRole('banner')).toContainText(renamed)
   await shot(page, 'S5-after-the-reload')
 })
 
@@ -267,7 +277,13 @@ test('S6: A second Member can\'t see the first person\'s chat', async ({ browser
   await seeAll(page)
   await expect(chatRow(page, title)).toBeVisible()
   const other = await pageFor(browser, 'leo', '#/today')
+  // Leo has a chat of his own, so the list he reads is loaded and not empty; Dana's isn't in it.
+  const own = `Ship S6 ${uid()} leo's own`
+  await makeChat(other, own)
+  await other.reload()
+  await ready(other)
   await seeAll(other)
+  await expect(chatRow(other, own)).toBeVisible()
   await expect(chatRow(other, title)).toHaveCount(0)
   await expect(other.getByText(title)).toHaveCount(0)
   // Not by its id either: the server answers as if there were no such chat.
@@ -281,6 +297,16 @@ test('S7: A fact the agent saves for you shows in your Memory; a team fact waits
   needsContainer()
   test.setTimeout(240_000)
   await openAs(context, page, 'dana', '#/today')
+  // Start without the fact: a run before this one may have saved it, so forget any copy through the API first.
+  const mine = await api(page, 'GET', '/api/memory')
+  expect(mine.status).toBe(200)
+  for (const line of (mine.json.personal as { key: string; text: string; rev: number }[]).filter(l => l.text === MEMORY_PERSON)) {
+    expect((await api(page, 'PUT', `/api/memory/personal/${line.key}/forgotten`, { forgotten: true, ifRev: line.rev })).status).toBe(200)
+  }
+  await page.reload()
+  await ready(page)
+  await settingsPage(page, 'Your settings', 'Memory')
+  await expect(main(page)).not.toContainText(MEMORY_PERSON)
   await askFromToday(page, 'scenario:memory-save remember I like order tables sorted by date')
   await expect(log(page).getByText('Saved.', { exact: true })).toBeVisible({ timeout: 150_000 })
   await settingsPage(page, 'Your settings', 'Memory')
@@ -290,6 +316,12 @@ test('S7: A fact the agent saves for you shows in your Memory; a team fact waits
   const admin = await pageFor(browser, 'admin', '#/today')
   await askFromToday(admin, 'scenario:memory-save-team remember we restock on Fridays')
   await expect(log(admin).getByText('Saved for the team.', { exact: true })).toBeVisible({ timeout: 150_000 })
+  // The list is read after the save (a reload waits for the server's answer), so its absence is of a loaded list.
+  const read = admin.waitForResponse(r => r.request().method() === 'GET' && new URL(r.url()).pathname === '/api/memory' && r.status() === 200)
+  await admin.reload()
+  await ready(admin)
+  const loaded = await (await read).json() as { team: { lines: { text: string }[] }[] }
+  expect(loaded.team.flatMap(g => g.lines.map(l => l.text))).not.toContain(MEMORY_TEAM)
   await settingsPage(admin, 'Team settings', 'Team memory')
   await expect(main(admin)).not.toContainText(MEMORY_TEAM)
   await shot(admin, 'S7-team-fact-waits-for-an-admin')
@@ -337,10 +369,15 @@ test('S8: A live answer stops when the agent is paused, and resuming starts noth
     await setPaused(admin, true)
     // The answer is no longer running: its Stop button goes, and the rest of it never arrives.
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 60_000 })
-    await setPaused(admin, false)
-    await expect(log(page).getByText(DONE_WAITING, { exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    await expect(page.getByText(PAUSED_NOTICE)).toBeVisible({ timeout: 60_000 })
     await shot(page, 'S8-live-answer-stopped-by-the-pause')
+    await setPaused(admin, false)
+    // Resuming starts nothing by itself: a fresh question gets its own answer, and the stopped one never finishes.
+    await expect(log(page).getByText(DONE_WAITING, { exact: true })).toHaveCount(0)
+    await ask(page, 'scenario:hello after the resume')
+    await expect(log(page).getByText(HELLO, { exact: true })).toBeVisible({ timeout: 150_000 })
+    await expect(log(page).getByText(HELLO, { exact: true })).toHaveCount(1)
+    await expect(log(page).getByText(DONE_WAITING, { exact: true })).toHaveCount(0)
   } finally {
     await setPaused(admin, false)
   }
@@ -370,6 +407,9 @@ test('S9: At the cap a new question gets the cap notice, and Usage shows the cap
     await expect(h1(member)).toHaveText('Usage')
     await expect(main(member).getByRole('progressbar', { name: 'Spending cap used' })).toBeVisible()
     await expect(main(member)).toContainText('$0.01')
+    // At the cap (the server reads it so once less than a start hold is left): Usage says so in the words of usageSummary.
+    await expect(main(member)).toContainText(/Cap reached with \d+ days of the month left/)
+    await expect(main(member)).toContainText('Cap reached today. Routines and jobs are paused until an admin raises it.')
     await shot(member, 'S9-usage-shows-the-cap')
   } finally {
     await setCap((before?.value as string | null | undefined) ?? null)
@@ -384,10 +424,10 @@ test('S10: Attach a file to a question; the agent makes a spreadsheet from it; t
   await openAs(context, page, 'dana', '#/today')
   await goTo(page, 'Today')
   await page.locator('[data-composer] input[type=file]').setInputFiles({ name: 'stock-list.csv', mimeType: 'text/csv', buffer: Buffer.from('sku,qty\nmug,12\n') })
-  await expect(page.locator('[data-composer]').getByText('stock-list.csv')).toBeVisible()
+  await expect(page.locator('[data-composer]').getByText('stock-list.csv').first()).toBeVisible()
   await ask(page, 'scenario:write-output make a spreadsheet from the attached list')
   // The question shows its attachment; the agent's two parts arrive (the one before its Bash call, then the answer).
-  await expect(log(page).getByText('stock-list.csv')).toBeVisible({ timeout: 60_000 })
+  await expect(log(page).getByText('stock-list.csv').first()).toBeVisible({ timeout: 60_000 })
   await expect(log(page).getByText('Saved outputs/table.csv.', { exact: true })).toBeVisible({ timeout: 150_000 })
   // The file the agent made is in the chat's files (route 40), as an output named table.csv.
   const chat = new URL(page.url()).hash.replace(/^#\/chats\//, '')
