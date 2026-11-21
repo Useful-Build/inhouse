@@ -710,6 +710,14 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
     expect(hubAsProduct.status).toBe(1)
     expect(hubAsProduct.stderr).toContain('name: "inhouse-sbx-eval-hub" is not the eval deployment\'s worker name')
   })
+  // #268 review nit 3: #239's literal case, kept: the candidate binds no eval name as its hub (the eval product's own).
+  test('the candidate product binds no eval name as its hub: inhouse-sbx-eval', () => {
+    const config = load('pass-candidate.json')
+    config.services = [{ ...evalEntry, service: 'inhouse-sbx-eval' }]
+    const r = run([...CANDIDATE, write(config)])
+    expect(r.status).toBe(1)
+    expect(failureLines(r)).toEqual([expect.stringContaining('services[0].service: "inhouse-sbx-eval" is the eval deployment\'s name, not the candidate\'s')])
+  })
   test('the candidate and a PR bind no eval hub', () => {
     const candidate = load('pass-candidate.json')
     candidate.services = [evalEntry]

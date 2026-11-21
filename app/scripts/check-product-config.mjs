@@ -74,10 +74,11 @@
 //     entrypoint }` with no other key: none (a build before P4); `HUB` -> ReadGateway alone (P4, what main ships); or
 //     `HUB` -> ReadGateway, `HUB_CONNECT` -> ConnectGateway and `HUB_DELIVERY` -> DeliveryGateway together (P5), in
 //     any order. Exact sets, not any subset: a P5 build without one of its three, two entries, a binding twice, another
-//     binding or another entrypoint for a binding are refused. Its hub is PR N's (`inhouse-sbx-pr<N>-hub`) or, for the
-//     candidate, exactly CANDIDATE_HUB (`inhouse-sbx-hub`, names.mjs), the same in every entry, and never the product's
-//     own name (the candidate product may not be named it either). A sandbox product Worker binds its own sandbox
-//     hub's gateways and nothing else (never the house's `inhouse-hub`, a live product or another PR's hub);
+//     binding or another entrypoint for a binding are refused. Its hub is PR N's (`inhouse-sbx-pr<N>-hub`), for the
+//     candidate exactly CANDIDATE_HUB (`inhouse-sbx-hub`, names.mjs), or for the eval deployment exactly its own
+//     (`inhouse-sbx-eval-hub`, `HUB` alone: see eval mode below), the same in every entry, and never the product's own
+//     name (the candidate product may not be named it either). A sandbox product Worker binds its own sandbox hub's
+//     gateways and nothing else (never the house's `inhouse-hub`, a live product or another deployment's hub);
 //   - `env` is set, or `workers_dev` or `preview_urls` isn't explicitly false;
 //   - per-PR: vars.INHOUSE_TEST_BUILD isn't "1" (Q2's one exception: the test issuer in a deployed build, sandbox only);
 //   - per-PR: vars.INHOUSE_EVAL_BRAND is set;
@@ -85,8 +86,8 @@
 //   - (P3) P3's pool and gateway rules (checkPool) fail, with the sandbox's container cap of 2 in place of
 //     3 x RUNNER_POOL (the sandbox runs RUNNER_POOL=2, max_instances=2).
 // With --hub (P4) the config is the connector hub's (the ops repo writes it from the hub's bundle and config), and the
-// rules above hold with these changes: the Worker name is the hub's (PR N's `inhouse-sbx-pr<N>-hub`, or for the
-// candidate exactly CANDIDATE_HUB); `services` is empty (the hub binds no Worker); only the hub's keys may hold a value
+// rules above hold with these changes: the Worker name is the hub's (PR N's `inhouse-sbx-pr<N>-hub`, for the candidate
+// exactly CANDIDATE_HUB, for the eval deployment exactly `inhouse-sbx-eval-hub`); `services` is empty (the hub binds no Worker); only the hub's keys may hold a value
 // (name, account, `main`, `no_bundle`, compatibility, `workers_dev`, `preview_urls`, vars, Durable Objects, their
 // migrations, observability, `rules`, `python_modules`, `limits`, `send_metrics`, `$schema`; not `keep_vars`): no route,
 // custom domain, assets, D1, R2, container or version metadata; `main` is set and `no_bundle` is true (the bundle that
@@ -103,7 +104,8 @@
 // harness signs in through it and grades the real model; Q2's one named spend exception). Every sandbox rule above holds,
 // and it refuses a config when:
 //   - a name or host isn't exactly the eval deployment's (scripts/sandbox/names.mjs `evalNames()`: `inhouse-sbx-eval`,
-//     `-db`, `-files`, and hosts `-brand`, `-team` on SBX_ZONE), which no PR and not the candidate can carry;
+//     `-db`, `-files`, its hub `-hub`, and hosts `-brand`, `-team` on SBX_ZONE), which no PR and not the candidate can
+//     carry;
 //   - `ai` isn't exactly `{ binding: <name> }`, or vars.AI_GATEWAY_ID isn't a gateway id;
 //   - a var is a Worker secret or has a secret-like name (the product rule; eval holds the real gateway token, so it has
 //     no test-value exception, AUDIT_HASH_KEY included: both go in with `wrangler secret put`), or is any other
