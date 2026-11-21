@@ -47,7 +47,16 @@ const MEMORY_TEAM = 'We restock on Fridays.'
 
 /** Waits for menus and windows to finish their finite animations, then attaches a screenshot named by the item. */
 async function shot(page: Page, name: string) {
-  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+  const settle = () => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+  try {
+    await settle()
+  } catch (e) {
+    // A navigation can land while the page waits on its animations (the evaluate is aborted, or its context destroyed):
+    // wait for the new page to load, then settle once more. Any other error, or a second failure, still fails the test.
+    if (!/AbortError|aborted|Execution context was destroyed/.test(String(e))) throw e
+    await page.waitForLoadState('load')
+    await settle()
+  }
   await test.info().attach(name, { body: await page.screenshot(), contentType: 'image/png' })
 }
 
@@ -106,7 +115,14 @@ async function closeDrawer(page: Page) {
 }
 
 async function goTo(page: Page, name: string) {
-  await (await sidebar(page)).getByRole('button', { name, exact: true }).click()
+  const side = await sidebar(page)
+  // Usage lives in the account menu, not the sidebar's nav (#226).
+  if (name === 'Usage') {
+    await side.getByRole('button', { name: /account and settings/i }).click()
+    await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Usage', exact: true }).click()
+    return
+  }
+  await side.getByRole('button', { name, exact: true }).click()
 }
 
 /** Chooses the Fast model (Sonnet): the composer's default is Opus, and the scripted model answers only for Sonnet. */

@@ -56,6 +56,12 @@ async function sidebar(page: Page) {
 
 async function goTo(page: Page, name: string) {
   const side = await sidebar(page)
+  // Usage lives in the account menu, not the sidebar's nav (#226).
+  if (name === 'Usage') {
+    await side.getByRole('button', { name: /account and settings/i }).click()
+    await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Usage', exact: true }).click()
+    return
+  }
   await side.getByRole('button', { name, exact: true }).click()
 }
 
