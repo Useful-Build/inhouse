@@ -31,5 +31,8 @@ export const PutNotifyChannelsSchema = z.strictObject({
 }).refine(b => !b.alertsChannelId || b.channelIds.includes(b.alertsChannelId), { path: ['alertsChannelId'], message: 'The alerts channel must be one of the listed channels' })
 export type PutNotifyChannels = z.infer<typeof PutNotifyChannelsSchema>
 
-/** Why route H refused a channel (`conflict`, `reason`); `name_taken`: two listed channels would share a lowercase name. */
-export const ChannelRefusalSchema = z.enum(['shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'name_taken', 'stale'])
+/**
+ * Why route H refused a channel (`conflict`, `reason`, with `current: { channelId }`); `name_taken`: two listed channels
+ * would share a lowercase name. A stale `ifRev` is a `conflict` with no reason and the current list as `current`.
+ */
+export const ChannelRefusalSchema = z.enum(['shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'name_taken'])

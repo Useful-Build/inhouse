@@ -6,6 +6,7 @@
 //  4. a change lands without its one audit line, or a no-op save writes a line.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
+import { ErrorBodySchema } from '../../shared/contract/common.ts'
 import type { HubResult, SlackChannel } from '../../hub/index/contract.ts'
 import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
@@ -95,7 +96,7 @@ describe('routes F, G and H', () => {
     expect(a).toEqual({ status: 200, body: { rev: r0 + 1, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }] } })
     expect(calls).toEqual(['check:server:C0TEST0001', 'check:server:C0TEST0002'])
     const stale = await json(await put(await inhouse(), hub, { channelIds: ['C0TEST0002'], ifRev: r0 }))
-    expect([stale.status, (stale.body.error as { reason: string }).reason, ((stale.body.error as { current: { rev: number } }).current.rev)]).toEqual([409, 'stale', r0 + 1])
+    expect([stale.status, (stale.body.error as { reason?: string }).reason, ((stale.body.error as { current: { rev: number } }).current.rev)]).toEqual([409, undefined, r0 + 1])
     const b = await json(await put(await inhouse(), hub, { channelIds: ['C0TEST0002'], alertsChannelId: 'C0TEST0002', ifRev: r0 + 1 }))
     expect(b.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: true }] })
     // A no-op save bumps the rev and writes no line.
@@ -132,5 +133,17 @@ describe('routes F, G and H', () => {
     await expect(db.prepare("INSERT INTO notify_channels (channel_id, name, alerts, added_by, added_at_ms) VALUES ('C0TEST0002', 'b', 1, 'm_system', 1)").run()).rejects.toThrow(/UNIQUE/)
     await expect(db.prepare("INSERT INTO notify_channels (channel_id, name, alerts, added_by, added_at_ms) VALUES ('C0TEST0003', 'A', 0, 'm_system', 1)").run()).rejects.toThrow(/UNIQUE/)
     await expect(db.prepare("INSERT INTO notify_channels (channel_id, name, alerts, added_by, added_at_ms) VALUES ('U0TEST0001', 'u', 0, 'm_system', 1)").run()).rejects.toThrow(/CHECK/)
+  })
+
+  it('every refusal body these routes send parses as the client reads it (ErrorBodySchema)', async () => {
+    const { hub } = fakeHub()
+    const p = await admin()
+    const bodies = [
+      await put(p, hub, { channelIds: ['C0TEST0003'], ifRev: await rev() }),
+      await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0007'], ifRev: await rev() }),
+      await put(p, hub, { channelIds: [], ifRev: 9999 }),
+      await availableNotifyChannels(routeCtx(p, { ...hub, listChannels: async () => ({ ok: false, error: { code: 'paused', message: 'connector paused' } }) }, { path: '/api/notify/channels/available' })),
+    ]
+    for (const r of bodies) expect(ErrorBodySchema.safeParse(await r.json()).success, String(r.status)).toBe(true)
   })
 })

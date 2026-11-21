@@ -58,7 +58,7 @@ export async function availableNotifyChannels(c: NotifyRouteCtx): Promise<Respon
 /**
  * Route H, `PUT /api/notify/channels`: `{ channelIds, alertsChannelId?, ifRev }`. Each channel is re-checked at Slack
  * and its name re-read; a refused channel answers `conflict` with its reason and the channel id; a lowercase name two
- * channels would share answers `conflict` `name_taken`; a stale `ifRev` answers `conflict` `stale` with the current list.
+ * channels would share answers `conflict` `name_taken`; a stale `ifRev` answers `conflict` with the current list (no reason).
  */
 export async function putNotifyChannels(c: NotifyRouteCtx): Promise<Response> {
   if (!canEdit(c)) return apiError('forbidden')
@@ -66,7 +66,7 @@ export async function putNotifyChannels(c: NotifyRouteCtx): Promise<Response> {
   if ('error' in body) return body.error
   const store = storesOf(c).notify
   const current = await store.list()
-  if (current.rev !== body.ok.ifRev) return apiError('conflict', { reason: 'stale', current })
+  if (current.rev !== body.ok.ifRev) return apiError('conflict', { current })
   const ids = [...new Set(body.ok.channelIds)]
   const checked: { channelId: string; name: string }[] = []
   for (const channelId of ids) {
@@ -92,6 +92,6 @@ export async function putNotifyChannels(c: NotifyRouteCtx): Promise<Response> {
     names.set(key, ch.channelId)
   }
   const saved = await store.save({ channels: checked, alertsChannelId: body.ok.alertsChannelId ?? null, ifRev: body.ok.ifRev }, writer(c))
-  if ('conflict' in saved) return apiError('conflict', { reason: 'stale', current: saved.conflict })
+  if ('conflict' in saved) return apiError('conflict', { current: saved.conflict })
   return apiJson(saved.ok)
 }
