@@ -22,6 +22,7 @@ import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
 import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
+import { runAlarmNow } from '@test-controls'
 import { createRunTokens } from './tokens.ts'
 import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
 import type { HubSocket, SocketPrincipal } from './sockets.ts'
@@ -77,6 +78,18 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
 
   async alarm(): Promise<void> {
     await this.sched.alarm()
+  }
+
+  /**
+   * The test build's alarm-now control (route 67, server/ops/alarm-now.ts; p4-w6.md OC 2): one scheduler pass, as
+   * `alarm()` runs it, called directly (no `blockConcurrencyWhile`: it would hold inbound calls, reset the object after
+   * 30 s, and deadlock a handler that calls back into the object). So this pass may overlap the runtime's own alarm:
+   * that rests on what the scheduler already relies on for at-least-once alarms, handlers idempotent by task id and
+   * results that commit only for the generation they started with (W6's "fire twice, exactly one turn" case tests it).
+   * Outside the test build `@test-controls` is the off module, which throws; route 67 answers 404 there first.
+   */
+  async testRunAlarm(): Promise<{ ran: true }> {
+    return runAlarmNow(() => this.sched.alarm())
   }
 
   /**

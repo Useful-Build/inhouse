@@ -1,5 +1,6 @@
 // check-product-config fixture: a deployable config (invented values).
 {
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {

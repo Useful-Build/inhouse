@@ -176,6 +176,9 @@ jobs:
 
   # The TEST BUILD (P2, p2-design section 10): the product Worker under `wrangler dev` with a fresh local D1 and the
   # test issuer. No secret anywhere: the issuer's key pair is made per run and only its public half reaches the Worker.
+  # P4 wave 4: the connector hub runs beside it in the same multi-config `wrangler dev` (the product's config first, then
+  # wrangler.hub.test.jsonc, one --persist-to; e2e/support/test-build/issuer.ts), answering from the recorded Shopify
+  # fixture with its test-only keys. No store credential.
   test-build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -192,6 +195,10 @@ jobs:
         with:
           persist-credentials: false
       - run: npm ci
+      # The hub's own packages (app/hub/ is its own package, not installed by app/'s npm ci): the hub Worker in the
+      # multi-config `wrangler dev` bundles from them.
+      - run: npm ci
+        working-directory: app/hub
       - run: npm run build:product-test
       # The migration job, fresh install: every migration in server/migrations/ on an empty local D1. From P3 it also
       # upgrades from the last release tag and runs that tag's API specs on the new schema.
