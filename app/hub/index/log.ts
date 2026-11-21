@@ -14,6 +14,8 @@ export type LogEvent =
   | 'connect_complete'
   | 'revoke_failed'
   | 'mcp_call'
+  // P5 (p5-w2)
+  | 'hub_codemode'
   // P5 (p5-w4)
   | 'hub_delivery'
 
@@ -32,6 +34,11 @@ export type LogFields = {
   memberId?: string
   upstreamTool?: string
   parts?: number
+  // P5 (p5-w2): code mode, never the code, a query, variables or a result
+  codeHash?: string
+  calls?: number
+  bytes?: number
+  outcome?: string
   // P5 (p5-w4): the first 12 hex of SHA-256 of a channel id, never the id or the text.
   channelHash?: string
 }
@@ -51,6 +58,11 @@ const ALLOWED: readonly (keyof LogFields)[] = [
   'memberId',
   'upstreamTool',
   'parts',
+  // P5 (p5-w2)
+  'codeHash',
+  'calls',
+  'bytes',
+  'outcome',
   // P5 (p5-w4)
   'channelHash',
 ]

@@ -29,3 +29,5 @@ export const FILE_REFUSAL = {
   tooLarge: 'too_large', tooMany: 'too_many', typeNotAllowed: 'type_not_allowed', saveFailed: 'save_failed', badName: 'bad_name',
 } as const satisfies Record<string, FileRefusalReason>
 export const RATE_LIMITED = 'rate_limited' satisfies AgentErrorCode
+/** The query parameter W1's sign-in callback puts a failure's code in (`/tools/slack?connect_error=<code>`), kept here so no snake_case string is in src/ (check-icons). */
+export const CONNECT_ERROR_PARAM = 'connect_error'

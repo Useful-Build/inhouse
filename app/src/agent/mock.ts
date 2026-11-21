@@ -932,6 +932,9 @@ export class MockAgent implements AgentClient {
     if (paused) toolPaused[key] = true; else delete toolPaused[key]
     return this.write({ toolPaused })
   }
+  /** The demo has no sign-in at a tool: the address is this app's own, which the Tools page reads as "connected" (no navigation). */
+  connectTool(key: string): Promise<{ authorizeUrl: string }> { return Promise.resolve({ authorizeUrl: `/tools/${encodeURIComponent(key)}?connected=1` }) }
+  disconnectTool(_key: string): Promise<{ revoked: boolean }> { return this.rejected('unavailable', "Disconnecting isn't connected in this demo.", true) }
   forgetMemory(key: string, forgotten: boolean) {
     const rec = `memory:${key}`
     const stale = this.conflict(rec, 1, () => ({ key, rev: this.rev(rec, 1) }))

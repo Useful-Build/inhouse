@@ -35,9 +35,19 @@ describe('grants and reads', () => {
 
   it('validates the request', async () => {
     const h = harness()
-    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ a }', apiVersion: '2026-11' }))).toBe('invalid_args')
-    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ a }', apiVersion: API, variables: [] as never }))).toBe('invalid_args')
+    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ shop { currencyCode } }', apiVersion: '2026-11' }))).toBe('invalid_args')
+    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ shop { currencyCode } }', apiVersion: API, variables: [] as never }))).toBe('invalid_args')
     expect(codeOf(await h.core.query(null as never))).toBe('invalid_args')
+  })
+
+  it('P5 W2 (review H1): junk, undeclared, function and oversize variables are refused before any token or upstream call', async () => {
+    const h = harness()
+    const doc = 'query Q($q: String) { orders(first: 1, query: $q) { nodes { id } } }'
+    const q = (variables: unknown) => h.core.query({ accountId: ACCOUNT, document: doc, apiVersion: API, variables: variables as never })
+    expect(await q({ q: 'sku:"a"', junk: 'x'.repeat(1000) })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: field not allowed' } })
+    expect(await q({ q: () => 'sku:"a"' })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: variables' } })
+    expect(await q({ q: 'x'.repeat(16 * 1024) })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: variables' } })
+    expect(h.shop.grants + h.shop.reads.length).toBe(0)
   })
 
   it('a call naming another account is internal and logged', async () => {
@@ -45,7 +55,7 @@ describe('grants and reads', () => {
     await readQuery(h)
     const lines: string[] = []
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')))
-    expect(codeOf(await h.core.query({ accountId: 'shopify:other', document: '{ a }', apiVersion: API }))).toBe('internal')
+    expect(codeOf(await h.core.query({ accountId: 'shopify:other', document: '{ shop { currencyCode } }', apiVersion: API }))).toBe('internal')
     expect(codeOf(h.core.status('shopify:other'))).toBe('internal')
     expect(lines.some(l => l.includes('"hub_internal"'))).toBe(true)
   })
@@ -55,7 +65,7 @@ describe('grants and reads', () => {
     h.config.value = null
     expect(codeOf(await readQuery(h))).toBe('not_configured')
     const h2 = harness()
-    expect(codeOf(await h2.core.query({ accountId: 'shopify:nobody', document: '{ a }', apiVersion: API }))).toBe('not_configured')
+    expect(codeOf(await h2.core.query({ accountId: 'shopify:nobody', document: '{ shop { currencyCode } }', apiVersion: API }))).toBe('not_configured')
     for (const json of [undefined, '{}', JSON.stringify({ current: 'k1', keys: {} })]) {
       const h3 = harness({ ring: { json } })
       expect(codeOf(await readQuery(h3))).toBe('key_unavailable')
@@ -518,7 +528,7 @@ describe('the canary token (property 8)', () => {
           h.shop.nextToken = () => `${canary}x`
           h.shop.revokeAll()
           results.push(await readQuery(h))
-          results.push(await h.core.query({ accountId: 'shopify:other', document: '{ a }', apiVersion: API }))
+          results.push(await h.core.query({ accountId: 'shopify:other', document: '{ shop { currencyCode } }', apiVersion: API }))
           h.clock.ms += LIFETIME_S * 1000
           await h.core.alarm()
         },

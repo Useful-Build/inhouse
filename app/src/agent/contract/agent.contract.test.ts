@@ -1008,6 +1008,16 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       checkWorld('after the plain writes')
     })
 
+    // The shared shape only; each target's exact answer is its own (the mock's is in mock.tools.test.ts).
+    only('connectTool', 'disconnectTool')('connect answers an address the page can read; a disconnect that cannot happen is an AgentError', async () => {
+      const { authorizeUrl } = await t.client.connectTool(fx.toolKey)
+      expect(() => new URL(authorizeUrl, 'https://app.example.test')).not.toThrow()
+      expect(authorizeUrl.length).toBeGreaterThan(0)
+      const refused = await t.client.disconnectTool(fx.toolKey).then(() => null, (e: unknown) => e)
+      expect(refused).toBeInstanceOf(AgentError)
+      checkWorld('after connect and a refused disconnect')
+    })
+
     only('setToggle', 'setSetting', 'setPhoto')('toggles, settings and photos', async () => {
       const c = t.client
       await c.setToggle(fx.toggleKey, false)

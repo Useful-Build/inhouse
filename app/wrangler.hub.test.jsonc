@@ -18,6 +18,8 @@
 		"bindings": [{ "name": "SIGNIN", "class_name": "SignIn" }]
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignIn"] }],
+	// P5 W2: code mode runs scripts in Dynamic Workers (env.LOADER). Exactly this one binding (check-hub-config.mjs).
+	"worker_loaders": [{ "binding": "LOADER" }],
 	// Turns on the test upstream seam (hub/testing/), together with INHOUSE_TEST_BUILD below.
 	"define": {
 		"__INHOUSE_HUB_TEST__": "true"

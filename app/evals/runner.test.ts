@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
 import { SLACK_SEARCH_CASE } from './connectors/slack-search/case.ts'
+import { CODEMODE_CASES } from './connectors/codemode/cases.ts'
 import { CANNED, createFakeTarget } from './targets/fake.ts'
 import { createFixtureTarget } from './targets/fixture.ts'
 import { createProductTarget, ProductTargetRefusal } from './targets/product.ts'
@@ -10,8 +11,10 @@ import { S5_PEOPLE } from './s5-fixtures.ts'
 import type { ChatResult, Target } from './types.ts'
 
 const USAGE = { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }
-// The Slack search case (P5) needs the hub's live Slack tool: no S5 canned transcript, the fake and fixture targets don't serve it.
-const S5_SET = CASES.filter((c) => c.id !== SLACK_SEARCH_CASE.id)
+// The Slack search case (P5) needs the hub's live Slack tool, and the code-mode cases (P5 W2) the live Shopify store: no
+// S5 canned transcript, the fake and fixture targets don't serve them.
+const LIVE_ONLY = new Set([SLACK_SEARCH_CASE.id, ...CODEMODE_CASES.map((c) => c.id)])
+const S5_SET = CASES.filter((c) => !LIVE_ONLY.has(c.id))
 const META = { target: 'fake', model: 'claude-sonnet-5-5', effort: 'medium', reps: 3, notRun: [] }
 
 describe('the fake target, full set end to end', () => {
@@ -63,10 +66,10 @@ describe('the fake target, full set end to end', () => {
 })
 
 describe('the fixture target replays S5', () => {
-  it('serves only the 43 S5 cases and reports the rest (the Slack case, the exfiltration cases) as not run', async () => {
+  it('serves only the 43 S5 cases and reports the rest (the Slack case, the code-mode cases, the exfiltration cases) as not run', async () => {
     const out = await runEvals({ target: createFixtureTarget(), cases: CASES, reps: 3, concurrency: 3 })
     expect(out.rows).toHaveLength(138)
-    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-SLACK-01', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
+    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
     const report = buildReport(CASES, out.rows, META)
     expect(report.summary.all).toMatchObject({ runs: 129, pass: 125 })
   })

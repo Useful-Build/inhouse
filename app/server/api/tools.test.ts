@@ -57,16 +57,19 @@ describe('route C: the merge', () => {
   it('a configured account the Inhouse team has not connected is in the catalog, not in connected', () => {
     const d = buildToolsData({ accounts: [acct('slack:workspace', { state: 'empty' })], rows: [], nowMs: NOW })
     expect(d.connected).toEqual([])
-    expect(d.catalog.map(c => c.k)).toEqual(['slack'])
+    expect(d.catalog).toEqual([{ k: 'slack', name: 'Slack', desc: 'Team conversations in the channels your agent can see', need: 0, accountId: 'slack:workspace' }])
     expect(d.channels).toEqual([])
-    expect(d.details.slack!.canDisconnect).toBe(false)
+    // A catalog tool has no details (the UI's rule: details are for tools connected or being connected).
+    expect(d.details).toEqual({})
   })
   it('a connecting row 2 minutes old is being connected; one 11 minutes old is not; exactly 10 minutes still is', () => {
     const at = (ageMs: number) => buildToolsData({ accounts: [acct('slack:workspace', { state: 'empty' })], rows: [row('slack:workspace', 'connecting', NOW - ageMs)], nowMs: NOW })
     expect(at(2 * MIN).beingConnected).toEqual(['slack'])
+    expect(at(2 * MIN).catalog).toEqual([])
+    expect(at(11 * MIN).catalog.map(c => c.k)).toEqual(['slack'])
+    expect(Object.keys(at(11 * MIN).details)).toEqual(['slack'])
     expect(at(2 * MIN).details.slack!.liveBy).toEqual(inst(NOW - 2 * MIN + 10 * MIN))
     expect(at(11 * MIN).beingConnected).toEqual([])
-    expect(at(11 * MIN).details.slack!.liveBy).toBeUndefined()
     expect(at(10 * MIN).beingConnected).toEqual(['slack'])
     expect(CONNECT_STATE_TTL_MS).toBe(10 * MIN)
   })
@@ -108,6 +111,35 @@ describe('route C: the merge', () => {
     expect(slack([row('slack:workspace', 'connected', NOW - 3 * MIN)])).toEqual([inst(NOW - 3 * MIN)])
     expect(slack([], { connectedAt: inst(NOW - 8 * MIN) })).toEqual([inst(NOW - 8 * MIN)])
     expect(slack([])).toEqual([])
+  })
+  it('a disconnected tool (hub state, row) keeps its details, with the failed revoke, and is a catalog entry to connect again', () => {
+    const d = buildToolsData({
+      accounts: [acct('slack:workspace', { state: 'disconnected', revokeFailedAt: inst(NOW - MIN) })],
+      rows: [row('slack:workspace', 'disconnected', NOW - MIN)], nowMs: NOW,
+    })
+    expect(d.connected).toEqual([])
+    expect(d.channels).toEqual([])
+    expect(d.catalog.map(c => [c.k, c.accountId])).toEqual([['slack', 'slack:workspace']])
+    expect(d.details.slack).toMatchObject({ accountId: 'slack:workspace', revokeFailed: true, canDisconnect: false })
+    expect(d.details.slack!.since).toBeUndefined()
+  })
+  it('the hub alone: a disconnected or failed account with NO row still shows (state from the hub, no time invented)', () => {
+    const off = buildToolsData({ accounts: [acct('slack:workspace', { state: 'disconnected', revokeFailedAt: inst(NOW - MIN) })], rows: [], nowMs: NOW })
+    expect(off.connected).toEqual([])
+    expect(off.details.slack).toMatchObject({ accountId: 'slack:workspace', revokeFailed: true })
+    expect(off.catalog.map(c => c.k)).toEqual(['slack'])
+    const lost = buildToolsData({ accounts: [acct('slack:workspace', { state: 'failed' })], rows: [], nowMs: NOW })
+    expect(lost.connected).toEqual(['slack'])
+    expect(lost.connection).toEqual({ slack: { status: 'disconnected', since: inst(0) } })
+    expect(Object.keys(lost.details)).toEqual(['slack'])
+  })
+  it('a first connect that failed or was declined leaves a row but no hub state: the details stay, so its page opens', () => {
+    for (const lastState of ['never', 'failed', 'disconnected'] as const) {
+      const d = buildToolsData({ accounts: [acct('slack:workspace', { state: 'empty' })], rows: [row('slack:workspace', lastState, NOW - MIN)], nowMs: NOW })
+      expect(Object.keys(d.details), lastState).toEqual(['slack'])
+      expect(d.catalog.map(c => c.k), lastState).toEqual(['slack'])
+      expect(d.connected).toEqual([])
+    }
   })
   it('readDone counts only tools the agent can read now: active, not paused, no reconnect needed', () => {
     const n = (over: Partial<AccountSummary['status']>) => buildToolsData({ accounts: [acct('slack:workspace', over), acct('shopify:store')], rows: [], nowMs: NOW }).readDone
