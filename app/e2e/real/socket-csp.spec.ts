@@ -25,9 +25,13 @@ test('A chat sent from the composer is answered over a same-origin socket, with 
   await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('scenario:hello can you hear me?')
   // Pick the model like a person would. The composer's default is Opus, but the scripted model answers only for the harness model
   // (Sonnet, the picker's "Fast"): on a phone the choices sit in the "+" menu, elsewhere in the model menu.
+  // The model menu button ("Model: <label>", Composer.tsx) shows once the models are read, so wait for whichever control the
+  // layout has before choosing: an immediate visibility check races that read and fell through to the phone's "+" on a desktop.
   const modelMenu = page.getByRole('button', { name: /^Model:/ })
+  const plusMenu = page.getByRole('button', { name: 'Attach, tools and model' })
+  await expect(modelMenu.or(plusMenu), 'the composer shows neither a "Model: ..." button nor an "Attach, tools and model" button').toBeVisible({ timeout: 60_000 })
   if (await modelMenu.isVisible()) await modelMenu.click()
-  else await page.getByRole('button', { name: 'Attach, tools and model' }).click()
+  else await plusMenu.click()
   await page.getByRole('menuitemradio', { name: /^Fast/ }).click()
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Send', exact: true }).click()
