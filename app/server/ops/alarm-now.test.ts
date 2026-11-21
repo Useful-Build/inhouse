@@ -70,6 +70,15 @@ async function dueProbe(): Promise<string> {
 const probeState = (id: string) => runInDurableObject(brand(), (_i, state) =>
   state.storage.sql.exec<{ state: string; last_error: string | null }>('SELECT state, last_error FROM due_tasks WHERE id = ?', id).toArray())
 const dropProbe = (id: string) => runInDurableObject(brand(), (_i, state) => { state.storage.sql.exec('DELETE FROM due_tasks WHERE id = ?', id) })
+/** Runs `fn` with a due probe and always removes the probe, so a failed assertion leaves no row behind. */
+async function withProbe(fn: (id: string) => Promise<void>): Promise<void> {
+  const id = await dueProbe()
+  try {
+    await fn(id)
+  } finally {
+    await dropProbe(id)
+  }
+}
 /** Silences the logs and returns the `test_control` lines the object wrote (they reach the test's console in workerd). */
 const controlLines = () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -81,26 +90,26 @@ const controlLines = () => {
 describe('route 67 outside the test build (failure 1)', () => {
   it('product build (compiled out, this test\'s own compile): 404 not_found to the release token, no pass', async () => {
     const lines = controlLines()
-    const probe = await dueProbe()
-    const res = await setup()('/api/ops/alarm', { method: 'POST', headers: await release() })
-    expect(res.status).toBe(404)
-    expect(await bodyOf(res)).toEqual({ error: { code: 'not_found' } })
-    expect(lines()).toEqual([])
-    expect(await probeState(probe)).toEqual([{ state: 'ready', last_error: null }])
-    await dropProbe(probe)
+    await withProbe(async probe => {
+      const res = await setup()('/api/ops/alarm', { method: 'POST', headers: await release() })
+      expect(res.status).toBe(404)
+      expect(await bodyOf(res)).toEqual({ error: { code: 'not_found' } })
+      expect(lines()).toEqual([])
+      expect(await probeState(probe)).toEqual([{ state: 'ready', last_error: null }])
+    })
     vi.restoreAllMocks()
   })
 
   it('compiled in but not switched on (no INHOUSE_TEST_BUILD, or not "1"): 404, no pass', async () => {
     const lines = controlLines()
-    const probe = await dueProbe()
-    for (const flag of [undefined, '0', 'true']) {
-      const res = await setup({ compiled: true, flag })('/api/ops/alarm', { method: 'POST', headers: await release() })
-      expect(res.status, String(flag)).toBe(404)
-    }
-    expect(lines()).toEqual([])
-    expect(await probeState(probe)).toEqual([{ state: 'ready', last_error: null }])
-    await dropProbe(probe)
+    await withProbe(async probe => {
+      for (const flag of [undefined, '0', 'true']) {
+        const res = await setup({ compiled: true, flag })('/api/ops/alarm', { method: 'POST', headers: await release() })
+        expect(res.status, String(flag)).toBe(404)
+      }
+      expect(lines()).toEqual([])
+      expect(await probeState(probe)).toEqual([{ state: 'ready', last_error: null }])
+    })
     vi.restoreAllMocks()
   })
 })
@@ -110,14 +119,14 @@ describe('route 67 in the test build (failures 2 and 3)', () => {
     const lines = controlLines()
     const call = setup({ compiled: true, flag: '1' })
     const h = await release()
-    const probe = await dueProbe()
-    expect(await probeState(probe)).toEqual([{ state: 'ready', last_error: null }])
-    const res = await call('/api/ops/alarm', { method: 'POST', headers: h })
-    expect(res.status).toBe(200)
-    expect(await bodyOf(res)).toEqual({ ran: true })
-    // The pass reached the due task: an unknown kind is quarantined (scheduler.ts), so the state changed in this pass.
-    expect(await probeState(probe)).toEqual([{ state: 'quarantined', last_error: 'unknown kind alarm-now-probe' }])
-    await dropProbe(probe)
+    await withProbe(async probe => {
+      expect(await probeState(probe)).toEqual([{ state: 'ready', last_error: null }])
+      const res = await call('/api/ops/alarm', { method: 'POST', headers: h })
+      expect(res.status).toBe(200)
+      expect(await bodyOf(res)).toEqual({ ran: true })
+      // The pass reached the due task: an unknown kind is quarantined (scheduler.ts), so the state changed in this pass.
+      expect(await probeState(probe)).toEqual([{ state: 'quarantined', last_error: 'unknown kind alarm-now-probe' }])
+    })
     expect(lines()).toEqual([[{ event: 'test_control', control: 'alarm_now', canary: 'inhouse-test-controls-canary-5d81e0a7' }]])
     for (const who of ['member', 'admin'] as const) {
       const r = await call('/api/ops/alarm', { method: 'POST', headers: await person(who) })
