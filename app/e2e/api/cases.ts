@@ -48,6 +48,8 @@ const NO_CHAT = 'c_e2e_nobody'
 const NO_MEMORY = 'mem_e2eNobodyAAAAAAAAAAAAA'
 /** A Today item id of the right shape (`p_` + 22) that names nothing. */
 const NO_TODAY = 'p_e2eNobodyAAAAAAAAAAAAA'
+/** A routine id nobody has (`rt_` + 22, audit.ts `RoutineIdSchema`). */
+const NO_ROUTINE = 'rt_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -131,6 +133,12 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/library/:id/download': { design: d('brand_data', ALL), path: `/api/library/f_${'0'.repeat(22)}/download`, passes: 404 },
   'POST /api/library/delete': { design: d('brand_data', ALL), path: '/api/library/delete', json: {}, passes: 400 },
   'POST /api/library/restore': { design: d('brand_data', ALL), path: '/api/library/restore', json: {}, passes: 400 },
+  // Rows 52 to 56 (P4 W2): the Routines page. The list reads (200); a write names a routine nobody has (404, nothing written).
+  'GET /api/routines': { design: d('brand_data', ALL), path: '/api/routines', passes: 200 },
+  'PUT /api/routines/:id/enabled': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/enabled`, json: { on: false, ifRev: 1 }, passes: 404 },
+  'POST /api/routines/:id/run': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/run`, json: { clientKey: 'e2e-run-key-1' }, passes: 404 },
+  'POST /api/routines/:id/delete': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/delete`, json: { ifRev: 1 }, passes: 404 },
+  'POST /api/routines/:id/restore': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/restore`, json: { ifRev: 1 }, passes: 404 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 

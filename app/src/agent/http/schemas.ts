@@ -16,6 +16,7 @@ import { NotificationsListSchema, NotificationsReadInputSchema } from '../../../
 import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
 import { UsageDataSchema } from '../../../shared/contract/usage'
+import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../../shared/contract/routines'
 import { z } from 'zod'
 import { ChatIdsInputSchema, ChatListSchema, ChatPageSchema, ChatPinInputSchema, ChatRenameInputSchema, ChatSummarySchema } from '../../../shared/contract/chats'
 import { ModelModeSchema } from '../../../shared/contract/model'
@@ -37,6 +38,8 @@ export const ANSWERS = {
   activityPage: ActivityPageSchema, notifications: NotificationsListSchema,
   // P4 (W5): the Library (rows 62, 63, 65 and 66).
   libraryPage: LibraryPageSchema, libraryFile: LibraryFileSchema, libraryFiles: LibraryFilesSchema,
+  // P4 (W2): the Routines page (routes 52 to 56).
+  routines: RoutinesListSchema, routineState: RoutineStateSchema, routineRun: RoutineRunAnswerSchema,
 }
 
 /** What each write sends. */
@@ -46,6 +49,7 @@ export const BODIES = {
   memoryForget: MemoryForgetInputSchema,
   notificationsRead: NotificationsReadInputSchema,
   libraryWrite: LibraryWriteSchema,
+  routineEnabled: RoutineEnabledInputSchema, routineRun: RoutineRunInputSchema, routineRev: RoutineRevInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
 }
 

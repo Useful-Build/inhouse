@@ -1,12 +1,10 @@
 // Which run Today shows, and which status cards it adds (p4-w3.md section 5). Pure: the slots and the clock come in, so
 // the literal timelines in the tests are the whole oracle. "Newer" is `(local_date, claimed_at_ms)` as a pair, never the
 // slot key's text; Today shows the shown run's items only, so a late older result can't bring a resolved problem back.
+import { ON_TIME_MS } from '../routines/limits.ts'
 import { instantOf, intlZone, weekdayBit } from '../routines/slots.ts'
 import { gapsOfSummary } from './words.ts'
 import type { CardCause } from './ids.ts'
-
-/** How long after its time a slot is on time (W2's `ON_TIME_MS`, OC 2; view.test.ts keeps the two equal). Not imported: the tick's module graph is too heavy for the stores' (the seed script loads them in plain node). */
-export const ON_TIME_MS = 10 * 60_000
 
 export interface SlotFacts {
   slot_key: string

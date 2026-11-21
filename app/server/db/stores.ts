@@ -39,8 +39,8 @@ import type { LibraryStore } from '../files/store.ts'
 import { todayStore } from '../today/store.ts'
 import type { TodayStore } from '../today/store.ts'
 
-import { routinesSignal } from '../routines/signal.ts'
-import type { SignalResult } from '../ops/signals/types.ts'
+import { routineStore } from '../routines/store.ts'
+import type { RoutineStore } from '../routines/store.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -76,8 +76,8 @@ export interface Stores extends AuthStores {
   /** P4 W3 (p4-w3.md section 5): Today's read and the set-aside write. */
   today: TodayStore
 
-  /** P4 W2 (p4-w2.md section 11): the routines signal's read. */
-  routines: { signal(nowMs: number): Promise<SignalResult> }
+  /** P4 W2 (p4-w2.md sections 9 to 11): routes 33 and 52 to 56, and the routines signal's read. */
+  routines: RoutineStore
 
   /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
   library: LibraryStore
@@ -146,7 +146,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
 
     today: todayStore({ db, hook }),
 
-    routines: { signal: nowMs => routinesSignal(db, nowMs) },
+    routines: routineStore({ db }),
 
     library: libraryStore({ db, bucket: env.FILES }),
   }

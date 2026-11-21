@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { ClockTimeSchema, InstantSchema, StageIndexSchema } from './common.ts'
 
-export const RoutineDefSchema = z.object({
+export const RoutineDefSchema = z.strictObject({
   /** The agent's own id for the routine: stable, and what runRoutine, deleteRoutine and restoreRoutine take. */
   id: z.string(),
   name: z.string(),

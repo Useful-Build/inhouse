@@ -34,7 +34,7 @@ export function endTaskId(slotKey: string): string {
 }
 
 /** A Run now's client key: the turn key shape without `.` (audit.ts `SlotKeySchema`), so its end id round-trips. */
-export const CLIENT_KEY = /^[A-Za-z0-9_-]{8,64}$/
+export { ROUTINE_CLIENT_KEY as CLIENT_KEY } from '../../shared/contract/routines.ts'
 
 /** The slot key an end task id names, or null when the id isn't a `routine-end` id. */
 export function slotKeyOfEndTask(taskId: string): string | null {
