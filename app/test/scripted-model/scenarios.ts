@@ -21,6 +21,18 @@ const resultOf = (id: string) => (r: MessagesRequest) => {
   return last?.role === 'user' && JSON.stringify(last.content).includes(`"tool_use_id":"${id}"`)
 }
 
+/**
+ * The last user message carries the result of tool call `id`, and its `is_error` is what the scenario expects: `error: true`
+ * wants a refusal, `error: false` wants a call that went through (absent counts as false). A mismatch is a loud miss, so a
+ * WebFetch the egress refused can't pass as an allowed one, nor the other way round.
+ */
+const resultIs = (id: string, error: boolean) => (r: MessagesRequest) => {
+  const last = r.messages.at(-1)
+  if (last?.role !== 'user' || !Array.isArray(last.content)) return false
+  const block = last.content.find((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id) as { is_error?: unknown } | undefined
+  return block !== undefined && (block.is_error === true) === error
+}
+
 const both =
   (...checks: ((r: MessagesRequest) => boolean)[]) =>
   (r: MessagesRequest) =>
@@ -132,7 +144,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'webfetch-allowed': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_fetch', name: 'WebFetch', input: { url: WEBFETCH_ALLOWED_URL, prompt: 'Summarise the page' } }], expect: mainLoop('WebFetch') },
-      { content: [{ type: 'text', text: 'Read the page.' }], expect: both(mainLoop('WebFetch'), resultOf('toolu_scripted_fetch')) },
+      { content: [{ type: 'text', text: 'Read the page.' }], expect: both(mainLoop('WebFetch'), resultIs('toolu_scripted_fetch', false)) },
     ],
   },
 
@@ -140,7 +152,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'webfetch-refused': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_fetch_refused', name: 'WebFetch', input: { url: WEBFETCH_REFUSED_URL, prompt: 'Summarise the page' } }], expect: mainLoop('WebFetch') },
-      { content: [{ type: 'text', text: 'The page could not be read.' }], expect: both(mainLoop('WebFetch'), resultOf('toolu_scripted_fetch_refused')) },
+      { content: [{ type: 'text', text: 'The page could not be read.' }], expect: both(mainLoop('WebFetch'), resultIs('toolu_scripted_fetch_refused', true)) },
     ],
   },
 

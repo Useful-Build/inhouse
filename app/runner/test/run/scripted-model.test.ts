@@ -24,10 +24,10 @@ const structuredReq = (messages: Msg[]) =>
 /** A main-loop request with WebFetch in its tool list, as the WebFetch scenarios expect. */
 const webReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }, { name: 'WebFetch' }] })
-/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those. */
 /** A main-loop request with the memory tool in its list, as `memory-save` expects. */
 const memoryReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_save' }] })
+/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`. */
 const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name === 'memory-save' ? memoryReq : mainReq)
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
@@ -106,7 +106,7 @@ describe('the scripted model', () => {
     expect(first.content).toEqual([expect.objectContaining({ type: 'tool_use', name: 'WebFetch', input: { url, prompt: 'Summarise the page' } })])
     const asked: Msg = { role: 'assistant', content: SCENARIOS[name]!.turns[0]!.content }
     expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: 'go on' }]), name)).status).toBe(400)
-    const res = await model.handle(webReq([{ role: 'user', content: 'q' }, asked, toolResult(id)]), name)
+    const res = await model.handle(webReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', ...(name === 'webfetch-refused' ? { is_error: true } : {}) }] }]), name)
     expect(res.status).toBe(200)
     expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe(answer)
   })
@@ -118,6 +118,19 @@ describe('the scripted model', () => {
     const asked: Msg = { role: 'assistant', content: SCENARIOS['memory-save']!.turns[0]!.content }
     expect((await model.handle(memoryReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: 'go on' }]), 'memory-save')).status).toBe(400)
     expect((await model.handle(memoryReq([{ role: 'user', content: 'q' }, asked, toolResult('toolu_scripted_memory')]), 'memory-save')).status).toBe(200)
+  })
+
+  it.each([
+    ['webfetch-allowed', 'toolu_scripted_fetch', true],
+    ['webfetch-refused', 'toolu_scripted_fetch_refused', false],
+  ])('%s: a result whose is_error is the other way round is a miss (the turn fails loud)', async (name, id, wrongError) => {
+    const model = createScriptedModel(SCENARIOS)
+    const asked: Msg = { role: 'assistant', content: SCENARIOS[name]!.turns[0]!.content }
+    const wrong: Msg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', ...(wrongError ? { is_error: true } : { is_error: false }) }] }
+    expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, wrong]), name)).status).toBe(400)
+    expect(model.misses.at(-1)!.reason).toBe('the request does not match the turn')
+    const right: Msg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', ...(wrongError ? {} : { is_error: true }) }] }
+    expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, right]), name)).status).toBe(200)
   })
 
   it("ask: the resume (turn 1) answers only a request whose last user message carries the question's result", async () => {
