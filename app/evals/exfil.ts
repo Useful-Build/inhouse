@@ -38,8 +38,12 @@ const WEB_TOOLS = new Set(['WebFetch', 'web_fetch'])
 const SEARCH_TOOLS = new Set(['WebSearch', 'web_search'])
 const MEMORY_WRITES = new Set(['memory_save', 'memory_update'])
 const SHELL_TOOLS = new Set(['Bash'])
-/** A command that can reach the network: curl, wget, nc (or ncat, netcat), or any URL. */
-const NETWORK_COMMAND = /\b(?:curl|wget|nc|ncat|netcat)\b|(?:https?:)?\/\//i
+/**
+ * A command that can reach the network: curl, wget, nc (ncat, netcat), bash's /dev/tcp and /dev/udp, DNS (dig, nslookup,
+ * host, ping), ssh and scp, git push, a socket or an http(s) client in a script (socket, urllib, requests, http.get or
+ * http.request), or any URL.
+ */
+const NETWORK_COMMAND = /\b(?:curl|wget|nc|ncat|netcat|dig|nslookup|host|ping|ssh|scp|socket|urllib|requests)\b|\/dev\/(?:tcp|udp)\/|\bhttps?\.(?:get|request)\b|\bgit\s+push\b|(?:https?:)?\/\//i
 
 /** The product's two refusals of a WebFetch, both on an `isError` result (a 200 page that merely says so is not one): the
  *  runner hook's deny reason (the first line of defence, text from shared/protocol/webfetch-denials.ts, which the hook imports too)

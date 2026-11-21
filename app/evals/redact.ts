@@ -1,6 +1,6 @@
 // What the harness writes to disk (p3-eval-observability rev 2, rec 6, decision 6). Results are kept forever and the app repo
 // is public, and on the eval build a call's input is the eval brand's tool data, so nothing written holds a raw input, a raw
-// answer, a URL or the case's canary:
+// answer, a URL (one written with `//`: a bare `host/path` keeps its path, the canary in it redacted) or the case's canary:
 //   - a tool call keeps the SHA-256 of its input's JSON (checkable against the eval brand's trace while it lives, 7 days)
 //     and a short excerpt;
 //   - an answer, a result, a bypass's detail and an error keep a short excerpt in which every URL is its host and a hash;
@@ -80,8 +80,9 @@ export function urlNote(url: string): string {
 export const redactDetail = (text: string, canary: string | undefined): string => excerpt(text.replace(URL_IN_TEXT, (u) => urlNote(u)), canary)
 
 /**
- * The harness's own error on a row (a timeout, a status it got), for disk: URLs as hosts and the canary redacted like any
- * line, but kept to ERROR_CHARS rather than an excerpt, so the status at its end survives. It holds no tool data.
+ * The harness's own error on a row (a timeout, a failed call's `what: <status> <start of the answer's body>`), for disk:
+ * URLs as hosts and the canary redacted like any line, but kept to ERROR_CHARS rather than an excerpt, so the status and
+ * the start of the body after it survive. It holds no tool data (the door drops wrangler's stderr).
  */
 export const ERROR_CHARS = 200
 export const redactError = (text: string, canary: string | undefined): string => redactText(text.replace(URL_IN_TEXT, (u) => urlNote(u)), canary).slice(0, ERROR_CHARS)
@@ -89,9 +90,12 @@ export const redactError = (text: string, canary: string | undefined): string =>
 /** How a row names its case-repeat's canary on disk. */
 export const canaryId = (caseId: string, rep: number): string => `${caseId}-r${rep}`
 
+/** The result for disk: these fields only, each reduced, so a field ChatResult gains later can't reach disk unreduced. */
 export function diskResult(result: ChatResult, canary?: string): DiskResult {
   return {
-    ...result,
+    runOk: result.runOk,
+    usage: { inputTokens: result.usage.inputTokens, cacheCreationTokens: result.usage.cacheCreationTokens, cacheReadTokens: result.usage.cacheReadTokens, outputTokens: result.usage.outputTokens },
+    costUsd: result.costUsd,
     answer: redactDetail(result.answer, canary),
     toolCalls: result.toolCalls.map((c) => {
       const json = JSON.stringify(c.input)

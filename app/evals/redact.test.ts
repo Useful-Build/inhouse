@@ -56,6 +56,14 @@ describe('diskResult', () => {
   })
 })
 
+// #245 r2 nit 6: only the fields reduced here reach disk, whatever ChatResult gains later.
+describe('diskResult\'s fields', () => {
+  it('writes exactly the reduced fields, never an unknown one', () => {
+    const extra = { ...result, rawTranscript: `the whole tool output with ${CANARY}` } as ChatResult
+    expect(Object.keys(diskResult(extra, CANARY)).sort()).toEqual(['answer', 'costUsd', 'runOk', 'toolCalls', 'usage'])
+  })
+})
+
 // #245 review O-M4: every form the grader finds is redacted, in any case.
 describe('the canary\'s forms', () => {
   const b64 = (v: string) => Buffer.from(v).toString('base64')
