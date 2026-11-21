@@ -34,6 +34,8 @@ const EXPECTED = {
   'fail-secret-define-client-secret.jsonc': ['secret-in-define'],
   'fail-secret-define-process-env.jsonc': ['secret-in-define'],
   'fail-secret-define-env-dot.jsonc': ['secret-in-define'],
+  'fail-unknown-var.jsonc': ['unknown-var'],
+  'fail-secret-slack-client-secret.jsonc': ['secret-in-vars'],
   'fail-alias.jsonc': ['bundler'],
   'fail-no-bundle.jsonc': ['bundler'],
   'fail-build.jsonc': ['bundler'],

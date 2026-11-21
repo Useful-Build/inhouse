@@ -217,7 +217,9 @@ describe('registry rules for oauth_mcp modules', () => {
   }
 
   it('accepts Slack and the notes test connector beside Shopify', () => {
-    expect(() => buildRegistry([...(connectors as readonly ConnectorModule[]), slackConnector, notesConnector])).not.toThrow()
+    // connectors/index.ts lists Slack now (orchestrator line 3); the test connector is added on top.
+    expect(connectors).toContain(slackConnector)
+    expect(() => buildRegistry([...(connectors as readonly ConnectorModule[]), notesConnector])).not.toThrow()
   })
 
   it('every connectors/mcp/*/route.ts exports a module (the connector list line is the orchestrator\'s)', async () => {

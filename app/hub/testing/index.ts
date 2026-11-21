@@ -13,6 +13,7 @@
 // - An unregistered host answers 599 with a clear message. Never a real fetch.
 
 import { createShopifyUpstream } from '../../test/upstreams/shopify/server'
+import { createMcpUpstream, SLACK_OAUTH_PATHS } from '../../test/upstreams/mcp/server'
 import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
@@ -26,6 +27,19 @@ export const testUpstreams = new Map<string, TestUpstream>()
 // The recorded Shopify store (P4 W1): the read fixture as recorded (recordings/fixture/), for the test config's
 // SHOPIFY_SHOP. Unit tests that need the planted edge cases use the hand dataset directly.
 testUpstreams.set('example-fixture.myshopify.com', createShopifyUpstream(shopifyFixtureDataset))
+
+// The fake OAuth MCP servers (P5 W1): Slack's profile and the generic `notes` server. slack.com answers only the OAuth
+// paths; W4's Web API paths join it with their fake.
+const slackMcp = createMcpUpstream('slack')
+const notesMcp = createMcpUpstream('notes')
+testUpstreams.set('mcp.slack.com', slackMcp.fetch)
+testUpstreams.set('notes.example.com', notesMcp.fetch)
+testUpstreams.set('auth.notes.example.com', notesMcp.fetch)
+testUpstreams.set('slack.com', req =>
+  (SLACK_OAUTH_PATHS as readonly string[]).includes(new URL(req.url).pathname)
+    ? slackMcp.fetch(req)
+    : Promise.resolve(new Response('no fake', { status: 599 })),
+)
 
 export async function testUpstreamFetch(req: Request): Promise<Response> {
   const host = new URL(req.url).host

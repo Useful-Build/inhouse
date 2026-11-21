@@ -38,6 +38,8 @@ export function loadRegistry(env: HubEnv): Promise<Registry> {
     if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
       const { fixtureConnector } = await import('../registry/testing/fixture-connector')
       modules.push(fixtureConnector)
+      const { notesConnector } = await import('../connectors/mcp/testing/notes-connector')
+      modules.push(notesConnector)
     }
     return buildRegistry(modules)
   })().catch((e: unknown) => {
