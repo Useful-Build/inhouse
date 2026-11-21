@@ -41,13 +41,17 @@ describe('mapSdkMessage (failure 3)', () => {
     const msg = { type: 'assistant', message: { content: [{ type: 'text', text: 'Looking.' }, { type: 'tool_use', id: 'tu', name: 'mcp__inhouse__memory_search', input: {} }, { type: 'tool_use', id: 'tu2', name: 'Mystery', input: {} }, { type: 'thinking', thinking: 'x' }] } }
     expect(mapSdkMessage(msg, false)).toEqual([
       { kind: 'text', text: 'Looking.' },
-      { kind: 'step', label: 'Searching memory', tool: 'mcp__inhouse__memory_search' },
-      { kind: 'step', label: 'Using a tool', tool: 'Mystery' },
+      { kind: 'step', label: 'Searching memory', tool: 'mcp__inhouse__memory_search', toolUseId: 'tu' },
+      { kind: 'step', label: 'Using a tool', tool: 'Mystery', toolUseId: 'tu2' },
     ])
   })
   it("a subagent's text is not part of the answer; its tool calls are steps", () => {
     const msg = { type: 'assistant', parent_tool_use_id: 'tu_parent', message: { content: [{ type: 'text', text: 'inner' }, { type: 'tool_use', id: 'x', name: 'WebFetch', input: {} }] } }
-    expect(mapSdkMessage(msg, false)).toEqual([{ kind: 'step', label: 'Reading a web page', tool: 'WebFetch' }])
+    expect(mapSdkMessage(msg, false)).toEqual([{ kind: 'step', label: 'Reading a web page', tool: 'WebFetch', toolUseId: 'x' }])
+  })
+  it('a tool_use block without a string id gives a step without one (the eval trace keys inputs by it)', () => {
+    const msg = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: {} }, { type: 'tool_use', id: 7, name: 'Read', input: {} }] } }
+    expect(mapSdkMessage(msg, false)).toEqual([{ kind: 'step', label: 'Reading a file', tool: 'Read' }, { kind: 'step', label: 'Reading a file', tool: 'Read' }])
   })
   it('results, user messages, system messages and truncated stubs give nothing', () => {
     expect(mapSdkMessage({ type: 'result', subtype: 'success', result: 'x' }, false)).toEqual([])

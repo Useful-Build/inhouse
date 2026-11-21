@@ -14,6 +14,9 @@ import { createUsageSweep } from '../../../usage/sweep.ts'
 import { turnCalls } from '../turn-calls.ts'
 import { poolRetry } from '../../runner/pool-retry.ts'
 import { chatFileSweep } from '../../../files-io/orphan-sweep.ts'
+import { EVAL_TASKS } from '@eval-trace'
+
+declare const __INHOUSE_EVAL_BUILD__: boolean
 
 export const taskHandlers: Readonly<Record<string, TaskHandler>> = {
   // W1
@@ -34,4 +37,6 @@ export const taskHandlers: Readonly<Record<string, TaskHandler>> = {
   'pool-retry': poolRetry,
   // W3 follow-up: the chat file orphan sweep (a seed: ensured due now on every start).
   'chat-file-sweep': chatFileSweep,
+  // The eval build only (p3-eval-observability rev 2 rec 5): the kept inputs' 7-day TTL (server/eval-trace/on.ts).
+  ...(__INHOUSE_EVAL_BUILD__ ? EVAL_TASKS : {}),
 }
