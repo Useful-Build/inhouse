@@ -1,12 +1,16 @@
 // P3's `files` store slot (p3-design 8.5, 11 and 12; W3). The chat files table (`0120_chat_files`): attachments
 // (`input`, saved at upload) and outputs (`output`, `pending` from the egress's PUT until `confirm`). Every method takes
 // data and returns data (the store contract in server/routes.ts). The bytes live in R2 under `files/<chatId>/<fileId>`
-// (r2-keys.ts), written with their SHA-256 (R2 docs: checked for integrity, kept in the object's `checksums`).
+// (r2-keys.ts), streamed there (files-io/bytes.ts). An output is written with the SHA-256 its sender claims (R2 docs:
+// checked for integrity, kept in the object's `checksums`); an upload's hash is known only once its bytes are in, so its
+// row keeps the hash counted as it streamed (R2 keeps its own MD5 of a single-part put).
 import type { ChatFile } from '../do/brand-agent/ports.ts'
 import { chatFileKey } from '../db/r2-keys.ts'
 import type { KeyedBucket } from '../db/r2-keys.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
-import { checkFile, newFileId } from './bytes.ts'
+import { newFileId, streamFile } from './bytes.ts'
+import type { FileRefusal } from './bytes.ts'
+import { FILE_CAPS } from './caps.ts'
 
 interface Row {
   id: string
@@ -49,9 +53,12 @@ export interface OutputSlot {
 
 export function fileStore({ db, bucket }: { db: D1Database; bucket: Pick<KeyedBucket, 'put' | 'get'> }) {
   return {
-    /** Writes a file's bytes under its key with their SHA-256 (hex), which R2 checks the bytes against and keeps. */
-    async putBytes(key: string, bytes: Uint8Array<ArrayBuffer>, sha256: string, contentType: string): Promise<void> {
-      await bucket.put(key, bytes, { sha256, httpMetadata: { contentType } })
+    /**
+     * Writes a file's bytes (a stream of known length, or a buffer) under its key, with their SHA-256 (hex) when it's
+     * known before the bytes: R2 checks the bytes against it, refuses the put on a mismatch, and keeps it.
+     */
+    async putBytes(key: string, body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>, sha256: string | undefined, contentType: string): Promise<void> {
+      await bucket.put(key, body, sha256 === undefined ? { httpMetadata: { contentType } } : { sha256, httpMetadata: { contentType } })
     },
 
     /** A saved file's bytes, or null when R2 has none. */
@@ -122,19 +129,21 @@ export function fileStore({ db, bucket }: { db: D1Database; bucket: Pick<KeyedBu
     },
 
     /**
-     * An attachment (route 39): its type from its bytes (on the allowed list), its own path `inputs/<fileId>-<name>`
-     * (so two uploads with one name both stay), its bytes in R2, then its row, saved at once.
+     * An attachment (route 39): its body streamed to R2 with the checks of files-io/bytes.ts (its type from its bytes,
+     * on the allowed list), its own path `inputs/<fileId>-<name>` (so two uploads with one name both stay), then its row,
+     * saved at once. A refused body leaves nothing in R2; a failed R2 write throws.
      */
-    async saveInput(f: { chatId: string; name: string; bytes: Uint8Array<ArrayBuffer>; createdBy: string; nowMs: number }): Promise<StoredFile | { refused: 'type_not_allowed' }> {
-      const checked = await checkFile(f.bytes, f.name)
-      if ('refused' in checked) return checked
+    async saveInput(f: { chatId: string; name: string; request: Request; createdBy: string; nowMs: number }): Promise<StoredFile | { refused: FileRefusal }> {
       const id = newFileId()
+      const r2Key = chatFileKey(f.chatId, id)
+      const s = await streamFile(f.request, f.name, { max: FILE_CAPS.maxFileBytes, put: (body, contentType) => bucket.put(r2Key, body, { httpMetadata: { contentType } }) })
+      if ('refused' in s) return s
+      if ('failed' in s) throw s.failed
       const row: Row = {
-        id, chat_id: f.chatId, kind: 'input', path: `inputs/${id}-${f.name}`, name: f.name, content_type: checked.contentType,
-        bytes: f.bytes.byteLength, sha256: checked.sha256, r2_key: chatFileKey(f.chatId, id), state: 'saved', turn_id: null,
+        id, chat_id: f.chatId, kind: 'input', path: `inputs/${id}-${f.name}`, name: f.name, content_type: s.contentType,
+        bytes: s.bytes, sha256: s.sha256, r2_key: r2Key, state: 'saved', turn_id: null,
         created_by: f.createdBy, created_at_ms: f.nowMs, replaced_at_ms: null,
       }
-      await bucket.put(row.r2_key, f.bytes, { sha256: row.sha256, httpMetadata: { contentType: row.content_type } })
       await runBatch(db, [stmt(
         `INSERT INTO chat_files (id, chat_id, kind, path, name, content_type, bytes, sha256, r2_key, state, turn_id, created_by, created_at_ms)
          VALUES (?, ?, 'input', ?, ?, ?, ?, ?, ?, 'saved', NULL, ?, ?)`,

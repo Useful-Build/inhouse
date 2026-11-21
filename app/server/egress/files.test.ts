@@ -77,6 +77,55 @@ describe('an R2 write that fails (failure 1)', () => {
   })
 })
 
+describe('a streamed PUT (p3-design 8.5, a streamed size)', () => {
+  const MiB3 = 3_145_728
+  // Letters by position (`0x61 + (i * 7 % 26)`): a reordered or repeated chunk changes the hash (shasum literal).
+  const SHA_3MIB_C = '6f97f83d8f09e4a4ff2346a040e4cdb2bdbec92c42547d6cf600e231e2396d26'
+  const stream = (total: number) => {
+    let at = 0
+    return new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (at >= total) return c.close()
+        const len = Math.min(65_536, total - at)
+        const b = new Uint8Array(len)
+        for (let i = 0; i < len; i++) b[i] = 0x61 + (((at + i) * 7) % 26)
+        at += len
+        c.enqueue(b)
+      },
+    }, { highWaterMark: 0 })
+  }
+  const put = (h: Awaited<ReturnType<typeof harness>>, path: string, body: ReadableStream<Uint8Array>, declared: number, hash: string) =>
+    // egressRequest's bodies are strings; a stream body goes on a copy of its request.
+    handleEgress(new Request(egressRequest(`/files/${path}`, { method: 'PUT', headers: { 'x-inhouse-sha256': hash, 'content-length': String(declared) } }), { body }), h.deps)
+  it('3 MiB: the row records the literal hash and size, pending; R2 holds the bytes with that checksum', async () => {
+    const { grant, h } = await setup()
+    const res = await put(h, 'outputs/big.csv', stream(MiB3), MiB3, SHA_3MIB_C)
+    expect(res.status).toBe(201)
+    expect(await res.json()).toEqual({ path: 'outputs/big.csv', bytes: MiB3, contentType: 'text/csv' })
+    const row = await db.prepare("SELECT bytes, sha256, content_type, state, r2_key FROM chat_files WHERE turn_id = ? AND kind = 'output'").bind(grant.turnId).first<{ r2_key: string }>()
+    expect(row).toMatchObject({ bytes: MiB3, sha256: SHA_3MIB_C, content_type: 'text/csv', state: 'pending' })
+    const head = await env.FILES.head(row!.r2_key)
+    expect(head?.size).toBe(MiB3)
+    expect([...new Uint8Array(head!.checksums.sha256!)].map(x => x.toString(16).padStart(2, '0')).join('')).toBe(SHA_3MIB_C)
+    const back = await (await env.FILES.get(row!.r2_key))!.arrayBuffer()
+    expect([...new Uint8Array(await crypto.subtle.digest('SHA-256', back))].map(x => x.toString(16).padStart(2, '0')).join('')).toBe(SHA_3MIB_C)
+  })
+  it('short, long or wrong-hash 3 MiB bodies: 400 with their code, the slot freed, nothing in R2', async () => {
+    const { grant, h } = await setup()
+    const cases: [ReadableStream<Uint8Array>, number, string, string][] = [
+      [stream(MiB3 - 1), MiB3, SHA_3MIB_C, 'length_mismatch'],
+      [stream(MiB3 + 1), MiB3, SHA_3MIB_C, 'length_mismatch'],
+      [stream(MiB3), MiB3, 'b'.repeat(64), 'hash'],
+    ]
+    for (const [body, declared, hash, error] of cases) {
+      const res = await put(h, 'outputs/big.csv', body, declared, hash)
+      expect([res.status, await res.json()]).toEqual([400, { error }])
+    }
+    expect(await outputsOf(grant.turnId)).toBe(0)
+    expect((await env.FILES.list({ prefix: `files/${grant.chatId}/` })).objects).toEqual([])
+  })
+})
+
 describe('pending until confirm (failure 2)', () => {
   it('a saved output is listed and served only after confirm', async () => {
     const { grant, h } = await setup()
