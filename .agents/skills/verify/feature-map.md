@@ -23,8 +23,8 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 Today: needs-you cards
   Path:     Today
-  Selector: article cards, button "Review"
-  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text
+  Selector: article cards (two columns on desktop, one on a phone), "Urgent" pill, draft sheet, button "Review draft" or "{cta}"
+  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the brand-tint sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill
   Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts
 
 Today: snooze and dismiss
@@ -54,7 +54,7 @@ Today: composer logo row
 ## Approvals
 
 Approvals: approve, edit, Undo
-  Path:     Today -> Review -> Approve and send (or Edit first)
+  Path:     Today -> Review draft -> Approve and send (or Edit first)
   Selector: panel button "Approve and send to Kestrel", toast "Undo"
   Expected: "goes out in 10 seconds" toast; Undo inside the hold cancels the send; a reload during the hold still sends it; Reset demo during the hold sends nothing
   Covered:  e2e/app.spec.ts, e2e/state.spec.ts, e2e/page-actions.spec.ts
@@ -65,9 +65,15 @@ Approvals: a draft with no text
   Expected: the panel opens on a note field and the note survives approve and Undo
   Covered:  e2e/today-approvals.spec.ts
 
+Approvals: draft cards
+  Path:     Approvals
+  Selector: one card per draft: "Urgent" pill, risk tag ("Spends $9,600", "Claims $1,240", "Goes to customers", "Low risk", "Needs review"), "{area} · {time}", draft text on the sheet, approver line, "Review draft" or the one-tap approve, "From {sources}"
+  Expected: one column; on a phone the tags sit above the title, detail rows stack and the primary is full width beside "···"
+  Covered:  e2e/today-approvals.spec.ts, e2e/today-approvals-phone.spec.ts, e2e/ship/needs-you-cards.spec.ts
+
 Approvals: approve all low-risk
   Path:     Approvals -> Approve all low-risk
-  Selector: button "Approve all low-risk", toast "Undo"
+  Selector: button "Approve all low-risk" with its count, toast "Undo"
   Expected: three drafts approved, one Undo takes all three back
   Covered:  e2e/today-approvals.spec.ts, e2e/toasts.spec.ts
 
@@ -409,8 +415,8 @@ Help and guides
 
 Problem panel
   Path:     Today or Approvals -> a card
-  Selector: panel dialog, Approve, Edit, Don't send, Ask <approver>, Manage, "Ask about this…"
-  Expected: the approval actions as in Approvals above; Ask <approver> says it isn't connected; Ask about this… (in the panel and the card menu) starts a chat holding the question that a reload keeps; Manage on a memory note opens Team memory
+  Selector: panel dialog, header "Ask" (named "Ask about this"), progress list, facts strip, sources toggle, the draft document with Edit, Don't send, Approve, Ask <approver>, Manage
+  Expected: the approval actions as in Approvals above; the footer (waiting only) holds Don't send and the main action with the amount it moves; Ask <approver> says it isn't connected; Ask (and the card menu's Ask about this) starts a chat holding the question that a reload keeps; Manage on a memory note opens Team memory; a purchase order shows its item table and total
   Covered:  e2e/problem-panel.spec.ts, e2e/today-approvals.spec.ts, e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts
 
 Trace window

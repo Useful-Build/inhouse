@@ -351,6 +351,8 @@ export interface IssueCard {
   primary: 'Approve' | 'Review' | null
   /** Grey button, shown only when there is no primary. */
   quiet: 'Ask about this' | 'Undo' | 'Review' | null
+  /** Run: what a waiting draft's card says on its draft sheet besides the draft ("Paused · emails wait for you"). */
+  sheetNote: string | null
   handled: boolean
   dimmed: boolean
 }
@@ -361,18 +363,18 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     const sens = !!(p.draft.money || p.draft.customer)
     const at = agent.approved[p.id]
     if (at) {
-      return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, handled: false, dimmed: true }
+      return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, sheetNote: null, handled: false, dimmed: true }
     }
-    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', handled: false, dimmed: false }
-    if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', handled: true, dimmed: true }
-    if (S === 2 && agent.undone[p.id] && !p.wait) return { problem: p, status: 'Undone · back to you', statusIcon: 'undo', tone: 'grey', primary: null, quiet: 'Review', handled: false, dimmed: false }
+    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', sheetNote: null, handled: false, dimmed: false }
+    if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', sheetNote: null, handled: true, dimmed: true }
+    if (S === 2 && agent.undone[p.id] && !p.wait) return { problem: p, status: 'Undone · back to you', statusIcon: 'undo', tone: 'grey', primary: null, quiet: 'Review', sheetNote: 'Undone · back to you', handled: false, dimmed: false }
     const part = ranByAgent(ctx, p) && p.partial
     return {
       problem: p,
       status: part ? p.partialShort! : (S === 2 || sens) && p.wait ? `Drafted · ${p.wait}` : 'Drafted · ready to approve',
       statusIcon: S === 2 || sens ? 'front_hand' : 'edit_note',
       tone: S === 2 || sens ? 'amber' : 'blue',
-      primary: sens ? 'Review' : 'Approve', quiet: null, handled: false, dimmed: false,
+      primary: sens ? 'Review' : 'Approve', quiet: null, sheetNote: part ? p.partialShort! : null, handled: false, dimmed: false,
     }
   })
   if (S === 2) cards.sort((a, b) => Number(a.handled) - Number(b.handled))
@@ -390,13 +392,19 @@ export interface DraftView {
   bodyLabel: string | null
   /** "Spends money" or "Goes to customers", or null for low risk. */
   waitsLabel: string | null
+  /** What the draft is ("Email", "Purchase order"): the Today sheet's header and the panel's document label. */
+  kind: string
+  /** One line for the Today sheet, never cut. */
+  summary: string
+  /** Where it goes, for the panel's progress line ("Kestrel"). Null shows "Sent". */
+  destination: string | null
+  /** The sources' names, deduplicated ("Amazon · Xero"). */
+  sourceNames: string
   cta: string
   memory: string | null
   doneNote: string | null
   approverNote: string | null
   askApprover: string | null
-  /** Foot note on the Approvals card: usual approver, or the sources. */
-  footNote: string
   approvedAt: string | null
   sent: boolean
   /** Reversible drafts keep Undo; others lose it once sent. */
@@ -421,21 +429,25 @@ export function draftView(ctx: Ctx, id: string): DraftView {
   // Approved items show the wording taken at approval time, so history never rewrites itself.
   const title = rec ? rec.title : part && dr.runTitle ? dr.runTitle : dr.title
   const srcLine = p.sources.map(s => s.name).filter((v, i, a) => a.indexOf(v) === i).join(' · ')
+  const lines = part && dr.runLines ? dr.runLines : dr.lines
   return {
     problem: p,
     mode: S === 0 ? 'watch' : at ? 'approved' : isHandled(ctx, p) ? 'handled' : 'waiting',
     draftTitle: title,
-    lines: part && dr.runLines ? dr.runLines : dr.lines,
+    lines,
     // A draft with no text of its own takes a note once a person writes one.
     body: agent.edits[id] ?? dr.body ?? null,
     bodyLabel: dr.bodyLabel ?? (agent.edits[id] !== undefined ? 'Your note' : null),
     waitsLabel: dr.money ? 'Spends money' : dr.customer ? 'Goes to customers' : null,
+    kind: dr.kind ?? (dr.body ? 'Email' : 'Draft'),
+    summary: dr.summary ?? (lines[0] ? `${lines[0][0]}: ${lines[0][1]}` : ''),
+    destination: dr.destination ?? null,
+    sourceNames: srcLine,
     cta: dr.cta || 'Approve',
     memory: S >= 1 && dr.memory ? dr.memory : null,
     doneNote: part && dr.doneNote ? fmtProse(dr.doneNote, display()) : null,
     approverNote: S >= 1 && dr.approver ? dr.approver : null,
     askApprover: S >= 1 && dr.ask ? dr.ask : null,
-    footNote: dr.approver ? dr.approver.split('. ')[0] + '.' : `From ${srcLine}`,
     approvedAt: at,
     sent,
     canUndo: !!dr.rev || !sent,
@@ -447,6 +459,21 @@ export function draftView(ctx: Ctx, id: string): DraftView {
   }
 }
 
+/**
+ * The one risk text the cards and the panel show: what approving it does that a person should look at ("Spends money",
+ * "Goes to customers"). Null when it's neither, which is low risk unless the draft waits for another reason.
+ */
+export const riskLabel = (dv: DraftView): string | null => {
+  const amount = dv.problem.draft.amount
+  // The amount reads only on a draft that is about money: low risk is decided by `money` and `customer`.
+  if (!amount || !dv.problem.draft.money) return dv.waitsLabel
+  return `${amount.direction === 'claim' ? 'Claims' : 'Spends'} ${fmtMoney(amount.money, display())}`
+}
+
+/** The icon for a draft's kind, on the Today sheet's small tile. */
+export const kindIcon = (kind: string): string =>
+  /mail|email/i.test(kind) ? 'mail' : /purchase order/i.test(kind) ? 'inventory_2' : /case/i.test(kind) ? 'description'
+    : /ticket/i.test(kind) ? 'support_agent' : /shopify/i.test(kind) ? 'storefront' : 'edit_note'
 
 /**
  * Exactly the waiting drafts Today offers one-tap Approve for: no money and no customers involved, and not a Run job a

@@ -19,7 +19,7 @@ const toast = (page: Page, text: string | RegExp) => toasts(page).filter({ hasTe
 const HELD = 'Approved. It goes out in 10 seconds.'
 const PO = 'PO-1187 from Kestrel is 6 days late'
 const STUCK = 'Order #4821 is stuck for 4 days'
-const approveOnCard = (page: Page, title: string) => card(page, title).getByRole('button', { name: 'Approve', exact: true }).click()
+const approveOnCard = (page: Page, title: string) => card(page, title).getByRole('button', { name: /^Approve/ }).click()
 
 /** Holds the clock: no toast counts down until `resume`. Half a second ahead, so the clock can't have passed it first. */
 async function hold(page: Page) {
@@ -47,14 +47,14 @@ test('Toasts: two approvals five seconds apart share one toast, and its one Undo
   // One Undo takes back both, before either goes out.
   await toasts(page).getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(toasts(page)).toHaveCount(0)
-  await expect(card(page, STUCK).getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
-  await expect(card(page, PO).getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+  await expect(card(page, STUCK).getByRole('button', { name: /^Approve/ })).toBeVisible()
+  await expect(card(page, PO).getByRole('button', { name: /^Approve/ })).toBeVisible()
 
   // Nothing went out.
   await page.clock.runFor(11_000)
   await expect(toast(page, /sent/i)).toHaveCount(0)
-  await expect(card(page, PO).getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
-  await expect(card(page, STUCK).getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+  await expect(card(page, PO).getByRole('button', { name: /^Approve/ })).toBeVisible()
+  await expect(card(page, STUCK).getByRole('button', { name: /^Approve/ })).toBeVisible()
   await shot(page, 'toasts-two-approvals-undone')
 })
 
@@ -74,7 +74,7 @@ test("Toasts: the first approval's sent notice shows on its own; the shared toas
   await shot(page, 'toasts-sent-notice-keeps-other-undo')
   await shared.getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(shared).toHaveCount(0)
-  await expect(card(page, STUCK).getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+  await expect(card(page, STUCK).getByRole('button', { name: /^Approve/ })).toBeVisible()
   await page.clock.runFor(6000)
   await expect(toast(page, 'Message sent to ShipBob about #4821')).toHaveCount(0)
 })

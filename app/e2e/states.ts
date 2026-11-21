@@ -124,7 +124,7 @@ export const STATES: UiState[] = [
       // Low-risk drafts approve in one tap; the others (money, customers) through Review in the panel.
       const drafts = page.locator('main [data-slot=card]').filter({ has: page.getByRole('heading', { level: 2 }) })
       for (let n = await drafts.count(); n > 0; n--) {
-        const review = drafts.first().getByRole('button', { name: 'Review', exact: true })
+        const review = drafts.first().getByRole('button', { name: 'Review draft', exact: true })
         if (await review.count()) {
           await review.click()
           await page.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click()

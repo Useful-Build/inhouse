@@ -19,11 +19,11 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
 
   // Money: no one-tap approve on the card.
   const kestrel = card(page, 'Ridge 30L Pack runs out in 9 days')
-  await expect(kestrel.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0)
+  await expect(kestrel.getByRole('button', { name: /^Approve/ })).toHaveCount(0)
   await kestrel.getByRole('button', { name: 'Review' }).click()
 
   const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Spends money')
+  await expect(panel).toContainText('Spends $9,600')
   await expect(panel).toContainText('Remembered: Kestrel ships in 14 days')
   await expect(panel).toContainText('Dana Kim usually signs off orders over $5,000')
   await page.screenshot({ path: test.info().outputPath('act-panel-kestrel.png') })
@@ -49,7 +49,7 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
 
   // Low risk: one-tap approve, reversible, Undo stays.
   const returns = card(page, '11 returns are not restocked')
-  await returns.getByRole('button', { name: 'Approve', exact: true }).click()
+  await returns.getByRole('button', { name: 'Approve and restock', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: '11 units restocked on Shopify' })).toBeVisible()
   await expect(page.getByRole('heading', { level: 1 })).toContainText('4 left to approve today.')
   await expect(badge(page)).toContainText('4')
