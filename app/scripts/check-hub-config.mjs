@@ -8,8 +8,11 @@
 //   - serves another public surface: `assets` or `site` (static files on the Worker's URL);
 //   - has an `env` key at all (routes, workers_dev and triggers inherit into env blocks, and an env block can
 //     override every rule here, so the hub has one environment: this file);
-//   - puts HUB_TOKEN_KEYS or SHOPIFY_CLIENT_SECRET under `vars`, or in any `define` key (`process.env.HUB_TOKEN_KEYS`
-//     too: they're Worker secrets, set through secret cards), or doesn't list both in `secrets.required`;
+//   - puts HUB_TOKEN_KEYS, SHOPIFY_CLIENT_SECRET or SLACK_CLIENT_SECRET under `vars`, or in any `define` key
+//     (`process.env.HUB_TOKEN_KEYS` too: they're Worker secrets, set through secret cards), or doesn't list the first
+//     two in `secrets.required` (SLACK_CLIENT_SECRET is optional: a dynamic-registration connector has none, OC-W1-9);
+//   - sets a `vars` name outside the known list (the connector settings: Shopify's two, Slack's three and
+//     CONNECT_REDIRECT_URI; P5 W1);
 //   - sets `alias`, `no_bundle` or `build` (each swaps a module or skips the esbuild bundle the bundle scan reads);
 //   - lacks the SIGNIN binding to the hub's own SignIn class, or the migration that creates SignIn on SQLite;
 //   - has a `main` other than hub/index/index.ts.
@@ -77,6 +80,10 @@ function removeTrailingCommas(json) {
 
 const has = (obj, key) => obj !== null && typeof obj === 'object' && Object.hasOwn(obj, key)
 const SECRET_NAMES = ['HUB_TOKEN_KEYS', 'SHOPIFY_CLIENT_SECRET']
+/** A Worker secret that may be absent: refused in `vars` and `define`, but not listed as required. */
+const OPTIONAL_SECRET_NAMES = ['SLACK_CLIENT_SECRET']
+/** The only `vars` a deployable config may set (the ops repo fills them per deployment). */
+const KNOWN_VARS = ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'SLACK_PRIVATE_SEARCH', 'CONNECT_REDIRECT_URI']
 const PUBLIC_SURFACES = ['assets', 'site']
 const BUNDLER_SWAPS = ['alias', 'no_bundle', 'build']
 
@@ -106,10 +113,14 @@ export function checkHubConfig(config) {
   }
   const vars = has(config, 'vars') && config.vars && typeof config.vars === 'object' ? config.vars : {}
   if (has(vars, 'INHOUSE_TEST_BUILD')) fail('test-build-var', '`vars.INHOUSE_TEST_BUILD` is set; it turns on the test build')
-  for (const name of SECRET_NAMES) {
+  for (const name of [...SECRET_NAMES, ...OPTIONAL_SECRET_NAMES]) {
     if (has(vars, name)) fail('secret-in-vars', `\`vars.${name}\` is set; it's a Worker secret, set through a secret card`)
   }
-  for (const key of Object.keys(define).filter(k => SECRET_NAMES.some(name => k.includes(name)))) {
+  const known = [...KNOWN_VARS, ...SECRET_NAMES, ...OPTIONAL_SECRET_NAMES, 'INHOUSE_TEST_BUILD']
+  for (const name of Object.keys(vars).filter(k => !known.includes(k))) {
+    fail('unknown-var', `\`vars.${name}\` isn't a known hub setting (add it to KNOWN_VARS in this script when a connector needs it)`)
+  }
+  for (const key of Object.keys(define).filter(k => [...SECRET_NAMES, ...OPTIONAL_SECRET_NAMES].some(name => k.includes(name)))) {
     fail('secret-in-define', `\`define["${key}"]\` is set; it names a Worker secret, set through a secret card`)
   }
   const required = Array.isArray(config.secrets?.required) ? config.secrets.required : []

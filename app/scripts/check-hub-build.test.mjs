@@ -20,6 +20,7 @@ const EXPECTED = {
   'deploy-dependency-testing': [0, /ok {4}module graph: clean/],
   'deploy-canary': [1, /FAIL {2}canary string: the deployable/],
   'deploy-shopify-canary': [1, /FAIL {2}shopify upstream canary: the deployable.*\n.*INHOUSE_SHOPIFY_UPSTREAM_CANARY_7c2d/],
+  'deploy-mcp-canary': [1, /FAIL {2}mcp upstream canary: the deployable.*\n.*INHOUSE_MCP_UPSTREAM_CANARY_7c2d/],
   'deploy-hub-testing': [1, /module hub\/testing\/index\.ts/],
   'deploy-registry-testing': [1, /module hub\/registry\/testing\/fake-registry\.ts/],
   'deploy-test-module': [1, /module hub\/scope\/scope\.test\.ts/],

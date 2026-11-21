@@ -4,9 +4,10 @@
 // The deployable hub carries no test seam: app/hub/testing/ (and the recorded upstreams it bundles from
 // app/test/upstreams/) is reached only inside `if (__INHOUSE_HUB_TEST__ && ...)`, which wrangler.hub.jsonc defines as
 // "false" so esbuild drops it. Two parts, each run on both bundles:
-//   1. The canaries: HUB_TEST_CANARY's value (read from app/hub/testing/index.ts) and the recorded Shopify upstream's
+//   1. The canaries: HUB_TEST_CANARY's value (read from app/hub/testing/index.ts), the recorded Shopify upstream's
 //      SHOPIFY_UPSTREAM_CANARY (read from app/test/upstreams/shopify/server.ts), each in any output file but the
-//      metafile. Both are read from their source, so the scan and the code can't drift.
+//      metafile, and the recorded MCP upstream's MCP_UPSTREAM_CANARY (P5, read from app/test/upstreams/mcp/server.ts).
+//      Each is read from its source, so the scan and the code can't drift.
 //   2. The module graph: the esbuild metafile `wrangler deploy --dry-run --metafile` writes (<dir>/bundle-meta.json).
 //      Fails when any input sits in a `testing/` folder anywhere under app/hub/ (app/hub/testing/, and later ones such
 //      as app/hub/registry/testing/), under app/test/upstreams/, or is a test module (`*.test.ts`). A string scan alone
@@ -57,6 +58,11 @@ if (!existsSync(shopifyUpstream)) fail(`${relative(root, shopifyUpstream)} is mi
 const shopifyMatch = read(shopifyUpstream).match(/export const SHOPIFY_UPSTREAM_CANARY = '([^']+)'/)
 if (!shopifyMatch) fail(`no \`export const SHOPIFY_UPSTREAM_CANARY = '...'\` in ${relative(root, shopifyUpstream)}; the upstream's shape changed.`)
 const SHOPIFY_CANARY = shopifyMatch[1]
+const mcpUpstream = join(root, 'test/upstreams/mcp/server.ts')
+if (!existsSync(mcpUpstream)) fail(`${relative(root, mcpUpstream)} is missing: there's no MCP upstream canary to look for.`)
+const mcpMatch = read(mcpUpstream).match(/export const MCP_UPSTREAM_CANARY = '([^']+)'/)
+if (!mcpMatch) fail(`no \`export const MCP_UPSTREAM_CANARY = '...'\` in ${relative(root, mcpUpstream)}; the upstream's shape changed.`)
+const MCP_CANARY = mcpMatch[1]
 
 // ---------- a bundle's files ----------
 const METAFILE = 'bundle-meta.json'
@@ -127,6 +133,7 @@ function moduleGraph({ inputs }) {
 const PARTS = [
   ['canary string', canary(CANARY)],
   ['shopify upstream canary', canary(SHOPIFY_CANARY)],
+  ['mcp upstream canary', canary(MCP_CANARY)],
   ['module graph', moduleGraph],
 ]
 
