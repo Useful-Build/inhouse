@@ -45,6 +45,10 @@ export const TurnFailureSchema = z.enum([
 ])
 export type TurnFailure = z.infer<typeof TurnFailureSchema>
 
+/** Why a turn that never ran was cancelled. */
+export const CancelWhySchema = z.enum(['paused', 'removed', 'deleted', 'cap_reached', 'pool_full', 'session_unusable'])
+export type CancelWhy = z.infer<typeof CancelWhySchema>
+
 /** One event of a run, in order by the envelope's `seq`. */
 export const ChatEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('run.started'), runId: RunIdSchema, chatId: ChatIdSchema }),
@@ -63,8 +67,7 @@ export const ChatEventSchema = z.discriminatedUnion('type', [
     reason: TurnFailureSchema.optional(),
   }),
   z.object({
-    type: z.literal('turn.cancelled'), turnId: TurnIdSchema,
-    why: z.enum(['paused', 'removed', 'deleted', 'cap_reached', 'pool_full', 'session_unusable']),
+    type: z.literal('turn.cancelled'), turnId: TurnIdSchema, why: CancelWhySchema,
   }),
   z.object({ type: z.literal('notice'), code: z.enum(['mirror_error', 'cap_reached', 'budget_busy', 'paused', 'pool_busy', 'session_damaged']) }),
   z.object({ type: z.literal('run.finished'), runId: RunIdSchema, turns: z.number().int(), durationMs: z.number().int().min(0), cost: MoneySchema }),

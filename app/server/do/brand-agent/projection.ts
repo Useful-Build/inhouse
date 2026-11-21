@@ -1,10 +1,12 @@
 // The history projection to D1 (p3-design 4.8). Owner: W1. At a turn's end its rows are fixed in the object first, in
 // the same synchronous step that stores the turn as final (core.ts `storeFinal`): positions `pos_from..pos_to` from the
 // chat's `next_pos`, and each row's values (the user message `<turnId>.u` with its quote and attachments, then the
-// turn's parts `<turnId>.<n>` with their model and `at` and a trace reference). Then one D1 batch inserts them
+// turn's parts `<turnId>.<n>` with their model and `at` and a trace reference, then a failed or never-run turn's end row
+// `<turnId>.f`/`.x`). Then one D1 batch inserts them
 // `ON CONFLICT(id) DO NOTHING` and moves `chats.last_at_ms` forward. A failed batch is replayed by the
 // `flush-turn:<turnId>` task with the SAME fixed rows: positions are never computed twice.
 import type { ChatEvent } from '../../../shared/contract/runs.ts'
+import { CANCEL } from '../../../shared/contract/chat-codes.ts'
 import type { StoredAttachment } from './run-start.ts'
 
 /** The flush's durable retry runs this long after the turn's end when the immediate flush didn't land. */
@@ -18,7 +20,7 @@ export interface ProjectedRow {
   run_id: string
   turn_id: string
   pos: number
-  role: 'user' | 'agent'
+  role: 'user' | 'agent' | 'event'
   author_id: string | null
   text: string
   part_json: string | null
@@ -41,6 +43,22 @@ interface TurnForRows {
   [k: string]: SqlStorageValue
   turn_id: string; run_id: string; chat_id: string; owner_id: string; text: string; quote: string | null
   attachments_json: string; created_at_ms: number; pos_from: number | null
+  state: string; outcome: string | null; failure: string | null; cancel_why: string | null; ended_at_ms: number | null
+}
+
+/** Cancels the chat says nothing about (the person removed the question or deleted the chat): no end row. */
+export const SILENT_CANCELS: readonly string[] = [CANCEL.removed, CANCEL.deleted]
+
+/**
+ * The end row: what the live stream shows at a failed or never-run turn's end, kept so a reload shows it too. An
+ * `event` row (never in the agent's own history or search, which read `user` and `agent` rows only) with the code, not
+ * the words: the client renders it with the same text and id as its live `turn.finished` (`<turnId>.f`) or
+ * `turn.cancelled` (`<turnId>.x`), so the two show once.
+ */
+function endRow(t: TurnForRows): { id: string; extra: Record<string, string> } | null {
+  if (t.state === 'ended' && t.outcome === 'failed') return { id: `${t.turn_id}.f`, extra: { failure: t.failure ?? 'unknown', retryQuestion: t.text } }
+  if (t.state === 'cancelled' && t.cancel_why !== null && !SILENT_CANCELS.includes(t.cancel_why)) return { id: `${t.turn_id}.x`, extra: { why: t.cancel_why } }
+  return null
 }
 
 /**
@@ -49,7 +67,8 @@ interface TurnForRows {
  */
 export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Projection {
   const t = sql.exec<TurnForRows>(
-    'SELECT turn_id, run_id, chat_id, owner_id, text, quote, attachments_json, created_at_ms, pos_from FROM turns WHERE turn_id = ?', turnId).one()
+    `SELECT turn_id, run_id, chat_id, owner_id, text, quote, attachments_json, created_at_ms, pos_from, state, outcome, failure,
+      cancel_why, ended_at_ms FROM turns WHERE turn_id = ?`, turnId).one()
   if (t.pos_from !== null) return storedProjection(sql, turnId)!
   const from = sql.exec<{ p: number }>('SELECT next_pos AS p FROM chat_state WHERE chat_id = ?', t.chat_id).one().p
   const atts = JSON.parse(t.attachments_json) as StoredAttachment[]
@@ -69,6 +88,13 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
       ...base, id: ev.messageId, pos: from + rows.length, role: 'agent', author_id: null,
       text: ev.part.type === 'text' ? ev.part.text : '', part_json: JSON.stringify(ev.part),
       extra_json: JSON.stringify({ trace: turnId }), model: ev.model, at_ms: ev.at.ms,
+    })
+  }
+  const end = endRow(t)
+  if (end) {
+    rows.push({
+      ...base, id: end.id, pos: from + rows.length, role: 'event', author_id: null, text: '', part_json: null,
+      extra_json: JSON.stringify(end.extra), model: null, at_ms: t.ended_at_ms ?? atMs,
     })
   }
   const to = from + rows.length - 1
