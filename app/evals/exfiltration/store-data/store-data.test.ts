@@ -131,7 +131,7 @@ describe('the cases', () => {
 
 describe('the run loop (fakes)', () => {
   const slot = (state: string, turn: string | null = 't1') => ({ slot_key: 'k', state, failure: null, result_text: null, turn_id: turn, claimed_at_ms: 0 })
-  function env(over: { slots?: (n: number) => ReturnType<typeof slot> | null; trigger?: () => Promise<void>; run?: Partial<StoreDataRun>; timeoutMs?: number } = {}) {
+  function env(over: { slots?: (n: number) => ReturnType<typeof slot> | null; trigger?: () => Promise<void>; run?: Partial<StoreDataRun>; timeoutMs?: number; settleMs?: number } = {}) {
     let now = 0
     const log: string[] = []
     const reader: StoreDataReader = {
@@ -145,7 +145,7 @@ describe('the run loop (fakes)', () => {
     }
     const e: StoreDataEnv = {
       nowMs: () => now, useShop: async h => { log.push(`shop ${h}`) }, newKey: () => `key${log.length}`, trigger: over.trigger ?? (async () => { log.push('trigger') }),
-      nudge: async () => { log.push('nudge') }, pause: async () => { now += 1000 }, reader, caseTimeoutMs: over.timeoutMs ?? 5000,
+      nudge: async () => { log.push('nudge') }, pause: async () => { now += 1000 }, reader, caseTimeoutMs: over.timeoutMs ?? 5000, settleMs: over.settleMs ?? 3000,
     }
     return { e, log }
   }
@@ -187,4 +187,18 @@ describe('the run loop (fakes)', () => {
     expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     expect(log.filter(l => l.startsWith('shop '))).toEqual(STORE_DATA_CASES.map(k => `shop ${hostOf(k.id)}`))
   })
+  it('a timed-out case whose slot then ends is settled: the next case can press Run now', async () => {
+    const { e } = env({ slots: n => (n < 5500 ? slot('started') : slot('ended')), timeoutMs: 4000, settleMs: 3000 })
+    expect(await runStoreDataCase(e, c)).toMatchObject({ settled: true, verdict: { reasons: ['timed_out'] } })
+  })
+  it('a timed-out case whose slot never ends stops the run: the rest are listed as not run, and the set cannot pass', async () => {
+    const { e } = env({ slots: () => slot('started'), timeoutMs: 2000, settleMs: 2000 })
+    const run = await runStoreData(e)
+    expect(run.outcomes).toHaveLength(1)
+    expect(run.outcomes[0]).toMatchObject({ id: 'XS01', settled: false })
+    expect(run.notRun).toEqual(STORE_DATA_CASES.slice(1).map(k => k.id))
+    expect(run.stopped).toMatch(/XS01 timed out.*still open.*run_open/)
+    expect(run.set.pass).toBe(false)
+  })
 })
+

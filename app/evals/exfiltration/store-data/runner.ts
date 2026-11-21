@@ -22,7 +22,8 @@ export interface StoreDataReader extends Reader {
 }
 export type StoreDataEnv = Omit<RunnerEnv, 'reader'> & { reader: StoreDataReader }
 
-export interface CaseOutcome { id: string; verdict: Verdict; slotKey: string | null; ms: number }
+/** `settled`: set only for a case that timed out with its slot open: whether the slot then reached a terminal state (else the next Run now would be `run_open`). */
+export interface CaseOutcome { id: string; verdict: Verdict; slotKey: string | null; ms: number; settled?: boolean }
 
 /** What the slot left, as the grader reads it. */
 export async function observeRun(reader: StoreDataReader, slot: SlotRow, sinceMs: number, canary: string): Promise<StoreDataRun> {
@@ -59,17 +60,42 @@ export async function runStoreDataCase(env: StoreDataEnv, c: StoreDataCase): Pro
     await env.nudge()
     await env.pause()
   }
-  if (!slot || !TERMINAL.has(slot.state)) return fail(slot ? 'timed_out' : 'no_slot', slot?.slot_key ?? null)
+  if (!slot || !TERMINAL.has(slot.state)) {
+    // A slot that began but never ended would answer the next Run now `run_open`: wait (with a deadline) for it to settle, as the
+    // morning-check runner does.
+    let settled = true
+    if (slot) {
+      const until = env.nowMs() + env.settleMs
+      let now: SlotRow | null = slot
+      while (now && !TERMINAL.has(now.state) && env.nowMs() < until) {
+        await env.nudge()
+        await env.pause()
+        now = await env.reader.slot(slotKey)
+      }
+      settled = now !== null && TERMINAL.has(now.state)
+    }
+    return { ...fail(slot ? 'timed_out' : 'no_slot', slot?.slot_key ?? null), ...(slot ? { settled } : {}) }
+  }
   const verdict = gradeStoreData(c, await observeRun(env.reader, slot, started, c.canary))
   return { id: c.id, verdict, slotKey: slot.slot_key, ms: env.nowMs() - started }
 }
 
-/** Every case in order, one at a time; `onCase` sees the outcomes so far after each, so a crash keeps the finished ones. */
-export async function runStoreData(env: StoreDataEnv, cases: readonly StoreDataCase[] = STORE_DATA_CASES, onCase?: (done: CaseOutcome[]) => void): Promise<{ outcomes: CaseOutcome[]; set: SetResult }> {
+/**
+ * Every case in order, one at a time; `onCase` sees the outcomes so far after each, so a crash keeps the finished ones. A case that
+ * timed out and whose slot doesn't settle leaves it open for up to 45 minutes, so every later Run now would be refused: the run
+ * stops there and lists the rest as `notRun` (the set then has fewer cases than it needs and cannot pass).
+ */
+export async function runStoreData(env: StoreDataEnv, cases: readonly StoreDataCase[] = STORE_DATA_CASES, onCase?: (done: CaseOutcome[]) => void): Promise<{ outcomes: CaseOutcome[]; set: SetResult; notRun: string[]; stopped?: string }> {
   const outcomes: CaseOutcome[] = []
+  let stopped: string | undefined
   for (const c of cases) {
-    outcomes.push(await runStoreDataCase(env, c))
+    const o = await runStoreDataCase(env, c)
+    outcomes.push(o)
     onCase?.([...outcomes])
+    if (o.settled === false) {
+      stopped = `${c.id} timed out and its slot (${o.slotKey}) is still open: every later Run now would answer run_open, so the run stops here`
+      break
+    }
   }
-  return { outcomes, set: gradeSet(STORE_DATA_CASES, Object.fromEntries(outcomes.map(o => [o.id, o.verdict]))) }
+  return { outcomes, set: gradeSet(STORE_DATA_CASES, Object.fromEntries(outcomes.map(o => [o.id, o.verdict]))), notRun: stopped ? cases.slice(outcomes.length).map(c => c.id) : [], ...(stopped ? { stopped } : {}) }
 }
