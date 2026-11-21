@@ -74,6 +74,35 @@ describe('route 33: the trace', () => {
     expect(h.core.readTrace(a.turnId, { owner: OTHER })).toBeNull()
     expect(h.core.readTrace('t_AAAAAAAAAAAAAAAAAAAAAA', { all: true })).toBeNull()
   }))
+
+  // Q2 on a sandbox deploy: calls the model service refused (closed at zero) and calls still open both read
+  // "0 in · 0 out", like a finished call that used no tokens. Ways it could fail: a refused close shows token counts; an
+  // open call shows as a finished step; a normal close changes shape.
+  it('a refused call and an open call say so; a finished call keeps its counts', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-trc02'))
+    await settle()
+    h.clock.now = T0 + 1 * SEC
+    h.push(a.turnId, ev.started())
+    const worst = { model: 'claude-sonnet-5-5', inputTokens: 2000, maxTokens: 1000, modifiers: {}, micro: 10_000 }
+    for (const id of ['c1', 'c2', 'c3', 'c4']) {
+      void h.core.admitModelCall(a.turnId, id, worst)
+      await settle()
+      h.core.renewModelCall(a.turnId, id, usage(0, 0, 0))
+    }
+    h.clock.now = T0 + 3 * SEC
+    h.core.releaseModelCall(a.turnId, 'c1', { usage: usage(1200, 300, 7_000), cut: false })
+    h.core.releaseModelCall(a.turnId, 'c2', { usage: { ...usage(0, 0, 0), refused: true }, cut: false })
+    h.core.renewModelCall(a.turnId, 'c4', usage(400, 50, 1_000))
+    await settle()
+    h.clock.now = T0 + 6 * SEC
+    const steps = h.core.readTrace(a.turnId, { owner: MEMBER })!.steps.filter(s => s.kind === 'model')
+    expect(steps).toEqual([
+      { label: 'claude-sonnet-5-5', kind: 'model', startMs: 1000, endMs: 3000, depth: 1, detail: '1200 in · 300 out' },
+      { label: 'claude-sonnet-5-5', kind: 'model', startMs: 1000, endMs: 3000, depth: 1, detail: 'claude-sonnet-5-5 · refused by the model service' },
+      { label: 'claude-sonnet-5-5', kind: 'model', startMs: 1000, endMs: 6000, depth: 1, detail: 'claude-sonnet-5-5 · in progress' },
+      { label: 'claude-sonnet-5-5', kind: 'model', startMs: 1000, endMs: 6000, depth: 1, detail: 'claude-sonnet-5-5 · in progress · 400 in · 50 out so far' },
+    ])
+  }))
 })
 
 describe('the runs signal', () => {

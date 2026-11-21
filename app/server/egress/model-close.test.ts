@@ -144,7 +144,7 @@ describe('no usage, or no message_stop: cut at the worst case (failure 3)', () =
     await settle(h)
     expect(releases(h)).toEqual([{ usage: { ...ZERO, inputTokens: 10, outputTokens: 1, micro: WORST }, cut: true }])
   })
-  it("an error that isn't the API's own (a gateway 524 after forwarding) is cut; the API's own is zero", async () => {
+  it("an error that isn't the API's own (a gateway 524 after forwarding) is cut; the API's own is zero, marked refused", async () => {
     const h = await harness()
     h.answer = async () => new Response('<html>timeout</html>', { status: 524, headers: { 'content-type': 'text/html' } })
     expect((await call(h)).status).toBe(524)
@@ -154,7 +154,8 @@ describe('no usage, or no message_stop: cut at the worst case (failure 3)', () =
     own.answer = async () => Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 })
     expect((await call(own)).status).toBe(529)
     await settle(own)
-    expect(releases(own)).toEqual([{ usage: { ...ZERO, micro: 0 }, cut: false }])
+    // Zero, and marked refused for the trace (runs-read.ts): the model service's own error never ran.
+    expect(releases(own)).toEqual([{ usage: { ...ZERO, micro: 0, refused: true }, cut: false }])
   })
   it('a stream that ends without message_stop is cut, not priced at its partial tally', async () => {
     const h = await harness()

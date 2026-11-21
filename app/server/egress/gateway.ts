@@ -60,16 +60,41 @@ export function gatewayUpstream(env: { AI?: AiGatewayBinding; AI_GATEWAY_ID?: st
   }
 }
 
-/** The default scenario, and the marker a test names its own with in the first user message (`scenario:<name>`). */
+/**
+ * The default scenario, and the marker a test names its own with in a user message (`scenario:<name>`). The newest user
+ * message that carries one wins, so a resumed session's new prompt plays its own scenario, not the first prompt's.
+ */
 export const DEFAULT_SCENARIO = 'hello'
 const SCENARIO_MARKER = /\bscenario:([A-Za-z0-9_-]{1,64})\b/
 
-/** The scenario a request plays: the marker in its first user message, else the default. */
-export function scenarioOf(request: MessagesRequest): string {
-  const first = request.messages.find(m => m.role === 'user')
-  const text = typeof first?.content === 'string' ? first.content : JSON.stringify(first?.content ?? '')
-  return SCENARIO_MARKER.exec(text)?.[1] ?? DEFAULT_SCENARIO
+/**
+ * A user message's marker, read from its text only: a message carrying a tool result is never a prompt (a tool's output
+ * may quote a marker), so it has none.
+ */
+const markerOf = (m: MessagesRequest['messages'][number]): string | undefined => {
+  if (m.role !== 'user') return undefined
+  if (typeof m.content === 'string') return SCENARIO_MARKER.exec(m.content)?.[1]
+  if (!Array.isArray(m.content)) return undefined
+  const blocks = m.content as { type?: unknown; text?: unknown }[]
+  if (blocks.some(b => b?.type === 'tool_result')) return undefined
+  const text = blocks.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
+  return SCENARIO_MARKER.exec(text)?.[1]
 }
+
+/**
+ * The scenario a request plays and where its conversation starts: the newest user message with a marker (`from`, its
+ * index), else the default from the start. A tool result carries no marker, so a tool loop keeps its prompt's scenario.
+ */
+export function scenarioStart(request: MessagesRequest): { scenario: string; from: number } {
+  for (let i = request.messages.length - 1; i >= 0; i--) {
+    const scenario = markerOf(request.messages[i]!)
+    if (scenario !== undefined) return { scenario, from: i }
+  }
+  return { scenario: DEFAULT_SCENARIO, from: 0 }
+}
+
+/** The scenario a request plays (`scenarioStart`'s). */
+export const scenarioOf = (request: MessagesRequest): string => scenarioStart(request).scenario
 
 let scripted: ScriptedModel | undefined
 
@@ -85,11 +110,16 @@ export function scriptedUpstream(): ModelUpstream {
       return Response.json({ type: 'error', error: { type: 'invalid_request_error', message: 'the scripted model does not count tokens' } }, { status: 400 })
     }
     let scenario = DEFAULT_SCENARIO
+    let body = init.body
     try {
-      scenario = scenarioOf(JSON.parse(init.body) as MessagesRequest)
+      const request = JSON.parse(init.body) as MessagesRequest
+      const at = scenarioStart(request)
+      scenario = at.scenario
+      // A resumed session's prompt: its turns count from that prompt, not from the session's first one.
+      if (at.from > 0) body = JSON.stringify({ ...request, messages: request.messages.slice(at.from) })
     } catch {
       // The scripted model reports the unreadable body itself.
     }
-    return model.handle(new Request(`https://scripted.invalid${path}`, { method: 'POST', headers: init.headers, body: init.body, signal: init.signal }), scenario)
+    return model.handle(new Request(`https://scripted.invalid${path}`, { method: 'POST', headers: init.headers, body, signal: init.signal }), scenario)
   }
 }
