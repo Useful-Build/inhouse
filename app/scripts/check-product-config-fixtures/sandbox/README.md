@@ -11,5 +11,7 @@ ends somewhere else (a bare `\r`) can't hide config from the lock. Invented valu
 - `raw-vite-output.json`: PR 7's config in the vite plugin's raw output shape (`@cloudflare/vite-plugin` 1.69.1's
   `getOutputConfig`, sandbox names already filled). The lock refuses it on exactly what `config.mjs` must rewrite: the
   plugin's config paths and a `migrations_dir` that leaves the build folder.
+- `pass-eval.json`: the eval deployment (p3-eval-observability rev 2, rec 2): the eval build with its own names, the test
+  issuer on, the eval brand marker, and the one AI binding and gateway id the sandbox allows.
 - `pass-candidate.json`: the candidate (the product build rehearsed on the shared sandbox resources); it passes the
   product rules too.

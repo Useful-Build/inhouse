@@ -5,6 +5,7 @@
 //   - it has an `env` block at all (each `env.<name>` can override vars, workers_dev and preview_urls, so none may
 //     deploy unchecked: the product config is one environment);
 //   - the test issuer is switched on: `INHOUSE_TEST_BUILD` or `TEST_ISSUER_JWKS` in `vars`;
+//   - the eval brand marker `INHOUSE_EVAL_BRAND` is in `vars` (only the sandbox's eval deployment is an eval brand);
 //   - a var is a Worker secret (`AUDIT_HASH_KEY` or `AI_GATEWAY_TOKEN`, the product config's required ones) or has a
 //     secret-like name (ends in SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with
 //     `wrangler secret put`, never in the config;
@@ -32,6 +33,7 @@
 // Sandbox mode (P3 PR0 item 12), the prefix lock for the sandbox, which shares its Cloudflare account with live products:
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --per-pr <N> <config path>
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --candidate <config path>
+//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --eval <config path>
 // The caller states the mode (never inferred from the config, which a PR writes). Both variables are required (exit 2
 // without them). The config must be plain JSON, read with JSON.parse alone: a comment or anything JSON.parse refuses
 // exits 2. (Two JSONC readers can disagree on where a comment ends: wrangler's ends `//` at a bare \r too, so a
@@ -49,7 +51,7 @@
 //   - a route or custom domain isn't exactly a sandbox host (with the `/path` a route may add), names a `zone_id` or
 //     another `zone_name`; or an INHOUSE_ACCESS origin isn't `https://<sandbox host>`;
 //   - `account_id` is missing or isn't CF_SANDBOX_ACCOUNT_ID;
-//   - an `ai` binding is present (the sandbox runs the scripted model only, no spend);
+//   - an `ai` binding is present (the sandbox runs the scripted model only, no spend), except in eval mode;
 //   - containers: more than one, a key but `class_name`, `name`, `image`, `max_instances` and `instance_type` (so no
 //     `image_build_context` or `images`), `max_instances` missing (wrangler's default is 20) or not 1 or 2, or an `image`
 //     that isn't `registry.cloudflare.com/<CF_SANDBOX_ACCOUNT_ID>/<name>:<tag>` or that exists as a file beside the
@@ -67,18 +69,29 @@
 //     the vite plugin's config paths and every other kind: this list fails closed on keys added later);
 //   - `env` is set, or `workers_dev` or `preview_urls` isn't explicitly false;
 //   - per-PR: vars.INHOUSE_TEST_BUILD isn't "1" (Q2's one exception: the test issuer in a deployed build, sandbox only);
+//   - per-PR: vars.INHOUSE_EVAL_BRAND is set;
 //   - candidate: any product rule above but the `inhouse-sbx-` one fails (it is the product build, rehearsed).
 //   - (P3) P3's pool and gateway rules (checkPool) fail, with the sandbox's container cap of 2 in place of
 //     3 x RUNNER_POOL (the sandbox runs RUNNER_POOL=2, max_instances=2).
+// Eval mode (p3-eval-observability rev 2, rec 2): the eval build's deployment (vite --mode product-eval), deployed from
+// main only by the ops repo. The one mode that allows the AI binding and gateway vars beside the test issuer (the eval
+// harness signs in through it and grades the real model; Q2's one named spend exception). Every sandbox rule above holds,
+// and it refuses a config when:
+//   - a name or host isn't exactly the eval deployment's (scripts/sandbox/names.mjs `evalNames()`: `inhouse-sbx-eval`,
+//     `-db`, `-files`, and hosts `-brand`, `-team` on SBX_ZONE), which no PR and not the candidate can carry;
+//   - `ai` isn't exactly `{ binding: <name> }`, or vars.AI_GATEWAY_ID isn't a gateway id;
+//   - vars.INHOUSE_TEST_BUILD or vars.INHOUSE_EVAL_BRAND isn't "1", or INHOUSE_ACCESS lists no app origins.
+// The generic product, per-PR and candidate rules are unchanged by it; checkPool's "no gateway on a test build" rule is
+// the one it lifts.
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
-  SandboxNameError, assertCandidateName, assertPrNumber, assertSandboxHost, assertZone, perPrNames,
+  SandboxNameError, assertCandidateName, assertPrNumber, assertSandboxHost, assertZone, evalNames, perPrNames,
 } from './sandbox/names.mjs'
 
 const USAGE = 'usage: node scripts/check-product-config.mjs <wrangler config path>\n' +
-  '       node scripts/check-product-config.mjs --sandbox (--per-pr <N> | --candidate) <wrangler config path>\n' +
+  '       node scripts/check-product-config.mjs --sandbox (--per-pr <N> | --candidate | --eval) <wrangler config path>\n' +
   '       (--sandbox reads CF_SANDBOX_ACCOUNT_ID and SBX_ZONE from the environment)'
 const usage = msg => {
   console.error(`check-product-config: ${msg}\n${USAGE}`)
@@ -126,6 +139,8 @@ const AUD = /^[0-9a-f]{64}$/i
 /** The Worker's secrets (wrangler.product.jsonc's required ones), and the names that look like one. */
 const SECRET_VARS = new Set(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN'])
 const SECRET_LIKE = /(SECRET|TOKEN|PASSWORD|PRIVATE|_KEY)$/i
+const GATEWAY_ID = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/
+const EVAL_BRAND_REFUSED = "vars.INHOUSE_EVAL_BRAND is set: only the sandbox's eval deployment is an eval brand"
 
 /** Every reason this config may not deploy as a product (empty: it may). */
 export function checkConfig(config) {
@@ -140,6 +155,7 @@ function productRules(config) {
   for (const name of ['INHOUSE_TEST_BUILD', 'TEST_ISSUER_JWKS']) {
     if (Object.hasOwn(vars, name)) failures.push(`vars.${name} is set: the test issuer must never be on in a deployable config`)
   }
+  if (Object.hasOwn(vars, 'INHOUSE_EVAL_BRAND')) failures.push(EVAL_BRAND_REFUSED)
   for (const name of Object.keys(vars)) {
     if (SECRET_VARS.has(name) || SECRET_LIKE.test(name)) failures.push(`vars.${name} looks like a secret: set secrets with wrangler secret put, never in the config`)
   }
@@ -190,7 +206,7 @@ function productRules(config) {
     }
   })
   if (config.ai !== undefined || Object.hasOwn(vars, 'AI_GATEWAY_ID')) {
-    if (typeof vars.AI_GATEWAY_ID !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(vars.AI_GATEWAY_ID)) {
+    if (typeof vars.AI_GATEWAY_ID !== 'string' || !GATEWAY_ID.test(vars.AI_GATEWAY_ID)) {
       failures.push('vars.AI_GATEWAY_ID must name the AI Gateway (lowercase letters, digits and dashes): the egress calls the model through it')
     }
   }
@@ -205,8 +221,10 @@ function productRules(config) {
  * P3's runner pool and gateway rules (p3-design sections 7 and 13), apart from INHOUSE_ACCESS so they run on any config.
  * `sandbox`: the sandbox lock caps the container at 2 instances with RUNNER_POOL=2, so there the 3 x RUNNER_POOL rule
  * (placement headroom; nothing in the code reads max_instances) gives way to that cap; every other pool rule holds.
+ * `evalMode`: the sandbox's eval deployment, the one config that runs the gateway beside the test issuer, so the
+ * test-build gateway rule gives way there (with `sandbox` only: `checkSandboxConfig` in eval mode).
  */
-export function checkPool(config, { sandbox = false } = {}) {
+export function checkPool(config, { sandbox = false, evalMode = false } = {}) {
   const failures = []
   const vars = config.vars ?? {}
   const runnerBound = (config.durable_objects?.bindings ?? []).some(b => b?.class_name === 'Runner')
@@ -222,7 +240,7 @@ export function checkPool(config, { sandbox = false } = {}) {
   }
   const testBuild = Object.hasOwn(vars, 'INHOUSE_TEST_BUILD') || Object.hasOwn(vars, 'TEST_ISSUER_JWKS')
   const gateway = config.ai !== undefined || Object.keys(vars).some(k => k.startsWith('AI_GATEWAY')) || (config.secrets?.required ?? []).some(k => String(k).startsWith('AI_GATEWAY'))
-  if (testBuild && gateway) failures.push('a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway')
+  if (testBuild && gateway && !(sandbox && evalMode)) failures.push('a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway')
   return failures
 }
 
@@ -295,7 +313,8 @@ const isInsidePath = p => typeof p === 'string' && p !== '' && !isAbsolute(p) &&
 
 /**
  * Every reason this config may not deploy to the sandbox (empty: it may). `accountId` and `zone` are the sandbox's own
- * (CF_SANDBOX_ACCOUNT_ID, SBX_ZONE); `mode` is `{ perPr: N }` or `{ candidate: true }`, from the caller; `configDir` is
+ * (CF_SANDBOX_ACCOUNT_ID, SBX_ZONE); `mode` is `{ perPr: N }`, `{ candidate: true }` or `{ eval: true }`, from the
+ * caller; `configDir` is
  * the folder the config file sits in (wrangler resolves an image path against it). A bad argument throws, since no
  * config could pass against it.
  */
@@ -303,16 +322,19 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   if (typeof accountId !== 'string' || !ACCOUNT_ID.test(accountId)) throw new SandboxNameError('CF_SANDBOX_ACCOUNT_ID must be 32 lowercase hex')
   assertZone(zone)
   const perPr = mode?.perPr !== undefined
-  if (perPr === (mode?.candidate === true)) throw new SandboxNameError('give exactly one mode: { perPr: N } or { candidate: true }')
+  const evalMode = mode?.eval === true
+  if ([perPr, mode?.candidate === true, evalMode].filter(Boolean).length !== 1) throw new SandboxNameError('give exactly one mode: { perPr: N }, { candidate: true } or { eval: true }')
   if (perPr) assertPrNumber(mode.perPr)
   if (typeof configDir !== 'string' || !isAbsolute(configDir)) throw new SandboxNameError('configDir must be an absolute folder')
-  const names = perPr ? perPrNames(mode.perPr) : null
+  // Per-PR and eval bind exact names; the candidate any shared sandbox name.
+  const names = perPr ? perPrNames(mode.perPr) : evalMode ? evalNames() : null
+  const whose = perPr ? `PR ${mode.perPr}'s` : 'the eval deployment\'s'
   const failures = [...forbiddenKeys(config)]
   const fail = msg => failures.push(msg)
   /** A name this mode allows for `kind` (one of perPrNames' keys). */
   const nameOk = (where, v, kind) => {
-    if (perPr) {
-      if (v !== names[kind]) fail(`${where}: ${JSON.stringify(v)} is not PR ${mode.perPr}'s ${kind} name (${names[kind]})`)
+    if (names) {
+      if (v !== names[kind]) fail(`${where}: ${JSON.stringify(v)} is not ${whose} ${kind} name (${names[kind]})`)
       return
     }
     try { assertCandidateName(v) } catch (err) {
@@ -321,8 +343,8 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     }
   }
   const hostOk = (where, host) => {
-    if (perPr) {
-      if (host !== `${names.brand}.${zone}` && host !== `${names.team}.${zone}`) fail(`${where}: host ${JSON.stringify(host)} is not PR ${mode.perPr}'s brand or team host on the sandbox zone`)
+    if (names) {
+      if (host !== `${names.brand}.${zone}` && host !== `${names.team}.${zone}`) fail(`${where}: host ${JSON.stringify(host)} is not ${whose} brand or team host on the sandbox zone`)
       return
     }
     try { assertSandboxHost(host, zone, 'candidate') } catch (err) {
@@ -350,7 +372,13 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   if (Object.hasOwn(config, 'env')) fail('env is set: a deployable config has no env blocks (each could override what this checks)')
   nameOk('name', config.name, 'worker')
   if (config.account_id !== accountId) fail('account_id is missing or is not the sandbox account (CF_SANDBOX_ACCOUNT_ID)')
-  if (config.ai !== undefined && config.ai !== null) fail('ai is set: the sandbox runs the scripted model only (no AI binding, no spend)')
+  if (evalMode) {
+    // The eval deployment runs the real model: exactly one AI binding, by name, and the gateway it calls.
+    onlyKeys('ai', config.ai, new Set(['binding']))
+    if (typeof config.ai?.binding !== 'string' || !config.ai.binding) fail('ai.binding must name the AI binding: the eval deployment runs the real model through the gateway')
+    const gatewayId = config.vars?.AI_GATEWAY_ID
+    if (typeof gatewayId !== 'string' || !GATEWAY_ID.test(gatewayId)) fail('vars.AI_GATEWAY_ID must name the AI Gateway (lowercase letters, digits and dashes): the egress calls the model through it')
+  } else if (config.ai !== undefined && config.ai !== null) fail('ai is set: the sandbox runs the scripted model only (no AI binding, no spend)')
   if (config.workers_dev !== false) fail('workers_dev must be false (left out, wrangler turns it on)')
   if (config.preview_urls !== false) fail('preview_urls must be false (left out, wrangler turns it on)')
   if (config.main !== undefined && !isInsidePath(config.main)) fail('main must be a relative path inside the build folder (no .., not absolute)')
@@ -444,11 +472,17 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   if (perPr) {
     if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in a per-PR test deployment')
     if (accessOrigins(config).length === 0) fail('vars.INHOUSE_ACCESS must list the per-PR hosts as its app origins')
+    if (Object.hasOwn(config.vars ?? {}, 'INHOUSE_EVAL_BRAND')) fail(EVAL_BRAND_REFUSED)
+  } else if (evalMode) {
+    if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in the eval deployment (the harness signs in through the test issuer)')
+    if (config.vars?.INHOUSE_EVAL_BRAND !== '1') fail('vars.INHOUSE_EVAL_BRAND must be "1" in the eval deployment (the eval brand marker)')
+    if (accessOrigins(config).length === 0) fail('vars.INHOUSE_ACCESS must list the eval hosts as its app origins')
   } else {
     for (const f of productRules(config)) if (!failures.includes(f)) fail(f)
   }
-  // P3's pool and gateway rules hold in the sandbox too, the container cap of 2 standing in for 3 x RUNNER_POOL.
-  for (const f of checkPool(config, { sandbox: true })) if (!failures.includes(f)) fail(f)
+  // P3's pool and gateway rules hold in the sandbox too, the container cap of 2 standing in for 3 x RUNNER_POOL (and in
+  // eval mode, the gateway beside the test issuer allowed).
+  for (const f of checkPool(config, { sandbox: true, evalMode })) if (!failures.includes(f)) fail(f)
   return failures
 }
 
@@ -465,8 +499,9 @@ export function readSandboxConfig(path) {
 /** The sandbox mode from the command line's flags (after --sandbox), or throws a usage message. */
 export function parseSandboxMode(args) {
   if (args[0] === '--candidate') return { mode: { candidate: true }, rest: args.slice(1) }
+  if (args[0] === '--eval') return { mode: { eval: true }, rest: args.slice(1) }
   if (args[0] === '--per-pr' && /^[1-9][0-9]{0,5}$/.test(args[1] ?? '')) return { mode: { perPr: Number(args[1]) }, rest: args.slice(2) }
-  throw new Error('--sandbox needs --per-pr <N> (1 to 999999) or --candidate')
+  throw new Error('--sandbox needs --per-pr <N> (1 to 999999), --candidate or --eval')
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -495,7 +530,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
     // Product mode adds P3's pool and gateway rules; sandbox mode runs them inside checkSandboxConfig.
     const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : [...checkConfig(config), ...checkPool(config)]
-    const where = sandbox ? ` to the sandbox (${mode.candidate ? 'candidate' : `PR ${mode.perPr}`})` : ''
+    const where = sandbox ? ` to the sandbox (${mode.candidate ? 'candidate' : mode.eval ? 'eval' : `PR ${mode.perPr}`})` : ''
     if (failures.length) {
       console.error(`check-product-config: ${args[0]} may not deploy${where}:\n${failures.map(f => `  - ${f}`).join('\n')}`)
       process.exit(1)

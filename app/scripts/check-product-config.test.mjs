@@ -16,6 +16,8 @@ const run = (...args) => spawnSync(process.execPath, [script, ...args], { encodi
 const RULE_TEXT = {
   'test-build-var': 'vars.INHOUSE_TEST_BUILD is set',
   'test-issuer-jwks': 'vars.TEST_ISSUER_JWKS is set',
+  // The eval build (p3-eval-observability rev 2, rec 2): the eval brand marker is the sandbox eval deployment's alone.
+  'eval-brand-var': "vars.INHOUSE_EVAL_BRAND is set: only the sandbox's eval deployment is an eval brand",
   'env-block': 'env is set: a deployable config has no env blocks',
   'apps-no-inhouse': 'must be exactly one "brand" app and one "inhouse" app',
   'apps-two-brands': 'must be exactly one "brand" app and one "inhouse" app',

@@ -14,6 +14,10 @@
 //  9. it runs with the sandbox's account, zone or mode unset or malformed instead of stopping (exit 2);
 // 10. its reader and wrangler's disagree on where a comment ends (a bare \r), so config hides from the check.
 // 11. a migration step's values carry what its keys don't (a `from_script` inside `renamed_classes`).
+// 12. (eval build, p3-eval-observability rev 2 rec 2) the AI binding or a gateway var passes beside the test issuer in any
+//     mode but `--eval`; the eval deployment binds another deployment's names or hosts, or ships without the real
+//     model, the test issuer's switch or the eval brand marker; the marker (INHOUSE_EVAL_BRAND) passes in a per-PR,
+//     candidate or product config, so a brand could be graded or traced as an eval brand.
 // Oracles: the literal pass fixtures in check-product-config-fixtures/sandbox/ and one literal change per rule below,
 // each with the failure text it must print. Every case runs the script as CI and the ops repo do.
 import { spawnSync } from 'node:child_process'
@@ -31,6 +35,8 @@ const ZONE = 'zone.example.test'
 const ENV = { CF_SANDBOX_ACCOUNT_ID: ACCOUNT, SBX_ZONE: ZONE }
 const PR12 = ['--sandbox', '--per-pr', '12']
 const CANDIDATE = ['--sandbox', '--candidate']
+const EVAL = ['--sandbox', '--eval']
+const EVAL_BRAND_REFUSED = 'vars.INHOUSE_EVAL_BRAND is set: only the sandbox\'s eval deployment is an eval brand'
 const run = (args, env = ENV) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env } })
 const load = name => JSON.parse(readFileSync(`${fixtures}sandbox/${name}`, 'utf8'))
 const tmp = mkdtempSync(join(tmpdir(), 'sandbox-config-'))
@@ -159,6 +165,8 @@ const PER_PR_CASES = [
   ['no test flag', c => { delete c.vars.INHOUSE_TEST_BUILD }, 'vars.INHOUSE_TEST_BUILD must be "1" in a per-PR test deployment'],
   ['test flag off', c => { c.vars.INHOUSE_TEST_BUILD = '0' }, 'vars.INHOUSE_TEST_BUILD must be "1"'],
   ['no INHOUSE_ACCESS', c => { delete c.vars.INHOUSE_ACCESS }, 'vars.INHOUSE_ACCESS must list the per-PR hosts'],
+  // 12: the eval brand marker.
+  ['the eval brand marker', c => { c.vars.INHOUSE_EVAL_BRAND = '1' }, EVAL_BRAND_REFUSED],
 ]
 
 describe('check-product-config --sandbox --per-pr: PR 12', () => {
@@ -320,6 +328,76 @@ describe('comments (failure 10)', () => {
   })
 })
 
+const evalHost = kind => `inhouse-sbx-eval-${kind}.${ZONE}`
+/** [case, change to the eval deployment's passing config, the failure text, optional text change, other lines]. */
+const EVAL_CASES = [
+  ['a PR\'s worker name', c => { c.name = 'inhouse-sbx-pr12' }, 'name: "inhouse-sbx-pr12" is not the eval deployment\'s worker name (inhouse-sbx-eval)'],
+  ['the candidate\'s d1', c => { c.d1_databases[0].database_name = 'inhouse-sbx-db' }, 'd1_databases[0].database_name: "inhouse-sbx-db" is not the eval deployment\'s d1 name (inhouse-sbx-eval-db)'],
+  ['a live product\'s r2', c => { c.r2_buckets[0].bucket_name = 'live-product-files' }, 'r2_buckets[0].bucket_name: "live-product-files" is not the eval deployment\'s r2 name'],
+  ['a PR\'s container', c => { c.containers[0].name = 'inhouse-sbx-pr12' }, 'containers[0].name: "inhouse-sbx-pr12" is not the eval deployment\'s container name'],
+  ['a PR\'s image', c => { c.containers[0].image = `registry.cloudflare.com/${ACCOUNT}/inhouse-sbx-pr12:v1` }, 'containers[0].image: "inhouse-sbx-pr12" is not the eval deployment\'s image name'],
+  ['the candidate\'s host', c => { c.routes[0].pattern = `inhouse-sbx-brand.${ZONE}` }, `routes[0].pattern: host "inhouse-sbx-brand.${ZONE}" is not the eval deployment's brand or team host on the sandbox zone`],
+  ['an access origin of a PR', c => { c.vars.INHOUSE_ACCESS = access(`https://inhouse-sbx-pr12-brand.${ZONE}`, `https://${evalHost('team')}`) }, 'INHOUSE_ACCESS.apps[0].origin: host "inhouse-sbx-pr12-brand.zone.example.test" is not the eval deployment\'s'],
+  ['no AI binding', c => { delete c.ai }, 'ai.binding must name the AI binding: the eval deployment runs the real model through the gateway'],
+  ['an AI binding with another key', c => { c.ai.remote = true }, 'ai.remote is set: a sandbox config may not use it'],
+  ['no gateway id', c => { c.vars.AI_GATEWAY_ID = '' }, 'vars.AI_GATEWAY_ID must name the AI Gateway'],
+  ['no eval brand marker', c => { delete c.vars.INHOUSE_EVAL_BRAND }, 'vars.INHOUSE_EVAL_BRAND must be "1" in the eval deployment'],
+  ['the marker off', c => { c.vars.INHOUSE_EVAL_BRAND = 'true' }, 'vars.INHOUSE_EVAL_BRAND must be "1" in the eval deployment'],
+  ['no test flag', c => { delete c.vars.INHOUSE_TEST_BUILD }, 'vars.INHOUSE_TEST_BUILD must be "1" in the eval deployment'],
+  ['no INHOUSE_ACCESS', c => { delete c.vars.INHOUSE_ACCESS }, 'vars.INHOUSE_ACCESS must list the eval hosts as its app origins'],
+  // The sandbox's own rules hold in eval mode too.
+  ['another account', c => { c.account_id = 'fedcba9876543210fedcba9876543210' }, 'account_id is missing or is not the sandbox account'],
+  ['3 containers', c => { c.containers[0].max_instances = 3 }, 'containers[0].max_instances must be 1 or 2'],
+  ['a service binding', c => { c.services = [{ binding: 'LIVE', service: 'live-product' }] }, 'services is set: a sandbox config may not use it'],
+  ['__proto__ in the AI binding', c => c, 'config.ai.__proto__ is a forbidden key', after('"ai":{"binding":"AI"', '"__proto__":{"remote":true}')],
+]
+
+describe('check-product-config --sandbox --eval (failure 12)', () => {
+  test('passes pass-eval.json with exit 0: the AI binding and gateway beside the test issuer', () => {
+    const r = run([...EVAL, `${fixtures}sandbox/pass-eval.json`])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('may deploy to the sandbox (eval)')
+  })
+  for (const [name, change, text, textChange, also = []] of EVAL_CASES) {
+    test(`refuses ${name} with exit 1 and names it`, () => {
+      const config = load('pass-eval.json')
+      change(config)
+      const r = run([...EVAL, write(config, textChange)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual([text, ...also].map(t => expect.stringContaining(t)))
+    })
+  }
+  test('no other mode passes the eval deployment\'s config, and eval mode passes no other\'s', () => {
+    const asPr = run([...PR12, `${fixtures}sandbox/pass-eval.json`])
+    expect(asPr.status).toBe(1)
+    expect(asPr.stderr).toContain('name: "inhouse-sbx-eval" is not PR 12\'s worker name')
+    expect(asPr.stderr).toContain('ai is set: the sandbox runs the scripted model only')
+    expect(asPr.stderr).toContain(EVAL_BRAND_REFUSED)
+    const asCandidate = run([...CANDIDATE, `${fixtures}sandbox/pass-eval.json`])
+    expect(asCandidate.status).toBe(1)
+    expect(asCandidate.stderr).toContain('name: "inhouse-sbx-eval" is the eval deployment\'s name, not the candidate\'s')
+    expect(asCandidate.stderr).toContain(EVAL_BRAND_REFUSED)
+    expect(asCandidate.stderr).toContain('ai is set: the sandbox runs the scripted model only')
+    const asProduct = run([`${fixtures}sandbox/pass-eval.json`])
+    expect(asProduct.status).toBe(1)
+    expect(asProduct.stderr).toContain(EVAL_BRAND_REFUSED)
+    for (const other of ['pass-per-pr.json', 'pass-candidate.json']) {
+      const r = run([...EVAL, `${fixtures}sandbox/${other}`])
+      expect(r.status, other).toBe(1)
+      expect(r.stderr, other).toContain('is not the eval deployment\'s worker name (inhouse-sbx-eval)')
+      expect(r.stderr, other).toContain('vars.INHOUSE_EVAL_BRAND must be "1" in the eval deployment')
+    }
+  })
+  test('the candidate refuses the eval brand marker', () => {
+    const config = load('pass-candidate.json')
+    config.vars.INHOUSE_EVAL_BRAND = '1'
+    const r = run([...CANDIDATE, write(config)])
+    expect(r.status).toBe(1)
+    expect(failureLines(r)).toEqual([expect.stringContaining(EVAL_BRAND_REFUSED)])
+  })
+})
+
 describe('usage (failure 9)', () => {
   const file = `${fixtures}sandbox/pass-per-pr.json`
   test('exits 2 without, or with a malformed, account id or zone', () => {
@@ -333,7 +411,8 @@ describe('usage (failure 9)', () => {
   test('exits 2 without a mode, on a malformed PR number, or on two modes', () => {
     for (const args of [['--sandbox', file], ['--sandbox', '--per-pr', file], ['--sandbox', '--per-pr', '0', file], ['--sandbox', '--per-pr', '012', file],
       ['--sandbox', '--per-pr', '1234567', file], ['--sandbox', '--per-pr', '12x', file], ['--sandbox', '--candidate', '--per-pr', '12', file],
-      ['--sandbox', '--per-pr', '12', '--candidate', file]]) {
+      ['--sandbox', '--per-pr', '12', '--candidate', file], ['--sandbox', '--eval', '--per-pr', '12', file], ['--sandbox', '--per-pr', '12', '--eval', file],
+      ['--sandbox', '--eval', '--candidate', file], ['--eval', file]]) {
       const r = run(args)
       expect(r.status, args.join(' ')).toBe(2)
       expect(r.stdout).toBe('')

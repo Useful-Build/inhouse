@@ -1,0 +1,80 @@
+{
+	"name": "inhouse-sbx-eval",
+	"main": "index.js",
+	"compatibility_date": "2026-11-13",
+	"account_id": "0123456789abcdef0123456789abcdef",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": "../client",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "inhouse-sbx-eval-db",
+			"migrations_dir": "server/migrations"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "FILES",
+			"bucket_name": "inhouse-sbx-eval-files"
+		}
+	],
+	"ai": {
+		"binding": "AI"
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "RUNNER",
+				"class_name": "Runner"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"Runner"
+			]
+		}
+	],
+	"containers": [
+		{
+			"class_name": "Runner",
+			"name": "inhouse-sbx-eval",
+			"image": "registry.cloudflare.com/0123456789abcdef0123456789abcdef/inhouse-sbx-eval:sha-0a1b2c3",
+			"max_instances": 2
+		}
+	],
+	"routes": [
+		{
+			"pattern": "inhouse-sbx-eval-brand.zone.example.test",
+			"custom_domain": true
+		},
+		{
+			"pattern": "inhouse-sbx-eval-team.zone.example.test",
+			"custom_domain": true
+		}
+	],
+	"version_metadata": {
+		"binding": "CF_VERSION_METADATA"
+	},
+	"vars": {
+		"INHOUSE_TEST_BUILD": "1",
+		"INHOUSE_EVAL_BRAND": "1",
+		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://test-issuer.invalid\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://inhouse-sbx-eval-brand.zone.example.test\",\"aud\":\"b1a2c3d4e5f60718293a4b5c6d7e8f90b1a2c3d4e5f60718293a4b5c6d7e8f90\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse-sbx-eval-team.zone.example.test\",\"aud\":\"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"}],\"serviceTokens\":{}}",
+		"AUDIT_HASH_KEY": "test-only-audit-hash-key-not-a-secret",
+		"RUNNER_POOL": "2",
+		"AI_GATEWAY_ID": "inhouse-sbx-eval-gateway"
+	},
+	"workers_dev": false,
+	"preview_urls": false,
+	"observability": {
+		"enabled": true
+	}
+}
