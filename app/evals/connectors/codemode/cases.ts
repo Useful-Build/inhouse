@@ -2,7 +2,9 @@
 // fixture store (300 orders, 150 products). Each passes when the agent picks shopify_script_run by itself and answers
 // right. The orchestrator runs them on Sonnet 5.5 at medium in its live check and also checks that at most
 // MAX_TOOL_RESULT_CHARS of tool result reached the model per question (the harness's Expect has no size field).
-// Registering them in evals/cases.ts is an orchestrator line. The expected values are the fixture's, as the oracles in
+// LIVE ONLY (B2, 2026-11-21): they run at the P5 live check against the real dev store, never against the recorded test
+// store (which answers only its recorded documents, so a script the model writes gets ACCESS_DENIED there). The harness
+// has no live-only field, so each case's note says it. The expected values are the fixture's, as the oracles in
 // app/hub/codemode/measure/oracle.ts compute them (asked at 2026-11-20T18:00:00Z).
 import type { Case } from '../../types.ts'
 
@@ -13,7 +15,7 @@ export const CODEMODE_CASES: Case[] = [
   {
     id: 'C-CODEMODE-01',
     cat: 'connector',
-    note: 'S4 lowest stock with a count over a price: the lowest is oversold at -4; 48 products sell for over $150',
+    note: 'LIVE ONLY (P5 live check, real dev store). S4 lowest stock with a count over a price: the lowest is oversold at -4; 48 products sell for over $150',
     needs: ['shopify_script_run'],
     chats: [
       {
@@ -25,7 +27,7 @@ export const CODEMODE_CASES: Case[] = [
   {
     id: 'C-CODEMODE-02',
     cat: 'connector',
-    note: 'S4 paid orders unfulfilled over 3 days, as of 2026-11-20 18:00 UTC: one, #1001',
+    note: 'LIVE ONLY (P5 live check, real dev store). S4 paid orders unfulfilled over 3 days, as of 2026-11-20 18:00 UTC: one, #1001',
     needs: ['shopify_script_run'],
     chats: [
       {
@@ -37,7 +39,7 @@ export const CODEMODE_CASES: Case[] = [
   {
     id: 'C-CODEMODE-03',
     cat: 'connector',
-    note: 'S4 refund spike by product and reason: 21 refunds of P4-0062 (Summit Camp Stove), "Igniter failed"',
+    note: 'LIVE ONLY (P5 live check, real dev store). S4 refund spike by product and reason: 21 refunds of P4-0062 (Summit Camp Stove), "Igniter failed"',
     needs: ['shopify_script_run'],
     chats: [
       {
@@ -49,7 +51,7 @@ export const CODEMODE_CASES: Case[] = [
   {
     id: 'C-CODEMODE-04',
     cat: 'connector',
-    note: 'S4 open returns not restocked: 11 open returns, all P4-0089, "Damaged or defective"',
+    note: 'LIVE ONLY (P5 live check, real dev store). S4 open returns not restocked: 11 open returns, all P4-0089, "Damaged or defective"',
     needs: ['shopify_script_run'],
     chats: [
       {
