@@ -377,6 +377,16 @@ describe('released (protocol v2): the last event of every run, with the checkpoi
       'failed',
     ],
     [
+      'an interrupt the SDK honours (its error_during_execution result: finished, not failed)',
+      { prompt: 'cp:honour' },
+      async (root, runId) => {
+        await waitFor(() => (root.egress.events.get(runId) ?? []).some((e) => e.type === 'sdk'), 'the query ran')
+        expect(await post(root, `/runs/${runId}/interrupt`)).toBe(202)
+      },
+      { checkpoint: CP, queryRan: true },
+      'finished',
+    ],
+    [
       'a stop before the query (the session never started it)',
       { prompt: 'obey-stop' },
       async (root, runId) => {

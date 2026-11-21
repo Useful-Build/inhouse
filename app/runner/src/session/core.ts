@@ -256,6 +256,12 @@ export async function runSession(deps: {
   let deadlineTimer: NodeJS.Timeout | undefined
   /** An interrupt that came before the query existed: applied as soon as it does. */
   let interruptPending = false
+  /**
+   * The root asked for an interrupt (before or after the query existed). The SDK honours `interrupt()` by ending the turn
+   * with an `error_during_execution` result and then throwing ("Claude Code returned an error result"); that result is
+   * the interrupt's own end, not an SDK fault, so it is kept as a stop's is.
+   */
+  let interrupted = false
   const abort = new AbortController()
   let resolveRun!: (config: RunConfig) => void
   const runConfig = new Promise<RunConfig>((r) => (resolveRun = r))
@@ -300,6 +306,7 @@ export async function runSession(deps: {
       gotRun = true
       resolveRun(m.config)
     } else if (m.type === 'interrupt') {
+      interrupted = true
       void halt()
     } else if (m.type === 'audit_ack') {
       settleAudit(m.id, null)
@@ -434,8 +441,9 @@ export async function runSession(deps: {
   } else if (result !== null && result.subtype === 'error_max_structured_output_retries') {
     // The SDK ran out of attempts at output matching the schema (it throws after this result; that's this, not a crash).
     terminal = { type: 'failed', reason: 'structured_output', message: 'the agent could not produce output matching the schema' }
-  } else if (result !== null && (!threw || stopping || abort.signal.aborted)) {
-    // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept).
+  } else if (result !== null && (!threw || stopping || interrupted || abort.signal.aborted)) {
+    // A result was seen: the run finished, even when a stop or interrupt raced its end (cost and usage are kept). After
+    // an interrupt the SDK throws once it has sent the turn's `error_during_execution` result: still this run's end.
     terminal = finishedEvent(result)
     const deferred = result.subtype === 'success' ? result.deferred_tool_use : undefined
     // Asked for structured output: any end that would be a clean `finished` (is_error false, whatever the subtype) carries

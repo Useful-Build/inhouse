@@ -83,6 +83,8 @@ const sendAudit = (entry: unknown, expiresAt = mono() + 10_000) =>
   })
 
 let mode = ''
+/** The part after the mode (`cp:honour` → `honour`), for the handlers of later root messages. */
+let variant = ''
 let runMessage: unknown = null
 let ended = false
 
@@ -139,7 +141,10 @@ channel.onMessage((line) => {
   if ((raw?.type === 'interrupt' || raw?.type === 'stop') && mode === 'cp' && !ended) {
     ended = true
     event(CP)
-    event(raw.type === 'interrupt' ? { type: 'failed', reason: 'interrupted', message: 'interrupted' } : { type: 'failed', reason: 'stopped', message: 'stopped' })
+    // `cp:honour`: an interrupt the SDK honoured, as the real session now ends it (the SDK's error_during_execution result
+    // kept: session/core.ts); otherwise the abort fallback's `failed interrupted`.
+    if (raw.type === 'interrupt' && variant === 'honour') event({ type: 'finished', subtype: 'error_during_execution', isError: true, numTurns: 1, costUsd: 0.00007, usage: { input_tokens: 10 } })
+    else event(raw.type === 'interrupt' ? { type: 'failed', reason: 'interrupted', message: 'interrupted' } : { type: 'failed', reason: 'stopped', message: 'stopped' })
     end()
     return
   }
@@ -151,6 +156,7 @@ channel.onMessage((line) => {
   if (raw?.type !== 'run') return
   runMessage = raw
   mode = raw.config.prompt.split(':')[0]
+  variant = raw.config.prompt.split(':')[1] ?? ''
   const [, a, b] = raw.config.prompt.split(':')
   const ticks = (n: number, marker: string | undefined, then: () => void) => {
     let i = 0
