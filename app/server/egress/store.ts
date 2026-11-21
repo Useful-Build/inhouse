@@ -8,7 +8,7 @@ import type { StoreKey } from '../../shared/protocol/index.ts'
 import { sessionKey, sessionPrefix } from '../db/r2-keys.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import type { EgressDeps } from './deps.ts'
-import { jsonAnswer, parseJson, readCapped, sha256Hex } from './http.ts'
+import { jsonAnswer, parseJson, readCapped, scopeRefused, sha256Hex } from './http.ts'
 
 /**
  * A load's answer, `{"entries":[...]}`, streamed one stored part at a time: each part is the JSON array an append wrote
@@ -47,7 +47,6 @@ export const STORE_BODY_MAX_BYTES = 16 * 1024 * 1024
 /** A load past this many bytes stops with 413 (the store-size policy's, flagged to the orchestrator). */
 export const STORE_LOAD_MAX_BYTES = 64 * 1024 * 1024
 
-const scope = () => jsonAnswer({ error: 'scope' }, 403)
 
 /** `m`, or `s/<encoded subpath>`. */
 const subOf = (key: StoreKey) => (key.subpath === undefined ? 'm' : `s/${encodeURIComponent(key.subpath)}`)
@@ -63,7 +62,7 @@ export async function storeRoute(request: Request, path: string, grant: RunGrant
   if (op === 'append') {
     const body = StoreAppend.safeParse(raw)
     if (!body.success) return jsonAnswer({ error: 'invalid' }, 400)
-    if (body.data.key.sessionId !== grant.sessionId) return scope()
+    if (body.data.key.sessionId !== grant.sessionId) return scopeRefused('store', d)
     const project = await sha256Hex(body.data.key.projectKey)
     const key = sessionKey(grant.chatId, grant.sessionId, project, subOf(body.data.key), body.data.part)
     // One object per part: a batch sent again carries the same part, so it overwrites rather than adds a copy.
@@ -74,7 +73,7 @@ export async function storeRoute(request: Request, path: string, grant: RunGrant
   if (op === 'load') {
     const body = StoreLoad.safeParse(raw)
     if (!body.success) return jsonAnswer({ error: 'invalid' }, 400)
-    if (body.data.key.sessionId !== grant.sessionId) return scope()
+    if (body.data.key.sessionId !== grant.sessionId) return scopeRefused('store', d)
     const project = await sha256Hex(body.data.key.projectKey)
     const prefix = `${sessionPrefix(grant.chatId, grant.sessionId, project)}${subOf(body.data.key)}/`
     const keys: string[] = []
@@ -98,7 +97,7 @@ export async function storeRoute(request: Request, path: string, grant: RunGrant
 
   const body = StoreListSubkeys.safeParse(raw)
   if (!body.success) return jsonAnswer({ error: 'invalid' }, 400)
-  if (body.data.key.sessionId !== grant.sessionId) return scope()
+  if (body.data.key.sessionId !== grant.sessionId) return scopeRefused('store', d)
   const project = await sha256Hex(body.data.key.projectKey)
   const prefix = `${sessionPrefix(grant.chatId, grant.sessionId, project)}s/`
   const subkeys = new Set<string>()
