@@ -207,6 +207,20 @@ describe('routes 53, 55 and 56: switch, delete and restore', () => {
     }
   })
 
+  it('a grant that expired but was never ended writes nothing (ends_at_ms past, ended_at_ms NULL)', async () => {
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    await db.prepare('UPDATE support_grants SET ends_at_ms = ? WHERE id = ?').bind(NOW - 1, GRANT).run()
+    try {
+      const before = await lastLineId(db)
+      expect((await send(inhouse(true), 'PUT', `/api/routines/${r.id}/enabled`, { on: false, ifRev: 1 })).status).toBe(403)
+      expect(await row(r.id)).toMatchObject({ rev: 1, enabled: 1 })
+      expect((await actions(before)).filter(([a]) => a !== 'support.access')).toEqual([])
+      expect(await routineLines(r.id)).toEqual([])
+    } finally {
+      await db.prepare('UPDATE support_grants SET ends_at_ms = ? WHERE id = ?').bind(NOW + 60_000, GRANT).run()
+    }
+  })
+
   it('Inhouse without a grant is refused before the handler; a stale ifRev is conflict with the routine and its switch as they are now', async () => {
     const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
     expect((await send(inhouse(false), 'PUT', `/api/routines/${r.id}/enabled`, { on: false, ifRev: 1 })).body).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
