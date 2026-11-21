@@ -3,10 +3,11 @@
 //   2. the morning check fills Today (needs the multi-config test build, `needsWatchBuild`): Run now on the system routine
 //      reads the recorded store through the hub and returns the scripted `morning-check` scenario's one item, which the
 //      server validates and saves; setting it aside, undoing it and a stale revision follow the brief's rules.
-// Group 2 relies on the test build naming the `morning-check` scenario for the system routine's run: its prompt carries no
-// `scenario:` marker, so without that mapping the run ends `invalid_result` and the spec fails loud on the first check.
-// The screens (Today, the problem panel) are W3 PR 2's; their specs are added once it merges. Expected answers are written
-// here from the brief.
+// Group 2 relies on the test build's scripted-model route (test/scripted-model/routes.ts): the system routine's prompt carries
+// no `scenario:` marker, and the route plays `morning-check` for it; without the route the run ends `invalid_result` and the
+// spec fails loud on the first check. The set-aside case reads the record's current revision first, so a D1 that earlier
+// runs touched works too. The screens (Today, the problem panel) are the ship specs'. Expected answers are written here from
+// the brief.
 import { randomBytes } from 'node:crypto'
 import { expect, test } from '@playwright/test'
 import { actor, call, endLiveGrants, expectConflict, expectError, me } from './kit.ts'
@@ -98,19 +99,21 @@ test.describe('the morning check fills Today (S1, server side)', () => {
 
   test('set aside: a snooze leaves Today for everyone, a stale revision is a 409 with the record as it is, an undo brings the card back, and each change is audited', async ({ request }) => {
     const before = auditWhere('today.set_aside').length
-    const snooze = await call(request, dana, 'PUT', `/api/today/${card.id}/aside`, { json: { reason: 'snoozed', ifRev: 0 } })
+    // The record's revision as it is now (0: none yet), so the spec doesn't need a fresh D1.
+    const rev0 = ((await call(request, dana, 'GET', '/api/today')).json.aside[card.id]?.rev as number | undefined) ?? 0
+    const snooze = await call(request, dana, 'PUT', `/api/today/${card.id}/aside`, { json: { reason: 'snoozed', ifRev: rev0 } })
     expect(snooze.status, snooze.text).toBe(200)
-    expect(snooze.json).toMatchObject({ reason: 'snoozed', rev: 1, by: danaId })
+    expect(snooze.json).toMatchObject({ reason: 'snoozed', rev: rev0 + 1, by: danaId })
     const seenByLeo = await call(request, leo, 'GET', '/api/today')
     expect((seenByLeo.json.items as Card[]).map(i => i.id)).not.toContain(card.id)
-    expect(seenByLeo.json.aside[card.id]).toMatchObject({ reason: 'snoozed', rev: 1 })
+    expect(seenByLeo.json.aside[card.id]).toMatchObject({ reason: 'snoozed', rev: rev0 + 1 })
 
-    const stale = expectConflict(await call(request, leo, 'PUT', `/api/today/${card.id}/aside`, { json: { reason: 'dismissed', ifRev: 0 } }))
-    expect(stale).toMatchObject({ reason: 'snoozed', rev: 1 })
+    const stale = expectConflict(await call(request, leo, 'PUT', `/api/today/${card.id}/aside`, { json: { reason: 'dismissed', ifRev: rev0 } }))
+    expect(stale).toMatchObject({ reason: 'snoozed', rev: rev0 + 1 })
 
-    const undo = await call(request, leo, 'PUT', `/api/today/${card.id}/aside`, { json: { reason: null, ifRev: 1 } })
+    const undo = await call(request, leo, 'PUT', `/api/today/${card.id}/aside`, { json: { reason: null, ifRev: rev0 + 1 } })
     expect(undo.status, undo.text).toBe(200)
-    expect(undo.json).toMatchObject({ reason: null, rev: 2 })
+    expect(undo.json).toMatchObject({ reason: null, rev: rev0 + 2 })
     expect(((await call(request, dana, 'GET', '/api/today')).json.items as Card[]).map(i => i.id)).toContain(card.id)
     const lines = auditWhere('today.set_aside').slice(before).map(l => JSON.parse(l.args_json) as { itemId: string; reason: string | null })
     expect(lines.map(l => [l.itemId, l.reason]), 'one line per accepted change, none for the conflict').toEqual([[card.id, 'snoozed'], [card.id, null]])

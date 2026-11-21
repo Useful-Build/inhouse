@@ -5,19 +5,20 @@
 //      tool result is an error with `write_refused`, and the product Worker's and the hub's log lines say so;
 //   3. no public route: the hub's default export answers 404 to every method;
 //   4. the canary sweep (4): after the morning check ran, neither the upstream's access token nor the test client secret nor
-//      a run token appears in either Worker's output, the runner container's log, a full D1 dump, every R2 object, the
+//      a run token appears in either Worker's output, the runner container's log, a full D1 dump and every R2 object (both taken after the runs), the
 //      runner's environment (a scripted `Bash` call printing `env` into a file read back here) or the run's events.
 // The orchestrator starts the multi-config test build under the heavy lock and sets three switches (documented in watch-kit.ts):
-// `E2E_WATCH_BUILD=1`; `E2E_HUB_ORIGIN`, the hub Worker's own origin; `WATCH_ARTIFACTS_DIR`, where it collects the sweep's
-// inputs: product-wrangler.log, hub-wrangler.log, runner-container.log, d1-dump.sql, r2/ (every object) and run-tokens.txt
-// (`ARTIFACTS` below). A group whose switch is missing skips and says so on stderr; an input that is named but missing fails
-// loud: a sweep over nothing proves nothing.
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+// `E2E_WATCH_BUILD=1`; `E2E_HUB_ORIGIN`, the hub Worker's own origin; `WATCH_ARTIFACTS_DIR`, where it keeps the sweep's live
+// inputs: product-wrangler.log, hub-wrangler.log, runner-container.log and run-tokens.txt (`<runId> <token>` per line; it must
+// hold the two runs this spec makes) (`ARTIFACTS` below). The local D1 and R2 are dumped by the spec itself after its runs.
+// Without E2E_WATCH_BUILD the container groups skip and say so on stderr; in a watch build a missing origin, directory or
+// file fails: no check passes without its inputs.
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { actor, call } from './kit.ts'
 import { answerOf, createChat, send, textOf } from './chat-kit.ts'
-import { needsWatchBuild, skipLoudly, slotWhere } from './watch-kit.ts'
+import { dumpLocalD1, needsWatchBuild, readLocalR2, skipLoudly, slotWhere } from './watch-kit.ts'
 import { leaks, withoutConfigEcho } from '../support/watch-pure.ts'
 import { HUB_WRITE_REFUSED_ANSWER } from '../../test/scripted-model/scenarios.ts'
 
@@ -26,30 +27,21 @@ const admin = actor('admin')
 
 const appFile = (rel: string) => readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8')
 
-/** What the orchestrator drops under `WATCH_ARTIFACTS_DIR` after the build has run the morning check (names are the contract). */
-const ARTIFACTS = {
-  productLog: 'product-wrangler.log',
-  hubLog: 'hub-wrangler.log',
-  runnerLog: 'runner-container.log',
-  d1Dump: 'd1-dump.sql',
-  r2Dir: 'r2',
-  runTokens: 'run-tokens.txt',
-} as const
+/**
+ * What the orchestrator keeps under `WATCH_ARTIFACTS_DIR` while the build runs (names are the contract): the two Workers' output
+ * and the runner container's log (streams, read as they are when the spec asks), and the run tokens the root proxy's test hook
+ * captured, one `<runId> <token>` per line. The local D1 and R2 are not artifacts: the spec dumps them itself after its runs.
+ */
+const ARTIFACTS = { productLog: 'product-wrangler.log', hubLog: 'hub-wrangler.log', runnerLog: 'runner-container.log', runTokens: 'run-tokens.txt' } as const
 
 const artifactsDir = process.env.WATCH_ARTIFACTS_DIR
 const artifact = (name: string): string => {
+  expect(artifactsDir, 'WATCH_ARTIFACTS_DIR is not set: a watch build must name where its logs and run tokens are kept').toBeTruthy()
   const path = join(artifactsDir!, name)
   expect(existsSync(path), `the orchestrator's artifact ${name} is missing from ${artifactsDir}: a sweep over nothing proves nothing`).toBe(true)
   return path
 }
 const textOfArtifact = (name: string): string => readFileSync(artifact(name), 'utf8')
-/** Every file under a directory, as text where it is valid UTF-8 and as latin1 bytes otherwise (a needle is ASCII either way). */
-function filesUnder(dir: string): { path: string; text: string }[] {
-  return readdirSync(dir, { recursive: true, withFileTypes: true }).filter(d => d.isFile()).map(d => {
-    const path = join(d.parentPath, d.name)
-    return { path, text: readFileSync(path).toString('latin1') }
-  })
-}
 
 /** The JSON log lines of a Worker's output with `event` as given (a line may carry a prefix before its `{`). */
 function logLines(text: string, event: string): Record<string, unknown>[] {
@@ -82,10 +74,6 @@ test.describe('a write sent through the runner\'s scope is refused at the hub (a
     const sent = await send(request, dana, chat, 'scenario:hub-write-refused please cancel an order')
     // The scenario answers HUB_WRITE_REFUSED_ANSWER only when the tool result held `write_refused` and was flagged as an error.
     expect(textOf(await answerOf(request, dana, chat, sent.turnId))).toContain(HUB_WRITE_REFUSED_ANSWER)
-    if (!artifactsDir) {
-      test.info().annotations.push({ type: 'note', description: 'no WATCH_ARTIFACTS_DIR: the log lines are proven where the orchestrator collects the Workers\' output' })
-      return
-    }
     const egress = logLines(textOfArtifact(ARTIFACTS.productLog), 'egress_hub').filter(l => l.turnId === sent.turnId && l.method === 'tools/call')
     expect(egress.map(l => l.code), 'the product Worker logged one tools/call for the turn, refused').toEqual(['write_refused'])
     const hub = logLines(textOfArtifact(ARTIFACTS.hubLog), 'hub_call').filter(l => l.runId === sent.runId)
@@ -95,9 +83,11 @@ test.describe('a write sent through the runner\'s scope is refused at the hub (a
 
 test.describe('the hub has no public route', () => {
   const origin = process.env.E2E_HUB_ORIGIN
-  skipLoudly(!origin, 'no E2E_HUB_ORIGIN: the orchestrator passes the hub Worker\'s own port of the multi-config build')
+  // Outside a watch build there is no hub port to ask (loud skip); in one, a missing E2E_HUB_ORIGIN fails.
+  skipLoudly(!origin && process.env.E2E_WATCH_BUILD !== '1', 'no E2E_HUB_ORIGIN and no E2E_WATCH_BUILD: the orchestrator passes the hub Worker\'s own origin of the multi-config build')
   for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']) {
     test(`${method} answers 404 on every path tried`, async ({ request }) => {
+      expect(origin, 'E2E_HUB_ORIGIN must be set in a watch build').toBeTruthy()
       for (const path of ['/', '/mcp', '/hub/', '/rpc', '/api/health', '/admin/oauth/access_token', '/tools/call']) {
         const res = await request.fetch(`${origin}${path}`, { method, failOnStatusCode: false, maxRedirects: 0 })
         expect(res.status(), `${method} ${path}`).toBe(404)
@@ -108,7 +98,6 @@ test.describe('the hub has no public route', () => {
 
 test.describe('no token or secret leaves the hub (acceptance 4: the canary sweep)', () => {
   needsWatchBuild()
-  skipLoudly(!artifactsDir, 'no WATCH_ARTIFACTS_DIR: the orchestrator collects the artifacts and passes the directory')
   test.describe.configure({ timeout: 900_000 })
 
   test('after the morning check ran: the access token, the client secret and the run tokens appear nowhere', async ({ request }) => {
@@ -141,27 +130,38 @@ test.describe('no token or secret leaves the hub (acceptance 4: the canary sweep
     // secret is the test-only one in the hub's test config, and the run tokens the root proxy's test hook captured.
     const secret = /export const TEST_CLIENT_SECRET = '([^']+)'/.exec(appFile('test/upstreams/shopify/server.ts'))?.[1]
     expect(secret, 'the upstream\'s test client secret is in test/upstreams/shopify/server.ts').toBeTruthy()
-    const runTokens = textOfArtifact(ARTIFACTS.runTokens).split('\n').map(l => l.trim()).filter(Boolean)
-    expect(runTokens.length, 'the root proxy hook captured the runs\' tokens').toBeGreaterThan(0)
+    // The hook's file is `<runId> <token>` per line, and must hold exactly these two runs (the morning check's and the env run's),
+    // so the sweep looks for the tokens of the runs it just made, not for an older file's.
+    const captured = new Map(textOfArtifact(ARTIFACTS.runTokens).split('\n').map(l => l.trim().split(/\s+/)).filter(p => p.length === 2).map(([id, token]) => [id!, token!]))
+    for (const e of events) expect(captured.has(e.id), `run-tokens.txt holds run ${e.id}`).toBe(true)
     const needles: Record<string, string | RegExp> = { accessToken: /shpat_test_\d+/, clientSecret: secret! }
+    for (const e of events) needles[`runToken of ${e.id}`] = captured.get(e.id)!
     // `wrangler dev` echoes a Worker's plain `vars` at start, and the hub's test config holds the invented test client secret as
     // one (its value is read from that file, and must be the upstream's). Only that echo line is dropped from the hub's output,
     // for exactly that name and value; the same value anywhere else in it is a leak.
     const configSecret = /"SHOPIFY_CLIENT_SECRET"\s*:\s*"([^"]+)"/.exec(appFile('wrangler.hub.test.jsonc'))?.[1]
     expect(configSecret, 'wrangler.hub.test.jsonc names the test client secret').toBe(secret)
-    runTokens.forEach((t, i) => { needles[`runToken${i}`] = t })
 
+    // The 401 and the refresh happened before the sweep reads the hub's output (no "the refresh path was swept" without it): the
+    // hub logged a grant for the account (`signin_grant`, code ok) at two or more generations, the second being the refresh the
+    // upstream's one 401 (armed in hub/testing/index.ts) forced. The log is the whole run of this hub, so an earlier read counts.
+    const hubText = textOfArtifact(ARTIFACTS.hubLog)
+    const grants = logLines(hubText, 'signin_grant').filter(l => l.code === 'ok')
+    expect(new Set(grants.map(l => l.generation)).size, 'the hub granted a token and then refreshed it: two generations at least').toBeGreaterThanOrEqual(2)
+    expect(logLines(hubText, 'hub_call').some(l => l.code === 'ok'), 'and its reads then succeeded').toBe(true)
+
+    // The local D1 and R2 are dumped here, after this spec's own runs, not collected earlier.
+    const r2 = readLocalR2()
+    expect(r2.length, 'the local R2 holds objects (transcripts included)').toBeGreaterThan(0)
     const swept: { where: string; text: string }[] = [
       { where: 'product Worker output', text: textOfArtifact(ARTIFACTS.productLog) },
-      { where: 'hub Worker output (without wrangler\'s echo of its own config var)', text: withoutConfigEcho(textOfArtifact(ARTIFACTS.hubLog), 'SHOPIFY_CLIENT_SECRET', configSecret!) },
+      { where: 'hub Worker output (without wrangler\'s echo of its own config var)', text: withoutConfigEcho(hubText, 'SHOPIFY_CLIENT_SECRET', configSecret!) },
       { where: 'runner container log', text: textOfArtifact(ARTIFACTS.runnerLog) },
-      { where: 'local D1 dump', text: textOfArtifact(ARTIFACTS.d1Dump) },
+      { where: 'local D1 dump (taken after the runs)', text: dumpLocalD1() },
       { where: 'the runner\'s environment (outputs/env.txt)', text: envText },
       ...events.map(e => ({ where: `events of run ${e.id}`, text: e.text })),
-      ...filesUnder(artifact(ARTIFACTS.r2Dir)).map(f => ({ where: `R2 object ${f.path}`, text: f.text })),
+      ...r2.map(f => ({ where: `R2 object ${f.path}`, text: f.text })),
     ]
-    expect(statSync(artifact(ARTIFACTS.r2Dir)).isDirectory()).toBe(true)
-    expect(swept.filter(s => s.where.startsWith('R2 object')).length, 'the R2 dump holds objects (transcripts included)').toBeGreaterThan(0)
     for (const s of swept) expect(leaks(s.text, needles), `found in the ${s.where}`).toEqual([])
   })
 })

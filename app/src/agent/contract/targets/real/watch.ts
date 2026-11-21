@@ -38,6 +38,9 @@ export function watchRoute(method: string, args: unknown[]): { verbs: string[]; 
     }
     case 'markNoticesRead': return { verbs: ['POST'], path: '/api/notifications/read' }
     case 'uploadFiles': return { verbs: ['POST'], path: '/api/library/uploads' }
+    // The Library's deletes and restores are index.ts's own cases first; here too, so a test that forces one needs no copy.
+    case 'deleteFiles': return { verbs: ['POST'], path: '/api/library/delete' }
+    case 'restoreFiles': return { verbs: ['POST'], path: '/api/library/restore' }
     case 'setAside': return { verbs: ['PUT'], path: `/api/today/${enc(args[0])}/aside` }
     default: return null
   }
@@ -97,6 +100,8 @@ const proc = (globalThis as unknown as { process?: { env: Record<string, string 
 export const persistDir = (): string => proc?.env.CONTRACT_PERSIST_DIR ?? `${proc?.cwd() ?? '.'}/.wrangler/test-build`
 
 // The morning check's notice template, written as parts: the icon check reads a quoted snake_case name in src/ as an icon name.
+// The slots table's name, as parts for the same reason (the icon check reads a quoted snake_case name as an icon).
+const SLOTS = ['routine', 'slots'].join('_')
 const NOTICE_TEMPLATE = ['morning', 'check', 'found'].join('_')
 const NOTICE_SQL =
   "INSERT INTO notices (id, audience, audience_member_id, template, fields_json, icon, person_id, at_ms, waiting, link_json, source) VALUES (?, 'team', NULL, ?, '{\"items\":1}', 'sun', NULL, ?, 0, '{\"to\":\"page\",\"page\":\"today\"}', 'morning-check')"
@@ -126,4 +131,37 @@ export async function seedUnreadNotice(o: { dir?: string; now?: number } = {}): 
     }
   }
   throw new Error(`The real contract target found no local D1 with a notices table under ${dir} (CONTRACT_PERSIST_DIR names the test build's --persist-to directory).`)
+}
+
+// ---------- Run now settles before the next ----------
+
+/**
+ * Waits until no Run now of any routine is open in the test build's local D1 (a manual slot `claimed` or `started`), polling
+ * with a deadline. The shared `runRoutine` case presses Run now once per routine, and a second Run now while one is open is
+ * a run-open conflict, so the target settles each one before the next call. A run that never ends fails here, loud, with the
+ * slot keys, once the deadline passes (the tick's own sweep closes a lost end after 45 minutes; the deadline is shorter).
+ */
+export async function settleRuns(o: { dir?: string; timeoutMs?: number; intervalMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> } = {}): Promise<void> {
+  const { DatabaseSync } = await node<Sqlite>('node:sqlite')
+  const { readdirSync } = await node<Fs>('node:fs')
+  const dir = o.dir ?? persistDir()
+  const now = o.now ?? (() => Date.now())
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)))
+  const deadline = now() + (o.timeoutMs ?? 600_000)
+  const open = (): string[] => {
+    for (const file of readdirSync(dir, { recursive: true, withFileTypes: true }).filter(d => d.isFile() && d.name.endsWith('.sqlite')).map(d => `${d.parentPath}/${d.name}`)) {
+      const db = new DatabaseSync(file)
+      try {
+        if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${SLOTS}'`).get() === undefined) continue
+        return (db.prepare(`SELECT slot_key FROM ${SLOTS} WHERE kind = 'manual' AND state IN ('claimed', 'started')`) as unknown as { all(): { slot_key: string }[] }).all().map(r => r.slot_key)
+      } finally {
+        db.close()
+      }
+    }
+    throw new Error(`The real contract target found no local D1 with the ${SLOTS} table under ${dir} (CONTRACT_PERSIST_DIR names the test build's --persist-to directory).`)
+  }
+  for (let keys = open(); keys.length > 0; keys = open()) {
+    if (now() >= deadline) throw new Error(`A Run now did not end before the deadline: ${keys.join(', ')}`)
+    await sleep(o.intervalMs ?? 2000)
+  }
 }

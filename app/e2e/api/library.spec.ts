@@ -1,8 +1,9 @@
 // The Library (P4 W5 routes 62 to 66, acceptance 7; p4-w5.md sections 1 to 4): what it lists to whom, the only byte path and
 // its headers, the upload's refusals, delete and restore against `ifRev`, and that a chat's attachment never reaches it.
 // The expected answers are written here from the brief's tables. Uploads and downloads run on any build (the API alone);
-// the chat-attachment cases seed a chat into the local D1; the chat-output cases play the scripted model's `write-output`
-// scenario in a container, so they run on the multi-config test build only (`needsWatchBuild`, which gates both).
+// the chat-attachment cases seed a chat into the local D1 (`needsLocalD1`: any local test build, CI's included); only the
+// chat-output cases play the scripted model's `write-output` scenario in a container, so only they need the multi-config
+// build (`needsWatchBuild`).
 import { randomBytes } from 'node:crypto'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
@@ -10,7 +11,7 @@ import { actor, allPages, call, endLiveGrants, expectConflict, expectError, imag
 import type { Actor, Reply } from './kit.ts'
 import { auditMax, expectOneLine, writeSql } from './db.ts'
 import { answerOf, createChat, send } from './chat-kit.ts'
-import { needsWatchBuild } from './watch-kit.ts'
+import { needsLocalD1, needsWatchBuild } from './watch-kit.ts'
 import { caseFor } from './cases.ts'
 
 const dana = actor('memberA')
@@ -219,9 +220,9 @@ test.describe('uploads, listing and the byte path', () => {
   })
 })
 
-test.describe('what a chat makes and what a person attaches', () => {
-  test.describe.configure({ mode: 'serial', timeout: 600_000 })
-  needsWatchBuild()
+test.describe('what a person attaches never reaches the Library', () => {
+  test.describe.configure({ mode: 'serial' })
+  needsLocalD1()
   let danaId: string
 
   test.beforeAll(async ({ request }) => {
@@ -248,6 +249,15 @@ test.describe('what a chat makes and what a person attaches', () => {
     expect((await call(request, dana, 'GET', `/api/files/${id}`)).bytes.toString(), 'the owner still has it through route 41').toBe('secret,1\n')
     writeSql('DELETE FROM chat_files WHERE chat_id = ?', chat)
     writeSql('DELETE FROM chats WHERE id = ?', chat)
+  })
+})
+
+test.describe('what a chat makes is the team\'s', () => {
+  test.describe.configure({ mode: 'serial', timeout: 600_000 })
+  needsWatchBuild()
+
+  test.afterAll(async ({ request }) => {
+    await endLiveGrants(request)
   })
 
   test('an agent-made file is the team\'s: only its chat\'s owner sees the chat\'s title and link; a Library delete withdraws it from route 41 for everyone but the owner; restoring reopens it', async ({ request }) => {

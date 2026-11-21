@@ -9,7 +9,9 @@
 // The expected answers are written here from the briefs' tables, never read from the code. Every group needs the multi-config
 // test build (`needsWatchBuild`): the routines are seeded into the local D1, and the slot cases run a turn in a container.
 // The slot math across a skipped and a repeated local time is W2's workers test (`p4-w2.md` tests 1 to 3): a brand zone can't
-// place a slot inside a transition on the real clock.
+// place a slot inside a transition on the real clock. The zone `next` cases check a daily 06:00 schedule against a literal
+// 2026 and 2027 offset table (`watch-pure.ts`, which throws loudly outside those two years: extend it then); a schedule at a
+// skipped or repeated local time is W2's.
 import { randomBytes } from 'node:crypto'
 import { expect, test } from '@playwright/test'
 import { actor, call, endLiveGrants, expectConflict, expectError, putSetting } from './kit.ts'
@@ -17,7 +19,7 @@ import type { Actor } from './kit.ts'
 import { auditWhere, readSql, writeSql } from './db.ts'
 import { answerOf, createChat, send, textOf } from './chat-kit.ts'
 import {
-  BRAND_TZ, P4_ROUTES, alarmAndTick, alarmControl, localSlot, memberIdOf, needsWatchBuild, retireRoutines, routineRow, seedRoutine, setStage, slotWhere, slotsOf, trackRoutine, turnsInChat,
+  BRAND_TZ, P4_ROUTES, alarmAndTick, alarmControl, localSlot, memberIdOf, needsLocalD1, needsWatchBuild, retireRoutines, routineRow, seedRoutine, setStage, slotWhere, slotsOf, trackRoutine, turnsInChat,
 } from './watch-kit.ts'
 import { caseFor } from './cases.ts'
 import { expectedNextDaily } from '../support/watch-pure.ts'
@@ -41,7 +43,7 @@ const list = async (request: Parameters<typeof call>[0], who: Actor) => {
 const defOf = (page: { routines: Def[]; deleted: Def[] }, id: string) => [...page.routines, ...page.deleted].find(r => r.id === id)
 
 test.describe('routes 52 to 56: who may do what to which routine', () => {
-  needsWatchBuild()
+  needsLocalD1()
   test.describe.configure({ mode: 'serial' })
   let routine: string
   let danaId: string
@@ -238,6 +240,15 @@ test.describe('stage gating (acceptance 8)', () => {
     expect(slot).toMatchObject({ state: 'skipped', reason: 'stage', turn_id: null })
     expect(slotsOf(id)).toHaveLength(1)
   })
+})
+
+test.describe('a team routine below its stage (acceptance 8)', () => {
+  needsLocalD1()
+  test.describe.configure({ mode: 'serial' })
+  test.afterAll(async ({ request }) => {
+    await setStage(request, 'Watch')
+    retireRoutines()
+  })
 
   test('a team routine\'s Run now below its stage is 403 stage, and allowed once the stage is Act', async ({ request }) => {
     await setStage(request, 'Watch')
@@ -312,8 +323,13 @@ test.describe('slots against the real scheduler and binding (acceptance 1)', () 
     const armed = await alarmControl(request, { action: 'stopAfterBatch' })
     expect(armed.status, armed.text).toBe(200)
     expect(armed.json).toEqual({ armed: true })
-    await alarmControl(request, { action: 'alarm', pokeTick: true }) // the pass that stops: its own answer isn't the claim
+    // The pass that stops throws inside the scheduler (it logs and carries on), so its answer is `{ ran: true }` like any pass: the
+    // proof it stopped as designed is the state it left, read before the second pass: the slot row is claimed and nothing ran.
+    const stopped = await alarmControl(request, { action: 'alarm', pokeTick: true })
+    expect(stopped.status, stopped.text).toBe(200)
     await expect.poll(() => slotsOf(id).length, { timeout: 60_000, message: 'the slot row the first pass wrote' }).toBe(1)
+    expect(slotsOf(id)[0], 'the first pass wrote the row and stopped before the run').toMatchObject({ state: 'claimed', run_id: null, turn_id: null })
+    expect(readSql('SELECT chat_id FROM routine_slots WHERE routine_id = ?', id).length).toBe(1)
     await alarmAndTick(request)
     const slot = await slotWhere(id, 'the slot to end after the second pass', s => s.state === 'ended')
     expect(slotsOf(id)).toHaveLength(1)
@@ -332,6 +348,16 @@ test.describe('slots against the real scheduler and binding (acceptance 1)', () 
     expect(slotsOf(id)).toHaveLength(1)
     expect(turnsInChat(slot.chat_id)).toBe(1)
   })
+})
+
+test.describe('a missed run under skip (acceptance 1)', () => {
+  needsLocalD1()
+  test.describe.configure({ mode: 'serial' })
+  let danaId: string
+  test.beforeAll(async ({ request }) => {
+    danaId = await memberIdOf(request, dana)
+  })
+  test.afterAll(() => retireRoutines())
 
   test('missed run, skip: the same routine runs nothing and leaves a missed row', async ({ request }) => {
     const slotTime = localSlot(60)
@@ -347,7 +373,7 @@ test.describe('slots against the real scheduler and binding (acceptance 1)', () 
 })
 
 test.describe('the next run the page shows follows the brand\'s zone', () => {
-  needsWatchBuild()
+  needsLocalD1()
   test.describe.configure({ mode: 'serial' })
   let id: string
 

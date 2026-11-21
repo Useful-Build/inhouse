@@ -13,7 +13,7 @@ import { RoutinesListSchema } from '../../../../../shared/contract/routines'
 import { TodayAnswerSchema } from '../../../../../shared/contract/today'
 import { HttpAgent } from '../../../http/client'
 import { AgentError } from '../../../types'
-import { WATCH_READ_PATH, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
+import { WATCH_READ_PATH, changeRoutineElsewhere, resetRoutines, seedUnreadNotice, settleRuns, watchRoute } from './watch'
 import { signer } from './me'
 import type { Signer } from './me'
 
@@ -25,12 +25,41 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
   let s: Signer
   const agentFor = (fetchOver?: typeof fetch) => new HttpAgent({ origin, fetch: fetchOver ?? ((i, init) => fetch(i, init)), headers: s.headers('admin') })
   const loaded = async (fetchOver?: typeof fetch) => { const a = agentFor(fetchOver); await a.whenLoaded(); return a }
-  /** The routine as the client holds it: its rev, and whether the page shows it deleted. */
-  const routine = (a: HttpAgent) => ({ rev: a.read().routines.find(r => r.id === MORNING_CHECK)!.rev, deleted: a.getSnapshot().routinesDeleted[MORNING_CHECK] === true })
+  /** The routine as the server has it (the client's `read()` drops a deleted one): its rev, whether it is deleted, and its switch. */
+  const server = async () => {
+    const r = await s.api('admin', 'GET', WATCH_READ_PATH.routines!)
+    const list = r.json as { routines: { id: string; rev: number }[]; deleted: { id: string; rev: number }[]; enabled: Record<string, boolean> }
+    const live = list.routines.find(x => x.id === MORNING_CHECK)
+    const gone = list.deleted.find(x => x.id === MORNING_CHECK)
+    const rec = live ?? gone
+    if (!rec) throw new Error(`the server lists no ${MORNING_CHECK}`)
+    return { rev: rec.rev, deleted: live === undefined, on: list.enabled[MORNING_CHECK] !== false }
+  }
+  /** A Today card to set aside: the first on Today, made by a morning check run when there is none (the scripted scenario fills it). */
+  const todayItem = async (): Promise<string> => {
+    const first = async () => ((await s.api('admin', 'GET', '/api/today')).json as { items: { id: string }[] }).items[0]?.id
+    let id = await first()
+    if (id === undefined) {
+      await settleRuns()
+      const run = await s.api('admin', 'POST', `/api/routines/${MORNING_CHECK}/run`, { clientKey: crypto.randomUUID().replaceAll('-', '') })
+      if (run.status !== 200) throw new Error(`Run now on the morning check answered ${run.status}: ${JSON.stringify(run.json)}`)
+      await settleRuns()
+      id = await first()
+    }
+    if (id === undefined) throw new Error('Today holds no card after a morning check run: the scripted morning-check route (test/scripted-model/routes.ts) must be on')
+    return id
+  }
+  /** The set-aside record of a card on the server: its reason and rev (0: none). */
+  const asideOf = async (id: string) => {
+    const r = ((await s.api('admin', 'GET', '/api/today')).json as { aside: Record<string, { reason: string | null; rev: number }> }).aside[id]
+    return { reason: r?.reason ?? null, rev: r?.rev ?? 0 }
+  }
 
   beforeAll(async () => {
     s = signer(origin)
+    await settleRuns()
     await resetRoutines(s)
+    await seedUnreadNotice()
   })
 
   describe('every value is parsed through the shared schema', () => {
@@ -104,10 +133,39 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
       expect((await refused(b.uploadFiles([new File(['x,1\n'], 'refused.csv', { type: 'text/csv' })]))).code).toBe('unavailable')
       expect(b.listFiles()).toBe(filesBefore)
     })
-    it('markNoticesRead, when an unread notice exists', async ctx => {
+    it('restoreRoutine: the delete lands, the refused restore puts the routine back as deleted', async () => {
+      const a = await loaded(failing('restoreRoutine', [MORNING_CHECK]))
+      await a.deleteRoutine(MORNING_CHECK)
+      const before = a.getSnapshot()
+      expect(before.routinesDeleted[MORNING_CHECK]).toBe(true)
+      expect((await refused(a.restoreRoutine(MORNING_CHECK))).code).toBe('unavailable')
+      expect(a.getSnapshot(), 'the refused restore put the snapshot back').toBe(before)
+      await resetRoutines(s)
+    })
+    it('restoreFiles: the delete lands, the refused restore leaves the file out of the list', async () => {
+      const probe = await loaded()
+      if (probe.listFiles().length === 0) await probe.uploadFiles([new File(['sku,qty\nA2,1\n'], 'watch live file.csv', { type: 'text/csv' })])
+      const fileId = probe.listFiles()[0]!.id
+      const a = await loaded(failing('restoreFiles', [[fileId]]))
+      await a.deleteFiles([fileId])
+      const before = a.getSnapshot()
+      expect(a.listFiles().map(f => f.id)).not.toContain(fileId)
+      expect((await refused(a.restoreFiles([fileId]))).code).toBe('unavailable')
+      expect(a.getSnapshot(), 'the refused restore put the snapshot back').toBe(before)
+      const other = await loaded()
+      await other.restoreFiles([fileId]).catch(() => undefined)
+    })
+    it('setAside: a refused snooze leaves the card where it was', async () => {
+      const id = await todayItem()
+      const a = await loaded(failing('setAside', [id]))
+      const before = a.getSnapshot()
+      expect((await refused(a.setAside(id, 'snoozed'))).code).toBe('unavailable')
+      expect(a.getSnapshot()).toBe(before)
+    })
+    it('markNoticesRead (an unread notice is seeded in beforeAll: none is a failure)', async () => {
       const a = await loaded(failing('markNoticesRead', [[]]))
       const unread = a.listNotifications().filter(n => n.unread).map(n => n.id)
-      if (unread.length === 0) return ctx.skip()
+      expect(unread.length, 'the seeded unread notice is on the bell').toBeGreaterThan(0)
       const before = a.listNotifications()
       expect((await refused(a.markNoticesRead(unread))).code).toBe('unavailable')
       expect(a.listNotifications().map(n => [n.id, n.unread])).toEqual(before.map(n => [n.id, n.unread]))
@@ -123,30 +181,66 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
       async steps => {
         await resetRoutines(s)
         const a = await loaded()
-        let lastRev = routine(a).rev
+        let lastRev = (await server()).rev
         for (const { stale, toggle } of steps) {
-          const before = routine(a)
-          const on = a.getSnapshot().toggles[`r:${MORNING_CHECK}`] !== false
+          const before = await server()
           if (stale) {
             const other = await loaded()
             await changeRoutineElsewhere(other, MORNING_CHECK, before.deleted)
           }
           // A deleted routine can only be restored; a live one is switched or deleted.
-          const op = before.deleted ? () => a.restoreRoutine(MORNING_CHECK) : toggle ? () => a.setToggle(`r:${MORNING_CHECK}`, !on) : () => a.deleteRoutine(MORNING_CHECK)
+          const op = before.deleted ? () => a.restoreRoutine(MORNING_CHECK) : toggle ? () => a.setToggle(`r:${MORNING_CHECK}`, !before.on) : () => a.deleteRoutine(MORNING_CHECK)
           const e = await op().then(() => undefined, (x: unknown) => x)
-          const after = routine(a)
+          const after = await server()
           if (stale) {
             expect(e, 'a stale write rejects').toBeInstanceOf(AgentError)
             expect((e as AgentError).code).toBe('conflict')
             expect((e as AgentError).current, 'it returns the record as it is now').toBeTruthy()
             expect(after.rev, 'revisions only go up').toBeGreaterThan(lastRev)
-            expect(after.deleted, 'it never applied').toBe(before.deleted)
+            expect([after.deleted, after.on], 'it never applied').toEqual([before.deleted, before.on])
+            expect(a.getSnapshot().routinesDeleted[MORNING_CHECK] === true, 'the client shows the server\'s state').toBe(before.deleted)
           } else {
             expect(e, 'a fresh write lands').toBeUndefined()
             expect(after.rev, 'a fresh write raises the rev by one').toBe(lastRev + 1)
+            expect(a.getSnapshot().routinesDeleted[MORNING_CHECK] === true, 'the client shows what landed').toBe(after.deleted)
           }
           lastRev = after.rev
         }
+      },
+    )
+
+    fcTest.prop([fc.array(fc.boolean(), { minLength: 1, maxLength: 5 })], runs)(
+      'a Today card\'s set-aside: a fresh snooze or undo lands and raises the rev by one; a stale one never applies, answers the current record (a higher rev) and leaves the reason as it was',
+      async stales => {
+        const id = await todayItem()
+        const start = await asideOf(id)
+        if (start.reason !== null) await s.api('admin', 'PUT', `/api/today/${id}/aside`, { reason: null, ifRev: start.rev })
+        const a = await loaded()
+        let lastRev = (await asideOf(id)).rev
+        for (const stale of stales) {
+          const before = await asideOf(id)
+          if (stale) {
+            // Two writes in the other session that leave the reason as it was, two revisions on.
+            const other = await loaded()
+            if (before.reason === null) { await other.setAside(id, 'dismissed'); await other.setAside(id, null) } else { await other.setAside(id, null); await other.setAside(id, before.reason as 'snoozed' | 'dismissed') }
+          }
+          const hidden = a.getSnapshot().setAside[id] !== undefined
+          const e = await (hidden ? a.setAside(id, null) : a.setAside(id, 'snoozed')).then(() => undefined, (x: unknown) => x)
+          const after = await asideOf(id)
+          if (stale) {
+            expect(e, 'a stale write rejects').toBeInstanceOf(AgentError)
+            expect((e as AgentError).code).toBe('conflict')
+            expect(after.rev, 'revisions only go up').toBeGreaterThan(lastRev)
+            expect(after.reason, 'it never applied').toBe(before.reason)
+          } else {
+            expect(e, 'a fresh write lands').toBeUndefined()
+            expect(after.rev, 'a fresh write raises the rev by one').toBe(lastRev + 1)
+            expect(after.reason === null, 'it flipped').toBe(!(before.reason === null))
+          }
+          lastRev = after.rev
+        }
+        const end = await asideOf(id)
+        if (end.reason !== null) await s.api('admin', 'PUT', `/api/today/${id}/aside`, { reason: null, ifRev: end.rev })
       },
     )
 

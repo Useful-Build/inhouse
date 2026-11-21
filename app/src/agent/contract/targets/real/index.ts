@@ -15,7 +15,7 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
-import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, seedUnreadNotice, watchRoute } from './watch'
+import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, seedUnreadNotice, settleRuns, watchRoute } from './watch'
 
 /** The P2 methods: what this target's client serves over HTTP. */
 /** How many live Library files `reset()` leaves (the shared Library cases delete one or two). */
@@ -105,15 +105,17 @@ function realTarget(origin: string): ContractTarget {
       if (typeof member !== 'function') return member
       const method = (member as (...a: unknown[]) => unknown).bind(target)
       if (typeof prop !== 'string' || !WRITES.has(prop)) return method
+      // A Run now is settled before the call returns (its manual slot ends), so the next one can't hit a run-open conflict (watch.ts settleRuns).
+      const settled = (p: Promise<unknown>): Promise<unknown> => (prop === 'runRoutine' ? p.then(async v => { await settleRuns(); return v }, async e => { await settleRuns(); throw e }) : p)
       return (...args: unknown[]) => {
         const code = armedErrors.get(prop)
-        if (!code) return method(...args)
+        if (!code) return settled(method(...args) as Promise<unknown>)
         const route = routeOf(prop as WriteMethod, args)
         forced = route ? { code, ...route } : null
         const done = method(...args) as Promise<unknown>
         const clear = () => { forced = null }
         done.then(clear, clear)
-        return done
+        return settled(done)
       }
     },
   }) as unknown as AgentClient
@@ -182,6 +184,7 @@ function realTarget(origin: string): ContractTarget {
       await resetTeam(s)
       await endLiveGrant(s)
       await resetSettings(s)
+      await settleRuns()
       await resetRoutines(s)
       await seedUnreadNotice()
       this.fixtures.personId = seeded.admin

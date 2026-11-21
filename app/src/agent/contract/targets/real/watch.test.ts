@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { WATCH_READ_PATH, seedUnreadNotice, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
+import { WATCH_READ_PATH, seedUnreadNotice, settleRuns, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
 import type { Signer } from './me'
 
 describe('the real target\'s P4 parts', () => {
@@ -17,11 +17,13 @@ describe('the real target\'s P4 parts', () => {
     expect(watchRoute('markNoticesRead', [['n1']])).toEqual({ verbs: ['POST'], path: '/api/notifications/read' })
     expect(watchRoute('uploadFiles', [[]])).toEqual({ verbs: ['POST'], path: '/api/library/uploads' })
     expect(watchRoute('setAside', ['p_x', 'snoozed'])).toEqual({ verbs: ['PUT'], path: '/api/today/p_x/aside' })
+    expect(watchRoute('deleteFiles', [['f']])).toEqual({ verbs: ['POST'], path: '/api/library/delete' })
+    expect(watchRoute('restoreFiles', [['f']])).toEqual({ verbs: ['POST'], path: '/api/library/restore' })
   })
   it('leaves a setting\'s toggle and every other method to index.ts', () => {
     expect(watchRoute('setToggle', ['n:weekly', true])).toBeNull()
     expect(watchRoute('setSetting', ['k', 'v'])).toBeNull()
-    expect(watchRoute('deleteFiles', [['f']])).toBeNull()
+    expect(watchRoute('pause', [])).toBeNull()
   })
 
   const fake = (state: { routines: { id: string; rev: number }[]; deleted: { id: string; rev: number }[]; enabled: Record<string, boolean> }, fail?: string) => {
@@ -114,6 +116,47 @@ describe('seeding an unread notice', () => {
   it('fails loud when no database holds a notices table', async () => {
     const { dir } = await make({ other: 'CREATE TABLE unrelated (x TEXT)' })
     await expect(seedUnreadNotice({ dir })).rejects.toThrow(/no local D1 with a notices table/)
+  })
+})
+
+describe('settling Run now', () => {
+  const load = async <T>(name: string): Promise<T> => (await import(/* @vite-ignore */ name)) as T
+  type Db = { exec(sql: string): void; close(): void }
+  const make = async (rows: [string, string, string][]) => {
+    const fs = await load<{ mkdtempSync(p: string): string; mkdirSync(p: string, o: { recursive: true }): void }>('node:fs')
+    const os = await load<{ tmpdir(): string }>('node:os')
+    const { DatabaseSync } = await load<{ DatabaseSync: new (f: string) => Db }>('node:sqlite')
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/w6-settle-`)
+    fs.mkdirSync(`${dir}/v3/d1`, { recursive: true })
+    const file = `${dir}/v3/d1/x.sqlite`
+    const db = new DatabaseSync(file)
+    db.exec('CREATE TABLE routine_slots (slot_key TEXT PRIMARY KEY, kind TEXT NOT NULL, state TEXT NOT NULL)')
+    for (const [k, kind, state] of rows) db.exec(`INSERT INTO routine_slots VALUES ('${k}', '${kind}', '${state}')`)
+    db.close()
+    const set = (key: string, state: string) => { const d = new DatabaseSync(file); d.exec(`UPDATE routine_slots SET state = '${state}' WHERE slot_key = '${key}'`); d.close() }
+    return { dir, set }
+  }
+
+  it('returns at once when no manual run is open (scheduled and ended ones do not count)', async () => {
+    const { dir } = await make([['a', 'manual', 'ended'], ['b', 'scheduled', 'started'], ['c', 'manual', 'missed']])
+    await settleRuns({ dir, sleep: async () => { throw new Error('should not wait') } })
+  })
+  it('waits while a manual run is claimed or started and returns when the last one ends', async () => {
+    const { dir, set } = await make([['a', 'manual', 'claimed'], ['b', 'manual', 'started']])
+    const slept: number[] = []
+    await settleRuns({ dir, intervalMs: 5, sleep: async ms => { slept.push(ms); if (slept.length === 1) set('a', 'ended'); if (slept.length === 2) set('b', 'lost') } })
+    expect(slept).toEqual([5, 5])
+  })
+  it('fails loud with the open slot keys once the deadline passes', async () => {
+    const { dir } = await make([['now|rt|k1', 'manual', 'started']])
+    let t = 0
+    await expect(settleRuns({ dir, timeoutMs: 100, now: () => t, sleep: async () => { t += 60 } })).rejects.toThrow(/did not end before the deadline: now\|rt\|k1/)
+  })
+  it('fails loud when no database holds routine_slots', async () => {
+    const { dir } = await make([])
+    const fs = await load<{ rmSync(p: string, o: { recursive: true; force: true }): void }>('node:fs')
+    fs.rmSync(`${dir}/v3`, { recursive: true, force: true })
+    await expect(settleRuns({ dir })).rejects.toThrow()
   })
 })
 
