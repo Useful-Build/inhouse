@@ -24,7 +24,8 @@ export const servedType = (stored: string): string => (typeAllowed(stored) && !N
 async function view(c: ApiCtx, rows: readonly LibraryRow[]): Promise<LibraryFiles['items']> {
   const library = storesOf(c).library
   const viewer = viewerOf(c.principal)
-  return Promise.all(rows.map(async r => libraryFile(r, viewer, await library.textPreview(r))))
+  // A deleted file gets no preview: its bytes aren't read at all.
+  return Promise.all(rows.map(async r => libraryFile(r, viewer, r.deleted_at_ms === null ? await library.textPreview(r) : undefined)))
 }
 
 /** Row 62, `GET /api/library?cursor&limit&deleted`: a page of listed files, newest first. */
@@ -48,6 +49,8 @@ export async function uploadLibraryFile(c: ApiCtx): Promise<Response> {
   if (name === null) return apiError('invalid', { reason: 'bad_name' })
   const claimed = c.request.headers.get(LIBRARY_SHA256_HEADER)
   if (claimed !== null && !SHA256.test(claimed)) return apiError('invalid', { reason: 'hash' })
+  // An empty file is refused before anything is written (the audit line counts 1 byte or more).
+  if (c.request.headers.get('content-length') === '0') return apiError('invalid', { reason: 'empty' })
   const saved = await storesOf(c).library.upload({ name, request: c.request, sha256: claimed ?? undefined, at })
   if ('refused' in saved) return apiError('invalid', { reason: saved.refused })
   const [file] = await view(c, [saved.ok])

@@ -379,3 +379,112 @@ describe('the chat-title rule (test 5, OC 2)', () => {
     expect(listed.find(f => f.id === png)).toMatchObject({ kind: 'images', type: 'PNG', src: `/api/library/${png}/download` })
   })
 })
+
+/**
+ * The stores with the Library's D1 wrapped: `before` runs once, just before the first batch the store sends (between its
+ * read of the files and its write), as another request landing in that gap would; `failBatch` makes that batch throw.
+ */
+function racing(o: { before?: () => Promise<unknown>; failBatch?: boolean }) {
+  let armed = true
+  const wrapped = {
+    prepare: (sql: string) => db.prepare(sql),
+    batch: async (stmts: D1PreparedStatement[]) => {
+      if (armed) {
+        armed = false
+        await o.before?.()
+        if (o.failBatch) throw new Error('d1 down at the save')
+      }
+      return db.batch(stmts)
+    },
+  }
+  return { ...stores, library: libraryStore({ db: wrapped as unknown as D1Database, bucket: env.FILES }) }
+}
+const libraryLines = async (since: number) => (await linesSince(db, since)).filter(l => l.action.startsWith('library.'))
+const activityFor = (id: string) => db.prepare("SELECT COUNT(*) AS n FROM activity_lines WHERE source = 'library' AND source_key LIKE ?").bind(`${id}|%`).first<number>('n')
+
+describe('a write that lands between the read and the batch (review fold, deterministic)', () => {
+  it('delete [X live, Y deleted] while Y is restored in the gap: a conflict, and nothing changes', async () => {
+    const chat = await newChat(A)
+    const x = await output(chat, 'x.csv', 'x,1\n', 'text/csv')
+    const y = await output(chat, 'y.csv', 'y,1\n', 'text/csv')
+    expect((await del(personPrincipal(A, 'member'), [{ id: y, ifRev: 1 }])).status).toBe(200)
+    const since = await lastLineId(db)
+    const s = racing({ before: () => db.prepare('UPDATE library_marks SET deleted_at_ms = NULL, deleted_by = NULL, rev = 3, req_id = ? WHERE file_id = ?').bind('other-req', y).run() })
+    const res = await call(deleteLibraryFiles, personPrincipal(B, 'member'), { method: 'POST', path: '/api/library/delete', body: { items: [{ id: x, ifRev: 1 }, { id: y, ifRev: 2 }] } }, s)
+    expect(res.status).toBe(409)
+    const current = ((await res.json()) as { error: { current: { items: LibraryFile[] } } }).error.current.items
+    expect(current.map(f => [f.id, f.rev])).toEqual([[x, 1], [y, 3]])
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM library_marks WHERE file_id = ?').bind(x).first<number>('n')).toBe(0)
+    expect(await libraryLines(since)).toEqual([])
+    expect(await activityFor(x)).toBe(0)
+  })
+  it('a first delete raced by another first mark: a conflict, only the other mark stands, no lines', async () => {
+    const chat = await newChat(A)
+    const x = await output(chat, 'x.csv', 'x,1\n', 'text/csv')
+    const since = await lastLineId(db)
+    const s = racing({ before: () => db.prepare("INSERT INTO library_marks (file_id, source, deleted_at_ms, deleted_by, rev, req_id) VALUES (?, 'chat', 1, ?, 2, 'other-req')").bind(x, C).run() })
+    expect((await call(deleteLibraryFiles, personPrincipal(B, 'member'), { method: 'POST', path: '/api/library/delete', body: { items: [{ id: x, ifRev: 1 }] } }, s)).status).toBe(409)
+    expect(await db.prepare('SELECT rev, deleted_by, req_id FROM library_marks WHERE file_id = ?').bind(x).first()).toEqual({ rev: 2, deleted_by: C, req_id: 'other-req' })
+    expect(await libraryLines(since)).toEqual([])
+    expect(await activityFor(x)).toBe(0)
+  })
+  it('a restore raced by a bump of the mark: a conflict, the bump stands, no lines', async () => {
+    const chat = await newChat(A)
+    const x = await output(chat, 'x.csv', 'x,1\n', 'text/csv')
+    expect((await del(personPrincipal(A, 'member'), [{ id: x, ifRev: 1 }])).status).toBe(200)
+    const since = await lastLineId(db)
+    const before = await activityFor(x)
+    const s = racing({ before: () => db.prepare("UPDATE library_marks SET rev = 3, req_id = 'other-req' WHERE file_id = ?").bind(x).run() })
+    expect((await call(restoreLibraryFiles, personPrincipal(B, 'member'), { method: 'POST', path: '/api/library/restore', body: { items: [{ id: x, ifRev: 2 }] } }, s)).status).toBe(409)
+    expect(await db.prepare('SELECT rev, deleted_at_ms IS NOT NULL AS deleted FROM library_marks WHERE file_id = ?').bind(x).first()).toEqual({ rev: 3, deleted: 1 })
+    expect(await libraryLines(since)).toEqual([])
+    expect(await activityFor(x)).toBe(before)
+  })
+})
+
+describe('more refusals (review fold)', () => {
+  it('an empty file is refused before anything is written; no Content-Length is length_required', async () => {
+    const before = await leftovers()
+    expect(await (await upload(personPrincipal(A, 'member'), 'empty.csv', new Uint8Array())).json()).toEqual({ error: { code: 'invalid', reason: 'empty' } })
+    const { c } = ctx(stores, personPrincipal(A, 'member'), { method: 'POST', path: '/api/library/uploads' })
+    const body = new ReadableStream({ start: ctl => { ctl.enqueue(enc.encode('a,1\n')); ctl.close() } })
+    const chunked = new Request('https://brand.example.test/api/library/uploads', { method: 'POST', headers: { 'X-File-Name': 'a.csv' }, body, duplex: 'half' } as RequestInit)
+    expect(chunked.headers.get('content-length')).toBeNull()
+    expect(await (await uploadLibraryFile({ ...c, request: chunked })).json()).toEqual({ error: { code: 'invalid', reason: 'length_required' } })
+    expect(await leftovers()).toEqual(before)
+  })
+  it('a D1 failure at the save step removes the object and the pending row', async () => {
+    const before = await leftovers()
+    await expect(upload(personPrincipal(A, 'member'), 'a.csv', enc.encode('a,1\n'), {}, racing({ failBatch: true }))).rejects.toThrow('d1 down at the save')
+    expect(await leftovers()).toEqual(before)
+  })
+  it('a cursor that is not ours is 400', async () => {
+    for (const cursor of ['@@', btoa('not-a-key').replace(/=+$/, ''), btoa('12.f_short').replace(/=+$/, '')]) {
+      expect((await call(listLibrary, personPrincipal(A, 'member'), { method: 'GET', path: `/api/library?cursor=${encodeURIComponent(cursor)}` })).status, cursor).toBe(400)
+    }
+  })
+  it('the filename fallback turns % into _', async () => {
+    const up = await upload(personPrincipal(A, 'member'), '100%25 sure.csv', enc.encode('a,1\n'))
+    const f = (await up.json()) as LibraryFile
+    expect(f.name).toBe('100%25 sure.csv')
+    expect((await download(personPrincipal(B, 'member'), f.id)).headers.get('content-disposition')).toBe(`attachment; filename="100_25 sure.csv"; filename*=UTF-8''100%2525%20sure.csv`)
+  })
+})
+
+describe('the trash listing (review fold)', () => {
+  it("lists deleted files' names and metadata only: no text preview, no image src, to anyone", async () => {
+    const chat = await newChat(A, 'Ann only')
+    const txt = await output(chat, 'secret.md', 'the secret plan\n', 'text/markdown')
+    const png = await output(chat, 'secret.png', 'body', 'image/png')
+    expect((await del(personPrincipal(A, 'member'), [{ id: txt, ifRev: 1 }, { id: png, ifRev: 1 }])).status).toBe(200)
+    for (const p of [personPrincipal(C, 'member'), personPrincipal(A, 'member')]) {
+      const trash = (await listAll(p, true)).filter(f => f.id === txt || f.id === png)
+      expect(trash.map(f => f.id).sort()).toEqual([txt, png].sort())
+      for (const f of trash) {
+        expect(f.text).toBeUndefined()
+        expect(f.src).toBeUndefined()
+      }
+      expect(JSON.stringify(trash)).not.toContain('the secret plan')
+    }
+  })
+})

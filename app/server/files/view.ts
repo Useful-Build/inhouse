@@ -16,14 +16,16 @@ const FORMER = 'a former member'
 /** The member id of whoever views (a person or the Inhouse team), or null for a service. */
 export const viewerOf = (p: Principal): string | null => (p.kind === 'person' || p.kind === 'inhouse' ? p.memberId : null)
 
+/** `text` is the file's preview, if any; a deleted file (`deleted_at_ms`) never carries one, nor an image `src`. */
 export function libraryFile(row: LibraryRow, viewerId: string | null, text: string | undefined): LibraryFile {
   const { kind, type } = kindOf(row.content_type)
   const base = {
     id: row.id, name: row.name, type, kind, size: formatSize(row.bytes), at: instantOf(row.at_ms), rev: row.rev,
     // OC 4: anyone the Library lists a file to may delete or restore it.
     canDelete: true,
-    ...(kind === 'images' ? { src: libraryDownloadPath(row.id), alt: '' } : {}),
-    ...(text !== undefined ? { text } : {}),
+    // The trash lists names and metadata only: a withdrawn output's contents never travel through row 62.
+    ...(kind === 'images' && row.deleted_at_ms === null ? { src: libraryDownloadPath(row.id), alt: '' } : {}),
+    ...(text !== undefined && row.deleted_at_ms === null ? { text } : {}),
   }
   if (row.source === 'upload') {
     const by = row.person_name ?? FORMER

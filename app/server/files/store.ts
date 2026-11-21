@@ -84,8 +84,9 @@ interface Change {
 }
 
 /**
- * The batch's predicate (see the header): every file in `changes` is at its revision (no mark yet, for one at 1 with
- * none) or at the next one stamped by this write. Two parameters: the changes as JSON, the stamp; then their count.
+ * The batch's predicate (see the header): every file the request names, the ones it won't change included, is at its
+ * revision (no mark yet, for one at 1 with none) or at the next one stamped by this write. Two parameters: the files as
+ * JSON, the stamp; then their count.
  */
 const STILL_AT = `(SELECT COUNT(*) FROM json_each(?) j LEFT JOIN library_marks k ON k.file_id = json_extract(j.value, '$.id')
   WHERE (k.file_id IS NULL AND json_extract(j.value, '$.marked') = 0)
@@ -127,7 +128,10 @@ export function libraryStore({ db, bucket }: { db: D1Database; bucket: Pick<Keye
       .map(r => ({ id: r.id, source: r.source, rev: r.rev, marked: r.rev > 1 }))
     if (changes.length === 0) return { ok: rows }
     const stamp = writeStamp(at.requestId)
-    const guard = [JSON.stringify(changes), stamp, changes.length] as const
+    // Every file the request names goes in the guard, the ones it won't change too: one of them moving under the request
+    // (a restore of a deleted one between this read and the batch) fails the whole batch.
+    const named = rows.map(r => ({ id: r.id, rev: r.rev, marked: r.rev > 1 }))
+    const guard = [JSON.stringify(named), stamp, named.length] as const
     const deletedAt = to === 'deleted' ? at.nowMs : null
     const deletedBy = to === 'deleted' ? at.actorId : null
     const writes = changes.map(c => c.marked
