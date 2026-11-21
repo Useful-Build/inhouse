@@ -130,6 +130,11 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/tools': { design: d('technical', ALL), path: '/api/tools', passes: 200 },
   'PUT /api/tools/:accountId/paused': { design: d('technical', ['inhouse']), path: '/api/tools/nothing:here/paused', json: { paused: true }, passes: 404 },
   'POST /api/tools/:accountId/disconnect': { design: d('technical', ['inhouse']), path: '/api/tools/nothing:here/disconnect', json: {}, passes: 404 },
+  // P5 W4, routes 73 to 75. The list reads 200; the picker reaches the test hub, where Slack isn't connected (503
+  // slack_not_connected); the save's empty body is 400 before any hub call or write (routes.test.ts proves the rest).
+  'GET /api/notify/channels': { design: d('baseline', ALL), path: '/api/notify/channels', passes: 200 },
+  'GET /api/notify/channels/available': { design: d('baseline', ['admin', 'inhouse']), path: '/api/notify/channels/available', passes: 503 },
+  'PUT /api/notify/channels': { design: d('baseline', ['admin', 'inhouse']), path: '/api/notify/channels', json: {}, passes: 400 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 

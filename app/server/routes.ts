@@ -34,6 +34,8 @@ import { toolsHandlers } from './api/tools.ts'
 import type { ToolsGateway } from './api/tools.ts'
 import { toolsAccounts } from './api/tools-accounts.ts'
 import { storesOf } from './db/handler-kit.ts'
+// P5 (p5-w4 section 10): the notice channel list.
+import { availableNotifyChannels, listNotifyChannels, putNotifyChannels } from './notify-slack/routes.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -174,6 +176,10 @@ export const routes: readonly Route[] = [
   /* 70 */ { method: 'GET', pattern: '/api/tools', handler: tools.listTools },
   /* 71 */ { method: 'PUT', pattern: '/api/tools/:accountId/paused', handler: tools.setToolPaused },
   /* 72 */ { method: 'POST', pattern: '/api/tools/:accountId/disconnect', handler: tools.disconnectTool },
+  // P5 W4 (p5-w4.md section 10): the Slack channels listed for notices (F reads, G picks through HUB_DELIVERY, H saves).
+  /* 73 */ { method: 'GET', pattern: '/api/notify/channels', handler: listNotifyChannels },
+  /* 74 */ { method: 'GET', pattern: '/api/notify/channels/available', handler: availableNotifyChannels },
+  /* 75 */ { method: 'PUT', pattern: '/api/notify/channels', handler: putNotifyChannels },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */
