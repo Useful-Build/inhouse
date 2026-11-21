@@ -22,11 +22,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { DotsBackground, GooDefs, Page as PageBox } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
-import { Approvals } from './screens/Approvals'
-import { Routines } from './screens/Routines'
-import { Activity } from './screens/Activity'
-import { Tools, ToolPage } from './screens/Tools'
-import { Skills } from './screens/Skills'
 import { MENU } from './screens/settings/menu'
 import { ProblemPanel } from './overlays/ProblemPanel'
 import { TeamWindow } from './overlays/TeamWindow'
@@ -46,8 +41,15 @@ function lazyRoute<M, C extends ComponentType>(load: () => Promise<M>, pick: (m:
   })
 }
 // The heavy routes load on first visit (P-2): Settings, Usage, the Library (its viewer and previews come with it) and
-// the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Today and the
-// rest stay in the entry chunk.
+// the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Approvals, Routines,
+// Activity, Tools (and its tool page) and Skills load on first visit too (P3 ship, to keep Today's first load under its
+// budget: build-support/entry-without-zod.test.ts pins them). Only Today and Chats stay in the entry chunk.
+const Approvals = lazyRoute(() => import('./screens/Approvals'), m => m.Approvals)
+const Routines = lazyRoute(() => import('./screens/Routines'), m => m.Routines)
+const Activity = lazyRoute(() => import('./screens/Activity'), m => m.Activity)
+const Tools = lazyRoute(() => import('./screens/Tools'), m => m.Tools)
+const ToolPage = lazyRoute(() => import('./screens/Tools'), m => m.ToolPage)
+const Skills = lazyRoute(() => import('./screens/Skills'), m => m.Skills)
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
