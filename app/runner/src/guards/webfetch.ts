@@ -10,8 +10,10 @@
 //   (server/do/runner/runner.ts), "A and AAAA lookups for an intercepted hostname return a placeholder address that
 //   routes the request to the intercept", and a `*` target makes "every hostname resolve, including hostnames that do not
 //   exist" (https://developers.cloudflare.com/durable-objects/api/container/, read 2026-11-21). So the check first asks
-//   for a name real DNS never answers (`.invalid`, RFC 6761); when that resolves, DNS is the intercept's, every fetch goes
-//   through the egress's own DoH check, and the lookup is skipped (it would refuse every public host);
+//   for a fresh random name under example.com that real DNS doesn't answer; when it resolves, and only to reserved
+//   addresses, DNS is the intercept's, every fetch goes through the egress's own DoH check, and the lookup is skipped
+//   (it would refuse every public host). Not `.invalid`: the sandbox showed the platform resolver NXDOMAINs that
+//   special-use name while it answers example.com with its placeholder (fd00::119:1);
 // - a list: only those hosts, exactly;
 // - `[]`: none.
 // Three layers:
@@ -21,6 +23,7 @@
 //   can't be narrowed by a deny, so a PreToolUse hook decides every URL itself;
 // - the network: the sandbox allowlist for Bash is the list (none with null: options.ts), and the container's egress is
 //   the Worker's (W3).
+import { randomBytes } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import type { HookCallbackMatcher, HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk'
@@ -28,10 +31,11 @@ import { WEBFETCH_DENY } from '../../../shared/protocol/webfetch-denials.ts'
 import { fetchHostRefusal } from './options.ts'
 
 /**
- * A name real DNS never answers (RFC 6761 reserves `.invalid`), fully qualified (the trailing dot skips search domains):
- * if it resolves, and only to reserved addresses, the answers are synthetic.
+ * A name real DNS has no record for: a fresh random label under example.com (IANA's documentation domain, which has no
+ * wildcard; the label is neutral, so nothing about the product reaches an outside resolver), fully qualified (the trailing dot skips search domains). If it resolves, and only to reserved addresses,
+ * the answers are synthetic. A fresh label per probe, so no cache anywhere can answer it from an earlier lookup.
  */
-export const DNS_PROBE_HOST = 'inhouse-dns-probe.invalid.'
+export const dnsProbeHost = (): string => `dns-probe-${randomBytes(6).toString('hex')}.example.com.`
 /** The most resolved addresses a deny reason lists. */
 export const DENY_ADDRESSES_MAX = 4
 
@@ -113,9 +117,9 @@ export function allowedFetchHost(url: unknown, domains: readonly string[] | null
   return domains.includes(host) ? host : null
 }
 
-/** Reserved addresses for a deny reason: zone ids dropped, this container's own named only as such, capped. */
-function shown(reserved: readonly string[], own: readonly string[]): string {
-  const names = [...new Set(reserved.map((a) => (own.includes(a) ? 'an own address' : a.replace(/%.*$/, ''))))]
+/** Addresses for a deny reason: zone ids dropped, this container's own named only as such, capped. */
+function shown(addresses: readonly string[], own: readonly string[]): string {
+  const names = [...new Set(addresses.map((a) => (own.includes(a) ? 'an own address' : a.replace(/%.*$/, ''))))]
   return `${names.slice(0, DENY_ADDRESSES_MAX).join(', ')}${names.length > DENY_ADDRESSES_MAX ? ', ...' : ''}`
 }
 
@@ -150,25 +154,27 @@ export async function resolvesToReserved(host: string, own: readonly string[], r
 }
 
 /**
- * Whether this process's DNS is synthetic (the container intercept's placeholder): the never-answered probe name resolves,
- * and every answer is reserved. A resolver that answers NXDOMAIN with a public address (a hijacking ISP's) reads as real
- * DNS, so the check stays on there.
+ * Whether this process's DNS is synthetic (the container intercept's placeholder): the probe name resolves, and every
+ * answer is reserved. A resolver that answers NXDOMAIN with a public address (a hijacking ISP's) reads as real DNS, so
+ * the check stays on there. `answers`: what the probe got (null: nothing), for a deny's diagnosis.
  */
-export async function dnsIsSynthetic(resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<boolean> {
-  const addresses = await lookupWithin(DNS_PROBE_HOST, resolve, timeoutMs)
-  return addresses !== null && addresses.length > 0 && addresses.every((a) => reservedAddress(a))
+export async function probeDns(resolve: Resolve, timeoutMs = RESOLVE_TIMEOUT_MS): Promise<{ synthetic: boolean; answers: string[] | null }> {
+  const answers = await lookupWithin(dnsProbeHost(), resolve, timeoutMs)
+  return { synthetic: answers !== null && answers.length > 0 && answers.every((a) => reservedAddress(a)), answers }
 }
 
 export function webFetchHook(domains: readonly string[] | null, hostAddresses: readonly string[] = [], resolve: Resolve = systemResolve): HookCallbackMatcher {
   const listed = domains === null ? null : [...domains]
   const own = [...hostAddresses]
-  // Asked once a yes is seen: the container's DNS stays the intercept's for its life. A no is asked again (cheap: real
-  // DNS answers `.invalid` at once with NXDOMAIN).
+  // Asked until a yes is seen: the container's DNS stays the intercept's for its life. A no is asked again (real DNS
+  // answers at once that the name has no record).
   let synthetic = false
-  const reservedHere = async (host: string): Promise<string[]> => {
+  const reservedHere = async (host: string): Promise<{ reserved: string[]; probe: string[] | null }> => {
+    if (synthetic) return { reserved: [], probe: null }
+    const p = await probeDns(resolve)
     // Only ever set to true: a slower probe that failed can't undo a concurrent one that saw the intercept.
-    if (!synthetic && (await dnsIsSynthetic(resolve))) synthetic = true
-    return synthetic ? [] : reservedResolution(host, own, resolve)
+    if (p.synthetic) synthetic = true
+    return { reserved: synthetic ? [] : await reservedResolution(host, own, resolve), probe: p.answers }
   }
   return {
     matcher: 'WebFetch',
@@ -179,10 +185,14 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
         const url = (input.tool_input as { url?: unknown } | null)?.url
         const host = allowedFetchHost(url, listed, own)
         if (host !== null && listed !== null) return {}
-        const reserved = host === null ? [] : await reservedHere(host)
+        const { reserved, probe } = host === null ? { reserved: [], probe: null } : await reservedHere(host)
         if (host !== null && reserved.length === 0) return {}
-        // The addresses a public name resolved to here (capped), so a run's visible refusal shows what DNS answered.
-        if (listed === null) return deny(reserved.length === 0 ? WEBFETCH_DENY.publicOnly : `${WEBFETCH_DENY.publicOnly} (${host} resolved here to ${shown(reserved, own)})`)
+        // What a public name resolved to here and what the synthetic-DNS probe got (both capped), so a run's visible
+        // refusal shows why the check ran.
+        if (listed === null) {
+          if (reserved.length === 0) return deny(WEBFETCH_DENY.publicOnly)
+          return deny(`${WEBFETCH_DENY.publicOnly} (${host} resolved here to ${shown(reserved, own)}; probe: ${probe === null || probe.length === 0 ? 'none' : shown(probe, own)})`)
+        }
         return deny(listed.length === 0 ? WEBFETCH_DENY.off : WEBFETCH_DENY.notListed)
       },
     ],
