@@ -453,7 +453,10 @@ export class HttpAgent implements AgentClient {
     if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('library', { status: 'ready' })
     try {
       const files = await readLibrary(this.http)
-      this.patch({ files, res: { ...this.s.res, library: { status: 'ready' } } })
+      // A file this client holds as deleted that the server lists live was restored elsewhere: it isn't ours to undo now.
+      const live = new Set(files.map(f => f.id))
+      const gone = Object.fromEntries(Object.entries(this.s.gone).filter(([id]) => !live.has(id)))
+      this.patch({ files, gone, res: { ...this.s.res, library: { status: 'ready' } } })
     } catch (e) {
       if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('library', { status: 'ready' })
       this.failStatus('library', e)
@@ -961,9 +964,9 @@ export class HttpAgent implements AgentClient {
         one = await uploadLibraryFile(this.http, file)
       } catch (e) {
         const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
-        // files.ts loads lazily (Today's first-load budget, build-support/entry-without-zod.test.ts).
-        const { uploadRefusalText } = await import('./files')
-        throw this.fail(new AgentError(err.code, uploadRefusalText(file.name, err), err.reason ? { reason: err.reason } : {}))
+        // files.ts loads lazily (Today's first-load budget, build-support/entry-without-zod.test.ts); if it can't load, the plain failure.
+        const text = await import('./files').then(m => m.uploadRefusalText(file.name, err), () => `Couldn't upload ${file.name}. Try again.`)
+        throw this.fail(new AgentError(err.code, text, err.reason ? { reason: err.reason } : {}))
       }
       kept.push(one)
       this.patch({ files: [one, ...this.s.files.filter(f => f.id !== one.id)].sort(byNewest) })
@@ -1162,15 +1165,20 @@ export class HttpAgent implements AgentClient {
   listFiles = () => this.s.files
   /**
    * Rows 65 and 66: the files leave the list (or come back) at once; the write sends each file's `rev` as it is when the
-   * write leaves (one lane, so an Undo waits for its delete's answer and sends the rev that answer gave). A refusal puts
-   * the files back where they were; a `conflict` takes the revisions it carries.
+   * write leaves (one lane, so an Undo waits for its delete's answer and sends the rev that answer gave). While a later
+   * write in the lane is still on its way, an answer or a refusal only folds in the revisions it carries and leaves the
+   * files on the side that later write put them (no blink). A refusal puts the files back with their latest revision. A
+   * `conflict` takes the revisions it carries and reads the Library again, so a file someone else deleted doesn't stay.
+   * A restore skips ids this client no longer holds as deleted (an Undo joined to a delete that was refused).
    */
-  private libraryWrite(k: Contract, ids: string[], to: 'delete' | 'restore'): Promise<void> {
-    if (ids.length < 1 || ids.length > 100 || new Set(ids).size !== ids.length) return this.refuseLocal('invalid', 'Choose 1 to 100 files.')
-    const pick = new Set(ids)
-    const from = (s: Slices) => (to === 'delete' ? s.files.filter(f => pick.has(f.id)) : ids.flatMap(id => (s.gone[id] ? [s.gone[id]] : [])))
-    if (from(this.s).length !== ids.length) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
-    /** The files `rows` put live (`restore`) or gone (`delete`), whatever side they were on. */
+  private libraryWrite(k: Contract, asked: string[], to: 'delete' | 'restore'): Promise<void> {
+    if (asked.length < 1 || asked.length > 100 || new Set(asked).size !== asked.length) return this.refuseLocal('invalid', 'Choose 1 to 100 files.')
+    const ids = to === 'restore' ? asked.filter(id => this.s.gone[id]) : asked
+    if (ids.length === 0) return Promise.resolve()
+    if (to === 'delete' && ids.some(id => !this.s.files.some(f => f.id === id))) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
+    const there = (s: Slices, id: string) => s.gone[id] ?? s.files.find(f => f.id === id)
+    const rowsOf = (s: Slices) => ids.flatMap(id => { const f = there(s, id); return f ? [f] : [] })
+    /** The files `rows` put live or gone, whatever side they were on. */
     const place = (s: Slices, rows: readonly LibraryFile[], side: 'live' | 'gone'): Slices => {
       const ours = new Set(rows.map(f => f.id))
       const gone = Object.fromEntries(Object.entries(s.gone).filter(([id]) => !ours.has(id)))
@@ -1178,19 +1186,25 @@ export class HttpAgent implements AgentClient {
       if (side === 'gone') for (const f of rows) gone[f.id] = f
       return { ...s, gone, files: side === 'live' ? [...files, ...rows].sort(byNewest) : files }
     }
-    const before = from(this.s)
-    const revOf = (id: string) => (this.s.gone[id] ?? this.s.files.find(f => f.id === id))?.rev ?? 1
+    /** The same files with the revisions `rows` carry, each left on the side it is on. */
+    const fold = (s: Slices, rows: readonly LibraryFile[]): Slices => {
+      const by = new Map(rows.map(f => [f.id, f]))
+      const gone = { ...s.gone }
+      for (const id of Object.keys(gone)) { const f = by.get(id); if (f) gone[id] = f }
+      return { ...s, gone, files: s.files.map(f => by.get(f.id) ?? f) }
+    }
+    const after: 'live' | 'gone' = to === 'delete' ? 'gone' : 'live'
+    const before: 'live' | 'gone' = to === 'delete' ? 'live' : 'gone'
     return this.write({
       lane: 'library',
-      apply: s => place(s, before, to === 'delete' ? 'gone' : 'live'),
-      send: () => postLibraryWrite(this.http, k, to, ids.map(id => ({ id, ifRev: revOf(id) }))),
-      done: (s, r) => place(s, r.items, to === 'delete' ? 'gone' : 'live'),
-      undo: s => place(s, before, to === 'delete' ? 'live' : 'gone'),
+      apply: s => place(s, rowsOf(s), after),
+      send: () => postLibraryWrite(this.http, k, to, ids.map(id => ({ id, ifRev: there(this.s, id)?.rev ?? 1 }))),
+      done: (s, r, others) => (others ? fold(s, r.items) : place(s, r.items, after)),
+      undo: (s, _was, others) => (others ? s : place(s, rowsOf(s), before)),
       onConflict: (s, current) => {
         const c = k.ANSWERS.libraryFiles.safeParse(current)
-        if (!c.success) return s
-        // Each file as it is now, on the side it was on before this write.
-        return place(s, c.data.items, to === 'delete' ? 'live' : 'gone')
+        void this.loadLibrary(true)
+        return c.success ? fold(s, c.data.items) : s
       },
     })
   }

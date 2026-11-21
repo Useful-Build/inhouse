@@ -68,16 +68,51 @@ describe('delete and restore', () => {
     await expect(refused.agent.deleteFiles([F('f1')])).rejects.toMatchObject({ code: 'unavailable' })
     expect(refused.agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f1'), 1]])
 
-    const stale = await loaded({ ...reads({ library: [file('f1', 1)] }), 'POST /api/library/delete': refusal(409, 'conflict', { current: { items: [file('f1', 1, 3)] } }) })
-    await expect(stale.agent.deleteFiles([F('f1')])).rejects.toMatchObject({ code: 'conflict' })
-    expect(stale.agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f1'), 3]])
+  })
+  test("a conflict reads the Library again: a file someone else deleted doesn't come back as a ghost", async () => {
+    let lists = 0
+    const { agent } = await loaded({
+      ...reads(),
+      'GET /api/library?limit=100': () => ({ body: { items: ++lists === 1 ? [file('f2', 2), file('f1', 1)] : [file('f1', 1)], nextCursor: null } }),
+      'POST /api/library/delete': refusal(409, 'conflict', { current: { items: [file('f2', 2, 3)] } }),
+    })
+    const relisted = new Promise<void>(done => {
+      const off = agent.subscribe(() => { if (lists === 2 && agent.listFiles().length === 1) { off(); done() } })
+    })
+    await expect(agent.deleteFiles([F('f2')])).rejects.toMatchObject({ code: 'conflict' })
+    await relisted
+    expect(lists).toBe(2)
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('f1')])
+  })
+  test('no blink: a delete answering while its Undo is queued leaves the file live and folds in its rev; a failed Undo keeps that rev', async () => {
+    let restores = 0
+    const { agent, calls } = await loaded({
+      ...reads({ library: [file('f1', 1)] }),
+      'POST /api/library/delete': { body: { items: [file('f1', 1, 2)] } },
+      'POST /api/library/restore': () => (++restores === 1 ? refusal(503, 'unavailable') : { body: { items: [file('f1', 1, 3)] } }),
+    })
+    const del = agent.deleteFiles([F('f1')])
+    const back = agent.restoreFiles([F('f1')])
+    // From the Undo's own apply until the delete has answered, every snapshot shows the file.
+    const shown: boolean[] = []
+    const off = agent.subscribe(() => shown.push(agent.listFiles().some(f => f.id === F('f1'))))
+    await del
+    off()
+    expect(shown.every(Boolean), 'the file never left the list').toBe(true)
+    expect(agent.listFiles().map(f => [f.id, f.rev]), 'live, at the rev the delete answered').toEqual([[F('f1'), 2]])
+    await expect(back).rejects.toMatchObject({ code: 'unavailable' })
+    expect(agent.listFiles().map(f => f.id), 'the refused Undo puts it back among the deleted').toEqual([])
+    await agent.restoreFiles([F('f1')])
+    expect(bodyOf(calls, '/api/library/restore')).toEqual([{ items: [{ id: F('f1'), ifRev: 2 }] }, { items: [{ id: F('f1'), ifRev: 2 }] }])
+    expect(agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f1'), 3]])
   })
   test('nothing is sent for an id the list lacks, an id twice, or over 100', async () => {
     const { agent, calls } = await loaded(reads({ library: [file('f1', 1)] }))
     await expect(agent.deleteFiles(['nope'])).rejects.toMatchObject({ code: 'not_found' })
     await expect(agent.deleteFiles([F('f1'), F('f1')])).rejects.toMatchObject({ code: 'invalid' })
     await expect(agent.deleteFiles([])).rejects.toMatchObject({ code: 'invalid' })
-    await expect(agent.restoreFiles([F('f1')])).rejects.toMatchObject({ code: 'not_found' })
+    // A restore of a file this client doesn't hold as deleted (an Undo joined to a refused delete) skips it: nothing to send.
+    await agent.restoreFiles([F('f1')])
     expect(calls.filter(c => c.method === 'POST')).toEqual([])
   })
 })

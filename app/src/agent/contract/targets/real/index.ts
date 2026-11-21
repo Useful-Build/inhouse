@@ -17,11 +17,14 @@ import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
 
 /** The P2 methods: what this target's client serves over HTTP. */
+/** How many live Library files `reset()` leaves (the shared Library cases delete one or two). */
+const LIBRARY_FILES = 2
+
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
-  // P4 W5 (p4-w5.md addendum): the Library's upload and download URL.
-  'uploadFiles', 'fileDownloadUrl',
+  // P4 W5 (p4-w5.md addendum, #256 review): the Library.
+  'listFiles', 'deleteFiles', 'restoreFiles', 'uploadFiles', 'fileDownloadUrl',
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
@@ -44,6 +47,8 @@ function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path:
     case 'removeMember': return { verbs: ['DELETE'], path: `/api/members/${enc(args[0])}` }
     case 'grantSupport': return { verbs: ['POST'], path: '/api/grants' }
     case 'endSupportGrant': return { verbs: ['POST'], path: `/api/grants/${enc(args[0])}/end` }
+    case 'deleteFiles': return { verbs: ['POST'], path: '/api/library/delete' }
+    case 'restoreFiles': return { verbs: ['POST'], path: '/api/library/restore' }
     default: return null
   }
 }
@@ -181,6 +186,9 @@ function realTarget(origin: string): ContractTarget {
       hung = false
       install(make('admin'))
       await agent.whenLoaded()
+      // The Library cases need two live files; the test build starts with none, and a case may leave one deleted.
+      const live = agent.listFiles().length
+      if (live < LIBRARY_FILES) await agent.uploadFiles(Array.from({ length: LIBRARY_FILES - live }, (_, i) => new File([`sku,qty\nA${i},1\n`], `contract file ${i}.csv`, { type: 'text/csv' })))
     },
     async seed(state) {
       // The test build has one brand and no stages or scenarios; the Loading scenario is a client that hasn't heard back.
@@ -203,6 +211,10 @@ function realTarget(origin: string): ContractTarget {
       } else if (record.kind === 'grant') {
         if (value === 'end') await other.endSupportGrant(record.id)
         else staleGrantEnd = true
+      } else if (record.kind === 'file') {
+        // A delete and a restore in the other session: the file is as it was, two revisions on.
+        await other.deleteFiles([record.id])
+        await other.restoreFiles([record.id])
       } else throw new Error(`The real target has no ${record.kind} to change elsewhere in P2.`)
     },
     async failRead(resource) {
