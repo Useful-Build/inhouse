@@ -35,6 +35,8 @@ const RoutePatternSchema = z.enum([
   // P3's brand_data GET routes (p3-design section 3: rows 22, 24, 32, 33, 34, 40, 41, 43).
   '/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files',
   '/api/files/:fileId', '/api/memory',
+  // P4 W4: row 59, Activity.
+  '/api/activity',
 ])
 /**
  * The `brand_data` write routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting

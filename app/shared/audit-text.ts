@@ -26,6 +26,7 @@ const ROUTE: Record<string, string> = {
   '/api/chats/:id/files': "A chat's files",
   '/api/files/:fileId': 'A file',
   '/api/memory': 'Memory',
+  '/api/activity': 'Activity',
   '/api/memory/brand/:id/forgotten': 'Team memory',
 }
 

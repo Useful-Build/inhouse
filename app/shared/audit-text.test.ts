@@ -75,7 +75,7 @@ describe('P3 lines (W1 first PR: the support.access routes of p3-design section 
     const expected: [string, string][] = [
       ['/api/chats', 'The chat list'], ['/api/chats/:id', 'A chat'], ['/api/runs/active', 'The running answers'],
       ['/api/traces/:id', "An answer's steps"], ['/api/socket', 'A live answer'], ['/api/chats/:id/files', "A chat's files"],
-      ['/api/files/:fileId', 'A file'], ['/api/memory', 'Memory'],
+      ['/api/files/:fileId', 'A file'], ['/api/memory', 'Memory'], ['/api/activity', 'Activity'],
     ]
     for (const [route, detail] of expected) expect(access(route), route).toEqual({ what: 'looked at brand data', detail })
   })

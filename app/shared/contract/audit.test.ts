@@ -107,7 +107,7 @@ describe('setting.changed (failure 3)', () => {
 
 describe('P3 lines (W1 first PR)', () => {
   it('take every P3 brand_data GET pattern and nothing concrete', () => {
-    for (const route of ['/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files', '/api/files/:fileId', '/api/memory']) {
+    for (const route of ['/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files', '/api/files/:fileId', '/api/memory', '/api/activity']) {
       expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(true)
     }
     for (const route of ['/api/chats/c1', '/api/chats?limit=5', '/api/usage', '/api/pause']) expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(false)
@@ -121,7 +121,7 @@ describe('P3 lines (W1 first PR)', () => {
 })
 
 describe('P3 memory lines (W6, item 19)', () => {
-  const GET_ROUTES = ['/api/members', '/api/members/:id/photo', '/api/audit', '/api/audit/export.csv', '/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files', '/api/files/:fileId', '/api/memory']
+  const GET_ROUTES = ['/api/members', '/api/members/:id/photo', '/api/audit', '/api/audit/export.csv', '/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files', '/api/files/:fileId', '/api/memory', '/api/activity']
   const FORGET = '/api/memory/brand/:id/forgotten'
   it('support.access pairs PUT with the team-fact forget only, and GET with the read routes only', () => {
     expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route: FORGET })).toBe(true)
