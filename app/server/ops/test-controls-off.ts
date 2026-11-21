@@ -5,6 +5,11 @@
 type Real = typeof import('./test-controls.ts')
 
 export const TEST_CONTROLS_CANARY: string = ''
-export const runAlarmNow: Real['runAlarmNow'] = () => {
+const off = () => {
   throw new Error('The test controls are not in this build.')
 }
+export const runAlarmNow: Real['runAlarmNow'] = off
+export const armStopAfterBatch: Real['armStopAfterBatch'] = off
+export const seedCursor: Real['seedCursor'] = off
+/** The tick's hook (routines/tick.ts): nothing, so the product build's tick runs as written. */
+export const afterTickBatch: Real['afterTickBatch'] = () => {}
