@@ -1036,6 +1036,17 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.listNotifications().every(n => !n.unread)).toBe(true)
     })
 
+    only('uploadFiles')('uploadFiles rejects as unavailable with a notice, and a file has no download link in the demo', async () => {
+      const heard: string[] = []
+      const off = t.client.onNotice(n => { if (n.type === 'error') heard.push(n.text) })
+      const e = await errorOf(t.client.uploadFiles([new File(['x'], 'a.txt')]))
+      off()
+      expect(e).toBeInstanceOf(AgentError)
+      expect((e as AgentError).code).toBe('unavailable')
+      expect(heard).toEqual(["Uploads aren't connected in this demo."])
+      expect(t.client.fileDownloadUrl(firstFile())).toBeNull()
+    })
+
     only('deleteFiles')('delete library files and restore them', async () => {
       const files = t.client.listFiles()
       expect(files.length).toBeGreaterThan(1)
