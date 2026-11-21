@@ -16,7 +16,8 @@ import type { QueryFn } from '../../../src/session/core.ts'
 // and app/shared/ has no node_modules of its own when only the runner's packages are installed (CI): send it to the
 // runner's copy, as the build and vitest do. Registered before the modules that need it are imported (below).
 const zod = new URL('../../../node_modules/zod/index.js', import.meta.url).href
-register(`data:text/javascript,${encodeURIComponent(`export async function resolve(s, c, next) { return next(s === 'zod' ? ${JSON.stringify(zod)} : s, c) }`)}`)
+// The path goes in as data, not into the hook's source.
+register(`data:text/javascript,${encodeURIComponent('let zod; export function initialize(d) { zod = d.zod } export async function resolve(s, c, next) { return next(s === "zod" ? zod : s, c) }')}`, { data: { zod } })
 const { openRootChannel } = await import('../../../src/session/channel.ts')
 const { runSession } = await import('../../../src/session/core.ts')
 const { PROXY_URL, fakeEgress } = await import('../support/fake-egress.ts')

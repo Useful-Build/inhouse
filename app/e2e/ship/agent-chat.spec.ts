@@ -348,7 +348,10 @@ test('S8: Pause the agent; a new question is refused with a notice; resume', asy
     await member.reload()
     await ready(member)
     await askFromToday(member, 'scenario:hello are you there?')
-    await expect(member.getByText(PAUSED_NOTICE)).toBeVisible({ timeout: 60_000 })
+    // Two surfaces say it, both intended (Chats.tsx): the refusal in the conversation, and the banner above the composer
+    // ("said where the person is about to type") that stays while the agent is paused.
+    await expect(log(member).getByText(PAUSED_NOTICE)).toBeVisible({ timeout: 60_000 })
+    await expect(member.locator('[data-chat-notice]').getByText(PAUSED_NOTICE)).toBeVisible()
     await shot(member, 'S8-a-question-is-refused')
     // Resume (through the API: the top bar's Pause pill doesn't show on a brand with no tools connected yet).
     await setPaused(page, false)
@@ -434,9 +437,12 @@ test('S10: Attach a file to a question; the agent makes a spreadsheet from it; t
   await expect(log(page).getByText('Saved outputs/table.csv.', { exact: true })).toBeVisible({ timeout: 150_000 })
   // The file the agent made is in the chat's files (route 40), as an output named table.csv.
   const chat = new URL(page.url()).hash.replace(/^#\/chats\//, '')
-  const files = await api(page, 'GET', `/api/chats/${chat}/files`)
-  expect(files.status).toBe(200)
-  expect(files.json.items).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'output', name: 'table.csv' }), expect.objectContaining({ kind: 'input', name: 'stock-list.csv' })]))
+  // The output is saved a moment after the answer shows: poll the list until both files are there.
+  await expect.poll(async () => {
+    const files = await api(page, 'GET', `/api/chats/${chat}/files`)
+    expect(files.status).toBe(200)
+    return (files.json.items as { kind: string; name: string }[]).map(f => `${f.kind}:${f.name}`).sort()
+  }, { timeout: 60_000, message: 'the chat\'s files: the attachment and the output' }).toEqual(['input:stock-list.csv', 'output:table.csv'])
   await shot(page, 'S10-attached-and-made')
 })
 
