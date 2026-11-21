@@ -5,7 +5,7 @@
 //   or Inhouse under a grant. Always as an attachment, `nosniff` (the site headers), `default-src 'none'; sandbox` and
 //   `private, no-store` (`FILE_RESPONSE_HEADERS`, which `keepPhotoHeaders` keeps), the stored type.
 import { ChatFileItemSchema, FILE_NAME_HEADER } from '../../shared/contract/attachments.ts'
-import type { ChatFileItem } from '../../shared/contract/attachments.ts'
+import type { ChatFileItem, ChatFiles } from '../../shared/contract/attachments.ts'
 import { ChatIdSchema, FileIdSchema } from '../../shared/contract/chat-ids.ts'
 import { badFileName } from '../../shared/files/names.ts'
 import { storesOf, writer } from '../db/handler-kit.ts'
@@ -63,7 +63,7 @@ export const listChatFiles: Handler = async c => {
   // A person sees only their own chat (another's is 404); Inhouse under a grant passes the owner rule.
   if (a.principal.kind === 'person' && owner !== a.principal.memberId) return apiError('not_found')
   a.access.requireObject({ ownerId: owner })
-  return apiJson({ items: (await stores.files.listCurrent(chatId.data)).map(item) })
+  return apiJson({ items: (await stores.files.listCurrent(chatId.data)).map(item) } satisfies ChatFiles)
 }
 
 /** `attachment; filename*=UTF-8''<name>` (RFC 6266), with an ASCII fallback. */

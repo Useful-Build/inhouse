@@ -34,6 +34,7 @@ export type ChatFileItem = z.infer<typeof ChatFileItemSchema>
 export const UploadResultSchema = ChatFileItemSchema
 /** Route 40's answer: the chat's current files, attachments first, each newest first. */
 export const ChatFilesSchema = z.object({ items: z.array(ChatFileItemSchema) })
+export type ChatFiles = z.infer<typeof ChatFilesSchema>
 /**
  * Route 39's `X-File-Name`: the file's name, `encodeURIComponent`-encoded (a header carries ASCII only). Decoded, it's
  * 1 to 200 characters, one segment (no `/`), and a name the runner's files route can carry.
