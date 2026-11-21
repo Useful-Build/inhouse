@@ -13,8 +13,9 @@
 //   Metadata-only log entries are still saved."
 // - Caching (/ai-gateway/features/caching/): `cf-aig-skip-cache: true`.
 // - Request handling (/ai-gateway/configuration/request-handling/): `cf-aig-max-attempts` sets the attempts (1: no retry).
-import { createScriptedModel, SCENARIOS } from '@scripted-model'
-import type { MessagesRequest, ScriptedModel } from '@scripted-model'
+import { SYSTEM_ROUTINE_PROMPTS } from '../routines/prompts.ts'
+import { createScriptedModel, routesFor, SCENARIOS } from '@scripted-model'
+import type { MessagesRequest, ScenarioRoute, ScriptedModel } from '@scripted-model'
 
 export type ModelPath = '/v1/messages' | '/v1/messages/count_tokens'
 
@@ -65,32 +66,38 @@ export function gatewayUpstream(env: { AI?: AiGatewayBinding; AI_GATEWAY_ID?: st
  * message that carries one wins, so a resumed session's new prompt plays its own scenario, not the first prompt's.
  */
 export const DEFAULT_SCENARIO = 'hello'
+/** The test build's routes for turns with no marker (none in any other build: `routesFor` is the off switch's empty one). */
+const TEST_ROUTES: readonly ScenarioRoute[] = routesFor(SYSTEM_ROUTINE_PROMPTS)
 const SCENARIO_MARKER = /\bscenario:([A-Za-z0-9_-]{1,64})\b/
 
 /**
- * A user message's marker, read from its text only: a message carrying a tool result is never a prompt (a tool's output
- * may quote a marker), so it has none.
+ * A user message's text: its string content, or its text blocks joined; empty when it carries a tool result (a tool's output is
+ * never a prompt: it may quote a marker or a route's text).
  */
-const markerOf = (m: MessagesRequest['messages'][number]): string | undefined => {
-  if (m.role !== 'user') return undefined
-  if (typeof m.content === 'string') return SCENARIO_MARKER.exec(m.content)?.[1]
-  if (!Array.isArray(m.content)) return undefined
+const promptTextOf = (m: MessagesRequest['messages'][number]): string => {
+  if (m.role !== 'user') return ''
+  if (typeof m.content === 'string') return m.content
+  if (!Array.isArray(m.content)) return ''
   const blocks = m.content as { type?: unknown; text?: unknown }[]
-  if (blocks.some(b => b?.type === 'tool_result')) return undefined
-  const text = blocks.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
-  return SCENARIO_MARKER.exec(text)?.[1]
+  if (blocks.some(b => b?.type === 'tool_result')) return ''
+  return blocks.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
 }
+const markerOf = (m: MessagesRequest['messages'][number]): string | undefined => SCENARIO_MARKER.exec(promptTextOf(m))?.[1]
 
 /**
  * The scenario a request plays and where its conversation starts: the newest user message with a marker (`from`, its
- * index), else the default from the start. A tool result carries no marker, so a tool loop keeps its prompt's scenario.
+ * index), else (test build routes, P4 W6) the scenario of the first route whose text the first user message contains, from the
+ * start, else the default from the start. A marker always wins over a route. A tool result carries no marker, so a tool loop
+ * keeps its prompt's scenario.
  */
-export function scenarioStart(request: MessagesRequest): { scenario: string; from: number } {
+export function scenarioStart(request: MessagesRequest, routes: readonly ScenarioRoute[] = TEST_ROUTES): { scenario: string; from: number } {
   for (let i = request.messages.length - 1; i >= 0; i--) {
     const scenario = markerOf(request.messages[i]!)
     if (scenario !== undefined) return { scenario, from: i }
   }
-  return { scenario: DEFAULT_SCENARIO, from: 0 }
+  const first = promptTextOf(request.messages.find(m => m.role === 'user') ?? { role: 'user', content: '' })
+  const route = routes.find(r => r.contains !== '' && first.includes(r.contains))
+  return { scenario: route?.scenario ?? DEFAULT_SCENARIO, from: 0 }
 }
 
 /** The scenario a request plays (`scenarioStart`'s). */
