@@ -170,6 +170,36 @@ describe('the type check past the prefix (failure 3)', () => {
   }
 })
 
+describe('the last chunk waits for every check (failures 2, 3, 4)', () => {
+  // A store that commits once it has the declared bytes, without waiting for the stream's end: a refusal found at the
+  // body's end must still come before the last bytes reach it.
+  const eagerPut = (length: number) => {
+    const c = { got: 0, committed: false }
+    const put: FilePut = async body => {
+      const r = body.getReader()
+      while (c.got < length) {
+        const { done, value } = await r.read()
+        if (done) break
+        c.got += value.byteLength
+      }
+      if (c.got === length) c.committed = true
+    }
+    return { c, put }
+  }
+  const cases: [string, () => { stream: ReadableStream<Uint8Array> }, string | undefined, string][] = [
+    ['a UTF-8 sequence cut by the body end', () => source(2 * MiB, i => (i === 2 * MiB - 1 ? 0xe2 : 0x64)), undefined, 'type_not_allowed'],
+    ['a wrong claimed hash', () => source(2 * MiB, () => 0x64), 'c'.repeat(64), 'hash'],
+    ['an extra chunk after exactly the declared length', () => source(2 * MiB, () => 0x64, CHUNK, new Uint8Array([0x64])), undefined, 'length_mismatch'],
+  ]
+  for (const [name, make, sha256, refused] of cases) {
+    it(`${name}: refused before the store has every byte`, async () => {
+      const { c, put } = eagerPut(2 * MiB)
+      expect(await streamFile(request(make().stream, 2 * MiB), 'd.txt', { max: MAX, sha256, put })).toEqual({ refused })
+      expect(c.committed).toBe(false)
+    })
+  }
+})
+
 describe('the claimed hash and a failed write (failures 4, 5)', () => {
   it('a wrong claimed hash past the prefix: refused, nothing in R2; the right one is kept', async () => {
     const wrong = key()
