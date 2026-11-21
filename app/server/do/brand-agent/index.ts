@@ -1,7 +1,7 @@
 // The BrandAgent Durable Object (P3, p3-design section 4): one per brand, `env.BRAND_AGENT.getByName('brand')`. Owner:
 // W1 (p3-w1.md). The class wires the object's SQLite, its scheduler (the one owner of the alarm), the run tokens and
-// the ports (compose.ts) to the turn engine (core.ts), and answers the RPC surface (`BrandAgentRpc`, ports.ts). The
-// socket (`fetch`, route 34) is PR 4's.
+// the ports (compose.ts) to the turn engine (core.ts), and answers the RPC surface (`BrandAgentRpc`, ports.ts). Route
+// 34's socket (`fetch`, then the hibernation handlers) runs on the socket hub (sockets.ts, 4.10).
 import { DurableObject } from 'cloudflare:workers'
 import { apiError } from '../../http.ts'
 import { SYSTEM_PROMPT_V1 } from '../../prompt/system.ts'
@@ -20,12 +20,18 @@ import { alarmPort, createScheduler } from './scheduler.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
 import { createRunTokens } from './tokens.ts'
+import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
+import type { HubSocket, SocketPrincipal } from './sockets.ts'
+import { SWEEP_EVERY_MS, sweepBy } from './authority.ts'
+import { auditInsert } from '../../db/audit.ts'
+import { runBatch } from '../../db/sql.ts'
 import type { EgressRoute, RunGrant, TokenRefusal } from './tokens.ts'
 
 export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   private core!: AgentCore
   private sched!: SqlScheduler
   private ports!: BrandAgentPorts
+  private hub!: SocketHub
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -43,9 +49,17 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         sql, scheduler: sched, now,
         hooks: { retryPlacement: id => this.core.retryPlacement(id), placementExpired: id => this.core.placementExpired(id) },
       })
+      this.hub = new SocketHub({
+        sql, now,
+        sockets: () => ctx.getWebSockets() as HubSocket[],
+        auditAttach: (p, runId) => supportAttachLine(env.DB, p, runId, now()),
+        wakeBy: atMs => sweepBy(sql, sched, Math.min(atMs, now() + SWEEP_EVERY_MS)),
+      })
       this.core = new AgentCore({
         sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V1, db: env.DB,
         modelUsable: modelUsable(openStores(env)),
+        onEvent: e => this.hub.onEvent(e),
+        sockets: this.hub,
       })
       this.core.ensureSeeds()
       await sched.syncAlarm()
@@ -56,10 +70,33 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
     await this.sched.alarm()
   }
 
-  /** Route 34's socket upgrade: PR 4. */
-  async fetch(): Promise<Response> {
-    return apiError('unavailable', { reason: 'not_built' })
+  /**
+   * Route 34's socket upgrade (4.10). Reached only through route 34's handler, which verified the caller and set
+   * `x-inhouse-principal`. A sign-in past its end is refused (401); a version this build doesn't speak, or a window of
+   * 0, is accepted and closed at once with its code (`4409`, `4401`), so the browser reads why.
+   */
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return apiError('invalid')
+    const opened = this.hub.open(request.headers.get(PRINCIPAL_HEADER), new URL(request.url).searchParams.get('v'))
+    if ('refuse' in opened) return apiError(opened.refuse)
+    const [client, server] = Object.values(new WebSocketPair())
+    if ('close' in opened) {
+      server.accept()
+      server.close(opened.close, opened.reason)
+    } else {
+      this.ctx.acceptWebSocket(server, opened.tags)
+      this.hub.accepted(server, opened.accept)
+    }
+    return new Response(null, { status: 101, webSocket: client })
   }
+
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    await this.hub.message(ws, message)
+  }
+  // The runtime answers a Close frame itself (`web_socket_auto_reply_to_close`, compatibility date 2026-11-13), and a
+  // closed socket leaves `getWebSockets()`; nothing else is kept per socket.
+  async webSocketClose(): Promise<void> {}
+  async webSocketError(): Promise<void> {}
 
   // ---------- the egress (8.1, 8.2, 8.6, 8.7) ----------
   async ingest(turnId: string, events: RunEvent[]): Promise<PushAck | { gone: true }> {
@@ -120,12 +157,15 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
     return this.core.readTrace(id, scope)
   }
 
-  // ---------- authority (4.10; the sockets are PR 4's) ----------
+  // ---------- authority (4.10) ----------
   async onMemberRemoved(memberId: string): Promise<void> {
     this.core.onMemberRemoved(memberId)
   }
   async onGrantEnded(grantId: string): Promise<void> {
     this.core.onGrantEnded(grantId)
+  }
+  async onGrantCreated(grantId: string, endsAtMs: number): Promise<void> {
+    this.core.onGrantCreated(grantId, endsAtMs)
   }
 
   // ---------- the pool (W2) ----------
@@ -145,7 +185,19 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async drainState(): Promise<DrainState> {
     return this.ports.pool.drainState()
   }
+  async undrain(): Promise<DrainState> {
+    return this.ports.pool.undrain()
+  }
   async warmup(): Promise<{ ok: true } | Refusal> {
     return this.core.warmup()
   }
+}
+
+/** The `support.attach` line (4.10): written, and awaited, before any frame of the run goes to the Inhouse socket. */
+async function supportAttachLine(db: D1Database, p: SocketPrincipal, runId: string, atMs: number): Promise<void> {
+  if (p.kind !== 'inhouse' || p.grantId === null) throw new Error('support.attach for a principal without a grant')
+  await runBatch(db, [auditInsert({
+    atMs, actorId: p.memberId, args: { action: 'support.attach', grantId: p.grantId, runId },
+    target: { kind: 'grant', id: p.grantId }, requestId: p.requestId,
+  }, null)])
 }

@@ -8,6 +8,12 @@ import type { CallOptions } from './kit.ts'
 // The matrix POSTs /api/pause (route 36): resume after this file so the test build's agent isn't left paused for later
 // specs (#153 round 1, L7; approved exception to the orchestrator-owned specs, this hook only).
 test.afterAll(async ({ request }) => { await call(request, actor('admin'), 'POST', '/api/resume', { json: {} }) })
+// The release token's same-origin POST /api/ops/drain below really drains the test build's brand: undrain it after this
+// file (the test build's DELETE /api/ops/drain), so later specs and the next run see an undrained pool.
+test.afterAll(async ({ request }) => {
+  const r = await call(request, actor('release'), 'DELETE', '/api/ops/drain')
+  expect(r.status, r.text).toBe(200)
+})
 
 const admin = actor('admin')
 const rows = matrixRows()
