@@ -140,11 +140,16 @@ function actorRefusal(by: Actor): Refusal | null {
   return null
 }
 
-/** The `onEnd` task's payload (ask B), read from the turn row as stored final. */
+/**
+ * The `onEnd` task's payload (ask B), read from the turn row as stored final. `failure` follows the outcome: a failed
+ * turn's code, a cancelled turn's reason, else null. A fence that lands after the terminal event keeps the outcome but
+ * still writes its own reason on the row (e.g. `done` then a pause), which must not read as a failure (#168 r1).
+ */
 function endPayload(t: TurnRow): TurnEndPayload {
   const outcome = (t.outcome ?? 'cancelled') as TurnEndPayload['outcome']
+  const failure = outcome === 'failed' ? t.failure : outcome === 'cancelled' ? t.cancel_why : null
   return {
-    turnId: t.turn_id, runId: t.run_id, chatId: t.chat_id, outcome, failure: t.failure ?? t.cancel_why ?? null,
+    turnId: t.turn_id, runId: t.run_id, chatId: t.chat_id, outcome, failure,
     structuredOutput: t.structured_output_json === null ? null : JSON.parse(t.structured_output_json),
   }
 }
@@ -665,7 +670,11 @@ export class AgentCore {
     const t = this.turn(turnId)!
     // PR 5, ask B: the turn's end task, in this same synchronous step (one implicit SQLite transaction), so no path can
     // store a final turn without it. `ensure`: a second final write can't move or replace it.
-    if (t.on_end_json !== null) {
+    // A deferral is not the turn's end (#168 r1 item 5): when this turn's own `deferred` (turns.deferred_json) left the
+    // chat `waiting` (its checkpoint, 4.5), the end task waits for the resume turn, which inherits `on_end_json` (PR 6).
+    // A deferred turn that never reached `waiting` (stopped, crashed or damaged before its checkpoint) ends as any turn.
+    const deferredEnd = t.deferred_json !== null && this.chatState(t.chat_id)?.session === 'waiting'
+    if (t.on_end_json !== null && !deferredEnd) {
       const onEnd = JSON.parse(t.on_end_json) as OnEnd
       this.d.scheduler.ensure({ id: onEnd.id, kind: onEnd.kind, dueAtMs: now, payload: endPayload(t) })
     }

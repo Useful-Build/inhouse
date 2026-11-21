@@ -45,7 +45,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         sql, alarm: alarmPort(ctx.storage), now, handlers: taskHandlers,
         context: (nowMs): TaskContext => ({
           nowMs, env, sql, scheduler: sched, tokens, ports: this.ports, agent: this.core,
-          runs: { submit: t => internalSubmit(this.core, taskHandlers, t) },
+          runs: { submit: t => internalSubmit(this.core, sql, taskHandlers, t) },
         }),
       })
       this.sched = sched

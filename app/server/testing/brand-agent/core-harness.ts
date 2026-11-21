@@ -126,7 +126,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
         sql, alarm, now, handlers: registry,
         context: (nowMs): TaskContext => ({
           nowMs, env, sql, scheduler: sched, tokens, ports: { pool, usage, files }, agent: core,
-          runs: { submit: t => internalSubmit(core, registry, t) },
+          runs: { submit: t => internalSubmit(core, sql, registry, t) },
         }),
       })
       hub = new SocketHub({

@@ -45,7 +45,7 @@ function submit(h: Harness, chatId: string, key: string, o: Partial<InternalSubm
     input: { clientTurnKey: key, text, priority: 'next', model: 'sonnet', attachments: [] },
     ...rest,
   }
-  return internalSubmit(h.core, h.registry, t)
+  return internalSubmit(h.core, h.sql, h.registry, t)
 }
 
 interface Seen { kind: string; id: string; due_at_ms: number; payload: unknown }
@@ -193,6 +193,56 @@ describe('B: the end task on every final path, in the final step (failure 1)', (
   })
 })
 
+describe('B: a turn that already ended keeps its own outcome in the payload (#168 r1, Opus 1)', () => {
+  const doneThen = async (h: Harness, key: string) => {
+    const a = ok(await submit(h, `rc-${key}`, key)); await settle()
+    h.push(a.turnId, ev.started(), ev.text('a'), ev.checkpoint(2), finishedWith({ v: 1 }))
+    expect(h.turn(a.turnId).state).toBe('ending')
+    return a
+  }
+  const done = (key: string, a: SendTurnResult) => ({ turnId: a.turnId, runId: a.runId, chatId: `rc-${key}`, outcome: 'done', failure: null, structuredOutput: { v: 1 } })
+
+  it('done, then a pause before released: failure null', () => inSeams(async h => {
+    const seen = captureEnds(h)
+    const a = await doneThen(h, 'k-donep-01')
+    h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    h.push(a.turnId, released())
+    expect(seen.get(a.turnId)!.map(x => x!.payload)).toEqual([done('k-donep-01', a)])
+  }))
+
+  it('done, then the container exits before released: failure null', () => inSeams(async h => {
+    const seen = captureEnds(h)
+    const a = await doneThen(h, 'k-donec-01')
+    h.pool.runnerTurns.set('runner-0', [a.turnId])
+    h.core.containerExited('runner-0', 1)
+    for (let i = 0; i < 5 && h.turn(a.turnId).state !== 'ended'; i++) await h.tick(MIN)
+    expect(seen.get(a.turnId)!.map(x => x!.payload)).toEqual([done('k-donec-01', a)])
+  }))
+})
+
+describe('B: a deferral is not the turn\'s end (#168 r1 item 5, line B)', () => {
+  it('a turn whose checkpoint leaves the chat waiting ensures no end task and keeps on_end_json for the resume', () => inSeams(async h => {
+    const seen = captureEnds(h)
+    const a = ok(await submit(h, 'rc-defer', 'k-defer-01')); await settle()
+    h.push(a.turnId, ev.started(), ev.text('a'), ev.deferred(), ev.checkpoint(2), ev.success(), released())
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', on_end_json: '{"kind":"test-end","id":"test-end:k-defer-01"}' })
+    expect(h.sql.exec<{ session: string }>("SELECT session FROM chat_state WHERE chat_id = 'rc-defer'").one().session).toBe('waiting')
+    expect(seen.get(a.turnId)).toEqual([null])
+  }))
+
+  it('the same shape without a deferral, and a deferral stopped before its checkpoint, both still fire', () => inSeams(async h => {
+    const seen = captureEnds(h)
+    const plain = ok(await submit(h, 'rc-nodefer', 'k-nodef-01')); await settle()
+    h.push(plain.turnId, ev.started(), ev.text('a'), ev.checkpoint(2), ev.success(), released())
+    const cut = ok(await submit(h, 'rc-defcut', 'k-defcut-1')); await settle()
+    h.push(cut.turnId, ev.started(), ev.text('a'), ev.deferred())
+    h.core.stop(cut.turnId, SYSTEM)
+    h.push(cut.turnId, ev.failed('stopped'), ev.released(null))
+    expect(seen.get(plain.turnId)!.map(x => x!.payload)).toEqual([{ turnId: plain.turnId, runId: plain.runId, chatId: 'rc-nodefer', outcome: 'done', failure: null, structuredOutput: null }])
+    expect(seen.get(cut.turnId)!.map(x => x!.payload)).toEqual([{ turnId: cut.turnId, runId: cut.runId, chatId: 'rc-defcut', outcome: 'stopped', failure: null, structuredOutput: null }])
+  }))
+})
+
 describe('C: structured output (failure 2, 3)', () => {
   it('the format reaches RunStart; a turn without one sends none', () => inSeams(async h => {
     const fmt = { type: 'json_schema' as const, schema: { type: 'object', properties: { s: { type: 'string' } } } }
@@ -282,7 +332,28 @@ describe('G and A: who submits, and what the internal path refuses (failure 5)',
     expect(await submit(h, 'rc-bad', 'k-badfmt-1', { outputFormat: { type: 'text' } as never })).toEqual({ refused: { code: 'invalid' } })
     expect(await submit(h, 'rc-bad', 'k-badend-1', { onEnd: { kind: 'no-such-kind', id: 'x' } })).toEqual({ refused: { code: 'invalid' } })
     expect(await submit(h, 'rc-bad', 'k-badend-2', { onEnd: { kind: 'test-end', id: '' } })).toEqual({ refused: { code: 'invalid' } })
+    // An end id another kind's task holds would make the final step's ensure a no-op: refused (#168 r1, Opus 3).
+    h.sched.schedule({ id: 'run-advance:held', kind: 'run-advance', dueAtMs: h.clock.now + MIN })
+    expect(await submit(h, 'rc-bad', 'k-badend-3', { onEnd: { kind: 'test-end', id: 'run-advance:held' } })).toEqual({ refused: { code: 'invalid' } })
     expect(h.turns()).toHaveLength(1)
+  }))
+})
+
+describe('the engine takes an end task or a format only through its extra argument (failure 6, #168 r1 nit)', () => {
+  it('core.submitTurn with onEnd and outputFormat on the turn itself stores neither, sends no format and ensures no end task', () => inSeams(async h => {
+    const t = {
+      chatId: 'c-noextra', by: { kind: 'person' as const, memberId: MEMBER }, model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium' as const,
+      sideModel: 'claude-haiku-5-5', maxTurns: 25, webFetchDomains: null,
+      input: { clientTurnKey: 'k-noext-01', text: 'hi', priority: 'next' as const, model: 'sonnet', attachments: [] },
+      onEnd: { kind: 'test-end', id: 'test-end:k-noext-01' }, outputFormat: { type: 'json_schema', schema: {} },
+    }
+    const a = ok(await h.core.submitTurn(t)); await settle()
+    expect(h.turn(a.turnId)).toMatchObject({ on_end_json: null, output_format_json: null })
+    const start = h.pool.calls.find(c => c.method === 'place')!.args[0] as Record<string, unknown>
+    expect(Object.hasOwn(start, 'outputFormat')).toBe(false)
+    h.push(a.turnId, ev.started(), ev.text('a'), ev.checkpoint(2), ev.success(), released())
+    expect(h.turn(a.turnId).state).toBe('ended')
+    expect(h.sql.exec("SELECT id FROM due_tasks WHERE kind = 'test-end'").toArray()).toEqual([])
   }))
 })
 

@@ -32,9 +32,14 @@ export function revive(sched: SqlScheduler, registry: Registry, p: { kind: strin
  * against the protocol's `OutputFormat` (its size and depth caps), the end task's kind against the registry. The engine
  * itself refuses an attachment named twice (core.ts, L9) on every path.
  */
-export async function internalSubmit(core: AgentCore, registry: Registry, t: InternalSubmit): Promise<SendTurnResult | Refusal> {
+export async function internalSubmit(core: AgentCore, sql: SqlStorage, registry: Registry, t: InternalSubmit): Promise<SendTurnResult | Refusal> {
   const { outputFormat, onEnd, ...turn } = t
   if (outputFormat !== undefined && !OutputFormat.safeParse(outputFormat).success) return { refused: { code: 'invalid' } }
   if (onEnd !== undefined && (typeof onEnd.id !== 'string' || onEnd.id === '' || !registered(registry, onEnd.kind))) return { refused: { code: 'invalid' } }
+  // An id another kind's task holds would make the final step's `ensure` a no-op: the end would be lost silently.
+  if (onEnd !== undefined) {
+    const held = sql.exec<{ kind: string }>('SELECT kind FROM due_tasks WHERE id = ?', onEnd.id).toArray()[0]
+    if (held && held.kind !== onEnd.kind) return { refused: { code: 'invalid' } }
+  }
   return core.submitTurn(turn, { outputFormat, onEnd })
 }

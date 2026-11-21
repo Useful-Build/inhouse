@@ -59,7 +59,15 @@ export function registrySeeds(handlers: Readonly<Record<string, TaskHandler<neve
   return Object.entries(handlers).flatMap(([kind, h]) => (h.seed === undefined ? [] : [{ id: h.seed.id, kind }]))
 }
 
-/** One submit from inside the object (PR 5, ask A): route 29's turn plus a structured-output format and an end task. */
+/**
+ * One submit from inside the object (PR 5, ask A): route 29's turn plus a structured-output format and an end task.
+ * Preconditions the caller owns (no D1 read here):
+ * - the chat exists in D1 with this owner: call `ensureChat` first (it also answers OK for a soft-deleted chat);
+ * - never submit into a person's chat that is in the trash (D1 `deleted_at_ms` set): the BrandAgent's own mark can say
+ *   live after a failed restore while D1 says deleted, and only route 29 reads D1;
+ * - `onEnd.id` is unique per turn: a same-kind end task still pending for an earlier turn would swallow this one's
+ *   (`ensure` never replaces it). An id another kind holds is refused `invalid`.
+ */
 export interface TaskRuns {
   submit(t: InternalSubmit): Promise<SendTurnResult | Refusal>
 }
