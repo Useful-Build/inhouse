@@ -158,3 +158,40 @@ describe('probes.sh', () => {
     expect(read(path.join(here, 'probes.sh'))).toMatch(/sh image\/probes\/build\.sh/)
   })
 })
+
+// .github/workflows/nightly.yml (E-9, 2026-11-21): the container guard probes (P3 Acc 5's proof) every night on main.
+// Ways it can fail, written down first: it stops running on a schedule; it runs a branch's code (a dispatch from a PR
+// branch); it holds a secret or reaches the eval deployment (the eval run needs the test-issuer key, which only the
+// ops repo holds, and runs only once the baseline's cost is measured); it runs something other than probes.sh.
+describe('nightly.yml', () => {
+  const wf = () => fs.readFileSync(path.join(here, '../../../.github/workflows/nightly.yml'), 'utf8')
+  it('runs on a daily schedule and by hand', () => {
+    expect(wf()).toMatch(/\n  schedule:\n    - cron: "\d+ \d+ \* \* \*"\n/)
+    expect(wf()).toMatch(/\n  workflow_dispatch:\n/)
+  })
+  it('runs main only, with no secrets and read-only contents', () => {
+    expect(wf()).toMatch(/\n    if: github\.ref == 'refs\/heads\/main'\n/)
+    expect(wf()).not.toMatch(/secrets\./)
+    expect(wf()).toMatch(/\npermissions:\n  contents: read\n/)
+    expect(wf()).toMatch(/persist-credentials: false/)
+  })
+  // #244 review: a failing nightly must reach a person. One issue, opened once and commented on after that.
+  it('a failure opens or updates one issue, from a job of its own that alone may write issues', () => {
+    const text = wf()
+    const notify = text.slice(text.indexOf('\n  notify:\n'))
+    expect(notify).toMatch(/^\n  notify:\n    needs: probes\n    if: failure\(\)\n/)
+    expect(notify).toMatch(/\n    permissions:\n      issues: write\n/)
+    expect(notify).not.toMatch(/actions\/checkout|npm |contents: write/)
+    expect(notify).toMatch(/TITLE: Nightly guard check failing\n/)
+    // The open issue with that title is reused (a comment); only with none open is one created.
+    expect(notify).toMatch(/gh api --paginate "repos\/\$REPO\/issues\?state=open&labels=\$LABEL[^"]*"[\s\S]*select\(\.pull_request == null and \.title == env\.TITLE\)/)
+    expect(notify).toMatch(/gh issue comment "\$open"[\s\S]*else[\s\S]*gh issue create /)
+    // The probes job keeps read-only contents: the workflow grants nothing more, and only notify adds issues: write.
+    expect(text.slice(0, text.indexOf('\n  notify:\n'))).not.toMatch(/issues: write/)
+    expect(text.match(/issues: write/g)).toHaveLength(1)
+  })
+  it('runs probes.sh, and no eval step', () => {
+    expect(wf()).toMatch(/\n        run: sh app\/scripts\/nightly\/probes\.sh\n/)
+    expect(wf()).not.toMatch(/evals\.mjs|evals\/run|--paid|INHOUSE_EVAL/)
+  })
+})

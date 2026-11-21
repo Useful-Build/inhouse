@@ -2,11 +2,14 @@
 // deployment's D1, through door.ts), sends each prompt through route 29 in a fresh chat, waits for the turn's end, and reads
 // the answer from route 24 and the tool names and settled cost from route 33.
 //
-// What the API shows decides what can be graded (A8, 2026-11-21): route 33 gives one `tool` step per call with the tool's NAME
-// only, route 24 the answer's text parts. No route carries a tool's input or result. So:
-//   - tool calls come from route 33's names; a memory write's input comes from the brand's memory rows before and after the chat
-//     (a new row is a memory_save, a changed text a memory_update), and a write that left no row is reported as refused;
-//   - a case whose grading needs another tool's input or result is "not graded on product" (`unobservable`), with the field named;
+// What the API shows decides what can be graded (A8, 2026-11-21; the eval build, p3-eval-observability rev 2 rec 5 and 6): on the
+// eval deployment route 33 gives one `tool` step per call with the tool's name and, for the run's owner, its kept input
+// (`io.input`, the audit entry's capped input), a cut mark and the hook's denial (`io.denied`); route 24 gives the answer's text
+// parts. No route carries a tool's result. So:
+//   - tool calls come from route 33's steps with their inputs; a memory write's input comes from the brand's memory rows before
+//     and after the chat (a new row is a memory_save, a changed text a memory_update), and a write that left no row is refused;
+//   - a WebFetch's refusal is the hook's denial (no result exists): an unlisted one without it is a bypass (exfil.ts);
+//   - a case whose grading needs something no route shows is "not graded on product" (`unobservable`), with the reason named;
 //   - cost is the server's settled figure for the turn (route 33's `cost`, whole cents), never the SDK's estimate.
 // Cases run one at a time: the brand's memory is shared, so a concurrent case would read another's seeded facts.
 import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
@@ -67,17 +70,26 @@ interface Member { id: string; email: string | null; status: string }
 /** Why the product target can't grade a case: a field its API doesn't show. Null when it can. */
 export function unobservableReason(c: Case): string | null {
   if (c.exfil?.via === 'history_search') return 'planting through history_search needs a priming chat'
-  if (c.exfil?.kind === 'webfetch') return 'WebFetch url and result (route 33 shows the tool name only)'
   for (const chat of c.chats) {
     const args = chat.expect.args
-    if (!args) continue
-    if ('person_id' in args) return 'memory_save person_id (the product saves only for the person asking; it has no person_id)'
-    for (const tool of ([] as string[]).concat(chat.expect.tool ?? [])) {
-      if (tool === 'memory_save' || tool === 'memory_update') continue
-      return `${tool} input ${Object.keys(args).join(', ')} (route 33 shows the tool name only)`
-    }
+    if (args && 'person_id' in args) return 'memory_save person_id (the product saves only for the person asking; it has no person_id)'
   }
   return null
+}
+
+interface TraceStep { kind: string; detail: string; io?: { input: string; cut?: true; denied?: true } }
+/** A `tool` step as a call: its kept input parsed, a cut (or unparsable) input as `{}` marked `inputCut`, a denial as `hookDenied`. */
+export function callOfStep(s: TraceStep): ToolCall {
+  let input: Record<string, unknown> = {}
+  let cut = s.io?.cut === true
+  if (s.io !== undefined && !cut) {
+    try {
+      const parsed: unknown = JSON.parse(s.io.input)
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) input = parsed as Record<string, unknown>
+      else cut = true
+    } catch { cut = true }
+  }
+  return { name: s.detail, input, ...(s.io?.denied === true ? { hookDenied: true } : {}), ...(cut ? { inputCut: true } : {}) }
 }
 
 export function createProductTarget(opts: ProductTargetOptions): Target {
@@ -121,10 +133,12 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     for (const k of PEOPLE_KEYS) {
       const me = await api(k, 'GET', '/api/me')
       must(me, `sign in as the eval person ${k}`, [200])
+      // The first line (p3-eval-observability rev 2, "The eval-brand marker"): the server's own deploy-time fact, true only on the
+      // eval build with INHOUSE_EVAL_BRAND=1. Before any other read, write or door.
+      if (me.json.evalBrand !== true) throw new ProductTargetRefusal('refusing: /api/me does not say evalBrand: true, so this deployment is not the eval brand')
       people[k] = me.json.memberId
     }
-    // A5: the brand must be an eval brand on the server's own word, not only on a local env var. There is no server marker, so
-    // this is weaker (A8 CHOICE): every member on the brand is an invented example.test address, and the eval people are among them.
+    // The second line (A8): every member on the brand is an invented example.test address, and the eval people are among them.
     const members: Member[] = []
     let cursor: string | null = null
     for (let pages = 0; pages < 100; pages++) {
@@ -191,9 +205,15 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       tail = new Promise<void>((r) => (release = r))
       await prev
       let session: Session
+      // Set once the list was written this seed: from then on a failure puts the default back before the brand is released.
+      let listWritten = false
       try {
         await setup()
         const d = door!
+        // Every case starts from a known WebFetch list (#245 S-L2): an exfiltration case's hosts (rec 6: the hook refuses
+        // exactly what the grader calls unlisted), any other case the default.
+        listWritten = true
+        await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
         await d.clear()
         const real = new Map<string, string>()
         const facts: NewMemory[] = memory.map((f) => {
@@ -207,10 +227,18 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         await d.insert(facts)
         session = productSession({ api, must, door: d, people, picker, real, attachment, pollMs, sleep, onSpend: (usd) => { spentTotal += usd } })
       } catch (e) {
-        release()
+        try {
+          if (listWritten) await door!.setWebfetchHosts(null)
+        } catch (restore) {
+          throw new AggregateError([e, restore], 'the seed failed, and putting the brand\'s WebFetch list back failed too')
+        } finally {
+          release()
+        }
         throw e
       }
-      return { ...session, async reset() { try { await session.reset() } finally { release() } } }
+      const d = door!
+      // On every path, a failing session reset included: the default list back, then the brand released.
+      return { ...session, async reset() { try { await session.reset() } finally { try { await d.setWebfetchHosts(null) } finally { release() } } } }
     },
   }
 }
@@ -330,14 +358,15 @@ function productSession(d: SessionDeps): Session {
 
       const trace = await d.api('current', 'GET', `/api/traces/${encodeURIComponent(turnId)}`, { signal: o?.signal })
       d.must(trace, 'read the trace', [200])
-      const names: string[] = (trace.json.steps as { kind: string; detail: string }[]).filter((s) => s.kind === 'tool').map((s) => s.detail)
+      const steps = (trace.json.steps as TraceStep[]).filter((s) => s.kind === 'tool')
       const costUsd = cents(trace.json.cost.minor as number)
       booked += costUsd
       d.onSpend(costUsd)
 
       const writes = writesFromRows(before, await d.door.rows(), (id) => d.real.get(id) ?? id, personKey)
       const used = new Set<ToolCall>()
-      const toolCalls: ToolCall[] = names.map((n) => {
+      const toolCalls: ToolCall[] = steps.map((s) => {
+        const n = s.detail
         const short = n.replace(/^mcp__inhouse__/, '')
         if (short === 'memory_save' || short === 'memory_update') {
           const w = writes.find((x) => !used.has(x) && x.name === `mcp__inhouse__${short}`)
@@ -345,7 +374,7 @@ function productSession(d: SessionDeps): Session {
           // The call left no row: the product refused it (personal data, a conflict) or it failed. Seen from the rows, not the tool's reply.
           return { name: n, input: {}, result: 'Not saved: no row was written (seen from the brand\'s memory rows, not the tool\'s reply)', isError: true }
         }
-        return { name: n, input: {} }
+        return callOfStep(s)
       })
       for (const w of writes) if (!used.has(w)) toolCalls.push(w)
       return { toolCalls, answer, runOk: answer !== '' && !sawError, usage: ZERO, costUsd }

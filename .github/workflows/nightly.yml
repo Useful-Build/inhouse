@@ -1,0 +1,74 @@
+# The nightly guard check (E-9, 2026-11-21): P3 R2's container probes (P3 Acc 5's proof) every night on main, with
+# app/scripts/nightly/probes.sh. That script builds the runner image from the checked-out code and runs the probe bundle
+# with the exact `docker run` flags of ci.yml's runner job (nightly.test.mjs fails when they differ), after the same two
+# host settings as ci.yml's "Probe setup" (why each is needed is written there). Any probe FAIL fails the run.
+# No eval step: a paid eval run needs the test issuer's private key, which only the private ops repo holds (decision 5),
+# and a nightly eval starts only once the baseline's cost is measured (decision 4). No secret here, ever.
+# Run by hand: gh workflow run nightly (main only: a dispatch from another branch skips the job).
+# A failure opens one issue ("Nightly guard check failing", label nightly, assigned) or comments on the open one.
+# GitHub disables a scheduled workflow after 60 days without repository activity in a public repo (see monitor.yml);
+# re-enable it in the Actions tab (or gh workflow enable nightly).
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  probes:
+    # Main's code only: the schedule runs on the default branch, and a dispatch from any other branch does nothing.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - name: The guards in the container
+        run: sh app/scripts/nightly/probes.sh
+
+  # A failed night reaches a person (as monitor.yml does): one open issue titled TITLE, labelled LABEL and assigned,
+  # commented on by every later failure until someone closes it. Its own job, so only it may write issues, and it runs no
+  # repository code: no checkout, gh only.
+  notify:
+    needs: probes
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      TITLE: Nightly guard check failing
+      LABEL: nightly
+      # Assigned on every new issue, so a failure always reaches a person.
+      ASSIGNEE: wasimjalali
+    steps:
+      - name: Open or update the issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          numbers=$(gh api --paginate "repos/$REPO/issues?state=open&labels=$LABEL&per_page=100" \
+            --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number')
+          open=$(head -n 1 <<< "$numbers")
+          body=$(printf 'The container guard probes failed at %s.\n\nRun: %s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" "$RUN_URL")
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$REPO" --body "$body"
+            echo "Commented on #$open"
+          else
+            gh label create "$LABEL" --repo "$REPO" --force --color B60205 --description "Opened by the nightly guard check"
+            gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --assignee "$ASSIGNEE" --body "$body"
+          fi
