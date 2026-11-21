@@ -1,0 +1,52 @@
+{
+ "row": {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No, you're not around. I have a note that you're out of office every Friday afternoon, so this Friday (Nov 20) is no different. I can't see a calendar, so if something has changed for this week, tell me and I'll update the note.",
+  "costUsd": 0.0112,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Friday afternoon availability out of office"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_feaf1e [person p_maya] Maya Berg is out of office every Friday afternoon.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "Friday off away holiday",
+     "from": "2026-11-01"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "No, you're not around. I have a note that you're out of office every Friday afternoon, so this Friday (Nov 20) is no different. I can't see a calendar, so if something has changed for this week, tell me and I'll update the note.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2550,
+   "cacheReadTokens": 20770,
+   "outputTokens": 274
+  },
+  "costUsd": 0.0112
+ }
+}

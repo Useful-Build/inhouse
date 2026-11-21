@@ -123,14 +123,17 @@ test('Composer logo row: 3 logos, a +N chip for the rest, and the real count', a
 
 test('Composer logo row with a longer list: +N and the count match', async ({ page }) => {
   // Test-only fixture: add a 7th connected tool to the built sample data.
+  // Every script is read, and only the chunk that holds the data is changed (the demo agent's lazy chunks load beside it).
+  let applied = false
   await page.route('**/assets/*.js', async route => {
     const res = await route.fetch()
     const body = await res.text()
     const next = body.replace('connected:[`shopify`,`amazon`,`shipbob`,`xero`,`gorgias`,`meta-ads`]', 'connected:[`shopify`,`amazon`,`shipbob`,`xero`,`gorgias`,`meta-ads`,`klaviyo`]')
-    expect(next, 'fixture applied to the bundle').not.toBe(body)
+    if (next !== body) applied = true
     await route.fulfill({ response: res, body: next })
   })
   await start(page, '#/today')
+  expect(applied, 'fixture applied to the bundle').toBe(true)
   // Klaviyo is still being connected (its tool details say so), so the agent reads six of the seven: the row, the
   // count and the menu all say six (M17).
   const chip = page.getByRole('button', { name: /Tools read in this chat/ })

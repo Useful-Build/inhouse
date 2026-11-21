@@ -1,0 +1,43 @@
+{
+ "row": {
+  "caseId": "R05",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Free shipping starts at €60. That comes from our saved brand memory. I haven't checked it against the shop settings.",
+  "costUsd": 0.0080793,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "free shipping threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed1 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Free shipping starts at €60. That comes from our saved brand memory. I haven't checked it against the shop settings.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 1978,
+   "cacheReadTokens": 21063,
+   "outputTokens": 102
+  },
+  "costUsd": 0.0080793
+ }
+}

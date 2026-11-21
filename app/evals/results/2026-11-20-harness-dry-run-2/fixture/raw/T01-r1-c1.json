@@ -1,0 +1,44 @@
+{
+ "row": {
+  "caseId": "T01",
+  "cat": "choice",
+  "pair": "memory_save/brand",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "I've saved that Kraftwerk Boxes is your packaging supplier and ships from Poland. It's a shared team fact, so it won't count until an admin approves it.",
+  "costUsd": 0.0095869,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Packaging supplier is Kraftwerk Boxes, which ships from Poland.",
+     "scope": "brand"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_48a612. It waits for an admin's OK before it counts.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've saved that Kraftwerk Boxes is your packaging supplier and ships from Poland. It's a shared team fact, so it won't count until an admin approves it.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2344,
+   "cacheReadTokens": 20789,
+   "outputTokens": 164
+  },
+  "costUsd": 0.0095869
+ }
+}

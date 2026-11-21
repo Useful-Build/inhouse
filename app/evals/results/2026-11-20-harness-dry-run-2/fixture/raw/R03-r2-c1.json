@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "R03",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like your weekly sales summary on Mondays at 7:30, as bullet points.",
+  "costUsd": 0.008992,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "sales summary"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [person p_maya] Maya wants the weekly sales summary on Mondays at 7:30, as bullet points.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "morning email report preference"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed1 [brand] Customer emails are signed 'Warm regards, the Fernwood team'.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You like your weekly sales summary on Mondays at 7:30, as bullet points.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2159,
+   "cacheReadTokens": 21065,
+   "outputTokens": 148
+  },
+  "costUsd": 0.008992
+ }
+}

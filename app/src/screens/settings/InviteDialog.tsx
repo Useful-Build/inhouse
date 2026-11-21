@@ -12,7 +12,8 @@ import { checkField } from './content'
 
 const ROLES: [string, MemberRole][] = [['Member', 'member'], ['Admin', 'admin']]
 
-export function InviteDialog({ onClose }: { onClose: () => void }) {
+/** `memberOnly`: the Inhouse team invites Members only (decision 19b), so the role picker isn't offered. */
+export function InviteDialog({ onClose, memberOnly = false }: { onClose: () => void; memberOnly?: boolean }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [title, setTitle] = useState('')
@@ -62,7 +63,7 @@ export function InviteDialog({ onClose }: { onClose: () => void }) {
         {field('invite-title', 'Title', title, setTitle, { hint: 'Optional' })}
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-strong text-foreground-2">Role</span>
-          <Select label="Role" value={role} options={ROLES.map(([l]) => l)} onChange={setRole} align="left" />
+          {memberOnly ? <span className="text-sm">Member</span> : <Select label="Role" value={role} options={ROLES.map(([l]) => l)} onChange={setRole} align="left" />}
         </div>
         {error && <p role="alert" className="m-0 text-sm text-destructive-text">{error}</p>}
         <div className="mt-1 flex justify-end gap-2">

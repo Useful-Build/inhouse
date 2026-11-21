@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T15",
+  "cat": "choice",
+  "pair": "approval_get/list",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "approval_get"
+  ],
+  "toolSearches": 0,
+  "answer": "It is still waiting.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__approval_get",
+    "input": {
+     "approval_id": "ap_204"
+    },
+    "result": "{\"status\":\"waiting\"}"
+   }
+  ],
+  "answer": "It is still waiting.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

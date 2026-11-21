@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "R09",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "We use Royal Mail for the UK. DHL covers the EU.",
+  "costUsd": 0.0087749,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "courier UK shipping carrier"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed6 [brand] Our courier is DHL for the EU and Royal Mail for the UK.\\nm_seed3 [brand] Free shipping starts at 60 euro.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "We use Royal Mail for the UK. DHL covers the EU.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2316,
+   "cacheReadTokens": 20769,
+   "outputTokens": 90
+  },
+  "costUsd": 0.0087749
+ }
+}

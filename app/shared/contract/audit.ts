@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { pageOf } from './paging.ts'
 import { GrantHoursSchema, GrantIdSchema } from './grants.ts'
+import { RunIdSchema } from './chat-ids.ts'
 import { MemberIdSchema, MemberRoleSchema } from './members.ts'
 import { SettingKeySchema, SettingScopeSchema, SettingValueSchema, settingSpec } from './settings.ts'
 
@@ -16,6 +17,12 @@ export const AuditActionSchema = z.enum([
   'member.invited', 'member.reinvited', 'member.bound', 'member.restored', 'member.role_changed', 'member.removed',
   'inhouse.first_sign_in', 'setting.changed', 'photo.changed', 'photo.removed', 'grant.created', 'grant.ended',
   'grant.expired', 'support.access',
+  // P3 (p3-design sections 3, 4.10 and 4.11): an Admin's or the Inhouse team's pause and resume, and an Inhouse socket attach.
+  'agent.paused', 'agent.resumed', 'support.attach',
+  // P3 (p3-design section 10, item 19): an Admin or the Inhouse team (under a live grant) forgets a team fact, or undoes that.
+  'memory.forgotten', 'memory.restored',
+  // P3 W1 PR 6 (route 51): the release job revived one quarantined due task (P4's and P6's runbooks).
+  'ops_task_revive',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -23,8 +30,27 @@ export type AuditAction = z.infer<typeof AuditActionSchema>
 export const RedactedValueSchema = z.object({ len: z.number().int().min(0), hash: z.string().regex(/^[0-9a-f]{32}$/) }).strict()
 
 /** The pattern of a `brand_data` GET route (p2-design.md section 3), never a concrete path: no ids, query, names or emails. */
-const RoutePatternSchema = z.enum(['/api/members', '/api/members/:id/photo', '/api/audit', '/api/audit/export.csv'])
+const RoutePatternSchema = z.enum([
+  '/api/members', '/api/members/:id/photo', '/api/audit', '/api/audit/export.csv',
+  // P3's brand_data GET routes (p3-design section 3: rows 22, 24, 32, 33, 34, 40, 41, 43).
+  '/api/chats', '/api/chats/:id', '/api/runs/active', '/api/traces/:id', '/api/socket', '/api/chats/:id/files',
+  '/api/files/:fileId', '/api/memory',
+])
+/**
+ * The `brand_data` write routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
+ * a team fact. `support.access` pairs `PUT` with these only, and `GET` with `RoutePatternSchema` only.
+ */
+const WritePatternSchema = z.enum(['/api/memory/brand/:id/forgotten'])
+const MemoryIdArgSchema = z.string().regex(/^mem_[A-Za-z0-9_-]{22}$/)
 const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
+/**
+ * A due task's kind and id as route 51 takes them: ids the server makes, never a name, an email or a text. An id is a
+ * kind-shaped seed id (`outbox-sweep`) or `<kind-shaped prefix>:<server id>` (`deferred-hook:q_...`). A bare lowercase
+ * word also matches the seed shape: "ids only" rests on route 51 being release-only (the release job sends task ids).
+ */
+export const TaskKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
+export const TaskIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}(:[A-Za-z0-9_:.-]{1,200})?$/)
+export const ReviveResultSchema = z.enum(['revived', 'not_quarantined', 'not_found'])
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
@@ -51,7 +77,24 @@ const otherLines = [
   line('grant.created', { grantId: GrantIdSchema, hours: GrantHoursSchema }),
   line('grant.ended', { grantId: GrantIdSchema }),
   line('grant.expired', { grantId: GrantIdSchema }),
-  line('support.access', { grantId: GrantIdSchema, method: z.literal('GET'), route: RoutePatternSchema }),
+  line('support.access', { grantId: GrantIdSchema, method: z.enum(['GET', 'PUT']), route: z.union([RoutePatternSchema, WritePatternSchema]) })
+    .superRefine((a, ctx) => {
+      // Runs even when a field above failed (zod 4), so it checks each value's type before using it.
+      const pattern = a.method === 'GET' ? RoutePatternSchema : a.method === 'PUT' ? WritePatternSchema : null
+      if (pattern && !pattern.safeParse(a.route).success) ctx.addIssue({ code: 'custom', path: ['route'], message: 'Not a route for this method' })
+    }),
+  line('agent.paused', {}),
+  line('agent.resumed', {}),
+  /** An Inhouse socket attach to a run, written before any of its frames are sent (p3-design 4.10). */
+  line('support.attach', { grantId: GrantIdSchema, runId: RunIdSchema }),
+  /** A team fact forgotten, or that undone (it then waits for an admin's OK again). Ids only, never the fact's text. */
+  line('memory.forgotten', { memoryId: MemoryIdArgSchema }),
+  line('memory.restored', { memoryId: MemoryIdArgSchema }),
+  /**
+   * Route 51: one due task revived (or found not quarantined, or not there). `by` names the service that asked: the
+   * release token has no member row, so the line's actor is `m_system`.
+   */
+  line('ops_task_revive', { kind: TaskKindSchema, id: TaskIdSchema, result: ReviveResultSchema, by: z.literal('release') }),
 ] as const
 
 /**

@@ -145,7 +145,9 @@ describe('the remote steps (failure 3)', () => {
 
 describe('the rendered SQL replays to the same rows (failure 2)', () => {
   const tables = db => db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(r => r.name)
-  const dump = db => Object.fromEntries(tables(db).map(t => [t, db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all().map(r => ({ ...r }))]))
+  // Rows sorted by their own JSON, not by rowid: P3 adds WITHOUT ROWID tables, and either order compares the same rows.
+  const byJson = (x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1)
+  const dump = db => Object.fromEntries(tables(db).map(t => [t, db.prepare(`SELECT * FROM ${t}`).all().map(r => ({ ...r })).sort(byJson)]))
 
   test('on a freshly migrated database: the brand as seed.test.ts counts it, and every table equal', async () => {
     const { sql, db: recorded } = await renderSeedSql({ hashKey: 'test-only-audit-hash-key-not-a-secret', nowMs: 1_800_000_000_000 })

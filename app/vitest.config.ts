@@ -30,6 +30,8 @@ const alias = {
   '@sample': fileURLToPath(new URL('./src/agent/sample-data', import.meta.url)),
   // W1's test issuer, as in the test build (vite.config.ts): its tests import the real one.
   '@test-issuer': fileURLToPath(new URL('./server/auth/test-issuer.ts', import.meta.url)),
+  // The scripted model (P3), as in the test build (vite.config.ts).
+  '@scripted-model': fileURLToPath(new URL('./test/scripted-model/index.ts', import.meta.url)),
   '@': fileURLToPath(new URL('./src', import.meta.url)),
 }
 
@@ -47,7 +49,7 @@ export default defineConfig({
           name: 'node',
           include: [
             'src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts', 'e2e/support/**/*.test.ts',
-            'ops/**/*.test.ts', 'shared/**/*.test.ts', 'scripts/**/*.test.mjs',
+            'ops/**/*.test.ts', 'shared/**/*.test.ts', 'evals/**/*.test.ts', 'scripts/**/*.test.mjs',
           ],
           environment: 'node',
           // The contract suite's real target (src/agent/contract/targets.ts reads it with `inject`): the test build's

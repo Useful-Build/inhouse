@@ -11,6 +11,9 @@
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"compatibility_date": "2026-11-13",
+	// `request.signal` fires when the caller disconnects (the egress closes a model call on it, p3-design 8.2); the default
+	// only from 2026-11-17. https://developers.cloudflare.com/workers/configuration/compatibility-flags/ (read 2026-11-20)
+	"compatibility_flags": ["enable_request_signal"],
 	"assets": {
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application",
@@ -28,11 +31,39 @@
 	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-test-files" }],
 	// As the product's. `wrangler dev` (miniflare) gives it a random id per start, so the test build reports a version too.
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	// P3 (p3-design sections 1 and 7): the BrandAgent (one per brand) and the Runner objects, each Runner with its
+	// container. Classes are only ever added (a new migration tag per change, never an edit of a deployed one).
+	// https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/ (read 2026-11-20)
+	"durable_objects": {
+		"bindings": [
+			{ "name": "BRAND_AGENT", "class_name": "BrandAgent" },
+			{ "name": "RUNNER", "class_name": "Runner" }
+		]
+	},
+	"migrations": [{ "tag": "p3-v1", "new_sqlite_classes": ["BrandAgent", "Runner"] }],
+	// The runner image, built from app/ as CI's runner job builds it (it bundles app/shared/protocol). max_instances is
+	// 3 x RUNNER_POOL (scripts/check-product-config.mjs compares them).
+	// https://developers.cloudflare.com/containers/ and the Wrangler configuration's `containers` (read 2026-11-20)
+	"containers": [
+		{
+			"class_name": "Runner",
+			"image": "./runner/Dockerfile",
+			"image_build_context": ".",
+			"instance_type": "standard-4",
+			"max_instances": 6
+		}
+	],
+	// `wrangler dev` (CI's Playwright servers) never builds or starts the container: the SDK sandbox can't run under
+	// `wrangler dev` (S6, docs/decisions/p3-local-containers.md), so the container path is proven on a deployment (Q2).
+	// Deploys ignore this block. https://developers.cloudflare.com/workers/wrangler/configuration/ (dev.enable_containers, read 2026-11-20)
+	"dev": { "enable_containers": false },
 	"vars": {
 		"INHOUSE_TEST_BUILD": "1",
-		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://test-issuer.invalid\",\"apps\":[{\"name\":\"brand\",\"origin\":\"http://brand.localhost:8787\",\"aud\":\"b1a2c3d4e5f60718293a4b5c6d7e8f90b1a2c3d4e5f60718293a4b5c6d7e8f90\"},{\"name\":\"inhouse\",\"origin\":\"http://inhouse.localhost:8787\",\"aud\":\"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"}],\"serviceTokens\":{\"monitor-test-client.access\":\"monitor\",\"smoke-test-client.access\":\"smoke\"}}",
+		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://test-issuer.invalid\",\"apps\":[{\"name\":\"brand\",\"origin\":\"http://brand.localhost:8787\",\"aud\":\"b1a2c3d4e5f60718293a4b5c6d7e8f90b1a2c3d4e5f60718293a4b5c6d7e8f90\"},{\"name\":\"inhouse\",\"origin\":\"http://inhouse.localhost:8787\",\"aud\":\"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"}],\"serviceTokens\":{\"monitor-test-client.access\":\"monitor\",\"smoke-test-client.access\":\"smoke\",\"release-test-client.access\":\"release\"}}",
 		// Test-only: the deployed Worker gets AUDIT_HASH_KEY as a secret, never a var.
-		"AUDIT_HASH_KEY": "test-only-audit-hash-key-not-a-secret"
+		"AUDIT_HASH_KEY": "test-only-audit-hash-key-not-a-secret",
+		// As the product's. No AI binding and no gateway here, ever (the config check refuses one): tests use the scripted model.
+		"RUNNER_POOL": "2"
 	},
 	"workers_dev": false,
 	"preview_urls": false,

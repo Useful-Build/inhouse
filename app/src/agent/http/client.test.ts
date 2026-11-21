@@ -60,7 +60,17 @@ const reads = (o: { me?: unknown; members?: unknown[]; settings?: Record<string,
   'GET /api/members': { body: { items: o.members ?? [member(ME_ID, { role: 'admin' }), member('m_dana')], nextCursor: null } },
   'GET /api/grants': { body: { items: [] } },
   'GET /api/audit': { body: { items: [line(2), line(1)], nextCursor: null } },
+  'GET /api/memory': { body: { team: [], personal: [] } },
+  // P3 (W5): the chats, the models, the usage and the pause state.
+  'GET /api/chats?limit=50': { body: { items: [], nextCursor: null } },
+  'GET /api/models': { body: { default: 'opus', modes: [] } },
+  'GET /api/usage': { body: EMPTY_USAGE },
+  'GET /api/pause': { body: { paused: false, at: null, by: null } },
 })
+const EMPTY_USAGE = {
+  month: 'November', cap: { minor: 32000, currency: 'USD' }, alertAt: 80, total: { minor: 0, currency: 'USD' }, conversations: 0, questionsAsked: 0, jobsRun: 0,
+  daily: [], breakdown: { person: [], job: [], model: [], tool: [] }, monthKey: '2026-11', months: ['2026-11'],
+}
 const record = (key: string, value: unknown, rev: number) => ({ key, value, rev, updatedAt: null, updatedBy: null })
 
 async function loaded(routes: Record<string, Answer | ((r: Req) => Answer)>) {
@@ -116,7 +126,8 @@ describe('reads', () => {
     expect(member1.agent.read().resources.grants.status).toBe('ready')
     const staff = await loaded(reads({ me: me({ role: 'inhouse', can: can(false) }) }))
     // The Inhouse team reads the grants (route 16) though it can't grant; members and audit are skipped by its `can`.
-    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/settings/brand', '/api/settings/technical'])
+    // It isn't asked for chats or memory on start (each read under a grant writes an audit line), but models, spending and the pause state are for everyone.
+    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/usage'])
   })
 
   test('a 403 on the grants reads as "not for you", not an error', async () => {
@@ -1098,10 +1109,8 @@ describe('paging', () => {
 describe('the parts that stay the stub until their phase', () => {
   const STUBS: [string, (c: AgentClient) => Promise<unknown>][] = [
     ['approve', c => c.approve('p')], ['undo', c => c.undo('p')], ['editDraft', c => c.editDraft('p', 'x')],
-    ['createChat', c => c.createChat({ id: 'c', title: 't' })], ['send', c => c.send('r', 'x')], ['pause', c => c.pause()],
-    ['requestTool', c => c.requestTool('k', true)], ['forgetMemory', c => c.forgetMemory('k', true)], ['setToggle (a routine)', c => c.setToggle('r:Morning', true)],
+    ['requestTool', c => c.requestTool('k', true)], ['setToggle (a routine)', c => c.setToggle('r:Morning', true)],
     ['markNoticesRead', c => c.markNoticesRead(['n'])], ['deleteFiles', c => c.deleteFiles(['f'])], ['runRoutine', c => c.runRoutine('r')],
-    ['renameChat', c => c.renameChat('c', 't')], ['deleteChats', c => c.deleteChats(['c'])],
   ]
   test.each(STUBS)('%s rejects with AgentError("unavailable") and sends one error notice', async (_n, call) => {
     const { agent, heard } = await loaded(reads())
@@ -1111,10 +1120,9 @@ describe('the parts that stay the stub until their phase', () => {
     expect(heard).toEqual([{ type: 'error', code: 'unavailable', text: (e as AgentError).message }])
   })
 
-  test('ask never starts a run, a listener that unsubscribed hears nothing, and the lists are empty and stable', async () => {
+  test('a listener that unsubscribed hears nothing, and the lists are empty and stable', async () => {
     const { agent, heard } = await loaded(reads())
-    const e = await errorOf(agent.ask('Which orders are stuck?', { chatId: 'c' })[Symbol.asyncIterator]().next())
-    expect((e as AgentError).code).toBe('unavailable')
+    expect(agent.link()).toBe('live')
     expect(heard).toEqual([])
     const quiet: AgentNotice[] = []
     agent.onNotice(n => quiet.push(n))()
@@ -1122,7 +1130,6 @@ describe('the parts that stay the stub until their phase', () => {
     expect(quiet).toEqual([])
     expect(agent.listFiles()).toBe(agent.listFiles())
     expect(agent.listNotifications()).toBe(agent.listNotifications())
-    expect(agent.getTrace('any')).toBeNull()
   })
 })
 
@@ -1200,5 +1207,75 @@ describe('the first read failing: the screen the shell shows (start-screen.ts)',
 
   test('before the first answer it is "Not connected yet"', () => {
     expect(startScreen(new HttpAgent({ fetch: server({}).fetch }).read())).toBe('not-connected')
+  })
+})
+
+describe('memory (P3 W6: routes 43 to 45)', () => {
+  const iso2 = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
+  const own = { key: 'mem_BBBBBBBBBBBBBBBBBBBBBB', text: 'Sort order tables by date', source: 'Sam told your Inhouse agent in a chat', at: iso2(2), rev: 1, scope: 'person' }
+  const team = { key: 'mem_AAAAAAAAAAAAAAAAAAAAAA', text: 'We restock on Fridays', source: 'Sam told your Inhouse agent in a chat', at: iso2(1), rev: 3, scope: 'brand' }
+  const page = { team: [{ group: 'Shared with the team', lines: [team] }], personal: [own] }
+
+  test('reads both lists on start; the Inhouse team only when asked', async () => {
+    const { agent } = await loaded({ ...reads(), 'GET /api/memory': { body: page } })
+    expect(agent.read().memory).toEqual(page)
+    expect(agent.read().resources.memory).toEqual({ status: 'ready' })
+    const staff = await loaded({ ...reads({ me: me({ role: 'inhouse', can: can(false) }) }), 'GET /api/memory': { body: page } })
+    expect(staff.calls.map(c => c.path)).not.toContain('/api/memory')
+    await staff.agent.retry('memory')
+    expect(staff.agent.read().memory).toEqual(page)
+  })
+
+  test('forget sends the line\'s rev to its route, marks it at once, and keeps the answer\'s rev; undo goes the same way', async () => {
+    const { agent, calls } = await loaded({
+      ...reads(), 'GET /api/memory': { body: page },
+      'PUT /api/memory/personal/mem_BBBBBBBBBBBBBBBBBBBBBB/forgotten': r => ({ body: { ...own, rev: JSON.parse(r.body!).ifRev + 1, ...(JSON.parse(r.body!).forgotten ? { forgotten: true } : {}) } }),
+    })
+    const p = agent.forgetMemory(own.key, true)
+    expect(agent.getSnapshot().forgot[own.key]).toBe(true)
+    await p
+    await agent.forgetMemory(own.key, false)
+    expect(agent.getSnapshot().forgot[own.key]).toBeUndefined()
+    expect(calls.filter(c => c.method === 'PUT').map(c => [c.path, JSON.parse(c.body!)])).toEqual([
+      ['/api/memory/personal/mem_BBBBBBBBBBBBBBBBBBBBBB/forgotten', { forgotten: true, ifRev: 1 }],
+      ['/api/memory/personal/mem_BBBBBBBBBBBBBBBBBBBBBB/forgotten', { forgotten: false, ifRev: 2 }],
+    ])
+    expect(agent.read().memory.personal[0].rev).toBe(3)
+  })
+
+  test('a team line goes to route 45; a conflict takes the line as it is now; an unknown key is refused locally', async () => {
+    const current = { ...team, rev: 5, forgotten: true }
+    const { agent, calls, heard } = await loaded({
+      ...reads(), 'GET /api/memory': { body: page },
+      'PUT /api/memory/brand/mem_AAAAAAAAAAAAAAAAAAAAAA/forgotten': { status: 409, body: { error: { code: 'conflict', current } } },
+    })
+    const e = await errorOf(agent.forgetMemory(team.key, true))
+    expect(e).toMatchObject({ code: 'conflict' })
+    expect(calls.filter(c => c.method === 'PUT').map(c => JSON.parse(c.body!))).toEqual([{ forgotten: true, ifRev: 3 }])
+    expect(agent.read().memory.team[0].lines[0].rev).toBe(5)
+    expect(agent.getSnapshot().forgot[team.key]).toBe(true)
+    expect(heard.filter(n => n.type === 'error')).toHaveLength(1)
+    expect(await errorOf(agent.forgetMemory('mem_CCCCCCCCCCCCCCCCCCCCCC', true))).toMatchObject({ code: 'not_found' })
+  })
+})
+
+describe('files (route 41)', () => {
+  const FILE = 'f_0123456789abcdefABCDEF'
+  test('a 401 is the signed-out state and still rejects with its code', async () => {
+    const { agent } = await loaded({ ...reads(), [`GET /api/files/${FILE}`]: refusal(401, 'unauthorized') })
+    expect(await errorOf(agent.downloadFile(FILE))).toMatchObject({ code: 'unauthorized' })
+    expect(agent.read().resources.meta).toMatchObject({ status: 'error', error: 'unauthorized' })
+  })
+
+  test('a 403 for a removed member is the signed-out state too', async () => {
+    const { agent } = await loaded({ ...reads(), [`GET /api/files/${FILE}`]: refusal(403, 'forbidden', { reason: 'removed' }) })
+    expect(await errorOf(agent.downloadFile(FILE))).toMatchObject({ code: 'forbidden' })
+    expect(agent.read().resources.meta).toMatchObject({ status: 'error', error: 'forbidden' })
+  })
+
+  test('a 404 is only that file: the app stays signed in', async () => {
+    const { agent } = await loaded({ ...reads(), [`GET /api/files/${FILE}`]: refusal(404, 'not_found') })
+    expect(await errorOf(agent.downloadFile(FILE))).toMatchObject({ code: 'not_found' })
+    expect(agent.read().resources.meta).toMatchObject({ status: 'ready' })
   })
 })

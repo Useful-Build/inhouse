@@ -5,6 +5,16 @@ import { caseFor } from './cases.ts'
 import { actor, appOrigin, call, expectError, matrixRows, rowKey } from './kit.ts'
 import type { CallOptions } from './kit.ts'
 
+// The matrix POSTs /api/pause (route 36): resume after this file so the test build's agent isn't left paused for later
+// specs (#153 round 1, L7; approved exception to the orchestrator-owned specs, this hook only).
+test.afterAll(async ({ request }) => { await call(request, actor('admin'), 'POST', '/api/resume', { json: {} }) })
+// The release token's same-origin POST /api/ops/drain below really drains the test build's brand: undrain it after this
+// file (the test build's DELETE /api/ops/drain), so later specs and the next run see an undrained pool.
+test.afterAll(async ({ request }) => {
+  const r = await call(request, actor('release'), 'DELETE', '/api/ops/drain')
+  expect(r.status, r.text).toBe(200)
+})
+
 const admin = actor('admin')
 const rows = matrixRows()
 const writes = rows.filter(r => r.method !== 'GET')
@@ -30,7 +40,9 @@ for (const row of writes) {
     })
   }
   test(`${rowKey(row)} with the right Origin and Sec-Fetch-Site: same-origin gets past the check`, async ({ request }) => {
-    const r = await call(request, admin, row.method, caseFor(row).path, { ...bodyOf(row), headers: { 'Sec-Fetch-Site': 'same-origin' } })
+    // P3's drain and warm-up are the release token's (open rows): it sends the brand Origin like any client.
+    const who = row.services.includes('release') ? actor('release') : admin
+    const r = await call(request, who, row.method, caseFor(row).path, { ...bodyOf(row), headers: { 'Sec-Fetch-Site': 'same-origin' } })
     expect(r.status, r.text).not.toBe(403)
   })
 }

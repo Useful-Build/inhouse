@@ -1,5 +1,5 @@
 // The access matrix, from outside: every row against every principal (Admin, Member A, Member B, Inhouse without a
-// grant, Inhouse with a live grant, `smoke`, `monitor`). The expectation is worked out here from the design's classes
+// grant, Inhouse with a live grant, `smoke`, `monitor`, and P3's `release`). The expectation is worked out here from the design's classes
 // (p2-design section 3), not by the Worker's own `checkAccess`, so the two can disagree and fail. The requests change
 // nothing (cases.ts): a caller the matrix lets through gets the handler's 400 or 404, a refused one 403 before it.
 // Rows come from access-matrix.ts, so a new row is swept as soon as it has a case, and routes.spec.ts fails until it has.
@@ -10,9 +10,14 @@ import { caseFor } from './cases.ts'
 import { actor, appOrigin, call, endLiveGrants, expectError, matrixRows, me, rowKey, someKey } from './kit.ts'
 import type { CallOptions, Row, Who } from './kit.ts'
 import { auditMax, auditAfter } from './db.ts'
+import { AuditArgsSchema } from '../../shared/contract/audit.ts'
+
+// The matrix POSTs /api/pause (route 36): resume after this file so the test build's agent isn't left paused for later
+// specs (#153 round 1, L7; approved exception to the orchestrator-owned specs, this hook only).
+test.afterAll(async ({ request }) => { await call(request, actor('admin'), 'POST', '/api/resume', { json: {} }) })
 
 type Principal = Who | 'inhouseGrant'
-const PRINCIPALS: Principal[] = ['admin', 'memberA', 'memberB', 'inhouse', 'inhouseGrant', 'smoke', 'monitor']
+const PRINCIPALS: Principal[] = ['admin', 'memberA', 'memberB', 'inhouse', 'inhouseGrant', 'smoke', 'monitor', 'release']
 const rows = matrixRows()
 
 type Verdict = { allowed: true } | { allowed: false; reason?: string }
@@ -21,18 +26,20 @@ type Verdict = { allowed: true } | { allowed: false; reason?: string }
 function verdict(row: Row, who: Principal): Verdict {
   const design = caseFor(row).design
   const read = row.method === 'GET'
-  if (who === 'smoke' || who === 'monitor') {
-    // A service token reaches only the rows that name it: monitor `open`, smoke some GET rows.
+  if (who === 'smoke' || who === 'monitor' || who === 'release') {
+    // A service token reaches only the rows that name it: monitor and release `open` rows, smoke its own chat rows (P3).
     return { allowed: design.services.includes(who) }
   }
   if (design.class === 'open') return { allowed: false }
   if (who === 'inhouse' || who === 'inhouseGrant') {
     if (!design.allow.includes('inhouse')) return { allowed: false }
     switch (design.class) {
+      // Changed for item 19 (2026-11-20): a brand_data row that lists inhouse takes it for reads and writes alike, only
+      // under a live grant (`allow` above already refused every row that doesn't list it).
       case 'brand_data':
-        if (!read) return { allowed: false }
         return who === 'inhouseGrant' ? { allowed: true } : { allowed: false, reason: 'grant_required' }
-      case 'baseline': return { allowed: read }
+      // Decision 19: the Inhouse team holds every Admin control, so a baseline row it is listed on lets it read and write.
+      case 'baseline': return { allowed: true }
       case 'technical': return { allowed: true }
       case 'report': return { allowed: true }
       default: return { allowed: false } // personal: never Inhouse
@@ -54,7 +61,7 @@ async function sweep(request: APIRequestContext, row: Row, who: Principal): Prom
   }
   const r = await call(request, actor(who === 'inhouseGrant' ? 'inhouse' : who), row.method, c.path, options)
   const v = verdict(row, who)
-  if (v.allowed) expect(r.status, `${who} ${rowKey(row)}: ${r.text}`).toBe(c.passes)
+  if (v.allowed) expect([c.passes, ...(c.alsoPasses ?? [])], `${who} ${rowKey(row)}: ${r.status} ${r.text}`).toContain(r.status)
   else expectError(r, 403, 'forbidden', v.reason)
 }
 
@@ -62,6 +69,13 @@ async function sweep(request: APIRequestContext, row: Row, who: Principal): Prom
 const designGets = (...classes: string[]) => rows.filter(r => r.method === 'GET' && classes.includes(caseFor(r).design.class) && caseFor(r).design.allow.includes('inhouse'))
 
 test.describe.configure({ mode: 'serial' })
+
+// The sweep's POST /api/ops/drain really drains the test build's brand: undrain it after this file (the test build's
+// DELETE /api/ops/drain, release only), so later specs and the next run see an undrained pool.
+test.afterAll(async ({ request }) => {
+  const r = await call(request, actor('release'), 'DELETE', '/api/ops/drain')
+  expect(r.status, r.text).toBe(200)
+})
 
 test.describe('without a live grant', () => {
   test.beforeAll(async ({ request }) => { await endLiveGrants(request) })
@@ -112,22 +126,24 @@ test.describe('what the rows alone do not say', () => {
     expect(aimed.status).toBe(404)
   })
 
-  // `stage` and `tm:fable:on` are literals on purpose: the spec is about them (a technical key, and the one an Admin may switch off).
-  test('an Admin can\'t write a technical key, except switching a model off', async ({ request }) => {
+  // `stage` and `tm:fable:on` are literals on purpose: the spec is about them (a technical key, and the one an Admin may switch).
+  test('an Admin can\'t write a technical key, except switching a model off and back on', async ({ request }) => {
     const admin = actor('admin')
     const tech = async () => Object.fromEntries((await call(request, admin, 'GET', '/api/settings/technical')).json.items.map((i: { key: string; value: unknown; rev: number }) => [i.key, i])) as Record<string, { value: unknown; rev: number }>
     const before = await tech()
     const stage = await call(request, admin, 'PUT', '/api/settings/technical/stage', { json: { value: 'Act', ifRev: before.stage?.rev ?? 0 } })
     expectError(stage, 403, 'forbidden', 'admin_read_only')
-    const on = await call(request, admin, 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'on', ifRev: before['tm:fable:on']?.rev ?? 0 } })
-    expectError(on, 403, 'forbidden', 'admin_read_only')
+    // Clearing the key is neither 'on' nor 'off': refused.
+    const cleared = await call(request, admin, 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: null, ifRev: before['tm:fable:on']?.rev ?? 0 } })
+    expectError(cleared, 403, 'forbidden', 'admin_read_only')
     expect((await tech()).stage?.value, 'a refused write changes nothing').toBe(before.stage?.value)
     const off = await call(request, admin, 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'off', ifRev: before['tm:fable:on']?.rev ?? 0 } })
     expect(off.status, off.text).toBe(200)
     expect(off.json.value).toBe('off')
-    // The Inhouse team switches it back on (an Admin can't).
-    const back = await call(request, actor('inhouse'), 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'on', ifRev: off.json.rev } })
+    // The Admin switches it back on (decision 27a).
+    const back = await call(request, admin, 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'on', ifRev: off.json.rev } })
     expect(back.status, back.text).toBe(200)
+    expect(back.json.value).toBe('on')
     // A member can't write a technical key at all, not even switching off.
     expectError(await call(request, actor('memberA'), 'PUT', '/api/settings/technical/tm:fable:on', { json: { value: 'off', ifRev: back.json.rev } }), 403, 'forbidden')
   })
@@ -149,6 +165,11 @@ test.describe('what the rows alone do not say', () => {
     const alex = actor('inhouse')
     try {
       const mark = auditMax()
+      // Every brand_data GET route can be named by a support.access line (the audit contract's closed list; P3's chat
+      // reads joined it in W1's first PR), so no Inhouse read is refused 503 for want of a line ("no line, no data",
+      // p3-design section 3). A P3 stub still answers its own 503 `not_built` after the line is written.
+      const logged = (route: string) => AuditArgsSchema.safeParse({ action: 'support.access', grantId: made.json.id, method: 'GET', route }).success
+      expect(designGets('brand_data').filter(r => !logged(r.pattern)).map(r => r.pattern), 'a brand_data read no line can name').toEqual([])
       const reads = designGets('brand_data')
       for (const row of reads) {
         const r = await call(request, alex, 'GET', caseFor(row).path)
@@ -178,7 +199,7 @@ test.describe('what the rows alone do not say', () => {
     expect(health.status, health.text).toBe(200)
     expect(health.json.ok).toBe(true)
     expect(health.json.signals.map((s: { name: string }) => s.name)).toEqual(expect.arrayContaining(['d1', 'migrations']))
-    for (const who of ['admin', 'memberA', 'memberB', 'inhouse', 'smoke'] as const) {
+    for (const who of ['admin', 'memberA', 'memberB', 'inhouse', 'smoke', 'release'] as const) {
       expectError(await call(request, actor(who), 'GET', '/api/health'), 403, 'forbidden')
     }
     for (const row of rows.filter(r => r.pattern !== '/api/health')) {

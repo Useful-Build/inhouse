@@ -1,0 +1,67 @@
+{
+ "row": {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "products_search",
+   "inventory_levels_get",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our notes say Moss was discontinued in September, and the policy is to offer Fern instead. But the shop still lists the Moss mug (MUG-500-MOSS) with 14 on hand.\n\nI couldn't find a Fern mug in the shop. The search for \"Fern mug\" only returned the Moss one. So I can't confirm Fern is available or chec",
+  "costUsd": 0.0146932,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "substitute alternative offer out of stock mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] The Moss glaze is discontinued since September. Offer Fern instead.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Moss glaze mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Fern mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Our notes say Moss was discontinued in September, and the policy is to offer Fern instead. But the shop still lists the Moss mug (MUG-500-MOSS) with 14 on hand.\n\nI couldn't find a Fern mug in the shop. The search for \"Fern mug\" only returned the Moss one. So I can't confirm Fern is available or check its stock.\n\nWhat I'd say to the customer:\n- **Offer Fern**, as the policy says, but only after Tom confirms it's in stock.\n- **If the customer insists on Moss**, the 14 left are probably the last ones. I'd only offer them if Tom confirms we can still sell them.\n\nCould you check with Tom whether the 14 Moss mugs are sellable and whether Fern is listed under a different name? Once that's settled, I can draft the customer reply for your approval.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2434,
+   "cacheReadTokens": 32962,
+   "outputTokens": 530
+  },
+  "costUsd": 0.0146932
+ }
+}

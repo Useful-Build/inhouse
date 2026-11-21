@@ -23,6 +23,12 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'grant.ended': { action: 'grant.ended', grantId: 'g_1' },
   'grant.expired': { action: 'grant.expired', grantId: 'g_1' },
   'support.access': { action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/audit' },
+  'agent.paused': { action: 'agent.paused' },
+  'agent.resumed': { action: 'agent.resumed' },
+  'support.attach': { action: 'support.attach', grantId: 'g_1', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' },
+  'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
+  'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
+  'ops_task_revive': { action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA', result: 'revived', by: 'release' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -60,5 +66,34 @@ describe('setting names and values under the registry as it is now (fix round 1)
       expect(t.detail).toMatch(/: changed \(not shown\)$/)
       expect(JSON.stringify(t)).not.toContain('Secret')
     }
+  })
+})
+
+describe('P3 lines (W1 first PR: the support.access routes of p3-design section 3, pause and socket attach)', () => {
+  const access = (route: string) => auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route } as AuditArgs, names)
+  it('names each P3 brand_data read', () => {
+    const expected: [string, string][] = [
+      ['/api/chats', 'The chat list'], ['/api/chats/:id', 'A chat'], ['/api/runs/active', 'The running answers'],
+      ['/api/traces/:id', "An answer's steps"], ['/api/socket', 'A live answer'], ['/api/chats/:id/files', "A chat's files"],
+      ['/api/files/:fileId', 'A file'], ['/api/memory', 'Memory'],
+    ]
+    for (const [route, detail] of expected) expect(access(route), route).toEqual({ what: 'looked at brand data', detail })
+  })
+  it('says what a pause, a resume and a socket attach did, with no id in the text', () => {
+    expect(auditText({ action: 'agent.paused' }, names)).toEqual({ what: 'paused the agent', detail: '' })
+    expect(auditText({ action: 'agent.resumed' }, names)).toEqual({ what: 'resumed the agent', detail: '' })
+    const t = auditText({ action: 'support.attach', grantId: 'g_1', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' }, names)
+    expect(t).toEqual({ what: 'watched a live answer', detail: '' })
+  })
+})
+
+describe('P3 memory lines (W6, item 19)', () => {
+  it('says what happened to a team fact, and an Inhouse forget reads as a change, not a look', () => {
+    expect(auditText({ action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' }, names)).toEqual({ what: 'forgot a team memory', detail: '' })
+    expect(auditText({ action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' }, names)).toEqual({ what: 'brought back a team memory', detail: 'It waits for an admin’s OK' })
+    expect(auditText({ action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_A', result: 'revived', by: 'release' }, names)).toEqual({ what: 'restarted a stuck background task', detail: 'deferred-hook: restarted (release job)' })
+    expect(auditText({ action: 'ops_task_revive', kind: 'routine-end', id: 'x', result: 'not_quarantined', by: 'release' }, names)).toEqual({ what: 'restarted a stuck background task', detail: 'routine-end: wasn’t stuck (release job)' })
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'PUT', route: '/api/memory/brand/:id/forgotten' }, names)).toEqual({ what: 'changed brand data', detail: 'Team memory' })
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/memory' }, names)).toEqual({ what: 'looked at brand data', detail: 'Memory' })
   })
 })
