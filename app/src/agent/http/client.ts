@@ -452,7 +452,16 @@ export class HttpAgent implements AgentClient {
   private async loadLibrary(asked = false) {
     if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('library', { status: 'ready' })
     try {
-      const files = await readLibrary(this.http)
+      let files: LibraryFile[] | null = null
+      // A read a Library write overtook (it finished, or is still on its way, after the read began) may predate it: its
+      // answer would undo what the write did. Read again once the writes are done, a few times at most.
+      for (let tries = 0; files === null && tries < 3; tries++) {
+        await this.lanes.get('library')
+        const finished = this.libraryWritesDone
+        const read = await readLibrary(this.http)
+        if (this.libraryWritesDone === finished && this.libraryInFlight.size === 0) files = read
+      }
+      if (files === null) return
       // A file this client holds as deleted that the server lists live was restored elsewhere: it isn't ours to undo now.
       const live = new Set(files.map(f => f.id))
       const gone = Object.fromEntries(Object.entries(this.s.gone).filter(([id]) => !live.has(id)))
@@ -1171,6 +1180,12 @@ export class HttpAgent implements AgentClient {
    * `conflict` takes the revisions it carries and reads the Library again, so a file someone else deleted doesn't stay.
    * A restore skips ids this client no longer holds as deleted (an Undo joined to a delete that was refused).
    */
+  /** Library writes on their way, per file id (how many name it), and how many have finished: what `loadLibrary` checks. */
+  private libraryInFlight = new Map<string, number>()
+  private libraryWritesDone = 0
+  /** A conflict asked for a fresh read: it starts once that write has finished. */
+  private libraryRelist = false
+
   private libraryWrite(k: Contract, asked: string[], to: 'delete' | 'restore'): Promise<void> {
     if (asked.length < 1 || asked.length > 100 || new Set(asked).size !== asked.length) return this.refuseLocal('invalid', 'Choose 1 to 100 files.')
     const ids = to === 'restore' ? asked.filter(id => this.s.gone[id]) : asked
@@ -1195,18 +1210,34 @@ export class HttpAgent implements AgentClient {
     }
     const after: 'live' | 'gone' = to === 'delete' ? 'gone' : 'live'
     const before: 'live' | 'gone' = to === 'delete' ? 'live' : 'gone'
-    return this.write({
+    const flight = this.libraryInFlight
+    for (const id of ids) flight.set(id, (flight.get(id) ?? 0) + 1)
+    /** This write's files that a later queued write also names: that write decides their side. */
+    const named = () => new Set(ids.filter(id => (flight.get(id) ?? 0) > 1))
+    const settle = (s: Slices, rows: readonly LibraryFile[], side: 'live' | 'gone'): Slices => {
+      const later = named()
+      return place(fold(s, rows.filter(f => later.has(f.id))), rows.filter(f => !later.has(f.id)), side)
+    }
+    const run = this.write({
+      // One lane for every Library write: they leave in order.
       lane: 'library',
       apply: s => place(s, rowsOf(s), after),
       send: () => postLibraryWrite(this.http, k, to, ids.map(id => ({ id, ifRev: there(this.s, id)?.rev ?? 1 }))),
-      done: (s, r, others) => (others ? fold(s, r.items) : place(s, r.items, after)),
-      undo: (s, _was, others) => (others ? s : place(s, rowsOf(s), before)),
+      done: (s, r) => settle(s, r.items, after),
+      undo: s => settle(s, rowsOf(s), before),
       onConflict: (s, current) => {
         const c = k.ANSWERS.libraryFiles.safeParse(current)
-        void this.loadLibrary(true)
+        this.libraryRelist = true
         return c.success ? fold(s, c.data.items) : s
       },
     })
+    const finish = () => {
+      for (const id of ids) { const n = (flight.get(id) ?? 1) - 1; if (n > 0) flight.set(id, n); else flight.delete(id) }
+      this.libraryWritesDone++
+      if (this.libraryRelist) { this.libraryRelist = false; void this.loadLibrary(true) }
+    }
+    void run.then(finish, finish)
+    return run
   }
   deleteFiles = this.needs((k, ids: string[]) => this.libraryWrite(k, ids, 'delete'))
   restoreFiles = this.needs((k, ids: string[]) => this.libraryWrite(k, ids, 'restore'))

@@ -106,6 +106,47 @@ describe('delete and restore', () => {
     expect(bodyOf(calls, '/api/library/restore')).toEqual([{ items: [{ id: F('f1'), ifRev: 2 }] }, { items: [{ id: F('f1'), ifRev: 2 }] }])
     expect(agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f1'), 3]])
   })
+  test('two deletes on different files, the first refused: that file comes back live, the other stays deleted', async () => {
+    const { agent } = await loaded({
+      ...reads({ library: [file('f2', 2), file('f1', 1)] }),
+      'POST /api/library/delete': req => (req.body?.includes(F('f1')) ? refusal(503, 'unavailable') : { body: { items: [file('f2', 2, 2)] } }),
+    })
+    const first = agent.deleteFiles([F('f1')])
+    const second = agent.deleteFiles([F('f2')])
+    await expect(first).rejects.toMatchObject({ code: 'unavailable' })
+    await second
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('f1')])
+  })
+  test("a conflict's fresh read waits for the Library writes queued behind it, so it can't bring a ghost back", async () => {
+    // The server's own state: f2 is deleted by the queued write; the list answers from that state when it is read.
+    let f2Deleted = false
+    let lists = 0
+    const { agent, calls } = await loaded({
+      ...reads(),
+      'GET /api/library?limit=100': () => {
+        lists++
+        return { body: { items: [...(f2Deleted ? [] : [file('f2', 2, 1)]), file('f1', 1, 3)], nextCursor: null } }
+      },
+      'POST /api/library/delete': req => {
+        if (req.body?.includes(F('f1'))) return refusal(409, 'conflict', { current: { items: [file('f1', 1, 3)] } })
+        f2Deleted = true
+        return { body: { items: [file('f2', 2, 2)] } }
+      },
+      'POST /api/library/restore': { body: { items: [file('f2', 2, 3)] } },
+    })
+    const settled = new Promise<void>(done => { const off = agent.subscribe(() => { if (lists === 2) { off(); done() } }) })
+    const a = agent.deleteFiles([F('f1')])
+    const b = agent.deleteFiles([F('f2')])
+    await expect(a).rejects.toMatchObject({ code: 'conflict' })
+    await b
+    await settled
+    const order = calls.map(c => `${c.method} ${c.path}`).filter(c => c.includes('/api/library'))
+    expect(order.slice(-2), 'the fresh read comes after the queued delete').toEqual(['POST /api/library/delete', 'GET /api/library?limit=100'])
+    expect(agent.listFiles().map(f => [f.id, f.rev])).toEqual([[F('f1'), 3]])
+    // f2 is still this client's to undo.
+    await agent.restoreFiles([F('f2')])
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('f2'), F('f1')])
+  })
   test('nothing is sent for an id the list lacks, an id twice, or over 100', async () => {
     const { agent, calls } = await loaded(reads({ library: [file('f1', 1)] }))
     await expect(agent.deleteFiles(['nope'])).rejects.toMatchObject({ code: 'not_found' })
