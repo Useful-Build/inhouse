@@ -84,19 +84,18 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   // The count beside "Your Inhouse team" is the team window's "Open requests" list, counted the same way.
   const open = openRequests(useCtx(), nowOf(), false).length
   type Item = [icon: string, label: string, run: () => void, trailing?: ReactNode]
+  // A window an item opens gives focus back to the button that opened this menu, not to the menu item about to close:
+  // focus that button first, so the window remembers it as its trigger.
+  const focusTrigger = () => document.querySelector<HTMLElement>('button[aria-haspopup="menu"][aria-expanded="true"]')?.focus()
   // Report a bug and Send feedback are request types in the team window, so the menu has one entry for the team.
   const groups: Item[][] = [[
     ['person', 'Your settings', () => openSettings('you-general')],
     ['admin_panel_settings', 'Team settings', () => openSettings('team-plan')],
     ['monitoring', 'Usage', () => go('usage')],
   ], [
-    ['support_agent', 'Your Inhouse team', () => openTeam('tool'),
+    ['support_agent', 'Your Inhouse team', () => { focusTrigger(); openTeam('tool') },
       open > 0 ? <span className="ml-auto text-xs text-muted-foreground tabular-nums">{open} open</span> : undefined],
-    ['menu_book', 'Help and guides', () => {
-      // Focus goes back to the Settings button that opened this menu, not to the menu item that is about to close.
-      document.querySelector<HTMLElement>('button[aria-haspopup="menu"][aria-expanded="true"]')?.focus()
-      openPop('help')
-    }],
+    ['menu_book', 'Help and guides', () => { focusTrigger(); openPop('help') }],
   ], [
     // The product signs out through Access (`signOutUrl()`); the demo has no sign-in.
     ['logout', 'Sign out', () => {

@@ -57,7 +57,7 @@ test('Pop-ups: notifications, account menu, team window, empty chat', async ({ f
   await expect(page.getByText('sam@northline.example · Admin')).toBeVisible()
   await shot(page, 'pop-account')
   await page.getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
-  await expect(page.getByText('Your Inhouse team')).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Your Inhouse team' })).toBeVisible()
   await shot(page, 'pop-team')
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'New chat' }).click()

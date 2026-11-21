@@ -384,7 +384,7 @@ Sidebar
   Path:     sidebar -> collapse
   Selector: nav "Main": Today, Approvals (count), Activity, then group "Your agent" (Routines, Skills, Tools, Library); Recent chats; the account row; rail tooltips
   Expected: two sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; collapses to a rail, stays collapsed after a reload, expands with the shortcut
-  Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts
+  Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts, e2e/help-account-menu.spec.ts, e2e/library.spec.ts
 
 Account menu
   Path:     sidebar -> account and settings

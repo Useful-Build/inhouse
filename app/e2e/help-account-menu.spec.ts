@@ -76,6 +76,7 @@ test('Account menu: Your Inhouse team opens the team window with its open reques
   await side(page).getByRole('button', { name: /account and settings/i }).click()
   const menu = page.getByRole('menu', { name: 'Account' })
   const item = menu.getByRole('menuitem', { name: /^Your Inhouse team/ })
+  await expect(item).toBeVisible()
   await expect(menu.getByRole('menuitem', { name: 'Report a bug' })).toHaveCount(0)
   await expect(menu.getByRole('menuitem', { name: 'Send feedback' })).toHaveCount(0)
   const counted = Number((await item.textContent())!.match(/(\d+) open/)![1])
@@ -86,6 +87,7 @@ test('Account menu: Your Inhouse team opens the team window with its open reques
   // Feedback is one of the window's request types: no screenshot box, Send waits for words.
   await team(page).getByRole('radio', { name: /Feedback/ }).click()
   const text = team(page).getByRole('textbox', { name: 'Your request' })
+  await expect(text).toHaveValue('')
   await expect(text).toHaveAttribute('placeholder', 'What would make Inhouse better for you?')
   await expect(team(page).getByRole('checkbox', { name: /Attach a screenshot/ })).toHaveCount(0)
   await expect(team(page).getByRole('button', { name: 'Send to the team' })).toBeDisabled()

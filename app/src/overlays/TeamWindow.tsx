@@ -45,7 +45,7 @@ export function TeamWindow() {
   const isBug = team.type === 'bug'
   // A request as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20" ("just now" for one the person
   // sent here in the demo). The tool being connected takes its date from tools.json; on First day it isn't listed.
-  const requests = openRequests(ctx, nowOf(), demo !== null).map(q => ({ ...q, ...(q.seed === null ? SEEDED_STYLE[1] : SEEDED_STYLE[q.seed] ?? SEEDED_STYLE[1]) }))
+  const requests = openRequests(ctx, nowOf(), demo !== null).map(q => ({ ...q, ...(SEEDED_STYLE[q.seed ?? 1] ?? SEEDED_STYLE[1]) }))
   // The sender is the signed-in person, by the name in Settings.
   const sender = userName(ctx)
   // Whitespace alone is empty: Send waits for words.

@@ -63,10 +63,6 @@ export const goingLive = (ctx: Ctx): { name: string; by: string } | null => {
   }
   return null
 }
-/**
- * A request to the Inhouse team as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20". One the person
- * sent (`sentHere`) says "just now" however long ago it went, as it did before C1; P2 shows `fmtAgo` from its instant.
- */
 export interface OpenRequest { icon: string; title: string; sub: string; status: string; /** A seeded request's place in the data, for its badge look; null for one the person sent here. */ seed: number | null }
 
 /**
@@ -85,6 +81,10 @@ export const openRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean): O
   return [...ctx.agent.teamRequests.map((q): OpenRequest => ({ icon: q.icon, title: q.title, ...teamRequestLine(q, now, sentHereJustNow), seed: null })), ...seeded]
 }
 
+/**
+ * A request to the Inhouse team as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20". One the person
+ * sent (`sentHere`) says "just now" however long ago it went, as it did before C1; P2 shows `fmtAgo` from its instant.
+ */
 export const teamRequestLine = (q: Omit<TeamRequest, 'icon'>, now: number, sentHere: boolean): { sub: string; status: string } => {
   const d0 = display()
   return { sub: `${q.sub}, ${sentHere ? 'just now' : fmtAgo(q.at, now, d0)}`, status: q.statusAt ? `${q.status} ${fmtWeekday(q.statusAt, d0)}` : q.status }
