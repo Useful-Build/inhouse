@@ -16,7 +16,12 @@
     "partial": "Run: your Inhouse agent did part (done) and the rest waits (wait)",
     "draft.runTitle / runLines / doneNote": "Run version of a partial draft (doneNote as { text, times }, like done)",
     "doneText": "confirmation text after approval",
-    "runDoneText": "confirmation text in Run for a partial draft"
+    "runDoneText": "confirmation text in Run for a partial draft",
+    "facts": "up to 3 facts for the review panel's strip: label, value, note, source (a sources[].n), tone \"bad\" for the bad news",
+    "draft.kind / summary": "what the draft is (\"Purchase order\") and one sentence for the Today card's draft sheet",
+    "draft.amount": "the money approving it moves: { money, direction: spend | claim }, shown as \"Spends $9,600\" or \"Claims $1,240\"",
+    "draft.destination / to": "a short name for where it goes (the panel's progress line), and who the document goes to (its From and To)",
+    "draft.items": "a purchase order's lines as { name, qty, each }: the panel draws them as a table"
   },
   "problems": [
     {
@@ -67,7 +72,30 @@
           "text": "Inventory by warehouse, read 6:00 AM"
         }
       ],
+      "facts": [
+        {
+          "label": "Open orders",
+          "value": "14",
+          "note": "for M, Olive",
+          "source": "1"
+        },
+        {
+          "label": "At ShipBob",
+          "value": "9 units",
+          "note": "in the warehouse",
+          "source": "2"
+        },
+        {
+          "label": "Can't ship",
+          "value": "5 orders",
+          "note": "and the variant is still live",
+          "tone": "bad"
+        }
+      ],
       "draft": {
+        "kind": "Shopify and 5 emails",
+        "summary": "Offers each a new ship date, Tue, Dec 8, or a refund.",
+        "destination": "5 customers",
         "title": "Pause the variant and email 5 customers",
         "lines": [
           [
@@ -157,7 +185,51 @@
           "text": "Sales, October 2025"
         }
       ],
+      "facts": [
+        {
+          "label": "Stock left",
+          "value": "9 days",
+          "note": "190 at 21 a day",
+          "source": "1"
+        },
+        {
+          "label": "Kestrel delivers in",
+          "value": "14 days",
+          "note": "from 6 past orders",
+          "source": "2"
+        },
+        {
+          "label": "Out of stock for",
+          "value": "5 days",
+          "note": "about $8,400 in sales",
+          "source": "3",
+          "tone": "bad"
+        }
+      ],
       "draft": {
+        "kind": "Purchase order",
+        "summary": "To Kestrel Supply as a PDF. 400 Olive, 200 Black.",
+        "amount": {
+          "money": { "minor": 960000, "currency": "USD" },
+          "direction": "spend"
+        },
+        "destination": "Kestrel",
+        "to": {
+          "name": "Kestrel Supply",
+          "note": "Mei Chen, as a PDF"
+        },
+        "items": [
+          {
+            "name": "Ridge 30L Pack · Olive",
+            "qty": 400,
+            "each": { "minor": 1600, "currency": "USD" }
+          },
+          {
+            "name": "Ridge 30L Pack · Black",
+            "qty": 200,
+            "each": { "minor": 1600, "currency": "USD" }
+          }
+        ],
         "title": "Reorder 600 Ridge 30L Packs",
         "lines": [
           [
@@ -238,7 +310,35 @@
           "text": "Fee preview per order"
         }
       ],
+      "facts": [
+        {
+          "label": "Amazon paid",
+          "value": "$18,420",
+          "note": "Oct 30 to Nov 12",
+          "source": "1"
+        },
+        {
+          "label": "Xero expected",
+          "value": "$19,660",
+          "note": "from your forecast",
+          "source": "2"
+        },
+        {
+          "label": "Missing",
+          "value": "$1,240",
+          "note": "large-item fee on 18 orders",
+          "source": "3",
+          "tone": "bad"
+        }
+      ],
       "draft": {
+        "kind": "Amazon case",
+        "summary": "Claims back the large-item fee on 18 orders.",
+        "amount": {
+          "money": { "minor": 124000, "currency": "USD" },
+          "direction": "claim"
+        },
+        "destination": "Amazon",
         "title": "Open a reimbursement case",
         "lines": [
           [
@@ -310,7 +410,31 @@
           "text": "Inventory, read 6:00 AM"
         }
       ],
+      "facts": [
+        {
+          "label": "Due",
+          "value": "Nov 10",
+          "note": "420 Summit Fleece",
+          "source": "1"
+        },
+        {
+          "label": "Last word",
+          "value": "Nov 3",
+          "note": "no shipping notice since",
+          "source": "2"
+        },
+        {
+          "label": "Stock left",
+          "value": "12 days",
+          "note": "of Summit Fleece",
+          "source": "3",
+          "tone": "bad"
+        }
+      ],
       "draft": {
+        "kind": "Email",
+        "summary": "To Mei Chen at Kestrel. \"PO-1187: new ship date?\"",
+        "destination": "Mei",
         "title": "Chase Kestrel for a new ship date",
         "lines": [
           [
@@ -373,6 +497,9 @@
         }
       ],
       "draft": {
+        "kind": "Shopify change",
+        "summary": "Puts 11 sellable returns back on sale.",
+        "destination": "Shopify",
         "title": "Restock 11 units on Shopify",
         "lines": [
           [
@@ -442,6 +569,9 @@
         }
       ],
       "draft": {
+        "kind": "ShipBob ticket",
+        "summary": "A new support ticket asking them to ship it today.",
+        "destination": "ShipBob",
         "title": "Ask ShipBob why #4821 hasn't shipped",
         "lines": [
           [

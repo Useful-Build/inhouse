@@ -115,11 +115,14 @@
   --app-menu-muted: var(--muted-foreground);           /* muted text inside them, 4.5:1 on the cursor */
   --app-tag-edge-strong: var(--border-strong);         /* a stage tag's outline on a selected row */
   --app-picked-muted: var(--muted-foreground);         /* muted text on a picked segment (Segmented sets it) */
+  --app-draft-sheet: #f5f6fe;                          /* the agent's drafted fix: a faint brand tint (Today's draft sheet, Approvals' draft text) */
+  --app-draft-kind: #ffffff;                           /* the small kind-icon tile on the draft sheet */
 
   /* card grids (CardGrid sizes): the narrowest a card gets before the row wraps */
   --app-grid-cards-sm: repeat(auto-fill, minmax(min(200px, 100%), 1fr));   /* Library */
   --app-grid-cards: repeat(auto-fill, minmax(min(280px, 100%), 1fr));      /* Today */
   --app-grid-cards-lg: repeat(auto-fill, minmax(min(360px, 100%), 1fr));   /* Tools, Skills, Usage */
+  --app-grid-cards-wide: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); /* Today's Needs you cards: two columns at page-wide */
   --app-grid-library-list: minmax(0, 2.6fr) 52px minmax(0, 1fr) 72px 136px;
   --app-grid-usage-totals: repeat(auto-fit, minmax(130px, 1fr));
   --app-grid-trace-stats: repeat(auto-fit, minmax(110px, 1fr));
@@ -206,6 +209,8 @@
   --app-tag-edge-strong: #828282;     /* 3.05:1 on the #383838 selected row, so the tag keeps its pill shape */
   --app-preview-dim: 0.82;            /* PR 6: a white page or poster no longer glares on the #1a1a1a card */
   --app-picked-muted: var(--foreground-3); /* muted text on a picked segment: 4.9:1 on #383838 (the base's muted is 4.0:1) */
+  --app-draft-sheet: #1d1f2e;
+  --app-draft-kind: #2a2c3c;
 }
 
 /* A menu or pop-up (the command palette too) is lifted in dark, so the soft fills inside it (icon tiles, chips, soft
@@ -293,6 +298,8 @@
   --color-on-destructive: var(--app-on-destructive);
   --color-switch-off: var(--app-switch-off);
   --color-window-surface: var(--app-window-surface);
+  --color-draft-sheet: var(--app-draft-sheet);
+  --color-draft-kind: var(--app-draft-kind);
   --color-tag-edge-strong: var(--app-tag-edge-strong);
   --spacing-select-height: min(288px, var(--radix-select-content-available-height));
   --spacing-below-topbar: var(--app-screen-below-topbar);
@@ -315,6 +322,7 @@
   --grid-template-columns-cards-sm: var(--app-grid-cards-sm);
   --grid-template-columns-cards: var(--app-grid-cards);
   --grid-template-columns-cards-lg: var(--app-grid-cards-lg);
+  --grid-template-columns-cards-wide: var(--app-grid-cards-wide);
   --grid-template-columns-library-list: var(--app-grid-library-list);
   --grid-template-columns-usage-totals: var(--app-grid-usage-totals);
   --grid-template-columns-trace-stats: var(--app-grid-trace-stats);

@@ -371,13 +371,19 @@ export interface DraftView {
   bodyLabel: string | null
   /** "Spends money" or "Goes to customers", or null for low risk. */
   waitsLabel: string | null
+  /** What the draft is ("Email", "Purchase order"): the Today sheet's header and the panel's document label. */
+  kind: string
+  /** One line for the Today sheet, never cut. */
+  summary: string
+  /** Where it goes, for the panel's progress line ("Kestrel"). Null shows "Sent". */
+  destination: string | null
+  /** The sources' names, deduplicated ("Amazon · Xero"). */
+  sourceNames: string
   cta: string
   memory: string | null
   doneNote: string | null
   approverNote: string | null
   askApprover: string | null
-  /** Foot note on the Approvals card: usual approver, or the sources. */
-  footNote: string
   approvedAt: string | null
   sent: boolean
   /** Reversible drafts keep Undo; others lose it once sent. */
@@ -402,21 +408,25 @@ export function draftView(ctx: Ctx, id: string): DraftView {
   // Approved items show the wording taken at approval time, so history never rewrites itself.
   const title = rec ? rec.title : part && dr.runTitle ? dr.runTitle : dr.title
   const srcLine = p.sources.map(s => s.name).filter((v, i, a) => a.indexOf(v) === i).join(' · ')
+  const lines = part && dr.runLines ? dr.runLines : dr.lines
   return {
     problem: p,
     mode: S === 0 ? 'watch' : at ? 'approved' : isHandled(ctx, p) ? 'handled' : 'waiting',
     draftTitle: title,
-    lines: part && dr.runLines ? dr.runLines : dr.lines,
+    lines,
     // A draft with no text of its own takes a note once a person writes one.
     body: agent.edits[id] ?? dr.body ?? null,
     bodyLabel: dr.bodyLabel ?? (agent.edits[id] !== undefined ? 'Your note' : null),
     waitsLabel: dr.money ? 'Spends money' : dr.customer ? 'Goes to customers' : null,
+    kind: dr.kind ?? (dr.body ? 'Email' : 'Draft'),
+    summary: dr.summary ?? (lines[0] ? `${lines[0][0]}: ${lines[0][1]}` : ''),
+    destination: dr.destination ?? null,
+    sourceNames: srcLine,
     cta: dr.cta || 'Approve',
     memory: S >= 1 && dr.memory ? dr.memory : null,
     doneNote: part && dr.doneNote ? fmtProse(dr.doneNote, display()) : null,
     approverNote: S >= 1 && dr.approver ? dr.approver : null,
     askApprover: S >= 1 && dr.ask ? dr.ask : null,
-    footNote: dr.approver ? dr.approver.split('. ')[0] + '.' : `From ${srcLine}`,
     approvedAt: at,
     sent,
     canUndo: !!dr.rev || !sent,
@@ -428,6 +438,20 @@ export function draftView(ctx: Ctx, id: string): DraftView {
   }
 }
 
+/**
+ * The one risk text the cards and the panel show: what approving it does that a person should look at ("Spends money",
+ * "Goes to customers"). Null when it's neither, which is low risk unless the draft waits for another reason.
+ */
+export const riskLabel = (dv: DraftView): string | null => {
+  const amount = dv.problem.draft.amount
+  if (!amount) return dv.waitsLabel
+  return `${amount.direction === 'claim' ? 'Claims' : 'Spends'} ${fmtMoney(amount.money, display())}`
+}
+
+/** The icon for a draft's kind, on the Today sheet's small tile. */
+export const kindIcon = (kind: string): string =>
+  /mail|email/i.test(kind) ? 'mail' : /purchase order/i.test(kind) ? 'inventory_2' : /case/i.test(kind) ? 'description'
+    : /ticket/i.test(kind) ? 'support_agent' : /shopify/i.test(kind) ? 'storefront' : 'edit_note'
 
 /**
  * Exactly the waiting drafts Today offers one-tap Approve for: no money and no customers involved, and not a Run job a

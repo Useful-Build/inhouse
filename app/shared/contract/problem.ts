@@ -5,6 +5,14 @@ import { InstantSchema, MoneySchema, PairSchema, ProseSchema } from './common.ts
 export const ProblemSourceSchema = z.object({ n: z.string(), logo: z.string().optional(), icon: z.string().optional(), name: z.string(), text: z.string() })
 export type ProblemSource = z.infer<typeof ProblemSourceSchema>
 
+/** One line of a structured purchase order: the panel draws these as its item table. */
+export const DraftItemSchema = z.object({ name: z.string(), qty: z.number().int().positive(), each: MoneySchema })
+export type DraftItem = z.infer<typeof DraftItemSchema>
+
+/** One fact in the panel's facts strip ("Stock left · 9 days · 190 at 21 a day", source 1). `bad` marks the bad news. */
+export const ProblemFactSchema = z.object({ label: z.string(), value: z.string(), note: z.string(), source: z.string().optional(), tone: z.enum(['bad']).optional() })
+export type ProblemFact = z.infer<typeof ProblemFactSchema>
+
 export const DraftSchema = z.object({
   title: z.string(),
   lines: z.array(PairSchema),
@@ -22,6 +30,18 @@ export const DraftSchema = z.object({
   runLines: z.array(PairSchema).optional(),
   /** Run, a partial draft: what the agent already did ("…paused the variant at {at:time}…"). */
   doneNote: ProseSchema.optional(),
+  /** What the draft is ("Purchase order", "Email", "Amazon case"). Missing: "Email" when it has a body, else "Draft". */
+  kind: z.string().optional(),
+  /** One sentence for the Today card's draft sheet. Missing: the first line as "key: value". */
+  summary: z.string().optional(),
+  /** The money approving it moves, and which way: a spend goes out, a claim asks for money back. */
+  amount: z.object({ money: MoneySchema, direction: z.enum(['spend', 'claim']) }).optional(),
+  /** A short name for where it goes, for the panel's progress line ("Kestrel", "5 customers"). Missing: "Sent". */
+  destination: z.string().optional(),
+  /** Who the document goes to, for the panel's From and To ("Kestrel Supply", "Mei Chen, as a PDF"). */
+  to: z.object({ name: z.string(), note: z.string().optional() }).optional(),
+  /** A purchase order's lines. Missing: the panel shows `lines` as key and value rows. */
+  items: z.array(DraftItemSchema).min(1).optional(),
 })
 export type Draft = z.infer<typeof DraftSchema>
 
@@ -53,6 +73,8 @@ export const ProblemSchema = z.object({
   trace: z.string().optional(),
   found: z.array(PairSchema),
   sources: z.array(ProblemSourceSchema),
+  /** Up to three facts for the panel's facts strip. Missing: the panel shows the "What your Inhouse agent found" card. */
+  facts: z.array(ProblemFactSchema).min(1).max(3).optional(),
   draft: DraftSchema,
   /** When the agent made this problem's draft (Activity, Approvals): what Approvals sorts by. */
   draftedAt: InstantSchema,

@@ -18,7 +18,7 @@ import type { AskOptions, CreateChatInput, SendOptions } from '../../shared/cont
 
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
-export type { ProblemSource, Draft, Problem } from '../../shared/contract/problem'
+export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
 export type { SkillDef, SkillSuggestion } from '../../shared/contract/skill'
