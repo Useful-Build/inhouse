@@ -19,7 +19,11 @@ export const EVAL_TRACE_CANARY: string = 'inhouse-eval-trace-canary-5d1e8a40'
 /** The flavor the health route's version signal names in the eval build (server/ops/signals/core.ts). */
 export const EVAL_BUILD_FLAVOR: string | null = `eval (${EVAL_TRACE_CANARY})`
 
-/** At most this many bytes of inputs per turn's trace; the call that crosses it is cut there, later ones kept empty. */
+/**
+ * At most this many bytes of inputs per trace, that is per run over all its turns (route 33 reads a run's trace), counted
+ * as stored: each record's JSON with its id and the input escaped inside it. The call that crosses it is cut there, later
+ * ones kept empty (each still a small record, so the reader sees the call was made).
+ */
 export const IO_TRACE_MAX_BYTES = 256 * 1024
 /** Inputs older than this are deleted (decision 6: eval `io` lives 7 days on the eval brand). */
 export const IO_TTL_MS = 7 * 24 * 3_600_000
@@ -28,26 +32,38 @@ export const IO_TTL_TASK: string = 'eval-io-ttl'
 const IO_TTL_EVERY_MS = 6 * 3_600_000
 
 const encoder = new TextEncoder()
+/** A kept input's stored size: its record's JSON, id and escaped input (the `bytes` and `cut` fields aside). */
+const storedBytes = (id: string, input: string): number => encoder.encode(JSON.stringify({ io: id, input })).byteLength
 
 /**
  * The `turn_trace` record that keeps this audit entry's input for its call, or null: no tool_use id (nothing to show it
- * on), or the call's input already kept (another hook's entry for the same call). The JSON text of `entry.input`, cut at
- * the turn's remaining room (a cut record says so, and keeps no partial character).
+ * on), or the call's input already kept in this run (another hook's entry for the same call). The JSON text of
+ * `entry.input`, cut to the run's remaining room at a whole character (a cut record says so; `bytes` is its stored size).
  */
 export function ioRecord(sql: SqlStorage, turnId: string, entry: AuditEntry): Record<string, string> | null {
   const id = entry.toolUseId
   if (id === undefined || id === '') return null
   const kept = sql.exec<{ used: number | null; dup: number }>(
     `SELECT SUM(CAST(json_extract(json, '$.bytes') AS INTEGER)) AS used, COUNT(CASE WHEN json_extract(json, '$.io') = ? THEN 1 END) AS dup
-      FROM turn_trace WHERE turn_id = ? AND json_extract(json, '$.io') IS NOT NULL`, id, turnId).one()
+      FROM turn_trace WHERE json_extract(json, '$.io') IS NOT NULL
+        AND turn_id IN (SELECT turn_id FROM turns WHERE run_id = (SELECT run_id FROM turns WHERE turn_id = ?))`, id, turnId).one()
   if (kept.dup > 0) return null
   const room = Math.max(0, IO_TRACE_MAX_BYTES - (kept.used ?? 0))
   const input = JSON.stringify(entry.input ?? null)
-  const bytes = encoder.encode(input)
-  if (bytes.byteLength <= room) return { io: id, input, bytes: String(bytes.byteLength) }
-  // `fatal: false` turns a split character at the cut into U+FFFD; drop it, so the kept text is whole characters.
-  const cut = new TextDecoder().decode(bytes.subarray(0, room)).replace(/\uFFFD$/, '')
-  return { io: id, input: cut, bytes: String(encoder.encode(cut).byteLength), cut: '1' }
+  const full = storedBytes(id, input)
+  if (full <= room) return { io: id, input, bytes: String(full) }
+  // The longest prefix of whole characters (code points) whose stored size fits the room: no split character, and the
+  // escaping is counted as stored. Binary search: the stored size only grows with the prefix.
+  const chars = Array.from(input)
+  let lo = 0
+  let hi = chars.length - 1
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (storedBytes(id, chars.slice(0, mid).join('')) <= room) lo = mid
+    else hi = mid - 1
+  }
+  const cut = chars.slice(0, lo).join('')
+  return { io: id, input: cut, bytes: String(storedBytes(id, cut)), cut: '1' }
 }
 
 /** A `turn_trace` record's kept input as `[tool_use id, io]`, or null when the record isn't one. */
@@ -58,8 +74,13 @@ export function ioFrom(rec: Record<string, string>): [string, StepIo] | null {
 
 /** Deletes kept inputs older than IO_TTL_MS (other trace records stay), then schedules its next pass. */
 const ioTtl = async (task: DueTask, ctx: TaskContext): Promise<TaskResult> => {
-  const r = ctx.sql.exec(`DELETE FROM turn_trace WHERE at_ms < ? AND json_extract(json, '$.io') IS NOT NULL`, ctx.nowMs - IO_TTL_MS)
-  console.log({ event: 'eval_io_ttl', taskId: task.id, deleted: r.rowsWritten })
+  const old = `FROM turn_trace WHERE at_ms < ? AND json_extract(json, '$.io') IS NOT NULL`
+  const before = ctx.nowMs - IO_TTL_MS
+  // Counted, then deleted, in one synchronous step (nothing interleaves in the object): the log's count is the rows
+  // deleted, not the storage's row-write count (which counts index writes too).
+  const deleted = ctx.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n ${old}`, before).one().n
+  ctx.sql.exec(`DELETE ${old}`, before)
+  console.log({ event: 'eval_io_ttl', taskId: task.id, deleted })
   ctx.scheduler.schedule({ id: IO_TTL_TASK, kind: IO_TTL_TASK, dueAtMs: ctx.nowMs + IO_TTL_EVERY_MS })
   return { done: true }
 }

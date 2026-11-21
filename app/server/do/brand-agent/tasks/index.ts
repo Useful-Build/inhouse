@@ -18,25 +18,33 @@ import { EVAL_TASKS } from '@eval-trace'
 
 declare const __INHOUSE_EVAL_BUILD__: boolean
 
-export const taskHandlers: Readonly<Record<string, TaskHandler>> = {
-  // W1
-  'grant-expiry': grantExpiry,
-  'authority-sweep': authoritySweep,
-  'turn-watch': turnWatch,
-  'run-advance': runAdvance,
-  'call-lease': callLease,
-  'flush-turn': flushTurn,
-  // W1 PR 6 (the P6 seams, A2's brief): P6's `onDeferred` and a resume waiting out a pause.
-  'deferred-hook': deferredHook,
-  'deferred-resume': deferredResume,
-  // W4
-  'audit-copy': auditCopy,
-  // W1 PR 2b gives the sweep the BrandAgent's reader over `model_calls` (A4-approved line).
-  'usage-sweep': createUsageSweep(turnCalls),
-  // W2
-  'pool-retry': poolRetry,
-  // W3 follow-up: the chat file orphan sweep (a seed: ensured due now on every start).
-  'chat-file-sweep': chatFileSweep,
-  // The eval build only (p3-eval-observability rev 2 rec 5): the kept inputs' 7-day TTL (server/eval-trace/on.ts).
-  ...(__INHOUSE_EVAL_BUILD__ ? EVAL_TASKS : {}),
+/**
+ * The registry for a build: `evalBuild` adds the eval build's own tasks (server/eval-trace/on.ts, the kept inputs'
+ * 7-day TTL). A function so a test can pin the eval build's registry (vitest compiles the product build's).
+ */
+export function buildTaskHandlers(evalBuild: boolean): Readonly<Record<string, TaskHandler>> {
+  return {
+    // W1
+    'grant-expiry': grantExpiry,
+    'authority-sweep': authoritySweep,
+    'turn-watch': turnWatch,
+    'run-advance': runAdvance,
+    'call-lease': callLease,
+    'flush-turn': flushTurn,
+    // W1 PR 6 (the P6 seams, A2's brief): P6's `onDeferred` and a resume waiting out a pause.
+    'deferred-hook': deferredHook,
+    'deferred-resume': deferredResume,
+    // W4
+    'audit-copy': auditCopy,
+    // W1 PR 2b gives the sweep the BrandAgent's reader over `model_calls` (A4-approved line).
+    'usage-sweep': createUsageSweep(turnCalls),
+    // W2
+    'pool-retry': poolRetry,
+    // W3 follow-up: the chat file orphan sweep (a seed: ensured due now on every start).
+    'chat-file-sweep': chatFileSweep,
+    // The eval build only (p3-eval-observability rev 2 rec 5): the kept inputs' 7-day TTL (server/eval-trace/on.ts).
+    ...(evalBuild ? EVAL_TASKS : {}),
+  }
 }
+
+export const taskHandlers: Readonly<Record<string, TaskHandler>> = buildTaskHandlers(__INHOUSE_EVAL_BUILD__)

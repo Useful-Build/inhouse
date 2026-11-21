@@ -4,11 +4,15 @@
 //  1. Inhouse's `{ all: true }` scope (support access under a grant) sees an input: BD7 gives the Inhouse team no `io`;
 //  2. the owner's trace misses the input of a call that has one, or shows it on the wrong step;
 //  3. a build that isn't the eval build (the product or test build, or this compile's default) keeps or shows any input;
-//  4. a trace keeps more than 256 KB of inputs, or cuts one without saying so;
+//  4. a trace (a run, over all its turns) keeps more than 256 KB of inputs as stored (JSON-escaped, with their ids), or cuts
+//     one without saying so, or cuts inside a character;
 //  5. a second audit entry for the same call (another hook) doubles its input, or an entry without a tool_use id is kept;
 //  6. the TTL task deletes anything but inputs older than 7 days, or stops running;
 //  7. the off module (every other build) keeps, reads or schedules anything;
-//  8. `GET /api/me` says `evalBrand` outside the eval build or without the deploy-time marker.
+//  8. `GET /api/me` says `evalBrand` outside the eval build or without the deploy-time marker;
+//  9. the eval build's task registry drops the TTL task (the 7-day promise breaks silently);
+// 10. a call's input recorded before its step (the audit post winning the race) isn't shown on it;
+// 11. deleting a person leaves their kept inputs behind.
 // Oracles: literal inputs and byte counts, and the scope rule written out here.
 import { describe, expect, it, vi } from 'vitest'
 import type { SendTurnResult } from '../../shared/contract/runs.ts'
@@ -19,6 +23,8 @@ import { meHandler } from '../auth/me-handler.ts'
 import type { HandlerContext } from '../routes.ts'
 import { DESIGN_CAN_ROWS, DESIGN_ROWS, fakeStores } from '../testing/auth-fixtures.ts'
 import { MEMBER, OTHER, SEC, T0, ev, fullAnswer, inAgent, settle } from '../testing/brand-agent/core-harness.ts'
+import { buildTaskHandlers, taskHandlers } from '../do/brand-agent/tasks/index.ts'
+import { registrySeeds } from '../do/brand-agent/scheduler.ts'
 import * as on from './on.ts'
 import * as off from './off.ts'
 
@@ -89,26 +95,86 @@ describe('the eval trace on route 33', () => {
     await h.core.writeToolCall(a.turnId, 0, entry('tu_1', { url: 'https://first.example.test/' }))
     await h.core.writeToolCall(a.turnId, 1, entry('tu_1', { url: 'https://second.example.test/' }))
     await h.core.writeToolCall(a.turnId, 2, entry(undefined, { url: 'https://none.example.test/' }))
-    expect(ioRows(h.sql, a.turnId)).toEqual([{ io: 'tu_1', input: '{"url":"https://first.example.test/"}', bytes: '37' }])
+    // `bytes` is the stored size: the record's JSON with its id and the input escaped inside it.
+    expect(ioRows(h.sql, a.turnId)).toEqual([{ io: 'tu_1', input: '{"url":"https://first.example.test/"}', bytes: '65' }])
   }, { evalTrace: true }))
 
-  it('caps a trace at 256 KB of inputs, marking the cut (failure 4)', () => inAgent(async h => {
+  it('caps a run\'s trace at 256 KB of inputs as stored, over all its turns, marking the cut (failure 4)', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-evt04'))
     await settle()
-    // 17 inputs of 16,002 bytes each (a 16,000-byte string in JSON quotes; the audit route caps one at 16 KiB).
+    // A second turn of the same chat, queued behind the first: the same run, so the same trace.
+    const b = ok(await h.submit('c1', 'key-evt14'))
+    await settle()
+    expect(b.runId).toBe(a.runId)
+    // A 16,000-character string is 16,002 bytes of JSON; stored escaped inside the record with its id, 16,028 bytes for
+    // tu_0 to tu_9 and 16,029 for tu_10 to tu_15: 256,454 in all, leaving 5,690 of the 262,144.
     const big = 'x'.repeat(16_000)
-    for (let i = 0; i < 17; i++) await h.core.writeToolCall(a.turnId, i, entry(`tu_${i}`, big))
-    const rows = ioRows(h.sql, a.turnId)
-    expect(rows).toHaveLength(17)
-    expect(rows.slice(0, 16).every(r => r.bytes === '16002' && r.cut === undefined)).toBe(true)
-    // 16 x 16,002 = 256,032 bytes fit under 262,144, leaving 6,112 for the 17th, which is cut there.
-    expect(rows[16]).toEqual({ io: 'tu_16', input: `"${'x'.repeat(6_111)}`, bytes: '6112', cut: '1' })
-    expect(rows.reduce((n, r) => n + Number(r.bytes), 0)).toBe(on.IO_TRACE_MAX_BYTES)
-    // A later call gets an empty, cut input: the reader still sees that one was made.
-    await h.core.writeToolCall(a.turnId, 17, entry('tu_17', { url: 'https://late.example.test/' }))
-    expect(ioRows(h.sql, a.turnId)[17]).toEqual({ io: 'tu_17', input: '', bytes: '0', cut: '1' })
-    expect(on.ioFrom(rows[16])).toEqual(['tu_16', { input: `"${'x'.repeat(6_111)}`, cut: true }])
+    for (let i = 0; i < 16; i++) await h.core.writeToolCall(a.turnId, i, entry(`tu_${i}`, big))
+    const first = ioRows(h.sql, a.turnId)
+    expect(first.map(r => r.bytes)).toEqual([...Array(10).fill('16028'), ...Array(6).fill('16029')])
+    expect(first.every(r => r.cut === undefined)).toBe(true)
+    // The second turn's first call crosses the run's cap: cut at 5,664 characters (stored size 5,690, exactly the room).
+    await h.core.writeToolCall(b.turnId, 0, entry('tu_16', big))
+    const [cut] = ioRows(h.sql, b.turnId)
+    expect(cut).toEqual({ io: 'tu_16', input: `"${'x'.repeat(5_663)}`, bytes: '5690', cut: '1' })
+    expect([...first, cut].reduce((n, r) => n + Number(r.bytes), 0)).toBe(on.IO_TRACE_MAX_BYTES)
+    expect(on.ioFrom(cut)).toEqual(['tu_16', { input: `"${'x'.repeat(5_663)}`, cut: true }])
+    // A later call gets an empty, cut input (its record's own 25 bytes): the reader still sees that one was made.
+    await h.core.writeToolCall(b.turnId, 1, entry('tu_17', { url: 'https://late.example.test/' }))
+    expect(ioRows(h.sql, b.turnId)[1]).toEqual({ io: 'tu_17', input: '', bytes: '25', cut: '1' })
   }, { evalTrace: true }))
+
+  it('cuts at whole characters, keeping a real U+FFFD and never splitting an escape (failure 4)', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-evt06'))
+    await settle()
+    const big = 'x'.repeat(16_000)
+    for (let i = 0; i < 16; i++) await h.core.writeToolCall(a.turnId, i, entry(`tu_${i}`, big))
+    // 5,690 bytes of room: a string of 4-byte characters, with a genuine U+FFFD and a quote, is cut at a whole character.
+    const odd = `\uFFFD"${'😀'.repeat(4_000)}`
+    await h.core.writeToolCall(a.turnId, 16, entry('tu_16', odd))
+    const cut = ioRows(h.sql, a.turnId)[16]
+    expect(cut.cut).toBe('1')
+    expect(cut.input.startsWith('"\uFFFD\\"😀')).toBe(true)
+    expect(cut.input.endsWith('😀')).toBe(true)
+    expect(Number(cut.bytes)).toBeLessThanOrEqual(5_690)
+    expect(Number(cut.bytes)).toBeGreaterThan(5_690 - 4)
+  }, { evalTrace: true }))
+
+  it('shows an input recorded before its step (failure 10)', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-evt07'))
+    await settle()
+    h.push(a.turnId, ev.started())
+    await h.core.writeToolCall(a.turnId, 0, entry('tu_1', { url: 'https://early.example.test/' }))
+    h.push(a.turnId, ev.tool('WebFetch'), ...fullAnswer('done', 2))
+    await settle()
+    expect(h.core.readTrace(a.turnId, { owner: MEMBER })?.steps.find(s => s.kind === 'tool')?.io).toEqual({ input: '{"url":"https://early.example.test/"}' })
+  }, { evalTrace: true }))
+
+  it('deleting a person removes their kept inputs (failure 11)', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-evt08'))
+    await settle()
+    h.push(a.turnId, ev.started())
+    await h.core.writeToolCall(a.turnId, 0, entry('tu_1', { url: 'https://person.example.test/' }))
+    h.push(a.turnId, ...fullAnswer('done', 2))
+    await settle()
+    expect(ioRows(h.sql, a.turnId)).toHaveLength(1)
+    // The turn's rows are in D1 (PR 3's flush), so the delete isn't busy.
+    h.sql.exec('UPDATE turns SET d1_flushed = 1 WHERE turn_id = ?', a.turnId)
+    expect(h.core.personData(MEMBER, 'delete')).not.toEqual({ busy: true })
+    expect(ioRows(h.sql, a.turnId)).toEqual([])
+  }, { evalTrace: true }))
+})
+
+describe('the eval build\'s task registry (failure 9)', () => {
+  it('holds the TTL task, seeded, in the eval build only', () => {
+    const evalBuild = buildTaskHandlers(true)
+    expect(Object.keys(evalBuild)).toContain(on.IO_TTL_TASK)
+    expect(evalBuild[on.IO_TTL_TASK].seed).toEqual({ id: on.IO_TTL_TASK })
+    expect(Object.keys(buildTaskHandlers(false))).not.toContain(on.IO_TTL_TASK)
+    // This compile (as the product build) registers what the eval-off registry does.
+    expect(Object.keys(taskHandlers)).toEqual(Object.keys(buildTaskHandlers(false)))
+    expect(registrySeeds(evalBuild)).toContainEqual({ id: on.IO_TTL_TASK, kind: on.IO_TTL_TASK })
+  })
 })
 
 describe('the TTL task (failure 6)', () => {
@@ -125,7 +191,11 @@ describe('the TTL task (failure 6)', () => {
     const task: DueTask = { id: on.IO_TTL_TASK, kind: on.IO_TTL_TASK, gen: 1, dueAtMs: now, payload: null, attempts: 0 }
     const handler = on.EVAL_TASKS[on.IO_TTL_TASK]
     expect(handler.seed).toEqual({ id: on.IO_TTL_TASK })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     expect(await handler(task, { nowMs: now, sql: h.sql, scheduler: { schedule } } as unknown as TaskContext)).toEqual({ done: true })
+    // The real number of inputs deleted (not the storage's row-write count, which counts index writes too).
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: 'eval_io_ttl', deleted: 1 }))
+    log.mockRestore()
     const left = h.sql.exec<{ n: number }>("SELECT n FROM turn_trace WHERE turn_id = 't_ttl' ORDER BY n").toArray().map(r => r.n)
     expect(left).toEqual([1, 2])
     expect(schedule).toHaveBeenCalledWith({ id: on.IO_TTL_TASK, kind: on.IO_TTL_TASK, dueAtMs: now + 6 * 3_600_000 })
