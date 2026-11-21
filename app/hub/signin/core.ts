@@ -74,6 +74,8 @@ export type SignInRecord = {
   revokeFailedAtMs?: number | null
   /** A refresh answer was lost: the next try is the last one with this refresh token. */
   refreshUnclear?: boolean
+  /** A refresh answered Retry-After: no refresh before this time (with H0's backoff, whichever is later). */
+  retryAtMs?: number | null
 }
 
 /** A v1 or v2 record with every v2 field present (the v1 defaults filled in). */
@@ -91,6 +93,7 @@ export function normalize(r: SignInRecord): SignInRecordV2 {
     endpoints: null,
     revokeFailedAtMs: null,
     refreshUnclear: false,
+    retryAtMs: null,
     ...r,
   }
 }
@@ -423,6 +426,19 @@ export class SignInCore {
     return true
   }
 
+  /** Re-seals a client registration if the stored envelope is still the one opened. No state or generation rule. */
+  async #resealClient(accountId: string, ring: KeyRing, before: Envelope, plaintext: string): Promise<boolean> {
+    const resealed = await seal(ring, accountId, 'client', plaintext)
+    const now = this.#read()
+    if (!now || now.accountId !== accountId || !sameEnvelope(now.client ?? null, before)) {
+      log('signin_grant_discarded', { accountId, kid: resealed.kid })
+      return false
+    }
+    this.#write({ ...now, client: resealed })
+    log('signin_reencrypt', { accountId, kid: resealed.kid, generation: now.generation })
+    return true
+  }
+
   // ---------- the stub's methods ----------
 
   async query(req: QueryRequest): Promise<HubResult<{ data: unknown }>> {
@@ -498,11 +514,15 @@ export class SignInCore {
         log(opened.reason === 'key_missing' ? 'signin_key_missing' : 'hub_internal', { accountId, kid: envelope.kid, code: 'key_unavailable' })
         return err('key_unavailable')
       }
-      if (await this.#lazyReseal(accountId, ring.ring, current, field, opened.plaintext)) changed = true
+      // P5: a client registration isn't a token, so a disconnected account's is re-sealed too (envelope check alone).
+      const done = field === 'client' ? await this.#resealClient(accountId, ring.ring, envelope, opened.plaintext) : await this.#lazyReseal(accountId, ring.ring, current, field, opened.plaintext)
+      if (done) changed = true
     }
     const after = this.#recordFor(accountId)
     if (!after) return err('internal')
-    return ok({ kid: after.token?.kid ?? ring.ring.current, changed })
+    // The kid of any envelope still under an old key, so the rotation runbook's "new kid" check is honest.
+    const stale = [after.token, after.refresh, after.client ?? null].find(e => e && e.kid !== ring.ring.current)
+    return ok({ kid: stale?.kid ?? after.token?.kid ?? ring.ring.current, changed })
   }
 
   /** P5's caller. Token and refresh deleted, generation + 1, alarm deleted; only P5's connect leaves this state. */
@@ -584,7 +604,11 @@ export class SignInCore {
       this.#sweepPending()
       const r = this.#read()
       if (r?.kind === 'oauth_mcp') return await this.#mcpAlarm(r)
-      if (!r || r.state === 'disconnected') return
+      if (!r || r.state === 'disconnected') {
+        // P5: nothing else sets an alarm here, so live one-time items (W2's counters) would never be swept.
+        await this.#ensureSweepAlarm(r?.accountId ?? '')
+        return
+      }
       const nowMs = this.#d.now()
       const due = refreshDueAt(r)
       if (usable(r, nowMs) && due !== null && nowMs < due) {
@@ -853,12 +877,16 @@ export class SignInCore {
     if (p.connector.profile === 'slack' && t.teamId !== p.clientConfig.teamId) failed = { code: 'workspace_mismatch' }
     else if (!t.scopes || !sameScopeSet(t.scopes, item.scopes)) failed = { code: 'scope_mismatch', detail: describeMcpScopes(t.scopes ?? [], item.scopes) }
     if (failed) {
+      const g0 = this.#read()?.generation
       if (await this.#isLive(accountId, ring.ring, t.accessToken)) {
-        // A cumulative grant handed back the very token we use: record what it now carries, revoke nothing.
+        // A cumulative grant handed back the very token we use: record what it now carries, revoke nothing. Written
+        // only if the record didn't move during the comparison (a reconnect with another token wins).
         const now = this.#read()
-        if (now && now.accountId === accountId && now.kind === 'oauth_mcp') {
+        if (now && now.accountId === accountId && now.kind === 'oauth_mcp' && now.generation === g0) {
           const scopes = failed.code === 'scope_mismatch' && t.scopes ? t.scopes : now.scopes
           this.#write({ ...now, scopes, lastError: { code: failed.code, atMs: this.#d.now() } })
+        } else {
+          await this.#revokeUnlessLive(accountId, ring.ring, p, r0, client, t.accessToken)
         }
       } else {
         this.#noteError(accountId, failed.code)
@@ -1042,6 +1070,7 @@ export class SignInCore {
       failures: 0,
       lastError: null,
       refreshUnclear: false,
+      retryAtMs: null,
     }
     this.#write(next)
     log('signin_grant', { accountId, code: 'ok', generation: next.generation, kid: token.kid, state: 'active' })
@@ -1054,6 +1083,13 @@ export class SignInCore {
       }
     }
     return { ok: true, generation: next.generation }
+  }
+
+  /** The earliest time the next refresh may go out: H0's backoff after the last failure, and any Retry-After. */
+  #refreshNotBefore(r: SignInRecord): number | null {
+    if (r.failures === 0 && !r.refreshUnclear) return null
+    const backoff = r.lastError ? r.lastError.atMs + backoffFor(r.failures) : 0
+    return Math.max(backoff, r.retryAtMs ?? 0)
   }
 
   /** The three refresh classes (section 4): not consumed keeps the record; unclear allows one more send; spent fails. */
@@ -1076,7 +1112,13 @@ export class SignInCore {
           lastError: { code: 'credentials_rejected', atMs: nowMs },
           refreshUnclear: false,
         }
-      : { ...r, failures: r.failures + 1, lastError: { code: res.code, atMs: nowMs }, refreshUnclear: res.cls === 'unclear' ? true : r.refreshUnclear === true }
+      : {
+          ...r,
+          failures: r.failures + 1,
+          lastError: { code: res.code, atMs: nowMs },
+          refreshUnclear: res.cls === 'unclear' ? true : r.refreshUnclear === true,
+          retryAtMs: res.retryAfterMs !== undefined ? nowMs + res.retryAfterMs : null,
+        }
     this.#write(next)
     log('signin_grant', { accountId, code: spent ? 'credentials_rejected' : res.code, generation: next.generation, state: next.state, failures: next.failures })
     return spent ? { ok: false, code: 'credentials_rejected' } : { ok: false, code: res.code }
@@ -1088,7 +1130,11 @@ export class SignInCore {
     const rotating = r.state === 'active' && r.refresh !== null && r.expiresAtMs !== null
     if (rotating) {
       const due = refreshDueAt(r)
-      if (due !== null && this.#d.now() < due && r.failures === 0 && !r.refreshUnclear) {
+      const notBefore = this.#refreshNotBefore(r)
+      if (notBefore !== null && this.#d.now() < notBefore) {
+        // Backing off after a failed refresh (H0's schedule, or the upstream's Retry-After): wait until then.
+        await this.#d.alarm.set(notBefore)
+      } else if (due !== null && this.#d.now() < due && notBefore === null) {
         // An early (sweep) alarm never costs the proactive refresh.
         await this.#d.alarm.set(due)
       } else {
@@ -1116,6 +1162,12 @@ export class SignInCore {
         return { ok: true, token: opened.plaintext, generation: r.generation }
       }
       if (!allowRefresh || !r.refresh) return { ok: false, code: 'credentials_rejected' }
+      // Backing off after a failed refresh: answer the last error, send nothing (the alarm retries on schedule).
+      const notBefore = this.#refreshNotBefore(r)
+      if (notBefore !== null && this.#d.now() < notBefore) {
+        const code = r.lastError?.code ?? 'upstream_unavailable'
+        return { ok: false, code, detail: undefined }
+      }
       const g = await this.#grant(accountId)
       if (!g.ok) return g
     }
@@ -1153,7 +1205,10 @@ export class SignInCore {
     const p = await this.#provider(accountId)
     if (!p) return err('not_configured')
     const c = p.connector
-    if (!c.tools.some(t => t.upstream === name)) return err(c.knownWrites.includes(name) ? 'write_refused' : 'unknown_tool')
+    const entry = c.tools.find(t => t.upstream === name)
+    if (!entry) return err(c.knownWrites.includes(name) ? 'write_refused' : 'unknown_tool')
+    // Defense in depth: the gateway already hides a tool whose policy is off.
+    if (entry.policy !== undefined && !p.clientConfig.policies.includes(entry.policy)) return err('unknown_tool')
     const r = this.#read()
     if (!r || r.accountId !== accountId || r.kind !== 'oauth_mcp') return err('not_configured')
     const requested = requestedScopes(c, p.clientConfig)
@@ -1183,7 +1238,11 @@ export class SignInCore {
         return this.#mcpLogged(accountId, name, started, err('credentials_rejected'))
       }
     }
-    if (out.kind === 'error') return this.#mcpLogged(accountId, name, started, err(out.code, undefined, out.retryAfterMs))
+    if (out.kind === 'error') {
+      // Whatever went wrong, a reused session isn't trusted for the next call.
+      this.#session = null
+      return this.#mcpLogged(accountId, name, started, err(out.code, undefined, out.retryAfterMs))
+    }
     // Kept only while the record still carries the generation it started under.
     if (this.#read()?.generation === out.session.generation) this.#session = out.session
     return this.#mcpLogged(accountId, name, started, ok(out.result), out.dropped)

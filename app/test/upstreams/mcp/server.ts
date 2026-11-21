@@ -176,6 +176,10 @@ export class FakeMcpServer {
   prmResource: string | null = null
   noS256 = false
   headerMetadata = true
+  /** Retry-After (seconds) on a rate-limited refresh. */
+  retryAfterS = 30
+  /** Overrides the AS metadata's `issuer` (RFC 8414 section 3.3 mismatch). */
+  asIssuer: string | null = null
   /** `notes_export` is listed from this `tools/list` call on (deterministic "added mid-test"). */
   exportAfterLists = 2
   /** Wraps each token-endpoint answer (fast-check's scheduler, in interleaving tests). */
@@ -219,7 +223,7 @@ export class FakeMcpServer {
   }
 
   /** Every live access token issued to `user`. */
-  liveTokens(user = SLACK_TEST.user): string[] {
+  liveTokens(user: string = SLACK_TEST.user): string[] {
     return [...this.tokens].filter(([, t]) => t.user === user && !t.revoked).map(([k]) => k)
   }
 
@@ -271,6 +275,7 @@ export class FakeMcpServer {
           token_endpoint_auth_methods_supported: ['client_secret_post'],
         }
     if (!this.noS256) meta.code_challenge_methods_supported = ['S256']
+    if (this.asIssuer !== null) meta.issuer = this.asIssuer
     return meta
   }
 
@@ -346,7 +351,8 @@ export class FakeMcpServer {
     this.refreshSends.push(token)
     if (mode === 'unreachable') return this.deliver(Promise.reject(new TypeError('connect failed')), 'refresh')
     if (mode === 'ratelimited') {
-      const res = this.profile === 'slack' ? json({ ok: false, error: 'ratelimited' }, 200, { 'Retry-After': '30' }) : json({ error: 'slow_down' }, 429, { 'Retry-After': '30' })
+      const ra = String(this.retryAfterS)
+      const res = this.profile === 'slack' ? json({ ok: false, error: 'ratelimited' }, 200, { 'Retry-After': ra }) : json({ error: 'slow_down' }, 429, { 'Retry-After': ra })
       return this.deliver(Promise.resolve(res), 'refresh')
     }
     const r = this.refreshes.get(token)

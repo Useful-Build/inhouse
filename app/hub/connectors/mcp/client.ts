@@ -25,6 +25,8 @@ type Target = { endpoint: string; allowedHosts: readonly string[] }
 type Rpc =
   | { kind: 'ok'; body: Record<string, unknown> | null; sessionId: string | null }
   | { kind: 'unauthorized' }
+  /** A 404 on a request that carried `Mcp-Session-Id`: the server ended the session (transports, "Session Management"). */
+  | { kind: 'session_gone' }
   | { kind: 'error'; code: HubErrorCode; retryAfterMs?: number }
 
 /** One JSON-RPC POST. `expectBody` false for a notification (202 with no body). */
@@ -45,6 +47,7 @@ async function rpc(upstream: Upstream, t: Target, token: string, session: McpSes
   if (sent.kind !== 'response') return { kind: 'error', code: 'upstream_unavailable' }
   const { status, headers: h } = sent
   if (status === 401) return { kind: 'unauthorized' }
+  if (status === 404 && session?.id) return { kind: 'session_gone' }
   if (status === 403) {
     const challenge = h.get('WWW-Authenticate') ?? ''
     return { kind: 'error', code: /error="?insufficient_scope"?/.test(challenge) ? 'scope_mismatch' : 'upstream_rejected' }
@@ -89,6 +92,7 @@ async function initialize(upstream: Upstream, t: Target, token: string, generati
     method: 'initialize',
     params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: 'Inhouse', version: '1.0.0' } },
   }, true)
+  if (init.kind === 'session_gone') return { kind: 'error', code: 'upstream_unavailable' }
   if (init.kind !== 'ok') return init
   const result = init.body?.result as { protocolVersion?: unknown } | undefined
   if (init.body?.error !== undefined || typeof result !== 'object' || result === null) return { kind: 'error', code: 'upstream_rejected' }
@@ -96,6 +100,7 @@ async function initialize(upstream: Upstream, t: Target, token: string, generati
   if (!version) return { kind: 'error', code: 'upstream_unavailable' }
   const session: McpSession = { generation, id: init.sessionId, protocolVersion: version }
   const note = await rpc(upstream, t, token, session, { jsonrpc: '2.0', method: 'notifications/initialized' }, false)
+  if (note.kind === 'session_gone') return { kind: 'error', code: 'upstream_unavailable' }
   if (note.kind !== 'ok') return note
   return { kind: 'ok', session }
 }
@@ -103,6 +108,8 @@ async function initialize(upstream: Upstream, t: Target, token: string, generati
 /**
  * `tools/call` with `name` and `args`, initialising first when there's no session for this generation. A JSON-RPC
  * error or `isError: true` is upstream_rejected with no upstream text; text parts only, other types dropped and counted.
+ * A 404 on a reused session means the server ended it (an upstream restart): MCP 2025-11-25 says the client MUST start
+ * a new one, so initialise once more and re-send once. A 404 on a session made for this call is upstream_unavailable.
  */
 export async function callMcpTool(
   upstream: Upstream,
@@ -114,12 +121,21 @@ export async function callMcpTool(
   args: Record<string, unknown>,
 ): Promise<McpOutcome> {
   let s = session && session.generation === generation ? session : null
+  const reused = s !== null
   if (!s) {
     const init = await initialize(upstream, t, token, generation)
     if (init.kind !== 'ok') return init
     s = init.session
   }
-  const res = await rpc(upstream, t, token, s, { jsonrpc: '2.0', id: rpcId(), method: 'tools/call', params: { name, arguments: args } }, true)
+  const call = (sess: McpSession) => rpc(upstream, t, token, sess, { jsonrpc: '2.0', id: rpcId(), method: 'tools/call', params: { name, arguments: args } }, true)
+  let res = await call(s)
+  if (res.kind === 'session_gone' && reused) {
+    const init = await initialize(upstream, t, token, generation)
+    if (init.kind !== 'ok') return init
+    s = init.session
+    res = await call(s)
+  }
+  if (res.kind === 'session_gone') return { kind: 'error', code: 'upstream_unavailable' }
   if (res.kind !== 'ok') return res
   const body = res.body!
   if (body.error !== undefined) return { kind: 'error', code: 'upstream_rejected' }

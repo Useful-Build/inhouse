@@ -138,6 +138,8 @@ export async function discover(upstream: Upstream, c: McpConnectorModule): Promi
     }
   }
   if (!as) return { ok: false, code: 'upstream_unavailable' }
+  // RFC 8414 section 3.3: the metadata's `issuer` must be identical to the issuer it was fetched for.
+  if (as.issuer !== issuer) return { ok: false, code: 'connect_refused' }
   const methods = Array.isArray(as.code_challenge_methods_supported) ? as.code_challenge_methods_supported : null
   if (!methods || !methods.includes('S256')) return { ok: false, code: 'connect_refused' }
   const url = (v: unknown) => (typeof v === 'string' && allowedUrl(v, hosts) ? v : null)
@@ -298,6 +300,8 @@ export async function revokeToken(upstream: Upstream, c: McpConnectorModule, end
   const form = new URLSearchParams()
   if (c.profile === 'slack') headers.Authorization = `Bearer ${token}`
   else {
+    // Generic (RFC 7009): only the access token is revoked here. Its refresh token, if any, is left to the AS's own
+    // rule (RFC 7009 section 2.1 lets an AS revoke both), and it's already deleted from our record.
     form.set('token', token)
     form.set('token_type_hint', 'access_token')
     if (client) clientAuth(form, headers, client)

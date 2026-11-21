@@ -410,27 +410,51 @@ describe('test 5: workspace and exact scopes', () => {
 })
 
 describe('test 8: canary', () => {
-  it('no token, refresh token, client secret, code or verifier reaches a result, a log line or a status', async () => {
+  it('no token, refresh token, client secret, code or verifier reaches a result, a log line, a status or storage', async () => {
     const w = world({ rotation: true })
+    const { open } = await import('../crypto/envelope')
+    const { parseKeyRing } = await import('../crypto/keyring')
+    const ring = await parseKeyRing(w.ring.json)
+    if (!ring.ok) throw new Error('ring')
+    const verifiers: string[] = []
+    const codes: string[] = []
     const results: unknown[] = []
-    const started = await w.core(SLACK).beginConnect({ accountId: SLACK, memberId: MEMBER })
-    results.push(started)
-    const { code, state } = await mintTestCode(started.ok ? started.value.authorizeUrl : '')
-    results.push(await w.core(SLACK).completeConnect({ state, code, memberId: MEMBER }))
+    /** Start, record the verifier (opened from the sealed pending item) and the code, then call back. */
+    const run = async (mint: Parameters<typeof mintTestCode>[1] = {}, tamper = false) => {
+      const started = await w.core(SLACK).beginConnect({ accountId: SLACK, memberId: MEMBER })
+      results.push(started)
+      const item = [...w.store(SLACK).map].filter(([k]) => k.startsWith('pending:')).map(([, v]) => v as { data: { pkce: never } }).at(-1)!
+      const v = await open(ring.ring, SLACK, 'pkce', item.data.pkce)
+      if (v.ok) verifiers.push(v.plaintext)
+      const { code, state } = await mintTestCode(started.ok ? started.value.authorizeUrl : '', mint)
+      codes.push(code)
+      results.push(await w.core(SLACK).completeConnect({ state, code: tamper ? `${code}x` : code, memberId: MEMBER }))
+    }
+    await run()
     results.push(await search(w))
     w.slack.staleSessions()
     results.push(await search(w))
+    await run({ team: SLACK_TEST.otherTeamId }) // workspace_mismatch
+    await run({}, true) // the exchange fails (invalid_code)
+    const real = w.slack.fetch
+    w.slack.fetch = async () => {
+      throw new TypeError('socket hang up')
+    }
+    results.push(await search(w)) // a throwing upstream
+    await run()
+    w.slack.fetch = real
     for (const t of w.slack.tokens.values()) t.revoked = true
     results.push(await search(w))
     results.push(await connect(w))
     w.slack.revokeFails = true
     results.push(await w.core(SLACK).disconnect(SLACK))
     results.push(await w.core(SLACK).accountStatus(SLACK))
-    const verifierItems = JSON.stringify([...w.store(SLACK).map])
+    expect(verifiers.length).toBeGreaterThanOrEqual(4)
+    const stored = JSON.stringify([...w.store(SLACK).map])
     const all = JSON.stringify(results) + lines.join('\n')
-    const secrets = [...w.slack.tokens.keys(), ...w.slack.refreshes.keys(), SLACK_TEST.clientSecret, code]
+    const secrets = [...w.slack.tokens.keys(), ...w.slack.refreshes.keys(), SLACK_TEST.clientSecret, ...codes, ...verifiers]
     for (const s of secrets) expect(all).not.toContain(s)
-    for (const s of secrets) expect(verifierItems).not.toContain(s)
+    for (const s of secrets) expect(stored).not.toContain(s)
   })
 })
 
@@ -522,6 +546,7 @@ describe('records', () => {
       endpoints: null,
       revokeFailedAtMs: null,
       refreshUnclear: false,
+      retryAtMs: null,
     })
   })
 
