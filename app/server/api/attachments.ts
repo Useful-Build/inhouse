@@ -81,6 +81,8 @@ export const getFile: Handler = async c => {
   // An input is its chat owner's (and Inhouse's under a grant); an output any person's on the brand (BD11).
   if (f.kind === 'input' && a.principal.kind === 'person' && f.ownerId !== a.principal.memberId) return apiError('not_found')
   if (a.principal.kind === 'service') return apiError('not_found')
+  // P4 W5 (line A's answer 4): a Library delete withdraws an output from everyone but its chat's owner, until a restore.
+  if (f.kind === 'output' && !(a.principal.kind === 'person' && f.ownerId === a.principal.memberId) && (await stores.library.withdrawn(f.id))) return apiError('not_found')
   const body = await stores.files.readBytes(f)
   if (!body) return apiError('not_found')
   return new Response(body, {

@@ -256,3 +256,26 @@ describe('route 39: an R2 write that fails (round 1)', () => {
     expect(await db.prepare('SELECT COUNT(*) AS n FROM chat_files WHERE chat_id = ?').bind(chatId).first<number>('n')).toBe(0)
   })
 })
+
+describe('route 41: a Library delete withdraws an output (P4 W5, line A answer 4)', () => {
+  it("404 to everyone but the chat's owner while the delete mark is live; a restore reopens it", async () => {
+    const chatId = await newChat()
+    const id = await savedOutput(chatId, 'outputs/w.csv', 'w,1\n', 'text/csv')
+    const colleague = personPrincipal(OTHER, 'member')
+    const owner = personPrincipal(OWNER, 'member')
+    expect((await get(colleague, id)).status).toBe(200)
+    await db.prepare("INSERT INTO library_marks (file_id, source, deleted_at_ms, deleted_by, rev) VALUES (?, 'chat', 10, ?, 2)").bind(id, OTHER).run()
+    expect((await get(colleague, id)).status).toBe(404)
+    expect((await get(personPrincipal(OTHER, 'admin'), id)).status).toBe(404)
+    expect((await get(inhouse, id)).status).toBe(404)
+    const own = await get(owner, id)
+    expect(own.status).toBe(200)
+    expect(await own.text()).toBe('w,1\n')
+    // A mark on another file, or an upload's mark with this id's shape, withdraws nothing here.
+    const other = await savedOutput(chatId, 'outputs/v.csv', 'v,1\n', 'text/csv')
+    expect((await get(colleague, other)).status).toBe(200)
+    await db.prepare('UPDATE library_marks SET deleted_at_ms = NULL, deleted_by = NULL, rev = 3 WHERE file_id = ?').bind(id).run()
+    expect((await get(colleague, id)).status).toBe(200)
+    expect((await get(inhouse, id)).status).toBe(200)
+  })
+})
