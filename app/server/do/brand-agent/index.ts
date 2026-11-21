@@ -145,6 +145,9 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async drainState(): Promise<DrainState> {
     return this.ports.pool.drainState()
   }
+  async undrain(): Promise<DrainState> {
+    return this.ports.pool.undrain()
+  }
   async warmup(): Promise<{ ok: true } | Refusal> {
     return this.core.warmup()
   }

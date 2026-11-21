@@ -94,6 +94,7 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   async runsHealth() { this.log('runsHealth'); return this.runsHealthAnswer }
   async drain() { this.log('drain'); return this.drainAnswer }
   async drainState() { this.log('drainState'); return this.drainAnswer }
+  async undrain() { this.log('undrain'); return this.drainAnswer }
   async warmup() { this.log('warmup'); return ok }
   async writeToolCall(turnId: string, n: number, entry: AuditEntry) { this.log('writeToolCall', turnId, n, entry) }
 }
