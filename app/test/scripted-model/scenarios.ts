@@ -161,6 +161,9 @@ const WEBFETCH_PROMPT = 'Summarise the page (scenario:webfetch-allowed)'
 const pageSummary = (r: MessagesRequest): boolean =>
   Array.isArray(r.tools) && r.tools.length === 0 && r.messages.length === 1 && firstUserText(r).includes('Web page content:') && firstUserText(r).includes(WEBFETCH_PROMPT)
 
+/** How long the `slow-bash` scenario's one Bash call sleeps: long enough to act on the live turn, short enough to end on its own. */
+export const SLOW_BASH_SECONDS = 20
+
 /** The fact the `memory-save` scenario saves (a person's own, active at once). */
 export const MEMORY_SAVE_TEXT = 'Likes the weekly stock report as a table.'
 
@@ -231,6 +234,24 @@ export const SCENARIOS: Record<string, Scenario> = {
         expect: mainLoop('Bash'),
       },
       { content: [{ type: 'text', text: 'Saved outputs/table.csv.' }], expect: both(mainLoop('Bash'), resultOf('toolu_scripted_write')) },
+    ],
+  },
+
+  /**
+   * Keeps a turn live: one Bash call that sleeps SLOW_BASH_SECONDS in the sandbox, then an answer. A test acts on the live
+   * turn meanwhile (pause, interrupt, stop). The same request shapes as `write-output` (text plus one Bash call, then its
+   * result): only the command differs. The sleep is bounded, so a turn nobody ends still finishes on its own.
+   */
+  'slow-bash': {
+    turns: [
+      {
+        content: [
+          { type: 'text', text: 'Waiting a while.' },
+          { type: 'tool_use', id: 'toolu_scripted_slow', name: 'Bash', input: { command: `sleep ${SLOW_BASH_SECONDS} && echo waited`, description: 'Wait a while' } },
+        ],
+        expect: mainLoop('Bash'),
+      },
+      { content: [{ type: 'text', text: 'Done waiting.' }], expect: both(mainLoop('Bash'), resultOf('toolu_scripted_slow')) },
     ],
   },
 

@@ -137,6 +137,18 @@ describe('the scripted model', () => {
     expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, right]), name)).status).toBe(200)
   })
 
+  it('slow-bash: turn 0 is a text and one Bash call that sleeps 20 seconds (literal); turn 1 answers only a request carrying its result', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const first = (await (await model.handle(mainReq(convo(0)), 'slow-bash')).json()) as { content: { type: string; name?: string; text?: string; input?: { command: string } }[] }
+    expect(first.content.map((b) => b.text ?? b.name)).toEqual(['Waiting a while.', 'Bash'])
+    expect(first.content[1]!.input!.command).toBe('sleep 20 && echo waited')
+    const asked: Msg = { role: 'assistant', content: SCENARIOS['slow-bash']!.turns[0]!.content }
+    expect((await model.handle(mainReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: 'go on' }]), 'slow-bash')).status).toBe(400)
+    const res = await model.handle(mainReq([{ role: 'user', content: 'q' }, asked, toolResult('toolu_scripted_slow')]), 'slow-bash')
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe('Done waiting.')
+  })
+
   it("ask: the resume (turn 1) answers only a request whose last user message carries the question's result", async () => {
     const model = createScriptedModel(SCENARIOS)
     const asked: Msg = { role: 'assistant', content: SCENARIOS.ask!.turns[0]!.content }
@@ -321,6 +333,14 @@ describe("the real CLI's requests", () => {
     const model = createScriptedModel(SCENARIOS)
     expect(await answer(model, captured[name]!.turn0!, name)).toEqual({ status: 200, content: turn0 })
     expect(await answer(model, captured[name]!.turn1!, name)).toEqual({ status: 200, content: turn1 })
+    expect(model.misses).toEqual([])
+  })
+
+  it("slow-bash: the real CLI's write-output requests (the same text-plus-Bash shape), with the call id renamed, get its two answers on the first try", async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const turn1 = JSON.parse(JSON.stringify(captured['write-output']!.turn1!).replaceAll('toolu_scripted_write', 'toolu_scripted_slow')) as MessagesRequest
+    expect(await answer(model, captured['write-output']!.turn0!, 'slow-bash')).toEqual({ status: 200, content: ['Waiting a while.', 'Bash'] })
+    expect(await answer(model, turn1, 'slow-bash')).toEqual({ status: 200, content: ['Done waiting.'] })
     expect(model.misses).toEqual([])
   })
 
