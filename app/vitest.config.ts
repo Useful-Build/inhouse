@@ -53,6 +53,9 @@ export default defineConfig({
             'src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts', 'e2e/support/**/*.test.ts',
             'ops/**/*.test.ts', 'shared/**/*.test.ts', 'evals/**/*.test.ts', 'scripts/**/*.test.mjs',
           ],
+          // The hub's two script tests use Node's built-in runner (node:test) and run in the `hub` CI job with `node --test`
+          // (P4, fleet/watch); vitest finds no suite in them.
+          exclude: ['scripts/check-hub-build.test.mjs', 'scripts/check-hub-config.test.mjs'],
           environment: 'node',
           // The contract suite's real target (src/agent/contract/targets.ts reads it with `inject`): the test build's
           // origin, set by e2e/support/test-build/serve.ts. Read here from the environment, so it can't be dropped on the way.
