@@ -18,8 +18,10 @@ import { mcpHandler } from '../mcp/server/index.ts'
 import { modelRoute } from './model.ts'
 import { storeRoute } from './store.ts'
 
-/** The test build's compile-time switch (vite.config.ts); false in every other build. */
+/** The test issuer's compile-time switch (vite.config.ts); true in the test and eval builds only. */
 declare const __INHOUSE_TEST_BUILD__: boolean
+/** The eval build's compile-time switch (vite.config.ts); true there only. */
+declare const __INHOUSE_EVAL_BUILD__: boolean
 
 export const EGRESS_HOST = 'egress.internal'
 
@@ -82,9 +84,17 @@ export async function brandSettings(db: D1Database): Promise<SettingsView> {
 /** The env the egress reads beyond the generated `Env`: the test build's flag, set only on the test build's config. */
 type EgressEnv = Env & { INHOUSE_TEST_BUILD?: string }
 
+/**
+ * Whether the model route answers from the scripted model: the test build only (compiled in AND switched on, as the test
+ * issuer is). The eval build compiles the test issuer in too but never the scripted model, so it always takes the gateway
+ * (p3-eval-observability rev 2, rec 1). `compiled` is a seam for the unit tests (vitest defines both flags false).
+ */
+export function usesScriptedModel(env: Pick<EgressEnv, 'INHOUSE_TEST_BUILD'>, compiled = { test: __INHOUSE_TEST_BUILD__, eval: __INHOUSE_EVAL_BUILD__ }): boolean {
+  return compiled.test && !compiled.eval && env.INHOUSE_TEST_BUILD === '1'
+}
+
 /** The real deps from the Worker's env (the test build's model is the scripted one, and only there). */
 export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressProps): EgressDeps {
-  const testBuild = __INHOUSE_TEST_BUILD__ && env.INHOUSE_TEST_BUILD === '1'
   return {
     // W1's BrandAgent implements BrandAgentRpc; the stub is typed by that interface.
     rpc: env.BRAND_AGENT.getByName('brand') as unknown as EgressRpc,
@@ -92,7 +102,7 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     touchRunner: async runner => {
       await (env.RUNNER.getByName(runner) as unknown as { touch(): Promise<void> }).touch()
     },
-    upstream: testBuild ? scriptedUpstream() : gatewayUpstream(env),
+    upstream: usesScriptedModel(env) ? scriptedUpstream() : gatewayUpstream(env),
     settings: () => brandSettings(env.DB),
     bucket: env.FILES,
     db: env.DB,

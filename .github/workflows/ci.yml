@@ -116,8 +116,10 @@ jobs:
       # pointer back when it ends, so the uploaded demo build is untouched either way.
       # P2: the test build too (built after, never beside, the product build), for the check's server bundle scan: no
       # test issuer in the deployable Worker, and the canary found in the test build's.
+      # The eval build too (p3-eval-observability rev 2, rec 1), for part 5: the eval trace in neither the deployable
+      # Worker nor the test build, its canary found in the eval build's, and no scripted model there.
       - if: matrix.shard == 1 && !cancelled()
-        run: npm run build:product && npm run build:product-test && node scripts/check-product-build.mjs
+        run: npm run build:product && npm run build:product-test && npm run build:product-eval && node scripts/check-product-build.mjs
       # The product build's own specs (e2e/product/): no sample name, no demo switches, the "Not connected
       # yet" screen. Right after the build it serves (dist-product/, via wrangler dev, so the demo's deploy pointer that
       # `vite preview` follows stays on dist/). E2E_PREBUILT keeps the demo server Playwright also starts from building
@@ -175,6 +177,25 @@ jobs:
             exit 1
           fi
           echo "check-product-config.mjs refused wrangler.test.jsonc (exit 1), as it must."
+      # The eval build's template the same way, and for the reason it's there: the test issuer is on in it, so as a
+      # product config it must be refused on that rule (the template also fails on its empty INHOUSE_ACCESS, which
+      # alone would keep exit 1 if the test-issuer rule went).
+      - name: The config check refuses wrangler.eval.jsonc
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          out=$(node scripts/check-product-config.mjs wrangler.eval.jsonc 2>&1) || rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::check-product-config.mjs exited $rc on wrangler.eval.jsonc; it must refuse it with exit code 1 (0 = passed a config that must never deploy, 2 = usage or a crash)."
+            exit 1
+          fi
+          # POSIX sh (the job's container runs steps under dash): a pipe, not a bash here-string.
+          if ! printf '%s\n' "$out" | grep -qF 'vars.INHOUSE_TEST_BUILD is set: the test issuer must never be on in a deployable config'; then
+            echo "::error::check-product-config.mjs refused wrangler.eval.jsonc, but not on the test-issuer rule it must name."
+            exit 1
+          fi
+          echo "check-product-config.mjs refused wrangler.eval.jsonc on the test-issuer rule (exit 1), as it must."
       # The api and real projects. Their web server migrates and seeds a fresh local D1 first (prepare.mjs).
       - name: Playwright, api and real
         if: ${{ !cancelled() }}
