@@ -25,6 +25,9 @@ import { drainState, startDrain, undrain } from './ops/drain.ts'
 import { alarmNow } from './ops/alarm-now.ts'
 import { warmup } from './ops/warmup.ts'
 import { reviveTask } from './ops/revive.ts'
+// P4 W4: Activity and the bell (rows 59 to 61).
+import { listActivity } from './api/activity.ts'
+import { listNotifications, markNotificationsRead } from './api/bell.ts'
 // P5 (p5-w1 section 9): the Inhouse team connects an OAuth tool through the hub's ConnectGateway.
 import { connectCallback, startConnect } from './api/connect.ts'
 
@@ -153,6 +156,10 @@ export const routes: readonly Route[] = [
   /* 51 */ { method: 'POST', pattern: '/api/ops/tasks/revive', handler: reviveTask },
   // P4 wave 4 (p4-w6.md OC 2): the test build's alarm-now control (404 elsewhere). P4's product routes are rows 52 to 66.
   /* 67 */ { method: 'POST', pattern: '/api/ops/alarm', handler: alarmNow },
+  // P4 W4 (p4-w4.md section 3): Activity and the bell.
+  /* 59 */ { method: 'GET', pattern: '/api/activity', handler: listActivity },
+  /* 60 */ { method: 'GET', pattern: '/api/notifications', handler: listNotifications },
+  /* 61 */ { method: 'POST', pattern: '/api/notifications/read', handler: markNotificationsRead },
   // P5 W1 (p5-w1.md section 9): connect start and the OAuth callback. P5's rows start at 68.
   /* 68 */ { method: 'POST', pattern: '/api/connect/:accountId/start', handler: startConnect },
   /* 69 */ { method: 'GET', pattern: '/api/connect/callback', handler: connectCallback },

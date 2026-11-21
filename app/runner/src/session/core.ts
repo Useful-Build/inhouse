@@ -17,10 +17,10 @@ import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/c
 import { z } from 'zod'
 import { AuditEntry, DEFERRED_INPUT_MAX_BYTES, SDK_MESSAGE_MAX_BYTES, STRUCTURED_MAX_DEPTH, STRUCTURED_OUTPUT_MAX_BYTES, jsonBytes, jsonDepth } from '../../../shared/protocol/index.ts'
 import { createFiles, errnoOf, snapshotOutputs } from '../files/files.ts'
-import { INHOUSE_MCP_SERVER } from '../guards/lists.ts'
 import { RootMessage, capSdkMessage, monotonicMs, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import { LOCAL_MAX_DEPTH, deeperThan, type LineResult } from '../protocol/ndjson.ts'
 import { createStoreAdapter, type Fetch } from '../store/adapter.ts'
+import { mcpServers } from './mcp-servers.ts'
 import type { QueryGuards } from './seam.ts'
 
 export type QueryFn = (params: { prompt: string | AsyncIterable<SDKUserMessage>; options: Options }) => Pick<Query, 'interrupt'> & AsyncIterable<SDKMessage>
@@ -87,8 +87,8 @@ export function modelEnv(config: Pick<RunConfig, 'model' | 'sideModel'>): Record
 }
 
 export function baseOptions(config: RunConfig, cwd: string, env: Record<string, string>, abortController: AbortController, sessionStore?: Options['sessionStore']): Options {
-  // The `inhouse` server goes through the root's proxy (sessionEnv() always sets INHOUSE_PROXY_URL; a bare test env
-  // without it gets no server).
+  // The `inhouse` and `apps` servers go through the root's proxy (sessionEnv() always sets INHOUSE_PROXY_URL; a bare
+  // test env without it gets no server).
   const proxy = env.INHOUSE_PROXY_URL
   return {
     cwd,
@@ -97,7 +97,7 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     systemPrompt: config.systemPrompt,
     // Structured output: the SDK adds its StructuredOutput tool (the guards let it through only with this set).
     ...(config.outputFormat ? { outputFormat: { type: config.outputFormat.type, schema: config.outputFormat.schema } } : {}),
-    ...(proxy ? { mcpServers: { [INHOUSE_MCP_SERVER]: { type: 'http', url: `${proxy.replace(/\/$/, '')}/mcp/` } } } : {}),
+    ...(proxy ? { mcpServers: mcpServers(proxy) } : {}),
     model: config.model,
     effort: config.effort,
     maxTurns: config.maxTurns,

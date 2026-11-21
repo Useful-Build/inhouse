@@ -32,5 +32,5 @@ export function checkFields(templateId: string, spec: FieldSpec, fields: FieldVa
   }
 }
 
-/** The `{slot}` names a text uses. */
-export const slotsOf = (text: string): string[] => [...text.matchAll(/\{([a-z]+)\}/g)].map(m => m[1])
+/** The `{slot}` names a text uses (`{items}`, or `{items:thing}`, the count with its noun: "1 thing", "2 things"). */
+export const slotsOf = (text: string): string[] => [...text.matchAll(/\{([a-z]+)(?::[a-z]+)?\}/g)].map(m => m[1])

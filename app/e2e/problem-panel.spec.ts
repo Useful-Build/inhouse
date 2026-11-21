@@ -1,4 +1,4 @@
-// The problem panel's two ways out that aren't approvals, at 1440: "Ask about this…" (in the panel and in the card's
+// The problem panel's two ways out that aren't approvals, at 1440: "Ask about this" (the panel header's Ask, and the card's
 // menu) starts a chat holding the question, which a reload keeps; the memory note's Manage opens Team memory. Approve,
 // Edit, Don't send and Undo are in app.spec.ts, today-approvals.spec.ts and page-actions.spec.ts.
 import { expect, test, type Fx } from './support/fx.js'
@@ -18,11 +18,11 @@ const sent = (page: Page, text: string) =>
 const STUCK = 'Order #4821 is stuck for 4 days'
 const JACKET = 'Trail Shell Jacket (M, Olive) is oversold by 5'
 
-test('Problem panel: Ask about this… starts a chat with the question, the panel closes, and a reload keeps the chat', async ({ fx, page }) => {
+test('Problem panel: Ask starts a chat with the question, the panel closes, and a reload keeps the chat', async ({ fx, page }) => {
   await start(page, fx)
   await card(page, STUCK).click({ position: { x: 12, y: 12 } })
   await expect(panel(page)).toBeVisible()
-  await panel(page).getByRole('button', { name: 'Ask about this…' }).click()
+  await panel(page).getByRole('button', { name: 'Ask about this', exact: true }).click()
 
   const question = `Tell me more about: ${STUCK}`
   await expect(panel(page)).toHaveCount(0)

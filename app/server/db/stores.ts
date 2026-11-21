@@ -28,6 +28,11 @@ import type { UsageStore } from '../usage/store.ts'
 import { memoryStore } from '../mcp/tools/memory/store.ts'
 import type { MemoryStore } from '../mcp/tools/memory/store.ts'
 
+// P4's slots, one per owner.
+import { activityReader } from '../activity/read.ts'
+import type { ActivityReader } from '../activity/read.ts'
+import { noticeReader } from '../notices/read.ts'
+import type { NoticeReader } from '../notices/read.ts'
 import { connectorAccountStore } from './connector-accounts.ts'
 import type { ConnectorAccountStore } from './connector-accounts.ts'
 
@@ -58,6 +63,9 @@ export interface Stores extends AuthStores {
   /** W6 (p3-w6.md): memory. */
   memory: MemoryStore
 
+  /** P4 W4 (p4-w4.md): Activity's lines and the bell's notices and read state (the writers are `recordActivity` and `addNotice`). */
+  activity: ActivityReader
+  notices: NoticeReader
   /** P5 W1 (p5-w1.md section 9): connector accounts, the Tools page's lifecycle record. */
   connectors: ConnectorAccountStore
 }
@@ -119,6 +127,9 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
 
     memory: memoryStore({ db }),
 
+    // P4's slots.
+    activity: activityReader({ db }),
+    notices: noticeReader({ db }),
     connectors: connectorAccountStore({ db, hook }),
   }
 }

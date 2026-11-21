@@ -14,6 +14,7 @@ import type { AbortSet } from '../screens/chat/upload'
 import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/upgrade-times'
 import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
+import { clearRevealed } from '../screens/chat/reveal'
 import { rememberTrigger } from '../ui/dialogs'
 import { activeMode, problemById } from './derive'
 import type { Ctx } from './derive'
@@ -1130,6 +1131,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     resetDemo: () => {
       // Every answer stops: the runs go with the state, so their late events find no token.
       for (const id of Object.keys(get().runs)) forgetRun(id)
+      // Answers already revealed are forgotten with the chats, so an id reused after the reset reveals again.
+      clearRevealed()
       demoControls?.reset()
       clearSession()
       // The stage and scenario go back to their defaults with everything else; the dot sweep and mark animation stay.

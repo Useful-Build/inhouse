@@ -22,6 +22,6 @@ export const NOTICE_TEMPLATES: Readonly<Record<string, NoticeTemplate>> = {
     source: 'routine-slot', text: 'A routine failed', who: 'Your Inhouse agent', fields: { code: 'code' },
   },
   morning_check_found: {
-    source: 'morning-check', text: 'The morning check found {items} things', who: 'Your Inhouse agent', fields: { items: 'number' },
+    source: 'morning-check', text: 'The morning check found {items:thing}', who: 'Your Inhouse agent', fields: { items: 'number' },
   },
 }

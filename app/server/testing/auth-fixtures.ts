@@ -143,6 +143,10 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/ops/tasks/revive', class: 'open', allow: [], services: ['release'] },
   // Route 67 (P4 wave 4, p4-w6.md OC 2): the test build's alarm-now control, release only (404 outside the test build).
   { method: 'POST', pattern: '/api/ops/alarm', class: 'open', allow: [], services: ['release'] },
+  // Rows 59 to 61 (P4 W4): Activity is brand data; the bell is personal, no Inhouse.
+  { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
   // Routes 68 and 69 (P5 W1, p5-w1.md section 9): connect start and the OAuth callback, the Inhouse team alone.
   { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
   { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },

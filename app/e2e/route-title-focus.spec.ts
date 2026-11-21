@@ -19,7 +19,9 @@ test('A lazy chunk that fails to load reloads the tab once and keeps the compose
     if (failed === 0) { failed++; return route.abort() }
     return route.continue()
   })
-  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Usage' }).click()
+  // Usage opens from the account menu (it left the sidebar); the menu is in the app's bundle, so the first chunk asked for is still Usage's.
+  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /account and settings/i }).click()
+  await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Usage', exact: true }).click()
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage' })).toBeVisible()
   expect(failed).toBe(1)

@@ -49,7 +49,7 @@ export const ACTIVITY_TEMPLATES = {
   // W3: the system routine's name is ours, so "Ran the morning check" is fine (p4-w2.md 8).
   morning_check_ran: {
     kind: 'read', source: 'routine-slot',
-    text: 'Ran the morning check and found {items} things', why: 'Its time came', result: 'Found {items}', who: 'Your Inhouse agent',
+    text: 'Ran the morning check and found {items:thing}', why: 'Its time came', result: 'Found {items}', who: 'Your Inhouse agent',
     fields: { items: 'number' },
   },
   routine_made: {
@@ -76,7 +76,7 @@ export const ACTIVITY_TEMPLATES = {
   // W5: the uploader as `actorId`.
   library_uploaded: {
     kind: 'change', source: 'library',
-    text: '{actor} added {files} files to the Library', why: '{actor} uploaded them', result: 'The agent can use them', who: '{actor}',
+    text: '{actor} added {files:file} to the Library', why: '{actor} uploaded them', result: 'The agent can use them', who: '{actor}',
     fields: { files: 'number' },
   },
   library_deleted: {

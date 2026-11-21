@@ -34,13 +34,16 @@ const alias = {
   '@scripted-model': fileURLToPath(new URL('./test/scripted-model/index.ts', import.meta.url)),
   // P4's test-build controls (server/ops/test-controls.ts), as in the test build (vite.config.ts).
   '@test-controls': fileURLToPath(new URL('./server/ops/test-controls.ts', import.meta.url)),
+  // The eval trace, as in the eval build (vite.config.ts): its tests import the real one. Code that reads it is switched by
+  // `__INHOUSE_EVAL_BUILD__` (false below), so every other test sees a product build.
+  '@eval-trace': fileURLToPath(new URL('./server/eval-trace/on.ts', import.meta.url)),
   '@': fileURLToPath(new URL('./src', import.meta.url)),
 }
 
 export default defineConfig({
   resolve: { alias },
-  // The test build's compile-time switch (vite.config.ts): off here, as in every build but `product-test`.
-  define: { __INHOUSE_TEST_BUILD__: 'false' },
+  // The test and eval builds' compile-time switches (vite.config.ts): off here, as in the product build.
+  define: { __INHOUSE_TEST_BUILD__: 'false', __INHOUSE_EVAL_BUILD__: 'false' },
   test: {
     // The slowest property takes about 7 s at 1000 cases (the whole file about 41 s), so 25 s fails a hang fast and leaves room.
     testTimeout: 25_000,
