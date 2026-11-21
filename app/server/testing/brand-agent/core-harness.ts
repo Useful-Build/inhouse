@@ -92,7 +92,7 @@ export const OTHER = 'm_other'
  * `db`: the D1 the engine writes its projection and `tool_calls` to (default the test D1; tests pass a failing one).
  * `handlers`: kinds a test adds to the real registry (the scheduler runs them; `runs.submit` and the seeds see them).
  */
-export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: number; db?: D1Database; handlers?: Readonly<Record<string, TaskHandler>> } = {}): Promise<void> {
+export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: number; db?: D1Database; handlers?: Readonly<Record<string, TaskHandler>>; evalTrace?: boolean } = {}): Promise<void> {
   const registry: Readonly<Record<string, TaskHandler>> = { ...taskHandlers, ...o.handlers }
   const stub = env.BRAND_AGENT.getByName(`core-${++objects}-${Math.random()}`)
   await runInDurableObject(stub, async (_i, state) => {
@@ -147,6 +147,8 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
       core = new AgentCore({
         onEvent: e => hub.onEvent(e), sockets: hub,
         sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: o.db ?? env.DB,
+        // The eval build's trace (server/eval-trace/), off unless a test asks for it.
+        evalTrace: o.evalTrace ?? false,
         taskSeeds: registrySeeds(registry),
         // D1's `chats` as the real object reads it (index.ts): gone or in the trash.
         chatGone: async chatId => {
