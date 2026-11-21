@@ -170,6 +170,21 @@ describe('nightly.yml', () => {
     expect(wf()).toMatch(/\npermissions:\n  contents: read\n/)
     expect(wf()).toMatch(/persist-credentials: false/)
   })
+  // #244 review: a failing nightly must reach a person. One issue, opened once and commented on after that.
+  it('a failure opens or updates one issue, from a job of its own that alone may write issues', () => {
+    const text = wf()
+    const notify = text.slice(text.indexOf('\n  notify:\n'))
+    expect(notify).toMatch(/^\n  notify:\n    needs: probes\n    if: failure\(\)\n/)
+    expect(notify).toMatch(/\n    permissions:\n      issues: write\n/)
+    expect(notify).not.toMatch(/actions\/checkout|npm |contents: write/)
+    expect(notify).toMatch(/TITLE: Nightly guard check failing\n/)
+    // The open issue with that title is reused (a comment); only with none open is one created.
+    expect(notify).toMatch(/gh api --paginate "repos\/\$REPO\/issues\?state=open&labels=\$LABEL[^"]*"[\s\S]*select\(\.pull_request == null and \.title == env\.TITLE\)/)
+    expect(notify).toMatch(/gh issue comment "\$open"[\s\S]*else[\s\S]*gh issue create /)
+    // The probes job keeps read-only contents: the workflow grants nothing more, and only notify adds issues: write.
+    expect(text.slice(0, text.indexOf('\n  notify:\n'))).not.toMatch(/issues: write/)
+    expect(text.match(/issues: write/g)).toHaveLength(1)
+  })
   it('runs probes.sh, and no eval step', () => {
     expect(wf()).toMatch(/\n        run: sh app\/scripts\/nightly\/probes\.sh\n/)
     expect(wf()).not.toMatch(/evals\.mjs|evals\/run|--paid|INHOUSE_EVAL/)
