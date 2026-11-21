@@ -11,6 +11,7 @@ import { estimateUsd, runEvals } from './runner.ts'
 import { createFakeTarget } from './targets/fake.ts'
 import { createFixtureTarget } from './targets/fixture.ts'
 import { createProductTarget } from './targets/product.ts'
+import { diskResult } from './redact.ts'
 import type { Target } from './types.ts'
 
 const { values: v } = parseArgs({
@@ -54,7 +55,10 @@ console.log(`target ${target.name}: ${cases.length} cases x ${reps} reps, estima
 const result = await runEvals({
   target, cases, reps, concurrency: Number(v.concurrency), budgetUsd,
   onChat: (row, res) => {
-    fs.writeFileSync(path.join(out, 'raw', `${row.caseId}-r${row.rep}-c${row.chat}.json`), JSON.stringify({ row, result: res }, null, 1))
+    // A product run's inputs are the eval brand's tool data: on disk (kept forever, public repo) only hashes and short
+    // excerpts, the canary redacted (p3-eval-observability rev 2, rec 6).
+    const kept = targetName === 'product' && res ? diskResult(res, row.canary) : res
+    fs.writeFileSync(path.join(out, 'raw', `${row.caseId}-r${row.rep}-c${row.chat}.json`), JSON.stringify({ row, result: kept }, null, 1))
   },
 })
 

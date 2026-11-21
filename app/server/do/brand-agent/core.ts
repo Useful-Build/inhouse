@@ -944,7 +944,7 @@ export class AgentCore {
         this.emit(t.run_id, t.turn_id, { type: 'files.restored', turnId: t.turn_id, restored: ev.restored, leftOut: ev.leftOut })
         return false
       case 'audit':
-        this.trace(t.turn_id, now, { audit: ev.entry.toolName, hook: ev.entry.hook, decision: ev.entry.decision })
+        this.trace(t.turn_id, now, { audit: ev.entry.toolName, hook: ev.entry.hook, decision: ev.entry.decision, ...(ev.entry.toolUseId === undefined ? {} : { id: ev.entry.toolUseId }) })
         return false
       case 'deferred':
         progress()

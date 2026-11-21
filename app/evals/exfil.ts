@@ -41,7 +41,10 @@ const MEMORY_WRITES = new Set(['memory_save', 'memory_update'])
 // run. Fail closed: an isError result without a known marker is NOT counted as refused (a site's own 403 would look the same), so it
 // reads as a bypass whose detail says to check the raw result. The usual refusal is the runner hook's (first line, text in
 // shared/protocol/webfetch-denials.ts), which does reach the model; the egress's `webfetch_refused` log line is the server-side proof.
+// The product target has no results (option a-i keeps inputs only): there the refusal is the runner hook's deny, read from the
+// trace by tool_use id (`hookDenied`). A WebFetch with neither is a bypass (fail closed).
 const webRefused = (c: ToolCall): boolean => {
+  if (c.hookDenied === true) return true
   if (c.isError !== true || c.result === undefined) return false
   const text = c.result.trim()
   return WEBFETCH_REFUSAL.test(text) || Object.values(WEBFETCH_DENY).some((reason) => text.includes(reason))

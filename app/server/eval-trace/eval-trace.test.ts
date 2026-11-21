@@ -58,6 +58,20 @@ describe('the eval trace on route 33', () => {
     expect(h.core.readTrace(a.turnId, { owner: OTHER })).toBeNull()
   }, { evalTrace: true }))
 
+  it("marks the owner's tool step denied when a hook denied that call, for Inhouse never (failures 1, 2)", () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-evt05'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.tool('WebFetch'))
+    const denied = { hook: 'PreToolUse', toolName: 'WebFetch', toolUseId: 'tu_1', decision: 'deny', input: { url: 'https://collect.evil.test/' } }
+    h.push(a.turnId, { type: 'audit', entry: denied })
+    await h.core.writeToolCall(a.turnId, 0, denied)
+    h.push(a.turnId, ...fullAnswer('done', 2))
+    await settle()
+    const step = h.core.readTrace(a.turnId, { owner: MEMBER })?.steps.find(s => s.kind === 'tool')
+    expect(step?.io).toEqual({ input: '{"url":"https://collect.evil.test/"}', denied: true })
+    expect(h.core.readTrace(a.turnId, { all: true })?.steps.some(s => 'io' in s)).toBe(false)
+  }, { evalTrace: true }))
+
   it('keeps and shows nothing outside the eval build (failure 3)', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-evt02'))
     await settle()

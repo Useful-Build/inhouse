@@ -66,6 +66,10 @@ export interface ToolCall {
   input: Record<string, unknown>
   result?: string
   isError?: boolean
+  /** The product target (eval build): a hook denied this call (route 33's `io.denied`), its refusal without a result. */
+  hookDenied?: boolean
+  /** The product target: the input was cut at the trace's cap (or not kept), so `input` is `{}` and grades as unknown. */
+  inputCut?: boolean
 }
 
 export interface Usage {

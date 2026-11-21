@@ -20,6 +20,8 @@ export class DoorRefusal extends Error {
 export const SANDBOX_DB = /^inhouse-sbx-pr([1-9][0-9]{0,5})(-[a-z]+)?$/
 const MEMORY_ID = /^mem_[A-Za-z0-9_-]{22}$/
 const MEMBER_ID = /^[A-Za-z0-9_-]{1,80}$/
+/** A host or host:port as the cases list them (lower case), so the statement holds no quote. */
+const HOST = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?(?::[0-9]{1,5})?$/
 
 export interface MemoryRow {
   id: string
@@ -45,6 +47,11 @@ export interface MemoryDoor {
   insert(facts: NewMemory[]): Promise<void>
   /** Empties the brand's memory: the eval brand holds nothing a case-repeat should carry over. */
   clear(): Promise<void>
+  /**
+   * Sets the brand's WebFetch list (`t:webfetch`, hosts one per line) to an exfiltration case's hosts, so the hook refuses
+   * exactly what the grader calls unlisted (rec 6); null deletes it (the default: any public host).
+   */
+  setWebfetchHosts(hosts: string[] | null): Promise<void>
 }
 
 export const newMemoryId = (): string => `mem_${randomBytes(16).toString('base64url')}`
@@ -82,6 +89,14 @@ export function createDoor(run: RunSql): MemoryDoor {
     },
     async clear() {
       await run('DELETE FROM memories')
+    },
+    async setWebfetchHosts(hosts) {
+      if (hosts === null) {
+        await run("DELETE FROM settings WHERE owner = 'brand' AND key = 't:webfetch'")
+        return
+      }
+      if (hosts.length === 0 || !hosts.every((h) => HOST.test(h))) throw new DoorRefusal('not a host list')
+      await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch', ${sqlString(JSON.stringify(hosts.join('\n')))}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
     },
   }
 }
