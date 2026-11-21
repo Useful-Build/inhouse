@@ -503,7 +503,10 @@ function loadSession(): SavedSession | null {
   return {
     started, chats, drafts,
     todayDraft: isStr(raw.todayDraft) ? raw.todayDraft : '',
-    modelSel: isStr(raw.modelSel) && data.models.some(m => m.id === raw.modelSel) ? raw.modelSel : null,
+    // The choice is the person's, kept in this browser like a draft. The product reads its models after the app starts, so with none
+    // known yet the saved id can't be checked and is kept; `activeMode` falls back to the default for one the team can't use, and
+    // a send names the mode it resolved, never the raw id.
+    modelSel: isStr(raw.modelSel) && (data.models.length === 0 || data.models.some(m => m.id === raw.modelSel)) ? raw.modelSel : null,
     feedback: Object.fromEntries(Object.entries(isRec(raw.feedback) ? raw.feedback : {}).filter(([, v]) => v === 'up' || v === 'down')) as SavedSession['feedback'],
     libraryView: LIBRARY_VIEWS.find(v => v === raw.libraryView) ?? 'masonry',
     answering: (Array.isArray(raw.answering) ? raw.answering : []).filter((id): id is string => isStr(id) && exists(id)),
