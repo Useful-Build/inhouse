@@ -149,32 +149,8 @@ export function jsonAnswer(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 }
 
-/** Reads a body up to `max` bytes; null when it's bigger (the declared length or the bytes themselves). */
-export async function readCapped(request: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
-  const declared = request.headers.get('content-length')
-  if (declared !== null && Number(declared) > max) return null
-  if (!request.body) return new Uint8Array(0)
-  const reader = request.body.getReader()
-  const parts: Uint8Array[] = []
-  let size = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    size += value.byteLength
-    if (size > max) {
-      await reader.cancel()
-      return null
-    }
-    parts.push(value)
-  }
-  const out = new Uint8Array(size)
-  let at = 0
-  for (const p of parts) {
-    out.set(p, at)
-    at += p.byteLength
-  }
-  return out
-}
+/** The one capped body reader (db/handler-kit.ts), re-exported for the egress routes. */
+export { readCapped } from '../db/handler-kit.ts'
 
 export function parseJson(bytes: Uint8Array): unknown {
   try {
