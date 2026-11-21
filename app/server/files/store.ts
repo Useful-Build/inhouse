@@ -8,7 +8,7 @@
 // An input, a pending or superseded output, a pending upload, a transcript (R2 `sessions/`, never in D1) or an unknown id
 // resolves to nothing, so every route answers 404 for it.
 //
-// Writes: every change and its audit line go in one `DB.batch`. A delete or restore of several files is one batch whose
+// Writes: every change, its audit line and its Activity lines (each guarded on this write's stamp) go in one `DB.batch`. A delete or restore of several files is one batch whose
 // every statement carries the same predicate over all its files ("each is still at the revision the request sent, or
 // already at the next one with this write's stamp"). The predicate holds for the whole batch iff it held at its start,
 // so a stale revision anywhere (another writer got in first) makes every statement match nothing and the batch changes
@@ -17,6 +17,7 @@ import { AuditArgsSchema } from '../../shared/contract/audit.ts'
 import type { AuditArgs, LibraryTypeSchema } from '../../shared/contract/audit.ts'
 import type { z } from 'zod'
 import { recordActivity } from '../activity/store.ts'
+import type { ActivityGuard } from '../activity/store.ts'
 import type { ActivityTemplateId } from '../activity/templates.ts'
 import { writeStamp } from '../db/ids.ts'
 import { libraryKey } from '../db/r2-keys.ts'
@@ -112,8 +113,8 @@ export function libraryStore({ db, bucket }: { db: D1Database; bucket: Pick<Keye
     ).bind(at.nowMs, at.actorId, action, target?.kind ?? null, target?.id ?? null, JSON.stringify(rest), at.requestId, stamp)
   }
 
-  const personLine = (template: ActivityTemplateId, fields: Record<string, number>, at: At, key: string) =>
-    recordActivity(db, { template, fields, kind: 'change', actorId: at.actorId, atMs: at.nowMs }, { source: 'library', key })
+  const personLine = (template: ActivityTemplateId, fields: Record<string, number>, at: At, key: string, guard?: ActivityGuard) =>
+    recordActivity(db, { template, fields, kind: 'change', actorId: at.actorId, atMs: at.nowMs }, { source: 'library', key }, guard)
 
   /** Delete (`deleted`) or restore (`live`) the files, against their revisions. */
   async function mark(to: 'deleted' | 'live', items: readonly { id: string; ifRev: number }[], at: At): Promise<WriteOutcome> {
@@ -142,7 +143,11 @@ export function libraryStore({ db, bucket }: { db: D1Database; bucket: Pick<Keye
         .bind(c.id, c.source, deletedAt, deletedBy, stamp, ...guard))
     const fileIds = changes.map(c => c.id)
     const action = to === 'deleted' ? 'library.deleted' : 'library.restored'
-    const results = await storage('D1', () => db.batch([...writes, audit(at, { action, fileIds }, null, 'library_marks', stamp)]))
+    // One Activity line per changed file, keyed by the revision it makes, in the same batch and only while this write's
+    // stamp is on that file's mark: a batch that changes nothing writes no line, a failed one rolls them back.
+    const template = to === 'deleted' ? 'library_deleted' : 'library_restored'
+    const lines = changes.map(c => personLine(template, {}, at, `${c.id}|rev${c.rev + 1}`, { sql: 'EXISTS (SELECT 1 FROM library_marks WHERE file_id = ? AND req_id = ?)', params: [c.id, stamp] }))
+    const results = await storage('D1', () => db.batch([...writes, audit(at, { action, fileIds }, null, 'library_marks', stamp), ...lines]))
     const changed = results.slice(0, writes.length).map(r => r.meta.changes)
     // The predicate is the same for every statement: all changed, or none (someone else's write got in first).
     if (changed.some(n => n !== 1)) {
@@ -151,10 +156,6 @@ export function libraryStore({ db, bucket }: { db: D1Database; bucket: Pick<Keye
       if (ids.some(id => !now.has(id))) return { not_found: true }
       return { conflict: ids.map(id => now.get(id)!) }
     }
-    // One Activity line per changed file, keyed by the revision it made. TODO(#250): move each into the batch with
-    // `recordActivity`'s guard (`stamped`) once P4 W2's guarded variant merges; until then it follows the commit.
-    const template = to === 'deleted' ? 'library_deleted' : 'library_restored'
-    await storage('D1', () => db.batch(changes.map(c => personLine(template, {}, at, `${c.id}|rev${c.rev + 1}`))))
     const after = await resolve(ids)
     return { ok: ids.map(id => after.get(id)!) }
   }
