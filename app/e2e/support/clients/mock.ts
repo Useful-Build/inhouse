@@ -78,6 +78,17 @@ const switches = ({ stage, scenario = 'Normal', demo }: Restage) => ({
   [KEYS.switches]: JSON.stringify({ stage, scenario, ambient: demo?.ambient ?? 'Off', animateMark: demo?.animateMark ?? false }),
 })
 
+/**
+ * The page's route has resolved. The Approvals, Routines, Activity, Tools and Skills pages (and the Library, Usage and Settings)
+ * load their code on first visit, so right after a navigation the page can still be the loading skeleton (`data-page-loading`):
+ * a spec that reads or screenshots then sees the skeleton. `main` exists in the same render as either the page or its skeleton,
+ * so wait for `main`, then for the skeleton to be gone.
+ */
+export async function routeReady(page: Page): Promise<void> {
+  await page.locator('main').waitFor()
+  await page.locator('[data-page-loading]').waitFor({ state: 'detached' })
+}
+
 export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt(): Promise<number> } {
   let names: Names | undefined
   const install = async (entries: Record<string, string>, once: boolean, clear: boolean, stampStart = false) => {
@@ -134,7 +145,11 @@ export function mockClient(page: Page, baseURL?: string): Fx & { demoStartedAt()
         await page.goto('about:blank')
       }
     },
-    open: (hash = '') => page.goto('/?demo' + hash),
+    open: async (hash = '') => {
+      const res = await page.goto('/?demo' + hash)
+      await routeReady(page)
+      return res
+    },
     /** The real-time stamp the demo saved at its first load (ms): the zero of its clock. Mock only (states.ts). */
     async demoStartedAt() { return (await saved()).demo.demoStartedAt as number },
   }

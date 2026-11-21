@@ -3,7 +3,7 @@
 // the lists in keys.ts, the settings table, the error constants. A schema (anything from a file that imports zod) belongs
 // to the server and the tests. Fails when one of them imports a value from another contract file, or when a plain
 // module starts importing something at run time.
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -39,6 +39,39 @@ describe('the upload and download code loads with the first file, not with Today
   for (const file of ['src/agent/http/client.ts', 'src/state/store.ts', 'src/components/Composer.tsx', 'src/screens/Chats.tsx']) {
     it(`${file} imports them only as types or at run time later`, () => {
       for (const i of runtimeImports(read(file))) for (const re of LAZY) expect(re.test(i), `${file} imports ${i} up front`).toBe(false)
+    })
+  }
+})
+
+describe('the screens Today does not need load on first visit, not with the entry', () => {
+  // scripts/check-bundle.mjs holds Today's first load to 240 KB gzip. Today and Chats stay in the entry; every other screen is a
+  // lazy route in App.tsx (a dynamic import), and nothing else in src imports one at run time (that would pull it back in).
+  const LAZY_SCREENS = ['Approvals', 'Routines', 'Activity', 'Tools', 'Skills', 'Library', 'Usage', 'Settings']
+  const files = (dir: string): string[] => readdirSync(new URL(`../${dir}`, import.meta.url), { withFileTypes: true })
+    .flatMap(e => (e.isDirectory() ? files(`${dir}/${e.name}`) : /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [`${dir}/${e.name}`] : []))
+  for (const name of LAZY_SCREENS) {
+    it(`${name} is a dynamic import in App.tsx and imported at run time nowhere else`, () => {
+      const app = read('src/App.tsx')
+      expect(app, `${name} is not lazy in App.tsx`).toMatch(new RegExp(`lazyRoute\\(\\(\\) => import\\('\\./screens/${name}'\\)`))
+      const re = new RegExp(`(^|/)screens/${name}(\\.tsx?)?$|^\\./${name}$`)
+      for (const file of files('src')) {
+        const hit = runtimeImports(read(file)).filter(i => re.test(i))
+        expect(hit, `${file} imports ${name} up front`).toEqual([])
+      }
+    })
+  }
+})
+
+describe('the five screens moved out of the entry are prefetched when the shell is idle', () => {
+  // So a first visit finds its chunk already loaded; the skeleton shows only on a slow link. Library, Usage and Settings are not prefetched.
+  for (const name of ['Approvals', 'Routines', 'Activity', 'Tools', 'Skills']) {
+    it(`${name}'s chunk is imported by the lazy route and by the prefetch list`, () => {
+      expect(read('src/App.tsx').split(`import('./screens/${name}')`).length - 1).toBeGreaterThanOrEqual(2)
+    })
+  }
+  for (const name of ['Library', 'Usage', 'Settings']) {
+    it(`${name} is not prefetched`, () => {
+      expect(read('src/App.tsx').split(`import('./screens/${name}')`).length - 1).toBe(1)
     })
   }
 })
