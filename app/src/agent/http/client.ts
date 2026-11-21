@@ -15,7 +15,6 @@ import type {
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
-import { downloadFile, uploadFile } from './files'
 import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -866,6 +865,8 @@ export class HttpAgent implements AgentClient {
   uploadFile = async (chatId: string, file: File, signal?: AbortSignal): Promise<{ fileId: string; name: string }> => {
     await this.lanes.get(`chat:${chatId}`)
     try {
+      // Loaded when a file is first sent: the entry's first load has a size budget (scripts/check-bundle.mjs).
+      const { uploadFile } = await import('./files')
       const kept = await uploadFile(this.http, chatId, file, signal)
       return { fileId: kept.fileId, name: kept.name }
     } catch (e) {
@@ -875,7 +876,7 @@ export class HttpAgent implements AgentClient {
   }
   /** Route 41. A 401, or a 403 for a person who was removed, is the signed-out state, as on every other call. */
   downloadFile = async (fileId: string): Promise<{ blob: Blob; name: string | null }> => {
-    try { return await downloadFile(this.http, fileId) } catch (e) {
+    try { return await (await import('./files')).downloadFile(this.http, fileId) } catch (e) {
       if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
       throw e
     }

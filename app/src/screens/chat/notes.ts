@@ -21,7 +21,11 @@ export const NOTICE_TEXT = {
 
 /** Route 39 refuses a file name over 230 UTF-8 bytes (bad name). */
 export const ATTACHMENT_NAME_MAX_BYTES = 230
-export const attachmentNameTooLong = (name: string): boolean => new TextEncoder().encode(name).length > ATTACHMENT_NAME_MAX_BYTES
+/** The server's name rule (route 39): at most 200 characters (UTF-16 units) and 230 bytes, and a name `encodeURIComponent` can encode (no lone surrogate), since it travels in a header. */
+export const attachmentNameTooLong = (name: string): boolean => {
+  if (name.length > 200 || new TextEncoder().encode(name).length > ATTACHMENT_NAME_MAX_BYTES) return true
+  try { encodeURIComponent(name); return false } catch { return true }
+}
 /** Why a name is refused: said on the file's chip and when the agent refuses a send with it (about 76 characters of Chinese, Japanese or Korean at 3 bytes each). */
 export const ATTACHMENT_NAME_TOO_LONG = 'The name is too long. Keep it under 230 letters or numbers, or about 76 characters in Chinese, Japanese or Korean.'
 export const NO_MODEL_NOTE = 'No model yet. An Admin turns one on in Settings.'

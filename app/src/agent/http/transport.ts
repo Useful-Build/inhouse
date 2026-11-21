@@ -134,6 +134,8 @@ export class Transport {
     const timer = setTimeout(() => { timedOut = true; ctl.abort() }, timeoutMs ?? this.timeoutMs)
     const cancel = () => ctl.abort()
     signal?.addEventListener('abort', cancel, { once: true })
+    // Aborted while the schemas or the headers were awaited: the listener missed it.
+    if (signal?.aborted) ctl.abort()
     try {
       let res: Response
       try {
