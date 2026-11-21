@@ -141,11 +141,12 @@ async function messages(request: Request, body: object, model: string, headers: 
 
 /**
  * How a call closes. `unsent`: no upstream request went out (a connect failure, the caller gone before the send), so
- * nothing was billed: zero, not cut. `tally`: the answer is whole and carried its usage: priced from it. `cut`: anything
+ * nothing was billed: zero, not cut. `refused`: the model service answered with its own error, which bills nothing: zero,
+ * marked `refused` for the trace. `tally`: the answer is whole and carried its usage: priced from it. `cut`: anything
  * else after the send (aborted, cancelled, timed out, lease gone, no final event, no usage): priced at the larger of its
  * admitted worst case (8.3) and its running tally (search results past the allowance can pass the worst case).
  */
-type CloseKind = 'unsent' | 'tally' | 'cut'
+type CloseKind = 'unsent' | 'refused' | 'tally' | 'cut'
 
 /** One admitted, confirmed call: sent once, renewed every 20 s, closed exactly once. */
 class CallLease {
@@ -204,7 +205,11 @@ class CallLease {
     this.request.signal.removeEventListener('abort', this.onAbort)
     if (kind === 'cut') this.upstreamAbort.abort()
     const tally = this.priced(this.usage())
-    const usage = kind === 'unsent' ? { ...ZERO, micro: 0 } : kind === 'cut' ? { ...tally, micro: Math.max(this.worst.micro, tally.micro) } : tally
+    const usage: ModelCallUsage =
+      kind === 'unsent' ? { ...ZERO, micro: 0 }
+      : kind === 'refused' ? { ...ZERO, micro: 0, refused: true }
+      : kind === 'cut' ? { ...tally, micro: Math.max(this.worst.micro, tally.micro) }
+      : tally
     try {
       await this.d.rpc.releaseModelCall(this.turnId, this.callId, { usage, cut: kind === 'cut' })
     } catch (e) {
@@ -254,10 +259,10 @@ class CallLease {
       return messagesError(502, 'api_error', 'The model service redirected.')
     }
     if (!res.ok) {
-      // The API's own error answer bills nothing: closed at zero (an empty tally). Any other error body (a gateway 5xx or
+      // The API's own error answer bills nothing: closed at zero, marked refused. Any other error body (a gateway 5xx or
       // 524 after forwarding) may follow a generation the model billed: cut.
       const mapped = await mapUpstreamError(res, h)
-      await this.close(mapped.anthropic ? 'tally' : 'cut')
+      await this.close(mapped.anthropic ? 'refused' : 'cut')
       return mapped.response
     }
     const streamed = (res.headers.get('content-type') ?? '').includes('text/event-stream')

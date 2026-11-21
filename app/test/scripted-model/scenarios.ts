@@ -134,10 +134,12 @@ export const SCENARIOS: Record<string, Scenario> = {
   },
 
   /**
-   * Asks the person with `question_ask` (deferred by the hook), then answers once resumed with `""`. Turn 1 is the
-   * resumed turn: its last user message holds the call's result with the person's answer. If the CLI adds an assistant
-   * message of its own on that resume (as it does after a cut turn), the resume lands on turn 2 and is a loud miss: the
-   * container check confirms which.
+   * Asks the person with `question_ask`, then answers its result. On fleet/agent-chat today nothing defers the call:
+   * `question_ask` is still a stub (server/mcp/tools/stubs/, P5 builds it) and the runner's PreToolUse hooks only audit,
+   * so the CLI gets the stub's `not_available_yet` refusal at once and turn 1 answers that result in the same run. Once
+   * P5 defers the call, turn 1 becomes the resumed turn (the run resumed with `""`, the last user message holding the
+   * person's answer); if the CLI adds an assistant message of its own on that resume (as it does after a cut turn), the
+   * resume lands on turn 2 and is a loud miss.
    */
   ask: {
     turns: [
