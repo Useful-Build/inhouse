@@ -92,8 +92,9 @@ test('Composer logo row: 3 logos, a +N chip for the rest, and the real count', a
   const logos = chip.locator('img')
   const more = chip.getByTestId('tools-more')
 
-  // The sample has 6 tools.
-  await expect(chip).toContainText('6 tools connected')
+  // The sample has 6 tools, all read: the logos and +3 say so, and the count is in the button's name, not written out.
+  await expect(chip).toHaveAccessibleName(/6 tools connected$/)
+  await expect(chip).not.toContainText('tools connected')
   await expect(logos).toHaveCount(3)
   await expect(more).toHaveText('+3')
   await shot(page, 'today-logo-row-1440')

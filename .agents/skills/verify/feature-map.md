@@ -48,7 +48,7 @@ Today: sort at Run
 Today: composer logo row
   Path:     Today -> composer
   Selector: tool logos, "+N" chip
-  Expected: 3 logos, a +N chip for the rest, and the count is real
+  Expected: 3 logos, a +N chip for the rest, and the count is real (in the button's name); the label is written out only when it says what the logos can't: no tools connected, some off in this chat, or some not read yet
   Covered:  e2e/dots-and-today.spec.ts
 
 ## Approvals
