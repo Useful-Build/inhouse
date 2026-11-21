@@ -19,7 +19,8 @@
 //     model, the test issuer's switch or the eval brand marker; the marker (INHOUSE_EVAL_BRAND) passes in a per-PR,
 //     candidate or product config, so a brand could be graded or traced as an eval brand.
 // 13. (P4) a sandbox product Worker binds a hub that isn't its own (the house's `inhouse-hub`, another PR's, a live
-//     Worker), another entrypoint (the hub's server surface) or a second service; or a hub config (--hub) gets a route,
+//     Worker; for the eval deployment, any hub but `inhouse-sbx-eval-hub`), another entrypoint (the hub's server
+//     surface) or a second service; or a hub config (--hub, --eval --hub) gets a route,
 //     storage, a service binding, an unbundled build, a `secrets` list wrangler would fail on, or (candidate) a store
 //     credential or the test switch.
 // Oracles: the literal pass fixtures in check-product-config-fixtures/sandbox/ and one literal change per rule below,
@@ -367,7 +368,8 @@ const EVAL_CASES = [
   // The sandbox's own rules hold in eval mode too.
   ['another account', c => { c.account_id = 'fedcba9876543210fedcba9876543210' }, 'account_id is missing or is not the sandbox account'],
   ['3 containers', c => { c.containers[0].max_instances = 3 }, 'containers[0].max_instances must be 1 or 2'],
-  ['a service binding', c => { c.services = [{ binding: 'LIVE', service: 'live-product' }] }, 'services is set: a sandbox config may not use it'],
+  // (eval hub) still refused; the eval deployment's own refusal names the one binding it may hold.
+  ['a service binding', c => { c.services = [{ binding: 'LIVE', service: 'live-product' }] }, 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub'],
   ['__proto__ in the AI binding', c => c, 'config.ai.__proto__ is a forbidden key', after('"ai":{"binding":"AI"', '"__proto__":{"remote":true}')],
 ]
 
@@ -591,7 +593,7 @@ describe('(P4) --hub: the connector hub\'s sandbox config (failure 12)', () => {
       const file = fileURLToPath(new URL(`../${name}`, import.meta.url))
       let text
       try { text = readFileSync(file, 'utf8') } catch { continue } // the hub's configs arrive with P4; nothing to read before
-      for (const mode of [PR12_HUB, CANDIDATE_HUB]) {
+      for (const mode of [PR12_HUB, CANDIDATE_HUB, [...EVAL, '--hub']]) {
         expect(run([...mode, file]).status, name).toBe(2)
         const r = run([...mode, write(JSON.parse(stripJsonc(text)))])
         expect(r.status, name).toBe(1)
@@ -609,32 +611,124 @@ describe('(P4) --hub: the connector hub\'s sandbox config (failure 12)', () => {
   })
 })
 
-describe('(P4) the hub and the eval deployment (failures 12 and 13)', () => {
-  test('an eval config binds no hub yet: any services entry is refused, the candidate\'s, a PR\'s or the house\'s', () => {
-    for (const service of ['inhouse-sbx-hub', 'inhouse-sbx-pr12-hub', 'inhouse-hub', 'inhouse-sbx-eval-hub']) {
+describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
+  const EVAL_HUB_NAME = 'inhouse-sbx-eval-hub'
+  const EVAL_HUB = [...EVAL, '--hub']
+  const evalEntry = { binding: 'HUB', service: EVAL_HUB_NAME, entrypoint: 'ReadGateway' }
+  test('the eval product may bind inhouse-sbx-eval-hub\'s ReadGateway, or no hub (a build before P4)', () => {
+    const config = load('pass-eval.json')
+    expect(config.services ?? []).toEqual([])
+    config.services = [evalEntry]
+    const r = run([...EVAL, write(config)])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
+  const SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub'
+  const p5 = [evalEntry, { binding: 'HUB_CONNECT', service: EVAL_HUB_NAME, entrypoint: 'ConnectGateway' }, { binding: 'HUB_DELIVERY', service: EVAL_HUB_NAME, entrypoint: 'DeliveryGateway' }]
+  const EVAL_PRODUCT_CASES = [
+    // #266's P5 set passes for a PR and the candidate; the eval deployment takes the read binding alone.
+    ['P5\'s three bindings', p5, SHAPE],
+    ['P5\'s connect binding alone', [p5[1]], SHAPE],
+    ['the read and the delivery bindings', [evalEntry, p5[2]], SHAPE],
+    ['the candidate\'s hub', { ...evalEntry, service: 'inhouse-sbx-hub' }, 'services[0].service: "inhouse-sbx-hub" is not the eval deployment\'s hub name (inhouse-sbx-eval-hub)'],
+    ['a PR\'s hub', { ...evalEntry, service: 'inhouse-sbx-pr12-hub' }, 'services[0].service: "inhouse-sbx-pr12-hub" is not the eval deployment\'s hub name'],
+    ['the house hub', { ...evalEntry, service: 'inhouse-hub' }, 'services[0].service: "inhouse-hub" is not the eval deployment\'s hub name'],
+    ['its own product Worker', { ...evalEntry, service: 'inhouse-sbx-eval' }, 'services[0].service: "inhouse-sbx-eval" is not the eval deployment\'s hub name'],
+    ['another eval name', { ...evalEntry, service: 'inhouse-sbx-eval-db' }, 'services[0].service: "inhouse-sbx-eval-db" is not the eval deployment\'s hub name'],
+    ['the server entrypoint', { ...evalEntry, entrypoint: 'ServerGateway' }, SHAPE],
+    ['the default export', { binding: 'HUB', service: EVAL_HUB_NAME }, SHAPE],
+    ['another binding name', { ...evalEntry, binding: 'LIVE' }, SHAPE],
+    ['an environment', { ...evalEntry, environment: 'production' }, SHAPE],
+    ['a second entry', [evalEntry, { ...evalEntry, binding: 'HUB2' }], SHAPE],
+    ['the hub binding twice', [evalEntry, evalEntry], SHAPE],
+    ['a live product', { binding: 'LIVE', service: 'live-product' }, SHAPE],
+  ]
+  for (const [name, entry, text] of EVAL_PRODUCT_CASES) {
+    test(`the eval product refuses ${name}`, () => {
       const config = load('pass-eval.json')
-      config.services = [{ binding: 'HUB', service, entrypoint: 'ReadGateway' }]
+      config.services = Array.isArray(entry) ? entry : [entry]
       const r = run([...EVAL, write(config)])
-      expect(r.status, service).toBe(1)
-      expect(failureLines(r)).toEqual([expect.stringContaining('services is set: a sandbox config may not use it (the eval deployment has no hub)')])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual([expect.stringContaining(text)])
+    })
+  }
+  test('passes pass-eval-hub.json as the eval hub', () => {
+    const r = run([...EVAL_HUB, `${fixtures}sandbox/pass-eval-hub.json`])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('may deploy to the sandbox (eval hub)')
+  })
+  const EVAL_HUB_CASES = [
+    ['the candidate hub\'s name', c => { c.name = 'inhouse-sbx-hub' }, 'name: "inhouse-sbx-hub" is not the eval deployment\'s hub name (inhouse-sbx-eval-hub)'],
+    ['a PR\'s hub name', c => { c.name = 'inhouse-sbx-pr12-hub' }, 'name: "inhouse-sbx-pr12-hub" is not the eval deployment\'s hub name'],
+    ['the house hub\'s name', c => { c.name = 'inhouse-hub' }, 'name: "inhouse-hub" is not the eval deployment\'s hub name'],
+    ['the eval product\'s name', c => { c.name = 'inhouse-sbx-eval' }, 'name: "inhouse-sbx-eval" is not the eval deployment\'s hub name'],
+    ['a store', c => { c.vars.SHOPIFY_SHOP = 'real-store' }, 'vars.SHOPIFY_SHOP must be empty: no store credential in the sandbox account'],
+    ['a client id', c => { c.vars.SHOPIFY_CLIENT_ID = 'abc' }, 'vars.SHOPIFY_CLIENT_ID must be empty'],
+    ['a secret in its vars', c => { c.vars.SHOPIFY_CLIENT_SECRET = 'x' }, 'vars.SHOPIFY_CLIENT_SECRET is set: the eval hub\'s vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only'],
+    ['the test switch', c => { c.vars.INHOUSE_TEST_BUILD = '1' }, 'vars.INHOUSE_TEST_BUILD is set: the eval hub\'s vars'],
+    ['the eval brand marker', c => { c.vars.INHOUSE_EVAL_BRAND = '1' }, 'vars.INHOUSE_EVAL_BRAND is set: the eval hub\'s vars'],
+    ['the gateway id', c => { c.vars.AI_GATEWAY_ID = 'inhouse-eval' }, 'vars.AI_GATEWAY_ID is set: the eval hub\'s vars'],
+    ['vars as a list', c => { c.vars = [] }, 'vars must be a plain object in the eval hub config'],
+    ['an AI binding (the hub runs no model)', c => { c.ai = { binding: 'AI' } }, 'ai is set'],
+    ['required secrets (wrangler would fail the deploy)', c => { c.secrets = { required: ['HUB_TOKEN_KEYS'] } }, 'secrets is set: a sandbox config may not use it'],
+    ['a define', c => { c.define = { __INHOUSE_HUB_TEST__: 'true' } }, 'define is set: a sandbox config may not use it'],
+    ['a service binding', c => { c.services = [evalEntry] }, 'services is set: a sandbox hub config binds no other Worker'],
+    ['a route', c => { c.routes = [{ pattern: `inhouse-sbx-eval-brand.${ZONE}`, custom_domain: true }] }, 'routes is set: a sandbox hub config may not use it'],
+    ['the eval D1', c => { c.d1_databases = [{ binding: 'DB', database_name: 'inhouse-sbx-eval-db' }] }, 'd1_databases is set: a sandbox hub config may not use it'],
+    ['version metadata', c => { c.version_metadata = { binding: 'CF_VERSION_METADATA' } }, 'version_metadata is set: a sandbox hub config may not use it'],
+    ['a rebundle', c => { delete c.no_bundle }, 'no_bundle must be true in a sandbox hub config'],
+    ['workers.dev on', c => { c.workers_dev = true }, 'workers_dev must be false'],
+    ['another account', c => { c.account_id = 'fedcba9876543210fedcba9876543210' }, 'account_id is missing or is not the sandbox account'],
+  ]
+  for (const [name, change, text] of EVAL_HUB_CASES) {
+    test(`the eval hub refuses ${name}`, () => {
+      const config = load('pass-eval-hub.json')
+      change(config)
+      const r = run([...EVAL_HUB, write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual([expect.stringContaining(text)])
+    })
+  }
+  test('the eval hub passes as no other hub, no other hub as the eval\'s, and the eval product fails as its hub', () => {
+    const asCandidate = run([...CANDIDATE_HUB, `${fixtures}sandbox/pass-eval-hub.json`])
+    expect(asCandidate.status).toBe(1)
+    expect(asCandidate.stderr).toContain('name: "inhouse-sbx-eval-hub" is the eval deployment\'s name, not the candidate\'s')
+    const asPr = run([...PR12_HUB, `${fixtures}sandbox/pass-eval-hub.json`])
+    expect(asPr.status).toBe(1)
+    expect(asPr.stderr).toContain('name: "inhouse-sbx-eval-hub" is not PR 12\'s hub name')
+    for (const other of ['pass-candidate-hub.json', 'pass-per-pr-hub.json']) {
+      const r = run([...EVAL_HUB, `${fixtures}sandbox/${other}`])
+      expect(r.status, other).toBe(1)
+      expect(r.stderr, other).toContain('is not the eval deployment\'s hub name (inhouse-sbx-eval-hub)')
     }
+    const productAsHub = run([...EVAL_HUB, `${fixtures}sandbox/pass-eval.json`])
+    expect(productAsHub.status).toBe(1)
+    expect(productAsHub.stderr).toContain('name: "inhouse-sbx-eval" is not the eval deployment\'s hub name')
+    expect(productAsHub.stderr).toContain('d1_databases is set: a sandbox hub config may not use it')
+    const hubAsProduct = run([...EVAL, `${fixtures}sandbox/pass-eval-hub.json`])
+    expect(hubAsProduct.status).toBe(1)
+    expect(hubAsProduct.stderr).toContain('name: "inhouse-sbx-eval-hub" is not the eval deployment\'s worker name')
   })
-  test('--eval --hub is a usage error, and an eval name is never the candidate\'s hub', () => {
-    const r = run(['--sandbox', '--eval', '--hub', `${fixtures}sandbox/pass-candidate-hub.json`])
-    expect(r.status).toBe(2)
-    expect(r.stdout).toBe('')
-    const config = load('pass-candidate-hub.json')
-    config.name = 'inhouse-sbx-eval'
-    const c = run([...CANDIDATE_HUB, write(config)])
+  test('the candidate and a PR bind no eval hub', () => {
+    const candidate = load('pass-candidate.json')
+    candidate.services = [evalEntry]
+    const c = run([...CANDIDATE, write(candidate)])
     expect(c.status).toBe(1)
-    expect(c.stderr).toContain('name: ')
+    expect(c.stderr).toContain('services[0].service: "inhouse-sbx-eval-hub" is the eval deployment\'s name, not the candidate\'s')
+    const pr = load('pass-per-pr.json')
+    pr.services = [evalEntry]
+    const p = run([...PR12, write(pr)])
+    expect(p.status).toBe(1)
+    expect(p.stderr).toContain('services[0].service: "inhouse-sbx-eval-hub" is not PR 12\'s hub name')
   })
-  test('the candidate product binds no eval name as its hub', () => {
-    const config = load('pass-candidate.json')
-    config.services = [{ binding: 'HUB', service: 'inhouse-sbx-eval', entrypoint: 'ReadGateway' }]
-    const r = run([...CANDIDATE, write(config)])
-    expect(r.status).toBe(1)
-    expect(r.stderr).toContain('services[0].service: ')
+  test('usage: --hub only right after --eval, once', () => {
+    const file = `${fixtures}sandbox/pass-eval-hub.json`
+    for (const args of [['--sandbox', '--hub', '--eval', file], ['--sandbox', '--eval', '--hub', '--hub', file], ['--sandbox', '--eval', file, '--hub']]) {
+      const r = run(args)
+      expect(r.status, args.join(' ')).toBe(2)
+      expect(r.stdout).toBe('')
+    }
   })
 })
 
@@ -701,11 +795,12 @@ describe('(P5) the product\'s three hub bindings: exact sets, not any subset (fa
       expect(r.stderr).toContain(text)
     }
   })
-  test('the eval deployment still binds none of them', () => {
+  // (eval hub) the eval deployment binds its own hub's read surface only, never P5's three.
+  test('the eval deployment binds none of P5\'s set', () => {
     const config = load('pass-eval.json')
     config.services = three('inhouse-sbx-eval-hub')
     const r = run([...EVAL, write(config)])
     expect(r.status).toBe(1)
-    expect(failureLines(r)).toEqual([expect.stringContaining('services is set: a sandbox config may not use it (the eval deployment has no hub)')])
+    expect(failureLines(r)).toEqual([expect.stringContaining('services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub')])
   })
 })

@@ -35,6 +35,7 @@
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --candidate <config path>
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --eval <config path>
 //   ... --sandbox --per-pr <N> --hub <config path>   or   ... --sandbox --candidate --hub <config path>
+//   or   ... --sandbox --eval --hub <config path>
 //     (P4) the connector hub's deploy config for that sandbox deployment (rules below).
 // The caller states the mode (never inferred from the config, which a PR writes). Both variables are required (exit 2
 // without them). The config must be plain JSON, read with JSON.parse alone: a comment or anything JSON.parse refuses
@@ -90,10 +91,12 @@
 // migrations, observability, `rules`, `python_modules`, `limits`, `send_metrics`, `$schema`; not `keep_vars`): no route,
 // custom domain, assets, D1, R2, container or version metadata; `main` is set and `no_bundle` is true (the bundle that
 // was built deploys as it is); per-PR: vars.INHOUSE_TEST_BUILD is "1" (the hub's test build) and INHOUSE_ACCESS isn't
-// needed; candidate: `vars`, when set, is a plain object holding only SHOPIFY_SHOP and SHOPIFY_CLIENT_ID, both empty (no store
-// credential in the sandbox account, p4 plan "Must not"), and the product rules don't apply (the hub isn't the product
-// Worker). `secrets` (wrangler fails a deploy whose `secrets.required` aren't set) and `define` (applied at bundle time)
-// must be empty, as every unlisted key: no generated sandbox or candidate hub config carries `secrets.required`. Any
+// needed; candidate and eval: `vars`, when set, is a plain object holding only SHOPIFY_SHOP and SHOPIFY_CLIENT_ID, both
+// empty (no store credential in the sandbox account, p4 plan "Must not"), and the product rules don't apply (the hub
+// isn't the product Worker); eval: the name is exactly the eval hub's (`evalNames().hub`, `inhouse-sbx-eval-hub`), and
+// the eval product's rules (the AI binding, the gateway, the eval brand marker) don't apply: the hub runs no model.
+// `secrets` (wrangler fails a deploy whose `secrets.required` aren't set) and `define` (applied at bundle time) must be
+// empty, as every unlisted key: no generated sandbox or candidate hub config carries `secrets.required`. Any
 // runtime secret the candidate hub needs is a per-run value the ops deploy sets at deploy time, not a store credential.
 // Eval mode (p3-eval-observability rev 2, rec 2): the eval build's deployment (vite --mode product-eval), deployed from
 // main only by the ops repo. The one mode that allows the AI binding and gateway vars beside the test issuer (the eval
@@ -112,9 +115,11 @@
 //     without one, so the deployment must carry it).
 // The generic product, per-PR and candidate rules are unchanged by it; checkPool's "no gateway on a test build" rule is
 // the one it lifts.
-// Eval and the hub (P4): the eval deployment has no hub yet (`evalNames()` names none), so `--eval --hub` is a usage
-// error and an eval config's `services` is refused like any other unlisted key, as before P4. When the eval build binds
-// the hub, its own eval hub name comes first (a line A decision), never the candidate's or a PR's.
+// Eval and the hub (P4, line A's eval hub): the eval deployment has its own hub, `evalNames().hub`
+// (`inhouse-sbx-eval-hub`). An eval product config's `services` is nothing (a build before P4) or exactly
+// `{ binding: "HUB", service: "inhouse-sbx-eval-hub", entrypoint: "ReadGateway" }`: never P5's HUB_CONNECT or
+// HUB_DELIVERY (the eval brand connects no store and delivers nothing), and never the candidate's, a PR's or the house's
+// hub; `--eval --hub` locks the eval hub's own config by the hub rules above.
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -342,6 +347,9 @@ const OBSERVABILITY_PART_KEYS = new Set(['enabled', 'head_sampling_rate', 'invoc
 const SANDBOX_HUB_ENTRYPOINTS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
 /** (P4, P5) The allowed sets of those bindings, exactly: P4's read binding alone, or P5's three. */
 const SANDBOX_HUB_SETS = [['HUB'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY']]
+/** (eval hub) The eval deployment's one allowed set: its own hub's read binding alone, never P5's connect or delivery. */
+const EVAL_HUB_SETS = [['HUB']]
+const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub, entry { binding, service, entrypoint } and nothing else (no P5 bindings)'
 const SERVICES_SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }, each entry { binding, service: <its own hub>, entrypoint } and nothing else'
 /** (P4) The keys a sandbox hub config may give a value (a subset of SANDBOX_KEYS). */
 const HUB_KEYS = new Set([
@@ -358,7 +366,7 @@ const isInsidePath = p => typeof p === 'string' && p !== '' && !isAbsolute(p) &&
 /**
  * Every reason this config may not deploy to the sandbox (empty: it may). `accountId` and `zone` are the sandbox's own
  * (CF_SANDBOX_ACCOUNT_ID, SBX_ZONE); `mode` is `{ perPr: N }`, `{ candidate: true }` or `{ eval: true }`, from the
- * caller, with `hub: true` for the connector hub's config (P4; per-PR and candidate only); `configDir` is
+ * caller, with `hub: true` for the connector hub's config (P4); `configDir` is
  * the folder the config file sits in (wrangler resolves an image path against it). A bad argument throws, since no
  * config could pass against it.
  */
@@ -371,7 +379,6 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   if (perPr) assertPrNumber(mode.perPr)
   if (mode.hub !== undefined && mode.hub !== true) throw new SandboxNameError('mode.hub must be true or left out')
   const hub = mode.hub === true
-  if (hub && evalMode) throw new SandboxNameError('the eval deployment has no hub: { eval: true } takes no hub')
   if (typeof configDir !== 'string' || !isAbsolute(configDir)) throw new SandboxNameError('configDir must be an absolute folder')
   // Per-PR and eval bind exact names; the candidate any shared sandbox name.
   const names = perPr ? perPrNames(mode.perPr) : evalMode ? evalNames() : null
@@ -425,17 +432,14 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   const services = list('services')
   if (hub) {
     if (!isEmpty(services)) fail('services is set: a sandbox hub config binds no other Worker')
-  } else if (evalMode) {
-    // The eval deployment has no hub yet (evalNames names none): its services stay refused, as before P4.
-    if (!isEmpty(services)) fail('services is set: a sandbox config may not use it (the eval deployment has no hub)')
   } else if (!isEmpty(services)) {
     // Each entry exactly { binding, service, entrypoint } with its binding's entrypoint, and the bindings exactly one
     // allowed set (sorted, so order doesn't matter and a binding given twice can't stand in for another).
     const entryOk = s => !!s && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).length === 3 &&
       Object.hasOwn(s, 'service') && Object.hasOwn(SANDBOX_HUB_ENTRYPOINTS, s.binding) && s.entrypoint === SANDBOX_HUB_ENTRYPOINTS[s.binding]
     const bindings = JSON.stringify(services.map(s => s?.binding).sort())
-    const shaped = services.every(entryOk) && SANDBOX_HUB_SETS.some(set => JSON.stringify([...set].sort()) === bindings)
-    if (!shaped) fail(SERVICES_SHAPE)
+    const shaped = services.every(entryOk) && (evalMode ? EVAL_HUB_SETS : SANDBOX_HUB_SETS).some(set => JSON.stringify([...set].sort()) === bindings)
+    if (!shaped) fail(evalMode ? EVAL_SERVICES_SHAPE : SERVICES_SHAPE)
     else {
       services.forEach((s, i) => {
         const before = failures.length
@@ -449,7 +453,7 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     if (config.no_bundle !== true) fail('no_bundle must be true in a sandbox hub config (the bundle that was built deploys as it is)')
   }
   if (config.account_id !== accountId) fail('account_id is missing or is not the sandbox account (CF_SANDBOX_ACCOUNT_ID)')
-  if (evalMode) {
+  if (evalMode && !hub) {
     // The eval deployment runs the real model: exactly one AI binding, by name, and the gateway it calls.
     onlyKeys('ai', config.ai, new Set(['binding']))
     if (typeof config.ai?.binding !== 'string' || !config.ai.binding) fail('ai.binding must name the AI binding: the eval deployment runs the real model through the gateway')
@@ -553,10 +557,12 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   } else if (hub) {
     // vars set but not a plain object (a list, a string, null) is refused, so nothing hides behind a shape this loop skips.
     const plain = config.vars !== null && typeof config.vars === 'object' && !Array.isArray(config.vars)
-    if (config.vars !== undefined && !plain) fail('vars must be a plain object in the candidate hub config')
+    // The candidate's and the eval deployment's hubs alike: main's hub config, the store vars empty.
+    const which = evalMode ? 'eval' : 'candidate'
+    if (config.vars !== undefined && !plain) fail(`vars must be a plain object in the ${which} hub config`)
     const vars = plain ? config.vars : {}
     for (const [k, v] of Object.entries(vars)) {
-      if (!CANDIDATE_HUB_VARS.has(k)) fail(`vars.${k} is set: the candidate hub's vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only (no test switch, no secret)`)
+      if (!CANDIDATE_HUB_VARS.has(k)) fail(`vars.${k} is set: the ${which} hub's vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only (no test switch, no secret)`)
       else if (v !== '') fail(`vars.${k} must be empty: no store credential in the sandbox account`)
     }
   } else if (evalMode) {
@@ -578,7 +584,7 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   }
   // P3's pool and gateway rules hold in the sandbox too, the container cap of 2 standing in for 3 x RUNNER_POOL (and in
   // eval mode, the gateway beside the test issuer allowed).
-  for (const f of checkPool(config, { sandbox: true, evalMode })) if (!failures.includes(f)) fail(f)
+  for (const f of checkPool(config, { sandbox: true, evalMode: evalMode && !hub })) if (!failures.includes(f)) fail(f)
   return failures
 }
 
@@ -611,10 +617,9 @@ export function parseSandboxMode(args) {
   if (args[0] === '--candidate') parsed = { mode: { candidate: true }, rest: args.slice(1) }
   else if (args[0] === '--eval') parsed = { mode: { eval: true }, rest: args.slice(1) }
   else if (args[0] === '--per-pr' && /^[1-9][0-9]{0,5}$/.test(args[1] ?? '')) parsed = { mode: { perPr: Number(args[1]) }, rest: args.slice(2) }
-  else throw new Error('--sandbox needs --per-pr <N> (1 to 999999), --candidate or --eval, then --hub for the hub\'s config (not with --eval)')
-  // (P4) --hub right after the mode: the connector hub's config. The eval deployment has no hub yet.
+  else throw new Error('--sandbox needs --per-pr <N> (1 to 999999), --candidate or --eval, then --hub for the hub\'s config')
+  // (P4) --hub right after the mode: the connector hub's config.
   if (parsed.rest[0] === '--hub') {
-    if (parsed.mode.eval) throw new Error('--hub is for --per-pr <N> or --candidate: the eval deployment has no hub')
     return { mode: { ...parsed.mode, hub: true }, rest: parsed.rest.slice(1) }
   }
   return parsed
