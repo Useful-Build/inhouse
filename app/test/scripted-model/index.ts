@@ -20,8 +20,11 @@ export type ScriptedTurn = {
   /** Default: `tool_use` when the content has a tool call, else `end_turn`. */
   stopReason?: 'end_turn' | 'tool_use' | 'max_tokens'
   usage?: { input_tokens: number; output_tokens: number }
-  /** A check on the request (say, that the last user message holds a tool result); false makes the turn a miss. */
-  expect?: (request: MessagesRequest) => boolean
+  /**
+   * A check on the request (say, that the last user message holds a tool result): `true` passes; `false` makes the turn
+   * a miss, and a string makes it a miss that says why (the 400's message carries it, so a container run shows it).
+   */
+  expect?: (request: MessagesRequest) => boolean | string
   /** The answer waits for this before it is sent (a test holds a turn open to act mid-run). */
   hold?: () => Promise<void>
 }
@@ -42,9 +45,10 @@ export type Scenario = { turns: (ScriptedTurn | null)[]; branches?: Record<strin
 
 export type MessagesRequest = {
   model: string
-  messages: { role: 'user' | 'assistant'; content: unknown }[]
+  /** The real CLI also sends `system` messages mid-conversation (fixtures/cli-requests.json). */
+  messages: { role: 'user' | 'assistant' | 'system'; content: unknown }[]
   stream?: boolean
-  tools?: { name: string }[]
+  tools?: { name: string; defer_loading?: boolean }[]
   [k: string]: unknown
 }
 
@@ -132,7 +136,8 @@ export function createScriptedModel(scenarios: Record<string, Scenario>): Script
       if (t === null) return miss(scenario, turn, path, `${where}this turn is not scripted`)
       // A script's own check or hold that throws is a miss too (a 400 that names it), never a 500 the CLI retries.
       try {
-        if (t.expect && !t.expect(body)) return miss(scenario, turn, path, 'the request does not match the turn')
+        const ok = t.expect ? t.expect(body) : true
+        if (ok !== true) return miss(scenario, turn, path, `the request does not match the turn${typeof ok === 'string' ? `: ${ok}` : ''}`)
       } catch (e) {
         return miss(scenario, turn, path, `the turn's expect threw: ${errorText(e)}`)
       }

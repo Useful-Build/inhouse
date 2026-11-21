@@ -2,41 +2,82 @@
 // request with that many assistant messages before it. Tests that need their own script build one with
 // `createScriptedModel` directly.
 import type { MessagesRequest, Scenario, ScriptedBranch } from './index.ts'
+import { BUILT_IN_TOOLS, INHOUSE_MCP_SERVER } from '../../runner/src/guards/lists.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
 export const HARNESS_MODEL = 'claude-sonnet-5-5'
 
+/** A turn's check: `true`, or why the request isn't the one the turn answers (the miss names it). */
+type Check = (r: MessagesRequest) => true | string
+
 /**
- * A main-loop request: the run's model and a tool list (naming `tool` when given). A side request the CLI makes on its
+ * A main-loop request: the run's model and a tool list (offering `tool` when given). A side request the CLI makes on its
  * own (a title, a summary) carries no tool list, so it can't take a scripted turn by accident: it's a loud miss.
  */
-const mainLoop =
-  (tool?: string) =>
-  (r: MessagesRequest): boolean =>
-    r.model === HARNESS_MODEL && Array.isArray(r.tools) && r.tools.length > 0 && (tool === undefined || r.tools.some((t) => t.name === tool))
+export const mainLoop =
+  (tool?: string): Check =>
+  (r) => {
+    if (r.model !== HARNESS_MODEL) return `model ${String(r.model)}, not ${HARNESS_MODEL}`
+    if (!Array.isArray(r.tools) || r.tools.length === 0) return 'no tool list (a side request)'
+    return tool === undefined || offers(r, tool) ? true : `the tool list doesn't offer ${tool}`
+  }
+
+/**
+ * The request offers `tool`: listed, or left out because the CLI defers it. With deferred tool loading on, the real CLI
+ * lists only the tools it loads up front plus a `defer_loading` placeholder (fixtures/cli-requests.json); the rest
+ * (WebFetch, WebSearch, the Task tools, most `mcp__inhouse__*`) come only after a ToolSearch, yet a call to one still
+ * runs. Matching only listed tools made a tool scenario's turn 0 miss until the CLI's 400 step-down inlined every tool.
+ * The placeholder stands in only for a tool the runner gives the agent (its BUILT_IN_TOOLS or our MCP server's); a tool
+ * taken off that allowlist is caught by runner/test/guards/lists.test.ts, which pins the list.
+ */
+const offers = (r: MessagesRequest, tool: string): boolean =>
+  Array.isArray(r.tools) && r.tools.some((t) => t.name === tool || (t.defer_loading === true && deferrable(tool)))
+
+const deferrable = (tool: string): boolean => (BUILT_IN_TOOLS as readonly string[]).includes(tool) || tool.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`)
+
+/** What the last message is, for a miss's reason. */
+const lastShape = (r: MessagesRequest): string => {
+  const last = r.messages.at(-1)
+  if (!last) return 'no messages'
+  const blocks = Array.isArray(last.content) ? last.content.map((b) => String((b as { type?: unknown })?.type)).join('+') : typeof last.content
+  return `the last message is ${last.role} (${blocks})`
+}
+
+/** The tool_result block for call `id` in the last message, when that message is the person's. */
+const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown } | undefined => {
+  const last = r.messages.at(-1)
+  if (last?.role !== 'user' || !Array.isArray(last.content)) return undefined
+  return last.content.find((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id) as { is_error?: unknown } | undefined
+}
 
 /** The last user message carries the result of tool call `id`. */
-const resultOf = (id: string) => (r: MessagesRequest) => {
-  const last = r.messages.at(-1)
-  return last?.role === 'user' && JSON.stringify(last.content).includes(`"tool_use_id":"${id}"`)
-}
+const resultOf =
+  (id: string): Check =>
+  (r) =>
+    resultBlock(r, id) !== undefined ? true : `no result for ${id}: ${lastShape(r)}`
 
 /**
  * The last user message carries the result of tool call `id`, and its `is_error` is what the scenario expects: `error: true`
  * wants a refusal, `error: false` wants a call that went through (absent counts as false). A mismatch is a loud miss, so a
  * WebFetch the egress refused can't pass as an allowed one, nor the other way round.
  */
-const resultIs = (id: string, error: boolean) => (r: MessagesRequest) => {
-  const last = r.messages.at(-1)
-  if (last?.role !== 'user' || !Array.isArray(last.content)) return false
-  const block = last.content.find((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id) as { is_error?: unknown } | undefined
-  return block !== undefined && (block.is_error === true) === error
-}
+const resultIs =
+  (id: string, error: boolean): Check =>
+  (r) => {
+    const block = resultBlock(r, id)
+    if (block === undefined) return `no result for ${id}: ${lastShape(r)}`
+    return (block.is_error === true) === error ? true : `the result for ${id} has is_error ${block.is_error === true}, not ${error}`
+  }
 
 const both =
-  (...checks: ((r: MessagesRequest) => boolean)[]) =>
-  (r: MessagesRequest) =>
-    checks.every((c) => c(r))
+  (...checks: Check[]): Check =>
+  (r) => {
+    for (const c of checks) {
+      const ok = c(r)
+      if (ok !== true) return ok
+    }
+    return true
+  }
 
 /** The marker the parallel scenario puts in each subagent's prompt, so its branch can find the subagent's requests. */
 export const subagentMarker = (i: number) => `[inhouse-subagent-${i}]`
@@ -110,6 +151,15 @@ export const STRUCTURED_BAD_TURNS = 12
 /** The pages the WebFetch scenarios ask for: a public https page, and a private address the runner hook and the egress both refuse. */
 export const WEBFETCH_ALLOWED_URL = 'https://example.com/'
 export const WEBFETCH_REFUSED_URL = 'https://10.0.0.1/'
+/**
+ * The allowed WebFetch's prompt; its marker brings WebFetch's own side request (the page summary) to the scenario. The
+ * routing relies on the CLI echoing the prompt into that request; a fetched page that itself held `scenario:<other>`
+ * would reroute it (example.com doesn't).
+ */
+const WEBFETCH_PROMPT = 'Summarise the page (scenario:webfetch-allowed)'
+/** WebFetch's side request: no tools, and its one user message is the fetched page followed by the call's prompt. */
+const pageSummary = (r: MessagesRequest): boolean =>
+  Array.isArray(r.tools) && r.tools.length === 0 && r.messages.length === 1 && firstUserText(r).includes('Web page content:') && firstUserText(r).includes(WEBFETCH_PROMPT)
 
 /** The fact the `memory-save` scenario saves (a person's own, active at once). */
 export const MEMORY_SAVE_TEXT = 'Likes the weekly stock report as a table.'
@@ -140,12 +190,20 @@ export const SCENARIOS: Record<string, Scenario> = {
     ],
   },
 
-  /** One WebFetch to an allowed public page, then an answer: a test drives a WebFetch through the sandbox (Q2's check). */
+  /**
+   * One WebFetch to an allowed public page, then an answer: a test drives a WebFetch through the sandbox (Q2's check).
+   * WebFetch hands the page to the side model in a request of its own (no tools, the page and this prompt as its one user
+   * message); the marker in the prompt brings that request here, where the `page-summary` branch answers it. Without
+   * an answer the fetch comes back as an error and turn 1's `is_error: false` check misses.
+   */
   'webfetch-allowed': {
     turns: [
-      { content: [{ type: 'tool_use', id: 'toolu_scripted_fetch', name: 'WebFetch', input: { url: WEBFETCH_ALLOWED_URL, prompt: 'Summarise the page' } }], expect: mainLoop('WebFetch') },
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_fetch', name: 'WebFetch', input: { url: WEBFETCH_ALLOWED_URL, prompt: WEBFETCH_PROMPT } }], expect: mainLoop('WebFetch') },
       { content: [{ type: 'text', text: 'Read the page.' }], expect: both(mainLoop('WebFetch'), resultIs('toolu_scripted_fetch', false)) },
     ],
+    branches: {
+      'page-summary': { match: pageSummary, turns: [{ content: [{ type: 'text', text: 'A page kept for documentation examples.' }] }] },
+    },
   },
 
   /** The refused twin: one WebFetch to a private address (never reachable, whatever the brand lists), then an answer. */
