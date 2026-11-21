@@ -15,10 +15,11 @@ export function expectedFindings(d: Dataset, now: number): Found[] {
   const age = (iso: string) => (now - t(iso)) / DAY
   const names = (os: { name: string }[]) => os.map(o => o.name).sort()
 
-  const late = live.filter(o => (o.displayFinancialStatus === 'PAID' || o.displayFinancialStatus === 'PARTIALLY_REFUNDED') && o.displayFulfillmentStatus === 'UNFULFILLED' && age(o.processedAt) > 3)
+  const late = live.filter(o => o.displayFinancialStatus === 'PAID' && o.displayFulfillmentStatus === 'UNFULFILLED' && age(o.processedAt) > 3)
   if (late.length > 0) out.push({ key: 'late-orders', sev: late.some(o => age(o.processedAt) > 7) ? 'red' : 'amber', sources: names(late) })
 
-  const unpaid = live.filter(o => ['PENDING', 'AUTHORIZED', 'PARTIALLY_PAID'].includes(o.displayFinancialStatus ?? '') && age(o.processedAt) > 2)
+  // An open order: not cancelled and not yet fulfilled (the dataset has no closed or archived flag).
+  const unpaid = live.filter(o => o.displayFulfillmentStatus !== 'FULFILLED' && ['PENDING', 'AUTHORIZED', 'PARTIALLY_PAID'].includes(o.displayFinancialStatus ?? '') && age(o.processedAt) > 2)
   if (unpaid.length > 0) out.push({ key: 'unpaid-orders', sev: 'amber', sources: names(unpaid) })
 
   const open = live.filter(o => o.returns.nodes.some(r => (r.status === 'REQUESTED' || r.status === 'OPEN') && Math.min(age(r.createdAt), age(o.updatedAt)) > 3))

@@ -13,7 +13,7 @@ import { AMBER, META, RED, hostOf } from './expected.ts'
 import type { MorningCaseMeta } from './expected.ts'
 import { grade, summarise } from './grade.ts'
 import type { Observed } from './grade.ts'
-import { resultPath, writeResults } from './results.ts'
+import { openResults, resultPath, writeResults } from './results.ts'
 import { ROUTINE_ID, observe, parseFixed, runAll, runCase } from './runner.ts'
 import type { Reader, RunnerEnv, SlotRow } from './runner.ts'
 import { fixedWords } from '../../server/today/words.ts'
@@ -80,51 +80,65 @@ describe('what fails', () => {
 })
 
 describe('the threshold', () => {
+  /** Rows for the first `g` graded, `c` clean and `o` outage cases of the set, each passing or not as given. */
   const rows = (graded: boolean[], clean: boolean[], outage: boolean[]) => [
-    ...graded.map(pass => ({ group: 'graded' as const, pass })), ...clean.map(pass => ({ group: 'clean' as const, pass })), ...outage.map(pass => ({ group: 'outage' as const, pass })),
+    ...META.filter(m => m.group === 'graded').slice(0, graded.length).map((m, i) => ({ id: m.id, group: m.group, pass: graded[i]! })),
+    ...META.filter(m => m.group === 'clean').slice(0, clean.length).map((m, i) => ({ id: m.id, group: m.group, pass: clean[i]! })),
+    ...META.filter(m => m.group === 'outage').slice(0, outage.length).map((m, i) => ({ id: m.id, group: m.group, pass: outage[i]! })),
   ]
   const t = (n: number) => Array.from({ length: 12 }, (_, i) => i < n)
-  it('is 90% of graded: 11 of 12 is 92% and passes, 10 of 12 is 83% and fails', () => {
-    expect(summarise(rows(t(12), [true, true, true], [true, true, true]))).toMatchObject({ graded: { passed: 12, total: 12 }, thresholdMet: true })
-    expect(summarise(rows(t(11), [true], [true])).thresholdMet).toBe(true)
-    expect(summarise(rows(t(10), [true], [true])).thresholdMet).toBe(false)
-  })
-  it('exactly 90% passes (9 of 10)', () => {
-    expect(summarise(rows([...Array(9).fill(true), false], [true], [true])).thresholdMet).toBe(true)
+  const yes3 = [true, true, true]
+  it('is 90% of graded: 12 of 12 passes, 11 of 12 is 92% and passes, 10 of 12 is 83% and fails', () => {
+    expect(summarise(rows(t(12), yes3, yes3), META)).toMatchObject({ graded: { passed: 12, total: 12 }, partial: false, thresholdMet: true })
+    expect(summarise(rows(t(11), yes3, yes3), META).thresholdMet).toBe(true)
+    expect(summarise(rows(t(10), yes3, yes3), META).thresholdMet).toBe(false)
   })
   it('every clean and every outage case must pass', () => {
-    expect(summarise(rows(t(12), [true, false, true], [true])).thresholdMet).toBe(false)
-    expect(summarise(rows(t(12), [true], [true, true, false])).thresholdMet).toBe(false)
+    expect(summarise(rows(t(12), [true, false, true], yes3), META).thresholdMet).toBe(false)
+    expect(summarise(rows(t(12), yes3, [true, true, false]), META).thresholdMet).toBe(false)
   })
-  it('no graded cases is not a pass', () => expect(summarise(rows([], [true], [true])).thresholdMet).toBe(false))
-  test.prop([fc.array(fc.boolean(), { minLength: 1, maxLength: 30 })])('graded passes iff passed*10 >= total*9', flags => {
-    expect(summarise(rows(flags, [], [])).thresholdMet).toBe(flags.filter(Boolean).length * 10 >= flags.length * 9)
+  it('a case that did not run is not a pass: a missing clean or outage case, and a missing graded case, fail the threshold', () => {
+    expect(summarise(rows(t(12), yes3, [true, true]), META)).toMatchObject({ outageAllPass: false, partial: true, thresholdMet: false })
+    expect(summarise(rows(t(12), [true, true], yes3), META)).toMatchObject({ cleanAllPass: false, partial: true, thresholdMet: false })
+    // 11 graded cases run and all pass: 11 of the set's 12, but the run is partial, so never a pass.
+    expect(summarise(rows(t(11), yes3, yes3).slice(0, 11).concat(rows([], yes3, yes3).slice(0, 6)), META)).toMatchObject({ graded: { passed: 11, total: 12 }, partial: true, thresholdMet: false })
+  })
+  it('an empty run is not a pass', () => expect(summarise([], META)).toMatchObject({ partial: true, thresholdMet: false }))
+  test.prop([fc.array(fc.boolean(), { minLength: 12, maxLength: 12 })])('over the whole set, graded passes iff passed*10 >= 12*9', flags => {
+    expect(summarise(rows(flags, yes3, yes3), META).thresholdMet).toBe(flags.filter(Boolean).length * 10 >= 12 * 9)
   })
 })
 
 describe('the runner', () => {
   const NOW = Date.parse('2026-11-22T12:00:00Z')
-  /** A fake stack: `answers` says what each case's slot ends with (the "model"), `never` cases never end. */
+  /**
+   * A fake stack: Run now makes a slot under the key it was given (as route 54 does), the slot ends after two polls, and
+   * `answer` says what it ends with (the "model"). `never` cases never get a slot.
+   */
   function fakeEnv(answer: (c: MorningCaseMeta) => { slot: Partial<SlotRow>; items: unknown[]; tools?: string[] } | 'never') {
     let now = NOW
     let current: MorningCaseMeta | null = null
-    let since = 0
+    let keys = 0
+    const made = new Map<string, { c: MorningCaseMeta; polls: number }>()
     const log: string[] = []
-    let polls = 0
     const reader: Reader = {
-      async newestSlot(routine, sinceMs) {
-        expect(routine).toBe(ROUTINE_ID)
-        polls++
-        const a = current ? answer(current) : 'never'
-        if (a === 'never' || sinceMs !== since) return null
-        // The slot ends after two polls (the turn takes a while).
-        return { slot_key: `now|${ROUTINE_ID}|k${polls}`, state: polls % 3 === 0 ? 'ended' : 'started', failure: null, result_text: null, turn_id: 't1', claimed_at_ms: since, ...a.slot }
+      async slot(slotKey) {
+        const m = made.get(slotKey)
+        if (!m) return null
+        m.polls++
+        const a = answer(m.c)
+        if (a === 'never') return null
+        return { slot_key: slotKey, state: m.polls >= 3 ? 'ended' : 'started', failure: null, result_text: null, turn_id: `t-${slotKey}`, claimed_at_ms: NOW, ...a.slot }
       },
-      async items() {
-        return (current ? (answer(current) as { items: unknown[] }).items : []).map(i => JSON.stringify(i))
+      async items(slotKey) {
+        const m = made.get(slotKey)
+        const a = m ? answer(m.c) : 'never'
+        return a === 'never' ? [] : a.items.map(i => JSON.stringify(i))
       },
-      async tools() {
-        return (current ? (answer(current) as { tools?: string[] }).tools : undefined) ?? ['mcp__apps__orders_search']
+      async tools(turnId) {
+        const m = [...made.entries()].find(([k]) => `t-${k}` === turnId)
+        const a = m ? answer(m[1].c) : 'never'
+        return (a === 'never' ? undefined : a.tools) ?? ['mcp__apps__orders_search']
       },
     }
     const env: RunnerEnv = {
@@ -132,14 +146,18 @@ describe('the runner', () => {
       async useShop(host) {
         current = META.find(c => hostOf(c.id) === host) ?? null
         log.push(`shop ${host}`)
-        polls = 0
       },
-      async trigger(s) { since = s; log.push('trigger') },
+      newKey: () => `${String(++keys).padStart(32, '0')}`,
+      async trigger(key) {
+        expect(key).toMatch(/^[0-9a-f]{32}$|^0{20,}\d+$/)
+        log.push(`trigger ${key}`)
+        if (current && answer(current) !== 'never') made.set(`now|${ROUTINE_ID}|${key}`, { c: current, polls: 0 })
+      },
       async nudge() { log.push('nudge') },
       async pause() { now += 1_000 },
       reader, caseTimeoutMs: 60_000,
     }
-    return { env, log }
+    return { env, log, made }
   }
   const itemsOf = (c: MorningCaseMeta) => c.items.map(i => ({ key: i.key, sev: i.sev, sources: i.sources.map(s => ({ n: typeof s === 'string' ? s : s[0] })) }))
   const perfectAnswer = (c: MorningCaseMeta) => ({
@@ -151,7 +169,7 @@ describe('the runner', () => {
     const { env, log } = fakeEnv(perfectAnswer)
     const file = await runAll(env, META, { date: '2026-11-22', sha: 'abc1234', model: 'fake' })
     expect(file.cases.filter(c => !c.verdict.pass).map(c => [c.id, c.verdict.reasons])).toEqual([])
-    expect(file.summary).toEqual({ graded: { passed: 12, total: 12 }, cleanAllPass: true, outageAllPass: true, thresholdMet: true })
+    expect(file.summary).toEqual({ graded: { passed: 12, total: 12 }, cleanAllPass: true, outageAllPass: true, partial: false, thresholdMet: true })
     expect(log.filter(l => l.startsWith('shop ')).length).toBe(META.length)
     const out = file.cases.find(c => c.id === 'outage-too-large')!
     expect(out.observed).toMatchObject({ ok: true, coverage: 'incomplete', gaps: ['returns'], fixed: { truncated: 2 } })
@@ -166,7 +184,19 @@ describe('the runner', () => {
     expect(file.summary.thresholdMet).toBe(false)
   })
 
-  it('gives up on a slot that never ends, at the deadline, without a sleep', async () => {
+  it('two cases on the same day each get their own slot, found by their own key', async () => {
+    const { env, made } = fakeEnv(perfectAnswer)
+    const first = await runCase(env, byId('late-orders'))
+    const second = await runCase(env, byId('clean-empty'))
+    expect(first.slotKey).not.toBe(second.slotKey)
+    expect([...made.keys()]).toEqual([first.slotKey, second.slotKey])
+    expect(first.slotKey).toMatch(/^now\|routine-morning-check\|/)
+    expect([first.verdict.pass, second.verdict.pass]).toEqual([true, true])
+    // The second case reads its own slot, not the first's: its items are none.
+    expect(second.observed).toMatchObject({ ok: true, items: [] })
+  })
+
+  it('gives up on a slot that never appears, at the deadline, without a sleep', async () => {
     const { env } = fakeEnv(() => 'never')
     const r = await runCase(env, byId('late-orders'))
     expect(r.observed).toMatchObject({ ok: false, cause: 'no_slot' })
@@ -174,14 +204,30 @@ describe('the runner', () => {
     expect(r.ms).toBeGreaterThanOrEqual(60_000)
   })
 
-  it('names a slot that started but never ended as timed_out, and ignores a slot from before the trigger', async () => {
-    const stuck = fakeEnv(() => ({ slot: { state: 'started' }, items: [] })).env
-    stuck.reader.newestSlot = async () => ({ slot_key: 's', state: 'started', failure: null, result_text: null, turn_id: null, claimed_at_ms: 1 })
-    expect((await runCase({ ...stuck, caseTimeoutMs: 5_000 }, byId('late-orders'))).observed).toMatchObject({ cause: 'timed_out' })
+  it('names a slot that started but never ended as timed_out', async () => {
+    const { env } = fakeEnv(() => ({ slot: { state: 'started' }, items: [] }))
+    env.reader.slot = async key => ({ slot_key: key, state: 'started', failure: null, result_text: null, turn_id: null, claimed_at_ms: 1 })
+    expect((await runCase({ ...env, caseTimeoutMs: 5_000 }, byId('late-orders'))).observed).toMatchObject({ cause: 'timed_out' })
+  })
+
+  it('writes the file after each case, so a crash keeps the finished ones; a run of some cases is partial and never a pass', async () => {
+    const { env } = fakeEnv(perfectAnswer)
+    const writes: { cases: number; partial: boolean; met: boolean }[] = []
+    const some = META.slice(0, 3)
+    const file = await runAll(env, some, { date: '2026-11-22', sha: 'abc1234', model: 'fake' }, f => writes.push({ cases: f.cases.length, partial: f.summary.partial, met: f.summary.thresholdMet }))
+    expect(writes).toEqual([{ cases: 1, partial: true, met: false }, { cases: 2, partial: true, met: false }, { cases: 3, partial: true, met: false }])
+    expect(file.summary).toMatchObject({ partial: true, thresholdMet: false })
+    // A crash at the third case: the first two were already written.
+    const crashing = fakeEnv(perfectAnswer)
+    let n = 0
+    const seen: number[] = []
+    crashing.env.useShop = async () => { if (++n === 3) throw new Error('the build did not come up') }
+    await expect(runAll(crashing.env, some, { date: '2026-11-22', sha: 'abc1234', model: 'fake' }, f => seen.push(f.cases.length))).rejects.toThrow('did not come up')
+    expect(seen).toEqual([1, 2])
   })
 
   it('observes a slot that was lost or missed as no valid result', async () => {
-    const reader: Reader = { newestSlot: async () => null, items: async () => [], tools: async () => [] }
+    const reader: Reader = { slot: async () => null, items: async () => [], tools: async () => [] }
     for (const state of ['lost', 'missed', 'refused', 'skipped']) {
       expect(await observe(reader, { slot_key: 's', state, failure: null, result_text: null, turn_id: null, claimed_at_ms: 1 })).toMatchObject({ ok: false, cause: `slot ${state}` })
     }
@@ -196,12 +242,23 @@ describe('the runner', () => {
 describe('the result file', () => {
   it('names the file by date and sha and never overwrites one', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mc-results-'))
-    const file = { date: '2026-11-22', sha: 'abc1234', model: 'm', summary: summarise([]), cases: [] }
+    const file = { date: '2026-11-22', sha: 'abc1234', model: 'm', summary: summarise([], META), cases: [] }
     const first = writeResults(dir, file)
     const second = writeResults(dir, { ...file, model: 'second' })
     expect([first.endsWith('2026-11-22-abc1234.json'), second.endsWith('2026-11-22-abc1234-2.json')]).toEqual([true, true])
     expect(JSON.parse(readFileSync(first, 'utf8')).model).toBe('m')
     expect(resultPath(dir, '2026-11-22', 'abc1234', p => p.endsWith('abc1234.json'))).toMatch(/abc1234-2\.json$/)
+  })
+  it('a run\'s file is created once and rewritten after each case, never over another run\'s', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mc-open-'))
+    const base = { date: '2026-11-22', sha: 'abc1234', model: 'm', summary: summarise([], META), cases: [] }
+    const other = writeResults(dir, base)
+    const mine = openResults(dir, '2026-11-22', 'abc1234')
+    expect(mine.path).not.toBe(other)
+    mine.write({ ...base, model: 'one' })
+    mine.write({ ...base, model: 'two' })
+    expect(JSON.parse(readFileSync(mine.path, 'utf8')).model).toBe('two')
+    expect(JSON.parse(readFileSync(other, 'utf8')).model).toBe('m')
   })
   it('refuses a malformed date or sha', () => {
     expect(() => resultPath('d', '22-11-2026', 'abc1234')).toThrow()

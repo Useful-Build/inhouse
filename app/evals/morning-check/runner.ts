@@ -3,7 +3,7 @@
 // the stored rows, grade it. Everything the outside world does is injected (`RunnerEnv`), so a unit test drives the loop with
 // fakes. `run.mjs` is the command line over the real test build.
 import { gapsOfSummary } from '../../server/today/words.ts'
-import { hostOf } from './expected.ts'
+import { META, hostOf } from './expected.ts'
 import type { MorningCaseMeta } from './expected.ts'
 import { grade, summarise } from './grade.ts'
 import type { Fixed, Observed } from './grade.ts'
@@ -23,8 +23,8 @@ export interface SlotRow {
 
 /** The stored rows a run leaves (read from the test build's local D1 file by `run.mjs`). */
 export interface Reader {
-  /** The routine's newest slot claimed at or after `sinceMs`, or null. */
-  newestSlot(routineId: string, sinceMs: number): Promise<SlotRow | null>
+  /** One slot by its key, or null while it doesn't exist. */
+  slot(slotKey: string): Promise<SlotRow | null>
   /** The `item_json` of the items a slot reported. */
   items(slotKey: string): Promise<string[]>
   /** The names of the tools a turn called (`tool_calls.tool`). */
@@ -35,8 +35,10 @@ export interface RunnerEnv {
   nowMs(): number
   /** Points the product Worker's SHOPIFY_SHOP at `host` (a restart of the test build, or a cheaper switch). */
   useShop(host: string): Promise<void>
-  /** Makes the morning check's slot due and starts a scheduler pass (route 67 seedCursor then alarm, or Run now). */
-  trigger(sinceMs: number): Promise<void>
+  /** A fresh Run now key (32 hex characters, no `.`): each case's own manual slot `now|<routine>|<key>`. */
+  newKey(): string
+  /** Presses Run now (route 54) with this key, as a person, and starts a scheduler pass. */
+  trigger(clientKey: string): Promise<void>
   /** One more scheduler pass while waiting (route 67 alarm; harmless when nothing is due). */
   nudge(): Promise<void>
   /** Yields between polls. */
@@ -75,11 +77,12 @@ export async function observe(reader: Reader, slot: SlotRow): Promise<Observed> 
 export async function runCase(env: RunnerEnv, c: MorningCaseMeta): Promise<CaseResult> {
   const started = env.nowMs()
   await env.useShop(hostOf(c.id))
-  const since = env.nowMs()
-  await env.trigger(since)
+  const clientKey = env.newKey()
+  const slotKey = `now|${ROUTINE_ID}|${clientKey}`
+  await env.trigger(clientKey)
   let slot: SlotRow | null = null
   while (env.nowMs() - started < env.caseTimeoutMs) {
-    slot = await env.reader.newestSlot(ROUTINE_ID, since)
+    slot = await env.reader.slot(slotKey)
     if (slot && TERMINAL.has(slot.state)) break
     await env.nudge()
     await env.pause()
@@ -94,9 +97,18 @@ export async function runCase(env: RunnerEnv, c: MorningCaseMeta): Promise<CaseR
   return { id: c.id, group: c.group, verdict: grade(c, observed), observed, slotKey: slot.slot_key, failure: slot.failure, resultText: slot.result_text, ms }
 }
 
-/** Every case in order, one at a time; the file to write. */
-export async function runAll(env: RunnerEnv, cases: readonly MorningCaseMeta[], meta: { date: string; sha: string; model: string }): Promise<ResultFile> {
+/**
+ * Every case in order, one at a time. `onCase` gets the file after each case, so a crash keeps the finished ones; a run of
+ * fewer cases than the set is `partial` and never meets the threshold.
+ */
+export async function runAll(
+  env: RunnerEnv, cases: readonly MorningCaseMeta[], meta: { date: string; sha: string; model: string }, onCase?: (file: ResultFile) => void,
+): Promise<ResultFile> {
   const results: CaseResult[] = []
-  for (const c of cases) results.push(await runCase(env, c))
-  return { ...meta, summary: summarise(results.map(r => ({ group: r.group, pass: r.verdict.pass }))), cases: results }
+  const file = (): ResultFile => ({ ...meta, summary: summarise(results.map(r => ({ id: r.id, group: r.group, pass: r.verdict.pass })), META), cases: [...results] })
+  for (const c of cases) {
+    results.push(await runCase(env, c))
+    onCase?.(file())
+  }
+  return file()
 }

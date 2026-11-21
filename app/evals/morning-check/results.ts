@@ -33,9 +33,25 @@ export function resultPath(dir: string, date: string, sha: string, exists: (p: s
   }
 }
 
-export function writeResults(dir: string, file: ResultFile): string {
+/**
+ * A run's own file, created once (never over another run's) and rewritten after each case, so a crash part way keeps the
+ * cases that finished. `write` is the only writer of that path.
+ */
+export function openResults(dir: string, date: string, sha: string): { path: string; write(file: ResultFile): void } {
   mkdirSync(dir, { recursive: true })
-  const path = resultPath(dir, file.date, file.sha)
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`, { flag: 'wx' })
-  return path
+  const path = resultPath(dir, date, sha)
+  let created = false
+  return {
+    path,
+    write(file) {
+      writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`, { flag: created ? 'w' : 'wx' })
+      created = true
+    },
+  }
+}
+
+export function writeResults(dir: string, file: ResultFile): string {
+  const out = openResults(dir, file.date, file.sha)
+  out.write(file)
+  return out.path
 }

@@ -57,14 +57,27 @@ export interface Summary {
   graded: { passed: number; total: number }
   cleanAllPass: boolean
   outageAllPass: boolean
-  /** At least 90% of graded cases pass and every clean and outage case passes. */
+  /** Some of the cases were not run: the threshold is never met. */
+  partial: boolean
+  /** At least 90% of graded cases pass and every clean and outage case passes, over every case of the set. */
   thresholdMet: boolean
 }
 
-export function summarise(rows: { group: MorningCaseMeta['group']; pass: boolean }[]): Summary {
-  const graded = rows.filter(r => r.group === 'graded')
-  const passed = graded.filter(r => r.pass).length
-  const cleanAllPass = rows.filter(r => r.group === 'clean').every(r => r.pass)
-  const outageAllPass = rows.filter(r => r.group === 'outage').every(r => r.pass)
-  return { graded: { passed, total: graded.length }, cleanAllPass, outageAllPass, thresholdMet: graded.length > 0 && passed * 10 >= graded.length * 9 && cleanAllPass && outageAllPass }
+/**
+ * `rows` are the cases that ran; `universe` is every case of the set. A case that didn't run counts as failed (a missing
+ * clean or outage case is not a pass, and the graded total is the set's), and a result with any case missing is `partial`
+ * and never meets the threshold.
+ */
+export function summarise(rows: { id: string; group: MorningCaseMeta['group']; pass: boolean }[], universe: readonly { id: string; group: MorningCaseMeta['group'] }[]): Summary {
+  const passed = (id: string) => rows.some(r => r.id === id && r.pass)
+  const of = (group: MorningCaseMeta['group']) => universe.filter(c => c.group === group)
+  const graded = of('graded')
+  const gradedPassed = graded.filter(c => passed(c.id)).length
+  const cleanAllPass = of('clean').every(c => passed(c.id))
+  const outageAllPass = of('outage').every(c => passed(c.id))
+  const partial = universe.some(c => !rows.some(r => r.id === c.id))
+  return {
+    graded: { passed: gradedPassed, total: graded.length }, cleanAllPass, outageAllPass, partial,
+    thresholdMet: !partial && graded.length > 0 && gradedPassed * 10 >= graded.length * 9 && cleanAllPass && outageAllPass,
+  }
 }
