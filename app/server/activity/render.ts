@@ -27,9 +27,10 @@ export const instantOf = (ms: number): Instant => ({ iso: new Date(ms).toISOStri
 
 /** The template's `{slot}` filled in one pass (a value is never read again as a slot, so a name holding `{items}` stays text). */
 export function fill(text: string, slots: Readonly<Record<string, string>>): string {
-  return text.replace(/\{([a-z]+)\}/g, (token, key: string) => {
+  return text.replace(/\{([a-z]+)(?::([a-z]+))?\}/g, (token, key: string, noun?: string) => {
     if (!Object.hasOwn(slots, key)) throw new Error(`slot ${token} has no value`)
-    return slots[key]
+    // `{key:noun}` is the count with its noun, singular for exactly 1: "0 things", "1 thing", "2 things".
+    return noun === undefined ? slots[key] : `${slots[key]} ${slots[key] === '1' ? noun : `${noun}s`}`
   })
 }
 

@@ -43,6 +43,17 @@ describe('slots (failures 2 and 3)', () => {
     expect(fill('{actor} did {items}', { actor: '{items}', items: '3' })).toBe('{items} did 3')
     expect(() => fill('{missing}', {})).toThrow(/no value/)
   })
+  it('a counted noun is singular for exactly 1 (0, 1 and 2)', () => {
+    expect(fill('found {items:thing}', { items: '0' })).toBe('found 0 things')
+    expect(fill('found {items:thing}', { items: '1' })).toBe('found 1 thing')
+    expect(fill('found {items:thing}', { items: '2' })).toBe('found 2 things')
+    for (const [files, text] of [[0, '0 files'], [1, '1 file'], [2, '2 files']] as const)
+      expect(renderLine(row({ template: 'library_uploaded', fields_json: JSON.stringify({ files }) }), new Map([['m_ada', 'Ada']])).text).toBe(`Ada added ${text} to the Library`)
+    for (const [items, text] of [[0, '0 things'], [1, '1 thing'], [2, '2 things']] as const) {
+      expect(renderLine(row({ template: 'morning_check_ran', kind: 'read', actor_id: null, fields_json: JSON.stringify({ items }) }), new Map()).text).toBe(`Ran the morning check and found ${text}`)
+      expect(renderNotice({ id: 'n', audience: 'team', template: 'morning_check_found', fields_json: JSON.stringify({ items }), body: null, icon: 'x', person_id: null, at_ms: 1, waiting: 0, link_json: '{"to":"page","page":"today"}', unread: 1 }, new Map()).text).toBe(`The morning check found ${text}`)
+    }
+  })
   it('a name with braces can\'t break `by` (the prose the screen formats)', () => {
     const line = renderLine(row(), new Map([['m_ada', 'Ada {at:time} {x}']]))
     expect(line.by.text).toBe('Ada at:time x, at {at:time}')

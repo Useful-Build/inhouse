@@ -208,7 +208,7 @@ describe('names render at read, from ids (failure 5)', () => {
     await db.prepare("UPDATE members SET status = 'removed', name = NULL, email_norm = NULL, subject = NULL, photo_key = NULL, pseudonymised_at_ms = ? WHERE id = ?").bind(NOW, A).run()
     expect(await lines()).toEqual([[`${NAMES[B]} added 2 files to the Library`, NAMES[B], B], ['A former member set up a routine', 'A former member', A]])
     expect(await person()).toBeUndefined()
-    expect((await bell(WHO.admin)).find(i => i.id === 'n_person_a')?.text).toBe('The morning check found 1 things')
+    expect((await bell(WHO.admin)).find(i => i.id === 'n_person_a')?.text).toBe('The morning check found 1 thing')
     expect(await dump()).toBe(rawBefore)
     await expect(db.prepare("UPDATE activity_lines SET actor_id = NULL WHERE actor_id = ?").bind(A).run()).rejects.toThrow(/append-only/)
   })
