@@ -237,8 +237,8 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
       const mode = modes.find(m => m.id === t.model)
       expect(mode?.model, `${c.id}: ${t.trace}`).toBe(last)
       if (t.stage && t.stage !== 'Act') continue
-      // The steps line names the connected tools the run read, in order, and counts the steps; the model and seconds are in the opened list.
-      const read = [...new Set(tr.steps.filter(x => x.kind === 'tool').map(x => x.label.split(' · ')[0]).filter(n => names.includes(n)))]
+      // The steps line names the connected tools the run read (not wrote to), in order, with a check, and counts the steps; the model and seconds are in the opened list.
+      const read = [...new Set(tr.steps.filter(x => x.kind === 'tool' && !/^(saved|sent|created|posted|updated|wrote|drafted|deleted|changed|added|scheduled|replied|approved)\b/i.test(x.label.split(' · ').slice(1).join(' · '))).map(x => x.label.split(' · ')[0]).filter(n => names.includes(n)))]
       const named = read.length > 1 ? `${read.slice(0, -1).join(', ')} and ${read.at(-1)}` : read.join('')
       const line = `${read.length ? `Checked ${named} · ` : ''}${tr.steps.length - 1} steps`
       const meta = `${mode!.label} · ${secs(tr.durationSeconds)}`
@@ -247,7 +247,7 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
     }
     await page.evaluate(id => { location.hash = `#/chats/${id}` }, c.id)
     const lines = page.getByRole('log', { name: 'Conversation' }).locator('[data-steps] > button')
-    await expect(lines, c.id).toHaveText(expected.map(l => new RegExp(`^check${l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}expand_more$`)))
+    await expect(lines, c.id).toHaveText(expected.map(l => new RegExp(`^${l.startsWith('Checked') ? 'check' : ''}${l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}expand_more$`)))
     await expect(lines.first(), c.id).toBeVisible()
     for (const line of await lines.all()) await line.click()
     await expect(page.getByRole('log', { name: 'Conversation' }).locator('[data-steps-meta]'), c.id).toHaveText(expectedMeta)

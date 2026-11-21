@@ -1,6 +1,6 @@
 // Chats: the thread (one card per answer, D2), hover actions under each answer and your own messages, the "···" menu,
 // long messages that fold, Retry on a stopped answer, Jump to latest, the queued messages and the ask box.
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
 import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted } from './chat/notes'
@@ -128,7 +128,8 @@ const CARD = 'box-border flex max-w-full min-w-0 flex-col gap-3.5 self-start rou
  */
 function Thinking({ text }: { text: string }) {
   const ctx = useCtx()
-  const tool = toolInText(ctx.data, text)
+  // The logo only of a tool the agent can read now, the one the text names first.
+  const tool = toolInText(ctx.data, text, readingTools(ctx))
   return (
     <div data-thinking aria-hidden="true" className="flex min-w-0 items-center gap-2.5">
       <AgentMark live />
@@ -194,6 +195,22 @@ function Thread() {
   useEffect(() => { if (openId !== null && noSeed) loadHistory(openId) }, [openId, noSeed, loadHistory])
   const msgs = useOpenChatMessages()
 
+  // The turns this view saw running, in this chat: only their text is revealed word by word (what's already there when a chat
+  // opens, a reload or a reopened chat is not), and a reveal that began runs on after the run ends. Adjusted during render
+  // (React redraws at once), so a turn is in before its first part draws.
+  const [seen, setSeen] = useState<{ key: string | null; ids: ReadonlySet<string> }>({ key: openId, ids: new Set() })
+  let seenNow = seen.key === openId ? seen : { key: openId, ids: new Set<string>() }
+  for (const t of [run?.turnId, view?.live]) if (t && !seenNow.ids.has(t)) seenNow = { key: openId, ids: new Set([...seenNow.ids, t]) }
+  if (seenNow !== seen) setSeen(seenNow)
+  // Answers with words still to come: the log is busy while there are any, so a screen reader doesn't read half an answer.
+  const [revealing, setRevealing] = useState<ReadonlySet<string>>(() => new Set())
+  const onBusy = useCallback((id: string, busy: boolean) => setRevealing(cur => {
+    if (cur.has(id) === busy) return cur
+    const next = new Set(cur)
+    if (busy) next.add(id); else next.delete(id)
+    return next
+  }), [])
+
   // Keep the view at the bottom as messages and thinking steps arrive, but only while the person is near it:
   // once they scroll up, their place stays and Jump to latest shows. Asking a question goes back to the bottom.
   const threadKey = openId ?? 'new'
@@ -232,7 +249,7 @@ function Thread() {
     if (el.scrollTop === pinnedTop.current) { pinnedTop.current = -1; return }
     recheck()
   }
-  // Show more or less keeps the reader where they are: the message grows below, the view doesn't follow it down.
+  // Show more or less, and opening an answer's steps or sources, keeps the reader where they are: it grows below, the view doesn't follow it down.
   const onToggleLong = () => { stick.current = false; requestAnimationFrame(recheck) }
   const last = msgs[msgs.length - 1]
   const lastQuestion = last?.role === 'user' ? last.id : undefined
@@ -405,7 +422,7 @@ function Thread() {
               </Button>
             </div>
           )}
-          <div key={threadKey} role="log" aria-label="Conversation" className="flex flex-col">
+          <div key={threadKey} role="log" aria-label="Conversation" aria-busy={revealing.size > 0 || undefined} className="flex flex-col">
           {blocks.map((b, k) => {
             const mt = k === 0 ? 'mt-2' : b.kind === 'event' ? 'mt-3.5' : 'mt-5.5'
             if (b.kind === 'user') {
@@ -471,14 +488,14 @@ function Thread() {
             return (
               <div key={b.ms[0].id} data-chat-msg data-answer className={`group/msg relative flex flex-col ${mt}`}>
                 {/* The finished steps, collapsed above the card. */}
-                {tr && <StepsLine trace={tr} traceId={traceId} model={ctx.data.models.find(x => x.id === lastMsg.model)?.label} at={lastMsg.at} />}
+                {tr && <StepsLine trace={tr} traceId={traceId} model={ctx.data.models.find(x => x.id === lastMsg.model)?.label} at={lastMsg.at} onToggle={onToggleLong} />}
                 {/* One white card per answer (D2): its text and tables inside, then its sources, and while it streams
                     the thinking line at its foot, so no second card shows. */}
                 {(inCard.length > 0 || streaming) && (
                   <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
-                    {inCard.map(x => <AgentPart key={x.id} id={x.id} part={x.part} trace={x.trace} live={streaming} />)}
+                    {inCard.map(x => <AgentPart key={x.id} id={x.id} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} onBusy={onBusy} />)}
                     {streaming && <Thinking text={thinkingText} />}
-                    {endsTurn && <SourcesRow parts={inCard.map(x => x.part)} trace={tr} />}
+                    {endsTurn && <SourcesRow parts={inCard.map(x => x.part)} trace={tr} onToggle={onToggleLong} />}
                   </div>
                 )}
                 {drafts.map(x => (

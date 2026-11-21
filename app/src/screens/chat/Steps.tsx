@@ -27,7 +27,7 @@ const Chevron = ({ open, turn }: { open: boolean; turn: string }) => (
  * The finished steps, collapsed above the answer's card. Opening it lists each step with its time; at its foot, the mode that
  * answered, how long it took and when (as far as they're known), and Details, which opens the trace window.
  */
-export function StepsLine({ trace, traceId, model, at }: { trace: Trace; traceId: string; model?: string; at?: At }) {
+export function StepsLine({ trace, traceId, model, at, onToggle }: { trace: Trace; traceId: string; model?: string; at?: At; onToggle?: () => void }) {
   const ctx = useCtx()
   const phone = useUi(s => s.phone)
   const openTrace = useUi(s => s.openTrace)
@@ -35,16 +35,20 @@ export function StepsLine({ trace, traceId, model, at }: { trace: Trace; traceId
   const listId = useId()
   const rows = stepRows(ctx.data, trace)
   const names = toolNames(ctx.data, rows)
-  const n = trace.steps.length - 1
+  // The steps listed (the run's own root line isn't one): a trace with none has no line.
+  const n = rows.length
+  if (n === 0) return null
   const count = `${n} ${n === 1 ? 'step' : 'steps'}`
   const d = display()
   const meta = [model, fmtDuration(trace.durationMs, d), at === undefined ? undefined : fmtTime(at, d)].filter(Boolean).join(' · ')
   return (
     <div data-steps className="mb-1.5 flex max-w-full flex-col items-start">
-      <button type="button" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(o => !o)}
+      <button type="button" aria-expanded={open} aria-controls={listId} onClick={() => { onToggle?.(); setOpen(o => !o) }}
         className={cn('-ml-1.5 flex h-7 max-w-full items-center gap-1.5 rounded-md pr-1 pl-1.5 text-sm text-foreground-3 hover:bg-fill-hover hover:text-foreground', phone && TAP)}>
-        <Icon name="check" size={16} className="flex-none" />
-        <span className="ellipsis min-w-0 tabular-nums">{names.length > 0 ? `Checked ${listNames(names)} · ${count}` : count}</span>
+        {/* The check and "Checked" only when the run read from a tool; the count never gets cut, the tool names do. */}
+        {names.length > 0 && <Icon name="check" size={16} className="flex-none" />}
+        {names.length > 0 && <span className="ellipsis min-w-0">Checked {listNames(names)}</span>}
+        <span className="flex-none whitespace-pre tabular-nums">{names.length > 0 ? ` · ${count}` : count}</span>
         <Chevron open={open} turn="-rotate-180" />
       </button>
       <div id={listId} hidden={!open} className="mt-1 flex w-full max-w-answer-measure flex-col">
@@ -76,7 +80,7 @@ export function StepsLine({ trace, traceId, model, at }: { trace: Trace; traceId
 }
 
 /** The answer's sources, as one quiet pill at the foot of its card: the tools' overlapping logos, the count and a chevron. Opens a plain list. No row when there are none. */
-export function SourcesRow({ parts, trace }: { parts: readonly MessagePart[]; trace: Trace | null | undefined }) {
+export function SourcesRow({ parts, trace, onToggle }: { parts: readonly MessagePart[]; trace: Trace | null | undefined; onToggle?: () => void }) {
   const ctx = useCtx()
   const phone = useUi(s => s.phone)
   const [open, setOpen] = useState(false)
@@ -87,7 +91,7 @@ export function SourcesRow({ parts, trace }: { parts: readonly MessagePart[]; tr
   const d = display()
   return (
     <div data-sources className="flex min-w-0 max-w-full flex-col items-start">
-      <button type="button" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(o => !o)}
+      <button type="button" aria-expanded={open} aria-controls={listId} onClick={() => { onToggle?.(); setOpen(o => !o) }}
         className={cn('flex h-8 items-center gap-2 rounded-full bg-fill py-0 pr-2 pl-1.5 text-sm text-foreground-3 hover:bg-fill-hover hover:text-foreground', phone && TAP)}>
         {tools.length > 0 && (
           <span aria-hidden="true" className="flex items-center -space-x-1.5">

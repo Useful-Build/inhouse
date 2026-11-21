@@ -171,8 +171,11 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await shot(page, 'newest-answer-hover')
   await page.mouse.move(5, 5)
   await expect.poll(() => opacity(freshActions)).toBe('0')
-  await fresh.getByRole('button', { name: 'Reply', exact: true }).focus()
-  await expect(fresh.getByRole('button', { name: 'Reply', exact: true })).toBeFocused()
+  // Reply is reachable by Tab from the steps line (its actions are only hidden, not out of the tab order).
+  const reply = fresh.getByRole('button', { name: 'Reply', exact: true })
+  await freshSteps.focus()
+  for (let i = 0; i < 8 && !(await reply.evaluate(el => el === document.activeElement)); i++) await page.keyboard.press('Tab')
+  await expect(reply).toBeFocused()
   await expect.poll(() => opacity(freshActions)).toBe('1')
   await shot(page, 'newest-answer-focus')
 
@@ -224,9 +227,9 @@ test('Conversation: an error turn has a steps line that opens the trace, and the
   const steps = err.getByRole('button', { name: /\d+ steps/ })
   await expect(steps).toBeVisible()
   // No tool was read, so the line is only the step count; opened, the list ends with how long it took and when.
-  await expect(steps).toContainText(/^check\d+ stepsexpand_more$/)
+  await expect(steps).toContainText(/^\d+ stepsexpand_more$/)
   await steps.click()
-  await expect(err.locator('[data-steps-meta]')).toHaveText(/^[\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
+  await expect(err.locator('[data-steps-meta]')).toHaveText(/^(?:[\w ]+ · )?[\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
   await shot(page, 'error-turn-steps')
   await err.getByRole('button', { name: 'Details', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toBeVisible()
@@ -236,4 +239,50 @@ test('Conversation: an error turn has a steps line that opens the trace, and the
   // Gorgias is disconnected, so the new chat's sentence leaves it out.
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'New chat' }).click()
   await expect(main(page).getByText('Your Inhouse agent reads Shopify, Amazon, ShipBob, Xero and Meta Ads.')).toBeVisible()
+})
+
+test('Conversation: the steps line expands and collapses and opens the trace, sources are one pill, a draft is its own card, the column is 880px', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await start(page, 'Normal', '#/chats/stuck')
+  const first = log(page).locator('[data-answer]').first()
+  await expect(first).toBeVisible()
+
+  // The steps line: collapsed, it opens its list in place (aria-expanded), closes again, and Details opens the trace window.
+  const steps = first.getByRole('button', { name: /\d+ steps/ })
+  await expect(steps).toHaveAttribute('aria-expanded', 'false')
+  await expect(first.getByRole('button', { name: 'Details', exact: true })).toHaveCount(0)
+  await steps.click()
+  await expect(steps).toHaveAttribute('aria-expanded', 'true')
+  await expect(first.getByRole('button', { name: 'Details', exact: true })).toBeVisible()
+  await steps.click()
+  await expect(steps).toHaveAttribute('aria-expanded', 'false')
+  await expect(first.getByRole('button', { name: 'Details', exact: true })).toHaveCount(0)
+  await steps.click()
+  await first.getByRole('button', { name: 'Details', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toHaveCount(0)
+
+  // Sources: one pill with the count (no numbered chips in the answer) that opens a plain list, one row per source.
+  const pill = first.locator('[data-sources]').getByRole('button')
+  await expect(pill).toContainText('2 sources')
+  await expect(pill).toHaveAttribute('aria-expanded', 'false')
+  await expect(first.locator('[data-sources] li')).toHaveCount(0)
+  await pill.click()
+  await expect(pill).toHaveAttribute('aria-expanded', 'true')
+  await expect(first.locator('[data-sources] li')).toHaveText([/Orders.*Shopify/s, /Shipments.*ShipBob/s])
+  await expect(first.getByRole('button', { name: /^\[?\d+\]?$/ })).toHaveCount(0)
+
+  // A draft to approve is its own card after the answer's card, never inside it.
+  const turn = log(page).locator('[data-answer]').filter({ has: page.locator('[data-approval]') })
+  const draft = turn.locator('[data-approval]')
+  await expect(draft).toHaveCount(1)
+  expect(await draft.evaluate(el => el.closest('.bg-card') !== null)).toBe(false)
+  const card = turn.locator('.bg-card').first()
+  const [cardBox, draftBox] = [await card.boundingBox(), await draft.boundingBox()]
+  expect(draftBox!.y).toBeGreaterThanOrEqual(cardBox!.y + cardBox!.height)
+
+  // The chat column is 880px at 1440 (the thread and the composer).
+  expect((await log(page).boundingBox())!.width).toBe(880)
+  expect((await page.locator('[data-composer]').boundingBox())!.width).toBeLessThanOrEqual(880)
 })

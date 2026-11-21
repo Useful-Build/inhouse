@@ -25,7 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { DotsBackground, GooDefs, Page as PageBox } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
-import { useOpenChatMessages } from './screens/chat/open-messages'
+import { useChatIsBlank } from './screens/chat/open-messages'
 import { MENU } from './screens/settings/menu'
 import { ProblemPanel } from './overlays/ProblemPanel'
 import { TeamWindow } from './overlays/TeamWindow'
@@ -299,7 +299,7 @@ function Shell() {
   const traceId = useUi(s => s.traceId)
   const chatId = useUi(s => s.chatId)
   const fresh = useUi(s => s.fresh)
-  const chatStarted = useOpenChatMessages().length > 0
+  const chatBlank = useChatIsBlank()
   const mainRef = useRef<HTMLElement>(null)
   const setTab = useUi(s => s.setTab)
   const setMenu = useUi(s => s.setMenu)
@@ -368,8 +368,8 @@ function Shell() {
       </a>
       <Sidebar />
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* Dots only on Today and an empty new chat; a chat that has started, and the All chats list, use the plain page background like Tools and Skills. */}
-        {(page === 'today' || (page === 'chats' && !chatList && !chatStarted)) && <DotsBackground />}
+        {/* Dots only on Today and a blank new chat; a saved chat or one that has started, and the All chats list, use the plain page background like Tools and Skills. */}
+        {(page === 'today' || (page === 'chats' && !chatList && chatBlank)) && <DotsBackground />}
         {/* The top bar is the banner landmark: a header outside main, so it stays put while main scrolls. */}
         <div className="flex-none"><TopBar /></div>
         <main id="main" ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 flex-col overflow-auto outline-none">

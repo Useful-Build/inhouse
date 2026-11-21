@@ -2,6 +2,7 @@
 // routines and skills as inset blocks, the "worked for" row, the not-in-this-stage pill, the error line and suggested
 // questions. The card itself is the thread's (Chats.tsx): a part draws no card of its own. A draft to approve is the
 // exception: it is its own card after the answer's (`ApprovalCard`), drawn by the thread. The sources row is `SourcesRow`.
+import { useLayoutEffect } from 'react'
 import type { MessagePart } from '../../agent/types'
 import { draftView, whenOf } from '../../state/derive'
 import { fmtNextRun, fmtTime } from '../../lib/format'
@@ -85,16 +86,25 @@ export function ApprovalCard({ problemId }: { problemId: string }) {
   )
 }
 
-/** The agent's text. Text that arrives while the answer is being written shows a few words at a time (reveal.ts); the announcement waits until it is all there. */
-function TextPart({ text, live }: { text: string; live: boolean }) {
-  const { shown, done, fading } = useRevealed(text, live)
+/**
+ * The agent's text. Text of a turn the view saw running shows a few words at a time (reveal.ts). The conversation is a live
+ * region, so while words are still coming the part tells the log it is busy (`onBusy`, which sets aria-busy on the log
+ * itself: the one place a screen reader looks), and the whole text is announced once, when it is all there.
+ */
+function TextPart({ id, text, animate, onBusy }: { id: string; text: string; animate: boolean; onBusy?: (id: string, busy: boolean) => void }) {
+  const { shown, done, fading } = useRevealed(text, animate)
+  useLayoutEffect(() => {
+    if (done || !onBusy) return
+    onBusy(id, true)
+    return () => onBusy(id, false)
+  }, [id, done, onBusy])
   return (
-    <div aria-busy={!done || undefined} className="max-w-answer-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={shown} fade={fading} /></div>
+    <div className="max-w-answer-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={shown} fade={fading} /></div>
   )
 }
 
-/** `live`: the answer is being written as this part first shows (a part from a saved chat isn't). */
-export function AgentPart({ part, trace, id, live = false }: { part: MessagePart; trace: string; id: string; live?: boolean }) {
+/** `animate`: this part is of a turn the view saw running, so its text is revealed (a part from a saved chat isn't). `onBusy`: see TextPart. */
+export function AgentPart({ part, trace, id, animate = false, onBusy }: { part: MessagePart; trace: string; id: string; animate?: boolean; onBusy?: (id: string, busy: boolean) => void }) {
   const go = useUi(s => s.go)
   const ask = useUi(s => s.ask)
   const retryAnswer = useUi(s => s.retryAnswer)
@@ -104,7 +114,7 @@ export function AgentPart({ part, trace, id, live = false }: { part: MessagePart
 
   switch (part.type) {
     case 'text':
-      return <TextPart text={part.text} live={live} />
+      return <TextPart id={id} text={part.text} animate={animate} onBusy={onBusy} />
 
     case 'table': {
       const t = part.table

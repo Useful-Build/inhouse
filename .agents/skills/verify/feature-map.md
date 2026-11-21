@@ -10,6 +10,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
 - Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts`, `e2e/ship/agent-chat.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts` and `agent-chat.spec.ts`: on the test build, `build=test`), never in CI's normal run.
+- Chat while it writes: the working line (agent mark, tool logo, sweep) and the word-by-word reveal are checked by no spec (the reveal's step sizes are property-tested in `src/screens/chat/reveal.test.ts`); an answer's text width (about 620px) and your message's (about 520px) are not measured; sources of an answer that cites nothing are not asserted.
 - Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
@@ -129,11 +130,11 @@ Chat: answer actions
   Expected: at rest every answer (the newest too) hides its actions; hover or keyboard focus shows them and an open More menu keeps them; the menu has exactly Send to #channel (when a channel is connected), Report a wrong answer and Delete; the phone row is Copy and More; markdown renders, Jump to latest appears when scrolled up mid-stream
   Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts
 
-Chat: working line, steps and sources
-  Path:     ask a question -> watch the answer's card while it writes -> the finished answer
-  Selector: `[data-thinking]`, `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
-  Expected: while it writes, one line: the moving agent mark, the logo of the tool a step names (round), and the step's text with a light sweep (plain muted text under reduced motion), new text fading up; text arrives a few words at a time and is all there when the answer ends (not under reduced motion); a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" when no connected tool was read) that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill (overlapping round tool logos, up to 3 then +N, "{N} sources", chevron) that opens a plain list of title, "{tool} · what it read" and time, with no numbered chips anywhere and no pill when the answer cites nothing; a draft to approve is its own brand-tint card after the answer's card; a chat with messages has no dot grid (Today and an empty new chat keep it); the column is 880px, an answer's text about 620px and your message about 520px
-  Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts, e2e/sample-data.spec.ts, e2e/memory.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts, e2e/overlays-keyboard.spec.ts, e2e/no-persona.spec.ts
+Chat: steps, sources and the answer's own cards
+  Path:     a finished answer in a chat (`#/chats/stuck`)
+  Selector: `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
+  Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; a chat with messages has no dot grid (Today and an empty new chat keep it); the chat column is 880px
+  Covered:  e2e/conversation.spec.ts, e2e/sample-data.spec.ts, e2e/conversation-polish.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts
 
 Chat: queue and edit
   Path:     send two messages mid-answer, Edit a question
