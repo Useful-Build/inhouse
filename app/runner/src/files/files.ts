@@ -91,12 +91,24 @@ async function walk(root: Dir, limit: number, signal?: AbortSignal): Promise<{ f
   return { files, others, unreadable, truncated: false }
 }
 
+/**
+ * What a failure logs: the error's `code` and `syscall` (or the HTTP status a save threw), never its message, which can
+ * carry a file's path (an output's name is chat content).
+ */
+function errnoOf(e: unknown): { code: string; syscall?: string } {
+  const { code, syscall } = (e ?? {}) as NodeJS.ErrnoException
+  if (typeof code === 'string') return typeof syscall === 'string' ? { code, syscall } : { code }
+  if (e instanceof NotFollowed) return { code: 'not_followed' }
+  if (e instanceof Error && /^\d{3}$/.test(e.message)) return { code: `http_${e.message}` }
+  return { code: e instanceof Error ? e.name : 'unknown' }
+}
+
 /** `outputs/`, opened as a real folder; null (logged) when it's missing, a symlink or not a folder. */
 async function openOutputs(cwd: string, log: (entry: Record<string, unknown>) => void): Promise<Dir | null> {
   try {
     return await openDir(join(cwd, OUTPUTS))
   } catch (e) {
-    log({ type: 'outputs_not_a_folder', error: String(e instanceof Error ? e.message : e).slice(0, 200) })
+    log({ type: 'outputs_not_a_folder', ...errnoOf(e) })
     return null
   }
 }
@@ -346,7 +358,7 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
           count-- // not sent: a later save tries it again
           throw e
         }
-        log({ type: 'file_save_failed', error: String(e instanceof Error ? e.message : e).slice(0, 200) })
+        log({ type: 'file_save_failed', ...errnoOf(e) })
         return refuse({ type: 'file_refused', path, reason: 'save_failed', bytes: body.length })
       }
       handled.add(path)

@@ -166,7 +166,20 @@ describe('saving outputs/', () => {
   it('a failed upload is a save_failed refusal, never a throw', async () => {
     out('a.pdf', PDF)
     egress.fail = (m) => (m === 'PUT' ? 500 : null)
-    expect(await saveAll()).toEqual([{ type: 'file_refused', path: 'outputs/a.pdf', reason: 'save_failed', bytes: PDF.length }])
+    const { f, logs } = files()
+    const events: RunEventBody[] = []
+    await f.save(new Map(), (e) => void events.push(e))
+    expect(events).toEqual([{ type: 'file_refused', path: 'outputs/a.pdf', reason: 'save_failed', bytes: PDF.length }])
+    // The log carries the failure's code, never the file's name (chat content).
+    expect(logs).toEqual([{ type: 'file_save_failed', code: 'http_500' }])
+  })
+})
+
+describe('what a failure logs', () => {
+  it('a missing outputs/ logs the error code and syscall, never the path', async () => {
+    const { f, logs } = files()
+    expect(await f.save(new Map(), () => {})).toBe(true)
+    expect(logs).toEqual([{ type: 'outputs_not_a_folder', code: 'ENOENT', syscall: 'open' }])
   })
 })
 
@@ -179,7 +192,10 @@ describe('symlinks and links the agent planted (saving)', () => {
     expect(await f.save(new Map(), (e) => void events.push(e))).toBe(true)
     expect(events).toEqual([])
     expect(egress.calls.filter((c) => c.startsWith('PUT'))).toEqual([])
-    expect(logs).toContainEqual(expect.objectContaining({ type: 'outputs_not_a_folder' }))
+    const folderLog = logs.find((l) => l.type === 'outputs_not_a_folder')
+    // A code only: the error's message names the path.
+    expect(folderLog).toEqual({ type: 'outputs_not_a_folder', code: 'not_followed' })
+    expect(JSON.stringify(logs)).not.toContain(cwd)
     expect(await snapshotOutputs(cwd)).toEqual(new Map())
   })
 
