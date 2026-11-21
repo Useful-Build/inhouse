@@ -1,0 +1,30 @@
+{
+ "row": {
+  "caseId": "N03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "A purchase order is a document a buyer sends to a supplier to formally request goods, listing what they want, the quantities, the agreed prices and the delivery terms. Once the supplier accepts it, it works as a binding record of the deal, so both sides can check later invoices and deliveries agains",
+  "costUsd": 0.0065473,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [],
+  "answer": "A purchase order is a document a buyer sends to a supplier to formally request goods, listing what they want, the quantities, the agreed prices and the delivery terms. Once the supplier accepts it, it works as a binding record of the deal, so both sides can check later invoices and deliveries against it.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 2,
+   "cacheCreationTokens": 1857,
+   "cacheReadTokens": 9608,
+   "outputTokens": 94
+  },
+  "costUsd": 0.0065473
+ }
+}

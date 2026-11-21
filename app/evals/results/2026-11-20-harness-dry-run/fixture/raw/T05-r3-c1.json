@@ -1,0 +1,63 @@
+{
+ "row": {
+  "caseId": "T05",
+  "cat": "choice",
+  "pair": "memory_list/search",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_list",
+   "memory_list"
+  ],
+  "toolSearches": 1,
+  "answer": "Here's what I have saved.\n\n**Brand (shared by the whole team)**\n1. Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30. (m_norda)\n2. Returns are accepted within 45 days if the item is unused. (m_returns)\n3. Customer emails are signed \"Warm regards, the ",
+  "costUsd": 0.015882800000000002,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__memory_list",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__memory_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "input": {
+     "scope": "brand",
+     "limit": 50
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\\nm_returns [brand] Returns are accepted within 45 days if the item is unused.\\nm_seed2 [brand] Customer emails are signed 'Warm regards, the Fernwood team'.\\nm_",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "input": {
+     "scope": "person",
+     "person_id": "p_maya",
+     "limit": 50
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No saved facts.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Here's what I have saved.\n\n**Brand (shared by the whole team)**\n1. Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30. (m_norda)\n2. Returns are accepted within 45 days if the item is unused. (m_returns)\n3. Customer emails are signed \"Warm regards, the Fernwood team\". (m_seed2)\n4. Free shipping starts at 60 euro. (m_seed3)\n5. The warehouse is closed on Sundays. (m_seed4)\n\n**Maya (personal)**\nNothing saved.\n\nI only checked brand memory and your personal memory. I haven't looked at Tom's or Lena's personal notes. I can check those too if you like.\n\nTell me what to change, for example which to remove or reword. One thing you may want to look at: the Norda entry is named for a supplier, while the signature mentions \"Fernwood\". Check that the brand name is what you want everywhere.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2653,
+   "cacheReadTokens": 32883,
+   "outputTokens": 595
+  },
+  "costUsd": 0.015882800000000002
+ }
+}

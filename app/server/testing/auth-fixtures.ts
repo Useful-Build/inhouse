@@ -15,13 +15,14 @@ export const BRAND = { name: 'brand', origin: 'https://brand.example.test', aud:
 export const INHOUSE = { name: 'inhouse', origin: 'https://inhouse.example.test', aud: 'b2'.repeat(32) } as const
 export const MONITOR_ID = 'monitor-client.access'
 export const SMOKE_ID = 'smoke-client.access'
+export const RELEASE_ID = 'release-client.access'
 export const SMOKE_MEMBER = 'm_smoke'
 
 /** The config as INHOUSE_ACCESS carries it (before parsing). */
 export const config: z.input<typeof AccessConfigSchema> = {
   teamDomain: TEAM,
   apps: [{ ...BRAND }, { ...INHOUSE }],
-  serviceTokens: { [MONITOR_ID]: 'monitor', [SMOKE_ID]: 'smoke' },
+  serviceTokens: { [MONITOR_ID]: 'monitor', [SMOKE_ID]: 'smoke', [RELEASE_ID]: 'release' },
 }
 export const authEnv = (c: unknown = config) => ({ INHOUSE_ACCESS: typeof c === 'string' ? c : JSON.stringify(c) })
 
@@ -66,35 +67,40 @@ export function fakeStores(opts: { people?: Record<string, { role: 'member' | 'a
 export const req = (origin: string, headers: Record<string, string> = {}, init: RequestInit = {}) =>
   new Request(`${origin}/api/me`, { ...init, headers })
 
+/** A sign-in's `expMs` in the fixtures: an hour past the matrix tests' clock. */
+export const FIXTURE_EXP_MS = Date.parse('2026-11-20T11:00:00.000Z')
+
 export const principals = {
-  member: (memberId = 'm_member'): Principal => ({ kind: 'person', memberId, role: 'member', subject: 's_m', requestId: 'r' }),
-  admin: (memberId = 'm_admin'): Principal => ({ kind: 'person', memberId, role: 'admin', subject: 's_a', requestId: 'r' }),
-  inhouse: (grant: ActiveGrant | null = null): Principal => ({ kind: 'inhouse', memberId: 'm_ih', subject: 's_i', grant, requestId: 'r' }),
+  member: (memberId = 'm_member'): Principal => ({ kind: 'person', memberId, role: 'member', subject: 's_m', requestId: 'r', expMs: FIXTURE_EXP_MS }),
+  admin: (memberId = 'm_admin'): Principal => ({ kind: 'person', memberId, role: 'admin', subject: 's_a', requestId: 'r', expMs: FIXTURE_EXP_MS }),
+  inhouse: (grant: ActiveGrant | null = null): Principal => ({ kind: 'inhouse', memberId: 'm_ih', subject: 's_i', grant, requestId: 'r', expMs: FIXTURE_EXP_MS }),
   smoke: (): Principal => ({ kind: 'service', name: 'smoke', memberId: SMOKE_MEMBER, requestId: 'r' }),
   monitor: (): Principal => ({ kind: 'service', name: 'monitor', requestId: 'r' }),
+  release: (): Principal => ({ kind: 'service', name: 'release', requestId: 'r' }),
 }
 
 /**
  * The 21 rows of p2-design section 3 as written there (row 12 with `admin` in `allow` and row 21 a `report` row, per
- * the review round 1 calls): the properties' rows, and the independent copy server/access-matrix.ts must equal
- * (matrix.test.ts).
+ * the review round 1 calls), as decision 19 amends them (rows 3 to 6 and 15 `baseline`; 4, 6 and 10 list `inhouse`,
+ * and 5 doesn't, decision 19b), then P3's rows 22 to 49 as p3-design section 3's table writes them: the properties' rows, and the
+ * independent copy server/access-matrix.ts must equal (matrix.test.ts).
  */
 export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/health', class: 'open', allow: [], services: ['monitor'] },
   { method: 'GET', pattern: '/api/me', class: 'baseline', allow: ['member', 'admin', 'inhouse'], services: ['smoke'] },
-  { method: 'GET', pattern: '/api/members', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
-  { method: 'POST', pattern: '/api/members/invites', class: 'brand_data', allow: ['admin'] },
-  { method: 'PUT', pattern: '/api/members/:id/role', class: 'brand_data', allow: ['admin'] },
-  { method: 'DELETE', pattern: '/api/members/:id', class: 'brand_data', allow: ['admin'] },
+  { method: 'GET', pattern: '/api/members', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/members/invites', class: 'baseline', allow: ['admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/members/:id/role', class: 'baseline', allow: ['admin'] },
+  { method: 'DELETE', pattern: '/api/members/:id', class: 'baseline', allow: ['admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/settings/personal', class: 'personal', allow: ['member', 'admin'], services: ['smoke'] },
   { method: 'PUT', pattern: '/api/settings/personal/:key', class: 'personal', allow: ['member', 'admin'] },
   { method: 'GET', pattern: '/api/settings/brand', class: 'baseline', allow: ['member', 'admin', 'inhouse'], services: ['smoke'] },
-  { method: 'PUT', pattern: '/api/settings/brand/:key', class: 'baseline', allow: ['admin'] },
+  { method: 'PUT', pattern: '/api/settings/brand/:key', class: 'baseline', allow: ['admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/settings/technical', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
   { method: 'PUT', pattern: '/api/settings/technical/:key', class: 'technical', allow: ['inhouse', 'admin'], adminWrite: true },
   { method: 'PUT', pattern: '/api/photo', class: 'personal', allow: ['member', 'admin'] },
   { method: 'DELETE', pattern: '/api/photo', class: 'personal', allow: ['member', 'admin'] },
-  { method: 'GET', pattern: '/api/members/:id/photo', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/members/:id/photo', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/grants', class: 'baseline', allow: ['admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/grants', class: 'baseline', allow: ['admin'] },
   { method: 'POST', pattern: '/api/grants/:id/end', class: 'baseline', allow: ['admin'] },
@@ -102,6 +108,39 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/audit/export.csv', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // Its own class (review round 1 call): the reporter posts from both hosts, and its handler gets no stores.
   { method: 'POST', pattern: '/api/client-error', class: 'report', allow: ['member', 'admin', 'inhouse'] },
+  // P3, p3-design section 3.
+  { method: 'GET', pattern: '/api/chats', class: 'brand_data', allow: ['member', 'admin', 'inhouse'], services: ['smoke'], ownerObject: true },
+  { method: 'POST', pattern: '/api/chats', class: 'personal', allow: ['member', 'admin'], services: ['smoke'] },
+  { method: 'GET', pattern: '/api/chats/:id', class: 'brand_data', allow: ['member', 'admin', 'inhouse'], services: ['smoke'], ownerObject: true },
+  { method: 'PUT', pattern: '/api/chats/:id/title', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'PUT', pattern: '/api/chats/:id/pin', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/chats/delete', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/chats/restore', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/chats/:id/turns', class: 'personal', allow: ['member', 'admin'], services: ['smoke'] },
+  { method: 'POST', pattern: '/api/turns/:turnId/interrupt', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/turns/:turnId/stop', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'GET', pattern: '/api/runs/active', class: 'brand_data', allow: ['member', 'admin', 'inhouse'], services: ['smoke'], ownerObject: true },
+  { method: 'GET', pattern: '/api/traces/:id', class: 'brand_data', allow: ['member', 'admin', 'inhouse'], ownerObject: true },
+  { method: 'GET', pattern: '/api/socket', class: 'brand_data', allow: ['member', 'admin', 'inhouse'], services: ['smoke'], ownerObject: true },
+  { method: 'GET', pattern: '/api/pause', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/pause', class: 'baseline', allow: ['admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/resume', class: 'baseline', allow: ['admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/models', class: 'baseline', allow: ['member', 'admin', 'inhouse'], services: ['smoke'] },
+  { method: 'POST', pattern: '/api/chats/:id/attachments', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'GET', pattern: '/api/chats/:id/files', class: 'brand_data', allow: ['member', 'admin', 'inhouse'], ownerObject: true },
+  { method: 'GET', pattern: '/api/files/:fileId', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/usage', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/memory', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/memory/personal/:id/forgotten', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'PUT', pattern: '/api/memory/brand/:id/forgotten', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
+  { method: 'GET', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
+  // Route 50 (W2): the test build's undrain, release only like drain (its handler answers 404 outside the test build).
+  { method: 'DELETE', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
+  { method: 'POST', pattern: '/api/ops/warmup', class: 'open', allow: [], services: ['release'] },
+  { method: 'POST', pattern: '/api/chats/:id/session/reset', class: 'personal', allow: ['member', 'admin'] },
+  // Route 51 (W1 PR 6): revive one quarantined due task, release only like drain.
+  { method: 'POST', pattern: '/api/ops/tasks/revive', class: 'open', allow: [], services: ['release'] },
 ]
 
 /** `CanRows` as section 3 maps them. */
@@ -111,7 +150,7 @@ export const DESIGN_CAN_ROWS: CanRows = {
   remove: { method: 'DELETE', pattern: '/api/members/:id' },
   editBrandSettings: { method: 'PUT', pattern: '/api/settings/brand/:key' },
   editTechnical: { method: 'PUT', pattern: '/api/settings/technical/:key' },
-  switchModelOff: { method: 'PUT', pattern: '/api/settings/technical/:key', as: 'adminWrite' },
+  switchModel: { method: 'PUT', pattern: '/api/settings/technical/:key', as: 'adminWrite' },
   grantSupport: { method: 'POST', pattern: '/api/grants' },
   viewMembers: { method: 'GET', pattern: '/api/members' },
   viewAudit: { method: 'GET', pattern: '/api/audit' },

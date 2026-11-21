@@ -11,12 +11,22 @@ export interface AuditText {
 }
 
 const ROLE = { member: 'Member', admin: 'Admin' } as const
+const REVIVE = { revived: 'restarted', not_quarantined: 'wasn’t stuck', not_found: 'not found' } as const
 
 const ROUTE: Record<string, string> = {
   '/api/members': 'The team',
   '/api/members/:id/photo': "A member's photo",
   '/api/audit': 'The audit log',
   '/api/audit/export.csv': 'The audit log export',
+  '/api/chats': 'The chat list',
+  '/api/chats/:id': 'A chat',
+  '/api/runs/active': 'The running answers',
+  '/api/traces/:id': "An answer's steps",
+  '/api/socket': 'A live answer',
+  '/api/chats/:id/files': "A chat's files",
+  '/api/files/:fileId': 'A file',
+  '/api/memory': 'Memory',
+  '/api/memory/brand/:id/forgotten': 'Team memory',
 }
 
 const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
@@ -46,6 +56,12 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'grant.created': return { what: 'gave the Inhouse team access', detail: hours(args.hours) }
     case 'grant.ended': return { what: 'ended the Inhouse team’s access', detail: '' }
     case 'grant.expired': return { what: 'Inhouse team access ended', detail: 'Its time ran out' }
-    case 'support.access': return { what: 'looked at brand data', detail: ROUTE[args.route] ?? args.route }
+    case 'support.access': return { what: args.method === 'PUT' ? 'changed brand data' : 'looked at brand data', detail: ROUTE[args.route] ?? args.route }
+    case 'agent.paused': return { what: 'paused the agent', detail: '' }
+    case 'agent.resumed': return { what: 'resumed the agent', detail: '' }
+    case 'support.attach': return { what: 'watched a live answer', detail: '' }
+    case 'memory.forgotten': return { what: 'forgot a team memory', detail: '' }
+    case 'memory.restored': return { what: 'brought back a team memory', detail: 'It waits for an admin’s OK' }
+    case 'ops_task_revive': return { what: 'restarted a stuck background task', detail: `${args.kind}: ${REVIVE[args.result]} (release job)` }
   }
 }

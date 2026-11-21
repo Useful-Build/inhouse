@@ -127,12 +127,16 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
 
   const { sub, email } = payload
   const commonName = (payload as { common_name?: unknown }).common_name
+  // `exp` is required (jwtVerify above checks it's a number); in ms, it bounds what this sign-in may hold open (P3's socket).
+  if (typeof payload.exp !== 'number') return refuse({ refused: 'unauthorized' }, 'bad_claims', requestId)
+  const expMs = payload.exp * 1000
   try {
     // A service token: `sub` empty, a client id in `common_name`, no email. Brand app only.
     if (sub === '' && nonEmpty(commonName) && email === undefined) {
       if (app.name !== 'brand') return refuse({ refused: 'unauthorized' }, 'service_on_inhouse', requestId)
       const name = config.serviceTokens.get(commonName)
       if (name === 'monitor') return { principal: { kind: 'service', name: 'monitor', requestId } }
+      if (name === 'release') return { principal: { kind: 'service', name: 'release', requestId } }
       if (name === 'smoke') return { principal: { kind: 'service', name: 'smoke', memberId: await stores.members.serviceMember('smoke'), requestId } }
       return refuse({ refused: 'unauthorized' }, 'unknown_service', requestId)
     }
@@ -145,10 +149,10 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
       // The one caller of `grants.active`: the grant is read fresh on every Inhouse request.
       const member = await stores.members.resolveInhouse(signIn)
       const grant = await stores.grants.active({ nowMs, requestId })
-      return { principal: { ...member, kind: 'inhouse', grant } }
+      return { principal: { ...member, kind: 'inhouse', grant, expMs } }
     }
     const found = await stores.members.resolvePerson(signIn)
-    if ('ok' in found) return { principal: found.ok }
+    if ('ok' in found) return { principal: { ...found.ok, expMs } }
     if (found.refused === 'wrong_kind') return refuse({ refused: 'unauthorized' }, 'wrong_kind', requestId)
     return refuse({ refused: 'forbidden', reason: found.refused }, found.refused, requestId)
   } catch (err) {
@@ -170,15 +174,4 @@ export function checkOrigin(request: Request, env: Pick<Env, 'INHOUSE_ACCESS'>):
   const site = request.headers.get('Sec-Fetch-Site')
   if (site !== null && site !== 'same-origin') return 'bad_origin'
   return null
-}
-
-/** Sign-in for a WebSocket upgrade (P3): `authenticate`, then the `Origin` match on the GET upgrade itself. */
-export async function authenticateUpgrade(request: Request, env: AuthEnv, stores: AuthStores, nowMs: number, requestId: string, keys?: JWTVerifyGetKey): Promise<AuthOutcome> {
-  const outcome = await authenticate(request, env, stores, nowMs, requestId, keys)
-  if (!('principal' in outcome)) return outcome
-  if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
-    return refuse({ refused: 'unauthorized' }, 'not_an_upgrade', requestId)
-  }
-  if (checkOrigin(request, env)) return refuse({ refused: 'forbidden', reason: 'bad_origin' }, 'bad_origin', requestId)
-  return outcome
 }

@@ -1,0 +1,71 @@
+{
+ "row": {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "routine_list",
+   "routine_create"
+  ],
+  "toolSearches": 1,
+  "answer": "The routine \"Weekday low stock check\" is set up. It runs every weekday at 06:00 and sends you a short message listing the low items, with units left and units on order where the shop has that.\n\n- **Low threshold:** I didn't find a saved threshold. It uses each product's own reorder point or low-stoc",
+  "costUsd": 0.0197937,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_create,mcp__inhouse__routine_list",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "low stock threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_create",
+    "input": {
+     "name": "Weekday low stock check",
+     "schedule": "weekdays 06:00",
+     "instruction": "Check current inventory levels in the shop. List the items that are low: use each product's reorder point or low-stock flag if the shop provides one, otherwise treat 10 units or fewer as low. For each low item give the name, units left and, if available, units on order. Send the list to Maya (p_maya) as a short message. If nothing is low, say so in one line. Do not place orders or change stock.",
+     "on_missed": "run_once"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Created routine r_new1.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "The routine \"Weekday low stock check\" is set up. It runs every weekday at 06:00 and sends you a short message listing the low items, with units left and units on order where the shop has that.\n\n- **Low threshold:** I didn't find a saved threshold. It uses each product's own reorder point or low-stock flag if the shop has one. Otherwise it counts 10 units or fewer as low. Tell me if you want a different number.\n- **Missed runs:** If the system is off at 06:00, it runs once when it's back.\n- **Monday report:** The existing \"Monday stock report\" at 07:30 is separate, and I left it alone.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 3053,
+   "cacheReadTokens": 45452,
+   "outputTokens": 760
+  },
+  "costUsd": 0.0197937
+ }
+}

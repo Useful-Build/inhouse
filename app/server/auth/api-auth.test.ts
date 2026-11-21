@@ -97,15 +97,15 @@ describe('the request path', () => {
 describe('the audit duty', () => {
   it('writes support.access before an Inhouse read of brand data, with the request nowMs', async () => {
     const { call, calls } = setup()
-    const res = await call(INHOUSE.origin, '/api/members', { headers: { 'Cf-Access-Jwt-Assertion': await as('inhouse') } })
+    const res = await call(INHOUSE.origin, '/api/audit', { headers: { 'Cf-Access-Jwt-Assertion': await as('inhouse') } })
     expect(res.status).toBe(200)
-    expect(calls.supportAccess).toEqual([{ method: 'GET', route: '/api/members', nowMs: calls.active[0].nowMs }])
+    expect(calls.supportAccess).toEqual([{ method: 'GET', route: '/api/audit', nowMs: calls.active[0].nowMs }])
   })
   it('answers 503 and never runs the handler when the line cannot be written', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const handler = vi.fn(ok)
-    const { call } = setup({ stores: fakeStores({ grant: { id: 'g', endsAtMs: Date.now() + 60_000 }, auditFails: true }), handlers: { 'GET /api/members': handler } })
-    expect((await call(INHOUSE.origin, '/api/members', { headers: { 'Cf-Access-Jwt-Assertion': await as('inhouse') } })).status).toBe(503)
+    const { call } = setup({ stores: fakeStores({ grant: { id: 'g', endsAtMs: Date.now() + 60_000 }, auditFails: true }), handlers: { 'GET /api/audit': handler } })
+    expect((await call(INHOUSE.origin, '/api/audit', { headers: { 'Cf-Access-Jwt-Assertion': await as('inhouse') } })).status).toBe(503)
     expect(handler).not.toHaveBeenCalled()
     vi.restoreAllMocks()
   })
@@ -129,7 +129,7 @@ describe('the object check', () => {
   })
   it('answers 403 when the handler swallows a refusal and writes anyway', async () => {
     const res = await put(async c => {
-      try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
+      try { c.access.requireObject({ settingKey: c.params.key, value: 'maybe' }) } catch { /* the bug under test */ }
       return apiJson({ wrote: true })
     })
     expect(res.status).toBe(403)
@@ -139,9 +139,9 @@ describe('the object check', () => {
     const s = fakeStores({ people: { admin: { role: 'admin' } } })
     let thrown: unknown
     const { call } = setup({ stores: s, handlers: { 'PUT /api/settings/technical/:key': async c => {
-      try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
+      try { c.access.requireObject({ settingKey: c.params.key, value: 'maybe' }) } catch { /* the bug under test */ }
       try {
-        await c.stores!.audit.supportAccess({ kind: 'inhouse', memberId: 'm_x', subject: 's', grant: null, requestId: c.requestId }, { method: 'PUT', route: '/x', nowMs: c.nowMs })
+        await c.stores!.audit.supportAccess({ kind: 'inhouse', memberId: 'm_x', subject: 's', grant: null, requestId: c.requestId, expMs: 4_102_444_800_000 }, { method: 'PUT', route: '/x', nowMs: c.nowMs })
       } catch (err) { thrown = err }
       return apiJson({ wrote: true })
     } } })
@@ -153,7 +153,7 @@ describe('the object check', () => {
   })
   it('answers 403, not 500, when the closed store throws out of the handler', async () => {
     const res = await put(async c => {
-      try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
+      try { c.access.requireObject({ settingKey: c.params.key, value: 'maybe' }) } catch { /* the bug under test */ }
       await c.stores!.members.profile('m_x')
       return apiJson({})
     })
@@ -166,7 +166,7 @@ describe('the object check', () => {
       const spread = { ...c.stores! }
       const members = { ...spread.members }
       const before = await members.profile('m_x')
-      try { c.access.requireObject({ settingKey: c.params.key, value: 'on' }) } catch { /* the bug under test */ }
+      try { c.access.requireObject({ settingKey: c.params.key, value: 'maybe' }) } catch { /* the bug under test */ }
       let after: unknown
       try { await members.profile('m_y') } catch (err) { after = err }
       seen = { keys: Object.keys(c.stores!).sort(), has: 'audit' in c.stores!, before, after }
@@ -204,7 +204,7 @@ describe('the object check', () => {
     vi.restoreAllMocks()
   })
   it('answers 403 admin_read_only when the object fails, and 200 when it passes', async () => {
-    const refused = await put(async c => { c.access.requireObject({ settingKey: c.params.key, value: 'on' }); return apiJson({}) })
+    const refused = await put(async c => { c.access.requireObject({ settingKey: c.params.key, value: 'maybe' }); return apiJson({}) })
     expect(refused.status).toBe(403)
     expect(await refused.json()).toEqual({ error: { code: 'forbidden', reason: 'admin_read_only' } })
     expect((await put(async c => { c.access.requireObject({ settingKey: c.params.key, value: 'off' }); return apiJson({}) })).status).toBe(200)
@@ -223,10 +223,10 @@ describe('me', () => {
   const profile = { name: 'A Person', email: 'a@example.test', photoKey: 'photos/1' }
   it('builds a schema-valid Me for every principal with a member row', () => {
     const withRows: Parameters<typeof buildMe>[0][] = [
-      { kind: 'person', memberId: 'm_member', role: 'member', subject: 's', requestId: 'r' },
-      { kind: 'person', memberId: 'm_admin', role: 'admin', subject: 's', requestId: 'r' },
-      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: { id: 'g', endsAtMs: NOW + 1 }, requestId: 'r' },
-      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: null, requestId: 'r' },
+      { kind: 'person', memberId: 'm_member', role: 'member', subject: 's', requestId: 'r', expMs: 4_102_444_800_000 },
+      { kind: 'person', memberId: 'm_admin', role: 'admin', subject: 's', requestId: 'r', expMs: 4_102_444_800_000 },
+      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: { id: 'g', endsAtMs: NOW + 1 }, requestId: 'r', expMs: 4_102_444_800_000 },
+      { kind: 'inhouse', memberId: 'm_ih', subject: 's', grant: null, requestId: 'r', expMs: 4_102_444_800_000 },
       { kind: 'service', name: 'smoke', memberId: 'm_smoke', requestId: 'r' },
     ]
     for (const p of withRows) {
@@ -326,7 +326,7 @@ describe('the committed route table (server/routes.ts)', () => {
     const res = await committed()(BRAND.origin, '/api/me', { headers: { 'Cf-Access-Jwt-Assertion': await as('admin') } })
     expect(res.status).toBe(200)
     const me = MeSchema.parse(await res.json())
-    expect(me).toMatchObject({ memberId: 'm_admin', role: 'admin', can: { invite: true, switchModelOff: true, editTechnical: false } })
+    expect(me).toMatchObject({ memberId: 'm_admin', role: 'admin', can: { invite: true, switchModel: true, editTechnical: false } })
   })
   it('refuses a Member on an admin row with 403 before its handler (every route has its handler now: W2 PR 2 and PR 3)', async () => {
     const call = committed()

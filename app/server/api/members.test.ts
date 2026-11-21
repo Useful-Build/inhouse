@@ -6,12 +6,13 @@
 //  5. a second invite for an open email goes through.
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemberRecordSchema } from '../../shared/contract/members.ts'
 import { pageOf } from '../../shared/contract/paging.ts'
 import { openStores } from '../db/stores.ts'
 import { ctx, lastLineId, linesSince, person, personPrincipal, reset } from '../db/test-support.ts'
 import { changeMemberRole, inviteMember, listMembers, removeMember } from './members.ts'
+import { recordingAgent } from '../testing/brand-agent/recording-agent.ts'
 
 const db = env.DB
 const stores = openStores(env)
@@ -31,7 +32,9 @@ const json = async (r: Promise<Response>) => {
 }
 const invite = (body: unknown) => json(inviteMember(ctx(stores, as(), { method: 'POST', path: '/api/members/invites', body }).c))
 const role = (id: string, body: unknown) => json(changeMemberRole(ctx(stores, as(), { method: 'PUT', path: `/api/members/${id}/role`, params: { id }, body }).c))
-const remove = (id: string, query: string) => json(removeMember(ctx(stores, as(), { method: 'DELETE', path: `/api/members/${id}${query}`, params: { id } }).c))
+// P3 W1 PR 4: the handler now tells the BrandAgent after its batch, so it gets an env (a recording stand-in here).
+const remove = (id: string, query: string, agent = recordingAgent()) =>
+  json(removeMember({ ...ctx(stores, as(), { method: 'DELETE', path: `/api/members/${id}${query}`, params: { id } }).c, env: agent.env }))
 const rev = async (id: string) => (await stores.members.get(id))!.rev
 
 describe('input (failure 1)', () => {
@@ -143,5 +146,30 @@ describe('paging (failure 4)', () => {
     expect(seen).toEqual(want)
     for (const r of rows) expect(statusOf.get(r.id)).toBe(r.status)
     for (const id of removedIds) expect(statusOf.get(id)).toBe('removed')
+  })
+})
+
+// P3 W1 PR 4 (p3-design 4.10): the call site. Ways it can fail: the BrandAgent hears before the batch committed (a
+// removal the object fences but D1 refused), hears of a refused removal, or a lost call turns a done removal into an error.
+describe('the BrandAgent hears of a removal (P3 4.10)', () => {
+  const statusOf = async (id: string) => (await db.prepare('SELECT status FROM members WHERE id = ?').bind(id).first<string>('status'))
+  it('after the batch, once, with the member id; a refused removal says nothing', async () => {
+    const id = await person(stores, { email: `rm-${uniq()}@example.test`, subject: `srm-${uniq()}`, role: 'member' })
+    const seen: (string | null)[] = []
+    const agent = recordingAgent({ onCall: async () => { seen.push(await statusOf(id)) } })
+    expect((await remove(id, '?ifRev=99', agent)).status).toBe(409)
+    expect(agent.calls).toEqual([])
+    expect((await remove(id, `?ifRev=${await rev(id)}`, agent)).status).toBe(200)
+    expect(agent.calls).toEqual([{ method: 'onMemberRemoved', args: [id] }])
+    expect(seen, 'D1 already said removed when the object was told').toEqual(['removed'])
+  })
+  it('a lost call still answers the removal (the sweep repairs it)', async () => {
+    const id = await person(stores, { email: `rl-${uniq()}@example.test`, subject: `srl-${uniq()}`, role: 'member' })
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await remove(id, `?ifRev=${await rev(id)}`, recordingAgent({ fails: true }))
+    expect(r.status).toBe(200)
+    expect(await statusOf(id)).toBe('removed')
+    expect(err).toHaveBeenCalledWith(expect.objectContaining({ event: 'authority_call_lost', call: 'onMemberRemoved' }))
+    err.mockRestore()
   })
 })

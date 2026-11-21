@@ -16,6 +16,8 @@ What counts as verified is the global `verification` skill. This is how to do it
 - The product build: `npm run build:product` (into `dist-product/`), then `E2E_PRODUCT=1 E2E_PREBUILT=1 npx playwright test --project=product` (it serves the build with `wrangler dev` on `E2E_PRODUCT_PORT`, default 5194; every URL shows "Not connected yet" and `?demo` does nothing). The product build puts the demo's deploy pointer back when it ends, so `vite preview` keeps serving `dist/`. `node scripts/check-product-build.mjs` checks both builds (and, since P2, the server bundle scan: run `npm run build:product-test` first). Since P2 the product build is the product Worker (`server/`, `wrangler.product.jsonc`), served from `dist-product/inhouse_product/wrangler.json`.
 - The test build (P2): `npm run build:product-test` (into `dist-product-test/`), then `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone`. Its web server makes a fresh local D1 under `.wrangler/test-build` (migrated, then seeded), and serves the build with `wrangler dev` on `E2E_TEST_BUILD_PORT` (default 8787) with this run's test issuer key (public half only, as `--var TEST_ISSUER_JWKS`). Origins: `http://brand.localhost:<port>` and `http://inhouse.localhost:<port>`. Specs sign in with `signIn(memberKey, app)` from `e2e/support/test-build/`. Outside Playwright: `node e2e/support/test-build/serve.ts -- <command>` (the contract suite on the real client: `-- npx vitest run src/agent/contract`). Heavy job: through the heavy lock.
 
+- The sandbox deploy (P3): chats need the runner container, which the local test build doesn't have (the local sandbox can't run Bash: decision Q2). A per-PR deploy of the test build to the sandbox account is made by the private ops repo, drained and warmed up (route 48). Then `E2E_TEST_BUILD_REMOTE=1 BASE_URL=<brand origin> TEST_BUILD_INHOUSE_URL=<inhouse origin> TEST_ISSUER_PRIVATE_JWK_FILE=<that deploy's key file> npx playwright test --project=api --project=real-desktop --project=real-phone` runs the same specs against it (no local server; specs that touch the local D1 skip). The scripted model answers there; no real model is called. Never run a paid eval or a real-model chat without Wasim's OK.
+
 ## Release smoke
 
 `e2e/smoke/product.spec.ts` (project `smoke`, request only, read only, so it is safe on a release): as `smoke`, `/api/me` is 200 with the smoke member and `/api/settings/brand` parses; as `monitor`, `/api/health` is 200 and `/api/me` is 403; with no token, `/api/me` is 401. Every Worker answer carries the security headers.
@@ -34,7 +36,7 @@ What counts as verified is the global `verification` skill. This is how to do it
 
 ## Drive
 
-- Test account: none. The app runs on invented mock data, nothing real is connected.
+- Test account: none. The demo runs on invented mock data. The test build and the sandbox deploy use a seeded invented brand (`example.test` members) and a test issuer key made per run; nothing real is connected.
 - Check at 1440x900 (desktop) and 390x844 (phone), in light and dark.
 
 ## Suites

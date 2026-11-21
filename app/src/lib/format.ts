@@ -145,6 +145,13 @@ export const fmtClock = (t: ClockTime, _d: Display): string => clockText(t.hour,
 // ---------- amounts and counts ----------
 
 /** A count ("1,314"). Every number over 999 on screen goes through it. */
+/** A row's share of the total, in whole percent. Nothing spent yet (a zero or missing total) is "0%", never "NaN%" from a 0/0. */
+export const fmtShare = (cost: number, total: number): string => (total > 0 && Number.isFinite(cost / total) ? `${Math.round((cost / total) * 100)}%` : '0%')
+/**
+ * How full the spending cap bar is, as a CSS width. At the cap (the server's own judgement, which counts a start hold: it can be
+ * reached with less than the cap spent, $0.00 of $0.01) the bar is full; else spend over cap in whole percent, at most 100%.
+ */
+export const fmtCapFill = (spent: number, cap: number, reached: boolean): string => (reached ? '100%' : cap > 0 ? `${Math.min(100, Math.round((spent / cap) * 100))}%` : '0%')
 export const fmtCount = (n: number, d: Display): string => nf(d.locale, {}).format(n)
 
 const minorDigits = (currency: string): number => nf('en-US', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2
@@ -198,6 +205,15 @@ export const traceTicks = (durationMs: number, d: Display): TraceTick[] => {
   const ticks: TraceTick[] = []
   for (let v = 0; v <= durationMs; v += step) ticks.push({ ms: v, label: v === 0 ? '0s' : fmtDuration(v, d) })
   return ticks
+}
+
+/**
+ * A trace's cost. A model call still open (its step's `costUpTo`, set by the server's runs-read.ts) counts at its
+ * admitted worst case until it closes, so the amount reads "up to …" while one is open.
+ */
+export const fmtTraceCost = (t: { cost: Money; steps: readonly { costUpTo?: boolean }[] }, d: Display): string => {
+  const shown = fmtMoney(t.cost, d, { cents: 'always' })
+  return t.steps.some(s => s.costUpTo === true) ? `up to ${shown}` : shown
 }
 
 /** The line under an answer: mode, steps, time taken and when it answered, as far as they're known ("Balanced · 6 steps · 11.6s · 8:03 AM"). */

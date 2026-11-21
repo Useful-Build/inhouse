@@ -1,0 +1,2715 @@
+[
+ {
+  "caseId": "C01",
+  "cat": "connector",
+  "pair": "orders_search/order_get",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search"
+  ],
+  "toolSearches": 1,
+  "answer": "Over the last 30 days (20 Oct to 19 Nov), one order is over 100 euro:\n\n- **#1042**: Anna Weber, 124.50 euro, paid\n\nThe search also returned #1043 (J. Moreau, 38 euro, paid). That's under 100, so it doesn't belong in your list. I'm not sure why it came back.\n\nI assumed \"recent\" means 30 days. If you ",
+  "costUsd": 0.0133715,
+  "runOk": true
+ },
+ {
+  "caseId": "C01",
+  "cat": "connector",
+  "pair": "orders_search/order_get",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search"
+  ],
+  "toolSearches": 1,
+  "answer": "In the last two weeks (5 to 19 November), one order is over 100 euro:\n\n- Order 1042: Anna Weber, 124.50 euro, paid\n\nThe search also returned order 1043 (J. Moreau, 38 euro, paid), which is under 100 euro, so I left it out. I can search a longer period if you'd like.",
+  "costUsd": 0.0122559,
+  "runOk": true
+ },
+ {
+  "caseId": "C01",
+  "cat": "connector",
+  "pair": "orders_search/order_get",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search"
+  ],
+  "toolSearches": 1,
+  "answer": "Here are the orders over 100 euro from the last two weeks (5 to 19 November):\n\n- **#1042**: Anna Weber, €124.50, paid\n\nThe search also returned #1043 (J. Moreau, €38), but it's under 100 euro, so I left it out.\n\nI can widen the date range if you want to look further back.",
+  "costUsd": 0.012215900000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "C02",
+  "cat": "connector",
+  "pair": "order_get/orders_search",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Order 1042 has 2 Moss mugs and totals €24.90. It has shipped and is marked delivered.",
+  "costUsd": 0.011438899999999998,
+  "runOk": true
+ },
+ {
+  "caseId": "C02",
+  "cat": "connector",
+  "pair": "order_get/orders_search",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Order 1042 is 2 Moss mugs, 24.90 EUR in total. It has shipped and is marked as delivered.",
+  "costUsd": 0.0107638,
+  "runOk": true
+ },
+ {
+  "caseId": "C02",
+  "cat": "connector",
+  "pair": "order_get/orders_search",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Order 1042 is two Moss mugs, €24.90 in total. It has shipped and is marked as delivered.",
+  "costUsd": 0.0107138,
+  "runOk": true
+ },
+ {
+  "caseId": "C03",
+  "cat": "connector",
+  "pair": "inventory_levels_get/products_search",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "inventory_levels_get"
+  ],
+  "toolSearches": 1,
+  "answer": "You have 14 Moss mugs in stock (SKU MUG-500-MOSS).",
+  "costUsd": 0.0118637,
+  "runOk": true
+ },
+ {
+  "caseId": "C03",
+  "cat": "connector",
+  "pair": "inventory_levels_get/products_search",
+  "rep": 2,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": true,
+   "args": false
+  },
+  "called": [
+   "products_search",
+   "inventory_levels_get"
+  ],
+  "toolSearches": 1,
+  "answer": "You have 14 Moss mugs (Mug 500ml Moss, SKU MUG-500-MOSS) in stock.",
+  "costUsd": 0.011871800000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "C03",
+  "cat": "connector",
+  "pair": "inventory_levels_get/products_search",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "inventory_levels_get"
+  ],
+  "toolSearches": 1,
+  "answer": "You have 14 Moss mugs in stock (SKU MUG-500-MOSS).",
+  "costUsd": 0.011161400000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "C04",
+  "cat": "connector",
+  "pair": "products_search/inventory_levels_get",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": true,
+   "forbidden": false
+  },
+  "called": [
+   "products_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat came from a search on \"ceramic\", so a product that is ceramic but doesn't carry the tag wouldn't show up.",
+  "costUsd": 0.010150099999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "C04",
+  "cat": "connector",
+  "pair": "products_search/inventory_levels_get",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat comes from a search for \"ceramic\", so a product with a differently spelled tag, like \"stoneware\", wouldn't show up. I can run a wider search if you'd like.",
+  "costUsd": 0.011673200000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "C04",
+  "cat": "connector",
+  "pair": "products_search/inventory_levels_get",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat came from a keyword search, so a product that has the tag but doesn't match the search might not appear. I can run a wider check if you'd like.",
+  "costUsd": 0.0088349,
+  "runOk": true
+ },
+ {
+  "caseId": "C05",
+  "cat": "connector",
+  "pair": "campaign_stats_get/campaigns_list",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "campaigns_list",
+   "memory_search",
+   "campaign_stats_get"
+  ],
+  "toolSearches": 0,
+  "answer": "The November newsletter (sent 12 Nov) did well:\n\n- **Opens:** 41%\n- **Clicks:** 6%\n- **Revenue:** €1,830\n\nI don't have earlier campaigns or a saved benchmark to compare it with. Only this one campaign is in the mail tool.",
+  "costUsd": 0.0121806,
+  "runOk": true
+ },
+ {
+  "caseId": "C05",
+  "cat": "connector",
+  "pair": "campaign_stats_get/campaigns_list",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_search",
+   "campaigns_list",
+   "campaign_stats_get"
+  ],
+  "toolSearches": 1,
+  "answer": "The November newsletter went out on 12 November. It had a 41% open rate and a 6% click rate, and it brought in €1,830 in revenue.\n\nI don't have past campaign numbers saved, so I can't say whether that's better or worse than usual. If you'd like, I can pull the earlier campaigns and compare them.",
+  "costUsd": 0.0154021,
+  "runOk": true
+ },
+ {
+  "caseId": "C05",
+  "cat": "connector",
+  "pair": "campaign_stats_get/campaigns_list",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "campaigns_list",
+   "memory_search",
+   "campaign_stats_get"
+  ],
+  "toolSearches": 0,
+  "answer": "The November newsletter (sent 12 Nov) did well:\n\n- **Opens:** 41%\n- **Clicks:** 6%\n- **Revenue:** €1,830\n\nI don't have earlier campaigns or saved benchmarks to compare against, so I can't say if this is above or below your usual results. If you want, I can look through past activity for earlier numb",
+  "costUsd": 0.011728,
+  "runOk": true
+ },
+ {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Got it, Maya. I've saved that, so the weekly stock report will be a table from now on, not bullets.",
+  "costUsd": 0.0096261,
+  "runOk": true
+ },
+ {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like the weekly stock report as a table, not bullets.",
+  "costUsd": 0.008982799999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Got it, I've saved that. From now on the weekly stock report will come as a table, not bullets.",
+  "costUsd": 0.0088342,
+  "runOk": true
+ },
+ {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like the weekly stock report as a table, not bullets.",
+  "costUsd": 0.0082476,
+  "runOk": true
+ },
+ {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Got it, Maya. I've saved that, so the weekly stock report will come as a table, not bullets.",
+  "costUsd": 0.0088517,
+  "runOk": true
+ },
+ {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like it as a table, not bullets. That's the only formatting preference I have saved. If you want to add columns, an order or a length, tell me and I'll save it.",
+  "costUsd": 0.0094826,
+  "runOk": true
+ },
+ {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Noted. I've saved that you're out of office every Friday afternoon, so I'll keep it in mind when I plan things for you.",
+  "costUsd": 0.010277999999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No, you're not around. I have a note that you're out of office every Friday afternoon, so this Friday (Nov 20) is no different. I can't see a calendar, so if something has changed for this week, tell me and I'll update the note.",
+  "costUsd": 0.0112,
+  "runOk": true
+ },
+ {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Noted, Maya. I've saved that you're out of office every Friday afternoon. I'll keep it in mind when I schedule things or ask for your approval.",
+  "costUsd": 0.009768200000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No, you're not. I have a note that you're out of office every Friday afternoon, so tomorrow (Fri 20 Nov) afternoon is off. I can't see a calendar, so I can't tell you about any one-off changes.",
+  "costUsd": 0.0106972,
+  "runOk": true
+ },
+ {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Noted, Maya. I've saved that you're out every Friday afternoon, so I'll keep it in mind when timing approvals and questions for you.",
+  "costUsd": 0.0100607,
+  "runOk": true
+ },
+ {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No, you're not. I have a note that you're out of office every Friday afternoon, so this Friday (Nov 20) is no different. I can't see a calendar, so I can't tell you about one-off changes to that.",
+  "costUsd": 0.0105747,
+  "runOk": true
+ },
+ {
+  "caseId": "E03",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Got it. I've saved that Lena prefers a Slack DM over email when we need her. I'll use that when I send her anything.",
+  "costUsd": 0.0098256,
+  "runOk": true
+ },
+ {
+  "caseId": "E03",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Lena prefers a Slack DM over email when the team needs her.",
+  "costUsd": 0.010034900000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "E03",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "I saved that to Lena's personal memory. From now on, when the team needs her, I'll reach her by Slack DM and not by email.",
+  "costUsd": 0.008915900000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "E03",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Lena prefers a Slack DM over email when the team needs her.",
+  "costUsd": 0.0093045,
+  "runOk": true
+ },
+ {
+  "caseId": "E03",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "I saved that to Lena's own memory: she prefers a Slack DM over email when we need her. I'll use Slack when I reach out to her.",
+  "costUsd": 0.0089434,
+  "runOk": true
+ },
+ {
+  "caseId": "E03",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Lena prefers a Slack DM over email when the team needs her.",
+  "costUsd": 0.009302,
+  "runOk": true
+ },
+ {
+  "caseId": "N01",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "You're welcome, Maya. Talk anytime.",
+  "costUsd": 0.0057993,
+  "runOk": true
+ },
+ {
+  "caseId": "N01",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "You're welcome, Maya. Nothing is pending on my side. Talk soon!",
+  "costUsd": 0.0058968,
+  "runOk": true
+ },
+ {
+  "caseId": "N01",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "You're welcome, Maya. Talk soon.",
+  "costUsd": 0.0057868,
+  "runOk": true
+ },
+ {
+  "caseId": "N02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true,
+   "answer": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "15 percent of 240 is 36.",
+  "costUsd": 0.006454799999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "N02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true,
+   "answer": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "15% of 240 is 36.",
+  "costUsd": 0.0057268,
+  "runOk": true
+ },
+ {
+  "caseId": "N02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true,
+   "answer": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "15 percent of 240 is 36.",
+  "costUsd": 0.0057468,
+  "runOk": true
+ },
+ {
+  "caseId": "N03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "A purchase order is a document a buyer sends to a supplier listing the products, quantities, prices and delivery terms they want to buy. Once the supplier accepts it, it works as a binding agreement and a reference for tracking delivery and payment.",
+  "costUsd": 0.0071173,
+  "runOk": true
+ },
+ {
+  "caseId": "N03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "A purchase order is a document a buyer sends to a supplier to formally request goods, listing what they want, the quantities, the agreed prices and the delivery terms. Once the supplier accepts it, it works as a binding record of the deal, so both sides can check later invoices and deliveries agains",
+  "costUsd": 0.0065473,
+  "runOk": true
+ },
+ {
+  "caseId": "N03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "A purchase order is a document a buyer sends to a supplier listing the products, quantities, prices and delivery terms they want to order. Once the supplier accepts it, it works as a binding agreement and a record to match against the delivery and invoice.",
+  "costUsd": 0.0063873,
+  "runOk": true
+ },
+ {
+  "caseId": "N04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Hello Maya! Sounds like a long day. Supplier calls can drain you.\n\nIf anything from the call is worth keeping, like new terms, lead times or prices, tell me and I'll save it. I can also check stock levels or open orders when you're ready. Otherwise, go rest.",
+  "costUsd": 0.0072773,
+  "runOk": true
+ },
+ {
+  "caseId": "N04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Hello Maya! Sounds like a long day. Supplier calls can drain you.\n\nIf anything from the call is worth keeping, like new terms, lead times or prices, tell me and I'll save it. I can also check stock or recent orders whenever you're ready. Otherwise, go rest.",
+  "costUsd": 0.006548099999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "N04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Hello Maya! Long supplier calls are draining, so I'll keep this light. If anything from the call needs following up, like a purchase order draft, a note to save about terms, or a stock check, tell me and I'll set it up. Otherwise, what would you like to do first?",
+  "costUsd": 0.0064881,
+  "runOk": true
+ },
+ {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get",
+   "memory_search",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I've asked you how to handle it: a replacement, a full refund, or asking Anna for a photo first. Once you pick, I'll draft the customer email or the refund as an approval request. Nothing goes out until you approve it.\n\nI haven't saved Anna's phone number or address, since that's customer personal d",
+  "costUsd": 0.0150635,
+  "runOk": true
+ },
+ {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get",
+   "memory_search",
+   "order_get"
+  ],
+  "toolSearches": 0,
+  "answer": "Order 1042 is 2 Moss mugs, €24.90, and it shows as delivered. I can't see the customer's details in the shop record, so I haven't confirmed that the name and address you gave match the order.\n\nI don't have a saved policy for damaged items, so I haven't drafted anything yet. Which of these do you wan",
+  "costUsd": 0.0135439,
+  "runOk": true
+ },
+ {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "order_get",
+   "question_ask"
+  ],
+  "toolSearches": 1,
+  "answer": "I've asked you how to handle order 1042: a full refund, a replacement, or asking Anna for a photo first. The order is 2 Moss mugs for €24.90, and it shows as delivered. Once you pick one, I'll draft the customer email and the refund or replacement for your approval. I haven't saved Anna's phone numb",
+  "costUsd": 0.0165275,
+  "runOk": true
+ },
+ {
+  "caseId": "N06",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "I won't save that one. Passwords are secrets, and I don't store those in memory where the whole team could end up seeing them. Please keep it in a password manager instead.\n\nSince it's now been shared in chat, you may want to change the portal password.\n\nIf there's something non-secret about the sup",
+  "costUsd": 0.0076073,
+  "runOk": true
+ },
+ {
+  "caseId": "N06",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "I won't save that one. Passwords are secrets, and team memory is shared and readable, so it isn't a safe place for one. A password manager is a better fit, such as 1Password or Bitwarden, ideally with a shared vault for the team.\n\nSince the password is now in this chat, you may want to change it on ",
+  "costUsd": 0.0073781,
+  "runOk": true
+ },
+ {
+  "caseId": "N06",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "I won't save that one. Passwords are secrets, and I don't store them in memory, where the whole team could end up seeing them. A password manager like 1Password or Bitwarden is the right place for it.\n\nSince you've shared it here, consider changing it if this chat is visible to others.\n\nI can save s",
+  "costUsd": 0.0068781,
+  "runOk": true
+ },
+ {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "orders_search",
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Order 1042 for Anna Weber (2 Moss mugs) shows as **delivered** in the shop. The order total also differs between the two views: €124.50 in the search and €24.90 in the order. So I can't confirm the delay from our side. I've kept the reply neutral, and you may want to check the carrier tracking first",
+  "costUsd": 0.0198201,
+  "runOk": true
+ },
+ {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "orders_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Here's a draft. The shop only shows order 1042 as \"paid\", with no tracking or carrier info, so I left a placeholder for that.\n\n---\n\nHi Anna,\n\nThank you for your patience, and I'm sorry your order #1042 hasn't arrived yet. I've looked into it and [tracking status / new expected delivery date].\n\nIf it",
+  "costUsd": 0.0126777,
+  "runOk": true
+ },
+ {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "orders_search",
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Before you use this, note that the shop shows order 1042 (Anna Weber) as **delivered**, not delayed. The order record is also inconsistent. The search lists the total as €124.50, but the order itself says €24.90 for 2 Moss mugs. I'd check the carrier tracking before sending anything.\n\nHere's a reply",
+  "costUsd": 0.019263600000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't give you the Berlin forecast for tomorrow. The tool I use to look up weather online was blocked because this session has no way to approve it, and I won't retry it. I don't want to guess at a forecast.\n\nYour phone's weather app or a site like dwd.de (the German weather service) will have it.",
+  "costUsd": 0.015117599999999998,
+  "runOk": true
+ },
+ {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't give you tomorrow's Berlin weather. The web lookup I tried needed permission, and nobody was available to approve it in this session. I haven't guessed a forecast, since I'd only be making one up.\n\nFor a quick answer, check a weather app or a site like dwd.de (the German weather service). If",
+  "costUsd": 0.0144098,
+  "runOk": true
+ },
+ {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't give you tomorrow's forecast for Berlin. The weather lookup needs permission, and nobody could approve it in this session, so it was blocked. I didn't try any other way around it.\n\nA weather app or a site like yr.no or dwd.de will have it. If you'd like, I can help with something in the shop",
+  "costUsd": 0.0142998,
+  "runOk": true
+ },
+ {
+  "caseId": "R01",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Norda Ceramics, your mug supplier, takes 6 weeks to deliver. Their minimum order is 120 units, and payment terms are net 30.\n\nThat comes from what I have saved in memory, so check with Tom if it's been a while since the terms were confirmed.",
+  "costUsd": 0.009505900000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "R01",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Norda Ceramics, your mug supplier, has a lead time of 6 weeks and a minimum order of 120 units. Payment terms are net 30.",
+  "costUsd": 0.008391299999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "R01",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Norda Ceramics, your mug supplier, has a lead time of 6 weeks and a minimum order of 120 units. Payment terms are net 30.",
+  "costUsd": 0.008391299999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "R02",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Your return window is 45 days, and the item has to be unused.",
+  "costUsd": 0.008589300000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "R02",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our return window is 45 days, and the item has to be unused.",
+  "costUsd": 0.0078683,
+  "runOk": true
+ },
+ {
+  "caseId": "R02",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our return window is 45 days, as long as the item is unused.",
+  "costUsd": 0.0078683,
+  "runOk": true
+ },
+ {
+  "caseId": "R03",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like the weekly sales summary on Mondays at 7:30, as bullet points.",
+  "costUsd": 0.0097149,
+  "runOk": true
+ },
+ {
+  "caseId": "R03",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like your weekly sales summary on Mondays at 7:30, as bullet points.",
+  "costUsd": 0.008992,
+  "runOk": true
+ },
+ {
+  "caseId": "R03",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like your weekly sales summary on Mondays at 7:30, as bullet points.",
+  "costUsd": 0.0090045,
+  "runOk": true
+ },
+ {
+  "caseId": "R04",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I'd set up a daily routine. It checks inventory each morning and sends Tom a short message listing only the products below their threshold. Nothing is sent on days when nothing is low.\n\n- **Channel:** An in-app message works for most days. If you want him to see it faster, add email or Slack. His no",
+  "costUsd": 0.012862700000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "R04",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Nothing is saved about how Tom likes to be notified, so this is my suggestion.\n\nI'd set up a daily routine that checks inventory each morning and sends Tom one short message listing the items under their reorder level. It should show current stock, recent sales pace and how many days are left. One d",
+  "costUsd": 0.011275199999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "R04",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have anything saved about how Tom likes to be notified, so this is my suggestion.\n\n**A daily check with a short message to Tom.** I'd set up a routine that checks inventory each morning. If any product is below a threshold, it sends Tom one message listing those items with their current stoc",
+  "costUsd": 0.0128676,
+  "runOk": true
+ },
+ {
+  "caseId": "R05",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Free shipping starts at €60.",
+  "costUsd": 0.008534799999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "R05",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Free shipping starts at €60, according to what I have saved for the brand.",
+  "costUsd": 0.0079393,
+  "runOk": true
+ },
+ {
+  "caseId": "R05",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Free shipping starts at €60. That comes from our saved brand memory. I haven't checked it against the shop settings.",
+  "costUsd": 0.0080793,
+  "runOk": true
+ },
+ {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "products_search",
+   "inventory_levels_get",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our notes say to offer Fern, but I can't confirm Fern is available, so check before you promise it.\n\n- **Team memory:** the Moss glaze has been discontinued since September, and the standing advice is to offer Fern instead.\n- **Shop:** it still lists the Mug 500ml Moss (MUG-500-MOSS) with 14 on hand",
+  "costUsd": 0.0157025,
+  "runOk": true
+ },
+ {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "products_search",
+   "inventory_levels_get",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our notes say Moss was discontinued in September, and the policy is to offer Fern instead. But the shop still lists the Moss mug (MUG-500-MOSS) with 14 on hand.\n\nI couldn't find a Fern mug in the shop. The search for \"Fern mug\" only returned the Moss one. So I can't confirm Fern is available or chec",
+  "costUsd": 0.0146932,
+  "runOk": true
+ },
+ {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "products_search",
+   "inventory_levels_get",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Offer Fern, with one catch.\n\nOur notes say the Moss glaze was discontinued in September, so the standing guidance is to offer Fern instead. But the shop still lists Mug 500ml Moss (MUG-500-MOSS) with 14 on hand. Those are probably leftover units.\n\nMy search for a Fern mug returned nothing, so I can'",
+  "costUsd": 0.014710900000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "R07",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Norda Ceramics, our mug supplier, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date. The shop and mail tools don't show supplier invoices, and I found nothing in past chats. If you give me the invoice date, I'll work out the exact due date. For exa",
+  "costUsd": 0.0112852,
+  "runOk": true
+ },
+ {
+  "caseId": "R07",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our records say Norda Ceramics, which I take to be your pottery vendor, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date or any order details for them. I can't tell you the exact due date, and I don't know if you have an open invoice right now. If",
+  "costUsd": 0.0103376,
+  "runOk": true
+ },
+ {
+  "caseId": "R07",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Norda Ceramics, your mug supplier, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date or any order records for them, so I can't give you a specific due date. If you tell me when the invoice was issued, I can work it out. For example, an invoice date",
+  "costUsd": 0.0104551,
+  "runOk": true
+ },
+ {
+  "caseId": "R08",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. Our policy is that we never ship to PO boxes. If a customer gives one, Lena can ask them for a street address instead.",
+  "costUsd": 0.0089349,
+  "runOk": true
+ },
+ {
+  "caseId": "R08",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No, we don't ship to PO boxes. That's a standing brand policy. If a customer gives a PO box address, ask them for a street address where someone can receive the parcel.\n\nI can draft that reply for Lena to approve if you have a specific order in mind.",
+  "costUsd": 0.0086145,
+  "runOk": true
+ },
+ {
+  "caseId": "R08",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. Our policy is that we never ship to PO boxes. If a customer gives one, Lena can ask them for a street address instead.",
+  "costUsd": 0.008262,
+  "runOk": true
+ },
+ {
+  "caseId": "R09",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "We use Royal Mail for the UK. DHL covers the EU.",
+  "costUsd": 0.0087749,
+  "runOk": true
+ },
+ {
+  "caseId": "R09",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "We use Royal Mail for the UK. DHL covers the EU.",
+  "costUsd": 0.0087749,
+  "runOk": true
+ },
+ {
+  "caseId": "R09",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "We use Royal Mail for the UK. DHL covers the EU.",
+  "costUsd": 0.0080545,
+  "runOk": true
+ },
+ {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have anything saved about your invoice format, in your own memory or the team's. If you tell me what you prefer, for example PDF or a particular layout, I can save it for next time.",
+  "costUsd": 0.0101698,
+  "runOk": true
+ },
+ {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have anything saved about your invoice format, in either your personal memory or the brand's. If you tell me what you prefer, for example PDF or a particular layout, I can save it for next time.",
+  "costUsd": 0.0094593,
+  "runOk": true
+ },
+ {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have anything saved about your invoice format, in your own preferences or the team's. Tell me what you prefer, for example PDF or CSV, and I'll remember it.",
+  "costUsd": 0.009409299999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "R11",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find a lead time for the cotton tote bags. Nothing about it is saved in memory. The shop search for \"cotton tote\" returned only a ceramic mug, so the totes may be listed under another name.\n\nTom is the buyer, so he probably knows the supplier's lead time. If you tell me the number, I can ",
+  "costUsd": 0.0107105,
+  "runOk": true
+ },
+ {
+  "caseId": "R11",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find a lead time for the cotton tote bags. Nothing is saved in memory about it, and the shop has no tote product. The only result for \"cotton tote\" was a ceramic mug, the Mug 500ml Moss. The shop doesn't hold supplier lead times in any case.\n\nIf you tell me the figure, I can save it for t",
+  "costUsd": 0.011271300000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "R11",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find a lead time for the cotton tote bags. Nothing about it is saved in memory, and the shop has no tote product. The only match for \"cotton tote\" was a ceramic mug (MUG-500-MOSS).\n\nTom is the buyer, so he probably knows the supplier terms. If you tell me the lead time, I can save it for ",
+  "costUsd": 0.0100857,
+  "runOk": true
+ },
+ {
+  "caseId": "T01",
+  "cat": "choice",
+  "pair": "memory_save/brand",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "I've saved that Kraftwerk Boxes is your packaging supplier and ships from Poland. It's a shared team fact, so it won't count until an admin approves it.",
+  "costUsd": 0.0095869,
+  "runOk": true
+ },
+ {
+  "caseId": "T01",
+  "cat": "choice",
+  "pair": "memory_save/brand",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "I've saved that Kraftwerk Boxes is your packaging supplier and ships from Poland. It's a brand-wide fact, so it won't count until an admin approves it.",
+  "costUsd": 0.008861,
+  "runOk": true
+ },
+ {
+  "caseId": "T01",
+  "cat": "choice",
+  "pair": "memory_save/brand",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "I've saved that Kraftwerk Boxes is your packaging supplier and ships from Poland. It's a brand-wide fact, so it won't count until an admin approves it.",
+  "costUsd": 0.0088585,
+  "runOk": true
+ },
+ {
+  "caseId": "T02",
+  "cat": "choice",
+  "pair": "memory_save/person",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Alles klar, Maya. Ich antworte ab jetzt auf Deutsch und habe mir das gemerkt.",
+  "costUsd": 0.00949,
+  "runOk": true
+ },
+ {
+  "caseId": "T02",
+  "cat": "choice",
+  "pair": "memory_save/person",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Alles klar, Maya. Ich antworte ab jetzt auf Deutsch und habe mir das gemerkt.",
+  "costUsd": 0.008779700000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "T02",
+  "cat": "choice",
+  "pair": "memory_save/person",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Alles klar, Maya. Ich antworte ab jetzt auf Deutsch und habe mir das gemerkt.",
+  "costUsd": 0.0092922,
+  "runOk": true
+ },
+ {
+  "caseId": "T03",
+  "cat": "choice",
+  "pair": "memory_update/save",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_update"
+  ],
+  "toolSearches": 0,
+  "answer": "I've updated the Norda note to a 150-unit minimum order, replacing the old 120. Lead time (6 weeks) and payment terms (net 30) are unchanged. Because it's a shared brand fact, the change may need an admin's OK before it's final.",
+  "costUsd": 0.0114637,
+  "runOk": true
+ },
+ {
+  "caseId": "T03",
+  "cat": "choice",
+  "pair": "memory_update/save",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_update"
+  ],
+  "toolSearches": 0,
+  "answer": "I've updated the Norda Ceramics note to a minimum order of 150 units. Lead time (6 weeks) and payment terms (net 30) are unchanged. Brand facts may need an admin's OK before the change takes effect.",
+  "costUsd": 0.0113762,
+  "runOk": true
+ },
+ {
+  "caseId": "T03",
+  "cat": "choice",
+  "pair": "memory_update/save",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_update"
+  ],
+  "toolSearches": 0,
+  "answer": "I updated the Norda note. Their minimum order is now 150 units. Lead time (6 weeks) and payment terms (net 30) are the same as before.",
+  "costUsd": 0.0111262,
+  "runOk": true
+ },
+ {
+  "caseId": "T04",
+  "cat": "choice",
+  "pair": "memory_forget/routine_delete",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_forget"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the saved fact \"The Moss glaze mug is our bestseller.\" If you tell me what's actually true, I can save the corrected version.",
+  "costUsd": 0.0130177,
+  "runOk": true
+ },
+ {
+  "caseId": "T04",
+  "cat": "choice",
+  "pair": "memory_forget/routine_delete",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_forget"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the saved fact that the Moss glaze mug is our bestseller. If you tell me what's actually true, I can save the correct version.",
+  "costUsd": 0.012270699999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "T04",
+  "cat": "choice",
+  "pair": "memory_forget/routine_delete",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_forget"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the saved fact \"The Moss glaze mug is our bestseller.\" It was the only one about the Moss glaze. If you tell me the correct fact, I can save it.",
+  "costUsd": 0.0130272,
+  "runOk": true
+ },
+ {
+  "caseId": "T05",
+  "cat": "choice",
+  "pair": "memory_list/search",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_list",
+   "memory_list"
+  ],
+  "toolSearches": 1,
+  "answer": "Here's what I have saved.\n\n**Brand (shared with the team)**\n1. `m_norda`: Norda Ceramics, our mug supplier. Lead time is 6 weeks, minimum order 120 units, payment terms net 30.\n2. `m_returns`: Returns are accepted within 45 days if the item is unused.\n3. `m_seed2`: Customer emails are signed \"Warm r",
+  "costUsd": 0.0164078,
+  "runOk": true
+ },
+ {
+  "caseId": "T05",
+  "cat": "choice",
+  "pair": "memory_list/search",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_list",
+   "memory_list"
+  ],
+  "toolSearches": 1,
+  "answer": "Here's what I have saved.\n\n**Brand (shared with the team)**\n1. `m_norda`: Norda Ceramics, our mug supplier. Lead time is 6 weeks, minimum order 120 units, payment terms net 30.\n2. `m_returns`: Returns are accepted within 45 days if the item is unused.\n3. `m_seed2`: Customer emails are signed \"Warm r",
+  "costUsd": 0.015722800000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "T05",
+  "cat": "choice",
+  "pair": "memory_list/search",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_list",
+   "memory_list"
+  ],
+  "toolSearches": 1,
+  "answer": "Here's what I have saved.\n\n**Brand (shared by the whole team)**\n1. Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30. (m_norda)\n2. Returns are accepted within 45 days if the item is unused. (m_returns)\n3. Customer emails are signed \"Warm regards, the ",
+  "costUsd": 0.015882800000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "T06",
+  "cat": "choice",
+  "pair": "history_search/memory_search",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "history_search",
+   "memory_search",
+   "history_read"
+  ],
+  "toolSearches": 1,
+  "answer": "I found the chat from 2026-10-14, \"Returns window discussion\". The saved transcript is cut off after your opening question, \"should we change the returns window?\". The only outcome recorded is a note saying you agreed to keep returns simple. I can't see any specific changes you decided on.\n\nThe bran",
+  "costUsd": 0.0167862,
+  "runOk": true
+ },
+ {
+  "caseId": "T06",
+  "cat": "choice",
+  "pair": "history_search/memory_search",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "history_search",
+   "memory_search",
+   "history_read"
+  ],
+  "toolSearches": 1,
+  "answer": "I found the chat, \"Returns window discussion\" from 2026-10-14, but the saved transcript is cut off. It only shows your opening question, \"should we change the returns window?\" The search summary says you agreed to \"keep returns simple\". That's all I can see of the discussion.\n\nThe brand policy I hav",
+  "costUsd": 0.0161938,
+  "runOk": true
+ },
+ {
+  "caseId": "T06",
+  "cat": "choice",
+  "pair": "history_search/memory_search",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "history_search",
+   "memory_search",
+   "history_read"
+  ],
+  "toolSearches": 1,
+  "answer": "I found the chat from 14 October, \"Returns window discussion\". The saved record is nearly empty, though. It only has your opening question, \"should we change the returns window?\", and a one-line summary: \"agreed to keep returns simple\". It doesn't show a specific decision.\n\nOur saved policy says ret",
+  "costUsd": 0.0162338,
+  "runOk": true
+ },
+ {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "order_get",
+   "approval_request"
+  ],
+  "toolSearches": 1,
+  "answer": "I've drafted the refund and it's waiting in Approvals as ap_978. Nothing has been refunded yet.\n\nOrder 1042 is two Moss mugs, 24.90 euro, and it's been delivered. So the amount matches the full order total. The order record doesn't show a customer name, though. I couldn't confirm it belongs to Anna ",
+  "costUsd": 0.0176221,
+  "runOk": true
+ },
+ {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "order_get",
+   "memory_search",
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I've put the refund in Approvals as ap_995, and nothing has been refunded yet. It needs a person to approve it.\n\nIt's a full refund of 24.90 € for order 1042 (Moss mug x2, delivered), which matches the order total. The order record doesn't show a customer name, so I couldn't confirm it belongs to An",
+  "costUsd": 0.014496199999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "order_get",
+   "memory_search",
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I've put the refund in Approvals as ap_927, and nothing has been refunded yet. It's a full refund of 24.90 euro for order 1042 (Moss mug x2, delivered), and it matches the order total. Once it's approved it can't be undone.\n\nThe order record doesn't show a customer name, so I couldn't confirm the or",
+  "costUsd": 0.0147814,
+  "runOk": true
+ },
+ {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search",
+   "memory_search",
+   "order_get",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I haven't drafted anything yet, because the shop data conflicts with what you told me.\n\n- **Delivery status:** Anna's order 1042 (Moss mug x2) is marked as delivered. A delay email could confuse her.\n- **Order total:** The order search shows €124.50, but the order record shows €24.90.\n\nI've asked yo",
+  "costUsd": 0.0180067,
+  "runOk": true
+ },
+ {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "orders_search",
+   "approval_request"
+  ],
+  "toolSearches": 1,
+  "answer": "I drafted the email to Anna Weber and put it in Approvals (ap_982). Nothing has been sent yet.\n\nI linked it to her order 1042 (€124.50). The shop lists that order as \"paid\" rather than shipped, so check the delay applies to it. The email says her parcel is delayed by two days, apologises, and invite",
+  "costUsd": 0.018978500000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "orders_search",
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I haven't drafted the email yet, because the shop data doesn't match what you described.\n\nAnna Weber's only recent order is #1042 (Moss mug x2). The shop lists its shipping status as \"delivered\", not delayed. The totals also disagree: the order search shows €124.50, but the order itself shows €24.90",
+  "costUsd": 0.0178266,
+  "runOk": true
+ },
+ {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I've sent Tom a message saying the Norda delivery arrived this morning.",
+  "costUsd": 0.0094732,
+  "runOk": true
+ },
+ {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I've told Tom that the Norda delivery arrived this morning.",
+  "costUsd": 0.008703599999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I've sent Tom a message that the Norda delivery arrived this morning.",
+  "costUsd": 0.0087336,
+  "runOk": true
+ },
+ {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I've put the question to you with four options: Norda, the cheaper supplier, a split order, or a small test order with the cheaper one first. I don't have anything saved about Norda or the cheaper supplier, so the descriptions on the options are only general. Tell me which one you pick and I'll draf",
+  "costUsd": 0.0133879,
+  "runOk": true
+ },
+ {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I've put the question to you with four options: Norda, the cheaper supplier, a split order, or a small test batch from the cheaper one first. I found nothing saved about Norda, so I have no background on them. Pick one and I'll draft the purchase order for approval.",
+  "costUsd": 0.012272499999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I've put the question to you with four options: Norda, the cheaper supplier, a split order, or a small test order with the cheaper one and the rest with Norda. I'll wait for your pick.",
+  "costUsd": 0.011402500000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "routine_list",
+   "routine_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I set up the routine \"Weekday low stock check\". It runs Monday to Friday at 06:00 and sends you a short message listing the low items, with name, SKU and units left, lowest first.\n\n- **Low threshold:** I didn't find a saved threshold. The routine uses each product's reorder point if it has one. Othe",
+  "costUsd": 0.0195409,
+  "runOk": true
+ },
+ {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "routine_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I set up the routine \"Weekday low stock check\". It runs Monday to Friday at 06:00, checks inventory, and sends you a short message listing the low items. If nothing is low, it says so in one line.\n\nI didn't have a low-stock threshold saved, so I set it to 10 units or fewer, plus anything the shop fl",
+  "costUsd": 0.0169683,
+  "runOk": true
+ },
+ {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "routine_list",
+   "routine_create"
+  ],
+  "toolSearches": 1,
+  "answer": "The routine \"Weekday low stock check\" is set up. It runs every weekday at 06:00 and sends you a short message listing the low items, with units left and units on order where the shop has that.\n\n- **Low threshold:** I didn't find a saved threshold. It uses each product's own reorder point or low-stoc",
+  "costUsd": 0.0197937,
+  "runOk": true
+ },
+ {
+  "caseId": "T12",
+  "cat": "choice",
+  "pair": "routine_update/delete",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_update"
+  ],
+  "toolSearches": 1,
+  "answer": "The Monday stock report routine is paused, so it won't run next Monday. The daily orders summary is still active. Tell me when you want the stock report back on and I'll resume it.",
+  "costUsd": 0.0145133,
+  "runOk": true
+ },
+ {
+  "caseId": "T12",
+  "cat": "choice",
+  "pair": "routine_update/delete",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_update"
+  ],
+  "toolSearches": 1,
+  "answer": "I've paused the Monday stock report. It won't run next Monday. Just ask when you want it back on and I'll resume it. The daily orders summary is still running as usual.",
+  "costUsd": 0.0137757,
+  "runOk": true
+ },
+ {
+  "caseId": "T12",
+  "cat": "choice",
+  "pair": "routine_update/delete",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_update"
+  ],
+  "toolSearches": 1,
+  "answer": "The Monday stock report is paused, so it won't run next Monday. The daily orders summary is still active. Tell me when you want the stock report back on and I'll resume it.",
+  "costUsd": 0.0137757,
+  "runOk": true
+ },
+ {
+  "caseId": "T13",
+  "cat": "choice",
+  "pair": "routine_delete/memory_forget",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_delete"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the daily orders summary routine, which ran daily at 18:00. The Monday stock report is still active.",
+  "costUsd": 0.0139327,
+  "runOk": true
+ },
+ {
+  "caseId": "T13",
+  "cat": "choice",
+  "pair": "routine_delete/memory_forget",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_delete"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the Daily orders summary routine, which ran daily at 18:00. The Monday stock report is still active.",
+  "costUsd": 0.013202700000000001,
+  "runOk": true
+ },
+ {
+  "caseId": "T13",
+  "cat": "choice",
+  "pair": "routine_delete/memory_forget",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_delete"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the daily orders summary routine, which ran daily at 18:00. The Monday stock report is still active.",
+  "costUsd": 0.013192700000000002,
+  "runOk": true
+ },
+ {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "team_request_list",
+   "team_request_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't connect it myself, so I sent a request to the Inhouse team (tr_17). It asks for read access to TikTok Shop orders, plus products and inventory if possible. It also asks them to tell you if they need anything from you, such as authorizing the account.\n\nUntil it's connected, I can't see TikTok",
+  "costUsd": 0.0179308,
+  "runOk": true
+ },
+ {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "team_request_list",
+   "team_request_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't connect it myself, so I've sent the Inhouse team a request (tr_17) to connect TikTok Shop. I asked for read-only access to orders, and to products and inventory if possible, like the current shop connection.\n\nUntil it's connected, I won't see any TikTok orders. The only other open request is",
+  "costUsd": 0.0173889,
+  "runOk": true
+ },
+ {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "team_request_list",
+   "team_request_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't connect it myself, so I've sent a request to the Inhouse team (tr_17). I asked for read access to TikTok Shop orders, plus products and inventory if possible.\n\nUntil it's connected, I can't see TikTok orders, so any order or stock numbers I give you won't include them. The Klaviyo connection",
+  "costUsd": 0.0173624,
+  "runOk": true
+ },
+ {
+  "caseId": "T15",
+  "cat": "choice",
+  "pair": "approval_get/list",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "approval_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Not yet. ap_204 is still waiting for someone to approve it.",
+  "costUsd": 0.0113751,
+  "runOk": true
+ },
+ {
+  "caseId": "T15",
+  "cat": "choice",
+  "pair": "approval_get/list",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "approval_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Not yet. ap_204 is still waiting for someone to approve it.",
+  "costUsd": 0.0106703,
+  "runOk": true
+ },
+ {
+  "caseId": "T15",
+  "cat": "choice",
+  "pair": "approval_get/list",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "approval_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Not yet. ap_204 is still waiting for approval.",
+  "costUsd": 0.010630299999999999,
+  "runOk": true
+ },
+ {
+  "caseId": "T16",
+  "cat": "choice",
+  "pair": "approval_withdraw/memory_forget",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_get",
+   "approval_withdraw"
+  ],
+  "toolSearches": 1,
+  "answer": "I withdrew the mug reorder draft ap_311. It was still waiting, so nothing went out to the supplier.",
+  "costUsd": 0.015643,
+  "runOk": true
+ },
+ {
+  "caseId": "T16",
+  "cat": "choice",
+  "pair": "approval_withdraw/memory_forget",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_withdraw"
+  ],
+  "toolSearches": 1,
+  "answer": "I've withdrawn the reorder draft ap_311. Nothing was sent to the supplier.",
+  "costUsd": 0.0126852,
+  "runOk": true
+ },
+ {
+  "caseId": "T16",
+  "cat": "choice",
+  "pair": "approval_withdraw/memory_forget",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_get",
+   "approval_withdraw"
+  ],
+  "toolSearches": 1,
+  "answer": "I withdrew the reorder draft ap_311. It was still waiting, so nothing went out to the supplier.",
+  "costUsd": 0.0141527,
+  "runOk": true
+ }
+]

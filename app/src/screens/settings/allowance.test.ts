@@ -4,7 +4,7 @@ import { CAN_KEYS } from '../../../shared/contract/keys'
 import { EXACT_ROWS, settingRow } from '../../../shared/contract/settings-table'
 import type { Can } from '../../agent/types'
 import type { Row } from './content'
-import { allowance } from './allowance'
+import { allowance, pageResources } from './allowance'
 import { nowIs } from './now-is'
 
 const row = (r: Partial<Row>): Row => ({ title: 't', desc: '', kind: 'select', value: '', need: 0, ...r })
@@ -22,9 +22,13 @@ describe('allowance', () => {
     const can = canOf(on)
     for (const k of CAN_KEYS) expect(allowance(row({ key: 'p:m_x', can: k }), can).control).toBe(can[k])
   })
-  test.prop([fc.boolean(), fc.boolean(), fc.boolean()])('a model row: effort needs technical; without it the switch only turns a model off, so only while it is on', (tech, off, on) => {
-    const a = allowance(row({ kind: 'mode', key: 'tm:fable:effort', switchOn: on }), canOf([...(tech ? ['editTechnical'] : []), ...(off ? ['switchModelOff'] : [])]))
-    expect(a).toEqual({ control: tech || off, effort: tech, switch: tech || (off && on) })
+  test.prop([fc.boolean(), fc.boolean(), fc.boolean()])('a model row: effort needs technical; the switch works both ways with technical or switchModel, whether the model is on or off', (tech, sw, on) => {
+    const a = allowance(row({ kind: 'mode', key: 'tm:fable:effort', switchOn: on }), canOf([...(tech ? ['editTechnical'] : []), ...(sw ? ['switchModel'] : [])]))
+    expect(a).toEqual({ control: tech || sw, effort: tech, switch: tech || sw })
+  })
+  test('an Admin (switchModel, no editTechnical) gets the switch on a model that is off, to turn it back on, and no effort picker', () => {
+    const a = allowance(row({ kind: 'mode', key: 'tm:fable:effort', switchOn: false }), canOf(['switchModel', 'editBrandSettings', 'invite']), true, 'admin')
+    expect(a).toEqual({ control: true, effort: false, switch: true })
   })
   const PERSONAL = Object.keys(EXACT_ROWS).filter(k => EXACT_ROWS[k].scope === 'personal')
   test.prop([fc.constantFrom(...PERSONAL), fc.subarray([...CAN_KEYS]), fc.constantFrom('select', 'text', 'toggle') as fc.Arbitrary<Row['kind']>])(
@@ -52,5 +56,13 @@ describe('nowIs', () => {
     expect(nowIs({ value: true })).toBe('on')
     expect(nowIs({ role: 'admin', name: 'X' })).toBe('Admin')
     expect(nowIs({ id: 'x' })).toBeNull()
+  })
+})
+
+describe('pageResources: the pages that read memory', () => {
+  test('both Memory pages name memory, so each re-reads it when it opens', () => {
+    expect(pageResources('you-memory', false)).toEqual(['memory'])
+    expect(pageResources('team-memory', false)).toEqual(['memory'])
+    expect(pageResources('team-members', false)).not.toContain('memory')
   })
 })

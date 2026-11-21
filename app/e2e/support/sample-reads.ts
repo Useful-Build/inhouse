@@ -12,4 +12,5 @@ export const sampleJson = (name: string): any => JSON.parse(readFileSync(new URL
 export const sampleFiles = (): string[] => readdirSync(DATA).filter(f => f.endsWith('.json'))
 
 /** The source of the mock module, for the checks on the answers it writes in code. */
-export const mockSource = (): string => readFileSync(new URL('../../src/agent/mock.ts', import.meta.url), 'utf8')
+/** The demo agent's source: the mock, and the files its scripted answers and chat engine moved to (mock-script.ts, mock-chat.ts: they load after the first load). The answers written in code are checked wherever they are. */
+export const mockSource = (): string => ['mock.ts', 'mock-script.ts', 'mock-chat.ts'].map(f => readFileSync(new URL(`../../src/agent/${f}`, import.meta.url), 'utf8')).join('\n')
