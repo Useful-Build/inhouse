@@ -1101,6 +1101,9 @@ export class MockAgent implements AgentClient {
     return this.writeRecs([...new Set(ids)].map(id => [`file:${id}`, 1] as [string, number]), { libraryDeleted })
   }
 
+  uploadFiles = (_files: File[]): Promise<LibraryFile[]> => this.rejected('unavailable', "Uploads aren't connected in this demo.", true)
+  fileDownloadUrl = (_id: string): string | null => null
+
   setAside(id: string, reason: SetAsideReason | null) {
     problemById(id)
     const setAside = { ...this.state.setAside }

@@ -897,6 +897,9 @@ export class HttpAgent implements AgentClient {
   approve = (_id: string) => this.refuse<Awaited<ReturnType<AgentClient['approve']>>>()
   undo = (_id: string) => this.refuse()
   editDraft = (_id: string, _body: string) => this.refuse()
+  // The Library's upload and download: W5 replaces these two with the real routes.
+  uploadFiles = (_files: File[]) => this.refuse<LibraryFile[]>()
+  fileDownloadUrl = (_id: string): string | null => null
   undoHandled = (_id: string) => this.refuse<string>()
   redoHandled = (_id: string) => this.refuse()
 
