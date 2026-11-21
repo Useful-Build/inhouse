@@ -85,7 +85,9 @@ const SECRET_NAMES = ['HUB_TOKEN_KEYS', 'SHOPIFY_CLIENT_SECRET']
 /** A Worker secret that may be absent: refused in `vars` and `define`, but not listed as required. */
 const OPTIONAL_SECRET_NAMES = ['SLACK_CLIENT_SECRET']
 /** The only `vars` a deployable config may set (the ops repo fills them per deployment). */
-const KNOWN_VARS = ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'SLACK_PRIVATE_SEARCH', 'CONNECT_REDIRECT_URI']
+const KNOWN_VARS = ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'SLACK_PRIVATE_SEARCH', 'CONNECT_REDIRECT_URI',
+  // P5 W4: the product origin Slack notices link to.
+  'APP_ORIGIN']
 const PUBLIC_SURFACES = ['assets', 'site']
 const BUNDLER_SWAPS = ['alias', 'no_bundle', 'build']
 

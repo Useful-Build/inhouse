@@ -37,7 +37,9 @@
 		"SLACK_CLIENT_ID": "",
 		"SLACK_TEAM_ID": "",
 		"SLACK_PRIVATE_SEARCH": "off",
-		"CONNECT_REDIRECT_URI": ""
+		"CONNECT_REDIRECT_URI": "",
+		// P5 W4: the brand's product origin (https, no path) for the "Open in Inhouse" link in Slack notices.
+		"APP_ORIGIN": ""
 	},
 	// Set with `wrangler secret put` through a secret card, never in a file. SLACK_CLIENT_SECRET is optional (not in
 	// `required`): set it the same way once the Slack app exists.

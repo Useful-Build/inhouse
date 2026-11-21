@@ -19,6 +19,8 @@ import { codeModeFor } from '../codemode/run'
 
 export { SignIn } from '../signin/signin'
 export { ConnectGateway } from '../oauth/entry'
+// P5 (p5-w4): Slack delivery for product server code only (HUB_DELIVERY).
+export { DeliveryGateway } from '../connectors/slack/delivery'
 
 const notFound = (): Response =>
   new Response(JSON.stringify({ error: 'not_found' }), {

@@ -34,6 +34,8 @@ export const ErrorReasonSchema = z.enum([
   'type_not_allowed', 'length_required', 'length_mismatch', 'hash',
   // P5 (p5-w3): the Tools routes' refusals.
   'not_configured', 'not_disconnectable', 'not_connected',
+  // P5 (p5-w4): the notice channel list's refusals (route 75 conflicts, route 74 while Slack can't be used).
+  'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'name_taken', 'slack_not_connected',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 

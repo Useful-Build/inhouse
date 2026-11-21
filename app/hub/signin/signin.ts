@@ -23,6 +23,7 @@ import {
   type ShopifyReadClient,
 } from '../registry/registry'
 import { parseShopifyConfig, type Upstream } from './providers/shopify'
+import type { SlackPostRequest } from '../connectors/slack/contract'
 import { SignInCore, type McpCallRequest, type McpProvider, type QueryRequest, type SyncStore } from './core'
 
 type HubEnv = Env & { INHOUSE_TEST_BUILD?: string }
@@ -129,6 +130,8 @@ export class SignIn extends DurableObject<Env> {
       scopesFor: async accountId => scopesFor(await loadRegistry(env), accountId),
       provider: accountId => providerFor(env, accountId),
       kindFor: async accountId => kindFor(await loadRegistry(env), accountId),
+      // P5 (p5-w4)
+      appOrigin: () => (env as HubEnv & { APP_ORIGIN?: unknown }).APP_ORIGIN,
     })
   }
 
@@ -183,6 +186,16 @@ export class SignIn extends DurableObject<Env> {
   /** Code mode's per-run and per-day script caps (cm: keys). */
   bumpCounter(key: string, limit: number, ttlMs: number) {
     return this.#guard(() => this.#core.bumpCounter(key, limit, ttlMs))
+  }
+  // ---- P5 (p5-w4): Slack delivery, the only Web API calls (section 6) ----
+  slackChannelInfo(accountId: string, channelId: string) {
+    return this.#guard(() => this.#core.slackChannelInfo(accountId, channelId))
+  }
+  slackChannelList(accountId: string, cursor?: string) {
+    return this.#guard(() => this.#core.slackChannelList(accountId, cursor))
+  }
+  slackPost(accountId: string, req: SlackPostRequest) {
+    return this.#guard(() => this.#core.slackPost(accountId, req))
   }
   override async alarm(): Promise<void> {
     await this.#core.alarm()

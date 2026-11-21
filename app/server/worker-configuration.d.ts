@@ -16,6 +16,7 @@ interface __BaseEnv_Env {
 	RUNNER: DurableObjectNamespace<import("./index").Runner>;
 	HUB: Service /* entrypoint ReadGateway from inhouse-hub */;
 	HUB_CONNECT: Service /* entrypoint ConnectGateway from inhouse-hub */;
+	HUB_DELIVERY: Service /* entrypoint DeliveryGateway from inhouse-hub */;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

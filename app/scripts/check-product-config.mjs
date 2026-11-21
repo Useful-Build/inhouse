@@ -259,10 +259,10 @@ export function checkPool(config, { sandbox = false, evalMode = false } = {}) {
 const HUB_SERVICE = 'inhouse-hub'
 /**
  * The hub entrypoints the product Worker binds, by binding name, and nothing else (P4 H1's ReadGateway; P5 W1's
- * ConnectGateway, product server code only). ServerGateway is never bound. Keeping the runner off HUB_CONNECT is code
+ * ConnectGateway and P5 W4's DeliveryGateway, product server code only). ServerGateway is never bound. Keeping the runner off HUB_CONNECT and HUB_DELIVERY is code
  * discipline plus checks (the import-boundary rule, W5's runtime tests), not this config: every module shares `env`.
  */
-const HUB_BINDINGS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway' }
+const HUB_BINDINGS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
 const HUB_KEYS = new Set(['binding', 'service', 'entrypoint'])
 const HUB_LIST = Object.entries(HUB_BINDINGS).map(([b, e]) => `${b} → ${e}`).join(', ')
 
@@ -282,7 +282,7 @@ export function checkHub(config) {
     }
     const expected = Object.hasOwn(HUB_BINDINGS, s.binding) ? HUB_BINDINGS[s.binding] : null
     if (!expected) {
-      failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its bindings are ${Object.keys(HUB_BINDINGS).join(' and ')}`)
+      failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its bindings are ${Object.keys(HUB_BINDINGS).slice(0, -1).join(', ')} and ${Object.keys(HUB_BINDINGS).at(-1)}`)
       return
     }
     const extra = Object.keys(s).filter(k => !HUB_KEYS.has(k))

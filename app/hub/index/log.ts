@@ -16,6 +16,8 @@ export type LogEvent =
   | 'mcp_call'
   // P5 (p5-w2)
   | 'hub_codemode'
+  // P5 (p5-w4)
+  | 'hub_delivery'
 
 export type LogFields = {
   accountId?: string
@@ -37,6 +39,8 @@ export type LogFields = {
   calls?: number
   bytes?: number
   outcome?: string
+  // P5 (p5-w4): the first 12 hex of SHA-256 of a channel id, never the id or the text.
+  channelHash?: string
 }
 
 const ALLOWED: readonly (keyof LogFields)[] = [
@@ -59,6 +63,8 @@ const ALLOWED: readonly (keyof LogFields)[] = [
   'calls',
   'bytes',
   'outcome',
+  // P5 (p5-w4)
+  'channelHash',
 ]
 
 export function log(event: LogEvent, fields: LogFields = {}): void {

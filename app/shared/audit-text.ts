@@ -76,6 +76,29 @@ const CONNECT_FAILED: Record<string, string> = {
   not_configured: 'it isn’t set up',
 }
 
+/** Why a notice didn't go, or where it went instead (P5 W4); any other code shows as it is. */
+const NOTIFY_DETAIL: Record<string, string> = {
+  not_listed: 'the channel isn’t listed',
+  shared_channel: 'the channel is shared with another organization',
+  archived: 'the channel is archived',
+  not_public: 'the channel isn’t public',
+  not_member: 'the connected person isn’t in the channel',
+  not_found: 'the channel wasn’t found',
+  run_cap: 'too many posts in one answer',
+  day_cap: 'too many posts today',
+  too_long: 'it was too long',
+  empty: 'it was empty',
+  unknown_member: 'not a member of the team',
+  slack_not_connected: 'Slack isn’t connected or is paused',
+  slack_unavailable: 'Slack couldn’t be reached',
+  rate_limited: 'Slack asked to slow down',
+  to_bell: 'sent to the bell until the Act stage',
+  no_alerts_channel: 'no alerts channel is set',
+  below_act: 'Slack posts start at the Act stage',
+  app_origin_missing: 'the app link isn’t set up at the hub',
+}
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
+
 const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
 
 /** `name(id)`: the member's current name, or null when the id names no member. */
@@ -131,5 +154,18 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'tools.pause': return { what: args.paused ? 'paused a tool' : 'resumed a tool', detail: connectorName(args.accountId) }
     case 'tools.disconnect':
       return { what: 'disconnected a tool', detail: args.revoked ? connectorName(args.accountId) : `${connectorName(args.accountId)}: its access wasn’t removed on the tool’s side, so remove the app there too` }
+    // P5 (p5-w4). Never the notice's text or title: the line holds neither.
+    case 'notify.send': {
+      const where = args.kind === 'slack' ? 'Slack' : args.target === 'admins' ? 'the admins’ bell' : `${who(args.target)}’s bell`
+      const why = args.detail ? NOTIFY_DETAIL[args.detail] ?? args.detail : ''
+      if (args.outcome === 'posted') return { what: args.kind === 'slack' ? 'posted a notice to Slack' : 'sent a notice to the bell', detail: args.detail === 'to_bell' ? `${where}: ${why}` : where }
+      if (args.outcome === 'unknown') return { what: 'may have posted a notice', detail: `${where}: no answer, not retried` }
+      return { what: 'a notice didn’t go out', detail: why ? `${where}: ${why}` : where }
+    }
+    case 'notify.channels': {
+      const parts = [args.added.length ? `${plural(args.added.length, 'channel')} added` : '', args.removed.length ? `${plural(args.removed.length, 'channel')} removed` : '']
+      if (args.alerts !== undefined) parts.push(args.alerts === null ? 'no alerts channel' : 'alerts channel set')
+      return { what: 'changed the Slack channels for notices', detail: parts.filter(Boolean).join(', ') }
+    }
   }
 }

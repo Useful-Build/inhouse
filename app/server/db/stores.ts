@@ -35,6 +35,8 @@ import { noticeReader } from '../notices/read.ts'
 import type { NoticeReader } from '../notices/read.ts'
 import { connectorAccountStore } from './connector-accounts.ts'
 import type { ConnectorAccountStore } from './connector-accounts.ts'
+import { notifyChannelStore } from '../notify-slack/channels.ts'
+import type { NotifyChannelStore } from '../notify-slack/channels.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -68,6 +70,8 @@ export interface Stores extends AuthStores {
   notices: NoticeReader
   /** P5 W1 (p5-w1.md section 9): connector accounts, the Tools page's lifecycle record. */
   connectors: ConnectorAccountStore
+  /** P5 W4 (p5-w4.md section 10): the Slack channels listed for notices. */
+  notify: NotifyChannelStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -131,5 +135,6 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     activity: activityReader({ db }),
     notices: noticeReader({ db }),
     connectors: connectorAccountStore({ db, hook }),
+    notify: notifyChannelStore({ db, hook }),
   }
 }

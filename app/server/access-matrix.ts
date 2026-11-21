@@ -76,6 +76,10 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 70 */ { method: 'GET', pattern: '/api/tools', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
   /* 71 */ { method: 'PUT', pattern: '/api/tools/:accountId/paused', class: 'technical', allow: ['inhouse'] },
   /* 72 */ { method: 'POST', pattern: '/api/tools/:accountId/disconnect', class: 'technical', allow: ['inhouse'] },
+  // P5 W4 (p5-w4.md section 10): the Slack channels listed for notices. Everyone reads; an Admin or the Inhouse team picks and saves.
+  /* 73 */ { method: 'GET', pattern: '/api/notify/channels', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  /* 74 */ { method: 'GET', pattern: '/api/notify/channels/available', class: 'baseline', allow: ['admin', 'inhouse'] },
+  /* 75 */ { method: 'PUT', pattern: '/api/notify/channels', class: 'baseline', allow: ['admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

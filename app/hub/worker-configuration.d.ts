@@ -9,6 +9,7 @@ interface __BaseEnv_Env {
 	SLACK_TEAM_ID: string;
 	SLACK_PRIVATE_SEARCH: string;
 	CONNECT_REDIRECT_URI: string;
+	APP_ORIGIN: string;
 	HUB_TOKEN_KEYS: string;
 	SHOPIFY_CLIENT_SECRET: string;
 	SIGNIN: DurableObjectNamespace<import("./index/index").SignIn>;
@@ -25,7 +26,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "SHOPIFY_SHOP" | "SHOPIFY_CLIENT_ID" | "SLACK_CLIENT_ID" | "SLACK_TEAM_ID" | "SLACK_PRIVATE_SEARCH" | "CONNECT_REDIRECT_URI" | "HUB_TOKEN_KEYS" | "SHOPIFY_CLIENT_SECRET">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "SHOPIFY_SHOP" | "SHOPIFY_CLIENT_ID" | "SLACK_CLIENT_ID" | "SLACK_TEAM_ID" | "SLACK_PRIVATE_SEARCH" | "CONNECT_REDIRECT_URI" | "APP_ORIGIN" | "HUB_TOKEN_KEYS" | "SHOPIFY_CLIENT_SECRET">> {}
 }
 declare module "*.txt" {
 	const value: string;

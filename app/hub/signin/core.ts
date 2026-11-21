@@ -46,6 +46,11 @@ import { checkReadDocument } from '../scope/graphql'
 import { checkShopifyFields, FIELD_NOT_ALLOWED } from '../scope/fields'
 import { checkVariables } from '../scope/variables'
 import { API_VERSION, requestGrant, sendRead, type ShopifyConfig, type Upstream } from './providers/shopify'
+// P5 (p5-w4)
+import { callWeb, LIST_LIMIT, parseChannel, POSTABLE_CHANNEL, refusalFor, type WebOutcome } from '../connectors/slack/web'
+import type { SlackChannel, SlackPostRequest } from '../connectors/slack/contract'
+import { boundNotice, composeSlack, isAppOrigin } from '../../shared/notify/bound'
+import { linkPath } from '../../shared/notify/links'
 
 export type SignInRecord = {
   /** 1: H0's shape (client credentials). 2: P5's OAuth records, every field below written. */
@@ -137,6 +142,9 @@ export type SignInDeps = {
   /** The connector kind behind an account, from the registry. Absent: every account is client credentials (H0). */
   kindFor?: (accountId: string) => Promise<'client_credentials' | 'oauth_mcp' | null>
   random?: Random
+  // ---- P5 (p5-w4) ----
+  /** The hub var `APP_ORIGIN` (the brand's product origin, from the ops repo); never from a request. */
+  appOrigin?: () => unknown
 }
 
 /** A pending connect (the `state`'s item). The verifier is sealed under field `pkce`. */
@@ -1290,6 +1298,118 @@ export class SignInCore {
   #mcpLogged<T>(accountId: string, name: string, started: number, result: HubResult<T>, parts?: number): HubResult<T> {
     log('mcp_call', { accountId, upstreamTool: name, code: result.ok ? 'ok' : result.error.code, ms: this.#d.now() - started, parts })
     return result
+  }
+
+  // ---------- P5 (p5-w4): Slack delivery, the choke point ----------
+  // Three methods and no generic one (p5-w4.md section 6, OC-W4-4 and OC-W4-9). Each starts with the readiness read the
+  // gateway's callReadTool uses (`ready`: active, not paused, the exact-scope rule), so a paused or needs-reconnect
+  // account answers `paused` or `scope_mismatch` before any upstream request. One send, no retry.
+
+  /** Readiness, then a usable token (refreshed first when it expired), for the Slack account only. */
+  async #slackGate(accountId: string): Promise<HubResult<{ token: string; upstream: Upstream }>> {
+    if ((await this.#kind(accountId)) !== 'oauth_mcp') return err('not_configured')
+    const p = await this.#provider(accountId)
+    if (!p || p.connector.id !== 'slack') return err('not_configured')
+    const rd = await this.ready(accountId)
+    if (!rd.ok) return rd
+    if (!rd.value.ready) return err(rd.value.code)
+    const ring = await this.#d.keyring()
+    if (!ring.ok) return err('key_unavailable')
+    const a = await this.#mcpAcquire(accountId, ring.ring, requestedScopes(p.connector, p.clientConfig), true)
+    if (!a.ok) return err(a.code, a.detail)
+    return ok({ token: a.token, upstream: await this.#d.upstream() })
+  }
+
+  #webError<T>(out: Exclude<WebOutcome, { kind: 'ok' }>): HubResult<T> {
+    return out.kind === 'unauthorized' ? err('credentials_rejected') : err(out.code, out.detail, out.retryAfterMs)
+  }
+
+  async #channelInfo(token: string, upstream: Upstream, channelId: string): Promise<HubResult<SlackChannel>> {
+    const out = await callWeb(upstream, token, 'conversations.info', { channel: channelId })
+    if (out.kind !== 'ok') return this.#webError(out)
+    const c = parseChannel(out.body.channel)
+    if (!c || c.id !== channelId) return err('upstream_unavailable')
+    return ok(c)
+  }
+
+  /** `conversations.info` for one channel id (C or G). */
+  async slackChannelInfo(accountId: string, channelId: string): Promise<HubResult<SlackChannel>> {
+    if (typeof channelId !== 'string' || !/^[CG][A-Z0-9]{2,20}$/.test(channelId)) return err('invalid_args', 'channelId')
+    const g = await this.#slackGate(accountId)
+    if (!g.ok) return g
+    return this.#channelInfo(g.value.token, g.value.upstream, channelId)
+  }
+
+  /** `conversations.list`: public channels, archived ones excluded, 200 a page. */
+  async slackChannelList(accountId: string, cursor?: string): Promise<HubResult<{ channels: SlackChannel[]; nextCursor: string | null }>> {
+    if (cursor !== undefined && (typeof cursor !== 'string' || !/^[A-Za-z0-9+/=_-]{1,500}$/.test(cursor))) return err('invalid_args', 'cursor')
+    const g = await this.#slackGate(accountId)
+    if (!g.ok) return g
+    const params: Record<string, string> = { types: 'public_channel', exclude_archived: 'true', limit: String(LIST_LIMIT) }
+    if (cursor !== undefined) params.cursor = cursor
+    const out = await callWeb(g.value.upstream, g.value.token, 'conversations.list', params)
+    if (out.kind !== 'ok') return this.#webError(out)
+    if (!Array.isArray(out.body.channels)) return err('upstream_unavailable')
+    const channels: SlackChannel[] = []
+    for (const raw of out.body.channels as unknown[]) {
+      const c = parseChannel(raw)
+      if (!c) return err('upstream_unavailable')
+      channels.push(c)
+    }
+    const meta = out.body.response_metadata as { next_cursor?: unknown } | undefined
+    const next = typeof meta?.next_cursor === 'string' && /^[A-Za-z0-9+/=_-]{1,500}$/.test(meta.next_cursor) ? meta.next_cursor : null
+    return ok({ channels, nextCursor: next })
+  }
+
+  /**
+   * The only Slack post (section 6): the id's shape, readiness, the bounds with the one escape, the channel re-checked at
+   * Slack, then `chat.postMessage` with a parameter object built here from exactly `channel`, `text`, `unfurl_links` and
+   * `unfurl_media`, so no caller can add `link_names`, `parse`, `blocks`, `thread_ts` or anything else.
+   */
+  async slackPost(accountId: string, req: SlackPostRequest): Promise<HubResult<{ ts: string }>> {
+    const started = this.#d.now()
+    const channelId = typeof req === 'object' && req !== null && typeof req.channelId === 'string' ? req.channelId : ''
+    const result = await this.#post(accountId, req)
+    log('hub_delivery', {
+      accountId,
+      code: result.ok ? 'ok' : result.error.code,
+      ms: this.#d.now() - started,
+      channelHash: POSTABLE_CHANNEL.test(channelId) ? (await sha256Hex(channelId)).slice(0, 12) : undefined,
+    })
+    return result
+  }
+
+  async #post(accountId: string, req: SlackPostRequest): Promise<HubResult<{ ts: string }>> {
+    if (typeof req !== 'object' || req === null) return err('invalid_args')
+    if (typeof req.channelId !== 'string' || !POSTABLE_CHANNEL.test(req.channelId)) return err('invalid_args', 'channelId')
+    if (typeof req.title !== 'string' || typeof req.text !== 'string') return err('invalid_args')
+    // The pure steps first, so a doomed post costs no token read, refresh or Slack call. Steps 1 and 2 again
+    // (idempotent on the server's output), then the escape, once. `report` keeps the line breaks the server left; a
+    // `message` already arrives on one line.
+    const b = boundNotice({ title: req.title, text: req.text, format: 'report' }, { escape: true })
+    if (!b.ok) return err('invalid_args', b.reason)
+    let appLink: { origin: string; path: string } | null = null
+    if (req.link !== undefined) {
+      const path = linkPath(req.link)
+      if (path === null) {
+        log('hub_delivery', { accountId, code: 'link_dropped' })
+      } else {
+        const origin = this.#d.appOrigin?.()
+        if (!isAppOrigin(origin)) return err('not_configured', 'APP_ORIGIN')
+        appLink = { origin, path }
+      }
+    }
+    const g = await this.#slackGate(accountId)
+    if (!g.ok) return g
+    const info = await this.#channelInfo(g.value.token, g.value.upstream, req.channelId)
+    if (!info.ok) return info
+    const refused = refusalFor(info.value)
+    if (refused) return err('connect_refused', refused)
+    const params = { channel: req.channelId, text: composeSlack(b.title, b.text, appLink), unfurl_links: 'false', unfurl_media: 'false' }
+    const out = await callWeb(g.value.upstream, g.value.token, 'chat.postMessage', params)
+    if (out.kind !== 'ok') return this.#webError(out)
+    const ts = out.body.ts
+    return typeof ts === 'string' && /^\d{1,12}\.\d{1,8}$/.test(ts) ? ok({ ts }) : err('upstream_unavailable')
   }
 }
 

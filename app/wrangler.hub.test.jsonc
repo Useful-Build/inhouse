@@ -38,6 +38,8 @@
 		"SLACK_CLIENT_SECRET": "test-only-slack-client-secret-9f3b",
 		"SLACK_TEAM_ID": "T0TEST0001",
 		"SLACK_PRIVATE_SEARCH": "off",
-		"CONNECT_REDIRECT_URI": "https://inhouse.example.com/api/connect/callback"
+		"CONNECT_REDIRECT_URI": "https://inhouse.example.com/api/connect/callback",
+		// P5 W4: invented, the product origin Slack notices link to.
+		"APP_ORIGIN": "https://inhouse.example.com"
 	}
 }

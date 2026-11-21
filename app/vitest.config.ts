@@ -86,6 +86,8 @@ export default defineConfig({
               serviceBindings: {
                 HUB: () => new Response('HUB is a stand-in in the server tests (vitest.config.ts)', { status: 503 }),
                 HUB_CONNECT: () => new Response('HUB_CONNECT is a stand-in in the server tests (vitest.config.ts)', { status: 503 }),
+                // P5 W4: HUB_DELIVERY (the hub's DeliveryGateway) likewise; the notify tests hand the server a fake gateway.
+                HUB_DELIVERY: () => new Response('HUB_DELIVERY is a stand-in in the server tests (vitest.config.ts)', { status: 503 }),
               },
             },
           })),

@@ -1,6 +1,6 @@
 // check-product-config fixture: refused, rule "hub-server-gateway" (the hub's ServerGateway bound in P4; invented values).
 {
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ServerGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }],
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ServerGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }, { "binding": "HUB_DELIVERY", "service": "inhouse-hub", "entrypoint": "DeliveryGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {

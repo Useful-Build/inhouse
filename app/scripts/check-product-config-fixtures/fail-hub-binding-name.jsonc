@@ -1,6 +1,6 @@
 // check-product-config fixture: refused, rule "hub-binding-name" (the hub under another binding name; invented values).
 {
-	"services": [{ "binding": "SHOPIFY", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }],
+	"services": [{ "binding": "SHOPIFY", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }, { "binding": "HUB_DELIVERY", "service": "inhouse-hub", "entrypoint": "DeliveryGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {

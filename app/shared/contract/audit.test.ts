@@ -54,6 +54,9 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   // P5 (p5-w3)
   'tools.pause': { action: 'tools.pause', accountId: 'slack:workspace', paused: false },
   'tools.disconnect': { action: 'tools.disconnect', accountId: 'shopify:store', revoked: false },
+  // P5 (p5-w4)
+  'notify.send': { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'slack', target: 'C0TEST0001', outcome: 'posted', textLength: 5, noticeSha256: '0'.repeat(64) },
+  'notify.channels': { action: 'notify.channels', added: ['C0TEST0001'], removed: [], alerts: null },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -327,7 +330,7 @@ describe('support.access write pairs (P4 review fold)', () => {
 describe('P5 (p5-w1): connect lines carry an account id and a closed outcome only', () => {
   it("appends its block after P4's, in this order", () => {
     const all = AuditActionSchema.options
-    expect(all.slice(all.indexOf('today.set_aside'))).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect', 'tools.pause', 'tools.disconnect'])
+    expect(all.slice(all.indexOf('today.set_aside'))).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect', 'tools.pause', 'tools.disconnect', 'notify.send', 'notify.channels'])
   })
 
   it("refuses a pause or disconnect line with free text, a non-boolean or an extra field (P5 W3)", () => {
@@ -354,4 +357,24 @@ type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 const outcomesAreHubCodes: Same<Exclude<ConnectOutcome, 'ok'>, HubErrorCode> = true
 describe('P5 (p5-w1): ConnectOutcomeSchema and HubErrorCode', () => {
   it('match both ways (checked by the type above)', () => expect(outcomesAreHubCodes).toBe(true))
+})
+
+describe('P5 (p5-w4): notice lines carry ids, closed codes, a length and a hash only', () => {
+  const okLine = (a: unknown) => AuditArgsSchema.safeParse(a).success
+  const send = { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'slack', target: 'C0TEST0001', outcome: 'refused', detail: 'not_listed', textLength: 40, noticeSha256: '0'.repeat(64) }
+  it('takes a well-formed line', () => {
+    expect(okLine(send)).toBe(true)
+    expect(okLine({ ...send, source: 'approvals', runId: undefined, systemKey: 'p6:n_1:2026112109', noticeKind: 'approval_waiting', kind: 'bell', target: 'admins', outcome: 'posted', detail: undefined })).toBe(true)
+    expect(okLine({ action: 'notify.channels', added: ['C0TEST0001'], removed: ['C0TEST0002'], alerts: null })).toBe(true)
+  })
+  it('refuses text, a DM or user id as a target, free-text detail and extra fields', () => {
+    expect(okLine({ ...send, text: 'hello' })).toBe(false)
+    expect(okLine({ ...send, title: 'Stock' })).toBe(false)
+    expect(okLine({ ...send, target: 'U0TEST0001' })).toBe(false)
+    expect(okLine({ ...send, target: 'D0TEST0001' })).toBe(false)
+    expect(okLine({ ...send, detail: 'channel_not_found from slack' })).toBe(false)
+    expect(okLine({ ...send, noticeSha256: 'xyz' })).toBe(false)
+    expect(okLine({ ...send, systemKey: 'has spaces in it' })).toBe(false)
+    expect(okLine({ action: 'notify.channels', added: ['general'], removed: [] })).toBe(false)
+  })
 })

@@ -26,7 +26,7 @@ const THE_20 = [
   'team_request_create', 'team_request_list',
 ]
 const THE_6 = ['memory_search', 'memory_save', 'approval_request', 'question_ask', 'history_search', 'notification_send']
-const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'history_search', 'history_read']
+const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'history_search', 'history_read', 'notification_send']
 
 const post = (body: string, headers: Record<string, string> = {}, scope = SCOPE) =>
   handleMcp(new Request('http://egress.internal/mcp/', { method: 'POST', body, headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers } }), scope, { db, now: () => NOW })
@@ -155,7 +155,9 @@ describe('descriptions promise only what P3 does (failure 5)', () => {
     const d = Object.fromEntries((body as { result: { tools: { name: string; description: string }[] } }).result.tools.map(t => [t.name, t.description]))
     expect(d.history_search).not.toMatch(/routine|run\b|activity/i)
     expect(d.history_read).not.toMatch(/routine|run\b/i)
-    expect(d.notification_send).toContain('Sends a notification: to the bell for members; to admin-listed Slack channels from the Act stage.')
-    expect(d.notification_send).not.toMatch(/email/i)
+    // P5 W4's description (p5-w4.md section 2): the bell for members, listed channels from Act; email named only to rule it out.
+    expect(d.notification_send).toContain('reaches their bell in the app (never a Slack DM, never email)')
+    expect(d.notification_send).toContain('posts there from the Act stage; at Watch it reaches the bell instead')
+    expect(d.notification_send.replace('never email', '')).not.toMatch(/email/i)
   })
 })

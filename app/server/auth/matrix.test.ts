@@ -289,6 +289,10 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/tools': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'PUT /api/tools/:accountId/paused': ['no', 'ro', 'ok', 'ok', 'no', 'no', 'no'],
   'POST /api/tools/:accountId/disconnect': ['no', 'ro', 'ok', 'ok', 'no', 'no', 'no'],
+  // Routes 73 to 75 (P5 W4): baseline rows, as the members list and the invite (routes 3 and 4).
+  'GET /api/notify/channels': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/notify/channels/available': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'PUT /api/notify/channels': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

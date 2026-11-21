@@ -14,6 +14,7 @@
 
 import { createShopifyUpstream } from '../../test/upstreams/shopify/server'
 import { createMcpUpstream, SLACK_OAUTH_PATHS } from '../../test/upstreams/mcp/server'
+import { createSlackWebUpstream, SLACK_WEB_PATHS } from '../../test/upstreams/slack/server'
 import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
@@ -35,11 +36,14 @@ const notesMcp = createMcpUpstream('notes')
 testUpstreams.set('mcp.slack.com', slackMcp.fetch)
 testUpstreams.set('notes.example.com', notesMcp.fetch)
 testUpstreams.set('auth.notes.example.com', notesMcp.fetch)
-testUpstreams.set('slack.com', req =>
-  (SLACK_OAUTH_PATHS as readonly string[]).includes(new URL(req.url).pathname)
-    ? slackMcp.fetch(req)
-    : Promise.resolve(new Response('no fake', { status: 599 })),
-)
+// slack.com by path: W1's OAuth paths, then W4's fake Web API (P5 W4).
+const slackWeb = createSlackWebUpstream()
+testUpstreams.set('slack.com', req => {
+  const path = new URL(req.url).pathname
+  if ((SLACK_OAUTH_PATHS as readonly string[]).includes(path)) return slackMcp.fetch(req)
+  if ((SLACK_WEB_PATHS as readonly string[]).includes(path)) return slackWeb.fetch(req)
+  return Promise.resolve(new Response('no fake', { status: 599 }))
+})
 
 export async function testUpstreamFetch(req: Request): Promise<Response> {
   const host = new URL(req.url).host
