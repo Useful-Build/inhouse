@@ -1,7 +1,7 @@
 import { agent, demo } from '../agent'
 import type { RequestType } from '../state/store'
 import { useCtx, useUi } from '../state/store'
-import { goingLive, teamRequestLine, userName } from '../state/derive'
+import { openRequests, userName } from '../state/derive'
 import { instantOf } from '../lib/format'
 import { nowOf } from '../state/display'
 import { Badge } from '@/components/ui/badge'
@@ -39,29 +39,13 @@ export function TeamWindow() {
   const showToast = useUi(s => s.showToast)
   const phone = useUi(s => s.phone)
   const ctx = useCtx()
-  const { agent: st, data } = ctx
   if (pop !== 'team') return null
 
   const close = () => patch({ pop: null })
   const isBug = team.type === 'bug'
-  // The tool being connected takes its date from tools.json; on First day (nothing live yet) its request isn't listed.
-  const live = goingLive(ctx)
-  // A request as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20" ("just now" for one the person sent).
-  const now = nowOf()
-  const seeded = data.notifications.teamRequests.flatMap((q, i) => {
-    const tool = /^Connect (.+)$/.exec(q.title)?.[1]
-    if (tool && live?.name !== tool) return []
-    const line = teamRequestLine(q, now, false)
-    return [{
-      icon: q.sub.startsWith('New job') ? 'work' : 'add_link', title: q.title, sub: line.sub, status: tool && live ? `Live by ${live.by}` : line.status,
-      ...(SEEDED_STYLE[i] ?? SEEDED_STYLE[1]),
-    }]
-  })
-  const requests = [
-    // The demo says "just now" for what was sent here; the product says how long ago (`fmtAgo`).
-    ...st.teamRequests.map(q => ({ icon: q.icon, title: q.title, ...teamRequestLine(q, now, demo !== null), ...SEEDED_STYLE[1] })),
-    ...seeded,
-  ]
+  // A request as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20" ("just now" for one the person
+  // sent here in the demo). The tool being connected takes its date from tools.json; on First day it isn't listed.
+  const requests = openRequests(ctx, nowOf(), demo !== null).map(q => ({ ...q, ...(SEEDED_STYLE[q.seed ?? 1] ?? SEEDED_STYLE[1]) }))
   // The sender is the signed-in person, by the name in Settings.
   const sender = userName(ctx)
   // Whitespace alone is empty: Send waits for words.

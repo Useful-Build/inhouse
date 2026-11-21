@@ -18,6 +18,11 @@ async function start(page: Page, fx: Fx, hash: string) {
 }
 const crashSeen = (page: Page) => page.evaluate(k => sessionStorage.getItem(k) === '1', CRASH)
 const sidebar = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
+/** Usage, from the account menu (it left the sidebar's nav). */
+async function openUsage(page: Page) {
+  await sidebar(page).getByRole('button', { name: /account and settings/i }).click()
+  await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Usage', exact: true }).click()
+}
 const crashHeading = (page: Page) => page.getByRole('heading', { name: 'Something went wrong.' })
 
 test('A lazy chunk that fails once reloads into the route, keeps the draft and never shows the crash screen', async ({ fx, page }) => {
@@ -30,7 +35,7 @@ test('A lazy chunk that fails once reloads into the route, keeps the draft and n
     if (failed === 0) { failed++; return route.abort() }
     return route.continue()
   })
-  await sidebar(page).getByRole('button', { name: 'Usage' }).click()
+  await openUsage(page)
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage' })).toBeVisible()
   expect(failed).toBe(1)
@@ -46,7 +51,7 @@ test('A second chunk failure inside the guard window reaches the error screen in
   let loads = 0
   page.on('load', () => { loads++ })
   await page.route(CHUNK, route => route.abort())
-  await sidebar(page).getByRole('button', { name: 'Usage' }).click()
+  await openUsage(page)
 
   await expect(crashHeading(page)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeVisible()
@@ -60,7 +65,7 @@ test('Offline, a chunk failure reaches the error screen and does not reload', as
   page.on('load', () => { loads++ })
   await page.context().setOffline(true)
   try {
-    await sidebar(page).getByRole('button', { name: 'Usage' }).click()
+    await openUsage(page)
     await expect(crashHeading(page)).toBeVisible()
     expect(loads, 'no extra page load').toBe(0)
   } finally {
