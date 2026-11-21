@@ -30,6 +30,8 @@ export const AuditActionSchema = z.enum([
   'today.set_aside',
   // P5 (p5-w1): the Inhouse team starts connecting a tool, and how the connect ended.
   'tools.connect_start', 'tools.connect',
+  // P5 (p5-w4): a notice to one recipient (the agent's or the server's own), and a change to the listed Slack channels.
+  'notify.send', 'notify.channels',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -118,6 +120,22 @@ export const ConnectOutcomeSchema = z.enum([
   'result_too_large', 'internal', 'state_invalid', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'paused',
 ])
 export type ConnectOutcome = z.infer<typeof ConnectOutcomeSchema>
+// P5 (p5-w4): notices. Ids, closed codes, a length and a hash only; never the notice's text, a title or a name.
+export const NotifySourceSchema = z.enum(['agent', 'approvals', 'questions', 'routines'])
+/** The server's own notice kinds (p5-w4 section 3a); `question_asked` is stored as `question_waiting`. */
+export const SystemNoticeKindSchema = z.enum([
+  'approval_waiting', 'approval_lapsed', 'approval_sent', 'approval_failed', 'needs_check', 'approval_expired',
+  'restore_reconciled', 'question_waiting', 'question_closed',
+])
+/** A public Slack channel id (never `U…`, `D…` or `G…`). */
+export const SlackChannelIdSchema = z.string().regex(/^C[A-Z0-9]{8,}$/)
+/** `posted`: delivered (a Slack post, or a bell notice written); `unknown`: the hub call threw after the reservation. */
+export const NotifyOutcomeSchema = z.enum(['posted', 'refused', 'failed', 'unknown'])
+/** Why a recipient didn't get it, or where it went instead: a closed list, never upstream text. */
+export const NotifyDetailSchema = z.enum([
+  'not_listed', 'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'run_cap', 'day_cap', 'too_long',
+  'empty', 'unknown_member', 'slack_not_connected', 'slack_unavailable', 'rate_limited', 'to_bell', 'no_alerts_channel', 'below_act',
+])
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
@@ -187,6 +205,27 @@ const otherLines = [
   // P5 (p5-w1): connect start (route A) and its end (route B), the account id and the outcome code only.
   line('tools.connect_start', { accountId: ConnectorAccountIdSchema }),
   line('tools.connect', { accountId: ConnectorAccountIdSchema, outcome: ConnectOutcomeSchema }),
+  // P5 (p5-w4): one line per recipient per call (`repeat`: the same notice again, answered with the first outcome), and
+  // the channel list's change (route H). `target` is a channel id, a member id or `admins`.
+  line('notify.send', {
+    source: NotifySourceSchema,
+    runId: RunIdSchema.optional(),
+    systemKey: z.string().regex(/^[A-Za-z0-9:_.-]{1,128}$/).optional(),
+    noticeKind: SystemNoticeKindSchema.optional(),
+    kind: z.enum(['slack', 'bell']),
+    target: z.union([SlackChannelIdSchema, MemberIdSchema, z.literal('admins')]),
+    outcome: NotifyOutcomeSchema,
+    detail: NotifyDetailSchema.optional(),
+    changed: z.array(z.enum(['links', 'mentions', 'link_dropped'])).min(1).max(3).optional(),
+    repeat: z.literal(true).optional(),
+    textLength: z.number().int().min(0).max(2000),
+    noticeSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  }),
+  line('notify.channels', {
+    added: z.array(SlackChannelIdSchema).max(100),
+    removed: z.array(SlackChannelIdSchema).max(100),
+    alerts: SlackChannelIdSchema.nullable().optional(),
+  }),
 ] as const
 
 /**

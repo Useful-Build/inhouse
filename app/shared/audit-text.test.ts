@@ -42,6 +42,9 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   // P5 (p5-w1)
   'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
   'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok' },
+  // P5 (p5-w4)
+  'notify.send': { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'bell', target: 'm_a', outcome: 'posted', textLength: 12, noticeSha256: 'ab'.repeat(32) },
+  'notify.channels': { action: 'notify.channels', added: ['C0TEST0001'], removed: [], alerts: 'C0TEST0001' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 

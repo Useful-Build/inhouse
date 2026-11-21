@@ -10,6 +10,8 @@ import type { SqlValue, Stmt } from './sql.ts'
 export type TargetKind = 'member' | 'setting' | 'grant' | 'memory'
   // P5 (p5-w1)
   | 'connector'
+  // P5 (p5-w4)
+  | 'channel'
 
 export interface LineInput {
   atMs: number
@@ -24,6 +26,8 @@ export interface Guard {
   table: 'members' | 'settings' | 'support_grants' | 'memories'
     // P5 (p5-w1)
     | 'connector_accounts'
+    // P5 (p5-w4)
+    | 'notify_channels'
   where: string
   params: readonly SqlValue[]
   stamp: string
