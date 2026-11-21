@@ -13,7 +13,8 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { DueTask, TaskContext } from '../do/brand-agent/scheduler.ts'
 import { registrySeeds } from '../do/brand-agent/scheduler.ts'
 import { taskHandlers } from '../do/brand-agent/tasks/index.ts'
-import { chatFileSweep, CONTINUE_MS, PENDING_PAGE, PENDING_PAGES, SAFETY_AGE_MS, SCAN_EVERY_MS, SCAN_PAGE, SCAN_PAGES, SWEEP_TASK_ID, sweepOnce } from './orphan-sweep.ts'
+import { inAgent } from '../testing/brand-agent/core-harness.ts'
+import { chatFileSweep, CONTINUE_MS, namedSql, PENDING_SQL, PENDING_PAGE, PENDING_PAGES, SAFETY_AGE_MS, SCAN_EVERY_MS, SCAN_PAGE, SCAN_PAGES, SWEEP_TASK_ID, sweepOnce } from './orphan-sweep.ts'
 
 const db = env.DB
 const bucket = env.FILES
@@ -236,4 +237,35 @@ describe('the registered task (failure 6)', () => {
     await chatFileSweep(task(), ctx)
     expect(await rows()).toEqual(['r_h'])
   })
+})
+
+describe('0121 indexes and the key invariant (review of #199)', () => {
+  const plan = async (sql: string, ...binds: unknown[]) =>
+    (await db.prepare(`EXPLAIN QUERY PLAN ${sql}`).bind(...binds).all<{ detail: string }>()).results.map(r => r.detail)
+
+  it('the key lookup uses chat_files_r2_key and the pending page uses chat_files_pending, neither scans the table', async () => {
+    const named = await plan(namedSql(3), 'a', 'b', 'c')
+    expect(named.join(' | ')).toMatch(/SEARCH chat_files USING (COVERING )?INDEX chat_files_r2_key/)
+    expect(named.some(d => /^SCAN chat_files/.test(d))).toBe(false)
+    const pending = await plan(PENDING_SQL, 1, -1, -1, '', 100)
+    expect(pending.join(' | ')).toContain('chat_files_pending')
+    expect(pending.some(d => /^SCAN chat_files$/.test(d))).toBe(false)
+    expect(pending.some(d => d.includes('USE TEMP B-TREE'))).toBe(false)
+  })
+
+  it('only the store and the egress build a files/ key: a new caller fails here until it is checked against the sweep', () => {
+    const sources = import.meta.glob<string>(['../**/*.ts', '!../**/*.test.ts'], { query: '?raw', import: 'default', eager: true })
+    const callers = Object.entries(sources).filter(([f, text]) => !f.endsWith('/db/r2-keys.ts') && /\bchatFileKey\b|CHAT_FILES_PREFIX|['"`]files\//.test(text)).map(([f]) => f.replace(/^\.\.?\//, '').replace(/^(orphan-sweep|store)\.ts$/, 'files-io/$1.ts')).sort()
+    expect(callers).toEqual(['egress/files.ts', 'files-io/orphan-sweep.ts', 'files-io/store.ts'])
+  })
+
+  it('the handler reads a real turn_effects row from the BrandAgent object', () => inAgent(async h => {
+    const c = await newChat()
+    await row({ id: 'r_real', chat: c, key: 'files/c/real', state: 'pending', createdAtMs: 1, turn: 't_real' })
+    await row({ id: 'r_free', chat: c, key: 'files/c/free', state: 'pending', createdAtMs: 2, turn: 't_free' })
+    h.sql.exec("INSERT INTO turn_effects (turn_id, seq, kind, json) VALUES ('t_real', 1, 'file', '{}')")
+    const ctx = { nowMs: OLD(), env, sql: h.sql, scheduler: { schedule: () => undefined, ensure: () => undefined, cancel: () => undefined } } as unknown as TaskContext
+    await chatFileSweep({ id: SWEEP_TASK_ID, kind: SWEEP_TASK_ID, gen: 1, dueAtMs: 0, payload: null, attempts: 0 }, ctx)
+    expect(await rows()).toEqual(['r_real'])
+  }))
 })

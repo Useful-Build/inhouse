@@ -4,6 +4,9 @@
 //    PUT's dropped copy (`confirm` deletes the duplicate row, not its object), a PUT that failed after its put.
 //  - `pending` rows never confirmed: the PUT's slot row stays when the Worker died before its `finally`, or the runner
 //    never sent `file_saved`.
+// INVARIANT: every live object under `files/` has a `chat_files` row naming its key (`r2_key`); the orphan rule
+// deletes any old object no row names. A new holder of a `files/` key (another table, another writer) must be added to
+// `namedSql` below first, or the sweep deletes its objects (`chatFileKey`'s callers are pinned by a test).
 // What it never touches: a row that isn't `pending` (so no saved, superseded or trashed chat's file: a chat in the trash
 // keeps its rows and objects until its purge deletes them), an object that has any row, an object or row younger than
 // `SAFETY_AGE_MS`, a pending row whose turn still has a file confirm queued in the object, and any key outside `files/`
@@ -49,6 +52,12 @@ export interface SweepResult {
 }
 
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ')
+/** The keys among `n` that some row names (0121's `chat_files_r2_key`); the test reads its plan. */
+export const namedSql = (n: number): string => `SELECT r2_key FROM chat_files WHERE r2_key IN (${marks(n)})`
+/** One keyset page of pending rows past the window (0121's `chat_files_pending`); the test reads its plan. */
+export const PENDING_SQL = `SELECT id, r2_key, turn_id, created_at_ms FROM chat_files
+        WHERE state = 'pending' AND created_at_ms < ? AND (created_at_ms > ? OR (created_at_ms = ? AND id > ?))
+        ORDER BY created_at_ms, id LIMIT ?`
 
 export interface SweepDeps {
   db: D1Database
@@ -64,11 +73,7 @@ async function expirePending(d: SweepDeps): Promise<{ expired: number; more: boo
   let expired = 0
   let after = { at: -1, id: '' }
   for (let page = 0; page < PENDING_PAGES; page++) {
-    const rows = (await d.db.prepare(
-      `SELECT id, r2_key, turn_id, created_at_ms FROM chat_files
-        WHERE state = 'pending' AND created_at_ms < ? AND (created_at_ms > ? OR (created_at_ms = ? AND id > ?))
-        ORDER BY created_at_ms, id LIMIT ?`,
-    ).bind(d.nowMs - SAFETY_AGE_MS, after.at, after.at, after.id, PENDING_PAGE).all<{ id: string; r2_key: string; turn_id: string | null; created_at_ms: number }>()).results
+    const rows = (await d.db.prepare(PENDING_SQL).bind(d.nowMs - SAFETY_AGE_MS, after.at, after.at, after.id, PENDING_PAGE).all<{ id: string; r2_key: string; turn_id: string | null; created_at_ms: number }>()).results
     const gone: string[] = []
     for (const r of rows) {
       if (r.turn_id !== null && d.confirmQueued(r.turn_id)) continue
@@ -78,7 +83,7 @@ async function expirePending(d: SweepDeps): Promise<{ expired: number; more: boo
     }
     // A key another row still names (a duplicate or a reused key) stays: the orphan rule decides it, never this one.
     if (gone.length > 0) {
-      const named = new Set((await d.db.prepare(`SELECT r2_key FROM chat_files WHERE r2_key IN (${marks(gone.length)})`).bind(...gone).all<{ r2_key: string }>()).results.map(x => x.r2_key))
+      const named = new Set((await d.db.prepare(namedSql(gone.length)).bind(...gone).all<{ r2_key: string }>()).results.map(x => x.r2_key))
       const free = gone.filter(k => !named.has(k))
       if (free.length > 0) await d.bucket.delete(free)
     }
@@ -100,7 +105,7 @@ async function sweepOrphans(d: SweepDeps): Promise<{ scanned: number; deleted: n
     const old = listed.objects.filter(o => o.key.startsWith(FILES_PREFIX) && o.uploaded.getTime() < d.nowMs - SAFETY_AGE_MS).map(o => o.key)
     scanned += listed.objects.length
     if (old.length > 0) {
-      const named = new Set((await d.db.prepare(`SELECT r2_key FROM chat_files WHERE r2_key IN (${marks(old.length)})`).bind(...old).all<{ r2_key: string }>()).results.map(x => x.r2_key))
+      const named = new Set((await d.db.prepare(namedSql(old.length)).bind(...old).all<{ r2_key: string }>()).results.map(x => x.r2_key))
       const orphans = old.filter(k => !named.has(k))
       if (orphans.length > 0) { await d.bucket.delete(orphans); deleted += orphans.length }
     }
