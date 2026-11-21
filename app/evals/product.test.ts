@@ -7,6 +7,7 @@ import { CASES } from './cases.ts'
 import { assertSandboxDatabase, createDoor, DoorRefusal, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './targets/door.ts'
 import { createProductTarget, onExampleTest, ProductTargetRefusal, unobservableReason, writesFromRows } from './targets/product.ts'
 import { runEvals } from './runner.ts'
+import { buildReport, renderReadme } from './report.ts'
 import type { Case, ChatResult, Target } from './types.ts'
 
 const ENV = { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test' }
@@ -45,6 +46,8 @@ interface Server {
   endlessMembers?: boolean
   /** How many stops answer 200 (still ending) before one answers 409 turn_ended. */
   stopsBeforeEnded?: number
+  /** Every stop answers this status instead. */
+  stopStatus?: number
 }
 const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } => {
   const s: Server = {
@@ -67,6 +70,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
     if (url.pathname === '/api/members') return json({ items: s.members, nextCursor: s.endlessMembers ? 'more' : null })
     if (url.pathname.startsWith('/api/turns/') && url.pathname.endsWith('/stop')) {
       const n = stops++
+      if (s.stopStatus) return json({ error: { code: 'unavailable' } }, s.stopStatus)
       return n < (s.stopsBeforeEnded ?? 0) ? json({}) : json({ error: { code: 'conflict', reason: 'turn_ended' } }, 409)
     }
     if (url.pathname === '/api/models') return json({ default: 'sonnet', modes: [{ id: 'sonnet' }] })
@@ -245,9 +249,10 @@ describe('cost of a chat that timed out or threw comes from the server', () => {
     const paths = srv.s.sent.map((x) => `${x.method} ${x.path}`)
     const stops = paths.flatMap((p, i) => (p.endsWith('/stop') ? [i] : []))
     const traceReads = paths.flatMap((p, i) => (p.startsWith('GET /api/traces/') ? [i] : []))
-    expect(stops).toHaveLength(3) // two 200s (still ending), then the 409 that says it ended
+    expect(stops).toHaveLength(4) // two 200s (still ending), the 409 that says it ended, then reset()'s own check (409)
     expect(traceReads.length).toBeGreaterThan(0)
-    expect(Math.min(...traceReads)).toBeGreaterThan(Math.max(...stops))
+    expect(Math.min(...traceReads)).toBeGreaterThan(stops[2]!) // the cost is read only after the 409
+    expect(stops[3]!).toBeGreaterThan(Math.max(...traceReads)) // and reset() stops again before it clears
   })
 
   it('a cost that can\'t be read is "cost unknown" on the row, never a silent $0 that resets the figure', async () => {
@@ -258,12 +263,31 @@ describe('cost of a chat that timed out or threw comes from the server', () => {
     expect(out.rows[0]!.costUsd).toBe(0)
   })
 
+  it('reset stops the session\'s turns first and throws when it can\'t, so the lock is not released over a live turn', async () => {
+    const srv = server({ stopStatus: 500 })
+    const door = new FakeDoor()
+    const session = await make(srv, door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    await session.chat('hi')
+    const clears = door.calls.filter((c) => c === 'clear').length
+    await expect(session.reset()).rejects.toThrow(/stop turn t_[A-Za-z0-9_-]+: 500/)
+    expect(door.calls.filter((c) => c === 'clear').length).toBe(clears) // nothing was cleared under a turn that may still write
+  })
+
   it('a chat that threw before the turn was accepted costs nothing: nothing was booked', async () => {
     const srv = server()
     const failing: typeof fetch = (async (input: string | URL | Request, init?: RequestInit) => (String(input).endsWith('/turns') ? new Response('{"error":{"code":"unavailable"}}', { status: 503 }) : srv.fetch(input, init))) as typeof fetch
     const out = await runEvals({ target: make(srv, new FakeDoor(), { fetch: failing }), cases: [kase('N01')], reps: 1, concurrency: 1 })
     expect(out.rows[0]).toMatchObject({ runOk: false, costUsd: 0 })
     expect(out.rows[0]!.err).toMatch(/send the turn: 503/)
+  })
+})
+
+describe('the product README says what its numbers are', () => {
+  it('names the half-cent upper bound and the empty WebSearch input', () => {
+    const text = renderReadme(buildReport(CASES, [], { target: 'product', model: 'm', effort: 'e', reps: 1, notRun: [] }), 't')
+    expect(text).toMatch(/upper bound \(\+0\.5 cent\)/)
+    expect(text).toMatch(/WebSearch call has input `\{\}`.*websearch\.unrequested.*never `websearch\.canary`/)
+    expect(renderReadme(buildReport(CASES, [], { target: 'fake', model: 'm', effort: 'e', reps: 1, notRun: [] }), 't')).not.toMatch(/Product target notes/)
   })
 })
 
@@ -344,6 +368,16 @@ describe('the memory door', () => {
     expect(await door.hasChat('eval-probe-2')).toBe(false)
     expect(sqls[0]).toBe("SELECT 1 AS one FROM chats WHERE id = 'eval-probe-1'")
     await expect(door.hasChat("x'; DROP TABLE chats;--")).rejects.toThrow(DoorRefusal)
+  })
+  it('one absolute config path goes to the check and to wrangler', async () => {
+    const read: string[] = []
+    const argv: string[][] = []
+    const run = wranglerRunner({ database: 'inhouse-sbx-pr12-db', config: 'rel/sbx.jsonc', readConfig: (f) => { read.push(f); return JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] }) }, env: ok, spawn: (a) => { argv.push(a); return { status: 0, stdout: '[]' } } })
+    await run('SELECT 1')
+    expect(read).toHaveLength(1)
+    expect(read[0]!.startsWith('/')).toBe(true)
+    expect(read[0]!.endsWith('/rel/sbx.jsonc')).toBe(true)
+    expect(argv[0]![argv[0]!.indexOf('--config') + 1]).toBe(read[0])
   })
   it('a non-sandbox database is refused when the runner is made, before any spawn', () => {
     let spawned = 0

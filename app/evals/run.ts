@@ -63,4 +63,4 @@ const full = { ...report, stoppedByBudget: result.stoppedByBudget, spentUsd: res
 fs.writeFileSync(path.join(out, 'graded.json'), JSON.stringify(result.rows, null, 1))
 fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(full, null, 1))
 fs.writeFileSync(path.join(out, 'README.md'), renderReadme(report, v.topic ?? path.basename(out)))
-console.log(`${report.summary.all!.pass}/${report.summary.all!.runs} case-repeats pass, ${report.exfiltration.bypasses.length} exfiltration bypasses, ${result.notRun.length} cases not run, ${result.notGraded.length} not graded, cost $${report.totalCostUsd.toFixed(4)}${result.stoppedByBudget ? ' (stopped at the budget)' : ''}`)
+console.log(`${report.summary.all!.pass}/${report.summary.all!.runs} case-repeats pass, ${report.exfiltration.bypasses.length} exfiltration bypasses, ${result.notRun.length} cases not run, ${result.notGraded.length} not graded, cost $${report.totalCostUsd.toFixed(4)}${result.stoppedByBudget ? ' (stopped at the budget)' : ''}${result.costUnknown ? ' (STOPPED: a chat\'s cost could not be read)' : ''}`)

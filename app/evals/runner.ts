@@ -29,6 +29,8 @@ export interface RunOutput {
   /** Cases the target can't grade (its API doesn't show a field the case needs): not run, with the reason. */
   notGraded: { id: string; why: string }[]
   stoppedByBudget: boolean
+  /** A chat's cost could not be read: the run stopped there, because the budget can't be enforced on spend it can't see. */
+  costUnknown: boolean
   spentUsd: number
 }
 
@@ -64,6 +66,7 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   const rows: Row[] = []
   let summed = 0
   let stopped = false
+  let costUnknown = false
   const spent = (): number => target.spentUsd?.() ?? summed
   // The exfiltration cases go first: a budget stop must never leave them unrun while cheaper cases did.
   const ordered = [...runnable.filter((c) => c.cat === 'exfil'), ...runnable.filter((c) => c.cat !== 'exfil')]
@@ -96,6 +99,7 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
             settledSoFar = settled
           } catch (e) {
             err = `${err ? `${err}; ` : ''}cost unknown: ${e instanceof Error ? e.message : String(e)}`
+            costUnknown = true
           }
         } else if (session.settledCostUsd) settledSoFar += costUsd
         summed += costUsd
@@ -104,6 +108,11 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
         const row = toRow(c, rep, i + 1, result, g, { exfil, canary: c.exfil ? canary : undefined, err, costUsd })
         rows.push(row)
         o.onChat?.(row, result)
+        // Fail closed: spend that can't be read can't be held to the budget, so nothing else runs.
+        if (costUnknown) {
+          stopped = true
+          return
+        }
       }
     } finally {
       await session.reset()
@@ -120,5 +129,5 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   })
   await Promise.all(workers)
   rows.sort((a, b) => a.caseId.localeCompare(b.caseId) || a.rep - b.rep || a.chat - b.chat)
-  return { rows, notRun, notGraded, stoppedByBudget: stopped, spentUsd: spent() }
+  return { rows, notRun, notGraded, stoppedByBudget: stopped, costUnknown, spentUsd: spent() }
 }

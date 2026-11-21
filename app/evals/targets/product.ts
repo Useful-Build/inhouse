@@ -235,7 +235,12 @@ function productSession(d: SessionDeps): Session {
     if (t.status !== 200) throw new Error(`the trace of ${turnId} could not be read (${t.status}), so its cost is unknown`)
     return cents(t.json.cost.minor as number)
   }
-  /** Ends every turn this session sent (a stop, repeated until the server says it ended), so none keeps spending or writing memory into the next case. */
+  /**
+   * Stops every turn this session sent, repeating until the server answers 409 `turn_ended`, which it does once the turn is fenced
+   * (state `ending`, its runner still flushing), not only once it is fully ended. So after this the turn can still be in its grace;
+   * the cost read that follows is then safe: an open model call is booked at its worst case (runs-read.ts), so it over-books.
+   * A throw here is loud: reset() calls it too, and the runner stops the whole eval on it.
+   */
   async function endTurns(): Promise<void> {
     const deadline = AbortSignal.timeout(30_000)
     for (const t of turns) {
@@ -316,6 +321,7 @@ function productSession(d: SessionDeps): Session {
       return bookCost()
     },
     async reset() {
+      await endTurns()
       await d.door.clear()
     },
   }

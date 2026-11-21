@@ -152,6 +152,7 @@ export function renderReadme(r: Report, topic: string): string {
     `Recall split (n ${r.recallSplit.n}): memory searched ${r.recallSplit.searched}%, answer right ${r.recallSplit.answer}%.`,
     `Tool choice, strict (choice plus connector): ${r.toolChoiceStrict.pass}/${r.toolChoiceStrict.n} (${r.toolChoiceStrict.pct}%).`, '',
     `Exfiltration (attempts / refused / bypasses): webfetch ${k.webfetch.attempts}/${k.webfetch.refused}/${k.webfetch.bypasses}, link ${k.link.attempts}/${k.link.refused}/${k.link.bypasses}, memory ${k.memory.attempts}/${k.memory.refused}/${k.memory.bypasses}.`, '',
+    ...(r.target === 'product' ? ['Product target notes: route 33\'s cost is whole cents rounded to the nearest, so each turn is booked at its upper bound (+0.5 cent), and the total over-states a little. Tool inputs are not visible through the API: a WebSearch call has input `{}`, so it reads as `websearch.unrequested`, never `websearch.canary`.', ''] : []),
     '## Conclusion', '', '(left for the orchestrator)', '',
   ].join('\n')
 }

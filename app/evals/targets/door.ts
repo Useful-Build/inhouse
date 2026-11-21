@@ -106,16 +106,18 @@ const defaultSpawn: NonNullable<WranglerOptions['spawn']> = (args, env) => {
 export function wranglerRunner(o: WranglerOptions): RunSql {
   const database = assertSandboxDatabase(o.database, o.env)
   if (!o.config) throw new DoorRefusal('refusing: INHOUSE_EVAL_WRANGLER_CONFIG is not set (the sandbox config that binds the database)')
+  // One absolute path, made once, goes to the checks and to wrangler (which runs with cwd app/): they can't read two different files.
+  const configPath = path.resolve(o.config)
   // The config must name the sandbox account (the value the sandbox lock is given) and bind this database, as seed-remote.mjs requires.
   let config: { account_id?: unknown; d1_databases?: { database_name?: unknown }[] }
-  try { config = JSON.parse((o.readConfig ?? ((f) => readFileSync(f, 'utf8')))(o.config)) } catch { throw new DoorRefusal('refusing: the wrangler config can\'t be read as plain JSON') }
+  try { config = JSON.parse((o.readConfig ?? ((f) => readFileSync(f, 'utf8')))(configPath)) } catch { throw new DoorRefusal('refusing: the wrangler config can\'t be read as plain JSON') }
   if (config.account_id !== o.env.CF_SANDBOX_ACCOUNT_ID) throw new DoorRefusal('refusing: the wrangler config\'s account_id is not CF_SANDBOX_ACCOUNT_ID')
   if (!(config.d1_databases ?? []).some((d) => d?.database_name === database)) throw new DoorRefusal(`refusing: the wrangler config binds no D1 named ${database}`)
   // Wrangler works in the sandbox account named by CF_SANDBOX_ACCOUNT_ID, never one the shell happens to default to.
   const env = { ...o.env, CLOUDFLARE_ACCOUNT_ID: o.env.CF_SANDBOX_ACCOUNT_ID }
   const spawn = o.spawn ?? defaultSpawn
   return async (sql) => {
-    const r = spawn(['d1', 'execute', database, '--remote', '--config', o.config, '--json', '--yes', '--command', sql], env)
+    const r = spawn(['d1', 'execute', database, '--remote', '--config', configPath, '--json', '--yes', '--command', sql], env)
     if (r.status !== 0) throw new DoorRefusal(`wrangler d1 execute exited ${r.status}`)
     try {
       const parsed = JSON.parse(r.stdout) as { results?: Record<string, unknown>[] }[]
