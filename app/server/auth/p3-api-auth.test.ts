@@ -174,18 +174,18 @@ describe('ownerObject rows (failures 4 and 5)', () => {
 })
 
 describe('the committed P3 routes are PR0 stubs (failure 6)', () => {
-  it('every route 22 to 49 not yet built answers 503 not_built to a caller the matrix lets through (W1 PR 2 built 29-33, 35-37, 49; W3 built 38-41)', async () => {
+  it('every route 22 to 49 not yet built answers 503 not_built to a caller the matrix lets through (W1 PR 2 built 29-33, 35-37, 49; W1 PR 4 built 34; W2 built 46-48; W3 built 38-41)', async () => {
     quiet()
     const { call } = setup({ table: routes, rows: accessMatrix })
     const member = { 'Cf-Access-Jwt-Assertion': await person('member'), Origin: BRAND.origin }
     const P3 = [
       ['GET', '/api/chats', member], ['POST', '/api/chats', member], ['GET', '/api/chats/c1', member], ['PUT', '/api/chats/c1/title', member],
       ['PUT', '/api/chats/c1/pin', member], ['POST', '/api/chats/delete', member], ['POST', '/api/chats/restore', member],
-      ['GET', '/api/socket', member],
     ] as const
     // Built and so off this list: 38-41 (W3), 42 (W4 PR 1), 43-45 (W6), 29-33, 35-37 and 49 (W1 PR 2,
-    // server/api/runs.test.ts), and 46-48 (W2 built routes 46-48: server/ops/drain.test.ts).
-    expect(P3).toHaveLength(8)
+    // server/api/runs.test.ts), 46-48 (W2 built routes 46-48: server/ops/drain.test.ts) and 34 (W1 PR 4,
+    // server/api/socket.test.ts).
+    expect(P3).toHaveLength(7)
     for (const [method, path, headers] of P3) {
       const res = await call(BRAND.origin, path, { method, headers })
       expect(res.status, `${method} ${path}`).toBe(503)

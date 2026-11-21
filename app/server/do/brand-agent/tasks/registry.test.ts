@@ -9,7 +9,7 @@ import { inAgent, settle } from '../../../testing/brand-agent/core-harness.ts'
 
 describe('the registry has no stub where it matters (obligation 12)', () => {
   it('the kinds built so far are real handlers', () => {
-    for (const kind of ['turn-watch', 'run-advance', 'call-lease']) expect(taskHandlers[kind], kind).not.toBe(notBuilt)
+    for (const kind of ['turn-watch', 'run-advance', 'call-lease', 'grant-expiry', 'authority-sweep']) expect(taskHandlers[kind], kind).not.toBe(notBuilt)
   })
 
   it('ensureSeeds() ensures no task whose handler is a stub', () => inAgent(async h => {
@@ -21,17 +21,18 @@ describe('the registry has no stub where it matters (obligation 12)', () => {
     for (const kind of kinds) expect(taskHandlers[kind], kind).not.toBe(notBuilt)
   }))
 
-  // Every kind but W1's last three stubs is real now (W2's pool-retry, W4's audit-copy and usage-sweep included).
-  const STILL_STUBS = ['grant-expiry', 'authority-sweep', 'flush-turn']
-  it('every registered handler outside the three W1 stubs is real', () => {
+  // Every kind but W1's last stub is real now (W2's pool-retry, W4's audit-copy and usage-sweep included; W1 PR 4 built
+  // grant-expiry and authority-sweep). flush-turn is W1 PR 3's.
+  const STILL_STUBS = ['flush-turn']
+  it('every registered handler outside the last W1 stub is real', () => {
     for (const [kind, handler] of Object.entries(taskHandlers)) {
       if (!STILL_STUBS.includes(kind)) expect(handler, kind).not.toBe(notBuilt)
     }
     for (const kind of STILL_STUBS) expect(taskHandlers[kind], kind).toBe(notBuilt)
   })
 
-  // Flips on with W1 PR 4 (grant-expiry, authority-sweep), after PR 3 builds flush-turn.
-  it.skip('no registered handler is a stub (flip in W1 PR 4)', () => {
+  // Flips on once W1 PR 3 (flush-turn) and PR 4 (grant-expiry, authority-sweep) are both in: whichever merges second.
+  it.skip('no registered handler is a stub (flip when PR 3 and PR 4 are both merged)', () => {
     for (const [kind, handler] of Object.entries(taskHandlers)) expect(handler, kind).not.toBe(notBuilt)
   })
 })
