@@ -1,0 +1,122 @@
+// The graded morning-check set's datasets, oracle and faults (P4 W3 PR 2; p4-w3.md section 6). Ways it can fail, written
+// down first:
+//  1. a dataset plants a problem the literal expectations don't list, or misses one they do (checked against an oracle
+//     that applies B2's eight rules in plain code, never against the same list);
+//  2. the answer depends on the day the set is run (every age is relative, so any `now` must give the same keys);
+//  3. a clean store crosses a rule;
+//  4. an outage fault doesn't reach the hub as its code: credentials_rejected, result_too_large, upstream_unavailable;
+//  5. a dataset isn't well-formed, or two cases share a host.
+import { describe, expect, it } from 'vitest'
+import { AMBER, GAPS, META, OPERATIONS_OF, RED } from '../../../evals/morning-check/expected'
+import { CASES } from '../../../test/upstreams/morning-check/cases'
+import { DAY, HOUR, fixtureStore, healthy } from '../../../test/upstreams/morning-check/datasets'
+import { expectedFindings } from '../../../test/upstreams/morning-check/oracle'
+import { MORNING_CHECK_UPSTREAMS, hostOf, upstreamFor, withFault } from '../../../test/upstreams/morning-check/upstreams'
+import { checkDataset } from '../../../test/upstreams/shopify/dataset'
+import { createShopifyUpstream } from '../../../test/upstreams/shopify/server'
+import { call, signInClient } from './test-kit'
+
+const NOW = Date.parse('2026-11-22T12:00:00Z')
+const FROM = { createdFrom: '2026-01-01T00:00:00Z' }
+const sevOf = (s: 'amber' | 'red') => (s === 'red' ? RED : AMBER)
+
+describe('the cases', () => {
+  it('has 12 graded, 3 clean and 3 outage cases, with unique ids and hosts', () => {
+    expect(CASES.filter(c => c.group === 'graded')).toHaveLength(12)
+    expect(CASES.filter(c => c.group === 'clean')).toHaveLength(3)
+    expect(CASES.filter(c => c.group === 'outage')).toHaveLength(3)
+    expect(new Set(CASES.map(c => c.id)).size).toBe(CASES.length)
+    expect(new Set(CASES.map(c => hostOf(c.id))).size).toBe(CASES.length)
+    expect(Object.keys(MORNING_CHECK_UPSTREAMS).sort()).toEqual(CASES.map(c => hostOf(c.id)).sort())
+    expect(META.map(m => m.id)).toEqual(CASES.map(c => c.id))
+  })
+
+  it('every dataset is a well-formed dataset', () => {
+    for (const c of CASES) expect(() => checkDataset(c.build(NOW)), c.id).not.toThrow()
+  })
+
+  for (const c of CASES.filter(x => !(x.fault && x.fault.ops === 'all'))) {
+    it(`${c.id}: the literal expectations equal what the eight rules find`, () => {
+      const found = expectedFindings(c.build(NOW), NOW)
+      expect(found.map(f => [f.key, sevOf(f.sev)]).sort()).toEqual(c.items.map(i => [i.key, i.sev]).sort())
+      for (const want of c.items) {
+        const have = found.find(f => f.key === want.key)!.sources
+        for (const name of want.sources) expect(Array.isArray(name) ? name.some(n => have.includes(n)) : have.includes(name as string), `${c.id} ${want.key} ${String(name)}`).toBe(true)
+      }
+    })
+
+    it(`${c.id}: the same findings on any day and hour`, () => {
+      const keys = (now: number) => expectedFindings(c.build(now), now).map(f => `${f.key}:${f.sev}`).sort()
+      const base = keys(NOW)
+      for (const shift of [-90 * DAY, -3 * HOUR, 5 * HOUR + 17 * 60_000, 11 * DAY, 400 * DAY + 7 * HOUR]) expect(keys(NOW + shift), `${c.id} at ${shift}`).toEqual(base)
+    })
+  }
+
+  it('the clean stores and the healthy store have no findings', () => {
+    for (const c of CASES.filter(x => x.group === 'clean')) expect(expectedFindings(c.build(NOW), NOW), c.id).toEqual([])
+    expect(expectedFindings(healthy(NOW), NOW)).toEqual([])
+  })
+})
+
+describe('the time-shifted fixture', () => {
+  it('keeps its relative ages: 5.3 days for #1001, and the refunds a few hours old', () => {
+    const d = fixtureStore(NOW)
+    const first = d.orders.find(o => o.name === '#1001')!
+    expect(((NOW - Date.parse(first.processedAt)) / DAY).toFixed(1)).toBe('5.3')
+    const refunds = d.orders.flatMap(o => o.refunds.map(r => Date.parse(r.createdAt!)))
+    expect(refunds).toHaveLength(21)
+    expect(refunds.every(t => NOW - t > 0 && NOW - t < DAY)).toBe(true)
+  })
+
+  it('finds what was checked by hand: late-orders (#1001), refund-spike (21 refunds) and oversold (P4-0038), nothing else', () => {
+    const found = expectedFindings(fixtureStore(NOW), NOW)
+    expect(found.map(f => f.key)).toEqual(['late-orders', 'refund-spike', 'oversold'])
+    expect(found[0]!.sources).toEqual(['#1001'])
+    expect(found[1]!.sources).toHaveLength(21)
+    expect(found[2]!.sources).toEqual(['P4-0038'])
+  })
+})
+
+describe('the outage upstreams, through the hub\'s own tools', () => {
+  const lateOrders = CASES.find(c => c.id === 'outage-credentials')!
+  const client = (id: string) => signInClient(upstreamFor(CASES.find(c => c.id === id)!, NOW)).client
+
+  it('outage-all: every read is upstream_unavailable', async () => {
+    const c = client('outage-all')
+    for (const [tool, input] of [['orders_search', { first: 5 }], ['refunds_search', { first: 5, ...FROM }], ['returns_search', { first: 5 }], ['products_search', { first: 5 }]] as const) {
+      expect(await call(tool, input, c), tool).toMatchObject({ ok: false, error: { code: 'upstream_unavailable' } })
+    }
+  })
+
+  it('outage-credentials: refunds_search is credentials_rejected, reads before it answered, and the account then stays rejected', async () => {
+    const c = client('outage-credentials')
+    expect(await call('orders_search', { first: 5 }, c)).toMatchObject({ ok: true })
+    expect(await call('refunds_search', { first: 5, ...FROM }, c)).toMatchObject({ ok: false, error: { code: 'credentials_rejected' } })
+    // The sign-in marks the account failed on a rejected token: every later read is credentials_rejected too, so which reads
+    // succeed depends on the model's order. The case is `lenient` for that reason (expected.ts).
+    expect(await call('orders_search', { first: 5 }, c)).toMatchObject({ ok: false, error: { code: 'credentials_rejected' } })
+    expect(lateOrders.fault).toEqual({ kind: 'credentials_rejected', ops: ['RefundsSearch'] })
+    expect(lateOrders.lenient).toBe(true)
+  })
+
+  it('outage-too-large: returns_search is result_too_large, the other reads still answer', async () => {
+    const c = client('outage-too-large')
+    expect(await call('returns_search', { first: 5 }, c)).toMatchObject({ ok: false, error: { code: 'result_too_large' } })
+    expect(await call('orders_search', { first: 5 }, c)).toMatchObject({ ok: true })
+    expect(await call('refunds_search', { first: 5, ...FROM }, c)).toMatchObject({ ok: true })
+  })
+
+  it('a fault names only operations the gaps map to, and each gap maps to the operation its tool uses', () => {
+    const known = new Set(Object.values(OPERATIONS_OF).flat())
+    for (const c of CASES) if (c.fault && c.fault.ops !== 'all') for (const op of c.fault.ops) expect(known.has(op), `${c.id} ${op}`).toBe(true)
+    expect(OPERATIONS_OF.refunds).toEqual(['RefundsSearch'])
+    expect(OPERATIONS_OF.returns).toEqual(['ReturnsSearch'])
+    expect(GAPS).toEqual(['orders', 'products', 'inventory', 'refunds', 'returns'])
+  })
+
+  it('a faultless wrapper changes nothing: the same answer as the plain upstream', async () => {
+    const plain = signInClient(createShopifyUpstream(CASES[0]!.build(NOW))).client
+    const wrapped = signInClient(withFault(createShopifyUpstream(CASES[0]!.build(NOW)), { kind: 'oversize', ops: ['NoSuchOperation'] })).client
+    expect(await call('orders_search', { first: 5 }, wrapped)).toEqual(await call('orders_search', { first: 5 }, plain))
+  })
+})

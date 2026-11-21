@@ -19,6 +19,12 @@ export function incompleteSummary(items: number, gaps: readonly string[]): strin
 export function gapsOfSummary(text: string | null): { areas: (typeof GAP_AREAS)[number][]; tooMany: boolean } {
   const t = text ?? ''
   const read = /couldn't read ([a-z, ]+)/.exec(t)?.[1] ?? ''
-  const named = read.split(', ')
+  const named = read.trim().split(', ')
   return { areas: GAP_AREAS.filter(a => named.includes(a)), tooMany: t.includes(`more than ${ITEMS_MAX} things`) }
+}
+
+/** What the normaliser fixed, in fixed words, for the summary's tail (empty when it fixed nothing): ` (fixed: 1 cut, 2 dropped)`. */
+export function fixedWords(c: { truncated: number; dropped: number; deduped: number; overflow: number }): string {
+  const parts = [[c.truncated, 'cut'], [c.dropped, 'dropped'], [c.deduped, 'repeated'], [c.overflow, 'over the cap']].filter(([n]) => (n as number) > 0).map(([n, w]) => `${n} ${w}`)
+  return parts.length > 0 ? ` (fixed: ${parts.join(', ')})` : ''
 }

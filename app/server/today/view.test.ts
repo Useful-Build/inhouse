@@ -13,7 +13,7 @@ import { ON_TIME_MS as TICK_ON_TIME_MS } from '../routines/tick.ts'
 import { cardId, itemId } from './ids.ts'
 import { cardProblem, toProblem } from './problem.ts'
 import { hides } from './store.ts'
-import { incompleteSummary, gapsOfSummary, thingsWords } from './words.ts'
+import { fixedWords, incompleteSummary, gapsOfSummary, thingsWords } from './words.ts'
 import { ON_TIME_MS, clockWords, todayView } from './view.ts'
 import type { RoutineFacts, SlotFacts } from './view.ts'
 
@@ -146,6 +146,10 @@ describe('the words', () => {
     expect(incompleteSummary(10, ['too_many', 'orders'])).toBe("found more than 10 things; showing 10; couldn't read orders")
     expect(gapsOfSummary("found 3 things; couldn't read refunds, returns")).toEqual({ areas: ['refunds', 'returns'], tooMany: false })
     expect(gapsOfSummary("found more than 10 things; showing 10; couldn't read orders")).toEqual({ areas: ['orders'], tooMany: true })
+    expect(gapsOfSummary("found more than 10 things; showing 10 (fixed: 1 over the cap)")).toEqual({ areas: [], tooMany: true })
+    expect(gapsOfSummary("found 2 things; couldn't read refunds (fixed: 3 cut)")).toEqual({ areas: ['refunds'], tooMany: false })
+    expect(fixedWords({ truncated: 0, dropped: 0, deduped: 0, overflow: 0 })).toBe('')
+    expect(fixedWords({ truncated: 2, dropped: 0, deduped: 1, overflow: 3 })).toBe(' (fixed: 2 cut, 1 repeated, 3 over the cap)')
     expect(gapsOfSummary(null)).toEqual({ areas: [], tooMany: false })
   })
   it('names the clock', () => {
