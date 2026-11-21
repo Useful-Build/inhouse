@@ -1,6 +1,9 @@
 // P5 W1 brief test 9 and test 3's grep: H0's Shopify path is unchanged by the OAuth extension. The same generated
 // event sequence runs on H0's core as merged (testing/h0-core.ts, a verbatim copy at the cut) and on the extended core;
 // results, records (envelopes compared by kid, since every seal draws a fresh IV) and log lines must be identical.
+// One deliberate difference (the #248 review, item 8d): with no record or a disconnected one, the extended alarm re-arms
+// itself at the next live one-time item's expiry, where H0 set nothing. Alarm histories are compared without those
+// entries, and a second property checks each extra entry is exactly such an expiry.
 import { fc, test } from '@fast-check/vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -68,6 +71,7 @@ describe('test 9: H0 unchanged', () => {
     const a = side('h0', keys)
     const b = side('v2', keys)
     const logs: { a: string[]; b: string[] } = { a: [], b: [] }
+    const expiries = new Set<number>()
     let target: 'a' | 'b' = 'a'
     vi.spyOn(console, 'log').mockImplementation((...x: unknown[]) => void logs[target].push(x.map(String).join(' ')))
     for (const o of ops) {
@@ -100,7 +104,11 @@ describe('test 9: H0 unchanged', () => {
             s.shop.grantMode = o.mode === 'ok' ? { kind: 'ok' } : o.mode === 'throw' ? { kind: 'throw' } : { kind: 'status', status: Number(o.mode) }
             break
           case 'pending':
-            out.push(await s.core.putPending(o.key, { v: o.key }, o.ttl))
+            {
+              const put = await s.core.putPending(o.key, { v: o.key }, o.ttl)
+              if (put.ok) expiries.add(put.value.expiresAtMs)
+              out.push(put)
+            }
             break
           case 'take':
             out.push(await s.core.takePending(o.key))
@@ -110,7 +118,10 @@ describe('test 9: H0 unchanged', () => {
       expect(JSON.stringify(out[0])).toBe(JSON.stringify(out[1]))
     }
     expect(comparable(b.store)).toEqual(comparable(a.store))
-    expect(b.alarm.history).toEqual(a.alarm.history)
+    // H0's own entries, in order; any extra entry on the extended core is a pending item's expiry (the re-arm).
+    const withoutRearm = (h: (number | null)[]) => h.filter(x => x === null || !expiries.has(x))
+    expect(withoutRearm(b.alarm.history)).toEqual(withoutRearm(a.alarm.history))
+    for (const x of b.alarm.history) if (!a.alarm.history.includes(x)) expect(x !== null && expiries.has(x)).toBe(true)
     expect(b.shop.grants).toBe(a.shop.grants)
     expect(logs.b).toEqual(logs.a)
   })
