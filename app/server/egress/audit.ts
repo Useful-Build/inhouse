@@ -4,7 +4,7 @@
 import { AuditPost } from '../../shared/protocol/index.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import type { EgressDeps } from './deps.ts'
-import { jsonAnswer, parseJson, readCapped } from './http.ts'
+import { jsonAnswer, parseJson, readCapped, scopeRefused } from './http.ts'
 
 /** An entry's input is capped at 16 KB as JSON (`AUDIT_INPUT_MAX_BYTES`); the rest of the post is small. */
 export const AUDIT_BODY_MAX_BYTES = 64 * 1024
@@ -16,7 +16,7 @@ export async function auditRoute(request: Request, path: string, grant: RunGrant
   if (bytes === null) return jsonAnswer({ error: 'too_large' }, 413)
   const post = AuditPost.safeParse(parseJson(bytes))
   if (!post.success) return jsonAnswer({ error: 'invalid' }, 400)
-  if (post.data.turnId !== grant.turnId) return jsonAnswer({ error: 'scope' }, 403)
+  if (post.data.turnId !== grant.turnId) return scopeRefused('audit', d)
   await d.rpc.writeToolCall(grant.turnId, post.data.n, post.data.entry)
   return new Response(null, { status: 204 })
 }

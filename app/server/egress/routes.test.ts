@@ -5,7 +5,9 @@
 //  3. a load over 64 MB answers anything but 413;
 //  4. an events batch for another turn is ingested, the Runner isn't touched after ingest, a closed `events` route
 //     or an ended turn answers anything but 410;
-//  5. an audit post for another turn is written; the token header reaches the MCP handler.
+//  5. an audit post for another turn is written; the token header reaches the MCP handler;
+//  6. a cross-chat or cross-turn call (a live token naming another session or turn) is refused without a log line, or
+//     with more than one, or with an id or the body in it; an in-scope call logs anything (acceptance 6).
 import { fc } from '@fast-check/vitest'
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
@@ -143,7 +145,8 @@ describe('scope on the real run tokens (failure 1, acceptance 6)', () => {
 
 // P3 acceptance item 6, the refusal itself: a run token the BrandAgent no longer honours (its turn revoked, or a token
 // it never minted) is refused before any route runs: 401 and one `egress_refused` line naming the route and why. A
-// live token for chat A naming chat B's session is not a refused token: it's 403 `scope`, with no refusal line.
+// live token for chat A naming chat B's session is not a refused token: it's 403 `scope`, logged as one
+// `egress_refused` line with why `scope`.
 describe('a refused run token on the session and files routes (acceptance 6)', () => {
   const sessionA = '00000000-0000-4000-8000-0000000000a2'
   const sessionB = '00000000-0000-4000-8000-0000000000b2'
@@ -164,10 +167,14 @@ describe('a refused run token on the session and files routes (acceptance 6)', (
         egressRequest('/files/outputs/b.csv', { method: 'GET', token, headers: { 'x-chat-id': chatB } }),
       ]
 
-      // Live: the store's own scope answers (403), and nothing is logged as a refused token.
+      // Live: the store's own scope answers (403), one `scope` line per call, never a token refusal.
       const live = await Promise.all(onB(tokenA).slice(0, 2).map(async r => (await handleEgress(r, h.deps)).status))
       expect(live).toEqual([403, 403])
-      expect(h.logs).toEqual([])
+      expect(h.logs).toEqual([
+        { event: 'egress_refused', route: 'store', why: 'scope', runner: 'runner-0' },
+        { event: 'egress_refused', route: 'store', why: 'scope', runner: 'runner-0' },
+      ])
+      h.logs.length = 0
 
       // Revoked (the turn ended): every route answers 401 before it runs, one line each.
       tokens.revokeTurn('t_ra', 'turn_ended')
@@ -191,6 +198,38 @@ describe('a refused run token on the session and files routes (acceptance 6)', (
       // Chat B's store was never written.
       expect((await bucket.list({ prefix: `sessions/${chatB}/` })).objects).toEqual([])
     })
+  })
+})
+
+describe('a scope refusal is logged once (failure 6, acceptance 6)', () => {
+  const other = { projectKey: 'p', sessionId: '00000000-0000-4000-8000-0000000000cc' }
+  const entry = { hook: 'PreToolUse', toolName: 'Bash', decision: 'allow', input: { command: 'ls' } }
+  const CROSS: [string, string, unknown][] = [
+    ['store', '/store/append', { key: other, entries: [{ type: 'x' }], part: '000000000000001-000001' }],
+    ['store', '/store/load', { key: other }],
+    ['store', '/store/list-subkeys', { key: other }],
+    ['events', '/events/', { turnId: 't_other', events: [{ runId: 't_other', seq: 0, type: 'heartbeat' }] }],
+    ['audit', '/audit/', { turnId: 't_other', n: 0, entry }],
+  ]
+  it.each(CROSS)('%s %s: 403 scope and exactly one egress_refused line, with no id or body', async (route, path, body) => {
+    const h = await harness({ bucket }, uniqGrant())
+    const res = await post(h, path, body)
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'scope' })
+    expect(h.logs).toEqual([{ event: 'egress_refused', route, why: 'scope', runner: 'runner-0' }])
+  })
+  it('in-scope calls on the same routes log nothing', async () => {
+    const g = uniqGrant()
+    const h = await harness({ bucket }, g)
+    const key = { projectKey: 'p', sessionId: g.sessionId }
+    for (const [path, body] of [
+      ['/store/append', { key, entries: [{ type: 'x' }], part: '000000000000001-000001' }],
+      ['/store/load', { key }],
+      ['/store/list-subkeys', { key }],
+      ['/events/', { turnId: g.turnId, events: [{ runId: g.turnId, seq: 0, type: 'heartbeat' }] }],
+      ['/audit/', { turnId: g.turnId, n: 0, entry }],
+    ] as const) expect((await post(h, path, body)).status, path).toBeLessThan(300)
+    expect(h.logs).toEqual([])
   })
 })
 

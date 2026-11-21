@@ -5,7 +5,7 @@
 import { PUSH_BATCH_MAX_BYTES, PushBatch } from '../../shared/protocol/index.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import type { EgressDeps } from './deps.ts'
-import { jsonAnswer, parseJson, readCapped } from './http.ts'
+import { jsonAnswer, parseJson, readCapped, scopeRefused } from './http.ts'
 
 export async function eventsRoute(request: Request, path: string, grant: RunGrant, d: EgressDeps): Promise<Response> {
   if (path !== '/events/') return jsonAnswer({ error: 'not_found' }, 404)
@@ -14,7 +14,7 @@ export async function eventsRoute(request: Request, path: string, grant: RunGran
   if (bytes === null) return jsonAnswer({ error: 'too_large' }, 413)
   const batch = PushBatch.safeParse(parseJson(bytes))
   if (!batch.success) return jsonAnswer({ error: 'invalid' }, 400)
-  if (batch.data.turnId !== grant.turnId) return jsonAnswer({ error: 'scope' }, 403)
+  if (batch.data.turnId !== grant.turnId) return scopeRefused('events', d)
   const ack = await d.rpc.ingest(grant.turnId, batch.data.events)
   if ('gone' in ack) return jsonAnswer({ error: 'gone' }, 410)
   try {

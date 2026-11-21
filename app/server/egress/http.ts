@@ -1,4 +1,6 @@
 // The egress's own answers and header rules (p3-design 8.1). Nothing here reads a token, a key or a body into a log.
+import type { EgressRoute } from '../do/brand-agent/tokens.ts'
+import type { EgressDeps } from './deps.ts'
 
 /** The header the root runner's proxy adds (app/runner/src/proxy/server.ts `RUN_TOKEN_HEADER`). Never forwarded. */
 export const RUN_TOKEN_HEADER = 'x-inhouse-run-token'
@@ -142,6 +144,16 @@ export function responseHeaders(upstream: Headers): Headers {
     if (RESPONSE_HEADERS.has(name) || RESPONSE_PREFIXES.some(p => name.startsWith(p))) out.set(name, v)
   }
   return out
+}
+
+/**
+ * A live token's call outside its grant (another chat's session, another turn): 403 `scope`, logged once as an
+ * `egress_refused` line like a refused token's (P3 acceptance 6). The line names the route and the runner only: no
+ * token, no chat, session or member id, no body.
+ */
+export function scopeRefused(route: EgressRoute, d: Pick<EgressDeps, 'log' | 'runner'>): Response {
+  d.log({ event: 'egress_refused', route, why: 'scope', runner: d.runner })
+  return jsonAnswer({ error: 'scope' }, 403)
 }
 
 /** A plain JSON answer for the non-model routes (`{ error }` on refusals, as the runner's adapters read them). */
