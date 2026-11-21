@@ -32,7 +32,7 @@ async function goApprovals(page: Page) {
   await expect(page.getByRole('heading', { level: 1, name: 'Approvals' })).toBeVisible()
 }
 
-test('S1: Today shows each problem with its drafted fix, urgent ones first, and a low-risk fix approves in place', async ({ fx, page }) => {
+test('S1: Today shows each problem with its drafted fix, urgent ones marked, and a low-risk fix approves in place', async ({ fx, page }) => {
   await start(page, fx)
   // Urgent cards lead with the pill; the others carry no marker.
   await expect(card(page, JACKET).getByText('Urgent', { exact: true })).toBeVisible()
@@ -40,7 +40,7 @@ test('S1: Today shows each problem with its drafted fix, urgent ones first, and 
   await expect(card(page, KESTREL).getByText('Urgent', { exact: true })).toHaveCount(0)
   // Two columns on desktop, one on a phone.
   const a = await card(page, JACKET).boundingBox()
-  const b = await card(page, PAYOUT).boundingBox()
+  const b = await card(page, KESTREL).boundingBox()
   if (phone()) expect(b!.y, 'one column').toBeGreaterThan(a!.y + a!.height - 1)
   else expect(Math.abs(b!.y - a!.y), 'two cards share a row').toBeLessThanOrEqual(2)
 

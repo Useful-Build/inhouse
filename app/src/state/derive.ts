@@ -332,6 +332,8 @@ export interface IssueCard {
   primary: 'Approve' | 'Review' | null
   /** Grey button, shown only when there is no primary. */
   quiet: 'Ask about this' | 'Undo' | 'Review' | null
+  /** Run: what a waiting draft's card says on its draft sheet besides the draft ("Paused · emails wait for you"). */
+  sheetNote: string | null
   handled: boolean
   dimmed: boolean
 }
@@ -342,18 +344,18 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     const sens = !!(p.draft.money || p.draft.customer)
     const at = agent.approved[p.id]
     if (at) {
-      return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, handled: false, dimmed: true }
+      return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, sheetNote: null, handled: false, dimmed: true }
     }
-    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', handled: false, dimmed: false }
-    if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', handled: true, dimmed: true }
-    if (S === 2 && agent.undone[p.id] && !p.wait) return { problem: p, status: 'Undone · back to you', statusIcon: 'undo', tone: 'grey', primary: null, quiet: 'Review', handled: false, dimmed: false }
+    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', sheetNote: null, handled: false, dimmed: false }
+    if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', sheetNote: null, handled: true, dimmed: true }
+    if (S === 2 && agent.undone[p.id] && !p.wait) return { problem: p, status: 'Undone · back to you', statusIcon: 'undo', tone: 'grey', primary: null, quiet: 'Review', sheetNote: 'Undone · back to you', handled: false, dimmed: false }
     const part = ranByAgent(ctx, p) && p.partial
     return {
       problem: p,
       status: part ? p.partialShort! : (S === 2 || sens) && p.wait ? `Drafted · ${p.wait}` : 'Drafted · ready to approve',
       statusIcon: S === 2 || sens ? 'front_hand' : 'edit_note',
       tone: S === 2 || sens ? 'amber' : 'blue',
-      primary: sens ? 'Review' : 'Approve', quiet: null, handled: false, dimmed: false,
+      primary: sens ? 'Review' : 'Approve', quiet: null, sheetNote: part ? p.partialShort! : null, handled: false, dimmed: false,
     }
   })
   if (S === 2) cards.sort((a, b) => Number(a.handled) - Number(b.handled))
@@ -444,7 +446,8 @@ export function draftView(ctx: Ctx, id: string): DraftView {
  */
 export const riskLabel = (dv: DraftView): string | null => {
   const amount = dv.problem.draft.amount
-  if (!amount) return dv.waitsLabel
+  // The amount reads only on a draft that is about money: low risk is decided by `money` and `customer`.
+  if (!amount || !dv.problem.draft.money) return dv.waitsLabel
   return `${amount.direction === 'claim' ? 'Claims' : 'Spends'} ${fmtMoney(amount.money, display())}`
 }
 

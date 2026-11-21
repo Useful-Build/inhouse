@@ -9,8 +9,14 @@ export type ProblemSource = z.infer<typeof ProblemSourceSchema>
 export const DraftItemSchema = z.object({ name: z.string(), qty: z.number().int().positive(), each: MoneySchema })
 export type DraftItem = z.infer<typeof DraftItemSchema>
 
-/** One fact in the panel's facts strip ("Stock left · 9 days · 190 at 21 a day", source 1). `bad` marks the bad news. */
-export const ProblemFactSchema = z.object({ label: z.string(), value: z.string(), note: z.string(), source: z.string().optional(), tone: z.enum(['bad']).optional() })
+/**
+ * One fact in the panel's facts strip ("Stock left · 9 days · 190 at 21 a day", source 1). `bad` marks the bad news.
+ * `shortLabel` and `shortNote` are what a phone shows, where three columns are narrow ("Delivery", "6 past orders").
+ */
+export const ProblemFactSchema = z.object({
+  label: z.string(), value: z.string(), note: z.string(), source: z.string().optional(), tone: z.enum(['bad']).optional(),
+  shortLabel: z.string().optional(), shortNote: z.string().optional(),
+})
 export type ProblemFact = z.infer<typeof ProblemFactSchema>
 
 export const DraftSchema = z.object({

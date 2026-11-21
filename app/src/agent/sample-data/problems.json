@@ -17,7 +17,7 @@
     "draft.runTitle / runLines / doneNote": "Run version of a partial draft (doneNote as { text, times }, like done)",
     "doneText": "confirmation text after approval",
     "runDoneText": "confirmation text in Run for a partial draft",
-    "facts": "up to 3 facts for the review panel's strip: label, value, note, source (a sources[].n), tone \"bad\" for the bad news",
+    "facts": "up to 3 facts for the review panel's strip: label, value, note, source (a sources[].n), tone \"bad\" for the bad news; shortLabel and shortNote are the phone's wording",
     "draft.kind / summary": "what the draft is (\"Purchase order\") and one sentence for the Today card's draft sheet",
     "draft.amount": "the money approving it moves: { money, direction: spend | claim }, shown as \"Spends $9,600\" or \"Claims $1,240\"",
     "draft.destination / to": "a short name for where it goes (the panel's progress line), and who the document goes to (its From and To)",
@@ -89,6 +89,7 @@
           "label": "Can't ship",
           "value": "5 orders",
           "note": "and the variant is still live",
+          "shortNote": "variant still live",
           "tone": "bad"
         }
       ],
@@ -190,18 +191,23 @@
           "label": "Stock left",
           "value": "9 days",
           "note": "190 at 21 a day",
+          "shortNote": "21 a day",
           "source": "1"
         },
         {
           "label": "Kestrel delivers in",
           "value": "14 days",
           "note": "from 6 past orders",
+          "shortLabel": "Delivery",
+          "shortNote": "6 past orders",
           "source": "2"
         },
         {
           "label": "Out of stock for",
           "value": "5 days",
           "note": "about $8,400 in sales",
+          "shortLabel": "Out of stock",
+          "shortNote": "~$8,400 sales",
           "source": "3",
           "tone": "bad"
         }
@@ -327,6 +333,7 @@
           "label": "Missing",
           "value": "$1,240",
           "note": "large-item fee on 18 orders",
+          "shortNote": "fee on 18 orders",
           "source": "3",
           "tone": "bad"
         }
@@ -421,6 +428,7 @@
           "label": "Last word",
           "value": "Nov 3",
           "note": "no shipping notice since",
+          "shortNote": "no notice since",
           "source": "2"
         },
         {

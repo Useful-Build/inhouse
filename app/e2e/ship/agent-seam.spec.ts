@@ -73,11 +73,11 @@ test('S1: Today opens at the morning start with the same six things and the same
   await expect(page.getByRole('article')).toHaveCount(6)
   // Every card's amount goes through the money formatter: it reads as it did before P1.
   // The amount element itself is checked: a title can carry the figure too ("Amazon paid out $1,240 less than expected").
-  for (const [title, cost] of Object.entries(GOLDEN_COST)) await expect(card(page, title).locator('span.text-xl'), title).toHaveText(cost)
+  for (const [title, cost] of Object.entries(GOLDEN_COST)) await expect(card(page, title).locator('span.text-2xl'), title).toHaveText(cost)
   // The Kestrel reorder spends money: its panel carries the sign-off amount.
   await card(page, KESTREL).getByRole('button', { name: 'Review' }).click()
   const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Spends money')
+  await expect(panel).toContainText('Spends $9,600')
   // The approver is the sample's own person (`fx.names.people`), so a renamed sample person keeps this spec working.
   const approver = fx.names.people.find(p => p.id === 'dana')
   expect(approver, 'the sample has the approver for orders over $5,000').toBeDefined()

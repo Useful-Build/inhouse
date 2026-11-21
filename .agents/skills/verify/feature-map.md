@@ -64,9 +64,15 @@ Approvals: a draft with no text
   Expected: the panel opens on a note field and the note survives approve and Undo
   Covered:  e2e/today-approvals.spec.ts
 
+Approvals: draft cards
+  Path:     Approvals
+  Selector: one card per draft: "Urgent" pill, risk tag ("Spends $9,600", "Claims $1,240", "Goes to customers", "Low risk", "Needs review"), "{area} · {time}", draft text on the sheet, approver line, "Review draft" or the one-tap approve, "From {sources}"
+  Expected: one column; on a phone the tags sit above the title, detail rows stack and the primary is full width beside "···"
+  Covered:  e2e/today-approvals.spec.ts, e2e/today-approvals-phone.spec.ts, e2e/ship/needs-you-cards.spec.ts
+
 Approvals: approve all low-risk
   Path:     Approvals -> Approve all low-risk
-  Selector: button "Approve all low-risk", toast "Undo"
+  Selector: button "Approve all low-risk" with its count, toast "Undo"
   Expected: three drafts approved, one Undo takes all three back
   Covered:  e2e/today-approvals.spec.ts, e2e/toasts.spec.ts
 

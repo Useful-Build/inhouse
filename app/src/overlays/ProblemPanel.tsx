@@ -47,17 +47,20 @@ export function ProblemPanel() {
     { label: dv.mode === 'handled' ? 'Handled by your agent' : 'Your approval', done: dv.mode !== 'waiting', current: dv.mode === 'waiting' },
     { label: dv.destination ? `Sent to ${dv.destination}` : 'Sent', done: dv.mode === 'handled' || (dv.mode === 'approved' && dv.sent), current: false },
   ]
-  const facts = p.facts ?? null
+  const facts = p.facts?.length ? p.facts : null
   const risk = riskLabel(dv)
   // A purchase order with structured lines renders as a table; every other draft as key and value rows.
   const items = p.draft.items ?? null
   const to = p.draft.to ?? null
   const itemTotal = items && { minor: items.reduce((n, it) => n + it.each.minor * it.qty, 0), currency: items[0].each.currency }
-  const itemCount = items && `${items.reduce((n, it) => n + it.qty, 0)} units`
+  const units = items?.reduce((n, it) => n + it.qty, 0)
+  const itemCount = units && `${units} ${units === 1 ? 'unit' : 'units'}`
   // One mark per source tool: a logo, or the source's icon.
   const sourceMarks = p.sources.map(s => ({ key: s.logo ?? s.icon ?? s.name, logo: s.logo, icon: s.icon }))
     .filter((m, i, all) => all.findIndex(o => o.key === m.key) === i)
-  const approverName = dv.approverNote ? memberFor(ctx.data, dv.approverNote, userName(ctx))?.name : undefined
+  // The approver's name in semibold, when the note starts with it: "Dana Kim usually signs off orders over $5,000."
+  const memberName = dv.approverNote ? memberFor(ctx.data, dv.approverNote, userName(ctx))?.name : undefined
+  const approverName = memberName && dv.approverNote?.startsWith(memberName) ? memberName : undefined
   const found = (
     <>
       <p className="mt-2.5 text-md leading-reading">
@@ -114,10 +117,10 @@ export function ProblemPanel() {
           {dv.mode === 'watch' ? (
             <p className="m-0 mt-3 text-sm text-muted-foreground">Found {foundAt}</p>
           ) : (
-            <ol aria-label="Progress" className="m-0 mt-3.5 flex list-none flex-wrap items-center gap-x-2 gap-y-1.5 p-0 text-sm text-muted-foreground">
+            <ol aria-label="Progress" className="m-0 mt-3.5 flex list-none flex-wrap items-center gap-x-1.5 gap-y-1.5 p-0 text-xs text-muted-foreground">
               {steps.map((st, i) => (
                 <Fragment key={st.label}>
-                  {i > 0 && <li aria-hidden="true" className="h-px w-4 bg-border-strong" />}
+                  {i > 0 && <li aria-hidden="true" className="h-px w-3 bg-border-strong" />}
                   <li aria-current={st.current ? 'step' : undefined} className={cn('flex items-center gap-1.5', st.current && 'font-semibold text-foreground')}>
                     {st.done
                       ? <span className="flex size-4 flex-none items-center justify-center rounded-full bg-foreground text-background"><Icon name="check" size={12} weight={600} /></span>
@@ -135,17 +138,22 @@ export function ProblemPanel() {
           {facts ? (
             <>
               <div className={cn('mt-5 grid rounded-2xl border border-border bg-card shadow-card', FACT_COLS[facts.length])}>
-                {facts.map(f => (
-                  <div key={f.label} className="min-w-0 border-l border-divider px-4 pt-3.5 pb-3.5 first:border-l-0">
-                    <div className="text-xs text-muted-foreground">{f.label}</div>
-                    <div className={cn('mt-1.5 text-2xl leading-none font-semibold tracking-stat tabular-nums', f.tone === 'bad' && 'text-destructive-text')}>{f.value}</div>
-                    <div className="mt-1.5 text-xs text-foreground-3">{f.note}{f.source && <Cite n={f.source} />}</div>
-                  </div>
-                ))}
+                {facts.map(f => {
+                  // A phone shows the short wording, where three columns are narrow. The source number stays on the note's last word.
+                  const note = (phone && f.shortNote) || f.note
+                  const cut = note.lastIndexOf(' ') + 1
+                  return (
+                    <div key={f.label} className={cn('min-w-0 border-l border-divider first:border-l-0', phone ? 'p-3' : 'px-4 py-3.5')}>
+                      <div className="text-xs text-muted-foreground">{(phone && f.shortLabel) || f.label}</div>
+                      <div className={cn('mt-1.5 leading-none font-semibold tracking-stat whitespace-nowrap tabular-nums', phone ? 'text-xl' : 'text-2xl', f.tone === 'bad' && 'text-destructive-text')}>{f.value}</div>
+                      <div className="mt-1.5 text-xs text-foreground-3">{note.slice(0, cut)}<span className="whitespace-nowrap">{note.slice(cut)}{f.source && <Cite n={f.source} />}</span></div>
+                    </div>
+                  )
+                })}
               </div>
               <Accordion type="single" collapsible className="-mx-2.5 mt-2">
                 <AccordionItem value="sources" className="border-b-0">
-                  <AccordionTrigger className="items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-normal text-foreground-3 hover:bg-accent hover:no-underline">
+                  <AccordionTrigger className={cn('items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-normal text-foreground-3 hover:bg-accent hover:no-underline', phone && 'min-h-11')}>
                     <span className="flex flex-none">
                       {sourceMarks.map(s => s.logo
                         ? <LogoTile key={s.key} k={s.logo} size="sm" round className="-mr-1.25 last:mr-0" />
@@ -179,7 +187,7 @@ export function ProblemPanel() {
             <>
               <h3 className="mt-5.5 text-sm font-semibold">Drafted for you</h3>
               <article aria-label={`${dv.kind} draft`} className="mt-2.5 rounded-xl bg-popover px-5.5 pt-4 pb-5 shadow-float">
-                <div className="flex min-h-8 items-center gap-2.5">
+                <div className="flex min-h-8 flex-wrap items-center gap-x-2.5 gap-y-1.5">
                   <span className="mono-label">{dv.kind}</span>
                   <Badge variant="muted">Draft</Badge>
                   {risk && <Badge variant="warning">{risk}</Badge>}
@@ -250,7 +258,7 @@ export function ProblemPanel() {
                 <div className="mt-3.5 flex items-start gap-2 text-sm text-foreground-3">
                   <Icon name="neurology" size={16} weight={400} className="mt-0.5 text-brand" />
                   <span className="flex-1">{dv.memory}</span>
-                  <button type="button" onClick={() => openSettings('team-memory')} className="rounded-xs font-semibold whitespace-nowrap text-brand-text">Manage</button>
+                  <button type="button" onClick={() => openSettings('team-memory')} className={cn('rounded-xs font-semibold whitespace-nowrap text-brand-text', tap)}>Manage</button>
                 </div>
               )}
               {dv.doneNote && (

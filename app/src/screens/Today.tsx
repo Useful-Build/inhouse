@@ -73,7 +73,7 @@ export function Today() {
       {f.isLoading && (
         <div className="mt-7">
           <SectionHeader onDots icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.tools.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
-          <CardGrid aria-hidden="true">
+          <CardGrid size="wide" aria-hidden="true">
             {SKELETON_WIDTHS.map(w => (
               <div key={w} className="box-border flex min-h-47.5 flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">
                 <Skeleton className="h-2.5 w-18 animate-none rounded-sm" />
@@ -175,6 +175,13 @@ export function Today() {
                       </div>
                       <div className="mt-2.5 text-base font-medium text-foreground-2">{dv.draftTitle}</div>
                       {dv.summary && <p className="m-0 mt-0.5 text-sm text-pretty text-muted-foreground">{dv.summary}</p>}
+                      {/* Run: what the agent already did, or that a person undid its job. */}
+                      {c.sheetNote && (
+                        <div className={cn('mt-2 flex items-start gap-1.5 text-sm', TONE_TEXT[c.tone])}>
+                          <Icon name={c.statusIcon} size={15} weight={400} className="mt-px" />
+                          <span className="min-w-0 flex-1 text-pretty">{c.sheetNote}</span>
+                        </div>
+                      )}
                       <Button className={cn('relative z-raised mt-3 whitespace-nowrap', phone ? 'w-full' : 'self-start', tap)} onClick={low ? () => approve(p.id) : open}>
                         {low ? <><Icon name="check" size={16} />{dv.cta}</> : <>Review draft<Icon name="arrow_forward" size={16} /></>}
                       </Button>
