@@ -532,7 +532,7 @@ function Thread() {
                 <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
                   <Icon name={link === 'held' ? 'refresh' : 'info'} size={16} className="flex-none" />
                   <span className="min-w-0 flex-1">{CONNECTION_TEXT[link]}</span>
-                  {link === 'reload' && <Button variant="soft" size="sm" onClick={() => location.reload()}>Reload</Button>}
+                  {(link === 'reload' || link === 'grantEnded') && <Button variant="soft" size="sm" onClick={() => location.reload()}>Reload</Button>}
                 </div>
               )}
               {ctx.agent.paused !== null && (

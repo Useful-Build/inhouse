@@ -81,3 +81,57 @@ describe('loadHistory', () => {
     expect(l.ui().history[id].state).toBe('ready')
   })
 })
+
+describe('history around a grant ending and a chat just started', () => {
+  async function loadWithLink() {
+    vi.resetModules()
+    const { agent } = await import('../agent')
+    let fire: (s: 'grantEnded') => void = () => {}
+    vi.spyOn(agent, 'onLink').mockImplementation(l => { fire = l as never; return () => {} })
+    const store = await import('./store')
+    await import('../screens/chat/run')
+    await (agent as unknown as MockAgent).preload()
+    return { mock: agent as unknown as MockAgent, ui: () => store.useUi.getState(), grantEnded: () => fire('grantEnded') }
+  }
+  const page = (id: string) => ({
+    chat: { id, title: 't', customTitle: null, pinned: false, deleted: false, at: { iso: '2026-11-20T00:00:00.000Z', ms: 1 }, rev: 1, running: false },
+    messages: [{ id: 't_AAAAAAAAAAAAAAAAAAAAAA.u', role: 'user' as const, text: 'secret', turnId: 't_AAAAAAAAAAAAAAAAAAAAAA', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', pos: 0, at: { iso: '2026-11-20T00:00:00.000Z', ms: 1 } }],
+    nextCursor: null, runs: [],
+  })
+
+  test('a read still on its way when the grant ends writes nothing back, and its failure writes nothing either', async () => {
+    const l = await loadWithLink()
+    const id = l.mock.allChatIds()[0]
+    let finish!: (p: ReturnType<typeof page>) => void
+    vi.spyOn(l.mock, 'getChat').mockReturnValueOnce(new Promise(r => { finish = r }))
+    l.ui().loadHistory(id)
+    l.grantEnded()
+    expect(l.ui().history).toEqual({})
+    finish(page(id))
+    await settle()
+    expect(l.ui().history).toEqual({})
+  })
+
+  test('a chat this tab started that the agent does not have (not_found) reads as empty, not as an error; a chat it did not start still errors', async () => {
+    const l = await load()
+    void l.ui().ask('A question')
+    await settle()
+    const started = l.ui().started[0].id
+    const get = vi.spyOn(l.mock, 'getChat').mockRejectedValue(new (await import('../agent/types')).AgentError('not_found', 'gone'))
+    l.ui().loadHistory(started)
+    await settle()
+    expect(l.ui().history[started]).toEqual({ messages: [], next: null, state: 'ready' })
+    const other = l.mock.allChatIds().find(c => c !== started)!
+    l.ui().loadHistory(other)
+    await settle()
+    expect(l.ui().history[other].state).toBe('error')
+    expect(get).toHaveBeenCalledTimes(2)
+  })
+
+  test('openModelMenu asks the composer once per call', async () => {
+    const l = await load()
+    const before = l.ui().modelMenuAsk
+    l.ui().openModelMenu(); l.ui().openModelMenu()
+    expect(l.ui().modelMenuAsk).toBe(before + 2)
+  })
+})

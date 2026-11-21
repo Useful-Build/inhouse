@@ -63,6 +63,35 @@ describe('the chat list', () => {
     expect(await errorOf(agent.getChat('nope'))).toMatchObject({ code: 'not_found' })
   })
 
+  test('a getChat waits for the chat\'s own save (a chat started a moment ago has no 404), and reads it once saved', async () => {
+    let release!: () => void
+    const held = new Promise<void>(r => { release = r })
+    const s = server({ ...reads(), 'POST /api/chats': { body: chatRow('c1') }, 'GET /api/chats/c1': { body: { chat: chatRow('c1'), messages: [], nextCursor: null, runs: [] } } })
+    const slow: typeof fetch = async (i, init) => { if (String(i).endsWith('/api/chats') && init?.method === 'POST') await held; return s.fetch(i, init) }
+    const agent = new HttpAgent({ fetch: slow, now: () => 5000 })
+    await agent.whenLoaded()
+    const made = agent.createChat({ id: 'c1', title: 'Hi' })
+    const page = agent.getChat('c1')
+    await new Promise(r => setTimeout(r, 0))
+    expect(s.calls.filter(c => c.path === '/api/chats/c1')).toHaveLength(0)
+    release()
+    await made
+    expect((await page).chat.id).toBe('c1')
+  })
+
+  test('a failed save then a getChat: the read gets the server\'s not_found (the store reads that as an empty chat)', async () => {
+    const { agent } = await loaded({ ...reads(), 'POST /api/chats': refusal(503, 'unavailable'), 'GET /api/chats/c1': refusal(404, 'not_found') })
+    await errorOf(agent.createChat({ id: 'c1', title: 'Hi' }))
+    expect(await errorOf(agent.getChat('c1'))).toMatchObject({ code: 'not_found' })
+  })
+
+  test('the first page of the deleted chats is the server\'s page only: it doesn\'t put them in the list', async () => {
+    const { agent } = await loaded({ ...reads({ chats: [chatRow('c1')] }), 'GET /api/chats?deleted=true': { body: { items: [chatRow('c_del', { deleted: true })], nextCursor: null } } })
+    const page = await agent.listChats({ deleted: true })
+    expect(page.items.map(c => c.id)).toEqual(['c_del'])
+    expect(agent.allChatIds()).toEqual(['c1'])
+  })
+
   test('listChats passes its options as the query and answers the server\'s page', async () => {
     const { agent, calls } = await loaded({
       ...reads(), 'GET /api/chats?cursor=k1&limit=10&deleted=true': { body: { items: [chatRow('c9', { deleted: true })], nextCursor: null } },

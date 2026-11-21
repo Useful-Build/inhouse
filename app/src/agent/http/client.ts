@@ -895,10 +895,13 @@ export class HttpAgent implements AgentClient {
   /** One page of the list, straight from the server (the snapshot keeps the first page; what a page brings is merged in). */
   listChats = async (opts?: Parameters<AgentClient['listChats']>[0]) => {
     const page = await readChats(this.http, opts ?? {})
-    if (!opts?.cursor || !opts.deleted) this.patch({ chats: this.mergeChats(page.items) })
+    // A listing of deleted chats is the server's page only: the main list holds deleted ones already marked, from the writes.
+    if (!opts?.deleted) this.patch({ chats: this.mergeChats(page.items) })
     return page
   }
   getChat = async (id: string, cursor?: string) => {
+    // A chat made a moment ago is read after its own save has answered (as a send is), so its history isn't a 404.
+    await this.lanes.get(`chat:${id}`)
     const page = await readChat(this.http, id, cursor)
     this.patch({ chats: this.mergeChats([page.chat]) })
     return page

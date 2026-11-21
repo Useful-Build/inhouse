@@ -107,20 +107,78 @@ describe('following a run', () => {
     expect(t.got).toEqual([1, 2, 3, 4])
   })
 
-  test('a drop that keeps failing waits longer each time, up to 10 s, and a good open starts the wait again', async () => {
+  test('a server that accepts and then closes (1012 after the open) gets a growing wait: an open alone does not start it again; the first answer does', async () => {
     const t = rig()
     t.attach(0)
     await t.settle()
     const waits: number[] = []
     for (let i = 0; i < 7; i++) {
-      t.sockets[i].drop(1006)
+      t.sockets[i].open()
+      t.sockets[i].drop(1012)
       waits.push(t.timers.at(-1)!.ms)
       t.timers.at(-1)!.fn()
     }
     expect(waits).toEqual([500, 1000, 2000, 4000, 8000, 10_000, 10_000])
+    // The server answers something this time: the wait starts over.
     t.sockets[7].open()
-    t.sockets[7].drop(1006)
+    t.sockets[7].say(attached(0))
+    t.sockets[7].drop(1012)
     expect(t.timers.at(-1)!.ms).toBe(500)
+  })
+
+  test('a 4401 after every open with the sign-in fine: the first reconnect is at once, then the wait grows', async () => {
+    const t = rig()
+    t.attach(0)
+    await t.settle()
+    const waits: number[] = []
+    for (let i = 0; i < 4; i++) {
+      t.sockets[i].open()
+      t.sockets[i].drop(4401)
+      await t.settle()
+      waits.push(t.timers.at(-1)!.ms)
+      t.timers.at(-1)!.fn()
+    }
+    expect(waits).toEqual([0, 500, 1000, 2000])
+  })
+
+  test('a close before the socket ever opened asks the sign-in: gone is the signed-out state with nothing reconnecting; fine reconnects with the growing wait', async () => {
+    const gone = rig({ reauth: () => Promise.resolve(false) })
+    gone.attach(0)
+    await gone.settle()
+    gone.sockets[0].drop(1006)
+    await gone.settle()
+    expect(gone.reauths).toHaveLength(1)
+    expect(gone.timers).toEqual([])
+    expect(gone.socket.link()).toBe('live')
+
+    const fine = rig()
+    fine.attach(0)
+    await fine.settle()
+    const waits: number[] = []
+    for (let i = 0; i < 3; i++) {
+      fine.sockets[i].drop(1006)
+      await fine.settle()
+      waits.push(fine.timers.at(-1)!.ms)
+      fine.timers.at(-1)!.fn()
+    }
+    expect(fine.reauths).toHaveLength(3)
+    expect(waits).toEqual([500, 1000, 2000])
+  })
+
+  test('while the sign-in is being asked, a new attach does not connect; it connects once the answer is in', async () => {
+    let answer!: (ok: boolean) => void
+    const t = rig({ reauth: () => new Promise<boolean>(r => { answer = r }) })
+    t.attach(0)
+    await t.settle()
+    t.sockets[0].open()
+    t.sockets[0].drop(4401)
+    t.socket.attach('r_BBBBBBBBBBBBBBBBBBBBBB', () => undefined, 0)
+    await t.settle()
+    expect(t.sockets).toHaveLength(1)
+    answer(true)
+    await t.settle()
+    t.timers.at(-1)!.fn()
+    expect(t.sockets).toHaveLength(2)
   })
 
   test('`attached` that says the server holds more than the feed has attaches again from the contiguous seq, and never twice from the same place', async () => {

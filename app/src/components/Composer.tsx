@@ -76,6 +76,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // A sent question being edited in this chat: Send puts it in place of the old one and its answer.
   const editing = useUi(s => variant === 'chat' && s.editMsg !== null && s.editMsg.chatId === openChatKey(s, ctx.data))
   const composerFocus = useUi(s => s.composerFocus)
+  const modelMenuAsk = useUi(s => s.modelMenuAsk)
   const atts = useUi(s => s.atts)
   const replyTo = useUi(s => s.replyTo)
   const modelSel = useUi(s => s.modelSel)
@@ -91,6 +92,13 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // The field's top edge fades once it scrolls (over 8 lines), so a cut line reads as more above (M12).
   const [scrolled, setScrolled] = useState(false)
   const [pop, setPop] = useState<Pop>(null)
+  // A failed answer asked for the model menu (on a phone it lives in "+"). Only the chat's composer answers.
+  const seenAsk = useRef(modelMenuAsk)
+  useEffect(() => {
+    if (modelMenuAsk === seenAsk.current) return
+    seenAsk.current = modelMenuAsk
+    if (variant !== 'today') setPop(slim ? 'attach' : 'model')
+  }, [modelMenuAsk, slim, variant])
   // Limit notes belong to the chat they were shown in.
   const [rejectedIn, setRejectedIn] = useState<{ key: string; list: { name: string; reason: string }[] }>({ key: chatKey, list: [] })
   const rejected = rejectedIn.key === chatKey ? rejectedIn.list : []

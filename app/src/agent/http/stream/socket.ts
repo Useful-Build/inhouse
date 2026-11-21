@@ -59,6 +59,12 @@ export class ChatSocket {
   private wait = WAIT_MIN_MS
   private parts: SocketParts | null = null
   private connecting = false
+  /** The wait only starts over once the server has answered something on an open socket (an `attached` or a frame): a server that accepts and then closes must not reset it. */
+  private settled = false
+  /** Reconnects straight after a good reauth in a row without the server settling: only the first is at once. */
+  private reauthStreak = 0
+  /** A 4401 (or a close before open) is asking the sign-in: nothing connects until it answers. */
+  private reauthing = false
   /** Bumped by every close of ours: a socket whose number isn't the current one is a stale one. */
   private epoch = 0
   private readonly o: ChatSocketOptions
@@ -103,13 +109,13 @@ export class ChatSocket {
     this.epoch++
     if (this.timer !== null) { (this.o.cancel ?? clearTimeout)(this.timer as never); this.timer = null }
     const ws = this.ws
-    this.ws = null; this.opened = false; this.connecting = false; this.wait = WAIT_MIN_MS
+    this.ws = null; this.opened = false; this.connecting = false; this.wait = WAIT_MIN_MS; this.settled = false; this.reauthStreak = 0; this.reauthing = false
     if (ws) { ws.onopen = ws.onmessage = ws.onclose = null; try { ws.close(1000) } catch { /* already closed */ } }
     if (this.state === 'held') this.setLink('live')
   }
 
   private async ensure(_first: boolean) {
-    if (this.ws || this.connecting || this.timer !== null) return
+    if (this.ws || this.connecting || this.timer !== null || this.reauthing) return
     this.connecting = true
     const epoch = this.epoch
     try { this.parts ??= await this.o.parts() } catch (e) {
@@ -132,7 +138,7 @@ export class ChatSocket {
     ws.onopen = () => {
       if (epoch !== this.epoch) return
       this.opened = true
-      this.wait = WAIT_MIN_MS
+      this.settled = false
       this.setLink('live')
       // Every run still followed is attached again from where its feed is contiguous.
       for (const [runId, sub] of this.subs) this.attachFrom(runId, sub, sub.feed.reattachFrom())
@@ -154,6 +160,7 @@ export class ChatSocket {
     try { raw = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data as ArrayBuffer)) } catch { return }
     if (typeof raw !== 'object' || raw === null) return
     const m = raw as Record<string, unknown>
+    if (!this.settled && (m.type === 'frame' || m.type === 'attached')) { this.settled = true; this.wait = WAIT_MIN_MS; this.reauthStreak = 0 }
     if (m.type === 'frame') return this.frame(m.frame)
     const c = this.parts?.parseControl(raw)
     if (!c) return
@@ -191,6 +198,7 @@ export class ChatSocket {
   }
 
   private closed(code: number) {
+    const wasOpen = this.opened
     this.ws = null; this.opened = false
     const out = closeOutcome(code)
     if (this.subs.size === 0) { this.shut(); return }
@@ -198,24 +206,32 @@ export class ChatSocket {
       case 'grantEnded':
         this.subs.clear(); this.shut(); this.setLink('grantEnded'); this.o.onGrantEnded(); return
       case 'reload': this.reload(); return
-      case 'reauth': {
-        this.setLink('held')
-        const epoch = this.epoch
-        void this.o.onReauth().then(ok => {
-          if (epoch !== this.epoch) return
-          if (ok) this.drop(0); else { this.subs.clear(); this.shut(); this.setLink('live') }
-        }, () => { if (epoch === this.epoch) this.drop() })
-        return
-      }
-      case 'held': case 'reconnect': this.drop(); return
+      case 'reauth': this.askSignIn(true); return
+      // A close before the socket ever opened may be the upgrade refused for an expired sign-in (a 401 the browser reports as 1006): ask.
+      case 'reconnect': if (!wasOpen) { this.askSignIn(false); return } this.drop(); return
+      case 'held': this.drop(); return
     }
+  }
+
+  /** Asks whether the person is still signed in. No: the signed-out state. Yes: connect again (`first` and nothing reconnected at once since the server last settled: at once; else with the growing wait). */
+  private askSignIn(first: boolean) {
+    this.setLink('held')
+    this.reauthing = true
+    const epoch = this.epoch
+    void this.o.onReauth().then(ok => {
+      if (epoch !== this.epoch) return
+      this.reauthing = false
+      if (!ok) { this.subs.clear(); this.shut(); this.setLink('live'); return }
+      if (first && this.reauthStreak === 0) { this.reauthStreak++; this.drop(0) } else this.drop()
+    }, () => { if (epoch === this.epoch) { this.reauthing = false; this.drop() } })
   }
 
   /** Waits, then connects again (the wait grows to 10 s while it keeps failing). */
   private drop(ms?: number) {
     this.setLink('held')
     const at = ms ?? this.wait
-    this.wait = Math.min(this.wait * 2, WAIT_MAX_MS)
+    // An immediate reconnect leaves the wait where it is; a real wait doubles it for the next.
+    if (ms === undefined) this.wait = Math.min(this.wait * 2, WAIT_MAX_MS)
     const epoch = this.epoch
     this.timer = (this.o.after ?? ((fn, t) => setTimeout(fn, t)))(() => {
       this.timer = null
