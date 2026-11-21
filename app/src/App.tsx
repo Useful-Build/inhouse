@@ -1,7 +1,10 @@
 import { Component, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
+import { isChatUnknown } from './state/chat-known'
+import { AgentError } from './agent/types'
 import type { AgentErrorCode, ToolsData } from './agent/types'
+import { NOT_FOUND } from '../shared/contract/error-codes'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
 import { Sidebar } from './shell/Sidebar'
@@ -220,7 +223,18 @@ function useHashRoute() {
   const openKey = openChatKey({ fresh, chatId }, data)
   const chatKey = chatList ? 'all' : openKey ?? 'new'
   // Unknown also covers a deleted chat, and the newest sample chat (`#/chats`) once it was deleted.
-  const chatUnknown = page === 'chats' && !chatList && openKey !== null && !chatEntries(data, started, agentState).some(c => c.id === openKey)
+  const ids = chatEntries(data, started, agentState).map(c => c.id)
+  // The list is one page: a chat it lacks may be an older one. Route 24 is asked about it once (found: it joins the list;
+  // a 404 or a deleted chat: it is unknown), and a failed ask (offline) judges nothing.
+  const [looked, setLooked] = useState<Record<string, true>>({})
+  const listReady = !demo && data.resources.chat.status === 'ready'
+  const needsLook = listReady && page === 'chats' && !chatList && openKey !== null && !ids.includes(openKey) && !looked[openKey]
+  useEffect(() => {
+    if (!needsLook || openKey === null) return
+    const done = () => setLooked(l => ({ ...l, [openKey]: true }))
+    agent.getChat(openKey).then(done, (e: unknown) => { if (e instanceof AgentError && e.code === NOT_FOUND) done() })
+  }, [needsLook, openKey])
+  const chatUnknown = isChatUnknown({ page, chatList, openKey, ids, serverList: demo ? null : data.resources.chat.status, looked: openKey !== null && looked[openKey] === true })
   const fallbackChat = newestChat(data, started, agentState)?.id ?? null
   const chatIsNew = started.some(c => c.id === chatKey)
   useEffect(() => {

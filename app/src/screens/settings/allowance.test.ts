@@ -4,7 +4,7 @@ import { CAN_KEYS } from '../../../shared/contract/keys'
 import { EXACT_ROWS, settingRow } from '../../../shared/contract/settings-table'
 import type { Can } from '../../agent/types'
 import type { Row } from './content'
-import { allowance } from './allowance'
+import { allowance, pageResources } from './allowance'
 import { nowIs } from './now-is'
 
 const row = (r: Partial<Row>): Row => ({ title: 't', desc: '', kind: 'select', value: '', need: 0, ...r })
@@ -56,5 +56,13 @@ describe('nowIs', () => {
     expect(nowIs({ value: true })).toBe('on')
     expect(nowIs({ role: 'admin', name: 'X' })).toBe('Admin')
     expect(nowIs({ id: 'x' })).toBeNull()
+  })
+})
+
+describe('pageResources: the pages that read memory', () => {
+  test('both Memory pages name memory, so each re-reads it when it opens', () => {
+    expect(pageResources('you-memory', false)).toEqual(['memory'])
+    expect(pageResources('team-memory', false)).toEqual(['memory'])
+    expect(pageResources('team-members', false)).not.toContain('memory')
   })
 })

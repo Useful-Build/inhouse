@@ -162,7 +162,7 @@ describe('a failed or never-run turn keeps its end (failure 5)', () => {
     })
   })
 
-  it('a turn that went live and was then paused has no end row (the live view words no cancel of a started turn)', async () => {
+  it('a turn that went live and was then paused keeps the paused note as `.x` { why } (the live view words it too, so a reload agrees)', async () => {
     const c = await chat()
     await inAgent(async h => {
       const l = await send(h, c, 'key-proj26'); await settle()
@@ -171,7 +171,23 @@ describe('a failed or never-run turn keeps its end (failure 5)', () => {
       await h.tick(MIN); await h.tick(MIN)
       expect(h.turn(l.turnId)).toMatchObject({ state: 'ended', cancel_why: 'paused' })
       expect(h.turn(l.turnId).started_at_ms).not.toBeNull()
-      expect((await d1Rows(c)).map(r => r.id)).toEqual([`${l.turnId}.u`, `${l.turnId}.0`])
+      const rows = await d1Rows(c)
+      expect(rows.map(r => r.id)).toEqual([`${l.turnId}.u`, `${l.turnId}.0`, `${l.turnId}.x`])
+      expect(JSON.parse(rows[2].extra_json as string)).toEqual({ why: 'paused' })
+    })
+  })
+
+  it('a turn that finished and was then paused in the grace window keeps no paused note (it was answered)', async () => {
+    const c = await chat()
+    await inAgent(async h => {
+      const d = await send(h, c, 'key-proj27'); await settle()
+      h.push(d.turnId, ev.started(), ev.text('answered'), ev.checkpoint(2, null, null), ev.success())
+      h.core.pause({ kind: 'person', memberId: 'm_admin' })
+      h.push(d.turnId, ev.released({ mainEntries: 2, lastUuid: null, lastUuidIndex: null }))
+      await h.tick(MIN); await h.tick(MIN)
+      // The fence keeps the outcome and still writes its own reason on the row; that reason is not this turn's end.
+      expect(h.turn(d.turnId)).toMatchObject({ state: 'ended', outcome: 'done', cancel_why: 'paused' })
+      expect((await d1Rows(c)).map(r => r.id)).toEqual([`${d.turnId}.u`, `${d.turnId}.0`])
     })
   })
 

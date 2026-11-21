@@ -206,6 +206,8 @@ export interface AgentClient {
   loadMore(list: 'audit' | 'members'): Promise<void>
   /** Reads a resource again after its read failed (`read().resources[resource].status` is `error`). */
   retry(resource: ResourceKey): Promise<void>
+  /** Reads the Memory pages' lines again, without the page showing as loading: a fact the agent saved since the last read shows. One read at a time (an open while one runs joins it). Nothing to read in the demo. */
+  refreshMemory(): Promise<void>
   /** Where the audit log downloads from, or null when the client builds the file itself (the demo, with shared/csv.ts). */
   auditExportUrl(): string | null
   /** Route 41: one chat file's bytes, and the name the server gave it (null when it gave none). Rejects with an `AgentError`. The demo serves a sample file. */

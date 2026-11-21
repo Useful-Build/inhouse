@@ -98,7 +98,7 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       return v
     case 'turn.finished': {
       const t = v.turns[ev.turnId]
-      if (!t || t.state === 'done' || t.state === 'interrupted' || t.state === 'stopped' || t.state === 'failed') return v
+      if (!t || t.state === 'done' || t.state === 'interrupted' || t.state === 'stopped' || t.state === 'failed' || t.state === 'cancelled') return v
       const state: TurnState = ev.outcome
       let messages = v.messages
       // A turn that ended before it started (a failure at the claim) still shows what was asked.
@@ -116,14 +116,19 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
     }
     case 'turn.cancelled': {
       const t = v.turns[ev.turnId]
-      if (!t || t.state !== 'queued') return v
+      // A turn still waiting, or one that went live and was stopped by the cancel (a pause): both say why, once.
+      if (!t || (t.state !== 'queued' && t.state !== 'live')) return v
       const text = CANCELLED_TEXT[ev.why]
       let messages = v.messages
       if (text !== null) {
         messages = upsert(messages, userMessage(t, v.queued.find(x => x.turnId === ev.turnId)?.messageId ?? `${ev.turnId}.u`))
         messages = upsert(messages, { id: `${ev.turnId}.x`, role: 'event', text })
       }
-      return { ...v, messages, queued: withoutTurn(v.queued, ev.turnId), budgetWait: false, turns: setTurn(v, ev.turnId, { state: 'cancelled' }) }
+      const wasLive = v.live === ev.turnId
+      return {
+        ...v, messages, queued: withoutTurn(v.queued, ev.turnId), budgetWait: false, turns: setTurn(v, ev.turnId, { state: 'cancelled' }),
+        ...(wasLive ? { live: null, thinking: null } : {}),
+      }
     }
     case 'notice': {
       const notice = { code: ev.code, text: NOTICE_TEXT[ev.code] }

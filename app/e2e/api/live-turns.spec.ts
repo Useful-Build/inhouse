@@ -9,7 +9,7 @@
 //     "Waiting a while."): the turn never reached its answer, so nothing says "Done waiting.";
 //   - stopping a queued turn by its id ends that turn only: the live one carries on until its own stop;
 //   - pause fences a live turn with `turn.cancelled { why: 'paused' }` (and a `paused` notice), never `turn.finished`; a send
-//     while paused is 403 `paused`; a turn that went live and was cancelled keeps its user and agent rows but no end row; resume
+//     while paused is 403 `paused`; a turn that went live and was cancelled keeps its user and agent rows and the paused end row `.x`; resume
 //     starts nothing.
 // Each test sets a 180 s timeout: the api project's 60 s cap is shorter than the first wait (a cold container start).
 import { expect, test } from '@playwright/test'
@@ -131,12 +131,12 @@ test('pause fences a live turn with turn.cancelled paused, refuses sends while p
     expect(tab.turnFinished(sent.turnId)).toBe(false)
     // Nothing new while paused.
     expectError(await sendTurn(request, dana, chat, 'scenario:hello are you there?'), 403, 'forbidden', 'paused')
-    // The history after a reload: the person's message and the part it said before the Bash call, and no end row (a turn that
-    // went live and was cancelled keeps none, projection.ts endRow).
+    // The history after a reload: the person's message, the part it said before the Bash call and the paused end row, which the
+    // live view words too (projection.ts endRow).
     await expect.poll(async () => (await stored(request, chat)).some(m => m.id === `${sent.turnId}.u`), { timeout: 60_000, message: 'the turn\'s stored rows' }).toBe(true)
     const rows = await stored(request, chat)
-    expect(rows.filter(m => m.turnId === sent.turnId).map(m => m.role).sort()).toEqual(['agent', 'user'])
-    expect(rows.some(m => m.id === `${sent.turnId}.x`)).toBe(false)
+    expect(rows.filter(m => m.turnId === sent.turnId).map(m => m.role).sort()).toEqual(['agent', 'event', 'user'])
+    expect(rows.find(m => m.id === `${sent.turnId}.x`)).toMatchObject({ role: 'event', end: { why: 'paused' } })
     expect(agentRows(rows, sent.turnId)).toEqual([expect.objectContaining({ ...SAID, id: `${sent.turnId}.0` })])
     // Resume starts nothing: the refused send was not kept, and no run of this chat comes back.
     expect((await call(request, admin, 'POST', '/api/resume', { json: {} })).json.paused).toBe(false)

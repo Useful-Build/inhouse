@@ -427,3 +427,60 @@ describe('uploadFile (route 39) on the chat client', () => {
     expect(b.agent.read().resources.meta).toMatchObject({ status: 'ready' })
   })
 })
+
+describe('refreshMemory: a fact saved after boot shows when the Memory page opens', () => {
+  const line = (key: string, text: string) => ({ key, text, source: 'Sam told your Inhouse agent in a chat', at: iso(5), rev: 1, scope: 'person' })
+  const K1 = 'mem_AAAAAAAAAAAAAAAAAAAAAA'
+  const K2 = 'mem_BBBBBBBBBBBBBBBBBBBBBB'
+
+  test('the page read at boot does not hold a fact saved since; refreshMemory brings it in', async () => {
+    let page = { team: [], personal: [line(K1, 'We restock on Fridays')] }
+    const { agent, calls } = await loaded({ ...reads(), 'GET /api/memory': () => ({ body: page }) })
+    expect(agent.read().memory.personal.map(l => l.text)).toEqual(['We restock on Fridays'])
+    page = { team: [], personal: [line(K2, 'Sort tables by date'), line(K1, 'We restock on Fridays')] }
+    await agent.refreshMemory()
+    expect(agent.read().memory.personal.map(l => l.text)).toEqual(['Sort tables by date', 'We restock on Fridays'])
+    expect(calls.filter(c => c.path === '/api/memory')).toHaveLength(2)
+  })
+
+  test('opening twice at once is one read; a later open reads again', async () => {
+    const { agent, calls } = await loaded({ ...reads(), 'GET /api/memory': { body: { team: [], personal: [] } } })
+    const before = calls.filter(c => c.path === '/api/memory').length
+    await Promise.all([agent.refreshMemory(), agent.refreshMemory()])
+    expect(calls.filter(c => c.path === '/api/memory').length - before).toBe(1)
+    await agent.refreshMemory()
+    expect(calls.filter(c => c.path === '/api/memory').length - before).toBe(2)
+  })
+
+  test('the page does not flip to loading while it reads again', async () => {
+    const { agent } = await loaded({ ...reads(), 'GET /api/memory': { body: { team: [], personal: [] } } })
+    const seen: string[] = []
+    agent.subscribe(() => { seen.push(agent.read().resources.memory.status) })
+    await agent.refreshMemory()
+    expect(seen.every(s => s === 'ready')).toBe(true)
+  })
+
+  test('a failed read says so on the page and keeps what it had', async () => {
+    let fail = false
+    const { agent } = await loaded({ ...reads(), 'GET /api/memory': () => (fail ? refusal(503, 'unavailable') : { body: { team: [], personal: [line(K1, 'We restock on Fridays')] } }) })
+    fail = true
+    await agent.refreshMemory().catch(() => undefined)
+    expect(agent.read().resources.memory.status).toBe('error')
+    expect(agent.read().memory.personal.map(l => l.text)).toEqual(['We restock on Fridays'])
+  })
+})
+
+describe('a chat past the first page of the list (route 24 finds it)', () => {
+  test('getChat adds the chat to the list, so a deep link to an older chat is known', async () => {
+    const { agent } = await loaded({ ...reads({ chats: [chatRow('c1')] }), 'GET /api/chats/c_old': { body: { chat: chatRow('c_old', { title: 'An older chat' }), messages: [], nextCursor: null, runs: [] } } })
+    expect(agent.allChatIds()).toEqual(['c1'])
+    await agent.getChat('c_old')
+    expect(agent.allChatIds().sort()).toEqual(['c1', 'c_old'])
+  })
+
+  test('a chat the server does not have is a 404 and stays out of the list', async () => {
+    const { agent } = await loaded({ ...reads({ chats: [chatRow('c1')] }), 'GET /api/chats/c_nope': refusal(404, 'not_found') })
+    expect(await errorOf(agent.getChat('c_nope'))).toMatchObject({ code: 'not_found' })
+    expect(agent.allChatIds()).toEqual(['c1'])
+  })
+})
