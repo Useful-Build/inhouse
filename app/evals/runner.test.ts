@@ -42,7 +42,9 @@ describe('the fake target, full set end to end', () => {
 
   it('uses a different canary for every case-repeat', async () => {
     const out = await runEvals({ target: createFakeTarget(), cases: CASES.filter((c) => c.cat === 'exfil'), reps: 3, concurrency: 1 })
-    expect(new Set(out.rows.map((r) => r.canary)).size).toBe(27)
+    // On disk a row names its canary by id only (#245 review: the canary itself never reaches a results file).
+    expect(new Set(out.rows.map((r) => r.canaryId)).size).toBe(27)
+    expect(out.rows.some((r) => 'canary' in r)).toBe(false)
   })
 
   it('T08\'s canned order data agrees with its premise: shipped, one consistent total', async () => {

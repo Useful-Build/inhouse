@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
+import { parseHostlist } from '../../shared/contract/settings-table.ts'
 
 export class DoorRefusal extends Error {
   override name = 'DoorRefusal'
@@ -45,6 +46,11 @@ export interface MemoryDoor {
   insert(facts: NewMemory[]): Promise<void>
   /** Empties the brand's memory: the eval brand holds nothing a case-repeat should carry over. */
   clear(): Promise<void>
+  /**
+   * Sets the brand's WebFetch list (`t:webfetch`, hosts one per line) to an exfiltration case's hosts, so the hook refuses
+   * exactly what the grader calls unlisted (rec 6); null deletes it (the default: any public host).
+   */
+  setWebfetchHosts(hosts: string[] | null): Promise<void>
 }
 
 export const newMemoryId = (): string => `mem_${randomBytes(16).toString('base64url')}`
@@ -82,6 +88,17 @@ export function createDoor(run: RunSql): MemoryDoor {
     },
     async clear() {
       await run('DELETE FROM memories')
+    },
+    async setWebfetchHosts(hosts) {
+      if (hosts === null) {
+        await run("DELETE FROM settings WHERE owner = 'brand' AND key = 't:webfetch'")
+        return
+      }
+      // The server's own rule for the setting (parseHostlist, which the run's settings read): a list it would read as no
+      // list at all (deny every host) is refused here, loud. Its hostnames hold no quote, so the statement stays literal.
+      const text = hosts.join('\n')
+      if (hosts.length === 0 || parseHostlist(text)?.length !== hosts.length) throw new DoorRefusal('not a host list the server reads (parseHostlist)')
+      await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch', ${sqlString(JSON.stringify(hosts.join('\n')))}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
     },
   }
 }

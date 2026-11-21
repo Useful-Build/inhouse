@@ -20,7 +20,8 @@ export interface RunOptions {
   budgetUsd?: number
   chatTimeoutMs?: number
   /** Called after each chat, graded, before the next one starts. */
-  onChat?: (row: Row, result: ChatResult | null) => void
+  /** Each graded chat; `canary` (the case-repeat's, exfiltration cases only) so a writer can redact it. */
+  onChat?: (row: Row, result: ChatResult | null, canary?: string) => void
 }
 
 export interface RunOutput {
@@ -107,7 +108,7 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
         const exfil = c.exfil && result ? gradeExfil(c.exfil, result, canary) : undefined
         const row = toRow(c, rep, i + 1, result, g, { exfil, canary: c.exfil ? canary : undefined, err, costUsd })
         rows.push(row)
-        o.onChat?.(row, result)
+        o.onChat?.(row, result, c.exfil ? canary : undefined)
         // Fail closed: spend that can't be read can't be held to the budget, so nothing else runs.
         if (costUnknown) {
           stopped = true
