@@ -29,6 +29,7 @@ import type { TurnOutcome } from './map-events.ts'
 import { buildStart, newId, submitPayloadHash } from './run-start.ts'
 import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
+import { FLUSH_RETRY_MS, FLUSH_TURN_PREFIX, fixTurnRows, storedProjection, writeProjection } from './projection.ts'
 import { ModelGate } from './gate.ts'
 import { callsMicro } from './turn-calls.ts'
 import { ensureUsageTasks } from '../../usage/seeds.ts'
@@ -87,6 +88,7 @@ export interface TurnRow {
   mirror_error: number; deferred_json: string | null; start_json: string | null; settled: number; ledger_hold_micro: number
   start_hold_micro: number; ledger_fails: number; ledger_retry_at_ms: number | null; runner_cost_micro: number | null; parts_n: number
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
+  pos_from: number | null; pos_to: number | null; d1_flushed: number
   output_format_json: string | null; on_end_json: string | null; structured_output_json: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
@@ -161,6 +163,8 @@ export class AgentCore {
   private readonly sql: SqlStorage
   /** Turns whose effects queue is being drained by this instance (one drain per turn at a time). */
   private readonly draining = new Set<string>()
+  /** Runs whose `advance` waits while one synchronous step ends several of their turns (`endChats`): none is claimed half-way. */
+  private readonly holding = new Set<string>()
   /** The model gate and the per-turn ledger queue (8.2, gate.ts). */
   readonly gate: ModelGate
 
@@ -285,6 +289,8 @@ export class AgentCore {
       sweepBy(this.sql, this.d.scheduler, this.d.now())
       return refuse('forbidden', 'removed')
     }
+    // A deleted chat is not found, as route 29 answers it from D1 (that read may predate the delete).
+    if (this.sql.exec('SELECT 1 FROM chat_deletion WHERE chat_id = ? AND deleted = 1', t.chatId).toArray().length > 0) return refuse('not_found')
     if (this.paused()) return refuse('forbidden', 'paused')
     if (this.draining_()) return refuse('unavailable', 'draining')
     const cs = this.chatState(t.chatId)
@@ -354,7 +360,7 @@ export class AgentCore {
    */
   advance(runId: string): string | null {
     const run = this.sql.exec<{ state: string; chat_id: string; started_at_ms: number }>('SELECT state, chat_id, started_at_ms FROM runs WHERE run_id = ?', runId).toArray()[0]
-    if (!run || run.state !== 'live') return null
+    if (!run || run.state !== 'live' || this.holding.has(runId)) return null
     if (this.count(`run_id = ? AND state IN ${ACTIVE}`, runId) > 0) return null
     const next = this.sql.exec<TurnRow>(`SELECT * FROM turns WHERE run_id = ? AND state = 'queued' ORDER BY ${PRIORITY_ORDER}, ord LIMIT 1`, runId).toArray()[0]
     if (next) {
@@ -678,7 +684,32 @@ export class AgentCore {
       const onEnd = JSON.parse(t.on_end_json) as OnEnd
       this.d.scheduler.ensure({ id: onEnd.id, kind: onEnd.kind, dueAtMs: now, payload: endPayload(t) })
     }
-    this.onFinal?.(t)
+    // The D1 projection (4.8): the rows fixed here, the batch after; the task is its durable retry.
+    fixTurnRows(this.sql, turnId, now)
+    this.d.scheduler.schedule({ id: `${FLUSH_TURN_PREFIX}${turnId}`, kind: 'flush-turn', dueAtMs: now + FLUSH_RETRY_MS })
+    void this.flushTurn(turnId)
+    this.onFinal?.(this.turn(turnId)!)
+  }
+
+  /**
+   * Writes the turn's fixed rows to D1 (idempotent: the same ids and positions every time). True once they're in; a
+   * failure stays for the `flush-turn` task, which retries with the scheduler's backoff.
+   */
+  async flushTurn(turnId: string): Promise<boolean> {
+    // The whole flush under one error path: a stored row that won't read fails like a batch that won't land (the task
+    // retries it, then quarantines it), never an unhandled rejection of the immediate flush.
+    try {
+      const p = storedProjection(this.sql, turnId)
+      if (!p) return true
+      if (this.turn(turnId)?.d1_flushed === 1) return true
+      await writeProjection(this.d.db, p)
+      this.sql.exec('UPDATE turns SET d1_flushed = 1 WHERE turn_id = ?', turnId)
+      this.d.scheduler.cancel(`${FLUSH_TURN_PREFIX}${turnId}`)
+      return true
+    } catch (err) {
+      console.error({ event: 'flush_turn_failed', turnId, error: errorText(err) })
+      return false
+    }
   }
 
   /** Testing seam (and PR 5's join point): called once per turn, inside `storeFinal`'s synchronous step. */
@@ -1184,6 +1215,64 @@ export class AgentCore {
     this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
       checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, chatId)
     return { ok: true }
+  }
+
+  // ---------- chats: history and delete (routes 24, 27; 4.8) ----------
+
+  /**
+   * The runs of these chats a reload attaches to (route 24): route 32's read narrowed to them (the live run, and every
+   * ended run with a turn whose rows aren't in D1 yet). The route has checked the reader's access to each chat.
+   */
+  chatRuns(chatIds: string[]): ActiveRun[] { return activeRuns(this.sql, { all: true }, chatIds) }
+
+  /**
+   * Applies route 27's or 28's change for each chat unless a newer one is already applied. `rev` is a D1 rev the chat
+   * really had while deleted: a delete's is the rev its own write left; a restore's is the rev of the deletion it read
+   * and is undoing (its D1 write applies only at that rev). So a delete applies only when its rev is newer than the
+   * last applied, and a restore also at an equal rev: it read that deletion, so it is the later of the two. A delete
+   * whose call arrives after a later restore changes nothing, nor the other way round (#163 reviews). The chats it applied.
+   */
+  private markChats(chats: { id: string; rev: number }[], deleted: boolean): string[] {
+    const now = this.d.now()
+    const applied: string[] = []
+    for (const c of chats) {
+      const last = this.sql.exec<{ rev: number }>('SELECT rev FROM chat_deletion WHERE chat_id = ?', c.id).toArray()[0]
+      if (last && (deleted ? last.rev >= c.rev : last.rev > c.rev)) continue
+      this.sql.exec(`INSERT INTO chat_deletion (chat_id, deleted, rev, at_ms) VALUES (?, ?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET deleted = excluded.deleted, rev = excluded.rev, at_ms = excluded.at_ms`, c.id, deleted ? 1 : 0, c.rev, now)
+      applied.push(c.id)
+    }
+    return applied
+  }
+
+  /**
+   * Route 27 (4.6): the chats were deleted (each with its D1 rev after the delete). Those not overtaken by a restore are
+   * marked deleted in `chat_deletion` (sends refused until a restore), their queued turns are cancelled and their
+   * running ones fenced, each through the fence's own paths, so every one ends in `storeFinal`. One synchronous step:
+   * the runs' `advance` is held until every turn is ended or fenced, so no queued turn is claimed on the way.
+   */
+  endChats(chats: { id: string; rev: number }[]) {
+    const chatIds = this.markChats(chats, true)
+    if (chatIds.length === 0) return
+    const marks = chatIds.map(() => '?').join(', ')
+    const runs = this.sql.exec<{ run_id: string }>(`SELECT run_id FROM runs WHERE state = 'live' AND chat_id IN (${marks})`, ...chatIds).toArray().map(r => r.run_id)
+    for (const r of runs) this.holding.add(r)
+    try {
+      const turns = this.sql.exec<{ turn_id: string }>(
+        `SELECT turn_id FROM turns WHERE chat_id IN (${marks}) AND state IN ('queued', 'starting', 'live') ORDER BY created_at_ms, ord`, ...chatIds).toArray()
+      for (const { turn_id } of turns) {
+        const fresh = this.turn(turn_id)
+        if (fresh && fresh.fenced === 0 && (fresh.state === 'queued' || fresh.state === 'starting' || fresh.state === 'live')) this.fence(fresh, { cancel: 'deleted' })
+      }
+    } finally {
+      for (const r of runs) this.holding.delete(r)
+    }
+    for (const r of runs) this.advance(r)
+  }
+
+  /** Route 28: the chats are being restored (each with the D1 rev it was read deleted at); sends into them are admitted again. */
+  restoreChats(chats: { id: string; rev: number }[]) {
+    this.markChats(chats, false)
   }
 
   // ---------- pause, drain (4.11, 7) ----------

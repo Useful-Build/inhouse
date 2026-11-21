@@ -14,6 +14,10 @@
 // - `turn_effects`: 4.2.6's awaited side effects (file confirms), one at a time per turn, keyed `(turn_id, seq)`;
 // - `turn_trace`: audit and step records for the trace (route 33), never parts;
 // - `authority`: the object's removed-member and ended-grant sets (4.3, 4.10);
+// - `turn_rows`: a final turn's D1 rows, fixed at its end (4.8, projection.ts), so a retry replays the same ones;
+// - `chat_deletion`: each chat route 27 deleted or route 28 restored, with a D1 rev the chat had while deleted (the
+//   delete's own, or the one the restore read; a newer delete or a restore at least as new replaces it): `submitTurn`
+//   refuses a deleted one, so a send that read the chat in D1 before the delete committed can't start a turn in it;
 // - PR 2b, the model gate (8.2): `model_calls` and `ledger_queue` as 4.1, plus `model_calls.n` (the turn's arrival
 //   order: FIFO without trusting the clock), `money_wait` (sent back to wait for money: decided again only once a
 //   sibling closes), `closed_at_ms` (the trace's end of a call); `turns.ledger_hold_micro` (4.1: the ledger's last
@@ -24,6 +28,8 @@
 // - PR 5 (the routine seams): `turns.output_format_json` (the run's structured-output format, into `RunStart`),
 //   `on_end_json` (the `{ kind, id }` task the turn's final step ensures), `structured_output_json` (the terminal
 //   event's value, at most 64 KiB); added to an older table by `ALTER TABLE` below.
+
+import { TURN_ROWS_TABLE } from './projection.ts'
 
 export function createAgentTables(sql: SqlStorage): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, owner_id TEXT NOT NULL,
@@ -86,4 +92,7 @@ export function createAgentTables(sql: SqlStorage): void {
     op TEXT NOT NULL CHECK (op IN ('extend', 'close', 'settle')), call_id TEXT, args_json TEXT,
     state TEXT NOT NULL CHECK (state IN ('pending', 'sent', 'answered')), answer_json TEXT, PRIMARY KEY (turn_id, n))`)
   sql.exec("CREATE INDEX IF NOT EXISTS ledger_queue_open ON ledger_queue(state) WHERE state != 'answered'")
+  sql.exec(TURN_ROWS_TABLE)
+  sql.exec(`CREATE TABLE IF NOT EXISTS chat_deletion (chat_id TEXT PRIMARY KEY, deleted INTEGER NOT NULL CHECK (deleted IN (0, 1)),
+    rev INTEGER NOT NULL, at_ms INTEGER NOT NULL)`)
 }

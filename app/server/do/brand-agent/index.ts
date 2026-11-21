@@ -126,7 +126,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
     await this.core.writeToolCall(turnId, n, entry)
   }
 
-  // ---------- the API (routes 29-31, 35-37, 49) ----------
+  // ---------- the API (routes 24, 27, 29-31, 35-37, 49) ----------
   /** Route 29's turn only: a structured-output format or an end task sent over RPC is dropped (`TaskContext.runs.submit` adds them). */
   async submitTurn(turn: SubmitTurn): Promise<SendTurnResult | Refusal> {
     const { chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains } = turn
@@ -153,6 +153,18 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
   async resetSession(chatId: string, by: Actor): Promise<{ ok: true } | Refusal> {
     return this.core.resetSession(chatId, by)
+  }
+  /** Route 24's `runs` and every summary's `running` (4.8): the chats' live runs and ended runs not yet all in D1. */
+  async chatRuns(chatIds: string[]): Promise<ActiveRun[]> {
+    return this.core.chatRuns(chatIds)
+  }
+  /** Route 27: the chats were deleted (each with its D1 rev); their queued turns are cancelled, their running ones fenced. */
+  async endChats(chats: { id: string; rev: number }[]): Promise<void> {
+    this.core.endChats(chats)
+  }
+  /** Route 28: the chats are being restored (each with the D1 rev it was read deleted at); sends into them are admitted again. */
+  async restoreChats(chats: { id: string; rev: number }[]): Promise<void> {
+    this.core.restoreChats(chats)
   }
   /** Route 32: live runs and ended ones with a turn not yet in D1, in the scope. */
   async activeRuns(scope: RunScope): Promise<ActiveRun[]> {
