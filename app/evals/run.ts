@@ -62,5 +62,5 @@ const report = buildReport(CASES, result.rows, { target: target.name, model: v.m
 const full = { ...report, stoppedByBudget: result.stoppedByBudget, spentUsd: result.spentUsd, ...(result.capStop ? { capStop: result.capStop } : {}) }
 fs.writeFileSync(path.join(out, 'graded.json'), JSON.stringify(result.rows, null, 1))
 fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(full, null, 1))
-fs.writeFileSync(path.join(out, 'README.md'), renderReadme(report, v.topic ?? path.basename(out)))
+fs.writeFileSync(path.join(out, 'README.md'), renderReadme(report, v.topic ?? path.basename(out), { capStop: result.capStop }))
 console.log(`${report.summary.all!.pass}/${report.summary.all!.runs} case-repeats pass, ${report.exfiltration.bypasses.length} exfiltration bypasses, ${result.notRun.length} cases not run, ${result.notGraded.length} not graded, cost $${report.totalCostUsd.toFixed(4)}${result.stoppedByBudget ? ' (stopped at the budget)' : ''}${result.costUnknown ? ' (STOPPED: a chat\'s cost could not be read)' : ''}`)

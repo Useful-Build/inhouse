@@ -7,6 +7,12 @@ import { CapReachedError, type Case, type ChatResult, type Target } from './type
 
 /** S5's measured price: about $0.011 a chat on Sonnet 5.5 at medium effort. */
 export const S5_USD_PER_CHAT = 0.011
+/**
+ * The cap check's per-chat estimate: the ledger's $0.25 start hold (server/usage/ledger.ts START_HOLD_MICRO, pinned by a
+ * test). The product refuses a turn unless that much room is free, so a lower estimate would let a case start that the
+ * product then fences (#253 review O5).
+ */
+export const CAP_CHAT_USD = Math.max(S5_USD_PER_CHAT, 0.25)
 export const CHAT_TIMEOUT_MS = 240_000
 
 export const estimateUsd = (cases: Case[], reps: number): number => cases.reduce((n, c) => n + c.chats.length, 0) * reps * S5_USD_PER_CHAT
@@ -35,7 +41,7 @@ export interface RunOutput {
    * The brand's Spending cap stopped the run (O2 note): a case whose estimate would cross it was never started, or a chat
    * was fenced by it. Either way `stoppedByBudget` is true, so the verdict is FAIL (the numbers are partial).
    */
-  capStop?: { caseId: string; rep: number; why: 'would cross the cap' | 'cap reached'; spentUsd?: number; capUsd?: number; estimateUsd?: number }
+  capStop?: { caseId: string; rep: number; why: 'would cross the cap' | 'cap reached' | 'cap check failed'; spentUsd?: number; capUsd?: number; estimateUsd?: number; detail?: string }
   spentUsd: number
 }
 
@@ -79,21 +85,35 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   const queue = ordered.flatMap((c) => Array.from({ length: o.reps }, (_, i) => ({ c, rep: i + 1 })))
 
   async function caseRepeat(c: Case, rep: number): Promise<void> {
-    // The month's room under the brand's Spending cap, before the case starts: never begin what the cap would fence.
-    if (target.room) {
-      const { spentUsd, capUsd } = await target.room()
-      const estimate = estimateUsd([c], 1)
-      if (spentUsd + estimate > capUsd) {
-        capStop ??= { caseId: c.id, rep, why: 'would cross the cap', spentUsd, capUsd, estimateUsd: estimate }
-        stopped = true
-        return
-      }
-    }
+    if (stopped) return
     const canary = makeCanary(c.id, rep)
     const session = await target.seed(c.seed ?? [], { caseId: c.id, rep, canary }, c.exfil)
     let settledSoFar = 0
     try {
+      // Another case-repeat stopped the run while this one waited for the brand (#253 review O4).
+      if (stopped) return
+      // The month's room under the brand's Spending cap, read after the seed (#253 review O1, O2): the target's setup has
+      // pinned the cap, its lock is held and the case-repeat before has ended, so this is the cap we pinned and settled
+      // spend. A failed read (route 42 down, the cap no longer $40) stops the run with a report (O3, O6).
+      if (target.room) {
+        let room: { spentUsd: number; capUsd: number }
+        try {
+          room = await target.room()
+        } catch (e) {
+          capStop ??= { caseId: c.id, rep, why: 'cap check failed', detail: e instanceof Error ? e.message : String(e) }
+          stopped = true
+          return
+        }
+        const estimate = c.chats.length * CAP_CHAT_USD
+        if (room.spentUsd + estimate > room.capUsd) {
+          capStop ??= { caseId: c.id, rep, why: 'would cross the cap', spentUsd: room.spentUsd, capUsd: room.capUsd, estimateUsd: estimate }
+          stopped = true
+          return
+        }
+      }
       for (const [i, chat] of c.chats.entries()) {
+        // After any stop, nothing more is sent (#253 review O4).
+        if (stopped) return
         if (o.budgetUsd !== undefined && spent() >= o.budgetUsd) {
           stopped = true
           return

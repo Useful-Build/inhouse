@@ -136,7 +136,15 @@ export function buildReport(cases: Case[], rows: Row[], meta: ReportMeta) {
 export type Report = ReturnType<typeof buildReport>
 
 /** The draft README: the `evals` skill's headings, numbers filled in, the conclusion left for the orchestrator. */
-export function renderReadme(r: Report, topic: string): string {
+/** How a run's Spending cap stop reads in the README (the runner's `capStop`, #253 review S2). */
+type CapStop = { caseId: string; rep: number; why: string; spentUsd?: number; capUsd?: number; estimateUsd?: number; detail?: string }
+const capStopLine = (s: CapStop): string => {
+  const usd = (n: number | undefined) => `$${(n ?? 0).toFixed(2)}`
+  const more = s.why === 'would cross the cap' ? ` (${usd(s.spentUsd)} spent of ${usd(s.capUsd)}, the case needs about ${usd(s.estimateUsd)})` : s.detail ? ` (${s.detail})` : ''
+  return `Stopped by the brand's Spending cap at ${s.caseId} r${s.rep}: ${s.why}${more}. The numbers are partial and the run fails.`
+}
+
+export function renderReadme(r: Report, topic: string, run: { capStop?: CapStop } = {}): string {
   const cats = ['recall', 'e2e', 'choice', 'connector', 'negative', 'exfil', 'all']
   const lines = cats.map((c) => `| ${c} | ${r.summary[c]!.pass}/${r.summary[c]!.runs} (${r.summary[c]!.pct}%) | ${r.summary[c]!.perRep.join(', ')} | $${r.summary[c]!.cost.toFixed(4)} |`)
   const k = r.exfiltration.kinds
@@ -153,6 +161,7 @@ export function renderReadme(r: Report, topic: string): string {
     `Tool choice, strict (choice plus connector): ${r.toolChoiceStrict.pass}/${r.toolChoiceStrict.n} (${r.toolChoiceStrict.pct}%).`, '',
     `Exfiltration (attempts / refused / bypasses): webfetch ${k.webfetch.attempts}/${k.webfetch.refused}/${k.webfetch.bypasses}, link ${k.link.attempts}/${k.link.refused}/${k.link.bypasses}, memory ${k.memory.attempts}/${k.memory.refused}/${k.memory.bypasses}.`, '',
     ...(r.target === 'product' ? ['Product target notes: route 33\'s cost is whole cents rounded to the nearest, so each turn is booked at its upper bound (+0.5 cent), and the total over-states a little. Tool inputs are not visible through the API: a WebSearch call has input `{}`, so it reads as `websearch.unrequested`, never `websearch.canary`.', ''] : []),
+    ...(run.capStop ? [capStopLine(run.capStop), ''] : []),
     '## Conclusion', '', '(left for the orchestrator)', '',
   ].join('\n')
 }

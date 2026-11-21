@@ -153,11 +153,14 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     // The O2 note: the brand's own Spending cap is the run's $40 (no second ledger). Pinned here, then read back as the
     // product reads it: anything else refuses before any case is seeded.
     await door.setSpendingCap(EVAL_CAP)
-    const { capUsd } = await room()
-    if (Math.round(capUsd * 100) !== Number(EVAL_CAP.slice(1)) * 100) throw new ProductTargetRefusal(`refusing: the brand's Spending cap is not ${EVAL_CAP} (route 42 says $${capUsd.toFixed(2)})`)
+    const { spentUsd } = await room()
+    // A month already at the cap is refused here, not on the first chat (#253 review O1).
+    if (spentUsd >= Number(EVAL_CAP.slice(1))) throw new ProductTargetRefusal(`refusing: this month's spend ($${spentUsd.toFixed(2)}) has reached the ${EVAL_CAP} cap`)
   })())
 
   /** The month's spend and the cap, from route 42 (the Usage page's numbers) as the Admin eval person. */
+  // Every read refuses unless the cap is still the pinned $40 (#253 review O3): a re-seed's $320 or a Settings change can't
+  // silently lift our layer mid-run.
   async function room(): Promise<{ spentUsd: number; capUsd: number }> {
     const u = await api('lena', 'GET', '/api/usage')
     must(u, 'read the month\'s usage', [200])
@@ -165,7 +168,9 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       if (!Number.isInteger(m)) throw new Error(`route 42 gave no ${what}`)
       return (m as number) / 100
     }
-    return { spentUsd: cents(u.json?.total?.minor, 'total'), capUsd: cents(u.json?.cap?.minor, 'cap') }
+    const r = { spentUsd: cents(u.json?.total?.minor, 'total'), capUsd: cents(u.json?.cap?.minor, 'cap') }
+    if (Math.round(r.capUsd * 100) !== Number(EVAL_CAP.slice(1)) * 100) throw new ProductTargetRefusal(`refusing: the brand's Spending cap is not ${EVAL_CAP} (route 42 says $${r.capUsd.toFixed(2)})`)
+    return r
   }
 
   let spentTotal = 0

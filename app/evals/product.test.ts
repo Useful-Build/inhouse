@@ -137,6 +137,24 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     expect(await target.room!()).toEqual({ spentUsd: 12.5, capUsd: 40 })
   })
 
+  // #253 review O3: our $40 layer can't be lifted silently mid-run (a re-seed's $320, a Settings change).
+  it('room() refuses whenever the cap is no longer $40', async () => {
+    const srv = server()
+    const target = make(srv, new FakeDoor())
+    await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    srv.s.capMinor = 32000
+    await expect(target.room!()).rejects.toThrow(/Spending cap is not \$40/)
+  })
+
+  // #253 review O1: a month already at the cap is refused at setup, not on the first chat.
+  it('setup refuses a month whose spend has reached the cap', async () => {
+    for (const spentMinor of [4000, 4500]) {
+      const d = new FakeDoor()
+      await expect(make(server({ spentMinor }), d).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), String(spentMinor)).rejects.toThrow(/reached the \$40 cap/)
+      expect(d.calls.filter((c) => c === 'clear' || c.startsWith('insert'))).toEqual([])
+    }
+  })
+
   it('a brand with more members than the check reads is refused, not passed', async () => {
     const srv = server({ endlessMembers: true })
     const door = new FakeDoor()
@@ -449,5 +467,15 @@ describe('the chat helper ids', () => {
     const r: ChatResult = { toolCalls: [], answer: '', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 }
     expect(r.runOk).toBe(false)
     expect(MEMBER.current).toBe('m_dana')
+  })
+})
+
+// #253 review S2: the results README says the cap stopped the run, and why.
+describe('the README and the cap', () => {
+  it('names the cap stop', () => {
+    const report = buildReport(CASES, [], { target: 'product', model: 'm', effort: 'e', reps: 1, notRun: [] })
+    const text = renderReadme(report, 't', { capStop: { caseId: 'R07', rep: 2, why: 'would cross the cap', spentUsd: 39.9, capUsd: 40, estimateUsd: 0.25 } })
+    expect(text).toContain('Stopped by the brand\'s Spending cap at R07 r2: would cross the cap ($39.90 spent of $40.00, the case needs about $0.25).')
+    expect(renderReadme(report, 't')).not.toMatch(/Spending cap at/)
   })
 })
