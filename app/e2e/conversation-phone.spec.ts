@@ -7,7 +7,7 @@ test('Phone conversation: every answer and question shows its actions', async ({
   const log = page.getByRole('log', { name: 'Conversation' })
   await expect(log.getByText('Refund requests rose').first()).toBeVisible()
 
-  // One more answer, with the mode and time in its steps button (the widest row).
+  // One more answer. Its steps line sits above its card, so the action row is Copy and More.
   const before = await log.getByRole('button', { name: 'More', exact: true }).count()
   await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('Which orders are stuck?')
   await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
