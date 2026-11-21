@@ -463,7 +463,8 @@ describe('(P4) the product\'s one service binding, to its own sandbox hub (failu
     expect(r2.stderr).toBe('')
     expect(r2.status).toBe(0)
   })
-  const SHAPE = 'services is set: a sandbox config may not use it, but for exactly one entry { binding: "HUB", service: <its own hub>, entrypoint: "ReadGateway" }'
+  // (P5) The message names both allowed sets now (the refusals are unchanged).
+  const SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }'
   const PRODUCT_CASES = [
     ['the house hub', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-hub' }, 'services[0].service: "inhouse-hub" is not PR 12\'s hub name (inhouse-sbx-pr12-hub)'],
     ['another PR\'s hub', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-sbx-pr13-hub' }, 'services[0].service: "inhouse-sbx-pr13-hub" is not PR 12\'s hub name'],
@@ -634,5 +635,77 @@ describe('(P4) the hub and the eval deployment (failures 12 and 13)', () => {
     const r = run([...CANDIDATE, write(config)])
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('services[0].service: ')
+  })
+})
+
+describe('(P5) the product\'s three hub bindings: exact sets, not any subset (failure 13)', () => {
+  const three = hub => [
+    { binding: 'HUB', service: hub, entrypoint: 'ReadGateway' },
+    { binding: 'HUB_CONNECT', service: hub, entrypoint: 'ConnectGateway' },
+    { binding: 'HUB_DELIVERY', service: hub, entrypoint: 'DeliveryGateway' },
+  ]
+  const SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }'
+  test('PR 12 and the candidate may bind all three to their own hub, in any order; none and HUB alone still pass', () => {
+    for (const services of [three('inhouse-sbx-pr12-hub'), three('inhouse-sbx-pr12-hub').reverse(), [three('inhouse-sbx-pr12-hub')[0]], []]) {
+      const config = load('pass-per-pr.json')
+      config.services = services
+      const r = run([...PR12, write(config)])
+      expect(r.stderr, JSON.stringify(services)).toBe('')
+      expect(r.status).toBe(0)
+    }
+    const candidate = load('pass-candidate.json')
+    candidate.services = three('inhouse-sbx-hub')
+    const r = run([...CANDIDATE, write(candidate)])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
+  const H = 'inhouse-sbx-pr12-hub'
+  const CASES = [
+    // Missing: a subset that isn't an allowed set.
+    ['HUB_CONNECT and HUB_DELIVERY without HUB', three(H).slice(1), SHAPE],
+    ['HUB and HUB_CONNECT without HUB_DELIVERY', three(H).slice(0, 2), SHAPE],
+    ['HUB_CONNECT alone', [three(H)[1]], SHAPE],
+    ['HUB_DELIVERY alone', [three(H)[2]], SHAPE],
+    // Extra.
+    ['a fourth entry to a live Worker', [...three(H), { binding: 'LIVE', service: 'live-product', entrypoint: 'ReadGateway' }], SHAPE],
+    ['a binding twice in place of another', [three(H)[0], three(H)[1], three(H)[1]], SHAPE],
+    ['the three and HUB again', [...three(H), three(H)[0]], SHAPE],
+    // Wrong entrypoint.
+    ['HUB_CONNECT on ReadGateway', [three(H)[0], { ...three(H)[1], entrypoint: 'ReadGateway' }, three(H)[2]], SHAPE],
+    ['HUB_DELIVERY on ConnectGateway', [three(H)[0], three(H)[1], { ...three(H)[2], entrypoint: 'ConnectGateway' }], SHAPE],
+    ['HUB on the server surface', [{ ...three(H)[0], entrypoint: 'ServerGateway' }, three(H)[1], three(H)[2]], SHAPE],
+    ['HUB_CONNECT with no entrypoint (the default export)', [three(H)[0], { binding: 'HUB_CONNECT', service: H }, three(H)[2]], SHAPE],
+    ['an extra key on one entry', [three(H)[0], three(H)[1], { ...three(H)[2], environment: 'production' }], SHAPE],
+    // Wrong hub.
+    ['HUB_CONNECT to the house hub', [three(H)[0], { ...three(H)[1], service: 'inhouse-hub' }, three(H)[2]], 'services[1].service: "inhouse-hub" is not PR 12\'s hub name (inhouse-sbx-pr12-hub)'],
+    ['HUB_DELIVERY to another PR\'s hub', [three(H)[0], three(H)[1], { ...three(H)[2], service: 'inhouse-sbx-pr13-hub' }], 'services[2].service: "inhouse-sbx-pr13-hub" is not PR 12\'s hub name'],
+    ['HUB_CONNECT to the candidate\'s hub', [three(H)[0], { ...three(H)[1], service: 'inhouse-sbx-hub' }, three(H)[2]], 'services[1].service: "inhouse-sbx-hub" is not PR 12\'s hub name'],
+  ]
+  for (const [name, services, text] of CASES) {
+    test(`refuses ${name}`, () => {
+      const config = load('pass-per-pr.json')
+      config.services = services
+      const r = run([...PR12, write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual([expect.stringContaining(text)])
+    })
+  }
+  test('the candidate: every entry names exactly its hub, never a PR\'s, the house\'s or its own product', () => {
+    for (const [i, service, text] of [[1, 'inhouse-sbx-pr12-hub', 'is a per-PR name'], [2, 'inhouse-hub', 'is not a sandbox name'], [1, 'inhouse-sbx-other-hub', 'is not the candidate hub\'s name'], [2, 'inhouse-sbx-product', 'is not the candidate hub\'s name']]) {
+      const config = load('pass-candidate.json')
+      config.services = three('inhouse-sbx-hub')
+      config.services[i] = { ...config.services[i], service }
+      const r = run([...CANDIDATE, write(config)])
+      expect(r.status, service).toBe(1)
+      expect(failureLines(r)).toEqual([expect.stringContaining(`services[${i}].service: `)])
+      expect(r.stderr).toContain(text)
+    }
+  })
+  test('the eval deployment still binds none of them', () => {
+    const config = load('pass-eval.json')
+    config.services = three('inhouse-sbx-eval-hub')
+    const r = run([...EVAL, write(config)])
+    expect(r.status).toBe(1)
+    expect(failureLines(r)).toEqual([expect.stringContaining('services is set: a sandbox config may not use it (the eval deployment has no hub)')])
   })
 })

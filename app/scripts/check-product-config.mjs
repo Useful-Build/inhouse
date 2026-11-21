@@ -69,11 +69,14 @@
 //     plugin's own ESModule rule; `python_modules` anything but wrangler's default;
 //   - any other top-level key holds anything but empty values (KV, queues, tail consumers, aliases, a tsconfig, `define`,
 //     `secrets`, the vite plugin's config paths and every other kind: this list fails closed on keys added later);
-//   - (P4) `services` holds anything but one entry, exactly `{ binding: "HUB", service: <its hub>, entrypoint:
-//     "ReadGateway" }`, where its hub is PR N's (`inhouse-sbx-pr<N>-hub`) or, for the candidate, exactly CANDIDATE_HUB
-//     (`inhouse-sbx-hub`, names.mjs), and never the product's own name (the candidate product may not be named it either).
-//     A sandbox product Worker binds its own sandbox hub's read surface and nothing else (never the house's
-//     `inhouse-hub`, a live product or another PR's hub). No `services` at all still passes (a build before P4);
+//   - (P4, P5) `services` isn't exactly one of the allowed sets of hub entries, each `{ binding, service: <its hub>,
+//     entrypoint }` with no other key: none (a build before P4); `HUB` -> ReadGateway alone (P4, what main ships); or
+//     `HUB` -> ReadGateway, `HUB_CONNECT` -> ConnectGateway and `HUB_DELIVERY` -> DeliveryGateway together (P5), in
+//     any order. Exact sets, not any subset: a P5 build without one of its three, two entries, a binding twice, another
+//     binding or another entrypoint for a binding are refused. Its hub is PR N's (`inhouse-sbx-pr<N>-hub`) or, for the
+//     candidate, exactly CANDIDATE_HUB (`inhouse-sbx-hub`, names.mjs), the same in every entry, and never the product's
+//     own name (the candidate product may not be named it either). A sandbox product Worker binds its own sandbox
+//     hub's gateways and nothing else (never the house's `inhouse-hub`, a live product or another PR's hub);
 //   - `env` is set, or `workers_dev` or `preview_urls` isn't explicitly false;
 //   - per-PR: vars.INHOUSE_TEST_BUILD isn't "1" (Q2's one exception: the test issuer in a deployed build, sandbox only);
 //   - per-PR: vars.INHOUSE_EVAL_BRAND is set;
@@ -335,8 +338,11 @@ const DO_KEYS = new Set(['name', 'class_name'])
 const MIGRATION_KEYS = new Set(['tag', 'new_classes', 'new_sqlite_classes', 'renamed_classes', 'deleted_classes'])
 const OBSERVABILITY_KEYS = new Set(['enabled', 'head_sampling_rate', 'logs', 'traces'])
 const OBSERVABILITY_PART_KEYS = new Set(['enabled', 'head_sampling_rate', 'invocation_logs', 'persist'])
-/** (P4) The one service binding a sandbox product Worker may hold, to its own sandbox hub's read surface. */
-const SANDBOX_HUB_ENTRY = { binding: 'HUB', entrypoint: 'ReadGateway' }
+/** (P4, P5) Each hub binding a sandbox product Worker may hold, by name, and the hub entrypoint it must name. */
+const SANDBOX_HUB_ENTRYPOINTS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
+/** (P4, P5) The allowed sets of those bindings, exactly: P4's read binding alone, or P5's three. */
+const SANDBOX_HUB_SETS = [['HUB'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY']]
+const SERVICES_SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }, each entry { binding, service: <its own hub>, entrypoint } and nothing else'
 /** (P4) The keys a sandbox hub config may give a value (a subset of SANDBOX_KEYS). */
 const HUB_KEYS = new Set([
   'name', 'account_id', 'workers_dev', 'preview_urls', 'vars', 'durable_objects', 'migrations', 'main', 'observability',
@@ -423,14 +429,19 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     // The eval deployment has no hub yet (evalNames names none): its services stay refused, as before P4.
     if (!isEmpty(services)) fail('services is set: a sandbox config may not use it (the eval deployment has no hub)')
   } else if (!isEmpty(services)) {
-    const s = services[0]
-    const shaped = services.length === 1 && s && typeof s === 'object' && !Array.isArray(s) &&
-      Object.keys(s).length === 3 && s.binding === SANDBOX_HUB_ENTRY.binding && s.entrypoint === SANDBOX_HUB_ENTRY.entrypoint && Object.hasOwn(s, 'service')
-    if (!shaped) fail('services is set: a sandbox config may not use it, but for exactly one entry { binding: "HUB", service: <its own hub>, entrypoint: "ReadGateway" }')
+    // Each entry exactly { binding, service, entrypoint } with its binding's entrypoint, and the bindings exactly one
+    // allowed set (sorted, so order doesn't matter and a binding given twice can't stand in for another).
+    const entryOk = s => !!s && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).length === 3 &&
+      Object.hasOwn(s, 'service') && Object.hasOwn(SANDBOX_HUB_ENTRYPOINTS, s.binding) && s.entrypoint === SANDBOX_HUB_ENTRYPOINTS[s.binding]
+    const bindings = JSON.stringify(services.map(s => s?.binding).sort())
+    const shaped = services.every(entryOk) && SANDBOX_HUB_SETS.some(set => JSON.stringify([...set].sort()) === bindings)
+    if (!shaped) fail(SERVICES_SHAPE)
     else {
-      const before = failures.length
-      nameOk('services[0].service', s.service, 'hub')
-      if (failures.length === before && s.service === config.name) fail(`services[0].service: the hub may not be the product's own name (${JSON.stringify(s.service)})`)
+      services.forEach((s, i) => {
+        const before = failures.length
+        nameOk(`services[${i}].service`, s.service, 'hub')
+        if (failures.length === before && s.service === config.name) fail(`services[${i}].service: the hub may not be the product's own name (${JSON.stringify(s.service)})`)
+      })
     }
   }
   if (hub) {
