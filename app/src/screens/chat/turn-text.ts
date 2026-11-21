@@ -89,6 +89,7 @@ export function sendFailureText(e: { code: string; reason?: string }): string {
     case REASON.modelOff: return MODEL_OFF_REFUSED
     case REASON.sessionDamaged: return NOTICE_TEXT[NOTICE.sessionDamaged]
     case REASON.waitingAnswer: return 'This chat is waiting for an answer from you first.'
+    case REASON.providerChanged: return "This chat was started with a different AI provider, so it can't go on here. Start a new chat to keep asking."
     case REASON.queueFull: return 'Too many messages are waiting in this chat. Ask again when some have been answered.'
     case REASON.draining: return 'Inhouse is restarting. Ask again in a minute.'
     case REASON.removed: return "You're no longer on this team."
