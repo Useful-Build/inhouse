@@ -376,6 +376,8 @@ describe('released (protocol v2): the last event of every run, with the checkpoi
       { checkpoint: CP, queryRan: true },
       'failed',
     ],
+    // The fixture's `cp:honour` and the root's forwarding of it: session/core.ts's own handling of the SDK's
+    // result-then-throw is covered in session.test.ts.
     [
       'an interrupt the SDK honours (its error_during_execution result: finished, not failed)',
       { prompt: 'cp:honour' },

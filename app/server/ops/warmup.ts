@@ -8,6 +8,8 @@
 // answers 503 in a few seconds, and the next call starts the container again. Those failed starts, under the drain, are
 // not restarts (pool.ts `containerExited`), so the retries never turn `pool_restarts` red. Each release still counts one
 // exit per warmed runner: the container from before the drain, which came up, is replaced here ("replaced at warm-up").
+// The release job must drain (route 46) before it calls warm-up: without the drain, those failed starts count as
+// restarts.
 import { apiError, apiJson } from '../http.ts'
 import type { Handler } from '../routes.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
