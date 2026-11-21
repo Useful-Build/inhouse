@@ -143,8 +143,7 @@ jobs:
   # (Node and workerd), the deployable and test dry-run bundles, then the bundle scan (the deployable bundle has no
   # test seam; the test bundle must be caught) and the config check (the template passes; the test config must fail).
   hub:
-    # Not on a fleet PR (the fast job stands in); on its branch's push instead.
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
+    # Light (about a minute), so it also runs on a fleet PR: the fast job doesn't cover app/hub.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -431,13 +430,13 @@ jobs:
   ci:
     needs: [e2e, test-build, runner, hub, fast]
     # always(): a cancelled or skipped job makes ci red, never skipped (a skipped check counts as passing). The one
-    # exception is a job skipped by design: e2e, test-build and hub on a fleet PR, fast on every other event. Each of
+    # exception is a job skipped by design: e2e and test-build on a fleet PR, fast on every other event. Each of
     # those must be exactly skipped, and every other job exactly success.
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Every job this event runs passed (a fleet PR - fast and runner; otherwise every shard, the test build, the runner job and the hub job)
+      - name: Every job this event runs passed (a fleet PR - fast, runner and hub; otherwise every shard, the test build, the runner job and the hub job)
         env:
           FLEET_PR: ${{ github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
           RESULT: ${{ needs.e2e.result }}
@@ -456,7 +455,7 @@ jobs:
             echo "::error::A job was cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
           if [ "$FLEET_PR" = true ]; then
-            test "$FAST" = success && test "$RUNNER" = success && test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$HUB" = skipped
+            test "$FAST" = success && test "$RUNNER" = success && test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$HUB" = success
           else
             test "$RESULT" = success && test "$TEST_BUILD" = success && test "$RUNNER" = success && test "$HUB" = success && test "$FAST" = skipped
           fi
