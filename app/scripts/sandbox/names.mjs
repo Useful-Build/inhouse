@@ -6,7 +6,7 @@
 //   - sandbox-wide rule: `inhouse-sbx-<lowercase letters, digits, hyphens>`. Admits the per-PR names and the shared
 //     sandbox resources (the candidate Worker, its D1 and R2), never a live product's name.
 //   - eval rule (p3-eval-observability rev 2, rec 2): exactly the eval deployment's names, `inhouse-sbx-eval` and
-//     `inhouse-sbx-eval-<db|files|brand|team>`. Disjoint from the per-PR rule (no `pr<N>`) and refused by the candidate
+//     `inhouse-sbx-eval-<db|files|brand|team|hub>` (`-hub`: the eval deployment's own connector hub). Disjoint from the per-PR rule (no `pr<N>`) and refused by the candidate
 //     rule, so neither a PR's deploy or cleanup nor the candidate ever names the eval brand's resources. Its host rule
 //     takes only the two host names (`-brand`, `-team`).
 //   - host rule: `<name>.<zone>`, where <name> passes the rule asked for and <zone> is exactly the sandbox zone (one
@@ -34,13 +34,14 @@ export const isSandboxName = name => typeof name === 'string' && SANDBOX_WIDE.te
 /** The eval deployment's exact names (the same keys as perPrNames; the ops repo's eval deploy uses these). */
 export function evalNames() {
   const worker = EVAL_WORKER
-  return { worker, d1: `${worker}-db`, r2: `${worker}-files`, container: worker, image: worker, brand: `${worker}-brand`, team: `${worker}-team` }
+  // (P4) hub: the eval deployment's own connector hub, never the candidate's or a PR's (line A, the eval hub).
+  return { worker, d1: `${worker}-db`, r2: `${worker}-files`, container: worker, image: worker, brand: `${worker}-brand`, team: `${worker}-team`, hub: `${worker}-hub` }
 }
 export const isEvalName = name => typeof name === 'string' && Object.values(evalNames()).includes(name)
 
 /** Throws unless `name` is one of the eval deployment's names. Returns the name. */
 export function assertEvalName(name) {
-  if (!isEvalName(name)) throw new SandboxNameError(`${show(name)} is not one of the eval deployment's names (${EVAL_WORKER}[-db|-files|-brand|-team])`)
+  if (!isEvalName(name)) throw new SandboxNameError(`${show(name)} is not one of the eval deployment's names (${EVAL_WORKER}[-db|-files|-brand|-team|-hub])`)
   return name
 }
 
