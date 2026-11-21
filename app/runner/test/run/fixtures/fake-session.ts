@@ -5,8 +5,9 @@
 //   crash              exits with code 3 without a terminal event
 //   crash-after:<n>    sends n sdk events, then exits with code 3
 //   crash-loud:<n>     writes n bytes of stderr (`<` + x's + `>`, a newline every 100 bytes), then exits with code 3
-//   crash-canary       writes a crash trace to stderr whose message and an extra line carry CHAT-CANARY, with 10 stack
-//                      frames (`    at f<i> (file:///s.js:<i>:1)`), then exits with code 3
+//   crash-canary       writes a crash trace to stderr whose message, an extra line and an indented chat line that
+//                      starts like a frame (`    at the CHAT-CANARY meeting at 10:30:45`) carry CHAT-CANARY, with 10
+//                      stack frames (`    at f<i> (file:///s.js:<i>:1)`), then exits with code 3
 //   crash-stdout:<n>   writes n bytes of stdout (`STDOUT-TEXT` repeated, cut to n), then exits with code 3
 //   stdout-flood:<n>   writes n bytes to stdout (in 16 KB writes, each awaited), then finished
 //   garbage            sends a message that isn't in the local schema
@@ -211,7 +212,7 @@ channel.onMessage((line) => {
     }
     case 'crash-canary': {
       const frames = Array.from({ length: 10 }, (_, i) => `    at f${i} (file:///s.js:${i}:1)`).join('\n')
-      process.stderr.write(`said: CHAT-CANARY\nError: CHAT-CANARY in the message\n${frames}\n`, () => process.exit(3))
+      process.stderr.write(`said: CHAT-CANARY\n    at the CHAT-CANARY meeting at 10:30:45\nError: CHAT-CANARY in the message\n${frames}\n`, () => process.exit(3))
       break
     }
     case 'crash-stdout': {

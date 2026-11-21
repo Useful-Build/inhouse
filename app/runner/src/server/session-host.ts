@@ -65,7 +65,11 @@ export type SessionHandle = {
 const STDERR_TAIL = 4096
 /** The most stack-frame lines (`    at ...`) from stderr's tail the root logs when a session ends without a terminal event. */
 const STACK_LOG_FRAMES = 8
-const STACK_FRAME = /^\s+at /
+/**
+ * A V8 stack frame that ends in a code location: `at <fn> (<location>)` or `at <location>`, the location with no space or
+ * parenthesis, then `:line:col`. An indented chat line that merely starts with `at` ("at the meeting at 10:30:45") isn't one.
+ */
+const STACK_FRAME = /^\s+at (?:[^()]+ \([^()\s]+:\d+:\d+\)|[^()\s]+:\d+:\d+)$/
 /**
  * What the root lets wait unsent for a session on fd 4, beyond the run message: the rest is small (interrupt, stop, one
  * answer per audit entry the session sent). A session past it isn't reading: the root ends it as `protocol`.
