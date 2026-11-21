@@ -20,6 +20,8 @@ export const FAILURE_TEXT: Record<TurnFailure, string> = {
   [FAIL.poolFull]: 'Your Inhouse agent is busy right now. Try again in a moment.',
   [FAIL.unknown]: RUN_FAILED,
   [FAIL.modelOff]: MODEL_OFF_FAILED,
+  // Only a routine's run asks for structured output (P4), and no person's chat shows one: the generic words.
+  [FAIL.structuredOutput]: RUN_FAILED,
 }
 
 /** Why a turn that was waiting never ran. Null: nothing to say (the person removed or deleted it). */

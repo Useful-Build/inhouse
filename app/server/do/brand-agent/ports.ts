@@ -3,7 +3,7 @@
 // (`BrandAgentRpc`: the egress, the API handlers, the Runner objects, the health signals). W1's first PR defines them
 // with a fake of each under testing/; W2, W3 and W4 fill the real pool, files and usage ports. Every amount is in
 // micro-USD, every time in epoch ms.
-import type { AuditEntry, PushAck, RunEvent, RunStart } from '../../../shared/protocol/index.ts'
+import type { AuditEntry, OutputFormat, PushAck, RunEvent, RunStart } from '../../../shared/protocol/index.ts'
 import type { AgentErrorCode, ErrorReason } from '../../../shared/contract/common.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
 import type { ActiveRun, PauseState, SendTurnInput, SendTurnResult } from '../../../shared/contract/runs.ts'
@@ -196,6 +196,30 @@ export interface SubmitTurn {
   webFetchDomains: string[] | null
 }
 
+/** The due task a turn's end schedules (PR 5, ask B): `{ id, kind }`, a registered kind. */
+export interface OnEnd { kind: string; id: string }
+
+/**
+ * A turn submitted from inside the object (`TaskContext.runs.submit`, PR 5 ask A): route 29's resolved turn plus the
+ * run's structured-output format (into `RunStart.outputFormat`) and the task its end schedules. Never from route 29's
+ * body: `BrandAgentRpc.submitTurn` drops both.
+ */
+export type InternalSubmit = SubmitTurn & { outputFormat?: OutputFormat; onEnd?: OnEnd }
+
+/**
+ * The payload of a turn's `onEnd` task, fixed in the step that stores the turn final. `outcome` names how it ended:
+ * `done`, `failed`, `stopped`, `interrupted` or `cancelled`; `failure` is the failure code (or, for a cancelled turn,
+ * why it was cancelled), else null; `structuredOutput` the terminal event's value, else null.
+ */
+export interface TurnEndPayload {
+  turnId: string
+  runId: string
+  chatId: string
+  outcome: 'done' | 'failed' | 'stopped' | 'interrupted' | 'cancelled'
+  failure: string | null
+  structuredOutput: unknown
+}
+
 /** Route 47's answer: what's still running, and until when a drain holds. */
 export interface DrainState {
   live: number
@@ -256,4 +280,14 @@ export interface BrandAgentRpc {
   warmup(): Promise<{ ok: true } | Refusal>
   /** The egress's audit route (8.7): the redacted `tool_calls` row, keyed `(turnId, n)`. */
   writeToolCall(turnId: string, n: number, entry: AuditEntry): Promise<void>
+  /**
+   * Schedules `{ id, kind, dueAtMs: dueAtMs ?? now }` (a past `dueAtMs` means now; `schedule()`, so any payload the task
+   * had is dropped). Throws for an unregistered kind, or an id another kind's task holds.
+   */
+  poke(p: { kind: string; id: string; dueAtMs?: number }): Promise<void>
+  /**
+   * Clears one quarantined task (attempts 0, due now, its payload kept byte for byte); an ops action, logged. Throws for
+   * an unregistered kind; a task of another kind is `not_found`.
+   */
+  revive(p: { kind: string; id: string }): Promise<'revived' | 'not_quarantined' | 'not_found'>
 }

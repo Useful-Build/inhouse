@@ -6,7 +6,8 @@
 // idempotent by task id, and nothing relies on alarm timing for authority. Passes never overlap: the runtime runs one
 // `alarm()` at a time per object ("Only one alarm() invocation runs per instance at a given moment", alarms docs).
 // https://developers.cloudflare.com/durable-objects/api/alarms/ and /api/sqlite-storage-api/ (read 2026-11-20)
-import type { BrandAgentPorts } from './ports.ts'
+import type { SendTurnResult } from '../../../shared/contract/runs.ts'
+import type { BrandAgentPorts, InternalSubmit, Refusal } from './ports.ts'
 import type { RunTokens } from './tokens.ts'
 
 export interface DueTask {
@@ -39,7 +40,37 @@ export type TaskResult = { done: true } | { retryAtMs: number; error: string }
  * changes nothing (the row exists), so a `done` answer still deletes it. A result of any other shape counts as a
  * retry with the default backoff.
  */
-export type TaskHandler<C = TaskContext> = (task: DueTask, ctx: C) => Promise<TaskResult>
+export type TaskHandler<C = TaskContext> = ((task: DueTask, ctx: C) => Promise<TaskResult>) & {
+  /**
+   * A registry entry may declare one seed task of its kind (PR 5, ask D): `ensureSeeds()` ensures `{ id, kind }` due now
+   * on every start (insert only if absent, so an existing one keeps its due time). Declared with `withSeed`.
+   */
+  readonly seed?: { readonly id: string }
+}
+
+/** A registry entry that declares its seed task: `'kind': withSeed(handler, { id: 'kind' })` in tasks/index.ts. */
+export function withSeed<C>(handler: TaskHandler<C>, seed: { id: string }): TaskHandler<C> {
+  const entry = (task: DueTask, ctx: C) => handler(task, ctx)
+  return Object.assign(entry, { seed: { id: seed.id } })
+}
+
+/** Every seed the registry declares, as `{ id, kind }`, in the registry's order. */
+export function registrySeeds(handlers: Readonly<Record<string, TaskHandler<never>>>): { id: string; kind: string }[] {
+  return Object.entries(handlers).flatMap(([kind, h]) => (h.seed === undefined ? [] : [{ id: h.seed.id, kind }]))
+}
+
+/**
+ * One submit from inside the object (PR 5, ask A): route 29's turn plus a structured-output format and an end task.
+ * Preconditions the caller owns (no D1 read here):
+ * - the chat exists in D1 with this owner: call `ensureChat` first (it also answers OK for a soft-deleted chat);
+ * - never submit into a person's chat that is in the trash (D1 `deleted_at_ms` set): the BrandAgent's own mark can say
+ *   live after a failed restore while D1 says deleted, and only route 29 reads D1;
+ * - `onEnd.id` is unique per turn: a same-kind end task still pending for an earlier turn would swallow this one's
+ *   (`ensure` never replaces it). An id another kind holds is refused `invalid`.
+ */
+export interface TaskRuns {
+  submit(t: InternalSubmit): Promise<SendTurnResult | Refusal>
+}
 
 /** The BrandAgent's own work its W1 tasks run (core.ts). */
 export interface AgentTasks {
@@ -63,6 +94,8 @@ export interface TaskContext {
   tokens: RunTokens
   ports: BrandAgentPorts
   agent: AgentTasks
+  /** Submits a turn through the same in-object path as `BrandAgentRpc.submitTurn` (core.ts `submitTurn`). */
+  runs: TaskRuns
 }
 
 /** The object's alarm. Only the scheduler holds one (a test scans the folder for any other `setAlarm`). */
@@ -103,6 +136,11 @@ export interface SqlScheduler extends Scheduler {
   settled(): Promise<void>
   /** How many tasks are quarantined (the runs signal goes red on any). */
   quarantinedCount(): number
+  /**
+   * Clears one quarantined task of this kind: `ready`, attempts 0, due now, a new generation, its payload kept byte for
+   * byte (unlike `schedule`, which replaces it). A task of another kind is `not_found`; a ready one is left as it is.
+   */
+  revive(id: string, kind: string): 'revived' | 'not_quarantined' | 'not_found'
 }
 
 export interface SchedulerOptions<C> {
@@ -275,5 +313,15 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
     },
     settled,
     quarantinedCount: () => sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM due_tasks WHERE state = 'quarantined'").one().n,
+    revive(id, kind) {
+      const row = sql.exec<{ kind: string; state: string }>('SELECT kind, state FROM due_tasks WHERE id = ?', id).toArray()[0]
+      if (!row || row.kind !== kind) return 'not_found'
+      if (row.state !== 'quarantined') return 'not_quarantined'
+      sql.exec(
+        `UPDATE due_tasks SET state = 'ready', attempts = 0, due_at_ms = ?, last_error = NULL, gen = ?
+          WHERE id = ? AND kind = ? AND state = 'quarantined'`, o.now(), ++lastGen, id, kind)
+      changed()
+      return 'revived'
+    },
   }
 }

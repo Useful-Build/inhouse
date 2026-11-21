@@ -14,10 +14,12 @@ import { apiError, apiJson } from '../http.ts'
 import { readCapped, storesOf } from '../db/handler-kit.ts'
 import { BRAND_OWNER } from '../db/settings.ts'
 import { CATALOG, resolveModel } from '../model/catalog.ts'
-import type { CatalogModel, SettingsView } from '../model/catalog.ts'
+import type { CatalogModel, ModelRefusal, SettingsView } from '../model/catalog.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
 import type { Actor, RunScope } from '../do/brand-agent/ports.ts'
 import type { Principal } from '../auth/index.ts'
+import type { Stores } from '../db/stores.ts'
+import type { Effort } from '../../shared/contract/common.ts'
 import type { Handler, HandlerContext } from '../routes.ts'
 
 /** Route 29's body cap (p3-design section 3). */
@@ -43,6 +45,39 @@ async function readJson(request: Request, max: number): Promise<unknown> {
 const refused = (r: { refused: { code: Parameters<typeof apiError>[0]; reason?: string } }) =>
   apiError(r.refused.code, r.refused.reason === undefined ? {} : { reason: r.refused.reason })
 
+/** What route 29 resolves from the picker's model id and the brand's technical settings (design 4.9). */
+export interface ResolvedTurn {
+  /** The turn model's API id, its picker id, its effort and the engine's background model. */
+  model: string
+  pickerId: string
+  effort: Effort
+  sideModel: string
+  maxTurns: number
+  /** null: any public host (an empty `t:webfetch`); a list narrows WebFetch to it. */
+  webFetchDomains: string[] | null
+}
+
+/**
+ * Route 29's model and settings resolution (design 4.9; PR 5, ask F), the one function the route and a due-task handler
+ * call: unknown model → `invalid`; switched off or unpriced → `forbidden`/`model_off`; the effort and side model from
+ * the catalogue and `tm:<id>:*`; `maxTurns` from `t:max_turns` (else 25); WebFetch's hosts from `t:webfetch` (empty:
+ * any public host; a stored value that breaks the rule allows none, fail closed).
+ */
+export async function resolveTurnSettings(
+  settingsStore: Pick<Stores['settings'], 'list'>, pickerId: string, catalog: readonly CatalogModel[] = CATALOG,
+): Promise<ResolvedTurn | { refused: ModelRefusal }> {
+  const settings: Record<string, string | boolean | null> = {}
+  for (const s of await settingsStore.list(BRAND_OWNER, 'technical')) settings[s.key] = s.value as string | boolean | null
+  const resolved = resolveModel(pickerId, settings as SettingsView, catalog)
+  if ('refused' in resolved) return resolved
+  const maxTurnsSetting = settings['t:max_turns']
+  const maxTurns = typeof maxTurnsSetting === 'string' && (MAX_TURNS as readonly string[]).includes(maxTurnsSetting) ? Number(maxTurnsSetting) : 25
+  const hostSetting = settings['t:webfetch']
+  const hosts = typeof hostSetting === 'string' ? parseHostlist(hostSetting) : []
+  const webFetchDomains = hosts === null ? [] : hosts.length === 0 ? null : hosts
+  return { model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort, sideModel: resolved.sideApiId, maxTurns, webFetchDomains }
+}
+
 /** Route 29 over a given catalogue (tests pass a priced copy; the route uses the shipped one). */
 export function sendTurnWith(catalog: readonly CatalogModel[]): Handler {
   return async (c: HandlerContext) => {
@@ -57,21 +92,9 @@ export function sendTurnWith(catalog: readonly CatalogModel[]): Handler {
     const chat = await stores.chats.ownerOf(chatId.data)
     if (!chat || chat.ownerId !== by.memberId || chat.deleted) return apiError('not_found')
     c.access.requireObject({ ownerId: chat.ownerId })
-    const settings: Record<string, string | boolean | null> = {}
-    for (const s of await stores.settings.list(BRAND_OWNER, 'technical')) settings[s.key] = s.value as string | boolean | null
-    const resolved = resolveModel(body.data.model, settings as SettingsView, catalog)
+    const resolved = await resolveTurnSettings(stores.settings, body.data.model, catalog)
     if ('refused' in resolved) return refused(resolved)
-    const maxTurnsSetting = settings['t:max_turns']
-    const maxTurns = typeof maxTurnsSetting === 'string' && (MAX_TURNS as readonly string[]).includes(maxTurnsSetting) ? Number(maxTurnsSetting) : 25
-    // An empty `t:webfetch` (the default) is any public host; a list narrows it; a stored value that breaks the rule
-    // allows no host (fail closed).
-    const hostSetting = settings['t:webfetch']
-    const hosts = typeof hostSetting === 'string' ? parseHostlist(hostSetting) : []
-    const webFetchDomains = hosts === null ? [] : hosts.length === 0 ? null : hosts
-    const answer = await brandAgent(c.env).submitTurn({
-      chatId: chatId.data, input: body.data, by, model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort,
-      sideModel: resolved.sideApiId, maxTurns, webFetchDomains,
-    })
+    const answer = await brandAgent(c.env).submitTurn({ chatId: chatId.data, input: body.data, by, ...resolved })
     return 'refused' in answer ? refused(answer) : apiJson(answer)
   }
 }

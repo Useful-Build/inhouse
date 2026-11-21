@@ -11,6 +11,7 @@ export const FAIL = {
   sessionCrashed: 'session_crashed', protocol: 'protocol', store: 'store', files: 'files', timeout: 'timeout', sdkError: 'sdk_error',
   maxTurns: 'max_turns', turnBudget: 'turn_budget', capReached: 'cap_reached', budgetBusy: 'budget_busy', poolFull: 'pool_full', unknown: 'unknown',
   modelOff: 'model_off',
+  structuredOutput: 'structured_output',
 } as const satisfies Record<string, TurnFailure>
 
 export const NOTICE = {

@@ -25,6 +25,8 @@ export interface StartInput {
   maxTurns: number
   webFetchDomains: string[] | null
   systemPrompt: string
+  /** Structured output (PR 5, ask C): the run answers a JSON value matching it. Absent on a turn without one. */
+  outputFormat?: RunStart['outputFormat']
 }
 
 export function buildStart(i: StartInput): StartWithoutToken {
@@ -46,6 +48,7 @@ export function buildStart(i: StartInput): StartWithoutToken {
     maxBudgetUsd: ceiling / 1_000_000,
     webFetchDomains: i.webFetchDomains,
     fileCaps: FILE_CAPS,
+    ...(i.outputFormat === undefined ? {} : { outputFormat: i.outputFormat }),
   }
 }
 
@@ -58,7 +61,8 @@ export const newId = (prefix: 'r_' | 't_'): string => prefix + base64url(crypto.
  * The fields of a send the payload hash covers (design 4.3; A2, 2026-11-20): the caller's input as sent. Not
  * `clientTurnKey` (the key itself), the principal, or anything the server resolves or mints (route 29's model id,
  * effort and settings, timestamps, ids), so a byte-for-byte re-submit after a settings change is still a dedupe.
- * `effort`, `outputFormat` and `onEnd` are hashed when the caller sends them (PR 5 adds the last two to the input).
+ * `effort`, `outputFormat` and `onEnd` are hashed when the caller sends them: only `TaskContext.runs.submit` does (its
+ * caller resolved the effort itself, route 29's settings function); route 29 sends none of the three.
  */
 export const PAYLOAD_FIELDS = ['text', 'quote', 'attachments (ids, in order)', 'model', 'effort', 'priority', 'outputFormat', 'onEnd'] as const
 
