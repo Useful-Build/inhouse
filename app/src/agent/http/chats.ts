@@ -5,8 +5,6 @@ import type { ChatList, ChatPage } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import type { Contract, Transport } from './transport'
 
-export const CHAT_PAGE_LIMIT = 50
-
 export function readChats(http: Transport, o: { cursor?: string; limit?: number; deleted?: boolean } = {}): Promise<ChatList> {
   const q = new URLSearchParams()
   if (o.cursor !== undefined) q.set('cursor', o.cursor)

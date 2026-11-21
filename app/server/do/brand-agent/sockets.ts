@@ -33,8 +33,6 @@ export const SMOKE_LEASE_MS = 15 * 60_000
 export const REPLAY_BURST = 500
 /** Runs one socket may follow at once: each costs its cursor in the 16 KB attachment. */
 export const MAX_RUNS_PER_SOCKET = 100
-/** The serialized attachment's limit (docs, "Maximum serialized size is 16,384 bytes"). */
-export const ATTACHMENT_MAX_BYTES = 16_384
 
 /** The close codes (4.10; the client's table is `app/src/agent/http/stream/close.ts`). */
 export const CLOSE_REAUTH = 4401

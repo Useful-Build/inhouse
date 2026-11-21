@@ -3,7 +3,7 @@
 // build-support/entry-without-zod.test.ts), so the client holds none at its top level: the chunk this file becomes loads
 // beside the first reads, and the client waits for it only where it parses.
 export { ErrorBodySchema } from '../../../shared/contract/common'
-import { ChatFileItemSchema } from '../../../shared/contract/attachments'
+import { UploadResultSchema } from '../../../shared/contract/attachments'
 import { AuditPageSchema } from '../../../shared/contract/audit'
 import { GrantCreateInputSchema, GrantEndInputSchema, GrantsListSchema, SupportGrantSchema } from '../../../shared/contract/grants'
 import { MeSchema } from '../../../shared/contract/me'
@@ -27,7 +27,7 @@ export const ANSWERS = {
   memory: MemoryDataSchema, memoryLine: MemoryLineSchema,
   // P3 (W5): chats (routes 22 to 28 and 49), turns (29 to 33), pause (35 to 37) and the model list (38).
   chatList: ChatListSchema, chatPage: ChatPageSchema, chat: ChatSummarySchema, chatItems: z.object({ items: z.array(ChatSummarySchema) }),
-  chatFile: ChatFileItemSchema, sendTurn: SendTurnResultSchema, ack: z.looseObject({}), activeRuns: ActiveRunsSchema, trace: TraceSchema, pause: PauseStateSchema,
+  chatFile: UploadResultSchema, sendTurn: SendTurnResultSchema, ack: z.looseObject({}), activeRuns: ActiveRunsSchema, trace: TraceSchema, pause: PauseStateSchema,
   models: z.object({ default: z.string().nullable(), modes: z.array(ModelModeSchema) }),
 }
 

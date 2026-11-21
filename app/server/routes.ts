@@ -12,7 +12,7 @@ import { health } from './ops/health.ts'
 import { getBrandSettings, getPersonalSettings, getTechnicalSettings, putBrandSetting, putPersonalSetting, putTechnicalSetting } from './api/settings.ts'
 import { SECURITY_HEADERS, apiError } from './http.ts'
 import { clientError } from '../worker/client-error.ts'
-// P3's routes (p3-design section 3): each owner's file, PR0's stubs until the owner fills them.
+// P3's routes (p3-design section 3): each in its owner's file.
 import { createChat, deleteChats, getChat, listChats, pinChat, renameChat, resetSession, restoreChats } from './api/chats.ts'
 import { activeRuns, getTrace, interruptTurn, sendTurn, stopTurn } from './api/runs.ts'
 import { openSocket } from './api/socket.ts'

@@ -16,7 +16,8 @@
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { AuditEntry, DEFERRED_INPUT_MAX_BYTES, SDK_MESSAGE_MAX_BYTES, STRUCTURED_MAX_DEPTH, STRUCTURED_OUTPUT_MAX_BYTES, jsonBytes, jsonDepth } from '../../../shared/protocol/index.ts'
-import { createFiles, snapshotOutputs } from '../files/files.ts'
+import { createFiles, errnoOf, snapshotOutputs } from '../files/files.ts'
+import { INHOUSE_MCP_SERVER } from '../guards/lists.ts'
 import { RootMessage, capSdkMessage, monotonicMs, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import { LOCAL_MAX_DEPTH, deeperThan, type LineResult } from '../protocol/ndjson.ts'
 import { createStoreAdapter, type Fetch } from '../store/adapter.ts'
@@ -58,9 +59,6 @@ export function cliEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out
 }
 
-/** The `inhouse` MCP server's name (R2's guard allows only it). */
-export const INHOUSE_SERVER = 'inhouse'
-
 /** Compaction (Wasim, item 22 E2): the 1M window, compacted at 600,000 tokens, below the gate's 650,000 refusal. */
 export const AUTO_COMPACT_WINDOW = 600_000
 
@@ -99,7 +97,7 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     systemPrompt: config.systemPrompt,
     // Structured output: the SDK adds its StructuredOutput tool (the guards let it through only with this set).
     ...(config.outputFormat ? { outputFormat: { type: config.outputFormat.type, schema: config.outputFormat.schema } } : {}),
-    ...(proxy ? { mcpServers: { [INHOUSE_SERVER]: { type: 'http', url: `${proxy.replace(/\/$/, '')}/mcp/` } } } : {}),
+    ...(proxy ? { mcpServers: { [INHOUSE_MCP_SERVER]: { type: 'http', url: `${proxy.replace(/\/$/, '')}/mcp/` } } } : {}),
     model: config.model,
     effort: config.effort,
     maxTurns: config.maxTurns,
@@ -380,7 +378,8 @@ export async function runSession(deps: {
     if (restored.event.restored > 0 || restored.event.leftOut.length > 0) await emit(restored.event)
   } catch (e) {
     if (stopping) return emit({ type: 'failed', reason: 'stopped', message: 'stopped before the query started' })
-    log({ type: 'files_restore_failed', error: message(e).slice(0, 300) })
+    // The code only: an fs error's message names a stored file's folder (chat content).
+    log({ type: 'files_restore_failed', ...errnoOf(e) })
     return emit({ type: 'failed', reason: 'files', message: "the chat's files could not be brought into the work folder" })
   }
   if (ended) return

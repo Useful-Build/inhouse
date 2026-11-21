@@ -5,8 +5,9 @@
 //   - it has an `env` block at all (each `env.<name>` can override vars, workers_dev and preview_urls, so none may
 //     deploy unchecked: the product config is one environment);
 //   - the test issuer is switched on: `INHOUSE_TEST_BUILD` or `TEST_ISSUER_JWKS` in `vars`;
-//   - a var is a Worker secret (`AUDIT_HASH_KEY`, the only one the server reads) or has a secret-like name (ends in
-//     SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with `wrangler secret put`, never in the config;
+//   - a var is a Worker secret (`AUDIT_HASH_KEY` or `AI_GATEWAY_TOKEN`, the product config's required ones) or has a
+//     secret-like name (ends in SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with
+//     `wrangler secret put`, never in the config;
 //   - `version_metadata` has no `binding` name (the Worker reads its release from that binding);
 //   - INHOUSE_ACCESS is missing or not JSON, or its `teamDomain` isn't `https://<name>.cloudflareaccess.com`;
 //   - INHOUSE_ACCESS.apps isn't exactly one `brand` app and one `inhouse` app;
@@ -122,8 +123,8 @@ export function stripJsonc(text) {
 
 const TEAM_DOMAIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$/
 const AUD = /^[0-9a-f]{64}$/i
-/** The Worker's secrets (server/db/stores.ts's StoresEnv), and the names that look like one. */
-const SECRET_VARS = new Set(['AUDIT_HASH_KEY'])
+/** The Worker's secrets (wrangler.product.jsonc's required ones), and the names that look like one. */
+const SECRET_VARS = new Set(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN'])
 const SECRET_LIKE = /(SECRET|TOKEN|PASSWORD|PRIVATE|_KEY)$/i
 
 /** Every reason this config may not deploy as a product (empty: it may). */

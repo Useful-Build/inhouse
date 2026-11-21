@@ -13,7 +13,6 @@ import type { EgressDeps, EgressRpc } from './deps.ts'
 import { eventsRoute } from './events.ts'
 import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
-import type { AiGatewayBinding } from './gateway.ts'
 import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
 import { modelRoute } from './model.ts'
@@ -80,8 +79,8 @@ export async function brandSettings(db: D1Database): Promise<SettingsView> {
   return out
 }
 
-/** The env the egress reads beyond the generated `Env`: the AI binding exists only on the product deploy config. */
-type EgressEnv = Env & { AI?: AiGatewayBinding; INHOUSE_TEST_BUILD?: string }
+/** The env the egress reads beyond the generated `Env`: the test build's flag, set only on the test build's config. */
+type EgressEnv = Env & { INHOUSE_TEST_BUILD?: string }
 
 /** The real deps from the Worker's env (the test build's model is the scripted one, and only there). */
 export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressProps): EgressDeps {

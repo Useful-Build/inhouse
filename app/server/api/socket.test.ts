@@ -67,6 +67,28 @@ describe('route 34 (4.10)', () => {
     vi.restoreAllMocks()
   })
 
+  it('a signed-in upgrade needs the exact Origin and, when sent, Sec-Fetch-Site same-origin: anything else is 403 bad_origin', async () => {
+    quiet()
+    const { call } = setup()
+    const signedIn = { ...upgrade, 'Cf-Access-Jwt-Assertion': await jwt('member') }
+    for (const headers of [
+      signedIn,
+      { ...signedIn, Origin: INHOUSE.origin },
+      { ...signedIn, Origin: `${BRAND.origin}/` },
+      { ...signedIn, Origin: BRAND.origin, 'Sec-Fetch-Site': 'cross-site' },
+      { ...signedIn, Origin: BRAND.origin, 'Sec-Fetch-Site': 'same-site' },
+    ]) {
+      const res = await call(BRAND.origin, '/api/socket?v=1', headers)
+      expect(res.status, JSON.stringify(headers)).toBe(403)
+      expect(await res.json()).toEqual({ error: { code: 'forbidden', reason: 'bad_origin' } })
+    }
+    const ok = await call(BRAND.origin, '/api/socket?v=1', { ...signedIn, Origin: BRAND.origin, 'Sec-Fetch-Site': 'same-origin' })
+    expect(ok.status).toBe(101)
+    ok.webSocket!.accept()
+    ok.webSocket!.close(1000)
+    vi.restoreAllMocks()
+  })
+
   it('a member gets a socket; a principal header the browser sent never reaches the object', async () => {
     const runId = 'r_SpoofSpoofSpoofSpoof01'
     await runInDurableObject(brandAgent(baseEnv), async (_i, state) => {

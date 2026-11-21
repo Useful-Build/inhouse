@@ -79,7 +79,6 @@ export const SocketClientMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('attach'), runId: RunIdSchema, fromSeq: z.number().int().min(0) }),
   z.object({ type: z.literal('detach'), runId: RunIdSchema }),
 ])
-export type SocketClientMsg = z.infer<typeof SocketClientMsgSchema>
 
 /** What the server sends: a frame, an attach's answer (the run's last seq and whether it's live), or a refusal. */
 export const SocketServerMsgSchema = z.discriminatedUnion('type', [

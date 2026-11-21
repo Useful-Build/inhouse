@@ -1,8 +1,9 @@
 // The `usage-sweep` due task (p3-design section 9), hourly: a turn that still holds budget (not final in D1) after its
 // run token ended (revoked at its fence, or expired) more than 15 minutes ago is settled from its calls. Owner: W4.
-// The calls are the BrandAgent's (`model_calls`, W1), so the sweep reads them through `TurnCallsReader`; until that
-// reader is wired it settles nothing (a money close books only what it can prove), logs what it found and leaves the
-// held budget visible to the `usage_stranded` signal (signal.ts). Idempotent by task id: settle is `final = 0` guarded.
+// The calls are the BrandAgent's (`model_calls`, W1), so the sweep reads them through `TurnCallsReader` (turn-calls.ts,
+// wired at the registry, do/brand-agent/tasks/index.ts). A turn the reader answers null for is not settled (a money close
+// books only what it can prove): the pass logs it and the held budget stays visible to the `usage_stranded` signal
+// (signal.ts). Idempotent by task id: settle is `final = 0` guarded.
 import type { DueTask, Scheduler, TaskContext, TaskHandler, TaskResult } from '../do/brand-agent/scheduler.ts'
 import { RUN_TOKEN_TTL_MS } from '../do/brand-agent/tokens.ts'
 import { createUsageLedger } from './ledger.ts'
@@ -13,7 +14,7 @@ import type { UsageLedger } from './ledger.ts'
  * open (deciding, granted or inflight) at their admitted worst case, cut calls by 8.3's cut-stream rule (priced at the
  * admitted worst case). `null`: nothing is settled; the reader answers null unless the BrandAgent's turn is terminal (no
  * live run, nothing queued), and for a turn it doesn't know. Synchronous: it reads the object's SQLite only. W1
- * implements it over `model_calls` and wires it at `usageSweep` below.
+ * implements it over `model_calls` (turn-calls.ts); the registry passes it to `createUsageSweep`.
  */
 export type TurnCallsReader = (sql: SqlStorage, turnId: string) => { micro: number } | null
 
@@ -86,6 +87,3 @@ export function createUsageSweep(turnCalls: TurnCallsReader | null): TaskHandler
     return { done: true }
   }
 }
-
-/** The registered handler (tasks/index.ts). W1 passes its `model_calls` reader here; null until then. */
-export const usageSweep: TaskHandler = createUsageSweep(null)

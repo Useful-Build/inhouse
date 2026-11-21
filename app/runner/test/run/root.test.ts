@@ -33,7 +33,7 @@ import { cleanup, gate, spawnFixture, testSessionUsers } from './support/test-se
 import { LOCAL_LINE_MAX_BYTES } from '../../src/protocol/ndjson.ts'
 import { API_MAX_CONNECTIONS } from '../../src/server/app.ts'
 import { RunStream } from '../../src/server/run-stream.ts'
-import { STDERR_LOG_CHARS, hostSession, stopEndWithinMs, type SessionHandle } from '../../src/server/session-host.ts'
+import { hostSession, stopEndWithinMs, type SessionHandle } from '../../src/server/session-host.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 
 let root: TestRoot
@@ -202,28 +202,34 @@ describe('a session that misbehaves', () => {
     expect(events.at(-1)?.type).toBe('finished')
   })
 
-  it("a crash logs the tail of the session's stderr, up to the cap: past 200 chars, never more than the cap", async () => {
-    for (const bytes of [1500, STDERR_LOG_CHARS * 3]) {
+  it("a crash logs stderr's size and nothing of its text but stack frames: no chat content reaches the log", async () => {
+    for (const bytes of [1500, 6000]) {
       root.logs.length = 0
-      // What the fixture writes: `<`, x's with a newline every 100 bytes, `>`.
-      const written = `<${Array.from({ length: bytes - 2 }, (_, i) => (i % 100 === 99 ? '\n' : 'x')).join('')}>`
       const events = await postRun(root, runStart({ prompt: `crash-loud:${bytes}` }))
       expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'session_crashed' })
-      const exit = root.logs.find((l) => l.type === 'session_exit') as { stderrBytes: number; stderrTail: string; stdoutBytes: number }
+      const exit = root.logs.find((l) => l.type === 'session_exit') as Record<string, unknown>
       // At least what it wrote: Node may add a runtime warning of its own.
       expect(exit.stderrBytes).toBeGreaterThanOrEqual(bytes)
-      expect(exit.stderrTail.length).toBeLessThanOrEqual(STDERR_LOG_CHARS)
-      // Its last words are the tail's: all of it under the cap, the cap's worth over it.
-      expect(exit.stderrTail.endsWith(written.slice(-STDERR_LOG_CHARS))).toBe(true)
-      if (bytes > STDERR_LOG_CHARS) expect(exit.stderrTail.length).toBe(STDERR_LOG_CHARS)
+      expect(exit.how).toBe('code 3')
+      expect(exit.stack).toEqual([])
       expect(exit.stdoutBytes).toBe(0)
+      expect(JSON.stringify(root.logs)).not.toContain('xxx')
     }
+  })
+
+  it('a crash whose stderr carries chat text logs at most 8 stack frames and never the text', async () => {
+    root.logs.length = 0
+    const events = await postRun(root, runStart({ prompt: 'crash-canary' }))
+    expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'session_crashed' })
+    const exit = root.logs.find((l) => l.type === 'session_exit') as Record<string, unknown>
+    expect(exit.stack).toEqual(Array.from({ length: 8 }, (_, i) => `    at f${i} (file:///s.js:${i}:1)`))
+    expect(JSON.stringify(root.logs)).not.toContain('CHAT-CANARY')
   })
 
   it('a crash after printing only on stdout: the log counts the stdout bytes and carries none of its text', async () => {
     const events = await postRun(root, runStart({ prompt: 'crash-stdout:5000' }))
     expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'session_crashed' })
-    const exit = root.logs.find((l) => l.type === 'session_exit') as { stderrTail: string; stdoutBytes: number }
+    const exit = root.logs.find((l) => l.type === 'session_exit') as { stdoutBytes: number }
     expect(exit.stdoutBytes).toBe(5000)
     expect(JSON.stringify(root.logs)).not.toContain('STDOUT-TEXT')
   })

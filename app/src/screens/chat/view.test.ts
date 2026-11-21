@@ -106,6 +106,52 @@ describe('saved files (the `file` event)', () => {
   })
 })
 
+describe('files the agent made but could not save, and earlier files left out', () => {
+  const started: ChatEvent = { type: 'turn.started', turnId: T, model: 'sonnet' }
+  const refused = (name: string, reason: Extract<ChatEvent, { type: 'file.refused' }>['reason']): ChatEvent => ({ type: 'file.refused', turnId: T, name, reason })
+  const notes = (v: ChatView) => v.messages.filter(m => m.role === 'event').map(m => [m.id, m.role === 'event' ? m.text : ''])
+
+  const REFUSED: [Extract<ChatEvent, { type: 'file.refused' }>['reason'], string][] = [
+    ['too_large', "Your Inhouse agent made report.pdf, but it wasn't saved because it's too big."],
+    ['too_many', "Your Inhouse agent made report.pdf, but it wasn't saved because this answer made too many files."],
+    ['type_not_allowed', "Your Inhouse agent made report.pdf, but it wasn't saved because your team doesn't allow that type of file."],
+    ['save_failed', "Your Inhouse agent made report.pdf, but it couldn't be saved. Ask again to try once more."],
+    ['bad_name', "Your Inhouse agent made report.pdf, but it wasn't saved because its name can't be used."],
+  ]
+  test.each(REFUSED)('a refused file (%s) shows a note with its name and why', (reason, text) => {
+    expect(notes(run(queued, started, refused('report.pdf', reason)))).toEqual([[`${T}.r.report.pdf`, text]])
+  })
+
+  test('the same refusal sent twice shows once; two files show two notes', () => {
+    const v = run(queued, started, refused('a.pdf', 'too_large'), refused('a.pdf', 'too_large'), refused('b.csv', 'save_failed'))
+    expect(notes(v).map(([id]) => id)).toEqual([`${T}.r.a.pdf`, `${T}.r.b.csv`])
+  })
+
+  test('files left out of the restore are named, without their folder', () => {
+    const v = run(queued, started, { type: 'files.restored', turnId: T, restored: 2, leftOut: ['inputs/big.pdf', 'outputs/old.csv'] })
+    expect(notes(v)).toEqual([[`${T}.l`, "Some of this chat's earlier files were too big to bring back together, so your Inhouse agent can't use these in this answer: big.pdf and old.csv."]])
+  })
+
+  test('past five left-out files, the rest are counted', () => {
+    const leftOut = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(n => `inputs/${n}.pdf`)
+    const v = run(queued, started, { type: 'files.restored', turnId: T, restored: 0, leftOut })
+    expect(notes(v)).toEqual([[`${T}.l`, "Some of this chat's earlier files were too big to bring back together, so your Inhouse agent can't use these in this answer: a.pdf, b.pdf, c.pdf, d.pdf, e.pdf and 2 more."]])
+  })
+
+  test("past the runner's 1000 names, its last entry counts the rest: the total stays right", () => {
+    // The runner's cap (files.ts capLeftOut): 999 names, then `and <n> more` for the 1501 past them (2500 in all).
+    const leftOut = [...Array.from({ length: 999 }, (_, i) => `inputs/f${i}.pdf`), 'and 1501 more']
+    const v = run(queued, started, { type: 'files.restored', turnId: T, restored: 0, leftOut })
+    expect(notes(v)).toEqual([[`${T}.l`, "Some of this chat's earlier files were too big to bring back together, so your Inhouse agent can't use these in this answer: f0.pdf, f1.pdf, f2.pdf, f3.pdf, f4.pdf and 2495 more."]])
+  })
+
+  test('a restore with nothing left out shows nothing', () => {
+    const before = run(queued, started)
+    const after = reduce(before, { type: 'files.restored', turnId: T, restored: 3, leftOut: [] }, AT)
+    expect(after).toBe(before)
+  })
+})
+
 describe('a live turn cancelled (a pause stops the answer being written)', () => {
   const live = [queued, { type: 'turn.started', turnId: T, model: 'sonnet' }] as const
   test('it gets its cancel note, the turn is over and the thinking line is gone', () => {

@@ -11,12 +11,10 @@ const fromRuns = (name: string, pick: keyof RunsHealth): Signal => ({
   check: async ({ env }) => (await brandAgent(env).runsHealth())[pick],
 })
 
+/** Listed in signals/index.ts. */
 export const RUNS_SIGNALS: readonly Signal[] = [
   fromRuns('runs_failed', 'failures'),
   fromRuns('runs_stuck', 'stuck'),
   fromRuns('session_damaged', 'damaged'),
   fromRuns('scheduler', 'quarantined'),
 ]
-
-/** Listed in signals/index.ts. */
-export const runsSignals: readonly Signal[] = RUNS_SIGNALS

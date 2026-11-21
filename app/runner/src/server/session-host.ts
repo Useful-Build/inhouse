@@ -63,8 +63,13 @@ export type SessionHandle = {
 }
 
 const STDERR_TAIL = 4096
-/** How much of the tail of a session's stderr the root logs when it ends without a terminal event. */
-export const STDERR_LOG_CHARS = 2000
+/** The most stack-frame lines (`    at ...`) from stderr's tail the root logs when a session ends without a terminal event. */
+const STACK_LOG_FRAMES = 8
+/**
+ * A V8 stack frame that ends in a code location: `at <fn> (<location>)` or `at <location>`, the location with no space or
+ * parenthesis, then `:line:col`. An indented chat line that merely starts with `at` ("at the meeting at 10:30:45") isn't one.
+ */
+const STACK_FRAME = /^\s+at (?:[^()]+ \([^()\s]+:\d+:\d+\)|[^()\s]+:\d+:\d+)$/
 /**
  * What the root lets wait unsent for a session on fd 4, beyond the run message: the rest is small (interrupt, stop, one
  * answer per audit entry the session sent). A session past it isn't reading: the root ends it as `protocol`.
@@ -243,7 +248,7 @@ export function hostSession(opts: {
   toSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, fd: 4, error: e.message }))
   // Nothing comes to the root on fd 4; read it anyway, so its end is seen and it closes with the session.
   toSession?.resume()
-  // Only stderr's tail is kept, for the crash log: the session's stdout can hold anything it printed (chat content, a
+  // Only stderr's tail is kept, for the crash log's stack frames: the session's stdout can hold anything it printed (chat content, a
   // tool's output), and Node's crash trace goes to stderr. stdout is drained, so it never blocks the session, and
   // counted.
   child.stdout?.on('data', (d: Buffer) => (stdoutBytes += d.length))
@@ -258,10 +263,15 @@ export function hostSession(opts: {
     clearTimeout(killTimer)
     clearTimeout(closeTimer)
     if (!stream.ended) {
-      // stderr's length and its last STDERR_LOG_CHARS: enough for a stack trace, bounded whatever the session printed.
-      // Still, the tail can hold chat content (an error that quotes a message or a tool's output): runner logs are
-      // as sensitive as the chat. stdout gives its byte count only.
-      log({ type: 'session_exit', runId, how, stderrBytes, stderrTail: stderrTail.slice(-STDERR_LOG_CHARS), stdoutBytes })
+      // No text from the session reaches the log: stderr can hold chat content (an error that quotes a message or a
+      // tool's output). It gives its byte count and the first stack-frame lines of its tail (code locations, each cut
+      // to 200 chars); stdout gives its byte count only. `how` is the exit code or signal.
+      const stack = stderrTail
+        .split('\n')
+        .filter((l) => STACK_FRAME.test(l))
+        .slice(0, STACK_LOG_FRAMES)
+        .map((l) => l.slice(0, 200))
+      log({ type: 'session_exit', runId, how, stderrBytes, stack, stdoutBytes })
       if (stopping) stream.emit({ type: 'failed', reason: 'stopped', message: 'stopped' })
       else stream.emit({ type: 'failed', reason: 'session_crashed', message: `the session process ended (${how})` })
     }

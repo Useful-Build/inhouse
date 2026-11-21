@@ -1,5 +1,5 @@
-// The due-task handler registry (p3-design section 6): every P3 kind and its owner's handler. W1's first PR lists all
-// nine against stubs in the owners' files; from then on this file is orchestrator-only (an owner fills its own file).
+// The due-task handler registry (p3-design section 6): every P3 kind (twelve) and its owner's handler, each in the
+// owner's own file. This file is orchestrator-only: a new kind is a line here plus its handler.
 import type { TaskHandler } from '../scheduler.ts'
 import { authoritySweep } from './authority-sweep.ts'
 import { callLease } from './call-lease.ts'

@@ -175,14 +175,3 @@ export function checkOrigin(request: Request, env: Pick<Env, 'INHOUSE_ACCESS'>):
   if (site !== null && site !== 'same-origin') return 'bad_origin'
   return null
 }
-
-/** Sign-in for a WebSocket upgrade (P3): `authenticate`, then the `Origin` match on the GET upgrade itself. */
-export async function authenticateUpgrade(request: Request, env: AuthEnv, stores: AuthStores, nowMs: number, requestId: string, keys?: JWTVerifyGetKey): Promise<AuthOutcome> {
-  const outcome = await authenticate(request, env, stores, nowMs, requestId, keys)
-  if (!('principal' in outcome)) return outcome
-  if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
-    return refuse({ refused: 'unauthorized' }, 'not_an_upgrade', requestId)
-  }
-  if (checkOrigin(request, env)) return refuse({ refused: 'forbidden', reason: 'bad_origin' }, 'bad_origin', requestId)
-  return outcome
-}

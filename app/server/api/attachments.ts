@@ -3,16 +3,16 @@
 // - 40 lists a chat's current files: the owner's own chat, or any chat for Inhouse under a grant.
 // - 41 downloads one: an output to any person on the brand (BD11, outputs are the team's), an input to its chat's owner
 //   or Inhouse under a grant. Always as an attachment, `nosniff` (the site headers), `default-src 'none'; sandbox` and
-//   `private, no-cache` (the photo route's values, which `keepPhotoHeaders` keeps), the stored type.
+//   `private, no-store` (`FILE_RESPONSE_HEADERS`, which `keepPhotoHeaders` keeps), the stored type.
 import { ChatFileItemSchema, FILE_NAME_HEADER } from '../../shared/contract/attachments.ts'
-import type { ChatFileItem } from '../../shared/contract/attachments.ts'
+import type { ChatFileItem, ChatFiles } from '../../shared/contract/attachments.ts'
 import { ChatIdSchema, FileIdSchema } from '../../shared/contract/chat-ids.ts'
 import { badFileName } from '../../shared/files/names.ts'
 import { storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
 import { downloadName, typeAllowed } from '../files-io/caps.ts'
 import type { StoredFile } from '../files-io/store.ts'
-import { PHOTO_RESPONSE_HEADERS, apiError, apiJson } from '../http.ts'
+import { FILE_RESPONSE_HEADERS, apiError, apiJson } from '../http.ts'
 import type { Handler } from '../routes.ts'
 
 const item = (f: StoredFile): ChatFileItem =>
@@ -63,7 +63,7 @@ export const listChatFiles: Handler = async c => {
   // A person sees only their own chat (another's is 404); Inhouse under a grant passes the owner rule.
   if (a.principal.kind === 'person' && owner !== a.principal.memberId) return apiError('not_found')
   a.access.requireObject({ ownerId: owner })
-  return apiJson({ items: (await stores.files.listCurrent(chatId.data)).map(item) })
+  return apiJson({ items: (await stores.files.listCurrent(chatId.data)).map(item) } satisfies ChatFiles)
 }
 
 /** `attachment; filename*=UTF-8''<name>` (RFC 6266), with an ASCII fallback. */
@@ -85,6 +85,6 @@ export const getFile: Handler = async c => {
   if (!body) return apiError('not_found')
   return new Response(body, {
     status: 200,
-    headers: { 'Content-Type': f.contentType, 'Content-Length': String(f.bytes), 'Content-Disposition': disposition(downloadName(f.name, f.contentType)), ...PHOTO_RESPONSE_HEADERS },
+    headers: { 'Content-Type': f.contentType, 'Content-Length': String(f.bytes), 'Content-Disposition': disposition(downloadName(f.name, f.contentType)), ...FILE_RESPONSE_HEADERS },
   })
 }

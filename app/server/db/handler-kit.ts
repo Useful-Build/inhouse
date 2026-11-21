@@ -33,7 +33,7 @@ export const MAX_BODY_BYTES = 16 * 1024
  * The body's bytes, read from the stream and counted as they arrive: null past `max` bytes, whatever `Content-Length`
  * says or whether it's sent at all (a chunked body has none). Stops reading at the cap.
  */
-export async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
+export async function readCapped(request: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
   const declared = request.headers.get('Content-Length')
   if (declared !== null && Number(declared) > max) return null
   if (!request.body) return new Uint8Array()
