@@ -1,6 +1,5 @@
-// Routes 59 to 61 (P4 W4) through the real request path (api.ts, the matrix rule, the stores and the migrations; only
-// sign-in is stood in for). The three route and matrix rows are the orchestrator's to add to routes.ts and
-// access-matrix.ts; the test adds them itself when they aren't there yet, with the exact rows the PR body lists.
+// Routes 59 to 61 (P4 W4) through the real request path (api.ts, the real routes and matrix rows, the stores and the
+// migrations; only sign-in is stood in for).
 // Ways it can fail, written down first:
 //  1. the bell shows a person a notice outside its audience (team, admins, a named member), or marks one they can't see
 //     (the answer must not tell which ids exist); reading twice differs from once;
@@ -16,7 +15,6 @@ import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { accessMatrix } from '../access-matrix.ts'
-import type { AccessRow } from '../access-matrix.ts'
 import { api } from '../api.ts'
 import type { ApiParts } from '../api.ts'
 import { checkAccess } from '../auth/matrix.ts'
@@ -24,11 +22,8 @@ import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
 import { lastLineId, linesSince } from '../db/test-support.ts'
 import { routes } from '../routes.ts'
-import type { Route } from '../routes.ts'
 import { recordActivity } from '../activity/store.ts'
 import { addNotice } from '../notices/store.ts'
-import { listActivity } from './activity.ts'
-import { listNotifications, markNotificationsRead } from './bell.ts'
 
 const db = env.DB
 const NOW = 1_800_000_000_000
@@ -40,27 +35,13 @@ const IH = 'm_ab_ih'
 const GRANT = 'g_abtest'
 const NAMES = { [A]: 'Ada Fixture-One', [B]: 'Bo Fixture-Two', [D]: 'Di Fixture-Three', [ADMIN]: 'Cy Fixture-Four' }
 
-const ROWS: AccessRow[] = [
-  { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
-  { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
-  { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
-]
-const ROUTES: Route[] = [
-  { method: 'GET', pattern: '/api/activity', handler: listActivity },
-  { method: 'GET', pattern: '/api/notifications', handler: listNotifications },
-  { method: 'POST', pattern: '/api/notifications/read', handler: markNotificationsRead },
-]
-const missing = <T extends { method: string; pattern: string }>(have: readonly T[], want: readonly T[]) => want.filter(w => !have.some(h => h.method === w.method && h.pattern === w.pattern))
-const matrix = [...accessMatrix, ...missing(accessMatrix, ROWS)]
-const table = [...routes, ...missing(routes, ROUTES)]
-
 const person = (memberId: string, role: 'member' | 'admin'): Principal => ({ kind: 'person', memberId, role, subject: `s-${memberId}`, requestId: `req-${Math.random()}`, expMs: NOW + 600_000 })
 const inhouse = (live: boolean): Principal => ({ kind: 'inhouse', memberId: IH, subject: 's-ih', grant: live ? { id: GRANT, endsAtMs: NOW + 60_000 } : null, requestId: `req-${Math.random()}`, expMs: NOW + 600_000 })
 const WHO = { a: person(A, 'member'), b: person(B, 'member'), d: person(D, 'member'), admin: person(ADMIN, 'admin') }
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
 async function send(principal: Principal, method: 'GET' | 'POST', path: string, body?: unknown) {
-  const parts: ApiParts = { authenticate: async () => ({ principal }), checkOrigin: () => null, checkAccess, stores: e => openStores(e), routes: table, accessMatrix: matrix }
+  const parts: ApiParts = { authenticate: async () => ({ principal }), checkOrigin: () => null, checkAccess, stores: e => openStores(e), routes, accessMatrix }
   const req = new Request(`http://brand.localhost:8787${path}`, {
     method, body: body === undefined ? undefined : JSON.stringify(body),
     headers: body === undefined ? {} : { 'Content-Type': 'application/json', Origin: 'http://brand.localhost:8787' },

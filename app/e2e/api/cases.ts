@@ -116,6 +116,10 @@ export const CASES: Record<string, RouteCase> = {
   // Route 67 (P4 wave 4): the test build's alarm-now control runs one scheduler pass (200); the product build answers 404
   // (server/ops/alarm-now.test.ts).
   'POST /api/ops/alarm': { design: d('open', [], ['release']), path: '/api/ops/alarm', json: {}, passes: 200 },
+  // Rows 59 to 61 (P4 W4): Activity (brand data) and the bell (personal, no Inhouse). Reading an id nobody has is a 200 that marks nothing.
+  'GET /api/activity': { design: d('brand_data', ALL), path: '/api/activity', passes: 200 },
+  'GET /api/notifications': { design: d('personal', PEOPLE), path: '/api/notifications', passes: 200 },
+  'POST /api/notifications/read': { design: d('personal', PEOPLE), path: '/api/notifications/read', json: { ids: ['n_e2e_nobody'] }, passes: 200 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 
