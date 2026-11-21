@@ -28,7 +28,13 @@ export const END_TASK_PREFIX = 'routine-end:'
  * written `.` (no slot key holds a `.`), because route 51's revive takes task ids by audit.ts `TaskIdSchema`, which has
  * no `|`: the recovery for an exhausted end (p4-w2.md section 6) must be able to name it.
  */
-export const endTaskId = (slotKey: string): string => `${END_TASK_PREFIX}${slotKey.replaceAll('|', '.')}`
+export function endTaskId(slotKey: string): string {
+  if (slotKey.includes('.')) throw new Error('endTaskId: a slot key never holds a "."')
+  return `${END_TASK_PREFIX}${slotKey.replaceAll('|', '.')}`
+}
+
+/** A Run now's client key: the turn key shape without `.` (audit.ts `SlotKeySchema`), so its end id round-trips. */
+export const CLIENT_KEY = /^[A-Za-z0-9_-]{8,64}$/
 
 /** The slot key an end task id names, or null when the id isn't a `routine-end` id. */
 export function slotKeyOfEndTask(taskId: string): string | null {

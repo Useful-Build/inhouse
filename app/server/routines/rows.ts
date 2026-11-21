@@ -2,6 +2,7 @@
 // alarm counter and the Activity line a close writes. Every slot write names its from-states (p4-w2.md section 6's
 // transition table), so a state only moves forward.
 import { recordActivity } from '../activity/store.ts'
+import type { ActivityGuard } from '../activity/store.ts'
 import { ACTIVITY_TEMPLATES } from '../activity/templates.ts'
 import type { ActivityTemplateId } from '../activity/templates.ts'
 import type { FieldValues } from '../activity/fields.ts'
@@ -109,8 +110,15 @@ export const alertStatement = (db: D1Database, code: 'key_reused' | 'tz_invalid'
     .bind(code, nowMs)
 
 /** A slot's own Activity line (source `routine-slot`): fixed words, the run as its trace, shown from the routine's stage. */
-export function slotLine(db: D1Database, l: { template: ActivityTemplateId; fields?: FieldValues; key: string; need: number; runId: string | null; atMs: number }): D1PreparedStatement {
+export function slotLine(
+  db: D1Database, l: { template: ActivityTemplateId; fields?: FieldValues; key: string; need: number; runId: string | null; atMs: number }, guard?: ActivityGuard,
+): D1PreparedStatement {
   return recordActivity(db, {
     template: l.template, fields: l.fields ?? {}, kind: ACTIVITY_TEMPLATES[l.template].kind, minStage: l.need as 0 | 1 | 2, atMs: l.atMs, ...(l.runId ? { trace: l.runId } : {}),
-  }, { source: 'routine-slot', key: l.key })
+  }, { source: 'routine-slot', key: l.key }, guard)
 }
+
+/** A slot line's guard: the slot is in `state` now (a close that matched nothing writes no line). */
+export const inState = (slotKey: string, state: SlotState, claimedAtMs?: number): ActivityGuard => claimedAtMs === undefined
+  ? { sql: 'EXISTS (SELECT 1 FROM routine_slots WHERE slot_key = ? AND state = ?)', params: [slotKey, state] }
+  : { sql: 'EXISTS (SELECT 1 FROM routine_slots WHERE slot_key = ? AND state = ? AND claimed_at_ms = ?)', params: [slotKey, state, claimedAtMs] }

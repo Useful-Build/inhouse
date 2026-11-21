@@ -21,6 +21,8 @@ describe('literal DST fixtures (tests 2 and 3)', () => {
     ['America/New_York', '2026-11-01', 1, 30, '2026-11-01T05:30:00Z', 'repeated: the first, 01:30 EDT'],
     ['Europe/London', '2026-03-29', 1, 30, '2026-03-29T01:00:00Z', 'skipped: 02:00 BST'],
     ['Europe/London', '2026-10-25', 1, 30, '2026-10-25T00:30:00Z', 'repeated: the first, 01:30 BST'],
+    // Cuba springs forward at local midnight (00:00 CST to 01:00 CDT): the gap is the first hour of the date itself.
+    ['America/Havana', '2026-03-08', 0, 30, '2026-03-08T05:00:00Z', 'skipped at midnight: 01:00 CDT'],
   ]
   for (const [tz, date, hour, minute, expected, why] of cases) {
     it(`${tz} ${date} ${hour}:${minute} → ${expected} (${why})`, () => {
@@ -76,23 +78,28 @@ describe('slotsDue against a brute-force oracle (test 1)', () => {
       hour: fc.integer({ min: 0, max: 23 }),
       minute: fc.integer({ min: 0, max: 59 }),
       atTransition: fc.boolean(),
+      spot: fc.nat(),
     })
     fc.assert(fc.property(window, w => {
       const ts = TRANSITIONS.get(w.zone)!
       const anchor = w.near && ts.length > 0 ? ts[w.pick % ts.length] + w.jitterMin * MIN : Z('2026-01-01T00:00:00Z') + w.startMin * MIN
-      // Half the time, schedule at the local wall time just before the transition (the skipped or repeated hour).
+      // Half the time, schedule at a wall time around the transition: any minute between the wall times 2 hours before and
+      // 1 hour after the hour the offset changed, so the skipped (or repeated) hour itself is often the target.
       let hour = w.hour
       let minute = w.minute
       if (w.atTransition && w.near && ts.length > 0) {
-        const t = wall(ts[w.pick % ts.length] - 15 * MIN, w.zone).slice(11)
-        hour = Number(t.slice(0, 2))
-        minute = (Number(t.slice(3, 5)) + w.minute % 45) % 60
+        const t = ts[w.pick % ts.length]
+        const asMin = (ms: number) => Date.parse(`${wall(ms, w.zone).replace(' ', 'T')}:00Z`) / MIN
+        const [lo, hi] = [asMin(t - 120 * MIN), asMin(t + 60 * MIN)].sort((a, b) => a - b)
+        const chosen = new Date((lo + (w.spot % (hi - lo + 1))) * MIN).toISOString().slice(11, 16)
+        hour = Number(chosen.slice(0, 2))
+        minute = Number(chosen.slice(3, 5))
       }
       const hhmm = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
       const from = Math.floor(anchor / MIN) * MIN
       const to = from + w.lengthMin * MIN
       const got = slotsDue(R({ days_mask: w.mask, hour, minute }), w.zone, from, to).map(s => ({ key: s.key, dueAtMs: s.dueAtMs }))
       expect(got).toEqual(oracle(w.zone, w.mask, hhmm, from, to))
-    }), { numRuns: 60 })
+    }), { numRuns: 100 })
   })
 })

@@ -2,6 +2,7 @@
 // a run failed or was lost, a claimed row outlived its deadline, or an invariant alarm fired, in the last 24 hours. The
 // detail names counts only. No rule reads `started` slots: one may wait on a question for days (section 6b).
 import type { Signal, SignalResult } from '../ops/signals/types.ts'
+import { BACKSTOP_MS } from './limits.ts'
 
 const DAY = 86_400_000
 /** A routine whose cursor lags `now` by more than this means the heartbeat stopped, or its pass throws. */
@@ -14,11 +15,15 @@ export async function routinesSignal(db: D1Database, nowMs: number): Promise<Sig
         (SELECT COUNT(*) FROM routines WHERE enabled = 1 AND deleted_at_ms IS NULL AND checked_until_ms < ?) AS lagging,
         (SELECT COUNT(*) FROM routine_slots s JOIN routines r ON r.id = s.routine_id
           WHERE r.origin = 'system' AND s.state = 'missed' AND s.claimed_at_ms >= ?) AS system_missed,
-        (SELECT COUNT(*) FROM routine_slots WHERE (state = 'ended' AND failure IS NOT NULL AND ended_at_ms >= ?)
-          OR ((state = 'lost' OR (state = 'refused' AND reason = 'internal')) AND claimed_at_ms >= ?)) AS failed,
+        (SELECT COUNT(*) FROM routine_slots WHERE
+          -- W3's quiet case: a brand with no store connected ends every check not_connected; that isn't a failure here.
+          (state = 'ended' AND failure IS NOT NULL AND failure <> 'not_connected' AND ended_at_ms >= ?)
+          -- A backstop close happens 8 days after the start: counted from then, so it turns the signal red when it closes.
+          OR (state = 'lost' AND reason = 'timeout' AND started_at_ms + ? >= ?)
+          OR (((state = 'lost' AND reason IS NOT 'timeout') OR (state = 'refused' AND reason = 'internal')) AND claimed_at_ms >= ?)) AS failed,
         (SELECT COUNT(*) FROM routine_slots WHERE state = 'claimed' AND deadline_ms < ?) AS overdue,
         (SELECT COUNT(*) FROM routine_alerts WHERE last_at_ms >= ?) AS alerts`,
-  ).bind(nowMs - LAG_MS, since, since, since, nowMs, since).first<Record<'lagging' | 'system_missed' | 'failed' | 'overdue' | 'alerts', number>>()
+  ).bind(nowMs - LAG_MS, since, since, BACKSTOP_MS, since, since, nowMs, since).first<Record<'lagging' | 'system_missed' | 'failed' | 'overdue' | 'alerts', number>>()
   if (!r) throw new Error('routinesSignal: no row')
   const parts = [
     r.lagging > 0 ? `${r.lagging} behind` : '',

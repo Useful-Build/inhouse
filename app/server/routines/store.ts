@@ -8,7 +8,7 @@ import { recordActivity } from '../activity/store.ts'
 import type { ActivityTemplateId } from '../activity/templates.ts'
 import { writeStamp } from '../db/ids.ts'
 import { brandFacts, submitSettings } from './brand.ts'
-import { manualSlotKey, newRoutineId } from './keys.ts'
+import { CLIENT_KEY, manualSlotKey, newRoutineId } from './keys.ts'
 import { renderSlot } from './render.ts'
 import { slotInsert } from './rows.ts'
 import type { RoutineRow, SlotRow } from './rows.ts'
@@ -35,15 +35,21 @@ function routineAudit(db: D1Database, at: At, args: AuditArgs, routineId: string
 const stamped = (id: string, stamp: string): Gate => ({ sql: 'EXISTS (SELECT 1 FROM routines WHERE id = ? AND req_id = ?)', params: [id, stamp] })
 
 /**
- * A person's Activity line for a routine write (source `routine`, fixed words, the person as `actorId`). Written after
- * the write's batch committed and only when it changed the row: W4's `recordActivity` is a plain insert, so it can't ride
- * the write's guard; a crash between the two loses the line, never invents one.
+ * A person's Activity line for a routine write (source `routine`, fixed words, the person as `actorId`), in the write's
+ * own batch and guarded like its audit line, so it commits exactly when the write changed the row.
  */
-const personLine = (db: D1Database, template: ActivityTemplateId, at: At, key: string) =>
-  recordActivity(db, { template, fields: {}, kind: 'change', actorId: at.actorId, atMs: at.nowMs }, { source: 'routine', key })
+const personLine = (db: D1Database, template: ActivityTemplateId, at: At, key: string, guard?: Gate) =>
+  recordActivity(db, { template, fields: {}, kind: 'change', actorId: at.actorId, atMs: at.nowMs }, { source: 'routine', key }, guard)
 
 /** The creator, or an active Admin, inside the statement. Two params: the actor twice. */
 const MAY_MANAGE = "(creator_id = ? OR EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active'))"
+
+/** The row a write's `RETURNING *` gave back: no read after the commit, so a committed write never answers an error. */
+function written(r: D1Result, what: string): RoutineRow {
+  const row = (r.results as RoutineRow[] | undefined)?.[0]
+  if (!row) throw new Error(`${what}: the write returned no row`)
+  return row
+}
 
 export const readRoutine = (db: D1Database, id: string): Promise<RoutineRow | null> =>
   db.prepare('SELECT * FROM routines WHERE id = ?').bind(id).first<RoutineRow>()
@@ -77,18 +83,16 @@ export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourc
   if ((await brandFacts(db)).stage < 1) return { refused: 'stage' }
   const id = newRoutineId()
   const stamp = writeStamp(at.requestId)
-  await db.batch([
+  const [made] = await db.batch([
     db.prepare(
       `INSERT INTO routines (id, origin, kind, name, instruction, prompt_ref, days_mask, hour, minute, missed, need, enabled,
           creator_id, source_chat_id, checked_until_ms, created_at_ms, updated_at_ms, rev, req_id)
-        VALUES (?, 'team', 'agent', ?, ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, 1, ?)`,
+        VALUES (?, 'team', 'agent', ?, ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, 1, ?) RETURNING *`,
     ).bind(id, n.name, n.instruction, n.days_mask, n.hour, n.minute, n.missed, at.actorId, sourceChatId, at.nowMs, at.nowMs, at.nowMs, stamp),
     routineAudit(db, at, { action: 'routine.created', routineId: id, need: 1 }, id, stamped(id, stamp)),
+    personLine(db, 'routine_made', at, `${id}|created`),
   ])
-  await personLine(db, 'routine_made', at, `${id}|created`).run()
-  const row = await readRoutine(db, id)
-  if (!row) throw new Error('createRoutine: the row is missing after its insert')
-  return { ok: row }
+  return { ok: written(made, 'createRoutine') }
 }
 
 export interface RoutinePatch {
@@ -126,17 +130,15 @@ export async function updateRoutine(db: D1Database, id: string, ifRev: number, p
     db.prepare(
       `UPDATE routines SET instruction = ?, days_mask = ?, hour = ?, minute = ?, missed = ?, enabled = ?,
           checked_until_ms = CASE WHEN ? = 1 THEN ? ELSE checked_until_ms END, updated_at_ms = ?, rev = rev + 1, req_id = ?
-        WHERE id = ? AND rev = ? AND deleted_at_ms IS NULL AND ${MAY_MANAGE}`,
+        WHERE id = ? AND rev = ? AND deleted_at_ms IS NULL AND ${MAY_MANAGE} RETURNING *`,
     ).bind(next.instruction, next.days_mask, next.hour, next.minute, next.missed, next.enabled, resetCursor, at.nowMs, at.nowMs, stamp, id, ifRev, at.actorId, at.actorId),
   ]
   if (changed.length > 0) stmts.push(routineAudit(db, at, { action: 'routine.updated', routineId: id, changed }, id, stamped(id, stamp)))
   if (enabledChanged) stmts.push(routineAudit(db, at, { action: 'routine.enabled', routineId: id, on: next.enabled === 1 }, id, stamped(id, stamp)))
+  stmts.push(personLine(db, 'routine_changed', at, `${id}|rev${ifRev + 1}`, stamped(id, stamp)))
   const [res] = await db.batch(stmts)
   if (res.meta.changes === 0) return whyNot(db, id, ifRev, at.actorId, 'live')
-  await personLine(db, 'routine_changed', at, `${id}|rev${ifRev + 1}`).run()
-  const row = await readRoutine(db, id)
-  if (!row) throw new Error('updateRoutine: the row is missing after its update')
-  return { ok: row }
+  return { ok: written(res, 'updateRoutine') }
 }
 
 /** A soft delete by the creator or an Admin, against `ifRev` (Undo is route 56's restore). */
@@ -145,15 +147,13 @@ export async function deleteRoutine(db: D1Database, id: string, ifRev: number, a
   const [res] = await db.batch([
     db.prepare(
       `UPDATE routines SET deleted_at_ms = ?, updated_at_ms = ?, rev = rev + 1, req_id = ?
-        WHERE id = ? AND rev = ? AND deleted_at_ms IS NULL AND ${MAY_MANAGE}`,
+        WHERE id = ? AND rev = ? AND deleted_at_ms IS NULL AND ${MAY_MANAGE} RETURNING *`,
     ).bind(at.nowMs, at.nowMs, stamp, id, ifRev, at.actorId, at.actorId),
     routineAudit(db, at, { action: 'routine.deleted', routineId: id }, id, stamped(id, stamp)),
+    personLine(db, 'routine_deleted', at, `${id}|rev${ifRev + 1}`, stamped(id, stamp)),
   ])
   if (res.meta.changes === 0) return whyNot(db, id, ifRev, at.actorId, 'live')
-  await personLine(db, 'routine_deleted', at, `${id}|rev${ifRev + 1}`).run()
-  const row = await readRoutine(db, id)
-  if (!row) throw new Error('deleteRoutine: the row is missing after its update')
-  return { ok: row }
+  return { ok: written(res, 'deleteRoutine') }
 }
 
 export type RunNowOutcome =
@@ -169,6 +169,7 @@ export type RunNowOutcome =
  * (`run_open`). A disabled routine may run (OC 10); a deleted one is not found; a team routine below its stage is refused.
  */
 export async function runNow(db: D1Database, routineId: string, clientKey: string, at: At): Promise<RunNowOutcome> {
+  if (!CLIENT_KEY.test(clientKey)) throw new Error('runNow: a client key is 8 to 64 of A-Z a-z 0-9 _ -')
   const key = manualSlotKey(routineId, clientKey)
   const existing = await db.prepare('SELECT * FROM routine_slots WHERE slot_key = ?').bind(key).first<SlotRow>()
   if (existing) return { ok: existing }

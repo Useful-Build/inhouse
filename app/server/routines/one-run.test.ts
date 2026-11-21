@@ -69,7 +69,7 @@ type Op =
 const maybe = (max: number) => fc.option(fc.nat({ max }), { nil: null, freq: 2 })
 const opA: fc.Arbitrary<Op> = fc.oneof(
   { weight: 4, arbitrary: fc.record({ t: fc.constant('advance' as const), min: fc.oneof(fc.integer({ min: 1, max: 30 }), fc.integer({ min: 40, max: 600 }), fc.integer({ min: 1000, max: 12_000 })) }) },
-  { weight: 4, arbitrary: fc.record({ t: fc.constantFrom('tick' as const, 'poke' as const), crashAt: maybe(14), writeAt: maybe(6), write: fc.constantFrom(...WRITES), crashAfterSubmit: fc.boolean() }) },
+  { weight: 4, arbitrary: fc.record({ t: fc.constantFrom('tick' as const, 'poke' as const), crashAt: maybe(14), writeAt: maybe(14), write: fc.constantFrom(...WRITES), crashAfterSubmit: fc.boolean() }) },
   { weight: 1, arbitrary: fc.record({ t: fc.constant('dup' as const) }) },
   { weight: 1, arbitrary: fc.record({ t: fc.constant('runNow' as const), key: fc.nat({ max: 3 }) }) },
   { weight: 1, arbitrary: fc.record({ t: fc.constant('write' as const), write: fc.constantFrom(...WRITES) }) },
@@ -119,8 +119,9 @@ describe('one run per slot (test 4)', () => {
         }
 
         const tick = async (op: Extract<Op, { t: 'tick' | 'poke' }> | null, id: string) => {
-          const w = wrapD1(db, async (kind, n) => {
-            if (op?.writeAt !== null && op?.writeAt !== undefined && kind === 'batch' && n === op.writeAt) await applyWrite(op.write, r.id, now)
+          const w = wrapD1(db, async (_kind, n) => {
+            // A route write lands before any read or batch of the pass (#250 review: reads too, so the last read before a submit is tested).
+            if (op?.writeAt !== null && op?.writeAt !== undefined && n === op.writeAt) await applyWrite(op.write, r.id, now)
             if (op?.crashAt !== null && op?.crashAt !== undefined && n === op.crashAt) throw new Crash()
           })
           h.runs.refuse = () => {

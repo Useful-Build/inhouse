@@ -66,4 +66,28 @@ describe('routinesSignal (test 12)', () => {
     expect(s.ok).toBe(false)
     expect(s.detail).toContain('1 alarms')
   })
+
+  it('a backstop lost (timeout) turns it red when it closes, 8 days after the start', async () => {
+    const h = harness()
+    const r = await insertRoutine(routine({ creator_id: CREATOR, checked_until_ms: SIX - MIN }))
+    await h.tick(SIX)
+    await db.prepare('UPDATE routines SET enabled = 0 WHERE id = ?').bind(r.id).run()
+    const [turn] = h.runs.turns.values()
+    h.status.set(turn.chatId, { waiting: true, liveRunId: null })
+    const late = SIX + 8 * 24 * 60 * MIN + MIN
+    await h.tick(late)
+    expect((await slotsOf(r.id)).map(s => [s.state, s.reason])).toEqual([['lost', 'timeout']])
+    expect(await routinesSignal(db, late)).toEqual({ ok: false, detail: '1 failed or lost' })
+  })
+
+  it('an end with not_connected (W3\'s quiet case) stays green; another failure is red', async () => {
+    const h = harness()
+    await insertRoutine(routine({ creator_id: CREATOR, checked_until_ms: SIX - MIN }))
+    await h.tick(SIX)
+    const [turn] = h.runs.turns.values()
+    await h.end(turn, SIX + 5 * MIN, { outcome: 'done', failure: 'not_connected' })
+    expect(await routinesSignal(db, SIX + 6 * MIN)).toEqual({ ok: true })
+    await db.prepare("UPDATE routine_slots SET failure = 'run_failed'").run()
+    expect(await routinesSignal(db, SIX + 6 * MIN)).toEqual({ ok: false, detail: '1 failed or lost' })
+  })
 })

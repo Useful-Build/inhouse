@@ -310,3 +310,45 @@ describe('a soft-deleted chat (test 16)', () => {
     expect(slots[1].chat_id).not.toBe(first.chat_id)
   })
 })
+
+describe('the sweep past waiting rows (#250 review)', () => {
+  it('51 started rows waiting on a question don\'t starve a newer overdue one, nor stop the pass early', async () => {
+    const h = harness()
+    const r = await insertRoutine(routine({ creator_id: CREATOR, checked_until_ms: six(D1), enabled: 0 }))
+    const insert = (key: string, chat: string, startedAt: number) => db.prepare(
+      `INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key,
+          prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms, started_at_ms, run_id)
+        VALUES (?, ?, 'scheduled', ?, '06:00', 'America/New_York', ?, ?, 'started', ?, 'rs_key', 'x', '{}', 1, ?, ?, ?, 'r_AAAAAAAAAAAAAAAAAAAAAA')`,
+    ).bind(key, r.id, D1, startedAt, startedAt + 10 * MIN, chat, CREATOR, startedAt, startedAt)
+    const stmts = []
+    for (let i = 0; i < 51; i++) {
+      const chat = `rc_wait_${String(i).padStart(2, '0')}`
+      stmts.push(insert(`${r.id}|${D1}|wait-${String(i).padStart(2, '0')}`, chat, six(D1) + i * 1000))
+      h.status.set(chat, { waiting: true, liveRunId: null })
+    }
+    stmts.push(insert(`${r.id}|${D1}|overdue`, 'rc_overdue', six(D1) + 60_000))
+    await db.batch(stmts)
+    const now = six(D1) + 2 * 60 * MIN
+    await h.tick(now)
+    const overdue = await db.prepare('SELECT state, reason FROM routine_slots WHERE slot_key = ?').bind(`${r.id}|${D1}|overdue`).first()
+    expect(overdue).toEqual({ state: 'lost', reason: 'no_end' })
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM routine_slots WHERE state = 'started'").first('n')).toBe(51)
+    // Not stopped early: the heartbeat isn't re-armed at now.
+    expect(h.scheduler.heartbeatAt()).toBeGreaterThan(now)
+  })
+})
+
+describe('guarded lines (#250 review)', () => {
+  it('a decide batch that lost its gate inserts no row and writes no missed line', async () => {
+    const { wrapD1 } = await import('./test-kit.ts')
+    const h = harness()
+    const r = await insertRoutine(routine({ creator_id: CREATOR, checked_until_ms: six(D1) - 10 * MIN }))
+    // A route write lands right before the pass's first batch (the decide batch): rev moves on.
+    const w = wrapD1(db, async (kind) => {
+      if (kind === 'batch') await db.prepare('UPDATE routines SET rev = rev + 1 WHERE id = ? AND rev = 1').bind(r.id).run()
+    })
+    await h.tick(six(D1) + 180 * MIN, undefined, w.db)
+    expect(await slotsOf(r.id)).toEqual([])
+    expect(await linesOf(r.id)).toEqual([])
+  })
+})

@@ -58,6 +58,10 @@ describe('the end task id', () => {
       expect(slotKeyOfEndTask(endTaskId(key))).toBe(key)
     }
   })
+
+  it('refuses a slot key holding a "." (it would not round-trip)', () => {
+    expect(() => endTaskId('now|rt_AAAAAAAAAAAAAAAAAAAAAA|key.dots')).toThrow('never holds')
+  })
 })
 
 describe('one batch, idempotent (test 11)', () => {

@@ -8,12 +8,13 @@
 import { ensureChat } from '../db/chats.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
 import type { DueTask, TaskContext, TaskResult } from '../do/brand-agent/scheduler.ts'
-import { brandFacts, submitSettings } from './brand.ts'
+import { brandFacts, stageIndex, submitSettings } from './brand.ts'
 import type { BrandFacts, SubmitSettings } from './brand.ts'
 import { renderSlot, submitOf } from './render.ts'
-import { alertStatement, slotInsert, slotLine } from './rows.ts'
+import { alertStatement, inState, slotInsert, slotLine } from './rows.ts'
 import type { NewSlot, RoutineRow, SlotRow } from './rows.ts'
 import { nextSlot, slotsDue } from './slots.ts'
+import { BACKSTOP_MS } from './limits.ts'
 import type { Slot } from './slots.ts'
 
 export const TICK_KIND = 'routine-tick'
@@ -27,8 +28,7 @@ export const HEARTBEAT_MS = 5 * MIN
 export const ON_TIME_MS = 10 * MIN
 /** A started slot with no end after this, whose chat neither waits nor runs, is lost (OC 8). */
 export const LOST_AFTER_MS = 45 * MIN
-/** A started slot is lost after this whatever its chat says: P6's 7-day question expiry plus a day (section 6b). */
-export const BACKSTOP_MS = 8 * 24 * 60 * MIN
+export { BACKSTOP_MS } from './limits.ts'
 /** A transient refusal or a thrown submit waits this long before the row is tried again. */
 export const RETRY_MS = 30_000
 export const MAX_SUBMIT_FAILURES = 3
@@ -36,8 +36,10 @@ export const MAX_SUBMIT_FAILURES = 3
 export const DECIDE_LIMIT = 50
 /** Claimed rows worked per pass. */
 export const SUBMIT_LIMIT = 20
-/** Started rows checked per pass. */
+/** Started rows closed per pass, and the sweep's page size. */
 export const SWEEP_LIMIT = 50
+/** Pages of started rows one pass reads at most (waiting rows are read but not counted). */
+export const SWEEP_PAGES = 20
 /** At most this many rows that won't run (missed, skipped) per routine per pass; older ones advance the cursor unrecorded. */
 export const NOT_RUN_ROWS_MAX = 7
 /** The enabled routines a pass reads for the next-slot time (a brand has a handful). */
@@ -92,7 +94,7 @@ async function runPass(ctx: TickContext, now: number): Promise<PassResult> {
 
   const decided = await decideAll(db, brand, routines, now)
   const swept = await sweepStarted(db, ctx, now)
-  const worked = await workClaimed(db, ctx, brand, now)
+  const worked = await workClaimed(db, ctx, now)
 
   let nextSlotAt: number | null = null
   if (typeof brand.tz === 'string') {
@@ -169,17 +171,15 @@ async function decideRoutine(db: D1Database, r: RoutineRow, brand: { stage: numb
     'UPDATE routines SET checked_until_ms = ? WHERE id = ? AND rev = ? AND checked_until_ms = ? AND enabled = 1 AND deleted_at_ms IS NULL',
   ).bind(now, r.id, r.rev, r.checked_until_ms)
   const gate = { sql: 'EXISTS (SELECT 1 FROM routines WHERE id = ? AND rev = ? AND checked_until_ms = ?)', params: [r.id, r.rev, now] }
-  const results = await db.batch([cursor, ...rows.map(s => slotInsert(db, s, gate))])
+  // A missed row's Activity line rides the same batch, guarded on the row this pass just made (state and claim time).
+  const lines = rows.filter(s => s.state === 'missed')
+    .map(s => slotLine(db, { template: 'routine_missed', key: `${s.slot_key}|missed`, need: r.need, runId: null, atMs: now }, inState(s.slot_key, 'missed', now)))
+  const results = await db.batch([cursor, ...rows.map(s => slotInsert(db, s, gate)), ...lines])
   if (results[0].meta.changes === 0) {
     console.warn({ event: 'routine_decide_raced', routineId: r.id })
     return 0
   }
-  const inserted = rows.filter((_, i) => results[i + 1].meta.changes > 0)
-  // A missed row's Activity line, once the row is in (the same key on a re-run writes nothing twice).
-  const lines = inserted.filter(s => s.state === 'missed')
-    .map(s => slotLine(db, { template: 'routine_missed', key: `${s.slot_key}|missed`, need: r.need, runId: null, atMs: now }))
-  if (lines.length > 0) await db.batch(lines)
-  return inserted.length
+  return rows.filter((_, i) => results[i + 1].meta.changes > 0).length
 }
 
 // ---------- step 2: the open rows ----------
@@ -188,14 +188,26 @@ async function decideRoutine(db: D1Database, r: RoutineRow, brand: { stage: numb
 const close = (db: D1Database, slotKey: string, from: 'claimed' | 'started', to: 'lost' | 'missed' | 'skipped' | 'refused', reason: string) =>
   db.prepare('UPDATE routine_slots SET state = ?, reason = ? WHERE slot_key = ? AND state = ?').bind(to, reason, slotKey, from)
 
+type StartedRead = { slot_key: string; chat_id: string; run_id: string | null; started_at_ms: number; need: number }
+
+/**
+ * Started rows past 45 minutes, oldest first, paged by `(started_at_ms, slot_key)`. A row whose chat waits on a question
+ * or runs a turn is passed over without counting toward the bound, so a pile of waiting rows can't starve a newer
+ * overdue one or keep the pass "stopped early". At most SWEEP_LIMIT closes per pass; the scan itself stops after
+ * SWEEP_PAGES pages (logged), which never re-arms early.
+ */
 async function sweepStarted(db: D1Database, ctx: TickContext, now: number): Promise<{ moved: number; stoppedEarly: boolean }> {
-  const rows = (await db.prepare(
-    `SELECT s.slot_key, s.chat_id, s.run_id, s.started_at_ms, r.need FROM routine_slots s JOIN routines r ON r.id = s.routine_id
-      WHERE s.state = 'started' AND s.started_at_ms <= ? ORDER BY s.started_at_ms ASC LIMIT ?`,
-  ).bind(now - LOST_AFTER_MS, SWEEP_LIMIT + 1).all<{ slot_key: string; chat_id: string; run_id: string | null; started_at_ms: number; need: number }>()).results
   let moved = 0
-  for (const s of rows.slice(0, SWEEP_LIMIT)) {
-    try {
+  let closes = 0
+  let after: { ms: number; key: string } | null = null
+  for (let page = 0; page < SWEEP_PAGES; page++) {
+    const rows: StartedRead[] = (await db.prepare(
+      `SELECT s.slot_key, s.chat_id, s.run_id, s.started_at_ms, r.need FROM routine_slots s JOIN routines r ON r.id = s.routine_id
+        WHERE s.state = 'started' AND s.started_at_ms <= ? AND (? IS NULL OR (s.started_at_ms, s.slot_key) > (?, ?))
+        ORDER BY s.started_at_ms ASC, s.slot_key ASC LIMIT ?`,
+    ).bind(now - LOST_AFTER_MS, after?.ms ?? null, after?.ms ?? 0, after?.key ?? '', SWEEP_LIMIT).all<StartedRead>()).results
+    for (const s of rows) {
+      after = { ms: s.started_at_ms, key: s.slot_key }
       let reason: string
       if (now > s.started_at_ms + BACKSTOP_MS) reason = 'timeout'
       else {
@@ -204,16 +216,22 @@ async function sweepStarted(db: D1Database, ctx: TickContext, now: number): Prom
         if (st.waiting || st.liveRunId !== null) continue
         reason = 'no_end'
       }
-      const [res] = await db.batch([
-        close(db, s.slot_key, 'started', 'lost', reason),
-        slotLine(db, { template: 'routine_lost', key: `${s.slot_key}|lost`, need: s.need, runId: s.run_id, atMs: now }),
-      ])
-      moved += res.meta.changes
-    } catch (err) {
-      console.error({ event: 'routine_sweep_failed', error: errorText(err) })
+      if (closes === SWEEP_LIMIT) return { moved, stoppedEarly: true }
+      closes++
+      try {
+        const [res] = await db.batch([
+          close(db, s.slot_key, 'started', 'lost', reason),
+          slotLine(db, { template: 'routine_lost', key: `${s.slot_key}|lost`, need: s.need, runId: s.run_id, atMs: now }, inState(s.slot_key, 'lost')),
+        ])
+        moved += res.meta.changes
+      } catch (err) {
+        console.error({ event: 'routine_sweep_failed', error: errorText(err) })
+      }
     }
+    if (rows.length < SWEEP_LIMIT) return { moved, stoppedEarly: false }
   }
-  return { moved, stoppedEarly: rows.length > SWEEP_LIMIT }
+  console.warn({ event: 'routine_sweep_scan_capped', pages: SWEEP_PAGES })
+  return { moved, stoppedEarly: false }
 }
 
 interface ClaimedRead extends SlotRow {
@@ -222,17 +240,23 @@ interface ClaimedRead extends SlotRow {
   r_enabled: number
   r_deleted_at_ms: number | null
   chat_deleted_at_ms: number | null
+  /** The brand's `stage` setting as stored, read with the row (never the pass's earlier read). */
+  stage_json: string | null
 }
 
-async function workClaimed(db: D1Database, ctx: TickContext, brand: BrandFacts, now: number): Promise<{ moved: number; stoppedEarly: boolean }> {
+type ClaimedKey = { slot_key: string; chat_id: string; local_date: string; r_name: string }
+
+async function workClaimed(db: D1Database, ctx: TickContext, now: number): Promise<{ moved: number; stoppedEarly: boolean }> {
   const keys = (await db.prepare(
     // Closest to expiry first; among equals, the one waiting longest, so a bound can't starve the same rows every pass.
-    "SELECT slot_key FROM routine_slots WHERE state = 'claimed' AND next_attempt_ms <= ? ORDER BY deadline_ms ASC, next_attempt_ms ASC, claimed_at_ms ASC, slot_key ASC LIMIT ?",
-  ).bind(now, SUBMIT_LIMIT + 1).all<{ slot_key: string }>()).results
+    `SELECT s.slot_key, s.chat_id, s.local_date, r.name AS r_name FROM routine_slots s JOIN routines r ON r.id = s.routine_id
+      WHERE s.state = 'claimed' AND s.next_attempt_ms <= ?
+      ORDER BY s.deadline_ms ASC, s.next_attempt_ms ASC, s.claimed_at_ms ASC, s.slot_key ASC LIMIT ?`,
+  ).bind(now, SUBMIT_LIMIT + 1).all<ClaimedKey>()).results
   let moved = 0
-  for (const { slot_key } of keys.slice(0, SUBMIT_LIMIT)) {
+  for (const k of keys.slice(0, SUBMIT_LIMIT)) {
     try {
-      moved += await workOne(db, ctx, brand, slot_key, now)
+      moved += await workOne(db, ctx, k, now)
     } catch (err) {
       console.error({ event: 'routine_work_failed', error: errorText(err) })
     }
@@ -240,26 +264,49 @@ async function workClaimed(db: D1Database, ctx: TickContext, brand: BrandFacts, 
   return { moved, stoppedEarly: keys.length > SUBMIT_LIMIT }
 }
 
-/** One claimed row: re-read it with its routine and chat, close it or submit it. How many rows it moved (0 or 1). */
-async function workOne(db: D1Database, ctx: TickContext, brand: BrandFacts, slotKey: string, now: number): Promise<number> {
+/** A thrown submit (or chat): one more failure, tried again after the delay; the third makes it `refused` (internal). */
+async function failedOnce(db: D1Database, slotKey: string, now: number, err: unknown): Promise<number> {
+  console.error({ event: 'routine_submit_failed', error: errorText(err) })
+  const row = await db.prepare(
+    `UPDATE routine_slots SET submit_failures = submit_failures + 1, next_attempt_ms = ?,
+        state = CASE WHEN submit_failures + 1 >= ? THEN 'refused' ELSE state END,
+        reason = CASE WHEN submit_failures + 1 >= ? THEN 'internal' ELSE reason END
+      WHERE slot_key = ? AND state = 'claimed' RETURNING state`,
+  ).bind(now + RETRY_MS, MAX_SUBMIT_FAILURES, MAX_SUBMIT_FAILURES, slotKey).first<{ state: string }>()
+  return row?.state === 'refused' ? 1 : 0
+}
+
+/**
+ * One claimed row. The chat is ensured first, so the last D1 read (the row with its routine, chat and the brand's
+ * stage) sits right before the synchronous checks and the submit: no write can land between what decides and the run.
+ * How many rows it moved (0 or 1).
+ */
+async function workOne(db: D1Database, ctx: TickContext, k: ClaimedKey, now: number): Promise<number> {
+  try {
+    await ensureChat(db, { id: k.chat_id, ownerId: SYSTEM_MEMBER_ID, title: `${k.r_name}, ${k.local_date}` }, now)
+  } catch (err) {
+    return failedOnce(db, k.slot_key, now, err)
+  }
   const s = await db.prepare(
     `SELECT s.*, r.name AS r_name, r.need AS r_need, r.enabled AS r_enabled, r.deleted_at_ms AS r_deleted_at_ms,
-        c.deleted_at_ms AS chat_deleted_at_ms
+        c.deleted_at_ms AS chat_deleted_at_ms,
+        (SELECT value_json FROM settings WHERE owner = 'brand' AND key = 'stage') AS stage_json
       FROM routine_slots s JOIN routines r ON r.id = s.routine_id LEFT JOIN chats c ON c.id = s.chat_id
       WHERE s.slot_key = ? AND s.state = 'claimed'`,
-  ).bind(slotKey).first<ClaimedRead>()
+  ).bind(k.slot_key).first<ClaimedRead>()
   if (!s) return 0
   const closeTo = async (to: 'missed' | 'skipped', reason: string) => {
-    const stmts = [close(db, slotKey, 'claimed', to, reason)]
-    if (to === 'missed') stmts.push(slotLine(db, { template: 'routine_missed', key: `${slotKey}|missed`, need: s.r_need, runId: null, atMs: now }))
+    const stmts = [close(db, s.slot_key, 'claimed', to, reason)]
+    if (to === 'missed') stmts.push(slotLine(db, { template: 'routine_missed', key: `${s.slot_key}|missed`, need: s.r_need, runId: null, atMs: now }, inState(s.slot_key, 'missed')))
     const [res] = await db.batch(stmts)
     return res.meta.changes
   }
+  const stage = stageIndex(s.stage_json === null ? null : JSON.parse(s.stage_json))
   // Never a submit into a trashed chat: `ensureChat` answers OK for one and the in-object submit reads no D1 (rev 3.3).
   if (s.chat_deleted_at_ms !== null) return closeTo('skipped', 'chat_deleted')
   if (s.r_deleted_at_ms !== null) return closeTo('skipped', 'deleted')
   if (s.kind === 'scheduled' && s.r_enabled !== 1) return closeTo('skipped', 'disabled')
-  if (brand.stage < s.r_need) return closeTo('skipped', 'stage')
+  if (stage < s.r_need) return closeTo('skipped', 'stage')
   if (now > s.deadline_ms) return closeTo('missed', 'late')
   return submit(db, ctx, s, now)
 }
@@ -267,17 +314,9 @@ async function workOne(db: D1Database, ctx: TickContext, brand: BrandFacts, slot
 async function submit(db: D1Database, ctx: TickContext, s: ClaimedRead, now: number): Promise<number> {
   let answer: Awaited<ReturnType<TickContext['runs']['submit']>>
   try {
-    await ensureChat(db, { id: s.chat_id, ownerId: SYSTEM_MEMBER_ID, title: `${s.r_name}, ${s.local_date}` }, now)
     answer = await ctx.runs.submit(submitOf(s))
   } catch (err) {
-    console.error({ event: 'routine_submit_failed', error: errorText(err) })
-    const res = await db.prepare(
-      `UPDATE routine_slots SET submit_failures = submit_failures + 1, next_attempt_ms = ?,
-          state = CASE WHEN submit_failures + 1 >= ? THEN 'refused' ELSE state END,
-          reason = CASE WHEN submit_failures + 1 >= ? THEN 'internal' ELSE reason END
-        WHERE slot_key = ? AND state = 'claimed'`,
-    ).bind(now + RETRY_MS, MAX_SUBMIT_FAILURES, MAX_SUBMIT_FAILURES, s.slot_key).run()
-    return res.meta.changes > 0 && s.submit_failures + 1 >= MAX_SUBMIT_FAILURES ? 1 : 0
+    return failedOnce(db, s.slot_key, now, err)
   }
   if (!('refused' in answer)) {
     // Forward only (Sonnet H-2): an end that already landed (`ended`) can't be reopened by this answer.
