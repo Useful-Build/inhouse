@@ -24,18 +24,22 @@ async function loaded(routes: Routes) {
   await agent.whenLoaded()
   return { agent, ...s }
 }
-/** A client whose requests to `held` wait until `release()`: a write still on its way. */
-async function loadedHolding(routes: Routes, held: string) {
+/** A client whose requests to `held` (and `alsoHeld`) wait until `release()` (`releaseAlso()`): writes still on their way. */
+async function loadedHolding(routes: Routes, held: string, alsoHeld?: string) {
   const s = server(routes)
   let release!: () => void
+  let releaseAlso!: () => void
   const gate = new Promise<void>(r => { release = r })
+  const gateAlso = new Promise<void>(r => { releaseAlso = r })
   const fetch: typeof globalThis.fetch = async (input, init) => {
-    if (new URL(String(input), 'http://x.test').pathname === held) await gate
+    const path = new URL(String(input), 'http://x.test').pathname
+    if (path === held) await gate
+    if (path === alsoHeld) await gateAlso
     return s.fetch(input, init)
   }
   const agent = new HttpAgent({ fetch, now: () => NOW })
   await agent.whenLoaded()
-  return { agent, release, ...s }
+  return { agent, release, releaseAlso, ...s }
 }
 const body = (r: Req) => JSON.parse(r.body ?? 'null') as Record<string, unknown>
 
@@ -150,6 +154,46 @@ describe('the client: routines', () => {
     ])
     expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
     expect(agent.read().routines.find(r => r.id === 'rt_a')).toMatchObject({ rev: 3, last: LAST })
+  })
+
+  test('Undo during an in-flight delete: the routine stays shown live while the restore is queued (no flicker)', async () => {
+    let restored = false
+    const routes: Routes = {
+      ...reads({ routines: LIST }),
+      'GET /api/routines': () => ({ body: restored ? { ...LIST, routines: [def('rt_a', 3, { last: LAST }), def('rt_b', 2)] } : LIST }),
+      'POST /api/routines/rt_a/delete': (r: Req) => ({ body: state(def('rt_a', (body(r).ifRev as number) + 1, { last: LAST })) }),
+      'POST /api/routines/rt_a/restore': (r: Req) => { restored = true; return { body: state(def('rt_a', (body(r).ifRev as number) + 1, { last: LAST })) } },
+    }
+    // Both held: the screen is looked at between the delete's answer and the restore's.
+    const { agent, release, releaseAlso } = await loadedHolding(routes, '/api/routines/rt_a/delete', '/api/routines/rt_a/restore')
+    const pDelete = agent.deleteRoutine('rt_a')
+    const pUndo = agent.restoreRoutine('rt_a')
+    expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
+    release()
+    await pDelete
+    // The delete has answered; the restore is still to come: the screen keeps the Undo's mark.
+    expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
+    releaseAlso()
+    await pUndo
+    expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
+  })
+
+  test('a delete refused while an Undo is queued: the routine shows live, one notice, no restore sent', async () => {
+    const { agent, calls, release } = await loadedHolding({
+      ...reads({ routines: LIST }),
+      'POST /api/routines/rt_a/delete': refusal(403, 'forbidden', { reason: 'not_owner' }),
+    }, '/api/routines/rt_a/delete')
+    const heard: unknown[] = []
+    agent.onNotice(n => heard.push(n))
+    const pDelete = agent.deleteRoutine('rt_a')
+    const pUndo = agent.restoreRoutine('rt_a')
+    release()
+    await expect(pDelete).rejects.toMatchObject({ code: 'forbidden' })
+    await pUndo
+    expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
+    expect(agent.read().routines.map(r => r.id)).toContain('rt_a')
+    expect(heard).toHaveLength(1)
+    expect(calls.filter(c => c.path === '/api/routines/rt_a/restore')).toEqual([])
   })
 
   test('the Undo re-read keeps another routine\'s switch that is still on its way (L8)', async () => {

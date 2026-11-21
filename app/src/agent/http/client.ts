@@ -14,6 +14,7 @@ import type {
   MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SupportGrant, Trace, UsageData,
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
+import type { RoutineState } from '../../../shared/contract/routines'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
 import { ACTIVITY_PAGE, readActivityPage, splitActivity } from './activity'
 import { postNoticesRead, readNotifications } from './bell'
@@ -1370,18 +1371,27 @@ export class HttpAgent implements AgentClient {
       if (deleted) routinesDeleted[id] = true; else delete routinesDeleted[id]
       return { ...s, state: { ...s.state, routinesDeleted } }
     }
-    return this.write({
+    /** Where the server has it, from the lists only its answers move (never the screen's optimistic mark). */
+    const deletedOnServer = (s: Slices) => s.routinesGone.some(x => x.id === id)
+    /**
+     * `next` with the screen's mark: as the server has it, unless a later write in this routine's lane is queued, whose
+     * mark is on screen (`shown`) and stays until that write settles it.
+     */
+    const settle = (next: Slices, others: boolean, shown: Slices) => mark(next, others ? shown.state.routinesDeleted[id] === true : deletedOnServer(next))
+    return this.write<RoutineState | null>({
       lane: `routine:${id}`,
       apply: s => mark(s, what === 'delete'),
-      send: () => postRoutineRev(this.http, k, id, what, this.routineOf(id)?.r.rev ?? found.r.rev),
-      done: (s, st) => this.withRoutine(s, st.routine, what === 'delete'),
-      undo: (s, before) => mark(s, before.state.routinesDeleted[id] === true),
+      // Nothing to send when the write ahead of this one in the lane was refused and left the routine where this one
+      // would put it (an Undo queued behind a delete that failed): no request, no notice.
+      send: async () => (deletedOnServer(this.s) === (what === 'delete') ? null : postRoutineRev(this.http, k, id, what, this.routineOf(id)?.r.rev ?? found.r.rev)),
+      done: (s, st, others) => settle(st === null ? s : this.withRoutine(s, st.routine, what === 'delete'), others, s),
+      undo: (s, _before, others) => settle(s, others, s),
       // A restored routine goes back to its place in the server's order (newest first), which only the list knows.
       after: what === 'restore' ? () => this.loadRoutines(true) : undefined,
-      onConflict: (s, current) => {
+      onConflict: (s, current, others) => {
         const st = k.ANSWERS.routineState.safeParse(current)
         // Refused: it's still where it was before this write (deleted for a restore, live for a delete).
-        return st.success ? this.withRoutine(s, st.data.routine, what === 'restore') : s
+        return st.success ? settle(this.withRoutine(s, st.data.routine, what === 'restore'), others, s) : s
       },
     })
   }
