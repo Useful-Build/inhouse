@@ -21,8 +21,8 @@ const moreItem = async (page: Page, title: string, item: string) => {
 /** Approve a draft from its card: low-risk ones in one tap, the rest through Review in the panel. */
 const approveDraft = async (page: Page, title: string) => {
   const d = draft(page, title)
-  if (await d.getByRole('button', { name: 'Review', exact: true }).count()) {
-    await d.getByRole('button', { name: 'Review', exact: true }).click()
+  if (await d.getByRole('button', { name: 'Review draft', exact: true }).count()) {
+    await d.getByRole('button', { name: 'Review draft', exact: true }).click()
     await page.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click()
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -147,7 +147,7 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
   await shot(page, 'today-snoozed-dismissed')
 
   // A one-tap Approve on a low-risk card shows the toast with Undo, and the counts move together.
-  await card(page, '11 returns are not restocked').getByRole('button', { name: 'Approve', exact: true }).click()
+  await card(page, '11 returns are not restocked').getByRole('button', { name: 'Approve and restock', exact: true }).click()
   await expect(badge(page)).toContainText('3')
   await toast(page, '11 units restocked on Shopify').getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(badge(page)).toContainText('4')

@@ -5,6 +5,7 @@
 import { expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { mockClient, routeReady } from './support/clients/mock.js'
+import { openTraceFrom } from './support/steps.js'
 
 export const THEMES = ['light', 'dark'] as const
 export type Theme = (typeof THEMES)[number]
@@ -79,8 +80,9 @@ export const STATES: UiState[] = [
   {
     name: 'pop-team-bug', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
-      await (await sidebar(page)).getByRole('button', { name: 'Settings' }).click()
-      await page.getByRole('menuitem', { name: 'Report a bug' }).click()
+      // Report a bug left the account menu; the palette keeps it, and the window opens on that type.
+      await page.keyboard.press('ControlOrMeta+k')
+      await page.getByRole('dialog', { name: 'Search' }).getByRole('option', { name: 'Report a bug' }).click()
       await expect(page.getByText('Your Inhouse team')).toBeVisible()
     },
   },
@@ -101,7 +103,7 @@ export const STATES: UiState[] = [
   {
     name: 'pop-trace', stage: 'Act', scenario: 'Normal', hash: '#/chats/stuck', ready: '3 orders · $556', a11y: true,
     act: async page => {
-      await page.locator('main').getByRole('button', { name: /6 steps/ }).last().click()
+      await openTraceFrom(page.locator('main').getByRole('button', { name: /6 steps/ }).last())
       await expect(page.getByRole('dialog', { name: /What your Inhouse agent did/ })).toContainText('9.4s')
     },
   },
@@ -123,7 +125,7 @@ export const STATES: UiState[] = [
       // Low-risk drafts approve in one tap; the others (money, customers) through Review in the panel.
       const drafts = page.locator('main [data-slot=card]').filter({ has: page.getByRole('heading', { level: 2 }) })
       for (let n = await drafts.count(); n > 0; n--) {
-        const review = drafts.first().getByRole('button', { name: 'Review', exact: true })
+        const review = drafts.first().getByRole('button', { name: 'Review draft', exact: true })
         if (await review.count()) {
           await review.click()
           await page.getByRole('dialog').getByRole('button', { name: /^Approve/ }).click()

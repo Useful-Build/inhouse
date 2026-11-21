@@ -11,7 +11,11 @@ async function start(page: Page, fx: Fx) {
 }
 
 const palette = (page: Page) => page.getByRole('dialog', { name: 'Search' })
-const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
+/** The team window, from the account menu's "Your Inhouse team" (it left the sidebar). */
+async function openTeam(page: Page) {
+  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /account and settings/i }).click()
+  await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
+}
 
 test('Palette: Report a bug opens the bug window, Send waits for words, then the window closes and the confirmation shows', async ({ fx, page }) => {
   await start(page, fx)
@@ -47,7 +51,7 @@ test('Palette: Report a bug opens the bug window, Send waits for words, then the
   await expect(page.locator('[data-toast]').filter({ hasText: 'Bug sent to your Inhouse team. Thank you.' })).toBeVisible()
 
   // The report is among the open requests, as a bug.
-  await side(page).getByRole('button', { name: 'Message the team →' }).click()
+  await openTeam(page)
   await expect(team.getByText('The Approve button does nothing on a refund card', { exact: true })).toBeVisible()
   await expect(team.getByText(/^Report a bug · sent by .+, just now$/)).toBeVisible()
 })

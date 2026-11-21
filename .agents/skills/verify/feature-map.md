@@ -10,6 +10,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
 - Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts`, `e2e/ship/agent-chat.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts` and `agent-chat.spec.ts`: on the test build, `build=test`), never in CI's normal run.
+- Chat while it writes: the working line (agent mark, tool logo, sweep) and the word-by-word reveal are checked by no spec (the reveal's step sizes are property-tested in `src/screens/chat/reveal.test.ts`); an answer's text width (about 620px) and your message's (about 520px) are not measured; sources of an answer that cites nothing are not asserted.
 - Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
@@ -24,8 +25,8 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 Today: needs-you cards
   Path:     Today
-  Selector: article cards, button "Review"
-  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text
+  Selector: article cards (two columns on desktop, one on a phone), "Urgent" pill, draft sheet, button "Review draft" or "{cta}"
+  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the brand-tint sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill
   Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts
 
 Today: snooze and dismiss
@@ -49,13 +50,13 @@ Today: sort at Run
 Today: composer logo row
   Path:     Today -> composer
   Selector: tool logos, "+N" chip
-  Expected: 3 logos, a +N chip for the rest, and the count is real
+  Expected: 3 logos, a +N chip for the rest, and the count is real (in the button's name); the label is written out only when it says what the logos can't: no tools connected, some off in this chat, or some not read yet
   Covered:  e2e/dots-and-today.spec.ts
 
 ## Approvals
 
 Approvals: approve, edit, Undo
-  Path:     Today -> Review -> Approve and send (or Edit first)
+  Path:     Today -> Review draft -> Approve and send (or Edit first)
   Selector: panel button "Approve and send to Kestrel", toast "Undo"
   Expected: "goes out in 10 seconds" toast; Undo inside the hold cancels the send; a reload during the hold still sends it; Reset demo during the hold sends nothing
   Covered:  e2e/app.spec.ts, e2e/state.spec.ts, e2e/page-actions.spec.ts
@@ -66,9 +67,15 @@ Approvals: a draft with no text
   Expected: the panel opens on a note field and the note survives approve and Undo
   Covered:  e2e/today-approvals.spec.ts
 
+Approvals: draft cards
+  Path:     Approvals
+  Selector: one card per draft: "Urgent" pill, risk tag ("Spends $9,600", "Claims $1,240", "Goes to customers", "Low risk", "Needs review"), "{area} · {time}", draft text on the sheet, approver line, "Review draft" or the one-tap approve, "From {sources}"
+  Expected: one column; on a phone the tags sit above the title, detail rows stack and the primary is full width beside "···"
+  Covered:  e2e/today-approvals.spec.ts, e2e/today-approvals-phone.spec.ts, e2e/ship/needs-you-cards.spec.ts
+
 Approvals: approve all low-risk
   Path:     Approvals -> Approve all low-risk
-  Selector: button "Approve all low-risk", toast "Undo"
+  Selector: button "Approve all low-risk" with its count, toast "Undo"
   Expected: three drafts approved, one Undo takes all three back
   Covered:  e2e/today-approvals.spec.ts, e2e/toasts.spec.ts
 
@@ -121,8 +128,14 @@ Chat: Dictate
 Chat: answer actions
   Path:     answer -> hover or Tab into the row -> Reply, Copy, Regenerate, thumbs, More; More -> Send to #channel, Report a wrong answer, Delete
   Selector: answer row buttons, `[data-answer-actions]`, menu "Message actions"
-  Expected: at rest every answer (the newest too) shows only its steps line; hover or keyboard focus shows the actions and an open More menu keeps them; the menu has exactly Send to #channel (when a channel is connected), Report a wrong answer and Delete; the phone row is Copy, steps and More; markdown renders, Jump to latest appears when scrolled up mid-stream, steps open the trace
+  Expected: at rest every answer (the newest too) hides its actions; hover or keyboard focus shows them and an open More menu keeps them; the menu has exactly Send to #channel (when a channel is connected), Report a wrong answer and Delete; the phone row is Copy and More; markdown renders, Jump to latest appears when scrolled up mid-stream
   Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts
+
+Chat: steps, sources and the answer's own cards
+  Path:     a finished answer in a chat (`#/chats/stuck`)
+  Selector: `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
+  Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; a chat with messages has no dot grid (Today and an empty new chat keep it); the chat column is 880px
+  Covered:  e2e/conversation.spec.ts, e2e/sample-data.spec.ts, e2e/conversation-polish.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts
 
 Chat: queue and edit
   Path:     send two messages mid-answer, Edit a question
@@ -213,7 +226,7 @@ Skills
   Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts
 
 Usage
-  Path:     Usage
+  Path:     account menu -> Usage (it isn't in the sidebar; the palette lists it)
   Selector: month picker, daily bars
   Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state
   Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts
@@ -387,19 +400,19 @@ Palette: theme switch
 Palette: Report a bug
   Path:     Cmd+K -> Report a bug
   Selector: option "Report a bug", team window Send
-  Expected: the window opens on the bug type; Send waits for words; sending closes the window, shows "Bug sent to your Inhouse team. Thank you." and lists the report among the open requests (the account menu's item opens it: `tour.spec.ts`)
+  Expected: the window opens on the bug type; Send waits for words; sending closes the window, shows "Bug sent to your Inhouse team. Thank you." and lists the report among the open requests (the palette and a crash's Message the team are the ways in on that type; the account menu has one team entry)
   Covered:  e2e/report-bug.spec.ts
 
 Sidebar
   Path:     sidebar -> collapse
-  Selector: collapse button, rail tooltips
-  Expected: collapses to a rail, stays collapsed after a reload, expands with the shortcut
-  Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts
+  Selector: nav "Main": Today, Approvals (count), Activity, then group "Your agent" (Routines, Skills, Tools, Library); Recent chats; the account row; rail tooltips
+  Expected: two sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; collapses to a rail, stays collapsed after a reload, expands with the shortcut
+  Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts, e2e/help-account-menu.spec.ts, e2e/library.spec.ts
 
 Account menu
   Path:     sidebar -> account and settings
-  Selector: menu "Account", items Your settings, Team settings, Help and guides, Report a bug, Send feedback, Sign out
-  Expected: Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Send feedback opens the team window on Feedback with an empty field and no screenshot box; Report a bug opens it on the bug type; Sign out says it isn't connected
+  Selector: menu "Account", items Your settings, Team settings, Usage | Your Inhouse team ("N open"), Help and guides | Sign out
+  Expected: Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Usage opens the Usage page; Your Inhouse team opens the team window and its count equals the "Open requests" rows (shown only above 0); Report a bug and Feedback are request types in that window; Sign out says it isn't connected
   Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts
 
 Help and guides
@@ -410,8 +423,8 @@ Help and guides
 
 Problem panel
   Path:     Today or Approvals -> a card
-  Selector: panel dialog, Approve, Edit, Don't send, Ask <approver>, Manage, "Ask about this…"
-  Expected: the approval actions as in Approvals above; Ask <approver> says it isn't connected; Ask about this… (in the panel and the card menu) starts a chat holding the question that a reload keeps; Manage on a memory note opens Team memory
+  Selector: panel dialog, header "Ask" (named "Ask about this"), progress list, facts strip, sources toggle, the draft document with Edit, Don't send, Approve, Ask <approver>, Manage
+  Expected: the approval actions as in Approvals above; the footer (waiting only) holds Don't send and the main action with the amount it moves; Ask <approver> says it isn't connected; Ask (and the card menu's Ask about this) starts a chat holding the question that a reload keeps; Manage on a memory note opens Team memory; a purchase order shows its item table and total
   Covered:  e2e/problem-panel.spec.ts, e2e/today-approvals.spec.ts, e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts
 
 Trace window
@@ -421,7 +434,7 @@ Trace window
   Covered:  e2e/app.spec.ts, e2e/conversation-polish.spec.ts, e2e/no-persona.spec.ts, e2e/overlays-keyboard.spec.ts
 
 Notifications and team window
-  Path:     bell -> a line; Message the team
+  Path:     bell -> a line; account menu -> Your Inhouse team
   Selector: bell count, window Send
   Expected: reading a line drops the count, Mark all as read empties it; Send waits for words and carries the name from Settings
   Covered:  e2e/navigation.spec.ts

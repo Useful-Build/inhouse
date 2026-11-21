@@ -1,15 +1,16 @@
 // Today: greeting, composer, then the problem cards (or the first-day and loading states).
 import { Fragment } from 'react'
 import { Composer } from '../components/Composer'
-import { amountOf, flags, handled, issueCards, pendingIds, setupRows, todayCopy, TONE_TEXT } from '../state/derive'
-import { sevClass } from '../ui/severity'
+import { amountOf, draftView, flags, handled, issueCards, kindIcon, pendingIds, riskLabel, setupRows, todayCopy, TONE_TEXT } from '../state/derive'
+import { isUrgent } from '../ui/severity'
 import { fmtMoney } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { AgentMark, Button, CardGrid, Dot, EmptyState, Icon, IconButton, LogoTile, MenuItem, SectionHeader } from '../ui'
+import { AgentMark, Button, CardGrid, EmptyState, Icon, IconButton, LogoTile, MenuItem, SectionHeader } from '../ui'
 import { Select, TAP } from '../ui/fields'
 
 const SORT_AMOUNT = 'Biggest amount first'
@@ -72,7 +73,7 @@ export function Today() {
       {f.isLoading && (
         <div className="mt-7">
           <SectionHeader onDots icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.tools.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
-          <CardGrid aria-hidden="true">
+          <CardGrid size="wide" aria-hidden="true">
             {SKELETON_WIDTHS.map(w => (
               <div key={w} className="box-border flex min-h-47.5 flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">
                 <Skeleton className="h-2.5 w-18 animate-none rounded-sm" />
@@ -107,66 +108,96 @@ export function Today() {
           )}
 
           {cards.length === 0 && <EmptyState>Every card is set aside for today. Activity lists them, each with Undo.</EmptyState>}
-          <CardGrid>
+          <CardGrid size="wide">
             {cards.map(c => {
               const p = c.problem
+              const dv = draftView(ctx, p.id)
               // Handled and approved cards are muted with the done token, never dimmed with opacity.
               const done = c.dimmed ? 'text-done' : ''
               const open = () => openProblem(p.id)
               const askAbout = () => void ask('Tell me more about: ' + p.title)
               // Snooze and dismiss are for cards that still need the person, not ones approved or handled.
               const needsYou = !c.handled && !ctx.agent.approved[p.id]
+              // A draft waiting on the person gets the agent's sheet; approved, handled and Watch cards keep the status line.
+              const waiting = c.primary !== null || c.quiet === 'Review'
+              const low = c.primary === 'Approve'
+              const risk = low ? null : riskLabel(dv)
               return (
                 // The title is the card's one link: its ::after stretches over the card, and the card's other buttons sit above it.
-                <article key={p.id} className={cn('today-card relative flex cursor-pointer flex-col rounded-2xl border border-border bg-card px-4.5 py-4 shadow-card transition focus-within:border-border-strong focus-within:shadow-float hover:border-border-strong hover:shadow-float', !phone && 'min-h-56')} aria-label={p.title}>
-                  <div className="flex items-center gap-2">
-                    <Dot className={c.dimmed ? 'bg-done' : sevClass(p.sev)} />
-                    <span className="mono-label flex-1">{p.area}</span>
-                    {/* The tiles overhang the label line a little, so cards with and without logos keep the same rhythm. */}
-                    {p.logos.map(l => <LogoTile key={l} k={l} size="sm" className="-my-1" />)}
-                    <DropdownMenu modal={false}>
-                      <DropdownMenuTrigger asChild>
-                        <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant={c.dimmed ? 'ghost' : 'card'} box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1.5', c.dimmed && done, tap)} />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
-                        <MenuItem onSelect={askAbout}>
-                          <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask about this</span>
-                        </MenuItem>
-                        {needsYou && <>
-                          <MenuItem onSelect={() => setAside(p.id, 'snoozed')}>
-                            <Icon name="snooze" size={18} /><span className="flex-1">Snooze until tomorrow</span>
+                <article key={p.id} className="today-card relative flex cursor-pointer flex-col rounded-2xl bg-card shadow-card transition focus-within:shadow-float hover:shadow-float" aria-label={p.title}>
+                  <div className="flex flex-1 flex-col pt-4 pr-4 pl-5.5">
+                    <div className="flex min-h-7 items-center gap-2">
+                      {!c.dimmed && isUrgent(p.sev) && <Badge variant="destructive" size="lg">Urgent</Badge>}
+                      <span className={cn('flex-1 text-sm font-medium text-foreground-3', done)}>{p.area}</span>
+                      {p.logos.length > 0 && (
+                        <span className="mr-1 flex flex-none">
+                          {p.logos.map(l => <LogoTile key={l} k={l} size="sm" round className="-mr-1.25 last:mr-0" />)}
+                        </span>
+                      )}
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant={c.dimmed ? 'ghost' : 'card'} box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1', c.dimmed && done, tap)} />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
+                          <MenuItem onSelect={askAbout}>
+                            <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask about this</span>
                           </MenuItem>
-                          <MenuItem onSelect={() => setAside(p.id, 'dismissed')}>
-                            <Icon name="do_not_disturb_on" size={18} /><span className="flex-1">Not a problem</span>
-                          </MenuItem>
-                        </>}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                          {needsYou && <>
+                            <MenuItem onSelect={() => setAside(p.id, 'snoozed')}>
+                              <Icon name="snooze" size={18} /><span className="flex-1">Snooze until tomorrow</span>
+                            </MenuItem>
+                            <MenuItem onSelect={() => setAside(p.id, 'dismissed')}>
+                              <Icon name="do_not_disturb_on" size={18} /><span className="flex-1">Not a problem</span>
+                            </MenuItem>
+                          </>}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                    <button type="button" onClick={open}
+                      className={`mt-3 mr-1.5 block cursor-pointer rounded-xs text-left text-xl leading-snug font-semibold tracking-card after:absolute after:inset-0 after:rounded-2xl ${done}`}>{p.title}</button>
+                    <div className="mt-1.5 mr-1.5 text-base text-foreground-3">{p.sub}</div>
+                    {/* The space sits above the amount, so amounts and bottom blocks line up across a row. */}
+                    <div className="min-h-3.5 flex-1" />
+                    <div className={`flex flex-wrap items-baseline gap-x-2 pb-4 ${done}`}>
+                      <span className="text-2xl leading-none font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>
+                      <span className="text-sm text-pretty text-muted-foreground">{p.costNote}</span>
+                    </div>
                   </div>
-                  <button type="button" onClick={open}
-                    className={`mt-2.5 block cursor-pointer rounded-xs text-left text-md leading-card font-strong tracking-card after:absolute after:inset-0 after:rounded-2xl ${done}`}>{p.title}</button>
-                  <div className="mt-1 text-sm text-foreground-3">{p.sub}</div>
-                  <div className="flex-1" />
-                  {/* Nothing here is cut: the amount line and the status line wrap. */}
-                  <div className="mt-3 flex flex-col gap-3 border-t border-divider pt-3">
-                    <div>
-                      <div className={`flex flex-wrap items-baseline gap-x-1.5 ${done}`}>
-                        <span className="text-xl font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>
-                        <span className="text-xs text-pretty text-muted-foreground">{p.costNote}</span>
+                  {waiting ? (
+                    // The agent's drafted fix, on its faint brand tint: in this app the brand means "your agent".
+                    <div className="mx-2 mb-2 flex flex-col rounded-xl bg-draft-sheet p-3.5">
+                      <div className="flex min-h-5.5 items-center gap-2 text-sm text-muted-foreground">
+                        <span className="flex size-5.5 flex-none items-center justify-center rounded-md border border-border bg-draft-kind text-foreground-3">
+                          <Icon name={kindIcon(dv.kind)} size={14} weight={400} />
+                        </span>
+                        <span className="min-w-0 flex-1">Draft · {dv.kind}</span>
+                        {risk && <span className="font-semibold text-warning-text tabular-nums">{risk}</span>}
                       </div>
-                      {/* Two lines tall on desktop, so every footer in a grid row lines up whether the status wraps or not. */}
-                      <div className={`mt-0.5 flex items-start gap-1 text-xs ${phone ? '' : 'min-h-today-status'} ${c.dimmed ? done : TONE_TEXT[c.tone]}`}>
-                        <Icon name={c.statusIcon} size={13} weight={400} className="mt-px" />
+                      <div className="mt-2.5 text-base font-medium text-foreground-2">{dv.draftTitle}</div>
+                      {dv.summary && <p className="m-0 mt-0.5 text-sm text-pretty text-muted-foreground">{dv.summary}</p>}
+                      {/* Run: what the agent already did, or that a person undid its job. */}
+                      {c.sheetNote && (
+                        <div className={cn('mt-2 flex items-start gap-1.5 text-sm', TONE_TEXT[c.tone])}>
+                          <Icon name={c.statusIcon} size={15} weight={400} className="mt-px" />
+                          <span className="min-w-0 flex-1 text-pretty">{c.sheetNote}</span>
+                        </div>
+                      )}
+                      <Button className={cn('relative z-raised mt-3 whitespace-nowrap', phone ? 'w-full' : 'self-start', tap)} onClick={low ? () => approve(p.id) : open}>
+                        {low ? <><Icon name="check" size={16} />{dv.cta}</> : <>Review draft<Icon name="arrow_forward" size={16} /></>}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="mx-2 mb-2 flex flex-col gap-3 rounded-xl bg-muted p-3.5">
+                      {/* Two lines tall on desktop, so every status block in a grid row lines up whether the status wraps or not. */}
+                      <div className={cn('flex items-start gap-1.5 text-sm', !phone && 'min-h-today-status', c.dimmed ? done : TONE_TEXT[c.tone])}>
+                        <Icon name={c.statusIcon} size={15} weight={400} className="mt-px" />
                         <span className="min-w-0 flex-1 text-pretty">{c.status}</span>
                       </div>
+                      {c.quiet && (
+                        <Button variant="secondary" className={cn('relative z-raised self-start', tap)} onClick={c.quiet === 'Ask about this' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
+                      )}
                     </div>
-                    {c.primary && (
-                      <Button className={cn('relative z-raised self-start', tap)} onClick={c.primary === 'Approve' ? () => approve(p.id) : open}>{c.primary}</Button>
-                    )}
-                    {!c.primary && c.quiet && (
-                      <Button variant="secondary" className={cn('relative z-raised self-start', tap)} onClick={c.quiet === 'Ask about this' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
-                    )}
-                  </div>
+                  )}
                 </article>
               )
             })}

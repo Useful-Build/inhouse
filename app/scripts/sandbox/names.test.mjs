@@ -3,14 +3,17 @@
 //     a suffix after the number with no hyphen, a prefix before `inhouse`, upper case, a trailing newline);
 //  2. it refuses a real per-PR name, or says it belongs to the wrong PR;
 //  3. a host passes on the wrong zone (a suffix attack, the bare zone, another zone, a deeper host, upper case);
-//  4. it accepts a non-string.
+//  4. it accepts a non-string;
+//  5. (eval build, p3-eval-observability rev 2 rec 2) the eval deployment's names overlap a PR's or the candidate's: a
+//     per-PR deploy or cleanup could then touch the eval brand, or the candidate bind its data; or a near miss passes as
+//     an eval name.
 // Oracles: literal lists, and for the properties a reference parser below that reads the names character by character
 // and shares no code (and no regular expression) with names.mjs.
 import { fc, test as propTest } from '@fast-check/vitest'
 import { describe, expect, test } from 'vitest'
 import {
-  SandboxNameError, assertCandidateName, assertPerPrName, assertPrNumber, assertSandboxHost, assertSandboxName, isPerPrName,
-  isSandboxName, perPrNames, prNumberOf,
+  SandboxNameError, assertCandidateName, assertEvalName, assertPerPrName, assertPrNumber, assertSandboxHost, assertSandboxName,
+  evalNames, isEvalName, isPerPrName, isSandboxName, perPrNames, prNumberOf,
 } from './names.mjs'
 
 const ZONE = 'zone.example.test'
@@ -80,6 +83,48 @@ describe('PR numbers, PR names and the candidate rule (failures 1, 2)', () => {
     for (const name of ['inhouse-sbx-pr12', 'inhouse-sbx-pr12-db', 'inhouse-app', '', 'inhouse-sbx-DB']) expect(() => assertCandidateName(name), name).toThrow(SandboxNameError)
     expect(assertSandboxHost('inhouse-sbx-brand.zone.example.test', 'zone.example.test', 'candidate')).toBe('inhouse-sbx-brand.zone.example.test')
     expect(() => assertSandboxHost('inhouse-sbx-pr12-brand.zone.example.test', 'zone.example.test', 'candidate')).toThrow(/per-PR name/)
+  })
+})
+
+describe('the eval deployment\'s names (failure 5)', () => {
+  const EVAL = ['inhouse-sbx-eval', 'inhouse-sbx-eval-db', 'inhouse-sbx-eval-files', 'inhouse-sbx-eval-brand', 'inhouse-sbx-eval-team']
+  const NEAR = ['inhouse-sbx-evals', 'inhouse-sbx-evaluation', 'inhouse-sbx-eval-', 'inhouse-sbx-eval-DB', 'inhouse-sbx-eval-db1',
+    'inhouse-sbx-eval-db-x', 'xinhouse-sbx-eval', 'inhouse-sbx-eval\n', 'inhouse-sbx-eval.db', 'inhouse-eval', '']
+  test('evalNames gives its literal names', () => {
+    expect(evalNames()).toEqual({
+      worker: 'inhouse-sbx-eval', d1: 'inhouse-sbx-eval-db', r2: 'inhouse-sbx-eval-files', container: 'inhouse-sbx-eval',
+      image: 'inhouse-sbx-eval', brand: 'inhouse-sbx-eval-brand', team: 'inhouse-sbx-eval-team',
+    })
+  })
+  test('the eval rule takes the eval names and no near miss', () => {
+    for (const name of EVAL) {
+      expect(isEvalName(name), name).toBe(true)
+      expect(assertEvalName(name)).toBe(name)
+    }
+    for (const name of [...NEAR, 'inhouse-sbx-db', 'inhouse-sbx-pr12', 'inhouse-sbx-pr12-db', 'inhouse-app', 7, null]) {
+      expect(isEvalName(name), String(name)).toBe(false)
+      expect(() => assertEvalName(name), String(name)).toThrow(SandboxNameError)
+    }
+  })
+  test('disjoint from the per-PR and candidate rules', () => {
+    for (const name of EVAL) {
+      expect(isPerPrName(name), name).toBe(false)
+      expect(() => assertCandidateName(name), name).toThrow(/eval deployment's name/)
+    }
+    for (const name of Object.values(perPrNames(12))) expect(isEvalName(name), name).toBe(false)
+    // A near miss isn't the eval's, so the candidate rule keeps it.
+    expect(assertCandidateName('inhouse-sbx-evaluation')).toBe('inhouse-sbx-evaluation')
+  })
+  test('hosts: the eval rule takes the eval hosts only, and the candidate rule refuses them', () => {
+    expect(assertSandboxHost(`inhouse-sbx-eval-brand.${ZONE}`, ZONE, 'eval')).toBe(`inhouse-sbx-eval-brand.${ZONE}`)
+    expect(() => assertSandboxHost(`inhouse-sbx-brand.${ZONE}`, ZONE, 'eval')).toThrow(SandboxNameError)
+    expect(() => assertSandboxHost(`inhouse-sbx-eval-brand.other.test`, ZONE, 'eval')).toThrow(SandboxNameError)
+    // #240 review S-L3: only the two host names, never another eval name as a host label.
+    expect(assertSandboxHost(`inhouse-sbx-eval-team.${ZONE}`, ZONE, 'eval')).toBe(`inhouse-sbx-eval-team.${ZONE}`)
+    for (const label of ['inhouse-sbx-eval', 'inhouse-sbx-eval-db', 'inhouse-sbx-eval-files']) {
+      expect(() => assertSandboxHost(`${label}.${ZONE}`, ZONE, 'eval'), label).toThrow(/not one of the eval deployment's hosts/)
+    }
+    expect(() => assertSandboxHost(`inhouse-sbx-eval-brand.${ZONE}`, ZONE, 'candidate')).toThrow(/eval deployment's name/)
   })
 })
 
