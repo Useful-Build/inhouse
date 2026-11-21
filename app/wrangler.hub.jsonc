@@ -29,9 +29,16 @@
 	// Empty means not configured. The ops repo fills them per deployment.
 	"vars": {
 		"SHOPIFY_SHOP": "",
-		"SHOPIFY_CLIENT_ID": ""
+		"SHOPIFY_CLIENT_ID": "",
+		// Slack (P5): the pre-registered app's client id and the workspace's team id. CONNECT_REDIRECT_URI is the product's
+		// OAuth callback (https://<product host>/api/connect/callback). SLACK_PRIVATE_SEARCH is "off" or "on".
+		"SLACK_CLIENT_ID": "",
+		"SLACK_TEAM_ID": "",
+		"SLACK_PRIVATE_SEARCH": "off",
+		"CONNECT_REDIRECT_URI": ""
 	},
-	// Set with `wrangler secret put` through a secret card, never in a file.
+	// Set with `wrangler secret put` through a secret card, never in a file. SLACK_CLIENT_SECRET is optional (not in
+	// `required`): set it the same way once the Slack app exists.
 	"secrets": {
 		"required": ["HUB_TOKEN_KEYS", "SHOPIFY_CLIENT_SECRET"]
 	}

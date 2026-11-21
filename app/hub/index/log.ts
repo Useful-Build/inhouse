@@ -9,6 +9,11 @@ export type LogEvent =
   | 'signin_reencrypt'
   | 'hub_config_invalid'
   | 'hub_internal'
+  // P5 (p5-w1)
+  | 'connect_start'
+  | 'connect_complete'
+  | 'revoke_failed'
+  | 'mcp_call'
 
 export type LogFields = {
   accountId?: string
@@ -21,6 +26,10 @@ export type LogFields = {
   generation?: number
   state?: string
   failures?: number
+  // P5 (p5-w1)
+  memberId?: string
+  upstreamTool?: string
+  parts?: number
 }
 
 const ALLOWED: readonly (keyof LogFields)[] = [
@@ -34,6 +43,10 @@ const ALLOWED: readonly (keyof LogFields)[] = [
   'generation',
   'state',
   'failures',
+  // P5 (p5-w1)
+  'memberId',
+  'upstreamTool',
+  'parts',
 ]
 
 export function log(event: LogEvent, fields: LogFields = {}): void {

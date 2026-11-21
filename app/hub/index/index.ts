@@ -13,10 +13,11 @@ import type { AccountStatus, CallerScope, HubResult, ReadGateway as ReadApi, Ser
 import { err } from './errors'
 import { log } from './log'
 import { AccountIdSchema, CallerScopeSchema, ToolNameSchema } from './schemas'
-import { callReadTool, listReadTools, toolNameForLog, type ConnectorModule, type GatewayDeps, type ShopifyReadClient } from '../registry/registry'
-import { isConfigured, loadRegistry } from '../signin/signin'
+import { callReadyTool, listReadyTools, toolNameForLog } from '../registry/registry'
+import { loadRegistry, readyGatewayDeps } from '../signin/signin'
 
 export { SignIn } from '../signin/signin'
+export { ConnectGateway } from '../oauth/entry'
 
 const notFound = (): Response =>
   new Response(JSON.stringify({ error: 'not_found' }), {
@@ -44,32 +45,11 @@ async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>
   }
 }
 
-async function gatewayDeps(env: Env): Promise<GatewayDeps> {
-  const registry = await loadRegistry(env)
-  return {
-    registry,
-    isConfigured: (c: ConnectorModule) => isConfigured(env, c),
-    shopifyFor: (c: ConnectorModule): ShopifyReadClient => ({
-      graphql: async (document, variables, apiVersion) => {
-        const version = apiVersion ?? c.apiVersion
-        if (!version) return err('invalid_args', 'apiVersion')
-        return (await signInFor(env, c.accountId).query({
-          accountId: c.accountId,
-          document,
-          variables,
-          apiVersion: version,
-        })) as HubResult<{ data: unknown }>
-      },
-    }),
-    nowMs: () => Date.now(),
-  }
-}
-
 export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
   async listTools(scope: CallerScope): Promise<HubResult<ToolInfo[]>> {
     return guarded(async () => {
       if (!CallerScopeSchema.safeParse(scope).success) return err('invalid_args', 'scope')
-      return { ok: true, value: listReadTools(await gatewayDeps(this.env)) }
+      return { ok: true, value: await listReadyTools(await readyGatewayDeps(this.env)) }
     })
   }
 
@@ -80,7 +60,7 @@ export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
     const result = await guarded(async () => {
       if (!parsedScope.success) return err('invalid_args', 'scope')
       if (!parsedName.success) return err('invalid_args', 'name')
-      return callReadTool(await gatewayDeps(this.env), parsedScope.data, parsedName.data, args)
+      return callReadyTool(await readyGatewayDeps(this.env), parsedScope.data, parsedName.data, args)
     })
     // A malformed registry already logged hub_config_invalid; this line then names no tool.
     const registry = await loadRegistry(this.env).catch(() => null)
