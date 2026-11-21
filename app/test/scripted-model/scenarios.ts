@@ -2,6 +2,7 @@
 // request with that many assistant messages before it. Tests that need their own script build one with
 // `createScriptedModel` directly.
 import type { MessagesRequest, Scenario, ScriptedBranch } from './index.ts'
+import { BUILT_IN_TOOLS, INHOUSE_MCP_SERVER } from '../../runner/src/guards/lists.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
 export const HARNESS_MODEL = 'claude-sonnet-5-5'
@@ -13,7 +14,7 @@ type Check = (r: MessagesRequest) => true | string
  * A main-loop request: the run's model and a tool list (offering `tool` when given). A side request the CLI makes on its
  * own (a title, a summary) carries no tool list, so it can't take a scripted turn by accident: it's a loud miss.
  */
-const mainLoop =
+export const mainLoop =
   (tool?: string): Check =>
   (r) => {
     if (r.model !== HARNESS_MODEL) return `model ${String(r.model)}, not ${HARNESS_MODEL}`
@@ -26,9 +27,13 @@ const mainLoop =
  * lists only the tools it loads up front plus a `defer_loading` placeholder (fixtures/cli-requests.json); the rest
  * (WebFetch, WebSearch, the Task tools, most `mcp__inhouse__*`) come only after a ToolSearch, yet a call to one still
  * runs. Matching only listed tools made a tool scenario's turn 0 miss until the CLI's 400 step-down inlined every tool.
+ * The placeholder stands in only for a tool the runner gives the agent (its BUILT_IN_TOOLS or our MCP server's); a tool
+ * taken off that allowlist is caught by runner/test/guards/lists.test.ts, which pins the list.
  */
 const offers = (r: MessagesRequest, tool: string): boolean =>
-  Array.isArray(r.tools) && r.tools.some((t) => t.name === tool || t.defer_loading === true)
+  Array.isArray(r.tools) && r.tools.some((t) => t.name === tool || (t.defer_loading === true && deferrable(tool)))
+
+const deferrable = (tool: string): boolean => (BUILT_IN_TOOLS as readonly string[]).includes(tool) || tool.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`)
 
 /** What the last message is, for a miss's reason. */
 const lastShape = (r: MessagesRequest): string => {
@@ -146,7 +151,11 @@ export const STRUCTURED_BAD_TURNS = 12
 /** The pages the WebFetch scenarios ask for: a public https page, and a private address the runner hook and the egress both refuse. */
 export const WEBFETCH_ALLOWED_URL = 'https://example.com/'
 export const WEBFETCH_REFUSED_URL = 'https://10.0.0.1/'
-/** The allowed WebFetch's prompt; its marker brings WebFetch's own side request (the page summary) to the scenario. */
+/**
+ * The allowed WebFetch's prompt; its marker brings WebFetch's own side request (the page summary) to the scenario. The
+ * routing relies on the CLI echoing the prompt into that request; a fetched page that itself held `scenario:<other>`
+ * would reroute it (example.com doesn't).
+ */
 const WEBFETCH_PROMPT = 'Summarise the page (scenario:webfetch-allowed)'
 /** WebFetch's side request: no tools, and its one user message is the fetched page followed by the call's prompt. */
 const pageSummary = (r: MessagesRequest): boolean =>

@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { createScriptedModel, type MessagesRequest, type ScriptedBranch, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
-import { HARNESS_MODEL, SCENARIOS, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
+import { HARNESS_MODEL, SCENARIOS, mainLoop, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
 
 type Msg = { role: 'user' | 'assistant'; content: unknown }
 const req = (messages: Msg[], stream = false, extra: Record<string, unknown> = {}) =>
@@ -330,6 +330,24 @@ describe("the real CLI's requests", () => {
     const model = createScriptedModel(SCENARIOS)
     expect(await answer(model, summary, 'webfetch-allowed')).toEqual({ status: 200, content: ['A page kept for documentation examples.'] })
     expect(model.log.at(-1)).toMatchObject({ branch: 'page-summary', turn: 0, missed: false })
+  })
+
+  it('the placeholder stands in only for a tool the runner gives the agent: an unknown tool is still a miss', () => {
+    const turn0 = captured['webfetch-allowed']!.turn0!
+    expect(mainLoop('WebFetch')(turn0)).toBe(true)
+    expect(mainLoop('mcp__inhouse__routine_create')(turn0)).toBe(true)
+    expect(mainLoop('NoSuchTool')(turn0)).toBe("the tool list doesn't offer NoSuchTool")
+  })
+
+  it.each([
+    ['the marker without page content', (r: MessagesRequest) => ({ ...r, messages: [{ role: 'user' as const, content: [{ type: 'text', text: 'Summarise the page (scenario:webfetch-allowed)' }] }] })],
+    ['page content with a tool list', (r: MessagesRequest) => ({ ...r, tools: [{ name: 'Bash' }] })],
+    ['two messages', (r: MessagesRequest) => ({ ...r, messages: [...r.messages, { role: 'user' as const, content: 'again' }] })],
+  ])('webfetch-allowed: a request like the page summary but with %s is a miss, not the branch', async (_, change) => {
+    const model = createScriptedModel(SCENARIOS)
+    expect((await answer(model, change(captured['webfetch-allowed']!['page-summary']!), 'webfetch-allowed')).status).toBe(400)
+    expect(model.misses).toHaveLength(1)
+    expect(model.log.some((l) => l.branch === 'page-summary')).toBe(false)
   })
 
   it('webfetch-refused: the captured turn 1 with is_error flipped is still a miss that says so', async () => {
