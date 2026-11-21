@@ -33,7 +33,7 @@ export const ErrorReasonSchema = z.enum([
   // Route 39's refusals (the server sends them as `invalid`; the client tells them apart).
   'type_not_allowed', 'length_required', 'length_mismatch', 'hash',
   // P5 (p5-w3): the Tools routes' refusals.
-  'not_configured', 'not_disconnectable',
+  'not_configured', 'not_disconnectable', 'not_connected',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 
