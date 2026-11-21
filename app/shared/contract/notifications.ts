@@ -1,10 +1,10 @@
 // The bell over HTTP (P4 W4, routes 60 and 61): the signed-in member's notifications and the read call.
 // `AgentNotificationSchema` (notice.ts) is the item the screen reads; the server adds `body`, plain text only, for the
-// notices that carry P5 and P6 content (never a name from our side; the bell shows it as plain text, no HTML, Markdown or links).
+// notices that carry P5 and P6 content (counted in code points, as the writer and the table count them, not UTF-16 units) (never a name from our side; the bell shows it as plain text, no HTML, Markdown or links).
 import { z } from 'zod'
 import { AgentNotificationSchema } from './notice.ts'
 
-export const NotificationItemSchema = AgentNotificationSchema.extend({ body: z.string().min(1).max(2000).optional() })
+export const NotificationItemSchema = AgentNotificationSchema.extend({ body: z.string().refine(s => { const n = [...s].length; return n >= 1 && n <= 2000 }, 'body is 1 to 2000 code points').optional() })
 export type NotificationItem = z.infer<typeof NotificationItemSchema>
 
 /** Route 60: the 50 newest notices this person may see, newest first. */

@@ -8,6 +8,8 @@
 //  3. Activity paging repeats or drops a line, or isn't newest first, with lines at the same instant;
 //  4. a role that shouldn't reach a route does: Inhouse on the bell with or without a grant, Inhouse on Activity without a
 //     grant, a grant read that writes no support.access line; a bad cursor, limit, body or extra parameter reaches a store;
+//  6. a stored body of astral-plane characters (counted in code points by the writer and the table) makes the list's
+//     response check throw, so route 60 answers 500 for that notice's whole audience;
 //  5. a name is read from a stored row instead of the members table: a pseudonymised member still shows their name, an
 //     UPDATE of the append-only table is needed to remove it, or a raw dump of either table holds a member's name.
 import { fc, test } from '@fast-check/vitest'
@@ -117,6 +119,18 @@ describe('the bell: who sees what (failure 1)', () => {
     expect(again).toEqual(first)
     expect(await readRows(memberId)).toEqual(oracle)
     for (const other of Object.values(WHO)) if (other !== me) expect(await readRows((other as Extract<Principal, { kind: 'person' }>).memberId)).toEqual([])
+  })
+})
+
+describe('a body of emoji lists (failure 6)', () => {
+  it('a stored body of 1,622 and of 2,000 astral-plane characters lists, with the body as stored (the list must not 500)', async () => {
+    for (const [id, n] of [['n_emoji_1622', 1622], ['n_emoji_2000', 2000]] as const)
+      await db.prepare("INSERT INTO notices (id, audience, template, fields_json, body, icon, at_ms, link_json, source) VALUES (?, 'team', 'morning_check_found', '{\"items\":1}', ?, 'x', 9000, '{\"to\":\"page\",\"page\":\"today\"}', 'morning-check')").bind(id, '😀'.repeat(n)).run()
+    const r = await send(WHO.a, 'GET', '/api/notifications')
+    expect(r.status).toBe(200)
+    const items = r.body.items as { id: string; body?: string }[]
+    expect([...items.find(i => i.id === 'n_emoji_1622')!.body!].length).toBe(1622)
+    expect([...items.find(i => i.id === 'n_emoji_2000')!.body!].length).toBe(2000)
   })
 })
 

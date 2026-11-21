@@ -523,9 +523,10 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
       undo: { type: 'setAside', id: p.id }, why: `${p.title}.`, result: line.result, by: `${byName(ctx.data, rec.by)}, at ${fmtTime(rec.at, d0)}. Drafted by Inhouse agent at ${fmtTime(p.draftedAt, d0)}.` })
   }
   const { today, earlier } = ctx.data.activity
-  // The demo's first line is the morning check, with `{read}` and `{found}` filled from state. The product's lines are the
-  // server's, already complete: every one of today's goes through the generic row below, as the earlier days' do.
-  const morning = today[0]?.text.includes('{read}') ? today[0] : undefined
+  // The demo's first line is the morning check (its trace is `morning`), with `{read}` and `{found}` filled from state. The
+  // product's lines are the server's, already complete, and its traces are run ids: every one of today's goes through the
+  // generic row below, as the earlier days' do. Keyed on the trace, which a member's name can't set.
+  const morning = today[0]?.trace === 'morning' && today[0].text.includes('{read}') ? today[0] : undefined
   /** A line the current stage hides: `minStage` is the lowest stage that shows it. */
   const below = (e: { minStage?: string }) => (e.minStage === 'Act' && S < 1) || (e.minStage === 'Run' && S < 2)
   if (!morning) {
@@ -561,7 +562,7 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
   for (const e of earlier) {
     if (below(e)) continue
     const change = e.kind === 'change'
-    rows.push({ day: fmtWeekday(e.at, d0), ...when(e.at), icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : e.kind === 'problem' ? 'error' : 'visibility', text: e.text, who: e.who,
+    rows.push({ day: fmtWeekday(e.at, d0), ...when(e.at), icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : ACTIVITY_ICON[e.kind], text: e.text, who: e.who,
       kind: e.kind, trace: e.trace, iconTone: change ? 'bg-background text-foreground' : 'bg-background text-foreground-3', why: e.why, result: e.result, by: fmtProse(e.by, d0) })
   }
   return rows.map(r => ({ ...r, key: `${r.day}|${r.t}|${r.text}` }))

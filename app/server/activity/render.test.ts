@@ -4,6 +4,7 @@
 //  2. a slot is left unfilled, or a value holding `{slot}` text is filled again (a name can't inject a template slot);
 //  3. a name with braces breaks `by` (fmtProse throws on a token with no time);
 //  4. a template renders with a stray brace or an undefined, for fields of its own declared types;
+//  6. a template that names an actor or person on a row without one reads "A former member" instead of failing;
 //  5. the bell shows a name for a former member's `person`, or drops the body, link or waiting flag.
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
@@ -54,12 +55,24 @@ describe('slots (failures 2 and 3)', () => {
       expect(renderNotice({ id: 'n', audience: 'team', template: 'morning_check_found', fields_json: JSON.stringify({ items }), body: null, icon: 'x', person_id: null, at_ms: 1, waiting: 0, link_json: '{"to":"page","page":"today"}', unread: 1 }, new Map()).text).toBe(`The morning check found ${text}`)
     }
   })
+  it('a member named "{read} Kim" renders without the braces, so no text holds a demo placeholder', () => {
+    const line = renderLine(row(), new Map([['m_ada', '{read} Kim']]))
+    expect(line).toMatchObject({ text: 'read Kim set up a routine', who: 'read Kim' })
+    const notice = renderNotice({ id: 'n', audience: 'team', template: 'shown', fields_json: '{}', body: null, icon: 'x', person_id: 'm_ada', at_ms: 1, waiting: 0, link_json: '{"to":"page","page":"today"}', unread: 1 },
+      new Map([['m_ada', '{read} Kim']]), { shown: { source: 't', text: '{person} did it', who: 'W', fields: {} } })
+    expect(notice).toMatchObject({ text: 'read Kim did it', person: '{read} Kim' })
+  })
+  it('a template that names {actor} on a row with no actor fails loud, never "A former member" (failure 6)', () => {
+    expect(() => renderLine(row({ actor_id: null }), new Map())).toThrow(/no value/)
+    expect(() => renderNotice({ id: 'n', audience: 'team', template: 'shown', fields_json: '{}', body: null, icon: 'x', person_id: null, at_ms: 1, waiting: 0, link_json: '{"to":"page","page":"today"}', unread: 1 },
+      new Map(), { shown: { source: 't', text: '{person} did it', who: 'W', fields: {} } })).toThrow(/no value/)
+  })
   it('a name with braces can\'t break `by` (the prose the screen formats)', () => {
     const line = renderLine(row(), new Map([['m_ada', 'Ada {at:time} {x}']]))
     expect(line.by.text).toBe('Ada at:time x, at {at:time}')
     expect(Object.keys(line.by.times)).toEqual(['at'])
-    // The headline keeps the name as typed.
-    expect(line.text).toBe('Ada {at:time} {x} set up a routine')
+    // The headline has no braces either: a name can't carry a slot into any text.
+    expect(line.text).toBe('Ada at:time x set up a routine')
   })
 })
 

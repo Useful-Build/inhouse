@@ -34,18 +34,24 @@ export function fill(text: string, slots: Readonly<Record<string, string>>): str
   })
 }
 
+/** A member's name for a slot: the current one with braces removed, or "A former member" when they have none. */
+export const nameOf = (id: string, names: ReadonlyMap<string, string>): string => (names.get(id) ?? FORMER).replace(/[{}]/g, '')
+
 /** `names` holds the current name of each member who has one; a missing id is a former member. */
 export function renderLine(row: LineRow, names: ReadonlyMap<string, string>): ActivityLine {
   if (!isActivityTemplate(row.template)) throw new Error(`unknown activity template ${row.template}`)
   const t = ACTIVITY_TEMPLATES[row.template]
   const fields = JSON.parse(row.fields_json) as Record<string, string | number>
-  const nameOf = (id: string | null) => (id === null ? FORMER : names.get(id) ?? FORMER)
-  const slots: Record<string, string> = { actor: nameOf(row.actor_id), subject: nameOf(row.subject_id) }
+  const slots: Record<string, string> = {}
+  // A slot exists only for an id the row has: a template that names {actor} on a row without one fails loud in `fill`,
+  // never reads "A former member". The name has no braces, so it can't carry a `{slot}` into any text.
+  if (row.actor_id !== null) slots.actor = nameOf(row.actor_id, names)
+  if (row.subject_id !== null) slots.subject = nameOf(row.subject_id, names)
   for (const [k, v] of Object.entries(fields)) slots[k] = String(v)
   const at = instantOf(row.at_ms)
   const who = fill(t.who, slots)
-  // `by` goes through fmtProse, which reads `{key:time}` tokens: a name can't carry braces into it.
-  const by = { text: `${who.replace(/[{}]/g, '')}, at {at:time}`, times: { at } }
+  // `by` goes through fmtProse, which reads `{key:time}` tokens: a name has no braces (nameOf).
+  const by = { text: `${who}, at {at:time}`, times: { at } }
   return {
     at, kind: row.kind, ...(row.min_stage === null ? {} : { minStage: STAGE[row.min_stage] }),
     text: fill(t.text, slots), who, ...(row.actor_id === null ? {} : { actorId: row.actor_id }),

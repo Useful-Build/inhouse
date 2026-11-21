@@ -3,7 +3,9 @@
 //     no tool reads (nothing shows for lines the server wrote);
 //  2. a line below the stage (`minStage` Act at Watch, Run below Run) shows;
 //  3. a problem line gets the read icon, or a former member's line gets an avatar name;
-//  4. the demo's morning line (with `{read}`) stops being the special row.
+//  4. the demo's morning line (trace `morning`, with `{read}`) stops being the special row;
+//  5. a real line whose text holds `{read}` (a member's name can: the server strips braces, but the key must not be the text)
+//     is taken for the demo's morning line and hidden.
 import { describe, expect, test } from 'vitest'
 import { HttpAgent } from '../agent/http/client'
 import type { ActivityLine, AgentData, Instant } from '../agent/types'
@@ -38,9 +40,17 @@ describe('a real client\'s lines', () => {
       expect(activityRows(ctxOf([], lines, S)).map(r => r.text), `earlier at stage ${S}`).toEqual(shown)
     }
   })
-  test('the demo\'s morning line, with {read}, is still the special row (failure 4)', () => {
-    // No tool reads, so the demo shows no morning row; the real lines after it are the demo's own "routines that ran".
-    const rows = activityRows(ctxOf([line(NOW, 'Morning check: read {read} tools, found {found} things'), line(NOW, 'Ran a routine')]))
+  test('the demo\'s morning line (trace morning, with {read}) is still the special row (failure 4)', () => {
+    // No tool reads, so the demo shows no morning row; the lines after it are the demo's own "routines that ran".
+    const rows = activityRows(ctxOf([line(NOW, 'Morning check: read {read} tools, found {found} things', { trace: 'morning' }), line(NOW, 'Ran a routine')]))
     expect(rows).toEqual([])
+  })
+  test('a line that holds {read} but isn\'t the demo\'s (a member named "{read} Kim", a run trace) shows like any other (failure 5)', () => {
+    const rows = activityRows(ctxOf([line(NOW, '{read} Kim set up a routine', { kind: 'change', trace: 'r_AAAAAAAAAAAAAAAAAAAAAA' })]))
+    expect(rows.map(r => r.text)).toEqual(['{read} Kim set up a routine'])
+  })
+  test('earlier lines get an icon by kind: needs is front_hand, problem is error (failure 3)', () => {
+    const rows = activityRows(ctxOf([], [line(NOW - 86_400_000 * 2, 'n', { kind: 'needs' }), line(NOW - 86_400_000 * 2, 'p', { kind: 'problem' }), line(NOW - 86_400_000 * 2, 'r')]))
+    expect(rows.map(r => [r.text, r.icon]).sort()).toEqual([['n', 'front_hand'], ['p', 'error'], ['r', 'visibility']])
   })
 })

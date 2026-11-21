@@ -1,7 +1,7 @@
 // A notice as the bell shows it (p4-w4 revision 3.2): `text` and `who` from the template row, `person` from `person_id`
 // through the members table. A pseudonymised or gone member reads "A former member" and gets no avatar. `body` is
 // passed on as stored: plain text, which the client shows escaped.
-import { fill, instantOf, FORMER } from '../activity/render.ts'
+import { fill, instantOf, nameOf } from '../activity/render.ts'
 import { AgentNotificationSchema } from '../../shared/contract/notice.ts'
 import type { NotificationItem } from '../../shared/contract/notifications.ts'
 import type { NoticeRow } from './read.ts'
@@ -15,7 +15,8 @@ export function renderNotice(row: NoticeRow, names: ReadonlyMap<string, string>,
   if (!t) throw new Error(`unknown notice template ${row.template}`)
   const fields = JSON.parse(row.fields_json) as Record<string, string | number>
   const person = row.person_id === null ? null : names.get(row.person_id) ?? null
-  const slots: Record<string, string> = { person: row.person_id === null ? FORMER : person ?? FORMER }
+  // The {person} slot exists only when the row names a person (a template that needs one on a row without fails loud).
+  const slots: Record<string, string> = row.person_id === null ? {} : { person: nameOf(row.person_id, names) }
   for (const [k, v] of Object.entries(fields)) slots[k] = String(v)
   const link = LinkSchema.parse(JSON.parse(row.link_json))
   return {

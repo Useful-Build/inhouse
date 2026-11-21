@@ -101,6 +101,24 @@ describe('the client: the bell', () => {
     const again = await loaded({ ...reads(), 'GET /api/notifications': () => ({ body: { items: server1 } }) })
     expect(again.agent.listNotifications().map(n => [n.id, n.unread])).toEqual([['n1', false], ['n2', true], ['n3', false]])
   })
+  test('a refused mark puts the dot back only on a notice that still shows read (a newer read is not overwritten)', async () => {
+    let held: HttpAgent | null = null
+    const s = server({ ...reads({ notifications: [notice('n1', true), notice('n2', true)] }) })
+    const fetch: typeof globalThis.fetch = async (i, init) => {
+      if (String(i).endsWith('/api/notifications/read')) {
+        // A newer read lands before the refusal: the server still has n2 unread and no longer lists n1 as unread-able.
+        await held!.retry('notifications')
+        return new Response(JSON.stringify({ error: { code: 'unavailable' } }), { status: 503 })
+      }
+      return s.fetch(i, init)
+    }
+    const agent = new HttpAgent({ fetch, now: () => 5000 })
+    held = agent
+    await agent.whenLoaded()
+    // Mark n1 only; while it is in flight a reload (n1 unread again from the server) replaces the list.
+    await agent.markNoticesRead(['n1']).then(() => 'ok', () => 'refused')
+    expect(agent.listNotifications().map(n => [n.id, n.unread])).toEqual([['n1', true], ['n2', true]])
+  })
   test('nothing unread to mark sends nothing', async () => {
     const { agent, calls } = await loaded(reads({ notifications: [notice('n1', false)] }))
     await agent.markNoticesRead(['n1'])
