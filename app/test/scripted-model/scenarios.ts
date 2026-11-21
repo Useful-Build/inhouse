@@ -54,12 +54,12 @@ const textOnly = (m: MessagesRequest['messages'][number]): boolean =>
  * message after the result: the budget line ("USD budget: $… remaining") whenever the run sets `maxBudgetUsd`, as every
  * runner run does (fixtures/cli-requests.json, `write-output.turn1-budget`).
  */
-const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown } | undefined => {
+const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown; content?: unknown } | undefined => {
   for (let i = r.messages.length - 1; i >= 0; i--) {
     const m = r.messages[i]!
     if (textOnly(m)) continue
     if (m.role !== 'user' || !Array.isArray(m.content)) return undefined
-    return m.content.find((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id) as { is_error?: unknown } | undefined
+    return m.content.find((b) => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id) as { is_error?: unknown; content?: unknown } | undefined
   }
   return undefined
 }
@@ -80,8 +80,21 @@ const resultIs =
   (r) => {
     const block = resultBlock(r, id)
     if (block === undefined) return `no result for ${id}: ${lastShape(r)}`
-    return (block.is_error === true) === error ? true : `the result for ${id} has is_error ${block.is_error === true}, not ${error}`
+    if ((block.is_error === true) === error) return true
+    // What the result says (capped): a tool that failed on its own model call (WebFetch's page summary) carries that
+    // call's own miss here, so the agent's visible error names it too. Scripted test data only.
+    const said = resultText(block).replace(/\s+/g, ' ').slice(0, RESULT_EXCERPT_MAX)
+    return `the result for ${id} has is_error ${block.is_error === true}, not ${error}; it says: "${said}"`
   }
+
+/** How much of a mismatched result's text a miss quotes. */
+export const RESULT_EXCERPT_MAX = 200
+
+/** A tool_result's text: its string content, or its text blocks joined. */
+const resultText = (block: { content?: unknown }): string =>
+  typeof block.content === 'string' ? block.content
+  : Array.isArray(block.content) ? block.content.map((b) => (typeof b === 'object' && b !== null && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join(' ')
+  : ''
 
 const both =
   (...checks: Check[]): Check =>

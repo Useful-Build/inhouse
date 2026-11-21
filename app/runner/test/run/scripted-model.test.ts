@@ -133,7 +133,7 @@ describe('the scripted model', () => {
     const asked: Msg = { role: 'assistant', content: SCENARIOS[name]!.turns[0]!.content }
     const wrong: Msg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', ...(wrongError ? { is_error: true } : { is_error: false }) }] }
     expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, wrong]), name)).status).toBe(400)
-    expect(model.misses.at(-1)!.reason).toBe(`the request does not match the turn: the result for ${id} has is_error ${wrongError}, not ${!wrongError}`)
+    expect(model.misses.at(-1)!.reason).toBe(`the request does not match the turn: the result for ${id} has is_error ${wrongError}, not ${!wrongError}; it says: "x"`)
     const right: Msg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', ...(wrongError ? {} : { is_error: true }) }] }
     expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, right]), name)).status).toBe(200)
   })
@@ -395,7 +395,23 @@ describe("the real CLI's requests", () => {
     const flipped = { ...budget, messages: budget.messages.map((m, i) => (i === at ? { ...m, content: (m.content as Record<string, unknown>[]).map((b) => ({ ...b, is_error: false })) } : m)) }
     const model = createScriptedModel(SCENARIOS)
     expect((await answer(model, flipped, 'webfetch-refused')).status).toBe(400)
-    expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: the result for toolu_scripted_fetch_refused has is_error false, not true'])
+    expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: the result for toolu_scripted_fetch_refused has is_error false, not true; it says: "refused by the egress"'])
+  })
+
+  // Q2 (fleet 9390b3c): webfetch-allowed's turn 1 saw is_error true, and the side request's own miss sat only in the
+  // tool_result, which nobody could read. The miss now quotes the result (capped), so the visible error carries it.
+  it("webfetch-allowed: an errored fetch's miss quotes what the result says, capped", async () => {
+    const turn1 = captured['webfetch-allowed']!['turn1-budget']!
+    const at = turn1.messages.findIndex((m) => JSON.stringify(m.content).includes('"tool_result"'))
+    const withResult = (content: unknown) => ({ ...turn1, messages: turn1.messages.map((m, i) => (i === at ? { ...m, content: [{ type: 'tool_result', tool_use_id: 'toolu_scripted_fetch', content, is_error: true }] } : m)) })
+    const sideMiss = 'API Error: 400 scripted model miss: scenario "hello", turn 0: the request does not match the turn: no tool list (a side request)'
+    const model = createScriptedModel(SCENARIOS)
+    expect((await answer(model, withResult(sideMiss), 'webfetch-allowed')).status).toBe(400)
+    expect((await answer(model, withResult([{ type: 'text', text: 'a'.repeat(250) }]), 'webfetch-allowed')).status).toBe(400)
+    expect(model.misses.map((m) => m.reason)).toEqual([
+      `the request does not match the turn: the result for toolu_scripted_fetch has is_error true, not false; it says: "${sideMiss}"`,
+      `the request does not match the turn: the result for toolu_scripted_fetch has is_error true, not false; it says: "${'a'.repeat(200)}"`,
+    ])
   })
 
   it('the placeholder stands in only for a tool the runner gives the agent: an unknown tool is still a miss', () => {
@@ -421,6 +437,6 @@ describe("the real CLI's requests", () => {
     const flipped = { ...turn1, messages: turn1.messages.map((m, i) => (i === turn1.messages.length - 1 ? { ...m, content: (m.content as Record<string, unknown>[]).map((b) => ({ ...b, is_error: false })) } : m)) }
     const model = createScriptedModel(SCENARIOS)
     expect((await answer(model, flipped, 'webfetch-refused')).status).toBe(400)
-    expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: the result for toolu_scripted_fetch_refused has is_error false, not true'])
+    expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: the result for toolu_scripted_fetch_refused has is_error false, not true; it says: "refused by the egress"'])
   })
 })
