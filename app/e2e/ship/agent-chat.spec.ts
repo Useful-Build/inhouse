@@ -13,8 +13,8 @@
 // The Memory pages list active facts only, so S7 can show the person's own fact and the team fact's absence, not the agent
 // "relying" on a fact (a scripted model can't); the waiting save itself is covered by tools.test.ts. S9 sets the smallest cap
 // ($0.01): the server judges the cap reached once less than a start hold ($0.25) is left, so Usage reads at the cap without any
-// spending. The chat has no UI for output files yet (route 40 is S10's oracle), and no download button until the route 41 UI
-// lands: S10's download test is fixme until SHIP_CHAT_DOWNLOAD=1.
+// spending. S10's download test attaches a real file through the composer (uploaded to route 39 when the message is sent) and
+// downloads it and the file the agent made through the chats' Download buttons (route 41).
 //
 // Run (the Q2 specs job, with the test issuer key it holds):
 //   E2E_TEST_BUILD_REMOTE=1 SHIP=1 BASE_URL=... TEST_BUILD_INHOUSE_URL=... TEST_ISSUER_PRIVATE_JWK_FILE=...
@@ -437,18 +437,25 @@ test('S10: Attach a file to a question; the agent makes a spreadsheet from it; t
   await shot(page, 'S10-attached-and-made')
 })
 
-test('S10: The file the agent made downloads from the chat', async ({ context, page }) => {
+test('S10: The attached file and the file the agent made download from the chat', async ({ context, page }) => {
   needsContainer()
-  // The download button's UI is a separate PR; until it lands this stays off. The button is named "Download <file name>".
-  test.fixme(process.env.SHIP_CHAT_DOWNLOAD !== '1', 'the chat has no download button yet (route 41 UI): set SHIP_CHAT_DOWNLOAD=1 once it lands')
   test.setTimeout(240_000)
   await openAs(context, page, 'dana', '#/today')
+  // The file goes up when the message is sent (route 39), so the chip's button names a file the server holds.
+  await page.locator('[data-composer] input[type=file]').setInputFiles({ name: 'stock-list.csv', mimeType: 'text/csv', buffer: Buffer.from('sku,qty\nmug,12\n') })
+  await expect(page.locator('[data-composer]').getByText('stock-list.csv').first()).toBeVisible()
   await askFromToday(page, 'scenario:write-output make the table')
   await expect(log(page).getByText('Saved outputs/table.csv.', { exact: true })).toBeVisible({ timeout: 150_000 })
-  const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Download table.csv' }).click()
-  const file = await download
-  expect(file.suggestedFilename()).toBe('table.csv')
-  expect(await readFile(await file.path(), 'utf8')).toBe('sku,qty\nA1,3\n')
+  // Each button saves its own file, named as the chip is.
+  const made = page.waitForEvent('download')
+  await log(page).getByRole('button', { name: 'Download table.csv' }).click()
+  const output = await made
+  expect(output.suggestedFilename()).toBe('table.csv')
+  expect(await readFile(await output.path(), 'utf8')).toBe('sku,qty\nA1,3\n')
+  const attached = page.waitForEvent('download')
+  await log(page).getByRole('button', { name: 'Download stock-list.csv' }).click()
+  const input = await attached
+  expect(input.suggestedFilename()).toBe('stock-list.csv')
+  expect(await readFile(await input.path(), 'utf8')).toBe('sku,qty\nmug,12\n')
   await shot(page, 'S10-downloaded')
 })
