@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Final, Approvals</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2d3bea}a:hover{color:#1f2aa8}
+.t-light{--page:#f2f2f2;--card:#ffffff;--sheet:#f5f6fe;--ink:#171717;--ink-2:#2e2e2e;--ink-3:#545454;--muted:#696969;--divider:#eeeeee;--brand:#2d3bea;--red-tint:#fcebe6;--red-text:#a3321b;--amber-tint:#fbf1df;--amber-text:#7d4b00;--primary:#171717;--on-primary:#ffffff;--primary-sheen:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,0));--btn-shadow:0 1px 2px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.08);--soft:#f0f0f0;--soft-hover:#e7e7e7;--ghost-hover:#ececec;--logo-tile:#ffffff;--logo-edge:rgba(0,0,0,.08);--dot:rgba(0,0,0,.085);--lift:0 0 0 1px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.04),0 8px 24px -10px rgba(0,0,0,.08);color-scheme:light}
+.t-dark{--page:#0f0f0f;--card:#191919;--sheet:#1d1f2e;--ink:#ededed;--ink-2:#dcdcdc;--ink-3:#b3b3b3;--muted:#959595;--divider:#262626;--brand:#7f87ff;--red-tint:#3a1b14;--red-text:#f09a86;--amber-tint:#33250f;--amber-text:#f0c983;--primary:#ededed;--on-primary:#111111;--primary-sheen:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0));--btn-shadow:0 1px 2px rgba(0,0,0,.5);--soft:#262626;--soft-hover:#303030;--ghost-hover:#262626;--logo-tile:#f2f2f2;--logo-edge:rgba(0,0,0,0);--dot:rgba(255,255,255,.06);--lift:0 0 0 1px rgba(255,255,255,.06),inset 0 1px 0 rgba(255,255,255,.035),0 10px 28px -12px rgba(0,0,0,.7);color-scheme:dark}
+.half{background-color:var(--page);background-image:radial-gradient(var(--dot) 1px,transparent 1.2px);background-size:24px 24px;color:var(--ink);font-family:Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.btn{font:inherit;border:0;cursor:pointer;white-space:nowrap;transition:background .15s ease,filter .15s ease}
+.btn-primary{background-image:var(--primary-sheen)}
+.btn-primary:hover{filter:brightness(1.18)}
+.t-dark .btn-primary:hover{filter:brightness(.92)}
+.btn-soft:hover{background:var(--soft-hover)!important}
+.btn-ghost:hover,.icon-btn:hover{background:var(--ghost-hover)!important}
+.btn:focus-visible,.icon-btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.lt{width:22px;height:22px;border-radius:999px;background:var(--logo-tile);box-shadow:0 0 0 2px var(--card),inset 0 0 0 1px var(--logo-edge);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.lt+.lt{margin-left:-5px}
+.lt img{width:12px;height:12px;object-fit:contain;display:block}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+@media (prefers-reduced-motion:reduce){.btn{transition:none}}
+</style>
+</helmet>
+<div style="width:2360px;height:2700px;display:flex">
+<sc-for list="{{themes}}" as="t" hint-placeholder-count="2">
+<div class="{{t.cls}}" style="flex:1;min-width:0;height:100%;box-sizing:border-box;padding:28px 42px 48px;display:flex;flex-direction:column">
+  <div class="mono" style="color:var(--muted)">{{t.label}}</div>
+
+  <div style="width:900px;margin:44px auto 0;display:flex;flex-direction:column">
+    <h1 style="margin:0;font-size:40px;line-height:1.1;font-weight:600;letter-spacing:-0.035em">Approvals</h1>
+    <p style="margin:10px 0 0;font-size:16px;line-height:1.5;color:var(--ink-3)">Work your Inhouse agent drafted. Nothing goes out until someone approves it.</p>
+
+    <div style="margin-top:40px;display:flex;align-items:center;gap:10px;padding:0 2px">
+      <h2 style="margin:0;font-size:17px;font-weight:600;letter-spacing:-0.012em">Waiting for you</h2>
+      <span class="num" style="font-size:14px;color:var(--muted)">6</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-soft" style="height:34px;padding:0 12px 0 10px;border-radius:10px;background:var(--soft);color:var(--ink);font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:7px"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 8.5l3 3 6-7M7.5 11.5l.5.5 6-7.5"></path></svg>Approve all low-risk<span class="num" style="font-weight:500;color:var(--muted)">3</span></button>
+      <button class="btn btn-ghost" style="height:34px;padding:0 10px;border-radius:10px;background:transparent;color:var(--ink-3);font-size:13.5px;display:flex;align-items:center;gap:6px">Oldest first<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6l3-3 3 3M5 10l3 3 3-3"></path></svg></button>
+    </div>
+
+    <div style="margin-top:14px;display:flex;flex-direction:column;gap:16px">
+      <sc-for list="{{items}}" as="r" hint-placeholder-count="6">
+      <article style="border-radius:22px;background:var(--card);box-shadow:var(--lift)">
+        <div style="display:flex;align-items:center;gap:10px;padding:18px 22px 16px 24px;border-bottom:1px solid var(--divider)">
+          <sc-if value="{{r.urgent}}" hint-placeholder-val="{{ false }}"><span style="display:inline-flex;align-items:center;height:24px;padding:0 10px;margin-left:-3px;border-radius:999px;background:var(--red-tint);color:var(--red-text);font-size:12.5px;font-weight:600;flex:none">Urgent</span></sc-if>
+          <h3 style="margin:0;min-width:0;flex:1;font-size:16.5px;line-height:1.35;font-weight:600;letter-spacing:-0.014em">{{r.title}}</h3>
+          <span style="display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:999px;background:{{r.tagBg}};color:{{r.tagInk}};font-size:12.5px;font-weight:600;white-space:nowrap;flex:none">{{r.risk}}</span>
+          <span style="font-size:13px;color:var(--muted);white-space:nowrap;flex:none">{{r.area}} · {{r.time}}</span>
+        </div>
+
+        <div style="padding:4px 24px 0">
+          <sc-for list="{{r.lines}}" as="ln" hint-placeholder-count="3">
+          <div class="num" style="display:grid;grid-template-columns:220px minmax(0,1fr);column-gap:16px;align-items:center;min-height:46px;border-bottom:1px solid var(--divider);font-size:14px">
+            <span style="color:var(--muted)">{{ln.k}}</span>
+            <span style="font-weight:500;color:var(--ink-2)">{{ln.v}}</span>
+          </div>
+          </sc-for>
+          <sc-if value="{{r.body}}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:16px;border-radius:14px;background:var(--sheet);padding:14px 18px 15px">
+              <div style="font-size:12.5px;color:var(--muted)">{{r.bodyLabel}}</div>
+              <p style="margin:6px 0 0;font-size:14.5px;line-height:1.6;color:var(--ink-2);text-wrap:pretty">{{r.body}}</p>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="padding:16px 22px 18px 24px;display:flex;flex-direction:column;gap:14px">
+          <sc-if value="{{r.approver}}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)">
+              <span style="width:24px;height:24px;border-radius:999px;background:{{r.avatarBg}};color:#2b1c10;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none">{{r.initials}}</span>
+              <span><b style="font-weight:600;color:var(--ink-2)">{{r.approver}}</b> {{r.approverNote}}</span>
+            </div>
+          </sc-if>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="btn btn-primary" style="height:38px;padding:0 16px;border-radius:12px;background-color:var(--primary);color:var(--on-primary);box-shadow:var(--btn-shadow);font-size:14px;font-weight:600;display:flex;align-items:center;gap:7px;flex:none">
+              <sc-if value="{{r.quick}}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"></path></svg></sc-if>
+              {{r.cta}}
+              <sc-if value="{{r.review}}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8h9M9 4.5L12.5 8 9 11.5"></path></svg></sc-if>
+            </button>
+            <button class="icon-btn" aria-label="More actions" style="width:38px;height:38px;border-radius:12px;border:0;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" fill="currentColor"></circle><circle cx="8" cy="8" r="1.2" fill="currentColor"></circle><circle cx="12.5" cy="8" r="1.2" fill="currentColor"></circle></svg></button>
+            <span style="flex:1"></span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);white-space:nowrap">
+              <span style="display:flex"><sc-for list="{{r.logos}}" as="l" hint-placeholder-count="2"><span class="lt"><img src="{{l.src}}" alt=""></span></sc-for></span>
+              From {{r.from}}
+            </span>
+          </div>
+        </div>
+      </article>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":2360,"height":2700}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var L = {
+      shopify: { src: '/_blob/926fa2db406968a63fc06cc9db4f65c2' },
+      amazon: { src: '/_blob/45226e2f78291c36a2d12cd21717cae2' },
+      shipbob: { src: '/_blob/610f9552eaa837eba0daab0177ceee07' },
+      xero: { src: '/_blob/8ace3dafbfca297fbcb9e3dbf873daa2' }
+    };
+    var warn = { tagBg: 'var(--amber-tint)', tagInk: 'var(--amber-text)', quick: false, review: true, cta: 'Review draft' };
+    var low = { tagBg: 'var(--soft)', tagInk: 'var(--ink-3)', risk: 'Low risk', quick: true, review: false };
+    function kv(k, v) { return { k: k, v: v }; }
+    var items = [
+      Object.assign({ urgent: true, title: 'Open a reimbursement case', risk: 'Claims $1,240', area: 'Money', time: '6:06 AM',
+        lines: [kv('Case', 'Fulfillment fee charged too high'), kv('Orders', '18, listed in the attachment'), kv('Amount', '$1,240')],
+        body: '', logos: [L.amazon, L.xero], from: 'Amazon · Xero', approver: '' }, warn),
+      Object.assign({ urgent: true, title: 'Pause the variant and email 5 customers', risk: 'Goes to customers', area: 'Orders', time: '6:07 AM',
+        lines: [kv('Pause on Shopify', 'Trail Shell Jacket · M · Olive'), kv('Email 5 customers', 'New ship date Tue, Dec 8, or a refund'), kv('Restock due', 'Thu, Dec 3 from Kestrel')],
+        bodyLabel: 'Email to customers, in your tone', body: 'Hi Jamie, thanks for your order. The Trail Shell in Olive, size M, sold faster than we expected, so yours will ship on Tue, Dec 8. If you’d rather not wait, reply and we’ll refund you straight away. The Northline team',
+        logos: [L.shopify, L.shipbob], from: 'Shopify · ShipBob', approver: 'Leo Park', approverNote: 'usually signs off customer emails.', initials: 'LP', avatarBg: '#a9c2d6' }, warn),
+      Object.assign({ urgent: false, title: 'Reorder 600 Ridge 30L Packs', risk: 'Spends $9,600', area: 'Stock', time: '6:08 AM',
+        lines: [kv('Ridge 30L · Olive', '400 × $16 = $6,400'), kv('Ridge 30L · Black', '200 × $16 = $3,200'), kv('To', 'Kestrel Supply, PDF purchase order'), kv('Total', '$9,600')],
+        body: '', logos: [L.shopify], from: 'Shopify · PO sheet', approver: 'Dana Kim', approverNote: 'usually signs off orders over $5,000.', initials: 'DK', avatarBg: '#c9a27e' }, warn),
+      Object.assign({ urgent: false, title: 'Chase Kestrel for a new ship date', area: 'Stock', time: '6:09 AM', cta: 'Approve and send',
+        lines: [kv('To', 'Mei Chen, Kestrel Supply'), kv('Subject', 'PO-1187: new ship date?')],
+        bodyLabel: 'Email, in your tone', body: 'Hi Mei, PO-1187 (420 Summit Fleece) was due on Nov 10 and we haven’t seen a shipping notice. Could you send a new ship date today? We have about 12 days of stock left. Thanks, Sam',
+        logos: [L.shopify], from: 'PO sheet · Email · Shopify', approver: '' }, low),
+      Object.assign({ urgent: false, title: 'Restock 11 units on Shopify', area: 'Orders', time: '6:10 AM', cta: 'Approve and restock',
+        lines: [kv('Ridge 30L · Olive', '4 units'), kv('Trail Shell · M · Black', '3 units'), kv('Summit Fleece · L', '4 units')],
+        body: '', logos: [L.shipbob, L.shopify], from: 'ShipBob · Shopify', approver: '' }, low),
+      Object.assign({ urgent: false, title: 'Ask ShipBob why #4821 hasn’t shipped', area: 'Orders', time: '6:11 AM', cta: 'Approve and send',
+        lines: [kv('To', 'ShipBob support, new ticket'), kv('Order', '#4821, paid Nov 12')],
+        bodyLabel: 'Support message', body: 'Hi, order #4821 was released to you on Nov 12 and still shows as not picked. Can you check what’s holding it and ship it today? It’s for a repeat customer. Thanks, Northline Outdoor',
+        logos: [L.shopify, L.shipbob], from: 'Shopify · ShipBob', approver: '' }, low)
+    ];
+    return {
+      themes: [{ cls: 'half t-light', label: 'Light' }, { cls: 'half t-dark', label: 'Dark' }],
+      items: items
+    };
+  }
+}
+</script>
+</body>
+</html>
