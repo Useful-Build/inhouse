@@ -334,6 +334,24 @@ describe('route E handler', () => {
     expect(retry.rowWrites).toEqual([{ accountId: 'slack:workspace', connector: 'slack' }])
     expect(retry.lines).toHaveLength(1)
   })
+  it('a connecting row (a reconnect in flight) is 409 not_connected: no hub call, no line; a failed row still retries', async () => {
+    const mid = fake({ slack: { state: 'disconnected' }, rows: [row('slack:workspace', 'connecting', NOW - MIN)] })
+    const res = await post(mid, inhouse, 'slack:workspace')
+    expect([res.status, (await errBody(res)).reason]).toEqual([409, 'not_connected'])
+    expect([mid.hubCalls, mid.lines, mid.rowWrites]).toEqual([[], [], []])
+    const failed = fake({ slack: { state: 'disconnected' }, rows: [row('slack:workspace', 'failed', NOW - MIN)] })
+    expect((await post(failed, inhouse, 'slack:workspace')).status).toBe(200)
+    expect(failed.hubCalls).toEqual(['disconnect:slack:workspace'])
+  })
+  it('a retry after a failed first revoke records revoked: false, in the line and the answer, though the second hub call says true', async () => {
+    const f = fake({ revoked: true, slack: { state: 'disconnected', revokeFailedAt: inst(NOW - 5 * MIN) }, rows: [row('slack:workspace', 'connected', NOW - 6 * MIN)] })
+    const res = await post(f, inhouse, 'slack:workspace')
+    expect([res.status, await res.json()]).toEqual([200, { revoked: false }])
+    expect(f.lines.map(l => l.line)).toEqual([{ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: false }])
+    // A first-time disconnect of an account with an old failed revoke flag still reports the hub's answer.
+    const first = fake({ revoked: true, slack: { revokeFailedAt: inst(NOW - 5 * MIN) } })
+    expect(await (await post(first, inhouse, 'slack:workspace')).json()).toEqual({ revoked: true })
+  })
   it('an Admin or Member is refused, a key or unknown id is 404, a hub failure changes nothing', async () => {
     for (const p of [admin, member]) {
       const f = fake()

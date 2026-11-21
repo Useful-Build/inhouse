@@ -203,13 +203,18 @@ export function toolsHandlers(resolve: (c: HandlerContext) => ToolsDeps): { list
     let retry = false
     if (state === 'disconnected') {
       const row = (await deps.accounts.list()).find(r => r.accountId === entry.accountId)
-      retry = row !== undefined && row.lastState !== 'disconnected' && row.lastState !== 'never'
+      // Only a row that still says connected or failed: a `connecting` row is a reconnect in flight, which a second
+      // hub disconnect would kill.
+      retry = row?.lastState === 'connected' || row?.lastState === 'failed'
     }
     if (state !== 'active' && state !== 'failed' && !retry) return apiError('conflict', { reason: 'not_connected' })
     const r = await deps.gateway.disconnect(scopeOf(c, 'tools.disconnect'), entry.accountId)
     if (!r.ok) return hubFailure(r.error)
-    await deps.accounts.recordDisconnect(writer(c), entry.accountId, entry.key, { action: 'tools.disconnect', accountId: entry.accountId, revoked: r.value.revoked })
-    return apiJson({ revoked: r.value.revoked })
+    // On a retry the hub finds no captured token and says `revoked: true`, which would hide a failed first revoke: keep
+    // the hub's record of it.
+    const revoked = retry ? r.value.revoked && was.status.revokeFailedAt === null : r.value.revoked
+    await deps.accounts.recordDisconnect(writer(c), entry.accountId, entry.key, { action: 'tools.disconnect', accountId: entry.accountId, revoked })
+    return apiJson({ revoked })
   }
 
   return { listTools, setToolPaused, disconnectTool }
