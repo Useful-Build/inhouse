@@ -53,12 +53,13 @@ function setup(mode?: { compiled: boolean; flag: string | undefined }) {
     if (mode.flag === undefined) delete env.INHOUSE_TEST_BUILD
     else env.INHOUSE_TEST_BUILD = mode.flag
   }
-  return async (body: unknown) => {
+  /** A `raw` string is sent as written; anything else as its JSON. */
+  return async (body: unknown, raw?: string) => {
     const headers = {
       'Cf-Access-Jwt-Assertion': await mintService({ key: good.key.privateJwk, iss: TEAM, aud: BRAND.aud, clientId: RELEASE_ID }),
       Origin: BRAND.origin, 'Content-Type': 'application/json',
     }
-    const res = await api(parts, new Request(`${BRAND.origin}/api/ops/alarm`, { method: 'POST', headers, body: JSON.stringify(body) }), env, ctx, 'req-1')
+    const res = await api(parts, new Request(`${BRAND.origin}/api/ops/alarm`, { method: 'POST', headers, body: raw ?? JSON.stringify(body) }), env, ctx, 'req-1')
     return { status: res.status, body: JSON.parse(await res.text()) as unknown }
   }
 }
@@ -105,6 +106,17 @@ describe('outside the test build (failure 1)', () => {
 })
 
 describe('stopAfterBatch in the test build (failure 2)', () => {
+  it('an arm left unconsumed is cleared by the tests\' fresh state: the next pass runs normally', async () => {
+    controlLines()
+    expect(await testBuild()({ action: 'stopAfterBatch' })).toEqual({ status: 200, body: { armed: true } })
+    await fresh()
+    const r = await dueRoutine()
+    const h = harness()
+    await h.tick(NOW)
+    expect((await slotsOf(r.id)).map(s => s.state)).toEqual(['started'])
+    expect(h.runs.turns.size).toBe(1)
+  })
+
   it('arms once: the next pass commits the slot row and stops before the run; the pass after runs it exactly once', async () => {
     const lines = controlLines()
     const r = await dueRoutine()
@@ -174,10 +186,21 @@ describe('seedCursor in the test build (failure 3)', () => {
   })
 })
 
+describe('the plain alarm\'s bodies', () => {
+  it('an empty or whitespace-only body is the plain alarm, as no body is; a non-JSON one is 400', async () => {
+    const lines = controlLines()
+    const call = testBuild()
+    for (const raw of ['', '  \n']) expect(await call(undefined, raw), JSON.stringify(raw)).toEqual({ status: 200, body: { ran: true } })
+    expect(lines()).toEqual(['alarm_now', 'alarm_now'])
+    expect(await call(undefined, 'nope')).toEqual({ status: 400, body: { error: { code: 'invalid' } } })
+  })
+})
+
 describe('the off stand-in (failure 5)', () => {
   it('refuses to arm or seed, and its tick hook does nothing', async () => {
     expect(() => off.armStopAfterBatch()).toThrow('The test controls are not in this build.')
     expect(() => off.seedCursor(db, 'rt_aaaaaaaaaaaaaaaaaaaaaa', 1)).toThrow('The test controls are not in this build.')
     expect(off.afterTickBatch()).toBeUndefined()
+    expect(off.resetTestControls()).toBeUndefined()
   })
 })

@@ -13,7 +13,7 @@
 //     `{ seeded: true }`, or 404 `not_found` with reason `routine` when no live routine has that id.
 import { z } from 'zod'
 import { RoutineIdSchema } from '../../shared/contract/audit.ts'
-import { readBody } from '../db/handler-kit.ts'
+import { MAX_BODY_BYTES, readCapped } from '../db/handler-kit.ts'
 import { apiError, apiJson } from '../http.ts'
 import type { Handler } from '../routes.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
@@ -26,17 +26,30 @@ const ControlSchema = z.union([
   z.strictObject({ action: z.literal('seedCursor'), routineId: RoutineIdSchema, checkedUntilMs: z.number().int().nonnegative() }),
 ])
 
+/** The control the body names; no body, or an empty or whitespace-only one, is the plain alarm. `null` when invalid. */
+async function readControl(request: Request): Promise<z.infer<typeof ControlSchema> | null> {
+  if (request.body === null) return {}
+  const bytes = await readCapped(request, MAX_BODY_BYTES)
+  if (bytes === null) return null
+  let json: unknown
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    if (text.trim() === '') return {}
+    json = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const parsed = ControlSchema.safeParse(json)
+  return parsed.success ? parsed.data : null
+}
+
 /** The flag is a parameter so the unit tests can stand in for each build mode (vitest compiles it `false`). */
 export function alarmNowHandler(compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__): Handler {
   return async c => {
     const on = compiledTestBuild && (c.env as { INHOUSE_TEST_BUILD?: unknown }).INHOUSE_TEST_BUILD === '1'
     if (!on) return apiError('not_found')
-    let body: z.infer<typeof ControlSchema> = {}
-    if (c.request.body !== null) {
-      const read = await readBody(c.request, ControlSchema)
-      if ('error' in read) return read.error
-      body = read.ok
-    }
+    const body = await readControl(c.request)
+    if (body === null) return apiError('invalid')
     const agent = brandAgent(c.env)
     if (body.action === 'stopAfterBatch') return apiJson(await agent.testStopAfterBatch())
     if (body.action === 'seedCursor') {

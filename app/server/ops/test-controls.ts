@@ -32,6 +32,11 @@ export function armStopAfterBatch(): { armed: true } {
   return { armed: true }
 }
 
+/** Clears the switch, armed or not: the tests' fresh state (routines/test-kit.ts `fresh`), so an unconsumed arm can't leak. */
+export function resetTestControls(): void {
+  stopAfterBatch = false
+}
+
 /** The tick's hook, called after its decide step (routines/tick.ts). Throws once when armed, and clears the switch. */
 export function afterTickBatch(): void {
   if (!stopAfterBatch) return

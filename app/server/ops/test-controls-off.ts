@@ -11,5 +11,6 @@ const off = () => {
 export const runAlarmNow: Real['runAlarmNow'] = off
 export const armStopAfterBatch: Real['armStopAfterBatch'] = off
 export const seedCursor: Real['seedCursor'] = off
+export const resetTestControls: Real['resetTestControls'] = () => {}
 /** The tick's hook (routines/tick.ts): nothing, so the product build's tick runs as written. */
 export const afterTickBatch: Real['afterTickBatch'] = () => {}
