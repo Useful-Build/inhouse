@@ -168,6 +168,10 @@ export interface AgentClient {
   deleteFiles(ids: string[]): Promise<void>
   /** Undo a delete. */
   restoreFiles(ids: string[]): Promise<void>
+  /** Adds files to the Library and answers them. Rejects with an `AgentError` (the demo: `unavailable`, with a notice, since nothing is kept). */
+  uploadFiles(files: File[]): Promise<LibraryFile[]>
+  /** Where a Library file downloads from, or null where it can't (the demo). */
+  fileDownloadUrl(id: string): string | null
 
   /** Take a problem off Today and Approvals for a reason, stamped with the time. Null brings it back (Undo). Approving it clears it too. */
   setAside(id: string, reason: SetAsideReason | null): Promise<void>
