@@ -332,7 +332,7 @@ test('S6: A second Member can\'t see the first person\'s chat', async ({ browser
 
 // ---------- S7: memory (a container) ----------
 
-test('S7: A fact the agent saves for you shows in your Memory; a team fact waits for an admin and no page lists it', async ({ browser, context, page }) => {
+test('S7: A fact the agent saves for you shows in your Memory and a new chat uses it; a team fact isn\'t used by a new chat (the admin approval is P6)', async ({ browser, context, page }) => {
   needsContainer()
   test.setTimeout(240_000)
   await openAs(context, page, 'dana', '#/today')
@@ -374,7 +374,7 @@ test('S7: A fact the agent saves for you shows in your Memory; a team fact waits
   expect(loaded.team.flatMap(g => g.lines.map(l => l.text))).not.toContain(MEMORY_TEAM)
   await settingsPage(admin, 'Team settings', 'Team memory')
   await expect(main(admin)).not.toContainText(MEMORY_TEAM)
-  await shot(admin, 'S7-team-fact-waits-for-an-admin')
+  await shot(admin, 'S7-team-fact-not-in-team-memory')
   // And a new chat doesn't use it: the same kind of search, for the team fact, finds nothing. (The words "waiting for an admin"
   // are P6's approvals; what P3 can show is that the fact is not in use.)
   await goTo(admin, 'New chat')
