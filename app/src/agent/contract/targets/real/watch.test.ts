@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { WATCH_READ_PATH, seedUnreadNotice, settleRuns, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
+import { WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, WATCH_READ_PATH, seedUnreadNotice, settleRuns, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
 import type { Signer } from './me'
 
 describe('the real target\'s P4 parts', () => {
   it('serves exactly these methods besides the Library five (literal)', () => {
-    expect([...WATCH_SERVED]).toEqual(['runRoutine', 'deleteRoutine', 'restoreRoutine', 'markNoticesRead', 'listNotifications', 'setAside'])
+    expect([...WATCH_SERVED]).toEqual(['listNotifications', 'setAside'])
+    expect(Object.keys(WATCH_EXEMPT)).toEqual(['markNoticesRead', 'deleteFiles', 'restoreFiles', 'runRoutine', 'deleteRoutine', 'restoreRoutine'])
+    for (const why of Object.values(WATCH_EXEMPT)) expect(why.length).toBeGreaterThan(20)
+    expect([...WATCH_ONLY_ON_WATCH_BUILD]).toEqual(['setAside'])
+    for (const m of Object.keys(WATCH_EXEMPT)) expect(WATCH_SERVED as readonly string[], `${m} is not both served and exempt`).not.toContain(m)
   })
   it('reads each resource from the route the design numbers (literal)', () => {
     expect(WATCH_READ_PATH).toEqual({ routines: '/api/routines', activity: '/api/activity', notifications: '/api/notifications', library: '/api/library' })

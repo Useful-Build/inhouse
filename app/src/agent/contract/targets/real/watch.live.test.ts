@@ -59,6 +59,24 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
     return { reason: r?.reason ?? null, rev: r?.rev ?? 0 }
   }
 
+  /** A second session of the person, by the API: each write sends the rev the server has now and must land (a refusal throws, naming it). */
+  const asOther = {
+    routine: {
+      async deleteRoutine(id: string) { const r = await server(); const d = await s.api('admin', 'POST', `/api/routines/${id}/delete`, { ifRev: r.rev }); if (d.status !== 200) throw new Error(`delete answered ${d.status}: ${JSON.stringify(d.json)}`) },
+      async restoreRoutine(id: string) { const r = await server(); const d = await s.api('admin', 'POST', `/api/routines/${id}/restore`, { ifRev: r.rev }); if (d.status !== 200) throw new Error(`restore answered ${d.status}: ${JSON.stringify(d.json)}`) },
+    },
+    async files(id: string, to: 'delete' | 'restore') {
+      const list = ((await s.api('admin', 'GET', `/api/library${to === 'restore' ? '?deleted=1' : ''}`)).json as { items: { id: string; rev: number }[] }).items.find(f => f.id === id)
+      if (!list) throw new Error(`the Library lists no ${id} to ${to}`)
+      const d = await s.api('admin', 'POST', `/api/library/${to}`, { items: [{ id, ifRev: list.rev }] })
+      if (d.status !== 200) throw new Error(`${to} answered ${d.status}: ${JSON.stringify(d.json)}`)
+    },
+    async aside(id: string, reason: 'snoozed' | null) {
+      const d = await s.api('admin', 'PUT', `/api/today/${id}/aside`, { reason, ifRev: (await asideOf(id)).rev })
+      if (d.status !== 200) throw new Error(`set aside answered ${d.status}: ${JSON.stringify(d.json)}`)
+    },
+  }
+
   beforeAll(async () => {
     s = signer(origin)
     if (watch) await settleRuns()
@@ -143,7 +161,8 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
       const before = a.getSnapshot()
       expect(before.routinesDeleted[MORNING_CHECK]).toBe(true)
       expect((await refused(a.restoreRoutine(MORNING_CHECK))).code).toBe('unavailable')
-      expect(a.getSnapshot(), 'the refused restore put the snapshot back').toBe(before)
+      // A rollback builds a new state object: compared by value.
+      expect(a.getSnapshot(), 'the refused restore put the snapshot back').toEqual(before)
       await resetRoutines(s)
     })
     it('restoreFiles: the delete lands, the refused restore leaves the file out of the list', async () => {
@@ -155,9 +174,8 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
       const before = a.getSnapshot()
       expect(a.listFiles().map(f => f.id)).not.toContain(fileId)
       expect((await refused(a.restoreFiles([fileId]))).code).toBe('unavailable')
-      expect(a.getSnapshot(), 'the refused restore put the snapshot back').toBe(before)
-      const other = await loaded()
-      await other.restoreFiles([fileId]).catch(() => undefined)
+      expect(a.getSnapshot(), 'the refused restore put the snapshot back').toEqual(before)
+      await asOther.files(fileId, 'restore')
     })
     it.skipIf(!watch)('setAside: a refused snooze leaves the card where it was', async () => {
       const id = await todayItem()
@@ -189,8 +207,7 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
         for (const { stale, toggle } of steps) {
           const before = await server()
           if (stale) {
-            const other = await loaded()
-            await changeRoutineElsewhere(other, MORNING_CHECK, before.deleted)
+            await changeRoutineElsewhere(asOther.routine, MORNING_CHECK, before.deleted)
           }
           // A deleted routine can only be restored; a live one is switched or deleted.
           const op = before.deleted ? () => a.restoreRoutine(MORNING_CHECK) : toggle ? () => a.setToggle(`r:${MORNING_CHECK}`, !before.on) : () => a.deleteRoutine(MORNING_CHECK)
@@ -225,8 +242,7 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
           const before = await asideOf(id)
           if (stale) {
             // Two writes in the other session that leave the reason as it was, two revisions on.
-            const other = await loaded()
-            if (before.reason === null) { await other.setAside(id, 'dismissed'); await other.setAside(id, null) } else { await other.setAside(id, null); await other.setAside(id, before.reason as 'snoozed' | 'dismissed') }
+            if (before.reason === null) { await asOther.aside(id, 'snoozed'); await asOther.aside(id, null) } else { await asOther.aside(id, null); await asOther.aside(id, 'snoozed') }
           }
           const hidden = a.getSnapshot().setAside[id] !== undefined
           const e = await (hidden ? a.setAside(id, null) : a.setAside(id, 'snoozed')).then(() => undefined, (x: unknown) => x)
@@ -259,9 +275,8 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
         let lastRev = revOf(a)!
         for (const stale of stales) {
           if (stale) {
-            const other = await loaded()
-            await other.deleteFiles([id])
-            await other.restoreFiles([id])
+            await asOther.files(id, 'delete')
+            await asOther.files(id, 'restore')
             const e = await a.deleteFiles([id]).then(() => undefined, (x: unknown) => x)
             expect(e, 'a stale delete rejects').toBeInstanceOf(AgentError)
             expect((e as AgentError).code).toBe('conflict')

@@ -15,7 +15,7 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
-import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, seedUnreadNotice, settleRuns, watchBuild, watchRoute } from './watch'
+import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, settleRuns, WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, watchBuild, watchRoute } from './watch'
 
 /** The P2 methods: what this target's client serves over HTTP. */
 /** How many live Library files `reset()` leaves (the shared Library cases delete one or two). */
@@ -25,7 +25,8 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
   // P4 W5 (p4-w5.md addendum, #256 review): the Library.
-  'listFiles', 'deleteFiles', 'restoreFiles', 'uploadFiles', 'fileDownloadUrl',
+  // (`deleteFiles` and `restoreFiles` are in WATCH_EXEMPT: the real client's writes don't fill the state the shared cases observe.)
+  'listFiles', 'uploadFiles', 'fileDownloadUrl',
   // P4 W6 (watch.ts): the routines, the bell and Today's set-aside.
   ...WATCH_SERVED,
 ])
@@ -65,6 +66,9 @@ const refusal = (code: AgentErrorCode) => new Response(JSON.stringify({ error: {
 const PNG_1X1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
 
 function realTarget(origin: string): ContractTarget {
+  // Said once per target: the P4 methods whose shared cases can't hold against the real client, and the one that needs containers.
+  for (const [method, why] of Object.entries(WATCH_EXEMPT)) console.warn(`CONTRACT METHOD NOT SERVED on the real target: ${method}: ${why}`)
+  if (!watchBuild()) console.warn('CONTRACT METHOD NOT SERVED on the real target: setAside: it needs a morning check run (a container): set E2E_WATCH_BUILD=1 on the multi-config build')
   const s: Signer = signer(origin)
   let ids: Awaited<ReturnType<typeof discover>> | undefined
   const ready = async () => (ids ??= await discover(s))
@@ -187,7 +191,6 @@ function realTarget(origin: string): ContractTarget {
       // Only a build with containers can end a Run now: a containerless one (CI's contract step) would wait out the deadline.
       if (watchBuild()) await settleRuns()
       await resetRoutines(s)
-      await seedUnreadNotice()
       this.fixtures.personId = seeded.admin
       this.fixtures.photoAfterSet = new RegExp(`^/api/members/${seeded.admin}/photo\\?v=[0-9a-f]{32}$`) // a member id is base64url: nothing to escape
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }
@@ -209,7 +212,7 @@ function realTarget(origin: string): ContractTarget {
     },
     async failSaves(on) { failAllSaves = on },
     async injectError(method, code) { if (code) armedErrors.set(method, code); else armedErrors.delete(method) },
-    serves: method => SERVED.has(method),
+    serves: method => SERVED.has(method) && (!WATCH_ONLY_ON_WATCH_BUILD.has(method) || watchBuild()),
     async writeElsewhere(record, value) {
       const other = await elsewhere()
       if (record.kind === 'setting') {

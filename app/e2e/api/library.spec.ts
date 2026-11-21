@@ -36,7 +36,19 @@ const page = async (request: APIRequestContext, who: Actor, query = ''): Promise
   expect(r.status, r.text).toBe(200)
   return r.json
 }
-const ids = async (request: APIRequestContext, who: Actor, query = '') => (await allPages<File_>(request, who, '/api/library' + query, 100)).items.map(f => f.id)
+/** Every page of the Library (`deleted` for the trash), following `nextCursor`; the query's own `?` and `&` are handled here (allPages appends its own `?limit`). */
+const pagesOf = async (request: APIRequestContext, who: Actor, deleted = false, limit = 100): Promise<File_[]> => {
+  const items: File_[] = []
+  let cursor: string | null = null
+  do {
+    const r = await call(request, who, 'GET', `/api/library?limit=${limit}${deleted ? '&deleted=1' : ''}${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`)
+    expect(r.status, r.text).toBe(200)
+    items.push(...r.json.items)
+    cursor = r.json.nextCursor
+  } while (cursor !== null)
+  return items
+}
+const ids = async (request: APIRequestContext, who: Actor) => (await pagesOf(request, who)).map(f => f.id)
 const write = (request: APIRequestContext, who: Actor, to: 'delete' | 'restore', items: { id: string; ifRev: number }[]) => call(request, who, 'POST', `/api/library/${to}`, { json: { items } })
 
 test.describe('uploads, listing and the byte path', () => {
@@ -195,7 +207,7 @@ test.describe('uploads, listing and the byte path', () => {
     expect(gone.status, gone.text).toBe(200)
     expect(gone.json.items[0]).toMatchObject({ id: csv.id, rev: 2 })
     expect(await ids(request, dana)).not.toContain(csv.id)
-    const trash = (await allPages<File_>(request, dana, '/api/library?deleted=1', 100)).items.find(f => f.id === csv.id)
+    const trash = (await pagesOf(request, dana, true)).find(f => f.id === csv.id)
     expect(trash, 'the trash lists it').toMatchObject({ id: csv.id, rev: 2 })
     expect(trash?.text, 'the trash holds no contents').toBeUndefined()
     expectError(await call(request, dana, 'GET', `/api/library/${csv.id}/download`), 404, 'not_found')
@@ -270,10 +282,10 @@ test.describe('what a chat makes is the team\'s', () => {
     expect(output, 'the turn saved outputs/table.csv').toBeTruthy()
     const id = output!.fileId
 
-    const own = (await page(request, dana)).items.find(f => f.id === id) ?? (await allPages<File_>(request, dana, '/api/library', 100)).items.find(f => f.id === id)
+    const own = (await page(request, dana)).items.find(f => f.id === id) ?? (await pagesOf(request, dana)).find(f => f.id === id)
     expect(own).toMatchObject({ place: 'chats', from: `Chat: E2E output chat ${run}`, by: 'Inhouse agent', madeByAgent: true, link: { to: 'chat', id: chat } })
     for (const who of [leo, admin]) {
-      const theirs = (await allPages<File_>(request, who, '/api/library', 100)).items.find(f => f.id === id)
+      const theirs = (await pagesOf(request, who)).find(f => f.id === id)
       expect(theirs, 'listed to everyone').toMatchObject({ place: 'chats', from: 'From a chat by Dana Kim', madeByAgent: true })
       expect(theirs?.link, 'no link, no title for anyone but the owner').toBeUndefined()
       expect(JSON.stringify(theirs)).not.toContain('E2E output chat')
