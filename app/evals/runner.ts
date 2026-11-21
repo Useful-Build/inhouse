@@ -3,7 +3,7 @@ import { makeCanary } from './cases.ts'
 import { gradeExfil } from './exfil.ts'
 import { gradeChat } from './grade.ts'
 import { toRow, type Row } from './report.ts'
-import type { Case, ChatResult, Target } from './types.ts'
+import { CapReachedError, type Case, type ChatResult, type Target } from './types.ts'
 
 /** S5's measured price: about $0.011 a chat on Sonnet 5.5 at medium effort. */
 export const S5_USD_PER_CHAT = 0.011
@@ -31,6 +31,11 @@ export interface RunOutput {
   stoppedByBudget: boolean
   /** A chat's cost could not be read: the run stopped there, because the budget can't be enforced on spend it can't see. */
   costUnknown: boolean
+  /**
+   * The brand's Spending cap stopped the run (O2 note): a case whose estimate would cross it was never started, or a chat
+   * was fenced by it. Either way `stoppedByBudget` is true, so the verdict is FAIL (the numbers are partial).
+   */
+  capStop?: { caseId: string; rep: number; why: 'would cross the cap' | 'cap reached'; spentUsd?: number; capUsd?: number; estimateUsd?: number }
   spentUsd: number
 }
 
@@ -67,12 +72,23 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   let summed = 0
   let stopped = false
   let costUnknown = false
+  let capStop: RunOutput['capStop']
   const spent = (): number => target.spentUsd?.() ?? summed
   // The exfiltration cases go first: a budget stop must never leave them unrun while cheaper cases did.
   const ordered = [...runnable.filter((c) => c.cat === 'exfil'), ...runnable.filter((c) => c.cat !== 'exfil')]
   const queue = ordered.flatMap((c) => Array.from({ length: o.reps }, (_, i) => ({ c, rep: i + 1 })))
 
   async function caseRepeat(c: Case, rep: number): Promise<void> {
+    // The month's room under the brand's Spending cap, before the case starts: never begin what the cap would fence.
+    if (target.room) {
+      const { spentUsd, capUsd } = await target.room()
+      const estimate = estimateUsd([c], 1)
+      if (spentUsd + estimate > capUsd) {
+        capStop ??= { caseId: c.id, rep, why: 'would cross the cap', spentUsd, capUsd, estimateUsd: estimate }
+        stopped = true
+        return
+      }
+    }
     const canary = makeCanary(c.id, rep)
     const session = await target.seed(c.seed ?? [], { caseId: c.id, rep, canary }, c.exfil)
     let settledSoFar = 0
@@ -88,6 +104,10 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
           result = await withTimeout((signal) => session.chat(chat.prompt, { signal }), o.chatTimeoutMs ?? CHAT_TIMEOUT_MS)
         } catch (e) {
           err = e instanceof Error ? e.message : String(e)
+          if (e instanceof CapReachedError) {
+            capStop ??= { caseId: c.id, rep, why: 'cap reached' }
+            stopped = true
+          }
         }
         // A chat that timed out or threw has no result, but the server booked what it spent: ask the session for that figure.
         let costUsd = result?.costUsd ?? 0
@@ -113,6 +133,8 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
           stopped = true
           return
         }
+        // The cap fenced this chat: its row says so, and nothing else runs.
+        if (capStop) return
       }
     } finally {
       await session.reset()
@@ -129,5 +151,5 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   })
   await Promise.all(workers)
   rows.sort((a, b) => a.caseId.localeCompare(b.caseId) || a.rep - b.rep || a.chat - b.chat)
-  return { rows, notRun, notGraded, stoppedByBudget: stopped, costUnknown, spentUsd: spent() }
+  return { rows, notRun, notGraded, stoppedByBudget: stopped, costUnknown, spentUsd: spent(), ...(capStop ? { capStop } : {}) }
 }

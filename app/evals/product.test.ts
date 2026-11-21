@@ -4,8 +4,9 @@
 // a case needing a field the API doesn't show is graded anyway.
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
-import { assertSandboxDatabase, createDoor, DoorRefusal, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './targets/door.ts'
+import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './targets/door.ts'
 import { createProductTarget, onExampleTest, ProductTargetRefusal, unobservableReason, writesFromRows } from './targets/product.ts'
+import { CapReachedError } from './types.ts'
 import { runEvals } from './runner.ts'
 import { buildReport, renderReadme } from './report.ts'
 import type { Case, ChatResult, Target } from './types.ts'
@@ -28,6 +29,7 @@ class FakeDoor implements MemoryDoor {
     this.rowsNow.push(...facts.map((f) => ({ id: f.id, scope: f.scope, ownerId: f.ownerId, text: f.text, status: 'active' as const, rev: 1 })))
   }
   async clear() { this.calls.push('clear'); this.rowsNow = [] }
+  async setSpendingCap(cap: string) { this.calls.push(`cap ${cap}`) }
 }
 
 interface Sent { method: string; path: string; token: string | null; body: any }
@@ -48,6 +50,11 @@ interface Server {
   stopsBeforeEnded?: number
   /** Every stop answers this status instead. */
   stopStatus?: number
+  /** Route 42's cap and the month's spend, in cents (defaults: the $40 cap, nothing spent). */
+  capMinor?: number
+  spentMinor?: number
+  /** The turn ends with no answer but an end row (route 24's `event` with `end`): a failure or a cancel reason. */
+  endRow?: { failure?: string; why?: string }
 }
 const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } => {
   const s: Server = {
@@ -74,6 +81,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
       return n < (s.stopsBeforeEnded ?? 0) ? json({}) : json({ error: { code: 'conflict', reason: 'turn_ended' } }, 409)
     }
     if (url.pathname === '/api/models') return json({ default: 'sonnet', modes: [{ id: 'sonnet' }] })
+    if (url.pathname === '/api/usage') return json({ cap: { minor: s.capMinor ?? 4000, currency: 'USD' }, total: { minor: s.spentMinor ?? 0, currency: 'USD' } })
     if (url.pathname === '/api/chats' && method === 'POST') return json({ id: body.id }, 201)
     if (url.pathname.endsWith('/attachments')) return json({ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }, 201)
     if (url.pathname.endsWith('/turns')) {
@@ -85,6 +93,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
     if (url.pathname.startsWith('/api/traces/')) return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps] })
     if (url.pathname.startsWith('/api/chats/')) {
       const answered = ++polls > s.emptyPolls
+      if (answered && s.endRow) return json({ messages: [{ role: 'user', turnId, pos: 0, text: 'q' }, { role: 'event', turnId, pos: 1, text: '', end: { retryQuestion: 'q', ...s.endRow } }], runs: [] })
       return json({ messages: answered ? s.answerParts.map((part, pos) => ({ role: 'agent', turnId, pos, part })) : [{ role: 'user', turnId, pos: 0, text: 'q' }], runs: [] })
     }
     return json({ error: { code: 'not_found' } }, 404)
@@ -108,6 +117,24 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(ProductTargetRefusal)
     expect(door.calls).toEqual([])
     expect(srv.s.sent.filter((x) => x.method !== 'GET')).toEqual([])
+  })
+
+  // (a), the O2 note: the eval brand's own Spending cap is the $40 (decision 18), pinned by the harness every run.
+  it('pins the brand\'s Spending cap to $40 through the door, then reads it back on route 42; any other cap refuses', async () => {
+    const door = new FakeDoor()
+    await (await make(server(), door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    expect(door.calls).toContain('cap $40')
+    for (const capMinor of [32000, 3999, 0]) {
+      const d = new FakeDoor()
+      await expect(make(server({ capMinor }), d).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), String(capMinor)).rejects.toThrow(/Spending cap is not \$40/)
+      expect(d.calls.filter((c) => c === 'clear' || c.startsWith('insert'))).toEqual([])
+    }
+  })
+
+  it('room(): the month\'s spend and the cap from route 42, in dollars', async () => {
+    const target = make(server({ spentMinor: 1250 }), new FakeDoor())
+    await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    expect(await target.room!()).toEqual({ spentUsd: 12.5, capUsd: 40 })
   })
 
   it('a brand with more members than the check reads is refused, not passed', async () => {
@@ -166,6 +193,16 @@ describe('a chat through the product', () => {
     expect(door.rowsNow.find((r) => r.text.startsWith('Tom wants'))!.ownerId).toBe('m_leo')
     await session.reset()
     expect(door.rowsNow).toEqual([])
+  })
+
+  it('a turn the cap fenced (cap_reached, failed or cancelled) throws CapReachedError, so the run stops', async () => {
+    for (const endRow of [{ failure: 'cap_reached' }, { why: 'cap_reached' }]) {
+      const session = await make(server({ endRow }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+      await expect(session.chat('hi'), JSON.stringify(endRow)).rejects.toThrow(CapReachedError)
+    }
+    // Any other end with no answer is a failed run, not a hang.
+    const other = await make(server({ endRow: { failure: 'sdk_error' } }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await other.chat('hi')).toMatchObject({ answer: '', runOk: false })
   })
 
   it('an error part, or no text, is a failed run', async () => {
@@ -325,40 +362,47 @@ describe('the memory door', () => {
     ['no name', undefined, ok],
     ['a name with a suffix attack', 'inhouse-sbx-db\n; DROP', ok],
     ['an upper-case name', 'Inhouse-SBX-db', ok],
-    ['a sandbox name without the sandbox account id', 'inhouse-sbx-pr12-db', {}],
+    ['a sandbox name without the sandbox account id', 'inhouse-sbx-eval-db', {}],
   ])('refuses %s', (_n, name, env) => {
     expect(() => assertSandboxDatabase(name, env)).toThrow(DoorRefusal)
   })
-  it.each(['inhouse-sbx-pr12-db', 'inhouse-sbx-pr7'])('accepts the PR deployment database %s', (name) => {
-    expect(assertSandboxDatabase(name, ok)).toBe(name)
+  // (a): only the eval deployment runs the real model with the test issuer and the eval brand marker, so the door takes its
+  // database alone; a PR's test deployment runs the scripted model and is never a paid eval's target.
+  it('accepts the eval deployment\'s database only', () => {
+    expect(assertSandboxDatabase('inhouse-sbx-eval-db', ok)).toBe('inhouse-sbx-eval-db')
+    for (const n of ['inhouse-sbx-pr12-db', 'inhouse-sbx-pr7', 'inhouse-sbx-eval', 'inhouse-sbx-eval-files', 'inhouse-sbx-eval-db\n']) expect(() => assertSandboxDatabase(n, ok), n).toThrow(/eval deployment's database/)
   })
-  it('matches scripts/sandbox/names.mjs on literal names', async () => {
-    const names = await import(/* @vite-ignore */ new URL('../scripts/sandbox/names.mjs', import.meta.url).href) as { isPerPrName: (n: string) => boolean }
-    for (const n of ['inhouse-sbx-pr12-db', 'inhouse-sbx-pr12', 'inhouse-sbx-pr0-db', 'inhouse-sbx-pr012-db', 'inhouse-sbx-db', 'inhouse-prod', 'inhouse-sbx-', 'inhouse-sbx-pr12-DB', 'xinhouse-sbx-pr1-db', 'inhouse-sbx-pr12-db\n']) {
-      let door = true
-      try { assertSandboxDatabase(n, ok) } catch { door = false }
-      expect(door, n).toBe(names.isPerPrName(n))
-    }
+  it('takes exactly scripts/sandbox/names.mjs\'s evalNames().d1', async () => {
+    const names = await import(/* @vite-ignore */ new URL('../scripts/sandbox/names.mjs', import.meta.url).href) as { evalNames: () => { d1: string } }
+    expect(EVAL_DB).toBe(names.evalNames().d1)
+  })
+  it('setSpendingCap upserts the brand\'s s:cap (its JSON string) and refuses anything but a cap the product reads', async () => {
+    const sqls: string[] = []
+    const door = createDoor(async (sql) => { sqls.push(sql); return [] })
+    await door.setSpendingCap('$40')
+    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 's:cap', '"\$40"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
+    for (const bad of ['40', '$0', "$40'; DROP TABLE settings;--", '$100001', '$40.5']) await expect(door.setSpendingCap(bad), bad).rejects.toThrow(DoorRefusal)
+    expect(sqls).toHaveLength(1)
   })
   it('wrangler runs in the sandbox account with the config and never echoes the environment', async () => {
     const seen: { args: string[]; env: Record<string, string | undefined> }[] = []
-    const run = wranglerRunner({ database: 'inhouse-sbx-pr12-db', config: '/tmp/sbx.jsonc', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_ACCOUNT_ID: 'house', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: (args, env) => { seen.push({ args, env }); return { status: 0, stdout: '[{"results":[{"n":1}]}]' } } })
+    const run = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: '/tmp/sbx.jsonc', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_ACCOUNT_ID: 'house', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: (args, env) => { seen.push({ args, env }); return { status: 0, stdout: '[{"results":[{"n":1}]}]' } } })
     expect(await run('SELECT 1 AS n')).toEqual([{ n: 1 }])
-    expect(seen[0]!.args).toEqual(['d1', 'execute', 'inhouse-sbx-pr12-db', '--remote', '--config', '/tmp/sbx.jsonc', '--json', '--yes', '--command', 'SELECT 1 AS n'])
+    expect(seen[0]!.args).toEqual(['d1', 'execute', 'inhouse-sbx-eval-db', '--remote', '--config', '/tmp/sbx.jsonc', '--json', '--yes', '--command', 'SELECT 1 AS n'])
     expect(seen[0]!.env.CLOUDFLARE_ACCOUNT_ID).toBe('acct')
-    const failing = wranglerRunner({ database: 'inhouse-sbx-pr12-db', config: 'c', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: () => ({ status: 1, stdout: 'secret-token leaked?' }) })
+    const failing = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: 'c', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: () => ({ status: 1, stdout: 'secret-token leaked?' }) })
     const err = await failing('SELECT 1').catch((e: Error) => e)
     expect(err).toBeInstanceOf(DoorRefusal)
     expect((err as Error).message).toBe('wrangler d1 execute exited 1')
   })
   it.each([
-    ['an empty config path', '', JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] })],
-    ['a config for another account', 'c', JSON.stringify({ account_id: 'house', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] })],
+    ['an empty config path', '', JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] })],
+    ['a config for another account', 'c', JSON.stringify({ account_id: 'house', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] })],
     ['a config that binds another database', 'c', JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr13-db' }] })],
     ['a config that is not JSON', 'c', '{ // jsonc'],
   ])('refuses %s, before any spawn', (_n, config, text) => {
     let spawned = 0
-    expect(() => wranglerRunner({ database: 'inhouse-sbx-pr12-db', config, readConfig: () => text, env: ok, spawn: () => { spawned++; return { status: 0, stdout: '[]' } } })).toThrow(DoorRefusal)
+    expect(() => wranglerRunner({ database: 'inhouse-sbx-eval-db', config, readConfig: () => text, env: ok, spawn: () => { spawned++; return { status: 0, stdout: '[]' } } })).toThrow(DoorRefusal)
     expect(spawned).toBe(0)
   })
   it('hasChat asks for exactly that chat id and refuses an id that is not one', async () => {
@@ -372,7 +416,7 @@ describe('the memory door', () => {
   it('one absolute config path goes to the check and to wrangler', async () => {
     const read: string[] = []
     const argv: string[][] = []
-    const run = wranglerRunner({ database: 'inhouse-sbx-pr12-db', config: 'rel/sbx.jsonc', readConfig: (f) => { read.push(f); return JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] }) }, env: ok, spawn: (a) => { argv.push(a); return { status: 0, stdout: '[]' } } })
+    const run = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: 'rel/sbx.jsonc', readConfig: (f) => { read.push(f); return JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }) }, env: ok, spawn: (a) => { argv.push(a); return { status: 0, stdout: '[]' } } })
     await run('SELECT 1')
     expect(read).toHaveLength(1)
     expect(read[0]!.startsWith('/')).toBe(true)

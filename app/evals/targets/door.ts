@@ -2,8 +2,9 @@
 // fact waits for an admin, and only the agent's tools write either), so the harness seeds each case's memory, and reads what a
 // chat changed, through the eval deployment's own D1. Three rules bind it (A8, 2026-11-21):
 //   (a) it is made only after the eval-brand check passed (createDoor is called by the product session setup after it);
-//   (b) it refuses any database that isn't a sandbox one: the name must pass the sandbox name rule (`inhouse-sbx-...`, the
-//       same pattern as scripts/sandbox/names.mjs, pinned by a test against that file) and CF_SANDBOX_ACCOUNT_ID must be set;
+//   (b) it refuses any database but the eval deployment's: the name must be exactly scripts/sandbox/names.mjs's
+//       evalNames().d1 (`inhouse-sbx-eval-db`, pinned by a test against that file; a PR's test deployment runs the scripted
+//       model and is never a paid eval's target), and CF_SANDBOX_ACCOUNT_ID must be set;
 //   (c) its credentials come from the environment (wrangler reads CLOUDFLARE_API_TOKEN itself) and are never logged: wrangler's
 //       stderr is dropped, and a failure names only the command's exit status.
 // Statements are built here from invented case text with every string literal quoted; ids are checked against a pattern.
@@ -11,13 +12,14 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
+import { capOk } from '../../shared/contract/settings-table.ts'
 
 export class DoorRefusal extends Error {
   override name = 'DoorRefusal'
 }
 
-/** The per-PR rule of scripts/sandbox/names.mjs (PER_PR): a PR deployment's database (`inhouse-sbx-pr<N>-db`), never the shared candidate's, which other work uses. */
-export const SANDBOX_DB = /^inhouse-sbx-pr([1-9][0-9]{0,5})(-[a-z]+)?$/
+/** The eval deployment's database: scripts/sandbox/names.mjs's evalNames().d1 (a test pins the two equal). */
+export const EVAL_DB = 'inhouse-sbx-eval-db'
 const MEMORY_ID = /^mem_[A-Za-z0-9_-]{22}$/
 const MEMBER_ID = /^[A-Za-z0-9_-]{1,80}$/
 
@@ -45,6 +47,8 @@ export interface MemoryDoor {
   insert(facts: NewMemory[]): Promise<void>
   /** Empties the brand's memory: the eval brand holds nothing a case-repeat should carry over. */
   clear(): Promise<void>
+  /** Sets the brand's monthly Spending cap (`s:cap`, its saved text, e.g. "$40"): the eval brand's $40 (O2 note). */
+  setSpendingCap(cap: string): Promise<void>
 }
 
 export const newMemoryId = (): string => `mem_${randomBytes(16).toString('base64url')}`
@@ -55,7 +59,7 @@ export type RunSql = (sql: string) => Promise<Record<string, unknown>[]>
 
 export function assertSandboxDatabase(name: string | undefined, env: Record<string, string | undefined>): string {
   if (!name) throw new DoorRefusal('refusing: INHOUSE_EVAL_D1_NAME is not set (the eval deployment\'s D1 database)')
-  if (!SANDBOX_DB.test(name)) throw new DoorRefusal(`refusing: ${JSON.stringify(name)} is not a per-PR sandbox database name (inhouse-sbx-pr<N>-db)`)
+  if (name !== EVAL_DB) throw new DoorRefusal(`refusing: ${JSON.stringify(name)} is not the eval deployment's database (${EVAL_DB})`)
   if (!env.CF_SANDBOX_ACCOUNT_ID) throw new DoorRefusal('refusing: CF_SANDBOX_ACCOUNT_ID is not set, so the target is not known to be the sandbox account')
   return name
 }
@@ -82,6 +86,11 @@ export function createDoor(run: RunSql): MemoryDoor {
     },
     async clear() {
       await run('DELETE FROM memories')
+    },
+    async setSpendingCap(cap) {
+      // The product's own rule for the field (settings-table.ts capOk): whole dollars or cents, above $0, at most $100,000.
+      if (!/^\$\d{1,6}$/.test(cap) || !capOk(cap)) throw new DoorRefusal('not a Spending cap in whole dollars the product reads')
+      await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 's:cap', ${sqlString(JSON.stringify(cap))}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
     },
   }
 }

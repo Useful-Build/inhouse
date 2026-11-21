@@ -1,3 +1,4 @@
+import { CapReachedError } from './types.ts'
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
 import { CANNED, createFakeTarget } from './targets/fake.ts'
@@ -196,3 +197,45 @@ describe('budget, timeout and failures', () => {
     expect(estimateUsd(s5, 3)).toBeCloseTo(0.011 * 138, 9)
   })
 })
+
+// (a), the O2 note: the eval brand's Spending cap. Ways it can fail, written down first: a case starts though its estimate
+// would cross the month's room; a chat the cap fenced is graded as a pass, or the run keeps going after it.
+describe('the Spending cap', () => {
+  const capTarget = (room: { spentUsd: number; capUsd: number }, chat?: () => Promise<never>) => {
+    const t = createFakeTarget()
+    const seeded: string[] = []
+    return Object.assign(t, {
+      seeded,
+      room: async () => room,
+      seed: async (...a: Parameters<typeof t.seed>) => {
+        seeded.push(a[1].caseId)
+        const s = await createFakeTarget().seed(...a)
+        return chat ? { ...s, chat } : s
+      },
+    })
+  }
+  it('refuses a case whose estimate would cross the cap, before it seeds, and stops the run', async () => {
+    const t = capTarget({ spentUsd: 39.99, capUsd: 40 })
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
+    expect(t.seeded).toEqual([])
+    expect(out.rows).toEqual([])
+    expect(out.stoppedByBudget).toBe(true)
+    expect(out.capStop).toMatchObject({ caseId: 'R01', rep: 1, why: 'would cross the cap', spentUsd: 39.99, capUsd: 40 })
+  })
+  it('runs a case with room', async () => {
+    const t = capTarget({ spentUsd: 0, capUsd: 40 })
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
+    expect(out.rows).toHaveLength(1)
+    expect(out.capStop).toBeUndefined()
+  })
+  it('a chat the cap fenced stops the run; its row is a failure that says so', async () => {
+    const t = capTarget({ spentUsd: 0, capUsd: 40 }, async () => { throw new CapReachedError('t_1') })
+    const out = await runEvals({ target: t, cases: ['R01', 'R02'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 1 })
+    expect(out.rows).toHaveLength(1)
+    expect(out.rows[0]).toMatchObject({ pass: false, runOk: false })
+    expect(out.rows[0]!.err).toMatch(/cap reached/)
+    expect(out.stoppedByBudget).toBe(true)
+    expect(out.capStop).toMatchObject({ caseId: out.rows[0]!.caseId, why: 'cap reached' })
+  })
+})
+

@@ -59,7 +59,7 @@ const result = await runEvals({
 })
 
 const report = buildReport(CASES, result.rows, { target: target.name, model: v.model!, effort: v.effort!, reps, notRun: result.notRun, notGraded: result.notGraded })
-const full = { ...report, stoppedByBudget: result.stoppedByBudget, spentUsd: result.spentUsd }
+const full = { ...report, stoppedByBudget: result.stoppedByBudget, spentUsd: result.spentUsd, ...(result.capStop ? { capStop: result.capStop } : {}) }
 fs.writeFileSync(path.join(out, 'graded.json'), JSON.stringify(result.rows, null, 1))
 fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(full, null, 1))
 fs.writeFileSync(path.join(out, 'README.md'), renderReadme(report, v.topic ?? path.basename(out)))
