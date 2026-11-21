@@ -38,8 +38,6 @@ const NO_GRANT = 'g_e2e_nobody'
 const d = (cls: Design['class'], allow: Role[], services: Design['services'] = [], adminWrite = false, ownerObject = false): Design => ({ class: cls, allow, services, adminWrite, ownerObject })
 /** P3's chat reads (p3-design section 3): `ownerObject`. */
 const owned = (allow: Role[], services: Design['services'] = []): Design => d('brand_data', allow, services, false, true)
-/** P3 PR0: every P3 route is a stub answering 503 `not_built` until its owner builds it (then its case moves to the real status). */
-const STUB = 503
 const NO_CHAT = 'c_e2e_nobody'
 /**
  * A memory id of the right shape (`mem_` + 22) that names nothing. Sent with a valid body, routes 44 and 45 get past the
@@ -73,13 +71,13 @@ export const CASES: Record<string, RouteCase> = {
   // Class 'report' is the agreed change from PR0b (server/auth/matrix.ts:15): both hosts post it, never a service token.
   'POST /api/client-error': { design: d('report', ALL), path: '/api/client-error', json: {}, passes: 204 },
   // P3, p3-design section 3's table, written out by hand.
-  'GET /api/chats': { design: owned(ALL, ['smoke']), path: '/api/chats', passes: STUB },
-  'POST /api/chats': { design: d('personal', PEOPLE, ['smoke']), path: '/api/chats', json: {}, passes: STUB },
-  'GET /api/chats/:id': { design: owned(ALL, ['smoke']), path: `/api/chats/${NO_CHAT}`, passes: STUB },
-  'PUT /api/chats/:id/title': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/title`, json: {}, passes: STUB },
-  'PUT /api/chats/:id/pin': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/pin`, json: {}, passes: STUB },
-  'POST /api/chats/delete': { design: d('personal', PEOPLE), path: '/api/chats/delete', json: {}, passes: STUB },
-  'POST /api/chats/restore': { design: d('personal', PEOPLE), path: '/api/chats/restore', json: {}, passes: STUB },
+  'GET /api/chats': { design: owned(ALL, ['smoke']), path: '/api/chats', passes: 200 },
+  'POST /api/chats': { design: d('personal', PEOPLE, ['smoke']), path: '/api/chats', json: {}, passes: 400 },
+  'GET /api/chats/:id': { design: owned(ALL, ['smoke']), path: `/api/chats/${NO_CHAT}`, passes: 404 },
+  'PUT /api/chats/:id/title': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/title`, json: {}, passes: 400 },
+  'PUT /api/chats/:id/pin': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/pin`, json: {}, passes: 400 },
+  'POST /api/chats/delete': { design: d('personal', PEOPLE), path: '/api/chats/delete', json: {}, passes: 400 },
+  'POST /api/chats/restore': { design: d('personal', PEOPLE), path: '/api/chats/restore', json: {}, passes: 400 },
   'POST /api/chats/:id/turns': { design: d('personal', PEOPLE, ['smoke']), path: `/api/chats/${NO_CHAT}/turns`, json: {}, passes: 400 },
   'POST /api/turns/:turnId/interrupt': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/interrupt', json: {}, passes: 404 },
   'POST /api/turns/:turnId/stop': { design: d('personal', PEOPLE), path: '/api/turns/t_e2e_nobody/stop', json: {}, passes: 404 },
