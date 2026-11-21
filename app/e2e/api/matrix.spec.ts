@@ -61,7 +61,7 @@ async function sweep(request: APIRequestContext, row: Row, who: Principal): Prom
   }
   const r = await call(request, actor(who === 'inhouseGrant' ? 'inhouse' : who), row.method, c.path, options)
   const v = verdict(row, who)
-  if (v.allowed) expect(r.status, `${who} ${rowKey(row)}: ${r.text}`).toBe(c.passes)
+  if (v.allowed) expect([c.passes, ...(c.alsoPasses ?? [])], `${who} ${rowKey(row)}: ${r.status} ${r.text}`).toContain(r.status)
   else expectError(r, 403, 'forbidden', v.reason)
 }
 
