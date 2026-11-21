@@ -430,7 +430,9 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   if (Object.hasOwn(config, 'env')) fail('env is set: a deployable config has no env blocks (each could override what this checks)')
   nameOk('name', config.name, hub ? 'hub' : 'worker')
   if (!perPr && !hub && config.name === CANDIDATE_HUB) fail(`name: the candidate product may not take the hub's name (${CANDIDATE_HUB})`)
-  // (P4) services: nothing for the hub; for the product, nothing or the one entry to its own hub's ReadGateway.
+  // (P4, P5) services: nothing for the hub; for the product, nothing, HUB -> ReadGateway alone, or HUB -> ReadGateway,
+  // HUB_CONNECT -> ConnectGateway and HUB_DELIVERY -> DeliveryGateway together, each naming its own hub (the eval
+  // deployment: nothing or HUB -> ReadGateway alone).
   const services = list('services')
   if (hub) {
     if (!isEmpty(services)) fail('services is set: a sandbox hub config binds no other Worker')

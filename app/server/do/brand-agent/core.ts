@@ -39,6 +39,7 @@ import { ModelGate } from './gate.ts'
 import { callsMicro } from './turn-calls.ts'
 import { ensureUsageTasks } from '../../usage/seeds.ts'
 import { activeRuns, runsHealth, traceOf } from './runs-read.ts'
+import { ioRecord } from '@eval-trace'
 import type { RunScope, RunsHealth } from './ports.ts'
 import type { ActiveRun } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
@@ -150,7 +151,15 @@ export interface CoreDeps {
    * person's chat and every resume read it, since only route 29 reads D1. Throws when D1 can't answer.
    */
   chatGone: (chatId: string) => Promise<boolean>
+  /**
+   * Whether this is the eval build, which keeps each tool call's capped input for the owner's trace (server/eval-trace/,
+   * p3-eval-observability rev 2 rec 5). Default: the compile-time `__INHOUSE_EVAL_BUILD__` (false in every other build,
+   * where `@eval-trace` keeps nothing anyway); tests pass it.
+   */
+  evalTrace?: boolean
 }
+
+declare const __INHOUSE_EVAL_BUILD__: boolean
 
 const refuse = (code: Refusal['refused']['code'], reason?: Refusal['refused']['reason']): Refusal =>
   ({ refused: reason === undefined ? { code } : { code, reason } })
@@ -855,7 +864,7 @@ export class AgentCore {
   // ---------- reads (routes 32, 33; the runs signal; runs-read.ts) ----------
 
   activeRuns(scope: RunScope): ActiveRun[] { return activeRuns(this.sql, scope) }
-  readTrace(id: string, scope: RunScope): Trace | null { return traceOf(this.sql, id, scope, this.d.now()) }
+  readTrace(id: string, scope: RunScope): Trace | null { return traceOf(this.sql, id, scope, this.d.now(), this.d.evalTrace ?? __INHOUSE_EVAL_BUILD__) }
   runsHealth(quarantined: number): RunsHealth { return runsHealth(this.sql, this.d.now(), quarantined) }
 
   // ---------- the model gate (8.2; the egress's calls) ----------
@@ -935,7 +944,7 @@ export class AgentCore {
         this.emit(t.run_id, t.turn_id, { type: 'files.restored', turnId: t.turn_id, restored: ev.restored, leftOut: ev.leftOut })
         return false
       case 'audit':
-        this.trace(t.turn_id, now, { audit: ev.entry.toolName, hook: ev.entry.hook, decision: ev.entry.decision })
+        this.trace(t.turn_id, now, { audit: ev.entry.toolName, hook: ev.entry.hook, decision: ev.entry.decision, ...(ev.entry.toolUseId === undefined ? {} : { id: ev.entry.toolUseId }) })
         return false
       case 'deferred':
         progress()
@@ -981,7 +990,7 @@ export class AgentCore {
         parts++
       } else {
         this.emit(t.run_id, t.turn_id, { type: 'step', turnId: t.turn_id, stepId: `${t.turn_id}.s${steps}`, label: b.label, tool: b.tool })
-        this.trace(t.turn_id, now, { step: b.label, tool: b.tool })
+        this.trace(t.turn_id, now, { step: b.label, tool: b.tool, ...(b.toolUseId === undefined ? {} : { id: b.toolUseId }) })
         steps++
       }
     }
@@ -1546,10 +1555,17 @@ export class AgentCore {
     return noteCountTokens(this.sql, turnId)
   }
 
-  /** The redacted `tool_calls` row (8.7): the input's byte length and SHA-256, never the input. */
+  /**
+   * The redacted `tool_calls` row (8.7): the input's byte length and SHA-256, never the input. The eval build alone also
+   * keeps the (already capped) input in `turn_trace` for the owner's trace (server/eval-trace/on.ts).
+   */
   async writeToolCall(turnId: string, n: number, entry: AuditEntry): Promise<void> {
     const t = this.turn(turnId)
     if (!t) throw new Error('writeToolCall: unknown turn')
+    if (this.d.evalTrace ?? __INHOUSE_EVAL_BUILD__) {
+      const io = ioRecord(this.sql, turnId, entry)
+      if (io !== null) this.trace(turnId, this.d.now(), io)
+    }
     const input = new TextEncoder().encode(JSON.stringify(entry.input ?? null))
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', input))].map(b => b.toString(16).padStart(2, '0')).join('')
     await this.d.db.prepare(

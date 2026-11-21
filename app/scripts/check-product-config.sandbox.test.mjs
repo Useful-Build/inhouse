@@ -18,10 +18,11 @@
 //     mode but `--eval`; the eval deployment binds another deployment's names or hosts, or ships without the real
 //     model, the test issuer's switch or the eval brand marker; the marker (INHOUSE_EVAL_BRAND) passes in a per-PR,
 //     candidate or product config, so a brand could be graded or traced as an eval brand.
-// 13. (P4) a sandbox product Worker binds a hub that isn't its own (the house's `inhouse-hub`, another PR's, a live
-//     Worker; for the eval deployment, any hub but `inhouse-sbx-eval-hub`), another entrypoint (the hub's server
-//     surface) or a second service; or a hub config (--hub, --eval --hub) gets a route,
-//     storage, a service binding, an unbundled build, a `secrets` list wrangler would fail on, or (candidate) a store
+// 13. (P4, P5) a sandbox product Worker binds a hub that isn't its own (the house's `inhouse-hub`, another PR's, a live
+//     Worker; for the eval deployment, any hub but `inhouse-sbx-eval-hub`), another entrypoint for a binding (the hub's
+//     server surface), or a set of hub bindings that isn't exactly HUB alone or P5's HUB, HUB_CONNECT and HUB_DELIVERY
+//     (a missing, extra or repeated binding; the eval deployment HUB alone); or a hub config (--hub, --eval --hub) gets
+//     a route, storage, a service binding, an unbundled build, a `secrets` list wrangler would fail on, or (candidate) a store
 //     credential or the test switch.
 // Oracles: the literal pass fixtures in check-product-config-fixtures/sandbox/ and one literal change per rule below,
 // each with the failure text it must print. Every case runs the script as CI and the ops repo do.
@@ -452,7 +453,7 @@ const HUB = { binding: 'HUB', service: 'inhouse-sbx-pr12-hub', entrypoint: 'Read
 const PR12_HUB = [...PR12, '--hub']
 const CANDIDATE_HUB = [...CANDIDATE, '--hub']
 
-describe('(P4) the product\'s one service binding, to its own sandbox hub (failure 12)', () => {
+describe('(P4) the product\'s one service binding, to its own sandbox hub (failure 13)', () => {
   test('PR 12 may bind inhouse-sbx-pr12-hub\'s ReadGateway, and the candidate a shared sandbox hub', () => {
     const pr = load('pass-per-pr.json')
     pr.services = [HUB]
@@ -513,7 +514,7 @@ describe('(P4) the product\'s one service binding, to its own sandbox hub (failu
   })
 })
 
-describe('(P4) --hub: the connector hub\'s sandbox config (failure 12)', () => {
+describe('(P4) --hub: the connector hub\'s sandbox config (failure 13)', () => {
   test('passes pass-per-pr-hub.json as PR 12\'s hub and pass-candidate-hub.json as the candidate\'s', () => {
     const r1 = run([...PR12_HUB, `${fixtures}sandbox/pass-per-pr-hub.json`])
     expect(r1.stderr).toBe('')
