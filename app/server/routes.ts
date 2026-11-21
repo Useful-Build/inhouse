@@ -28,6 +28,8 @@ import { reviveTask } from './ops/revive.ts'
 // P4 W4: Activity and the bell (rows 59 to 61).
 import { listActivity } from './api/activity.ts'
 import { listNotifications, markNotificationsRead } from './api/bell.ts'
+// P4 W3: Today (rows 57 and 58).
+import { getToday, putAside } from './api/today.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -158,6 +160,9 @@ export const routes: readonly Route[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', handler: listActivity },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', handler: listNotifications },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', handler: markNotificationsRead },
+  // P4 W3 (p4-w3.md section 5): Today.
+  /* 57 */ { method: 'GET', pattern: '/api/today', handler: getToday },
+  /* 58 */ { method: 'PUT', pattern: '/api/today/:id/aside', handler: putAside },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

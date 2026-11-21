@@ -147,6 +147,9 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // Rows 57 and 58 (P4 W3): Today is brand data; the set-aside write is open to the Inhouse team under a live grant.
+  { method: 'GET', pattern: '/api/today', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/today/:id/aside', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

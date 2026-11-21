@@ -8,7 +8,10 @@ import { RESULT_HANDLERS } from './results.ts'
  * The system routines' prompts, by `prompt_ref` (one line each, added with the routine's row: W3's morning check). An
  * unknown ref fails loud: that routine's pass throws, its cursor holds and the routines signal goes red on the lag.
  */
-export const SYSTEM_ROUTINE_PROMPTS: Readonly<Record<string, string>> = {}
+export const SYSTEM_ROUTINE_PROMPTS: Readonly<Record<string, string>> = {
+  // W3's morning check. A placeholder: the orchestrator replaces this line with the import from `prompt/routines/morning-check.ts`.
+  'morning-check': 'PLACEHOLDER: the morning check prompt is the orchestrator\'s (app/server/prompt/routines/morning-check.ts).',
+}
 
 /** Said before a team routine's instruction: no person is in this chat, and nothing earlier is in it. */
 export const TEAM_ROUTINE_PREAMBLE =

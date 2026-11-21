@@ -34,6 +34,9 @@ import type { ActivityReader } from '../activity/read.ts'
 import { noticeReader } from '../notices/read.ts'
 import type { NoticeReader } from '../notices/read.ts'
 
+import { todayStore } from '../today/store.ts'
+import type { TodayStore } from '../today/store.ts'
+
 import { routinesSignal } from '../routines/signal.ts'
 import type { SignalResult } from '../ops/signals/types.ts'
 
@@ -67,6 +70,9 @@ export interface Stores extends AuthStores {
   /** P4 W4 (p4-w4.md): Activity's lines and the bell's notices and read state (the writers are `recordActivity` and `addNotice`). */
   activity: ActivityReader
   notices: NoticeReader
+
+  /** P4 W3 (p4-w3.md section 5): Today's read and the set-aside write. */
+  today: TodayStore
 
   /** P4 W2 (p4-w2.md section 11): the routines signal's read. */
   routines: { signal(nowMs: number): Promise<SignalResult> }
@@ -132,6 +138,8 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     // P4's slots.
     activity: activityReader({ db }),
     notices: noticeReader({ db }),
+
+    today: todayStore({ db, hook }),
 
     routines: { signal: nowMs => routinesSignal(db, nowMs) },
   }

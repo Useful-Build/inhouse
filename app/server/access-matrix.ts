@@ -67,6 +67,9 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // P4 W3 (p4-w3.md section 5): Today is brand data; setting an item aside is a write the Inhouse team may make under a live grant (audited; INHOUSE_BRAND_WRITES).
+  /* 57 */ { method: 'GET', pattern: '/api/today', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 58 */ { method: 'PUT', pattern: '/api/today/:id/aside', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */
