@@ -19,7 +19,7 @@ import { modelUsable } from './model-check.ts'
 import { openStores } from '../../db/stores.ts'
 import { chatStore } from '../../db/chats.ts'
 import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
-import { internalSubmit, poke, revive } from './task-ops.ts'
+import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
 import { createRunTokens } from './tokens.ts'
@@ -45,16 +45,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       const tokens = createRunTokens(sql, now)
       const sched: SqlScheduler = createScheduler<TaskContext>({
         sql, alarm: alarmPort(ctx.storage), now, handlers: taskHandlers,
-        context: (nowMs): TaskContext => {
-          const core = this.core
-          return {
-            nowMs, env, sql, scheduler: sched, tokens, ports: this.ports, agent: core,
-            runs: { submit: t => internalSubmit(core, sql, taskHandlers, t) },
-            get paused() { return core.isPaused() },
-            resumeDeferred: (chatId, decision, questionId) => core.resumeDeferred(chatId, decision, questionId),
-            chats: { status: chatId => core.chatStatus(chatId) },
-          }
-        },
+        context: (nowMs): TaskContext => taskContext({ nowMs, env, sql, scheduler: sched, tokens, ports: this.ports, core: this.core, registry: taskHandlers }),
       })
       this.sched = sched
       const parts: BrandAgentParts = {

@@ -89,8 +89,11 @@ const otherLines = [
   /** A team fact forgotten, or that undone (it then waits for an admin's OK again). Ids only, never the fact's text. */
   line('memory.forgotten', { memoryId: MemoryIdArgSchema }),
   line('memory.restored', { memoryId: MemoryIdArgSchema }),
-  /** Route 51: one due task revived (or found not quarantined, or not there), by the release job. */
-  line('ops_task_revive', { kind: TaskKindSchema, id: TaskIdSchema, result: ReviveResultSchema }),
+  /**
+   * Route 51: one due task revived (or found not quarantined, or not there). `by` names the service that asked: the
+   * release token has no member row, so the line's actor is `m_system`.
+   */
+  line('ops_task_revive', { kind: TaskKindSchema, id: TaskIdSchema, result: ReviveResultSchema, by: z.literal('release') }),
 ] as const
 
 /**

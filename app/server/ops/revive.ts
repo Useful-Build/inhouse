@@ -2,7 +2,8 @@
 // service token only (class `open`, like drain: a runbook action, in the product build too). P4's and P6's runbooks
 // point here: an exhausted routine or outbox task after its fix is deployed, a quarantined `deferred-hook:<questionId>`.
 // The BrandAgent clears that one task's quarantine (attempts 0, due now, its payload kept byte for byte: `revive` in
-// task-ops.ts); nothing else, never in bulk. Every call writes ONE audit line `ops_task_revive { kind, id, result }`.
+// task-ops.ts); nothing else, never in bulk. Every call writes ONE audit line
+// `ops_task_revive { kind, id, result, by: 'release' }` (actor `m_system`: the release token has no member row).
 import { z } from 'zod'
 import { TaskIdSchema, TaskKindSchema } from '../../shared/contract/audit.ts'
 import { apiError, apiJson } from '../http.ts'

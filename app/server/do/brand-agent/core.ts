@@ -1568,13 +1568,16 @@ export class AgentCore {
     const input = { clientTurnKey: key, text: '', priority: 'now' as const, model: parked0.picker_id, attachments: [] }
     // The hash is stored like any turn's; a second call never compares it (it answers the first turn by key).
     const hash = await submitPayloadHash({ ...input, effort: parked0.effort })
-    const gone = await this.d.chatGone(chatId)
+    const goneInD1 = await this.d.chatGone(chatId)
     // Back from the awaits: the same checks again on what's stored now (claim before await, 4.2.1).
     const again = this.byKey(chatId, key)
     if (again) return this.answerOf(again)
     const cs = this.chatState(chatId)
     const w = cs?.session === 'waiting' ? this.waitingOf(cs) : null
     if (!cs || !w || w.questionId !== questionId) return refuse('not_found')
+    // Gone in D1 (in the trash or not there) or marked deleted here by route 27 (A8: either one; the mark is read now,
+    // after the await, so a delete that landed meanwhile counts).
+    const gone = goneInD1 || this.sql.exec('SELECT 1 FROM chat_deletion WHERE chat_id = ? AND deleted = 1', chatId).toArray().length > 0
     if (gone) {
       this.fireParked(cs, 'deleted')
       this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
@@ -1634,6 +1637,10 @@ export class AgentCore {
     const live = this.count(`owner_id = ? AND state IN ('queued', ${ACTIVE.slice(1, -1)})`, personId)
       + this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM chat_state WHERE owner_id = ? AND session = 'waiting'", personId).one().n
       + this.count("owner_id = ? AND state IN ('ended', 'cancelled') AND reserved > 0 AND settled = 0", personId)
+      // A final turn whose rows aren't in D1 yet: its flush writes D1 after an await, so a delete now could let that
+      // batch land after C1's D1 delete (rows nothing would reach). Busy until flushed: once delete answers, no D1 write
+      // for this person follows from this object.
+      + this.count("owner_id = ? AND state IN ('ended', 'cancelled') AND d1_flushed = 0", personId)
     if (mode === 'delete' && live > 0) return { busy: true }
     const turnsOf = "SELECT turn_id FROM turns WHERE owner_id = ?"
     const byTurn = (table: string) => [`${table} WHERE turn_id IN (${turnsOf})`, [personId]] as const
@@ -1644,6 +1651,8 @@ export class AgentCore {
       pool_queue: byTurn('pool_queue'),
       turn_effects: byTurn('turn_effects'),
       turn_trace: byTurn('turn_trace'),
+      turn_rows: byTurn('turn_rows'),
+      chat_deletion: ['chat_deletion WHERE chat_id IN (SELECT chat_id FROM chat_state WHERE owner_id = ? UNION SELECT chat_id FROM turns WHERE owner_id = ?)', [personId, personId]],
       run_tokens: ['run_tokens WHERE member_id = ?', [personId]],
       chat_state: ['chat_state WHERE owner_id = ?', [personId]],
       turns: ['turns WHERE owner_id = ?', [personId]],

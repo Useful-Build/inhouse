@@ -182,6 +182,7 @@ describe('onDeferred through deferred-hook:<questionId> (P6 ask 4, failure 3)', 
     const calls: DeferredQuestion[] = []
     let up = false
     h.core.setOnDeferred(async q => { calls.push(q); return up ? { ok: true } : { retry: 'd1 down' } })
+    await d1Chat('c-quar', MEMBER)  // its turn's history flushes (a failing flush would quarantine too)
     const a = ok(await h.submit('c-quar', 'key-quar01')); await settle()
     defer(h, a.turnId)
     const id = `deferred-hook:${qid(a.turnId)}`
@@ -363,6 +364,18 @@ describe('onEnd across a deferral: parked, fired exactly once (A7, A8; failure 5
     expect(ends).toEqual([{ id: 'test-end:key-rdel01', payload: end(a, 'rc-del', 'cancelled', 'deleted') }])
   }))
 
+  it('route 27 marked the waiting chat deleted here (D1 still live): the deny fires one end task (cancelled, deleted)', () => inEnds(async (h, ends) => {
+    await d1Chat('rc-mark', 'm_system')
+    const a = ok(await routine(h, 'rc-mark', 'key-rmrk01')); await settle()
+    defer(h, a.turnId)
+    h.core.endChats([{ id: 'rc-mark', rev: 2 }])
+    expect(chatRow(h, 'rc-mark').session).toBe('waiting')
+    expect(await h.core.resumeDeferred('rc-mark', 'deny', qid(a.turnId))).toEqual({ refused: { code: 'not_found' } })
+    expect(await h.core.resumeDeferred('rc-mark', 'deny', qid(a.turnId))).toEqual({ refused: { code: 'not_found' } })
+    await h.tick(SEC)
+    expect(ends).toEqual([{ id: 'test-end:key-rmrk01', payload: end(a, 'rc-mark', 'cancelled', 'deleted') }])
+  }))
+
   it('route 49 reset of the waiting chat fires one end task (cancelled, session_reset)', () => inEnds(async (h, ends) => {
     await d1Chat('rc-rst', 'm_system')
     const a = ok(await routine(h, 'rc-rst', 'key-rrst01')); await settle()
@@ -435,21 +448,30 @@ describe('TaskContext.chats.status (P4, B2; failure 6)', () => {
 
 describe('personData (P8 C1; failure 7)', () => {
   /** One person's finished turn with a trace step, a file confirm still queued, and a second member's alike. */
-  async function twoMembers(h: Harness) {
-    const mine = ok(await h.submit('c-pd-mine', 'key-pdm001')); await settle()
+  async function twoMembers(h: Harness, tag: string) {
+    // In D1 as route 23 leaves them, so each finished turn's history flushes (delete is busy until it has).
+    await d1Chat(`c-pd-mine-${tag}`, MEMBER)
+    await d1Chat(`c-pd-their-${tag}`, OTHER)
+    const mine = ok(await h.submit(`c-pd-mine-${tag}`, 'key-pdm001')); await settle()
     h.push(mine.turnId, ev.started(), ev.tool('Read'), ev.text('a'), ev.checkpoint(2), ev.success(), released())
-    const theirs = ok(await h.submit('c-pd-their', 'key-pdt001', { member: OTHER })); await settle()
+    const theirs = ok(await h.submit(`c-pd-their-${tag}`, 'key-pdt001', { member: OTHER })); await settle()
     h.push(theirs.turnId, ev.started(), ev.tool('Read'), ev.text('b'), ev.checkpoint(2), ev.success(), released())
-    await h.tick(SEC)
+    // Past the flush's durable retry: both turns' history is in D1 whichever immediate flush landed.
+    await h.tick(MIN)
+    expect(h.turns().map(t => t.d1_flushed)).toEqual([1, 1])
     return { mine, theirs }
   }
-  const ZERO = { runs: 0, turns: 0, events: 0, chat_state: 0, run_tokens: 0, model_calls: 0, ledger_queue: 0, pool_queue: 0, due_tasks: 0, turn_effects: 0, turn_trace: 0 }
+  const ZERO = {
+    runs: 0, turns: 0, events: 0, chat_state: 0, run_tokens: 0, model_calls: 0, ledger_queue: 0, pool_queue: 0, due_tasks: 0, turn_effects: 0,
+    turn_trace: 0, turn_rows: 0, chat_deletion: 0,
+  }
 
   it('count equals delete\'s counts; other members\' rows untouched; a second delete is zeros', () => inAgent(async h => {
-    await twoMembers(h)
+    await twoMembers(h, 'a')
     // From the script: one run (run.started, turn.queued, turn.started, step, part, turn.finished, run.finished = 7
-    // events), one turn, one chat, one token, one trace record (the Read step), the settle on the ledger queue.
-    const expected = { ...ZERO, runs: 1, turns: 1, events: 7, chat_state: 1, run_tokens: 1, ledger_queue: 1, turn_trace: 1 }
+    // events), one turn, one chat, one token, one trace record (the Read step), the settle on the ledger queue, the
+    // turn's fixed D1 rows (one `turn_rows` row).
+    const expected = { ...ZERO, runs: 1, turns: 1, events: 7, chat_state: 1, run_tokens: 1, ledger_queue: 1, turn_trace: 1, turn_rows: 1 }
     expect(h.core.personData(MEMBER, 'count')).toEqual({ counts: expected })
     const theirsBefore = h.core.personData(OTHER, 'count')
     expect(theirsBefore).toEqual({ counts: expected })
@@ -461,13 +483,31 @@ describe('personData (P8 C1; failure 7)', () => {
   }))
 
   it('due tasks naming the person\'s turns or chats are counted and deleted; others kept', () => inAgent(async h => {
-    const { mine, theirs } = await twoMembers(h)
+    const { mine, theirs } = await twoMembers(h, 'b')
     h.sched.schedule({ id: `flush-turn:${mine.turnId}`, kind: 'flush-turn', dueAtMs: h.clock.now + 60 * MIN })
-    h.sched.schedule({ id: 'test-end:x', kind: 'flush-turn', dueAtMs: h.clock.now + 60 * MIN, payload: { chatId: 'c-pd-mine', turnId: mine.turnId } })
+    h.sched.schedule({ id: 'test-end:x', kind: 'flush-turn', dueAtMs: h.clock.now + 60 * MIN, payload: { chatId: 'c-pd-mine-b', turnId: mine.turnId } })
     h.sched.schedule({ id: `flush-turn:${theirs.turnId}`, kind: 'flush-turn', dueAtMs: h.clock.now + 60 * MIN })
     expect((h.core.personData(MEMBER, 'count') as { counts: Record<string, number> }).counts.due_tasks).toBe(2)
     expect((h.core.personData(MEMBER, 'delete') as { counts: Record<string, number> }).counts.due_tasks).toBe(2)
     expect(h.sql.exec<{ id: string }>("SELECT id FROM due_tasks WHERE kind = 'flush-turn'").toArray().map(r => r.id)).toEqual([`flush-turn:${theirs.turnId}`])
+  }))
+
+  it('busy while a final turn\'s history is not in D1 yet; the chat_deletion mark is the person\'s row', () => inAgent(async h => {
+    // No D1 chat row: the flush can't land (chat_messages references chats), so the turn stays unflushed.
+    const a = ok(await h.submit('c-unfl', 'key-unfl01')); await settle()
+    h.push(a.turnId, ...fullAnswer('a', 2))
+    // Settled (the hold given back), so only the flush holds the delete.
+    for (let i = 0; i < 5 && h.turn(a.turnId).settled === 0; i++) await h.tick(MIN)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', d1_flushed: 0, settled: 1 })
+    expect(h.core.personData(MEMBER, 'delete')).toEqual({ busy: true })
+    expect(h.turns()).toHaveLength(1)
+    await d1Chat('c-unfl', MEMBER)
+    await h.tick(10 * MIN)
+    expect(h.turn(a.turnId).d1_flushed).toBe(1)
+    h.core.endChats([{ id: 'c-unfl', rev: 2 }])
+    const counts = (h.core.personData(MEMBER, 'delete') as { counts: Record<string, number> }).counts
+    expect({ chat_deletion: counts.chat_deletion, turn_rows: counts.turn_rows, turns: counts.turns }).toEqual({ chat_deletion: 1, turn_rows: 1, turns: 1 })
+    expect(h.sql.exec('SELECT chat_id FROM chat_deletion').toArray()).toEqual([])
   }))
 
   it('busy while a turn of the person is queued, starting, live or ending, or a chat of theirs waits; nothing deleted', () => inAgent(async h => {

@@ -10,7 +10,7 @@ import type { TurnRow } from '../../do/brand-agent/core.ts'
 import type { SubmitTurn } from '../../do/brand-agent/ports.ts'
 import { createAgentTables } from '../../do/brand-agent/schema.ts'
 import { createScheduler, registrySeeds } from '../../do/brand-agent/scheduler.ts'
-import { internalSubmit } from '../../do/brand-agent/task-ops.ts'
+import { taskContext } from '../../do/brand-agent/task-ops.ts'
 import type { AlarmPort, SqlScheduler, TaskContext, TaskHandler } from '../../do/brand-agent/scheduler.ts'
 import { taskHandlers } from '../../do/brand-agent/tasks/index.ts'
 import { createRunTokens } from '../../do/brand-agent/tokens.ts'
@@ -128,13 +128,8 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
       let hub!: SocketHub
       const sched: SqlScheduler = createScheduler<TaskContext>({
         sql, alarm, now, handlers: registry,
-        context: (nowMs): TaskContext => ({
-          nowMs, env, sql, scheduler: sched, tokens, ports: { pool, usage, files }, agent: core,
-          runs: { submit: t => internalSubmit(core, sql, registry, t) },
-          get paused() { return core.isPaused() },
-          resumeDeferred: (chatId, decision, questionId) => core.resumeDeferred(chatId, decision, questionId),
-          chats: { status: chatId => core.chatStatus(chatId) },
-        }),
+        // The shipped context (task-ops.ts `taskContext`, as index.ts builds it).
+        context: (nowMs): TaskContext => taskContext({ nowMs, env, sql, scheduler: sched, tokens, ports: { pool, usage, files }, core, registry }),
       })
       hub = new SocketHub({
         sql, now, burst: o.burst,

@@ -43,7 +43,7 @@ describe('route 51: revive one quarantined task (failures 1, 2)', () => {
     expect(await task(id)).toMatchObject({ kind: 'deferred-hook', state: 'ready', attempts: 0, payload_json: PAYLOAD })
     expect(await lines()).toEqual([{
       actor_id: 'm_system', action: 'ops_task_revive', target_kind: null, target_id: null,
-      args_json: '{"kind":"deferred-hook","id":"deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA","result":"revived"}',
+      args_json: '{"kind":"deferred-hook","id":"deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA","result":"revived","by":"release"}',
     }])
   })
 
@@ -54,9 +54,9 @@ describe('route 51: revive one quarantined task (failures 1, 2)', () => {
     expect(await call({ kind: 'deferred-hook', id })).toEqual({ status: 200, body: { result: 'not_quarantined' } })
     expect(await call({ kind: 'flush-turn', id })).toEqual({ status: 200, body: { result: 'not_found' } })
     expect((await lines()).map(l => JSON.parse(l.args_json as string))).toEqual([
-      { kind: 'deferred-hook', id, result: 'revived' },
-      { kind: 'deferred-hook', id, result: 'not_quarantined' },
-      { kind: 'flush-turn', id, result: 'not_found' },
+      { kind: 'deferred-hook', id, result: 'revived', by: 'release' },
+      { kind: 'deferred-hook', id, result: 'not_quarantined', by: 'release' },
+      { kind: 'flush-turn', id, result: 'not_found', by: 'release' },
     ])
   })
 })

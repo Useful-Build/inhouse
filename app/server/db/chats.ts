@@ -132,7 +132,7 @@ export function chatStore(deps: { db: D1Database }): ChatStore {
     },
     async recordTaskRevive(r, at) {
       await runBatch(db, [auditInsert({
-        atMs: at.nowMs, actorId: SYSTEM_MEMBER_ID, args: { action: 'ops_task_revive', kind: r.kind, id: r.id, result: r.result }, target: null,
+        atMs: at.nowMs, actorId: SYSTEM_MEMBER_ID, args: { action: 'ops_task_revive', kind: r.kind, id: r.id, result: r.result, by: 'release' }, target: null,
         requestId: at.requestId,
       }, null)])
     },
