@@ -4,5 +4,6 @@
 // a directory scan. H0's registry completeness test fails when a connectors/*/route.ts on disk isn't listed here.
 import { slackConnector } from './mcp/slack/route'
 import { shopifyConnector } from './shopify/route'
+import { codeModeConnector } from '../codemode/route'
 
-export const connectors = [shopifyConnector, slackConnector] as const
+export const connectors = [shopifyConnector, codeModeConnector, slackConnector] as const

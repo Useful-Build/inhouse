@@ -523,7 +523,7 @@ describe('test 13: the path by kind', () => {
   it('an oauth_mcp account with no provider configured answers not_configured, and no Shopify grant is attempted', async () => {
     const w = world({ noProvider: true })
     expect(codeOf(await w.core(SLACK).beginConnect({ accountId: SLACK, memberId: MEMBER }))).toBe('not_configured')
-    expect(codeOf(await w.core(SLACK).query({ accountId: SLACK, document: '{ shop { name } }', apiVersion: '2026-10' }))).toBe('not_configured')
+    expect(codeOf(await w.core(SLACK).query({ accountId: SLACK, document: '{ shop { currencyCode } }', apiVersion: '2026-10' }))).toBe('not_configured')
     expect(codeOf(await search(w))).toBe('not_configured')
     await w.core(SLACK).alarm()
     expect(w.hostsSeen.filter(h => h.endsWith('myshopify.com'))).toEqual([])

@@ -195,5 +195,5 @@ export function harness(opts: { store?: MemStore; ring?: { json: string | undefi
   return { core, store, alarm, shop, clock, ring, config }
 }
 
-export const readQuery = (h: Harness, document = '{ shop { name } }') => h.core.query({ accountId: ACCOUNT, document, apiVersion: API })
+export const readQuery = (h: Harness, document = '{ shop { currencyCode } }') => h.core.query({ accountId: ACCOUNT, document, apiVersion: API })
 

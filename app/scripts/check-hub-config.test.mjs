@@ -45,6 +45,12 @@ const EXPECTED = {
   'fail-signin-binding-script.jsonc': ['signin-binding'],
   'fail-signin-migration.jsonc': ['signin-migration'],
   'fail-main.jsonc': ['main'],
+  // P5 W2: code mode's loader.
+  'fail-worker-loaders-two.jsonc': ['worker-loaders'],
+  'fail-worker-loaders-name.jsonc': ['worker-loaders'],
+  'fail-worker-loaders-extra-key.jsonc': ['worker-loaders'],
+  'fail-worker-loaders-not-array.jsonc': ['worker-loaders'],
+  'fail-worker-loaders-empty.jsonc': ['worker-loaders'],
 }
 
 const run = path => {
