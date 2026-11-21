@@ -5,7 +5,7 @@
 // test bundle, 1 for a refusal, 2 when the scan can't run.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -58,4 +58,17 @@ test('a test bundle that is clean fails the scan: it proves nothing', () => {
 test('a missing folder or a flag with no value exits 2, never 0 or 1', () => {
   assert.equal(run('--deploy', `${FIXTURES}/does-not-exist`, '--test', TEST).status, 2)
   assert.equal(run('--deploy').status, 2)
+})
+
+// The scan once hung at exit on the real bundles (node 26.13.1: a worker thread never joined, about 3 runs in 4) while
+// every fixture passed: the fixtures are a few hundred bytes, the real script and map are megabytes and were read once
+// per canary. Synthetic padded bundles never reproduced it, so this runs the real scan on the real bundles (CI builds
+// them just before this test), 8 times, each under a time bound. Skipped, saying so, where the bundles aren't built.
+const built = existsSync(join(app, 'dist-hub/bundle-meta.json')) && existsSync(join(app, 'dist-hub-test/bundle-meta.json'))
+test('the scan finishes on the real hub bundles, every time', { skip: built ? false : 'run `npm run bundle` and `npm run bundle:test` in app/hub first' }, () => {
+  for (let i = 0; i < 8; i++) {
+    const r = spawnSync(process.execPath, ['scripts/check-hub-build.mjs'], { cwd: app, encoding: 'utf8', timeout: 20000 })
+    assert.equal(r.error, undefined, `run ${i} did not finish in 20 s: ${r.error?.message}`)
+    assert.equal(r.status, 0, `run ${i}: ${r.stdout}${r.stderr}`)
+  }
 })
