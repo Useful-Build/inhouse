@@ -76,6 +76,12 @@ export const SEEDED_MEMORY_TEXT = 'Likes the weekly stock report as a table.'
  * Fails loud when the turn never makes the line, never guesses a key.
  */
 export async function seedMemoryFact(s: Signer, who: Seeded, o: { chatId: string; timeoutMs?: number; sleep?: (ms: number) => Promise<void> }): Promise<string> {
+  const known = async (): Promise<Set<string>> => {
+    const page = await s.api(who, 'GET', CHAT_READ_PATH.memory!)
+    if (page.status !== 200) throw new Error(`The real contract target couldn't read the memory page: ${page.status}`)
+    return new Set((page.json as MemoryData).personal.map(l => l.key))
+  }
+  const before = await known()
   const made = await s.api(who, 'POST', '/api/chats', { id: o.chatId, title: 'Memory seed' })
   if (made.status !== 200) throw new Error(`The real contract target couldn't make the seed chat: ${made.status}`)
   const sent = await s.api(who, 'POST', `/api/chats/${enc(o.chatId)}/turns`, { clientTurnKey: `contract-seed-${o.chatId}`.slice(0, 64), text: 'scenario:memory-save remember this', model: 'sonnet' })
@@ -85,7 +91,7 @@ export async function seedMemoryFact(s: Signer, who: Seeded, o: { chatId: string
   for (;;) {
     const page = await s.api(who, 'GET', CHAT_READ_PATH.memory!)
     if (page.status !== 200) throw new Error(`The real contract target couldn't read the memory page: ${page.status}`)
-    const line = (page.json as MemoryData).personal.find(l => l.text === SEEDED_MEMORY_TEXT)
+    const line = (page.json as MemoryData).personal.find(l => l.text === SEEDED_MEMORY_TEXT && !before.has(l.key))
     if (line) return line.key
     if (Date.now() > until) throw new Error('The seed turn made no memory line in time.')
     await sleep(1000)

@@ -68,6 +68,7 @@ export function unobservableReason(c: Case): string | null {
   for (const chat of c.chats) {
     const args = chat.expect.args
     if (!args) continue
+    if ('person_id' in args) return 'memory_save person_id (the product saves only for the person asking; it has no person_id)'
     for (const tool of ([] as string[]).concat(chat.expect.tool ?? [])) {
       if (tool === 'memory_save' || tool === 'memory_update') continue
       return `${tool} input ${Object.keys(args).join(', ')} (route 33 shows the tool name only)`
@@ -130,6 +131,8 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       cursor = r.json.nextCursor
       if (cursor === null) break
     }
+    // Fail closed: members past the page cap were never checked.
+    if (cursor !== null) throw new ProductTargetRefusal('refusing: the brand has more members than the check reads (100 pages), so it is not known to be an eval brand')
     const live = members.filter((m) => m.status !== 'removed')
     const offenders = live.filter((m) => !onExampleTest(m.email))
     if (offenders.length > 0) throw new ProductTargetRefusal(`refusing: ${offenders.length} member(s) of this brand are not on example.test, so it is not an eval brand`)
@@ -139,6 +142,11 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     if (!models.json.modes?.some((m: { id: string }) => m.id === picker)) throw new ProductTargetRefusal(`refusing: the brand does not serve the ${picker} model`)
     // (a) the door only after the check passed; (b) and (c) are door.ts's.
     door ??= createDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
+    // The database must be the one this origin answers from: make a chat through the API, read it back through the door. Nothing is
+    // cleared or written before this passes.
+    const probe = `eval-probe-${rid()}`
+    must(await api('current', 'POST', '/api/chats', { json: { id: probe, title: 'Eval probe' } }), 'create the probe chat')
+    if (!(await door.hasChat(probe))) throw new ProductTargetRefusal(`refusing: ${EVAL_D1_NAME} does not hold the chat the origin just created, so it is not this deployment's database`)
   })())
 
   let spentTotal = 0
@@ -198,6 +206,9 @@ interface SessionDeps {
   onSpend: (usd: number) => void
 }
 
+/** Route 33's cost is whole cents, rounded to the nearest: the true figure is under half a cent more, so it is booked at that upper bound. */
+export const cents = (minor: number): number => (minor + 0.5) / 100
+
 const rid = (): string => crypto.randomUUID().replaceAll('-', '').slice(0, 24)
 const ZERO = { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }
 
@@ -221,10 +232,24 @@ function productSession(d: SessionDeps): Session {
 
   async function turnCost(turnId: string): Promise<number> {
     const t = await d.api('current', 'GET', `/api/traces/${encodeURIComponent(turnId)}`)
-    if (t.status !== 200) return 0
-    return (t.json.cost.minor as number) / 100
+    if (t.status !== 200) throw new Error(`the trace of ${turnId} could not be read (${t.status}), so its cost is unknown`)
+    return cents(t.json.cost.minor as number)
+  }
+  /** Ends every turn this session sent (a stop, repeated until the server says it ended), so none keeps spending or writing memory into the next case. */
+  async function endTurns(): Promise<void> {
+    const deadline = AbortSignal.timeout(30_000)
+    for (const t of turns) {
+      for (;;) {
+        const r = await d.api('current', 'POST', `/api/turns/${encodeURIComponent(t)}/stop`, { json: {} })
+        if (r.status === 409 || r.status === 404) break // `turn_ended`, or no such turn
+        if (deadline.aborted) throw new Error(`turn ${t} did not end after a stop`)
+        if (r.status !== 200) throw new Error(`stop turn ${t}: ${r.status}`)
+        await d.sleep(d.pollMs)
+      }
+    }
   }
   async function bookCost(): Promise<number> {
+    await endTurns()
     let total = 0
     for (const t of turns) total += await turnCost(t)
     d.onSpend(Math.max(0, total - booked))
@@ -268,7 +293,7 @@ function productSession(d: SessionDeps): Session {
       const trace = await d.api('current', 'GET', `/api/traces/${encodeURIComponent(turnId)}`, { signal: o?.signal })
       d.must(trace, 'read the trace', [200])
       const names: string[] = (trace.json.steps as { kind: string; detail: string }[]).filter((s) => s.kind === 'tool').map((s) => s.detail)
-      const costUsd = (trace.json.cost.minor as number) / 100
+      const costUsd = cents(trace.json.cost.minor as number)
       booked += costUsd
       d.onSpend(costUsd)
 

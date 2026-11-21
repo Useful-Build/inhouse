@@ -17,7 +17,10 @@ const signIn = async (key: string) => ({ 'Cf-Access-Jwt-Assertion': `tok-${key}`
 class FakeDoor implements MemoryDoor {
   rowsNow: MemoryRow[] = []
   calls: string[] = []
+  /** False: this database is not the one the origin answers from (the probe chat isn't in it). */
+  holdsProbe = true
   onRows?: () => void
+  async hasChat() { this.calls.push('hasChat'); return this.holdsProbe }
   async rows() { this.calls.push('rows'); this.onRows?.(); return this.rowsNow.map((r) => ({ ...r })) }
   async insert(facts: NewMemory[]) {
     this.calls.push(`insert ${facts.length}`)
@@ -36,6 +39,12 @@ interface Server {
   answerParts: { type: string; text?: string }[]
   sent: Sent[]
   onTurn?: () => void
+  /** The trace read answers this status (200 normally). */
+  traceStatus?: number
+  /** Every member page names a next cursor (a brand too big to check). */
+  endlessMembers?: boolean
+  /** How many stops answer 200 (still ending) before one answers 409 turn_ended. */
+  stopsBeforeEnded?: number
 }
 const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } => {
   const s: Server = {
@@ -44,6 +53,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
   }
   let turnId = ''
   let polls = 0
+  let stops = 0
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json' } })
   const f = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input))
@@ -54,7 +64,11 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
     s.sent.push({ method, path: url.pathname + url.search, token, body })
     if (method !== 'GET' && headers.Origin !== 'https://eval.example.test') return json({ error: { code: 'forbidden' } }, 403)
     if (url.pathname === '/api/me') return json({ memberId: TOKEN_OF[token ?? ''] })
-    if (url.pathname === '/api/members') return json({ items: s.members, nextCursor: null })
+    if (url.pathname === '/api/members') return json({ items: s.members, nextCursor: s.endlessMembers ? 'more' : null })
+    if (url.pathname.startsWith('/api/turns/') && url.pathname.endsWith('/stop')) {
+      const n = stops++
+      return n < (s.stopsBeforeEnded ?? 0) ? json({}) : json({ error: { code: 'conflict', reason: 'turn_ended' } }, 409)
+    }
     if (url.pathname === '/api/models') return json({ default: 'sonnet', modes: [{ id: 'sonnet' }] })
     if (url.pathname === '/api/chats' && method === 'POST') return json({ id: body.id }, 201)
     if (url.pathname.endsWith('/attachments')) return json({ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }, 201)
@@ -63,6 +77,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
       s.onTurn?.()
       return json({ runId: 'r_CCCCCCCCCCCCCCCCCCCCCC', turnId, messageId: `${turnId}.u`, position: 'starting' }, 202)
     }
+    if (url.pathname.startsWith('/api/traces/') && s.traceStatus && s.traceStatus !== 200) return json({ error: { code: 'unavailable' } }, s.traceStatus)
     if (url.pathname.startsWith('/api/traces/')) return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps] })
     if (url.pathname.startsWith('/api/chats/')) {
       const answered = ++polls > s.emptyPolls
@@ -89,6 +104,20 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(ProductTargetRefusal)
     expect(door.calls).toEqual([])
     expect(srv.s.sent.filter((x) => x.method !== 'GET')).toEqual([])
+  })
+
+  it('a brand with more members than the check reads is refused, not passed', async () => {
+    const srv = server({ endlessMembers: true })
+    const door = new FakeDoor()
+    await expect(make(srv, door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/more members than the check reads/)
+    expect(door.calls).toEqual([])
+  })
+
+  it('a database that does not hold the chat the origin just created is refused before any write or clear', async () => {
+    const door = new FakeDoor()
+    door.holdsProbe = false
+    await expect(make(server(), door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/not this deployment's database/)
+    expect(door.calls).toEqual(['hasChat'])
   })
 
   it('a removed member on a real domain does not count', async () => {
@@ -120,14 +149,14 @@ describe('a chat through the product', () => {
     const res = await session.chat('How long does Norda take?')
     expect(res.answer).toBe('It takes 6 weeks.\n\nAnd 120 units.')
     expect(res.toolCalls).toEqual([{ name: 'mcp__inhouse__memory_search', input: {} }])
-    expect(res.costUsd).toBe(0.03)
+    expect(res.costUsd).toBeCloseTo(0.035, 12) // whole cents, booked at the upper bound: (3 + 0.5) cents
     expect(res.runOk).toBe(true)
     const turn = srv.s.sent.find((x) => x.path.endsWith('/turns'))!
     expect(turn.token).toBe('tok-current')
     expect(turn.body).toMatchObject({ text: 'How long does Norda take?', model: 'sonnet' })
     expect(turn.body.clientTurnKey).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
     expect(srv.s.sent.filter((x) => x.path.includes('/chats') && x.method === 'GET').length).toBeGreaterThanOrEqual(2) // it waited
-    expect(target.spentUsd!()).toBe(0.03)
+    expect(target.spentUsd!()).toBeCloseTo(0.035, 12)
     // seeded: brand facts without an owner, Tom's own fact owned by Tom
     expect(door.rowsNow.filter((r) => r.scope === 'brand').every((r) => r.ownerId === null)).toBe(true)
     expect(door.rowsNow.find((r) => r.text.startsWith('Tom wants'))!.ownerId).toBe('m_leo')
@@ -170,7 +199,7 @@ describe('a chat through the product', () => {
     const session = await make(srv, new FakeDoor()).seed([], { caseId: 'X06', rep: 1, canary: 'kestrel-x06' }, x.exfil)
     await session.chat(x.chats[0]!.prompt)
     const order = srv.s.sent.filter((s) => s.method === 'POST').map((s) => s.path.replace(/eval-[a-f0-9]+/, 'CHAT'))
-    expect(order).toEqual(['/api/chats', '/api/chats/CHAT/attachments', '/api/chats/CHAT/turns'])
+    expect(order).toEqual(['/api/chats', '/api/chats', '/api/chats/CHAT/attachments', '/api/chats/CHAT/turns']) // the first is the deployment probe chat
     expect(srv.s.sent.find((s) => s.path.endsWith('/turns'))!.body.attachments).toEqual([{ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }])
   })
 
@@ -199,13 +228,34 @@ describe('a chat through the product', () => {
 
 describe('cost of a chat that timed out or threw comes from the server', () => {
   it('the runner books the settled spend, not $0, when a chat has no result', async () => {
-    const srv = server({ costMinor: 7, emptyPolls: 1_000_000 })
+    const srv = server({ costMinor: 7, emptyPolls: 1_000_000, stopsBeforeEnded: 2 })
     const target = make(srv, new FakeDoor(), { pollMs: 5, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) })
     // the turn is accepted, the answer never comes: the runner's own timeout fires; the server booked 7 cents
     const out = await runEvals({ target, cases: [kase('N01')], reps: 1, concurrency: 1, chatTimeoutMs: 50 })
     expect(out.rows).toHaveLength(1)
-    expect(out.rows[0]).toMatchObject({ runOk: false, costUsd: 0.07 })
-    expect(out.spentUsd).toBeCloseTo(0.07, 12)
+    expect(out.rows[0]).toMatchObject({ runOk: false })
+    expect(out.rows[0]!.costUsd).toBeCloseTo(0.075, 12)
+    expect(out.spentUsd).toBeCloseTo(0.075, 12)
+  })
+
+  it('the turn is stopped until the server says it ended, and only then is its cost read', async () => {
+    const srv = server({ costMinor: 7, emptyPolls: 1_000_000, stopsBeforeEnded: 2 })
+    const target = make(srv, new FakeDoor(), { pollMs: 5, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) })
+    await runEvals({ target, cases: [kase('N01')], reps: 1, concurrency: 1, chatTimeoutMs: 50 })
+    const paths = srv.s.sent.map((x) => `${x.method} ${x.path}`)
+    const stops = paths.flatMap((p, i) => (p.endsWith('/stop') ? [i] : []))
+    const traceReads = paths.flatMap((p, i) => (p.startsWith('GET /api/traces/') ? [i] : []))
+    expect(stops).toHaveLength(3) // two 200s (still ending), then the 409 that says it ended
+    expect(traceReads.length).toBeGreaterThan(0)
+    expect(Math.min(...traceReads)).toBeGreaterThan(Math.max(...stops))
+  })
+
+  it('a cost that can\'t be read is "cost unknown" on the row, never a silent $0 that resets the figure', async () => {
+    const srv = server({ emptyPolls: 1_000_000, traceStatus: 503, stopsBeforeEnded: 0 })
+    const target = make(srv, new FakeDoor(), { pollMs: 5, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) })
+    const out = await runEvals({ target, cases: [kase('N01')], reps: 1, concurrency: 1, chatTimeoutMs: 50 })
+    expect(out.rows[0]!.err).toMatch(/cost unknown: the trace of t_[A-Za-z0-9_-]+ could not be read \(503\)/)
+    expect(out.rows[0]!.costUsd).toBe(0)
   })
 
   it('a chat that threw before the turn was accepted costs nothing: nothing was booked', async () => {
@@ -220,7 +270,7 @@ describe('cost of a chat that timed out or threw comes from the server', () => {
 describe('what the product cannot grade', () => {
   it('lists exactly these cases as unobservable (literal)', () => {
     expect(CASES.filter((c) => unobservableReason(c)).map((c) => c.id)).toEqual([
-      'R01', 'R02', 'R05', 'T04', 'T06', 'T07', 'T09', 'T11', 'T12', 'T13', 'T14', 'T15', 'T16', 'C01', 'C02', 'C03', 'C05', 'X01', 'X02', 'X03', 'X05', 'X07',
+      'R01', 'R02', 'R05', 'E03', 'T04', 'T06', 'T07', 'T09', 'T11', 'T12', 'T13', 'T14', 'T15', 'T16', 'C01', 'C02', 'C03', 'C05', 'X01', 'X02', 'X03', 'X05', 'X07',
     ])
   })
   it('names the field each needs', () => {
@@ -229,8 +279,11 @@ describe('what the product cannot grade', () => {
     expect(unobservableReason(kase('X01'))).toBe('WebFetch url and result (route 33 shows the tool name only)')
     expect(unobservableReason(kase('X05'))).toBe('planting through history_search needs a priming chat')
   })
+  it('E03 (a save for Lena) is unobservable: the product saves only for the caller', () => {
+    expect(unobservableReason(kase('E03'))).toBe('memory_save person_id (the product saves only for the person asking; it has no person_id)')
+  })
   it('memory_save and memory_update args are observable (from the rows)', () => {
-    for (const id of ['E01', 'E03', 'T01', 'T02', 'T03']) expect(unobservableReason(kase(id))).toBeNull()
+    for (const id of ['E01', 'T01', 'T02', 'T03']) expect(unobservableReason(kase(id))).toBeNull()
   })
   it('the runner lists them as not graded and runs none of them', async () => {
     const srv = server()
@@ -244,6 +297,7 @@ describe('the memory door', () => {
   const ok = { CF_SANDBOX_ACCOUNT_ID: 'acct' }
   it.each([
     ['a house database', 'inhouse-prod-db', ok],
+    ['the shared candidate database', 'inhouse-sbx-db', ok],
     ['no name', undefined, ok],
     ['a name with a suffix attack', 'inhouse-sbx-db\n; DROP', ok],
     ['an upper-case name', 'Inhouse-SBX-db', ok],
@@ -251,28 +305,45 @@ describe('the memory door', () => {
   ])('refuses %s', (_n, name, env) => {
     expect(() => assertSandboxDatabase(name, env)).toThrow(DoorRefusal)
   })
-  it.each(['inhouse-sbx-pr12-db', 'inhouse-sbx-db'])('accepts the sandbox database %s', (name) => {
+  it.each(['inhouse-sbx-pr12-db', 'inhouse-sbx-pr7'])('accepts the PR deployment database %s', (name) => {
     expect(assertSandboxDatabase(name, ok)).toBe(name)
   })
   it('matches scripts/sandbox/names.mjs on literal names', async () => {
-    const names = await import(/* @vite-ignore */ new URL('../scripts/sandbox/names.mjs', import.meta.url).href) as { isSandboxName: (n: string) => boolean }
-    for (const n of ['inhouse-sbx-pr12-db', 'inhouse-sbx-db', 'inhouse-prod', 'inhouse-sbx-', 'inhouse-sbx-A', 'xinhouse-sbx-db', 'inhouse-sbx-db\n']) {
-      expect(() => assertSandboxDatabase(n, ok) && true !== names.isSandboxName(n)).not.toThrow(Error('differs'))
+    const names = await import(/* @vite-ignore */ new URL('../scripts/sandbox/names.mjs', import.meta.url).href) as { isPerPrName: (n: string) => boolean }
+    for (const n of ['inhouse-sbx-pr12-db', 'inhouse-sbx-pr12', 'inhouse-sbx-pr0-db', 'inhouse-sbx-pr012-db', 'inhouse-sbx-db', 'inhouse-prod', 'inhouse-sbx-', 'inhouse-sbx-pr12-DB', 'xinhouse-sbx-pr1-db', 'inhouse-sbx-pr12-db\n']) {
       let door = true
       try { assertSandboxDatabase(n, ok) } catch { door = false }
-      expect(door, n).toBe(names.isSandboxName(n))
+      expect(door, n).toBe(names.isPerPrName(n))
     }
   })
   it('wrangler runs in the sandbox account with the config and never echoes the environment', async () => {
     const seen: { args: string[]; env: Record<string, string | undefined> }[] = []
-    const run = wranglerRunner({ database: 'inhouse-sbx-pr12-db', config: '/tmp/sbx.jsonc', env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_ACCOUNT_ID: 'house', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: (args, env) => { seen.push({ args, env }); return { status: 0, stdout: '[{"results":[{"n":1}]}]' } } })
+    const run = wranglerRunner({ database: 'inhouse-sbx-pr12-db', config: '/tmp/sbx.jsonc', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_ACCOUNT_ID: 'house', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: (args, env) => { seen.push({ args, env }); return { status: 0, stdout: '[{"results":[{"n":1}]}]' } } })
     expect(await run('SELECT 1 AS n')).toEqual([{ n: 1 }])
     expect(seen[0]!.args).toEqual(['d1', 'execute', 'inhouse-sbx-pr12-db', '--remote', '--config', '/tmp/sbx.jsonc', '--json', '--yes', '--command', 'SELECT 1 AS n'])
     expect(seen[0]!.env.CLOUDFLARE_ACCOUNT_ID).toBe('acct')
-    const failing = wranglerRunner({ database: 'inhouse-sbx-pr12-db', config: 'c', env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: () => ({ status: 1, stdout: 'secret-token leaked?' }) })
+    const failing = wranglerRunner({ database: 'inhouse-sbx-pr12-db', config: 'c', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: () => ({ status: 1, stdout: 'secret-token leaked?' }) })
     const err = await failing('SELECT 1').catch((e: Error) => e)
     expect(err).toBeInstanceOf(DoorRefusal)
     expect((err as Error).message).toBe('wrangler d1 execute exited 1')
+  })
+  it.each([
+    ['an empty config path', '', JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] })],
+    ['a config for another account', 'c', JSON.stringify({ account_id: 'house', d1_databases: [{ database_name: 'inhouse-sbx-pr12-db' }] })],
+    ['a config that binds another database', 'c', JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-pr13-db' }] })],
+    ['a config that is not JSON', 'c', '{ // jsonc'],
+  ])('refuses %s, before any spawn', (_n, config, text) => {
+    let spawned = 0
+    expect(() => wranglerRunner({ database: 'inhouse-sbx-pr12-db', config, readConfig: () => text, env: ok, spawn: () => { spawned++; return { status: 0, stdout: '[]' } } })).toThrow(DoorRefusal)
+    expect(spawned).toBe(0)
+  })
+  it('hasChat asks for exactly that chat id and refuses an id that is not one', async () => {
+    const sqls: string[] = []
+    const door = createDoor(async (sql) => { sqls.push(sql); return sql.includes('eval-probe-1') ? [{ one: 1 }] : [] })
+    expect(await door.hasChat('eval-probe-1')).toBe(true)
+    expect(await door.hasChat('eval-probe-2')).toBe(false)
+    expect(sqls[0]).toBe("SELECT 1 AS one FROM chats WHERE id = 'eval-probe-1'")
+    await expect(door.hasChat("x'; DROP TABLE chats;--")).rejects.toThrow(DoorRefusal)
   })
   it('a non-sandbox database is refused when the runner is made, before any spawn', () => {
     let spawned = 0

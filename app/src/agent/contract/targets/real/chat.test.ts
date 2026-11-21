@@ -56,12 +56,19 @@ describe('the real target\'s chat and pause parts (W7 PR 2)', () => {
     let reads = 0
     const s = { api: async (_w: string, method: string, path: string, body?: unknown) => {
       calls.push(`${method} ${path}`)
-      if (path === '/api/memory') return { status: 200, json: ++reads < 2 ? { team: [], personal: [] } : { team: [], personal: [{ key: KEY_P, text: SEEDED_MEMORY_TEXT, source: 's', rev: 1 }] } }
+      if (path === '/api/memory') return { status: 200, json: ++reads < 3 ? { team: [], personal: [] } : { team: [], personal: [{ key: KEY_P, text: SEEDED_MEMORY_TEXT, source: 's', rev: 1 }] } }
       if (path.endsWith('/turns')) expect(body).toMatchObject({ text: 'scenario:memory-save remember this', model: 'sonnet' })
       return { status: path.endsWith('/turns') ? 202 : 200, json: {} }
     } } as unknown as Signer
     expect(await seedMemoryFact(s, 'admin', { chatId: 'seed-1', sleep: async () => {} })).toBe(KEY_P)
-    expect(calls).toEqual(['POST /api/chats', 'POST /api/chats/seed-1/turns', 'GET /api/memory', 'GET /api/memory'])
+    expect(calls).toEqual(['GET /api/memory', 'POST /api/chats', 'POST /api/chats/seed-1/turns', 'GET /api/memory', 'GET /api/memory'])
+  })
+  it('ignores a line with the seeded text that was there before the send', async () => {
+    const old = { key: KEY_B, text: SEEDED_MEMORY_TEXT, source: 's', rev: 1 }
+    const fresh = { key: KEY_P, text: SEEDED_MEMORY_TEXT, source: 's', rev: 1 }
+    let reads = 0
+    const s = { api: async (_w: string, _m: string, path: string) => (path === '/api/memory' ? { status: 200, json: { team: [], personal: ++reads < 3 ? [old] : [old, fresh] } } : { status: path.endsWith('/turns') ? 202 : 200, json: {} }) } as unknown as Signer
+    expect(await seedMemoryFact(s, 'admin', { chatId: 'seed-4', sleep: async () => {} })).toBe(KEY_P)
   })
   it('fails loud when the turn makes no line in time or a call is refused', async () => {
     const quiet = { api: async (_w: string, _m: string, path: string) => ({ status: path.endsWith('/turns') ? 202 : 200, json: { team: [], personal: [] } }) } as unknown as Signer

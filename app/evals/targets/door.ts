@@ -8,6 +8,7 @@
 //       stderr is dropped, and a failure names only the command's exit status.
 // Statements are built here from invented case text with every string literal quoted; ids are checked against a pattern.
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 
@@ -15,8 +16,8 @@ export class DoorRefusal extends Error {
   override name = 'DoorRefusal'
 }
 
-/** The sandbox-wide name rule of scripts/sandbox/names.mjs (SANDBOX_WIDE): the shared candidate and every per-PR deployment. */
-export const SANDBOX_DB = /^inhouse-sbx-[a-z0-9-]+$/
+/** The per-PR rule of scripts/sandbox/names.mjs (PER_PR): a PR deployment's database (`inhouse-sbx-pr<N>-db`), never the shared candidate's, which other work uses. */
+export const SANDBOX_DB = /^inhouse-sbx-pr([1-9][0-9]{0,5})(-[a-z]+)?$/
 const MEMORY_ID = /^mem_[A-Za-z0-9_-]{22}$/
 const MEMBER_ID = /^[A-Za-z0-9_-]{1,80}$/
 
@@ -36,6 +37,8 @@ export interface NewMemory {
 }
 
 export interface MemoryDoor {
+  /** Whether the deployment's D1 holds a chat with this id: the proof that the database is the one the API answers from. */
+  hasChat(id: string): Promise<boolean>
   /** Every fact in the brand's memory, whatever its status. */
   rows(): Promise<MemoryRow[]>
   /** Puts facts in, active (the case's premise is that the agent knows them). */
@@ -52,13 +55,17 @@ export type RunSql = (sql: string) => Promise<Record<string, unknown>[]>
 
 export function assertSandboxDatabase(name: string | undefined, env: Record<string, string | undefined>): string {
   if (!name) throw new DoorRefusal('refusing: INHOUSE_EVAL_D1_NAME is not set (the eval deployment\'s D1 database)')
-  if (!SANDBOX_DB.test(name)) throw new DoorRefusal(`refusing: ${JSON.stringify(name)} is not a sandbox database name (inhouse-sbx-...)`)
+  if (!SANDBOX_DB.test(name)) throw new DoorRefusal(`refusing: ${JSON.stringify(name)} is not a per-PR sandbox database name (inhouse-sbx-pr<N>-db)`)
   if (!env.CF_SANDBOX_ACCOUNT_ID) throw new DoorRefusal('refusing: CF_SANDBOX_ACCOUNT_ID is not set, so the target is not known to be the sandbox account')
   return name
 }
 
 export function createDoor(run: RunSql): MemoryDoor {
   return {
+    async hasChat(id) {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new DoorRefusal('not a chat id')
+      return (await run(`SELECT 1 AS one FROM chats WHERE id = ${sqlString(id)}`)).length > 0
+    },
     async rows() {
       const out = await run('SELECT id, scope, owner_id, text, status, rev FROM memories ORDER BY n')
       return out.map((r) => ({ id: String(r.id), scope: r.scope as MemoryRow['scope'], ownerId: r.owner_id === null ? null : String(r.owner_id), text: String(r.text), status: r.status as MemoryRow['status'], rev: Number(r.rev) }))
@@ -84,6 +91,8 @@ export interface WranglerOptions {
   /** The sandbox wrangler config that binds the database (wrangler finds the D1 id there). */
   config: string
   env: Record<string, string | undefined>
+  /** Reads the config file (tests). */
+  readConfig?: (file: string) => string
   /** Replaces the process spawn (tests). Gets the argv after `wrangler`. */
   spawn?: (args: string[], env: Record<string, string | undefined>) => { status: number | null; stdout: string }
 }
@@ -96,6 +105,12 @@ const defaultSpawn: NonNullable<WranglerOptions['spawn']> = (args, env) => {
 /** `wrangler d1 execute <name> --remote --json --command <sql>`, for a database that passes the sandbox rule only. */
 export function wranglerRunner(o: WranglerOptions): RunSql {
   const database = assertSandboxDatabase(o.database, o.env)
+  if (!o.config) throw new DoorRefusal('refusing: INHOUSE_EVAL_WRANGLER_CONFIG is not set (the sandbox config that binds the database)')
+  // The config must name the sandbox account (the value the sandbox lock is given) and bind this database, as seed-remote.mjs requires.
+  let config: { account_id?: unknown; d1_databases?: { database_name?: unknown }[] }
+  try { config = JSON.parse((o.readConfig ?? ((f) => readFileSync(f, 'utf8')))(o.config)) } catch { throw new DoorRefusal('refusing: the wrangler config can\'t be read as plain JSON') }
+  if (config.account_id !== o.env.CF_SANDBOX_ACCOUNT_ID) throw new DoorRefusal('refusing: the wrangler config\'s account_id is not CF_SANDBOX_ACCOUNT_ID')
+  if (!(config.d1_databases ?? []).some((d) => d?.database_name === database)) throw new DoorRefusal(`refusing: the wrangler config binds no D1 named ${database}`)
   // Wrangler works in the sandbox account named by CF_SANDBOX_ACCOUNT_ID, never one the shell happens to default to.
   const env = { ...o.env, CLOUDFLARE_ACCOUNT_ID: o.env.CF_SANDBOX_ACCOUNT_ID }
   const spawn = o.spawn ?? defaultSpawn

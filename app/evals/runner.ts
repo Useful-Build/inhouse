@@ -89,9 +89,14 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
         // A chat that timed out or threw has no result, but the server booked what it spent: ask the session for that figure.
         let costUsd = result?.costUsd ?? 0
         if (result === null && session.settledCostUsd) {
-          const settled = await session.settledCostUsd().catch(() => 0)
-          costUsd = Math.max(0, settled - settledSoFar)
-          settledSoFar = settled
+          // Never a silent $0: a failed read keeps the last known figure and says so on the row.
+          try {
+            const settled = await session.settledCostUsd()
+            costUsd = Math.max(0, settled - settledSoFar)
+            settledSoFar = settled
+          } catch (e) {
+            err = `${err ? `${err}; ` : ''}cost unknown: ${e instanceof Error ? e.message : String(e)}`
+          }
         } else if (session.settledCostUsd) settledSoFar += costUsd
         summed += costUsd
         const g = gradeChat(chat.expect, result, target.people)
