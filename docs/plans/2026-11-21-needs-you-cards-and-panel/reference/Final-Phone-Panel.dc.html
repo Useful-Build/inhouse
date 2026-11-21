@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phone, review panel</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2d3bea}a:hover{color:#1f2aa8}
+.t-light{--scrim:#8a8a8a;--window:#f7f7f7;--card:#ffffff;--paper:#ffffff;--ink:#171717;--ink-2:#2e2e2e;--ink-3:#545454;--muted:#686868;--divider:#e9e9e9;--rule:#e4e4e4;--brand:#2d3bea;--brand-text:#1f2aa8;--red-text:#a3321b;--primary:#171717;--on-primary:#ffffff;--primary-sheen:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,0));--btn-shadow:0 1px 2px rgba(0,0,0,.2),inset 0 1px 0 rgba(255,255,255,.08);--soft:#ebebeb;--logo-tile:#ffffff;--logo-edge:rgba(0,0,0,.08);--done:#171717;--on-done:#ffffff;--frame:rgba(0,0,0,.1);--canvas:#e6e6e6;--lift:0 0 0 1px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.035),0 6px 18px -10px rgba(0,0,0,.08);--sheet:0 0 0 1px rgba(0,0,0,.055),0 1px 2px rgba(0,0,0,.04),0 16px 36px -18px rgba(0,0,0,.2);--panel:0 0 0 1px rgba(0,0,0,.06),0 -10px 40px -10px rgba(0,0,0,.25);color-scheme:light}
+.t-dark{--scrim:#050505;--window:#1b1b1b;--card:#222222;--paper:#262626;--ink:#ededed;--ink-2:#dcdcdc;--ink-3:#b3b3b3;--muted:#979797;--divider:#2b2b2b;--rule:#383838;--brand:#7f87ff;--brand-text:#b9beff;--red-text:#f09a86;--primary:#ededed;--on-primary:#111111;--primary-sheen:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0));--btn-shadow:0 1px 2px rgba(0,0,0,.5);--soft:#2a2a2a;--logo-tile:#f2f2f2;--logo-edge:rgba(0,0,0,0);--done:#ededed;--on-done:#111111;--frame:rgba(255,255,255,.12);--canvas:#050505;--lift:0 0 0 1px rgba(255,255,255,.065),inset 0 1px 0 rgba(255,255,255,.04),0 8px 22px -12px rgba(0,0,0,.7);--sheet:0 0 0 1px rgba(255,255,255,.085),inset 0 1px 0 rgba(255,255,255,.05),0 18px 40px -18px rgba(0,0,0,.85);--panel:0 0 0 1px rgba(255,255,255,.09),inset 0 1px 0 rgba(255,255,255,.05);color-scheme:dark}
+.half{background:var(--canvas);color:var(--ink);font-family:Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.btn{font:inherit;border:0;cursor:pointer;white-space:nowrap}
+.btn-primary{background-image:var(--primary-sheen)}
+.btn:focus-visible,.icon-btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.lt{width:22px;height:22px;border-radius:999px;background:var(--logo-tile);box-shadow:0 0 0 2px var(--window),inset 0 0 0 1px var(--logo-edge);display:inline-flex;align-items:center;justify-content:center;flex:none;color:#3a3a3a}
+.lt+.lt{margin-left:-5px}
+.lt img{width:12px;height:12px;object-fit:contain;display:block}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.cite{margin-left:2px;color:var(--brand-text);font-family:'Geist Mono',ui-monospace,monospace;font-size:9.5px;font-weight:600;vertical-align:1px}
+</style>
+</helmet>
+<div style="width:940px;min-height:1640px;display:flex">
+<sc-for list="{{themes}}" as="t" hint-placeholder-count="2">
+<div class="{{t.cls}}" style="flex:1;min-width:0;box-sizing:border-box;padding:24px 40px 40px;display:flex;flex-direction:column;align-items:center">
+  <div class="mono" style="align-self:flex-start;color:var(--muted)">{{t.label}}</div>
+  <div style="margin-top:16px;width:390px;border-radius:32px;overflow:hidden;background:var(--scrim);box-shadow:0 0 0 1px var(--frame);padding:10px;box-sizing:border-box">
+    <aside aria-label="Ridge 30L Pack runs out in 9 days" style="border-radius:24px;background:var(--window);box-shadow:var(--panel);display:flex;flex-direction:column;overflow:hidden">
+      <div style="display:flex;justify-content:center;padding-top:8px"><span aria-hidden="true" style="width:36px;height:4px;border-radius:999px;background:var(--rule)"></span></div>
+      <div style="display:flex;align-items:center;gap:4px;padding:8px 8px 0 18px">
+        <span style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:999px;background:var(--soft);color:var(--ink-2);font-size:13px;font-weight:500">Stock</span>
+        <span style="flex:1"></span>
+        <button class="btn" style="height:44px;padding:0 12px;border-radius:12px;background:transparent;color:var(--ink-3);font-size:14px;font-weight:500;display:flex;align-items:center;gap:7px"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5A1.5 1.5 0 014.5 3h7A1.5 1.5 0 0113 4.5v5a1.5 1.5 0 01-1.5 1.5H7l-3 2.5V11a1.5 1.5 0 01-1-1.5z"></path></svg>Ask</button>
+        <button class="icon-btn" aria-label="Close" style="width:44px;height:44px;border-radius:12px;border:0;background:transparent;color:var(--ink-3);display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"></path></svg></button>
+      </div>
+
+      <div style="padding:8px 18px 22px">
+        <h2 style="margin:0;font-size:23px;line-height:1.18;font-weight:600;letter-spacing:-0.028em">Ridge 30L Pack runs out in 9 days</h2>
+        <ol aria-label="Progress" style="list-style:none;margin:12px 0 0;padding:0;display:flex;flex-wrap:wrap;align-items:center;column-gap:7px;row-gap:6px;font-size:12.5px;color:var(--muted)">
+          <li style="display:flex;align-items:center;gap:5px"><span style="width:15px;height:15px;border-radius:999px;background:var(--done);color:var(--on-done);display:flex;align-items:center;justify-content:center"><svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"></path></svg></span>Found 6:08 AM</li>
+          <li style="display:flex;align-items:center;gap:5px"><span style="width:15px;height:15px;border-radius:999px;background:var(--done);color:var(--on-done);display:flex;align-items:center;justify-content:center"><svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"></path></svg></span>Drafted</li>
+          <li aria-current="step" style="display:flex;align-items:center;gap:5px;color:var(--ink);font-weight:600"><span style="width:15px;height:15px;border-radius:999px;box-sizing:border-box;border:1.5px solid var(--ink);display:flex;align-items:center;justify-content:center"><span style="width:5px;height:5px;border-radius:999px;background:var(--ink)"></span></span>Your approval</li>
+          <li style="display:flex;align-items:center;gap:5px"><span style="width:15px;height:15px;border-radius:999px;box-sizing:border-box;border:1.5px solid var(--rule)"></span>Sent to Kestrel</li>
+        </ol>
+
+        <div style="margin-top:18px;border-radius:16px;background:var(--card);box-shadow:var(--lift);display:grid;grid-template-columns:repeat(3,minmax(0,1fr))">
+          <div style="padding:12px 10px 12px 12px"><div style="font-size:11.5px;color:var(--muted)">Stock left</div><div class="num" style="margin-top:6px;font-size:20px;line-height:1;font-weight:600;letter-spacing:-0.03em">9 days</div><div style="margin-top:6px;font-size:11.5px;color:var(--ink-3)">21 a day<span class="cite">1</span></div></div>
+          <div style="padding:12px 10px 12px 12px;border-left:1px solid var(--divider)"><div style="font-size:11.5px;color:var(--muted)">Delivery</div><div class="num" style="margin-top:6px;font-size:20px;line-height:1;font-weight:600;letter-spacing:-0.03em">14 days</div><div style="margin-top:6px;font-size:11.5px;color:var(--ink-3)">6 past orders<span class="cite">2</span></div></div>
+          <div style="padding:12px 10px 12px 12px;border-left:1px solid var(--divider)"><div style="font-size:11.5px;color:var(--muted)">Out of stock</div><div class="num" style="margin-top:6px;font-size:20px;line-height:1;font-weight:600;letter-spacing:-0.03em;color:var(--red-text)">5 days</div><div style="margin-top:6px;font-size:11.5px;color:var(--ink-3)">~$8,400 sales<span class="cite">3</span></div></div>
+        </div>
+
+        <button class="btn" aria-expanded="false" style="margin:6px -8px 0;width:calc(100% + 16px);min-height:44px;display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:12px;background:transparent;color:var(--ink-3);font-size:13px;text-align:left;white-space:normal">
+          <span style="display:flex"><span class="lt"><img src="/_blob/926fa2db406968a63fc06cc9db4f65c2" alt=""></span><span class="lt"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"></rect><path d="M2 6.5h12M6 6.5v7"></path></svg></span></span>
+          <span style="flex:1">How your agent worked it out</span>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5L8 10l3.5-3.5"></path></svg>
+        </button>
+
+        <h3 style="margin:16px 0 0;font-size:13.5px;font-weight:600">Drafted for you</h3>
+        <article aria-label="Purchase order draft" style="margin-top:10px;border-radius:14px;background:var(--paper);box-shadow:var(--sheet);padding:16px 16px 16px 18px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="mono" style="color:var(--ink-3)">Purchase order</span>
+            <span style="font-size:11.5px;font-weight:600;color:var(--ink-3);background:var(--soft);border-radius:6px;padding:2px 7px">Draft</span>
+            <span style="flex:1"></span>
+            <button class="btn" style="height:44px;padding:0 10px;margin:-10px -10px -10px 0;border-radius:10px;background:transparent;color:var(--ink);font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13l.9-3.3L10.6 3a1.4 1.4 0 012 0l.4.4a1.4 1.4 0 010 2L6.3 12.1z"></path><path d="M9.4 4.2l2.4 2.4"></path></svg>Edit</button>
+          </div>
+          <div style="margin-top:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;font-size:13px;line-height:1.45">
+            <div><div style="font-size:11.5px;color:var(--muted)">From</div><div style="margin-top:2px;font-weight:600">Northline Outdoor</div></div>
+            <div><div style="font-size:11.5px;color:var(--muted)">To</div><div style="margin-top:2px;font-weight:600">Kestrel Supply</div><div style="color:var(--ink-3)">Mei Chen, as a PDF</div></div>
+          </div>
+          <div style="margin-top:14px;border-top:1.5px solid var(--ink)">
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) 40px 70px;column-gap:8px;padding:8px 0 7px;font-size:11.5px;color:var(--muted)"><span>Item</span><span style="text-align:right">Qty</span><span style="text-align:right">Amount</span></div>
+            <div class="num" style="display:grid;grid-template-columns:minmax(0,1fr) 40px 70px;column-gap:8px;padding:9px 0;border-top:1px solid var(--rule);font-size:13.5px"><span>Ridge 30L · Olive<span style="display:block;font-size:12px;color:var(--muted)">$16 each</span></span><span style="text-align:right">400</span><span style="text-align:right">$6,400</span></div>
+            <div class="num" style="display:grid;grid-template-columns:minmax(0,1fr) 40px 70px;column-gap:8px;padding:9px 0;border-top:1px solid var(--rule);font-size:13.5px"><span>Ridge 30L · Black<span style="display:block;font-size:12px;color:var(--muted)">$16 each</span></span><span style="text-align:right">200</span><span style="text-align:right">$3,200</span></div>
+            <div class="num" style="display:flex;align-items:baseline;padding:12px 0 0;border-top:1.5px solid var(--ink)"><span style="flex:1;font-size:12.5px;color:var(--ink-3)">600 packs</span><span style="font-size:12.5px;color:var(--ink-3);margin-right:10px">Total</span><span style="font-size:22px;font-weight:600;letter-spacing:-0.03em">$9,600</span></div>
+          </div>
+        </article>
+
+        <div style="margin-top:12px;display:flex;align-items:flex-start;gap:9px;font-size:13px;line-height:1.45;color:var(--ink-3)">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true" style="flex:none;margin-top:2px;color:var(--brand)"><path d="M4.5 2.5h7v11L8 11l-3.5 2.5z"></path></svg>
+          <span style="flex:1">Remembered: Kestrel ships in 14 days and wants the PO as a PDF. <b style="font-weight:600;color:var(--brand-text)">Manage</b></span>
+        </div>
+      </div>
+
+      <div style="padding:12px 14px 14px;border-top:1px solid var(--divider);display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:9px;padding:0 4px;font-size:12.5px;line-height:1.4;color:var(--muted)">
+          <span style="width:24px;height:24px;border-radius:999px;background:#c9a27e;color:#2b1c10;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none">DK</span>
+          <span style="flex:1"><b style="font-weight:600;color:var(--ink-2)">Dana Kim</b> signs off orders over $5,000. You can approve as admin.</span>
+          <span style="font-weight:600;color:var(--ink);white-space:nowrap">Ask Dana</span>
+        </div>
+        <button class="btn btn-primary" style="height:48px;border-radius:14px;background-color:var(--primary);color:var(--on-primary);box-shadow:var(--btn-shadow);font-size:15px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:10px">Approve and send to Kestrel<span class="num" style="opacity:.62;font-weight:500">$9,600</span></button>
+        <button class="btn" style="height:44px;border-radius:12px;background:transparent;color:var(--ink-3);font-size:15px;font-weight:500">Don’t send</button>
+      </div>
+    </aside>
+  </div>
+</div>
+</sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":940,"height":1640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themes: [{ cls: 'half t-light', label: 'Light' }, { cls: 'half t-dark', label: 'Dark' }] };
+  }
+}
+</script>
+</body>
+</html>
