@@ -61,7 +61,16 @@ const reads = (o: { me?: unknown; members?: unknown[]; settings?: Record<string,
   'GET /api/grants': { body: { items: [] } },
   'GET /api/audit': { body: { items: [line(2), line(1)], nextCursor: null } },
   'GET /api/memory': { body: { team: [], personal: [] } },
+  // P3 (W5): the chats, the models, the usage and the pause state.
+  'GET /api/chats?limit=50': { body: { items: [], nextCursor: null } },
+  'GET /api/models': { body: { default: 'opus', modes: [] } },
+  'GET /api/usage': { body: EMPTY_USAGE },
+  'GET /api/pause': { body: { paused: false, at: null, by: null } },
 })
+const EMPTY_USAGE = {
+  month: 'November', cap: { minor: 32000, currency: 'USD' }, alertAt: 80, total: { minor: 0, currency: 'USD' }, conversations: 0, questionsAsked: 0, jobsRun: 0,
+  daily: [], breakdown: { person: [], job: [], model: [], tool: [] }, monthKey: '2026-11', months: ['2026-11'],
+}
 const record = (key: string, value: unknown, rev: number) => ({ key, value, rev, updatedAt: null, updatedBy: null })
 
 async function loaded(routes: Record<string, Answer | ((r: Req) => Answer)>) {
@@ -117,7 +126,8 @@ describe('reads', () => {
     expect(member1.agent.read().resources.grants.status).toBe('ready')
     const staff = await loaded(reads({ me: me({ role: 'inhouse', can: can(false) }) }))
     // The Inhouse team reads the grants (route 16) though it can't grant; members and audit are skipped by its `can`.
-    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/settings/brand', '/api/settings/technical'])
+    // It isn't asked for chats or memory on start (each read under a grant writes an audit line), but models, spending and the pause state are for everyone.
+    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/usage'])
   })
 
   test('a 403 on the grants reads as "not for you", not an error', async () => {
@@ -1099,10 +1109,8 @@ describe('paging', () => {
 describe('the parts that stay the stub until their phase', () => {
   const STUBS: [string, (c: AgentClient) => Promise<unknown>][] = [
     ['approve', c => c.approve('p')], ['undo', c => c.undo('p')], ['editDraft', c => c.editDraft('p', 'x')],
-    ['createChat', c => c.createChat({ id: 'c', title: 't' })], ['send', c => c.send('c', { clientTurnKey: 'key-12345', text: 'x', model: 'sonnet' })], ['listChats', c => c.listChats()], ['getChat', c => c.getChat('c')], ['interrupt', c => c.interrupt('t')], ['stop', c => c.stop('t')], ['resetSession', c => c.resetSession('c')], ['pause', c => c.pause()],
     ['requestTool', c => c.requestTool('k', true)], ['setToggle (a routine)', c => c.setToggle('r:Morning', true)],
     ['markNoticesRead', c => c.markNoticesRead(['n'])], ['deleteFiles', c => c.deleteFiles(['f'])], ['runRoutine', c => c.runRoutine('r')],
-    ['renameChat', c => c.renameChat('c', 't')], ['deleteChats', c => c.deleteChats(['c'])],
   ]
   test.each(STUBS)('%s rejects with AgentError("unavailable") and sends one error notice', async (_n, call) => {
     const { agent, heard } = await loaded(reads())
@@ -1112,11 +1120,9 @@ describe('the parts that stay the stub until their phase', () => {
     expect(heard).toEqual([{ type: 'error', code: 'unavailable', text: (e as AgentError).message }])
   })
 
-  test('no run is ever attached to, a listener that unsubscribed hears nothing, and the lists are empty and stable', async () => {
+  test('a listener that unsubscribed hears nothing, and the lists are empty and stable', async () => {
     const { agent, heard } = await loaded(reads())
-    expect(await agent.activeRuns()).toEqual([])
     expect(agent.link()).toBe('live')
-    agent.attach('r', () => { throw new Error('a frame') })()
     expect(heard).toEqual([])
     const quiet: AgentNotice[] = []
     agent.onNotice(n => quiet.push(n))()
@@ -1124,7 +1130,6 @@ describe('the parts that stay the stub until their phase', () => {
     expect(quiet).toEqual([])
     expect(agent.listFiles()).toBe(agent.listFiles())
     expect(agent.listNotifications()).toBe(agent.listNotifications())
-    expect(await agent.getTrace('any')).toBeNull()
   })
 })
 

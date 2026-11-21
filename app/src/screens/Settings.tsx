@@ -19,6 +19,7 @@ import { readParts } from './settings/read-text'
 import { single } from './settings/single'
 import { tell } from './settings/write'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
 import { MENU, checkField, settingsPage } from './settings/content'
 import { useTheme } from '@/lib/theme'
@@ -120,9 +121,14 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
   }
   return (
     <div className="flex max-w-full flex-col items-end gap-1.5">
-      <Input {...common} value={draft} inputMode={type === 'money' ? 'decimal' : 'email'} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
-        onChange={e => { setDraft(e.target.value); if (error) setError(null) }}
-        onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} />
+      {type === 'hosts'
+        // A list: Enter adds a line, and the list is checked when the field loses focus.
+        ? <Textarea aria-label={row.title} disabled={disabled} autoComplete="off" spellCheck={false} rows={4} value={draft} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
+            className="box-border w-55 max-w-full rounded-lg bg-card px-3.25 py-2 text-base text-foreground shadow-none focus-visible:border-foreground/45 focus-visible:shadow-halo focus-visible:ring-0 md:text-base"
+            onChange={e => { setDraft(e.target.value); if (error) setError(null) }} onBlur={commit} />
+        : <Input {...common} value={draft} inputMode={type === 'money' ? 'decimal' : 'email'} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
+            onChange={e => { setDraft(e.target.value); if (error) setError(null) }}
+            onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} />}
       {error && <p id={errorId} className="m-0 w-55 max-w-full text-sm text-destructive-text">{error}</p>}
     </div>
   )

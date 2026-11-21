@@ -198,7 +198,8 @@ export function capStatus(ctx: Ctx): CapStatus {
   const alertAt = usageAlertAt(ctx)
   return {
     spent, cap, alertAt,
-    reached: spent.minor >= cap.minor,
+    // The server's own answer when it judged the cap Settings shows now (Usage does the same); else spend against the cap.
+    reached: ctx.data.usage.capReached !== undefined && ctx.data.usage.cap.minor === cap.minor ? ctx.data.usage.capReached : spent.minor >= cap.minor,
     bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.`,
   }
 }
