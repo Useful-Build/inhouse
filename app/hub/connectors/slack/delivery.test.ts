@@ -83,6 +83,7 @@ describe('test 3: the hub re-checks whatever the server sent', () => {
     expect(body).not.toMatch(/:\/\//)
     expect(body).not.toMatch(/www\./i)
     expect(body).not.toMatch(/(?:^|\s)@(?:here|channel|everyone)/i)
+// eslint-disable-next-line no-control-regex -- the oracle looks for control characters
     expect(body).not.toMatch(/[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/u)
     expect(body).not.toMatch(/(?:[a-z0-9-]+\.)+(?:com|net|org|io|co|uk|de|example)\b/i)
     assertFourOnly(w)
@@ -264,4 +265,11 @@ describe('logs', () => {
     expect(line.channelHash).toBe(createHash('sha256').update('C0TEST0001').digest('hex').slice(0, 12))
     expect(logs.join('\n')).not.toMatch(/CANARY-T|C0TEST0001/)
   })
+})
+
+// The contract spells the link kinds out (it imports nothing); tsc fails here if they drift from the shared table's.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const linkKindsAgree: Same<import('../../index/contract').NoticeLinkKind, import('../../../shared/notify/links').LinkKind> = true
+describe('the contract', () => {
+  it("NoticeLinkKind equals the shared table's LinkKind (checked by the type above)", () => expect(linkKindsAgree).toBe(true))
 })

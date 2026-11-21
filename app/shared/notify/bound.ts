@@ -14,6 +14,7 @@ export type NoticeFormat = 'message' | 'report'
 // ---------- step 1: characters ----------
 
 /** C0 except \n and \t, DEL, C1, bidi controls, zero-width and joiners, BOM, tag characters, lone surrogates. */
+// eslint-disable-next-line no-control-regex -- the strip list is control characters by design
 const STRIP = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}]|[\uD800-\uDFFF]/gu
 
 /** Step 1. NFC, `\t` and the Unicode line and paragraph separators as plain whitespace, then the strip list. */

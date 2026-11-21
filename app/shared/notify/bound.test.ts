@@ -10,6 +10,7 @@ import { bellLink, checkLink, linkPath } from './links.ts'
 const ORACLE_HOST = /(?:[a-z0-9\u00C0-\u{10FFFF}-]+\.)+(?:[a-z\u00C0-\u{10FFFF}]{2,}|xn--[a-z0-9-]+)(?![a-z0-9])/iu
 const ORACLE_IP = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/
 const ORACLE_SCHEME = /\b(?:https?|ftp|mailto|tel|sms|slack|data|javascript|vbscript|file):/i
+// eslint-disable-next-line no-control-regex -- the oracle looks for control characters
 const ORACLE_CONTROL = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]|[\u{E0000}-\u{E007F}]/u
 const cp = (s: string) => [...s].length
 

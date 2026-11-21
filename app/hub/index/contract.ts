@@ -85,3 +85,32 @@ export interface ConnectGateway {
   setPaused(scope: CallerScope, accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>>
   listAccounts(scope: CallerScope): Promise<HubResult<AccountSummary[]>>
 }
+
+// ---- P5 (p5-w4): notices to listed Slack channels ----
+
+/** The app link kinds (app/shared/notify/links.ts `LINK_KINDS`, written out here; a hub test checks they agree). */
+export type NoticeLinkKind = 'approval' | 'chat' | 'today' | 'activity' | 'routine'
+
+export type SlackChannel = { id: string; name: string; isMember: boolean; shared: boolean; archived: boolean; private: boolean }
+
+export type PostNoticeRequest = {
+  accountId: 'slack:workspace'
+  channelId: string
+  /** Bounded but unescaped (the hub escapes once). */
+  title: string
+  text: string
+  link?: { kind: NoticeLinkKind; id?: string }
+  /** The server's notice id, `n_` + 128 random bits. */
+  noticeId: string
+}
+
+/**
+ * Product Worker server code only (P5 W4), bound as `HUB_DELIVERY`; re-exported from index.ts by an orchestrator line.
+ * `scope.kind` must be `server`. A refused channel is `connect_refused` with one of `shared_channel`, `archived`,
+ * `not_public`, `not_member`, `not_found` after the message's `: `. Nothing here returns a token or an upstream body.
+ */
+export interface DeliveryGateway {
+  postNotice(scope: CallerScope, req: PostNoticeRequest): Promise<HubResult<{ ts: string }>>
+  listChannels(scope: CallerScope, req: { accountId: 'slack:workspace'; cursor?: string }): Promise<HubResult<{ channels: SlackChannel[]; nextCursor: string | null }>>
+  checkChannel(scope: CallerScope, req: { accountId: 'slack:workspace'; channelId: string }): Promise<HubResult<SlackChannel>>
+}
