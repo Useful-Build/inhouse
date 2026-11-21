@@ -1,6 +1,7 @@
 import { Component, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
+import { isChatUnknown } from './state/chat-known'
 import type { AgentErrorCode, ToolsData } from './agent/types'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
@@ -213,7 +214,7 @@ function useHashRoute() {
   const openKey = openChatKey({ fresh, chatId }, data)
   const chatKey = chatList ? 'all' : openKey ?? 'new'
   // Unknown also covers a deleted chat, and the newest sample chat (`#/chats`) once it was deleted.
-  const chatUnknown = page === 'chats' && !chatList && openKey !== null && !chatEntries(data, started, agentState).some(c => c.id === openKey)
+  const chatUnknown = isChatUnknown({ page, chatList, openKey, ids: chatEntries(data, started, agentState).map(c => c.id), serverList: demo ? null : data.resources.chat.status })
   const fallbackChat = newestChat(data, started, agentState)?.id ?? null
   const chatIsNew = started.some(c => c.id === chatKey)
   useEffect(() => {

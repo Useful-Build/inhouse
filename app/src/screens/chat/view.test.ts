@@ -105,3 +105,27 @@ describe('saved files (the `file` event)', () => {
     expect(filesOfTurns(undefined, new Set([T]))).toEqual([])
   })
 })
+
+describe('a live turn cancelled (a pause stops the answer being written)', () => {
+  const live = [queued, { type: 'turn.started', turnId: T, model: 'sonnet' }] as const
+  test('it gets its cancel note, the turn is over and the thinking line is gone', () => {
+    const v = run(...live, { type: 'turn.cancelled', turnId: T, why: 'paused' })
+    expect(v.messages.at(-1)).toEqual({ id: `${T}.x`, role: 'event', text: 'Your Inhouse agent was paused, so this question was not asked.' })
+    expect(v.turns[T].state).toBe('cancelled')
+    expect(v.live).toBeNull()
+    expect(v.thinking).toBeNull()
+  })
+  test('a cancel with nothing to say (the person removed it) adds no note', () => {
+    const v = run(...live, { type: 'turn.cancelled', turnId: T, why: 'removed' })
+    expect(v.messages.map(m => m.id)).toEqual([`${T}.u`])
+    expect(v.turns[T].state).toBe('cancelled')
+  })
+  test('a finish that follows the cancel changes nothing', () => {
+    const cancelled = run(...live, { type: 'turn.cancelled', turnId: T, why: 'paused' })
+    expect(reduce(cancelled, { type: 'turn.finished', turnId: T, outcome: 'stopped' }, AT)).toBe(cancelled)
+  })
+  test('a turn that already finished is not cancelled afterwards', () => {
+    const done = run(...live, { type: 'turn.finished', turnId: T, outcome: 'done' })
+    expect(reduce(done, { type: 'turn.cancelled', turnId: T, why: 'paused' }, AT)).toBe(done)
+  })
+})

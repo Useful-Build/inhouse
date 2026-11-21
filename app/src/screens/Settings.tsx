@@ -249,6 +249,9 @@ export function Settings() {
   const [ask, setAsk] = useState<Ask | null>(null)
   // A "Saved" still waiting for typing to stop doesn't follow the person off the page.
   useEffect(() => () => clearTimeout(savedTimer), [])
+  // A Memory page re-reads memory when it opens: what the agent saved since the app started isn't in the first read.
+  const readsMemory = pageResources(setTab, false).includes('memory')
+  useEffect(() => { if (readsMemory) agent.refreshMemory().catch(() => undefined) }, [readsMemory, setTab])
   // Phone: the menu alone, or the picked page alone with Back to the menu (the store forgets which when Settings is left).
   const atMenu = phone && ui.setMenu
   // A new screen starts at its top.

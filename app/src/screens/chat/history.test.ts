@@ -111,4 +111,14 @@ describe('historyMessages: a stored end row in the live words', () => {
     const liveMessages = live(queued(T1, 'a'), { type: 'turn.cancelled', turnId: T1, why: 'pool_full' })
     expect(liveMessages.find(m => m.id === `${T1}.x`)).toEqual(historyMessages(page)[1])
   })
+
+  test('a live answer stopped by a pause shows the paused note live, and a reload shows the same one once', () => {
+    const page = [storedUser(T1, 0, 'a'), end(T1, 'x', 1, { why: 'paused' })]
+    const shown = historyMessages(page)
+    expect(shown[1]).toEqual({ id: `${T1}.x`, role: 'event', text: 'Your Inhouse agent was paused, so this question was not asked.' })
+    const liveMessages = live(queued(T1, 'a'), { type: 'turn.started', turnId: T1, model: 'sonnet' }, { type: 'turn.cancelled', turnId: T1, why: 'paused' })
+    expect(liveMessages.find(m => m.id === `${T1}.x`)).toEqual(shown[1])
+    expect(ids(mergeHistory(shown, [], liveMessages))).toEqual([`${T1}.u`, `${T1}.x`])
+  })
 })
+

@@ -377,6 +377,10 @@ export class HttpAgent implements AgentClient {
    * memory only when asked (`retry('memory')`, when its page opens). Without a live grant it's refused (a 403 that
    * isn't "left the team"): nothing to show, not an error.
    */
+  private refreshing: Promise<void> | null = null
+  /** The Memory page opened: reads memory again (the boot read doesn't hold what the agent saved since). */
+  refreshMemory = (): Promise<void> => (this.refreshing ??= this.loadMemory(true).finally(() => { this.refreshing = null }))
+
   private async loadMemory(asked = false) {
     if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('memory', { status: 'ready' })
     try {

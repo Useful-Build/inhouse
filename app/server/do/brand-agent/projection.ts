@@ -58,14 +58,15 @@ export const SILENT_CANCELS: readonly string[] = [CANCEL.removed, CANCEL.deleted
  * the client renders it with the same text and id as the live message, so the two show once.
  * - `<turnId>.f` `{ failure, retryQuestion }`: a failed turn (`turn.finished` failed);
  * - `<turnId>.x` `{ outcome }`: a stopped or interrupted one (`turn.finished` stopped/interrupted, the stopped note);
- * - `<turnId>.x` `{ why }`: a turn cancelled before it started (`turn.cancelled`), whatever state the cancel left it in (a
- *   pause during a placement fences it to `ended`). One that went live and was cancelled after shows no note live (the
- *   client only words a cancel of a turn it holds as waiting), so it keeps none here.
+ * - `<turnId>.x` `{ why }`: a turn cancelled (`turn.cancelled`) for a reason that has words, whether it was still waiting or had
+ *   gone live (a pause stops an answer being written), whatever state the cancel left it in (a pause during a placement
+ *   fences it to `ended`). The client words both live, so a reload agrees. (Until the first ship recording a turn that went
+ *   live kept no row, because the client wordless-ignored its cancel.)
  */
 function endRow(t: TurnForRows): { id: string; extra: Record<string, string> } | null {
   if (t.outcome === 'failed') return { id: `${t.turn_id}.f`, extra: { failure: t.failure ?? 'unknown', retryQuestion: t.text } }
   if (t.outcome === 'stopped' || t.outcome === 'interrupted') return { id: `${t.turn_id}.x`, extra: { outcome: t.outcome } }
-  if (t.cancel_why !== null && t.started_at_ms === null && !SILENT_CANCELS.includes(t.cancel_why)) return { id: `${t.turn_id}.x`, extra: { why: t.cancel_why } }
+  if (t.cancel_why !== null && !SILENT_CANCELS.includes(t.cancel_why)) return { id: `${t.turn_id}.x`, extra: { why: t.cancel_why } }
   return null
 }
 

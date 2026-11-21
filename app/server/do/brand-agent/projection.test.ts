@@ -162,7 +162,7 @@ describe('a failed or never-run turn keeps its end (failure 5)', () => {
     })
   })
 
-  it('a turn that went live and was then paused has no end row (the live view words no cancel of a started turn)', async () => {
+  it('a turn that went live and was then paused keeps the paused note as `.x` { why } (the live view words it too, so a reload agrees)', async () => {
     const c = await chat()
     await inAgent(async h => {
       const l = await send(h, c, 'key-proj26'); await settle()
@@ -171,7 +171,9 @@ describe('a failed or never-run turn keeps its end (failure 5)', () => {
       await h.tick(MIN); await h.tick(MIN)
       expect(h.turn(l.turnId)).toMatchObject({ state: 'ended', cancel_why: 'paused' })
       expect(h.turn(l.turnId).started_at_ms).not.toBeNull()
-      expect((await d1Rows(c)).map(r => r.id)).toEqual([`${l.turnId}.u`, `${l.turnId}.0`])
+      const rows = await d1Rows(c)
+      expect(rows.map(r => r.id)).toEqual([`${l.turnId}.u`, `${l.turnId}.0`, `${l.turnId}.x`])
+      expect(JSON.parse(rows[2].extra_json as string)).toEqual({ why: 'paused' })
     })
   })
 
