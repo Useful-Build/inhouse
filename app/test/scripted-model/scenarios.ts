@@ -99,6 +99,9 @@ export const STRUCTURED_BAD_TURNS = 12
 export const WEBFETCH_ALLOWED_URL = 'https://example.com/'
 export const WEBFETCH_REFUSED_URL = 'https://10.0.0.1/'
 
+/** The fact the `memory-save` scenario saves (a person's own, active at once). */
+export const MEMORY_SAVE_TEXT = 'Likes the weekly stock report as a table.'
+
 export const SCENARIOS: Record<string, Scenario> = {
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
@@ -115,6 +118,14 @@ export const SCENARIOS: Record<string, Scenario> = {
       content: [{ type: 'tool_use' as const, id: `toolu_scripted_bad_${i}`, name: 'StructuredOutput', input: { late_orders: 'many' } }],
       expect: mainLoop('StructuredOutput'),
     })),
+  },
+
+  /** Saves one fact for the person with memory_save, then answers: a chat turn makes a memory line through the API alone (the contract suite's forgetMemory). */
+  'memory-save': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_memory', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_SAVE_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
+      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory')) },
+    ],
   },
 
   /** One WebFetch to an allowed public page, then an answer: a test drives a WebFetch through the sandbox (Q2's check). */

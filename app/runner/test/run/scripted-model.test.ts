@@ -25,7 +25,10 @@ const structuredReq = (messages: Msg[]) =>
 const webReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }, { name: 'WebFetch' }] })
 /** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those. */
-const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : mainReq)
+/** A main-loop request with the memory tool in its list, as `memory-save` expects. */
+const memoryReq = (messages: Msg[]) =>
+  req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_save' }] })
+const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name === 'memory-save' ? memoryReq : mainReq)
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
@@ -106,6 +109,15 @@ describe('the scripted model', () => {
     const res = await model.handle(webReq([{ role: 'user', content: 'q' }, asked, toolResult(id)]), name)
     expect(res.status).toBe(200)
     expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe(answer)
+  })
+
+  it('memory-save: turn 0 saves the literal person fact; turn 1 answers only a request carrying the save\'s result', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const first = (await (await model.handle(memoryReq(convo(0)), 'memory-save')).json()) as { content: { type: string; name?: string; input?: unknown }[] }
+    expect(first.content).toEqual([expect.objectContaining({ type: 'tool_use', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: 'Likes the weekly stock report as a table.' } })])
+    const asked: Msg = { role: 'assistant', content: SCENARIOS['memory-save']!.turns[0]!.content }
+    expect((await model.handle(memoryReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: 'go on' }]), 'memory-save')).status).toBe(400)
+    expect((await model.handle(memoryReq([{ role: 'user', content: 'q' }, asked, toolResult('toolu_scripted_memory')]), 'memory-save')).status).toBe(200)
   })
 
   it("ask: the resume (turn 1) answers only a request whose last user message carries the question's result", async () => {
