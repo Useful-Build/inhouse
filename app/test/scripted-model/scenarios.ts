@@ -1,7 +1,7 @@
 // The scripted scenarios the harness serves (app/runner/harness/). A run names its scenario; each turn answers the
 // request with that many assistant messages before it. Tests that need their own script build one with
 // `createScriptedModel` directly.
-import type { MessagesRequest, Scenario, ScriptedBranch } from './index.ts'
+import type { MessagesRequest, Scenario, ScriptedBranch, ScriptedTurn } from './index.ts'
 import { BUILT_IN_TOOLS, INHOUSE_MCP_SERVER } from '../../runner/src/guards/lists.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
@@ -191,6 +191,29 @@ const pageSummary = (r: MessagesRequest): boolean =>
 /** The fact the `memory-save-team` scenario saves (the team's, waiting for an admin). */
 export const MEMORY_SAVE_TEAM_TEXT = 'We restock on Fridays.'
 
+/**
+ * Looks one fact up with memory_search and answers from what came back, so a test sees what the session actually received:
+ * the answer says the fact (`From memory: <fact>`) only when the search result holds it, else `Nothing saved matches that.`
+ * The two answers are two branches, picked by the result's content, so the scenario never says a fact it wasn't given.
+ */
+export const MEMORY_RECALL_NONE = 'Nothing saved matches that.'
+export const memoryRecallAnswer = (fact: string): string => `From memory: ${fact}`
+function memoryRecall(id: string, query: string, fact: string): Scenario {
+  const ask = mainLoop('mcp__inhouse__memory_search')
+  const answered = (found: boolean) => (r: MessagesRequest) => {
+    const block = resultBlock(r, id)
+    return block !== undefined && resultText(block).includes(fact) === found
+  }
+  const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultOf(id)) })
+  return {
+    turns: [{ content: [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query } }], expect: ask }],
+    branches: {
+      found: { match: answered(true), turns: [null, reply(memoryRecallAnswer(fact))] },
+      none: { match: answered(false), turns: [null, reply(MEMORY_RECALL_NONE)] },
+    },
+  }
+}
+
 /** How long the `slow-bash` scenario's one Bash call sleeps: long enough to act on the live turn, short enough to end on its own. */
 export const SLOW_BASH_SECONDS = 20
 
@@ -222,6 +245,12 @@ export const SCENARIOS: Record<string, Scenario> = {
       { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory')) },
     ],
   },
+
+  /** Searches memory for the weekly stock report preference and says what it found (the ship spec's S7: a new chat uses the saved fact). */
+  'memory-recall': memoryRecall('toolu_scripted_recall', 'weekly stock report', MEMORY_SAVE_TEXT),
+
+  /** The same for the team's Friday restock fact: it waits for an admin, so a search can't find it and the answer says nothing is saved. */
+  'memory-recall-team': memoryRecall('toolu_scripted_recall_team', 'restock Fridays', MEMORY_SAVE_TEAM_TEXT),
 
   /** Saves one fact for the whole team: it waits for an admin's OK, so no page lists it yet (the ship spec's S7). */
   'memory-save-team': {
