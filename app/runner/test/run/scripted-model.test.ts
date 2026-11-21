@@ -7,13 +7,14 @@
 // - a side request the CLI makes on its own (a title, a summary: no tool list) takes a scripted turn;
 // - the `ask` scenario's resume answers a request that doesn't carry the question's result.
 // - a tool scenario misses the real CLI's own requests (deferred tools left out of the tool list, WebFetch's page
-//   summary as a side request of its own), so the CLI's 400 step-down spends calls before turn 0 and turn 1 never matches.
+//   summary as a side request of its own), so the CLI's 400 step-down spends calls before turn 0 and turn 1 never matches;
+// - a tool's result is missed because the CLI ends the request with a trailing `system` message (the budget line).
 // The real CLI against it is in test/store/eager.test.ts; its captured requests are fixtures/cli-requests.json.
 import { readFileSync } from 'node:fs'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { createScriptedModel, type MessagesRequest, type ScriptedBranch, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
-import { HARNESS_MODEL, SCENARIOS, mainLoop, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
+import { HARNESS_MODEL, SCENARIOS, mainLoop, resultOf, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
 
 type Msg = { role: 'user' | 'assistant'; content: unknown }
 const req = (messages: Msg[], stream = false, extra: Record<string, unknown> = {}) =>
@@ -350,6 +351,51 @@ describe("the real CLI's requests", () => {
     const model = createScriptedModel(SCENARIOS)
     expect(await answer(model, summary, 'webfetch-allowed')).toEqual({ status: 200, content: ['A page kept for documentation examples.'] })
     expect(model.log.at(-1)).toMatchObject({ branch: 'page-summary', turn: 0, missed: false })
+  })
+
+  // Q2 on fleet 7a6ce90: every runner run sets maxBudgetUsd, so the CLI ends turn 1 with its budget line as a `system`
+  // message after the tool's result; the result must still be found there, and a missing one must still miss.
+  it.each([
+    ['webfetch-allowed', ['WebFetch'], ['Read the page.']],
+    ['webfetch-refused', ['WebFetch'], ['The page could not be read.']],
+    ['write-output', ['Writing the table.', 'Bash'], ['Saved outputs/table.csv.']],
+    ['memory-save', ['mcp__inhouse__memory_save'], ['Saved.']],
+  ])('%s: turn 1 with the trailing budget line still finds the result', async (name, turn0, turn1) => {
+    const budget = captured[name]!['turn1-budget']!
+    expect(budget.messages.at(-1)).toMatchObject({ role: 'system', content: [{ type: 'text', text: expect.stringMatching(/^USD budget: /) }] })
+    const model = createScriptedModel(SCENARIOS)
+    expect(await answer(model, captured[name]!.turn0!, name)).toEqual({ status: 200, content: turn0 })
+    expect(await answer(model, budget, name)).toEqual({ status: 200, content: turn1 })
+    expect(model.misses).toEqual([])
+  })
+
+  it('a turn 1 whose result is missing still misses, past the trailing budget line or a text-only message', async () => {
+    const budget = captured['write-output']!['turn1-budget']!
+    const noResult = { ...budget, messages: budget.messages.filter((_, i) => i !== budget.messages.length - 2) }
+    const textAfter = { ...noResult, messages: [...noResult.messages.slice(0, -1), { role: 'user' as const, content: [{ type: 'text', text: 'go on' }] }, noResult.messages.at(-1)!] }
+    const model = createScriptedModel(SCENARIOS)
+    expect((await answer(model, noResult, 'write-output')).status).toBe(400)
+    expect((await answer(model, textAfter, 'write-output')).status).toBe(400)
+    expect(model.misses.map((m) => m.reason)).toEqual([
+      'the request does not match the turn: no result for toolu_scripted_write: the last message is system (text)',
+      'the request does not match the turn: no result for toolu_scripted_write: the last message is system (text)',
+    ])
+  })
+
+  it('the look-back stops at the last assistant message: an older turn\'s result does not count', () => {
+    const budget = captured['write-output']!['turn1-budget']!
+    const later = { ...budget, messages: [...budget.messages.slice(0, -1), { role: 'assistant' as const, content: [{ type: 'text', text: 'Saved outputs/table.csv.' }] }, budget.messages.at(-1)!] }
+    expect(resultOf('toolu_scripted_write')(budget)).toBe(true)
+    expect(resultOf('toolu_scripted_write')(later)).toBe('no result for toolu_scripted_write: the last message is system (text)')
+  })
+
+  it('webfetch-refused: the trailing budget line does not hide an is_error the other way round', async () => {
+    const budget = captured['webfetch-refused']!['turn1-budget']!
+    const at = budget.messages.length - 2
+    const flipped = { ...budget, messages: budget.messages.map((m, i) => (i === at ? { ...m, content: (m.content as Record<string, unknown>[]).map((b) => ({ ...b, is_error: false })) } : m)) }
+    const model = createScriptedModel(SCENARIOS)
+    expect((await answer(model, flipped, 'webfetch-refused')).status).toBe(400)
+    expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: the result for toolu_scripted_fetch_refused has is_error false, not true'])
   })
 
   it('the placeholder stands in only for a tool the runner gives the agent: an unknown tool is still a miss', () => {
