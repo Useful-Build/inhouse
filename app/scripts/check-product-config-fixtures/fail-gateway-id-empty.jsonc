@@ -1,5 +1,6 @@
 // check-product-config fixture: the AI binding with an empty AI_GATEWAY_ID (the template's value, unfilled).
 {
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"ai": { "binding": "AI" },
