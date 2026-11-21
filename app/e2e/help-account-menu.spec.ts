@@ -1,6 +1,6 @@
 // Help and guides and the account menu's other items, at 1440. Help shows one guide at a time, and its Ask the team
-// sends a question that lands among the open requests and stays after a reload. Send feedback opens the team window on
-// Feedback; Your settings and Team settings open their pages. (Help's keyboard path is in overlays-keyboard.spec.ts,
+// sends a question that lands among the open requests and stays after a reload. Your Inhouse team opens the team window
+// and counts its open requests; Usage, Your settings and Team settings open their pages. (Help's keyboard path is in overlays-keyboard.spec.ts,
 // its focus return in cross-screen.spec.ts, Report a bug in report-bug.spec.ts, Sign out in sample-data.spec.ts.)
 import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
@@ -15,13 +15,13 @@ const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' }
 const team = (page: Page) => page.getByRole('dialog', { name: 'Your Inhouse team' })
 const help = (page: Page) => page.getByRole('dialog', { name: 'Help and guides' })
 
-async function accountItem(page: Page, name: string) {
+async function accountItem(page: Page, name: string | RegExp) {
   const menu = page.getByRole('menu', { name: 'Account' })
   // A click on the trigger while the last menu is still closing is lost, so wait for it to be gone first.
   await expect(menu).toHaveCount(0)
   await side(page).getByRole('button', { name: /account and settings/i }).click()
   await expect(menu).toBeVisible()
-  await menu.getByRole('menuitem', { name, exact: true }).click()
+  await menu.getByRole('menuitem', typeof name === 'string' ? { name, exact: true } : { name }).click()
 }
 
 test('Help: one guide open at a time; Ask the team sends a question that is listed and survives a reload', async ({ page }) => {
@@ -59,30 +59,46 @@ test('Help: one guide open at a time; Ask the team sends a question that is list
 
   // It is listed first among the open requests, as feedback from Sam, and a reload keeps it.
   const listed = (p: Page) => team(p).getByText('I have a question: can a routine run twice a day?', { exact: true })
-  await side(page).getByRole('button', { name: 'Message the team →' }).click()
+  await accountItem(page, /^Your Inhouse team/)
   await expect(listed(page)).toBeVisible()
   // The first row under "Open requests" (the selected row's icon and status sit in the same row, so contain, not equal).
   await expect(team(page).getByRole('heading', { name: 'Open requests' }).locator('xpath=following-sibling::div[1]/div[1]')).toContainText('I have a question: can a routine run twice a day?')
   await expect(team(page).getByText('Feedback · sent by Sam Mercer, just now', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await page.reload()
-  await side(page).getByRole('button', { name: 'Message the team →' }).click()
+  await accountItem(page, /^Your Inhouse team/)
   await expect(listed(page)).toBeVisible()
 })
 
-test('Account menu: Send feedback opens the team window on Feedback; Your settings and Team settings open their pages', async ({ page }) => {
+test('Account menu: Your Inhouse team opens the team window with its open requests counted; Feedback is a chip there; Usage, Your settings and Team settings open their pages', async ({ page }) => {
   await start(page, '#/today')
-  await accountItem(page, 'Send feedback')
+  // One team entry, no Report a bug or Send feedback items.
+  await side(page).getByRole('button', { name: /account and settings/i }).click()
+  const menu = page.getByRole('menu', { name: 'Account' })
+  const item = menu.getByRole('menuitem', { name: /^Your Inhouse team/ })
+  await expect(item).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: 'Report a bug' })).toHaveCount(0)
+  await expect(menu.getByRole('menuitem', { name: 'Send feedback' })).toHaveCount(0)
+  const counted = Number((await item.textContent())!.match(/(\d+) open/)![1])
+  await item.click()
   await expect(team(page)).toBeVisible()
-  await expect(team(page).getByRole('radio', { name: /Feedback/ })).toBeChecked()
+  // The count is the number of rows under "Open requests".
+  await expect(team(page).getByRole('heading', { name: 'Open requests' }).locator('xpath=following-sibling::div[1]/div')).toHaveCount(counted)
+  // Feedback is one of the window's request types: no screenshot box, Send waits for words.
+  await team(page).getByRole('radio', { name: /Feedback/ }).click()
   const text = team(page).getByRole('textbox', { name: 'Your request' })
   await expect(text).toHaveValue('')
   await expect(text).toHaveAttribute('placeholder', 'What would make Inhouse better for you?')
-  // Feedback has no screenshot box: that's for bugs.
   await expect(team(page).getByRole('checkbox', { name: /Attach a screenshot/ })).toHaveCount(0)
   await expect(team(page).getByRole('button', { name: 'Send to the team' })).toBeDisabled()
   await page.keyboard.press('Escape')
   await expect(team(page)).toHaveCount(0)
+
+  // Usage lives in the account menu, and the account row shows selected there.
+  await accountItem(page, 'Usage')
+  await expect(page.getByRole('heading', { level: 1, name: 'Usage' })).toBeVisible()
+  await expect(page).toHaveURL(/#\/usage$/)
+  await expect(side(page).getByRole('button', { name: /account and settings/i })).toHaveAttribute('aria-current', 'page')
 
   await accountItem(page, 'Your settings')
   await expect(page.getByRole('heading', { level: 1, name: 'General', exact: true })).toBeVisible()
