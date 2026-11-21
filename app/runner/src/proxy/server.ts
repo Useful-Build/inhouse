@@ -1,5 +1,5 @@
 // The loopback proxy in the root runner. Every credentialed call a session makes (the model, the inhouse MCP server,
-// the session store, file saves) comes here on 127.0.0.1. The proxy asks the kernel which OS user is calling, maps that
+// the hub's `apps` MCP server, the session store, file saves) comes here on 127.0.0.1. The proxy asks the kernel which OS user is calling, maps that
 // uid to its live run, adds the run's token and forwards to the Worker's egress. The token never leaves the root's
 // memory except in that one header to the egress.
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
@@ -7,7 +7,9 @@ import https from 'node:https'
 import type { Socket } from 'node:net'
 
 export const RUN_TOKEN_HEADER = 'x-inhouse-run-token'
-export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files'] as const
+export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files', 'hub'] as const
+/** The token route each proxy route asks for: `hub` (P4 H1's `apps` server) rides the run's `mcp` token, so it closes when `mcp` does. */
+export const tokenRouteFor = (route: string): string => (route === 'hub' ? 'mcp' : route)
 
 /**
  * The request headers forwarded, an allowlist: what the Messages API takes (`anthropic-*`), what the MCP streamable
@@ -106,7 +108,7 @@ export function createProxy(deps: ProxyDeps): http.Server {
     const uid = await (uids.get(req.socket) ?? Promise.resolve(null))
     if (uid === null) return refuseLogged(deps, res, route, null, 'unknown caller')
     if (uid === 0) return refuseLogged(deps, res, route, uid, 'root never calls through the proxy')
-    const token = deps.tokenForUid(uid, route)
+    const token = deps.tokenForUid(uid, tokenRouteFor(route))
     if (token === null) return refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
     forward(deps, path, req, res, token, route, uid)
   }
