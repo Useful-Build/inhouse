@@ -15,7 +15,7 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
-import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, settleRuns, WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, watchBuild, watchRoute } from './watch'
+import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, settleRuns, WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, watchBuild, watchRoute } from './watch'
 
 /** The P2 methods: what this target's client serves over HTTP. */
 /** How many live Library files `reset()` leaves (the shared Library cases delete one or two). */
@@ -190,7 +190,6 @@ function realTarget(origin: string): ContractTarget {
       await resetSettings(s)
       // Only a build with containers can end a Run now: a containerless one (CI's contract step) would wait out the deadline.
       if (watchBuild()) await settleRuns()
-      await resetRoutines(s)
       this.fixtures.personId = seeded.admin
       this.fixtures.photoAfterSet = new RegExp(`^/api/members/${seeded.admin}/photo\\?v=[0-9a-f]{32}$`) // a member id is base64url: nothing to escape
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }

@@ -69,20 +69,30 @@ interface RoutinesAnswer { routines: RoutineListed[]; deleted: RoutineListed[]; 
 
 /**
  * Puts the routines back to how the seed left them, through the API as the seed's Admin: every deleted routine is restored
- * (against the rev the list shows) and every routine that was switched off is switched on. Each routine's delete, restore and
- * switch leave only revisions behind, which every case reads fresh. Fails loud on any refusal.
+ * (against the rev the list shows) and every routine that was switched off is switched on. Another test file may be doing the
+ * same at the same moment (vitest runs files in parallel against one build), so a restore or a switch that finds the routine
+ * already put back (404 or 409) isn't an error: the list is read again, up to three passes, and what is still wrong then fails
+ * loud. Each routine's delete, restore and switch leave only revisions behind, which every case reads fresh.
  */
 export async function resetRoutines(s: Signer): Promise<void> {
   const need = (what: string, r: { status: number; json: unknown }) => {
     if (r.status >= 300) throw new Error(`The real contract target couldn't ${what}: ${r.status} ${JSON.stringify(r.json)}`)
     return r.json
   }
+  /** A write that may lose a race: 404 and 409 mean someone else got there first (the next pass reads the list again). */
+  const tolerant = (what: string, r: { status: number; json: unknown }) => {
+    if (r.status === 404 || r.status === 409) return
+    need(what, r)
+  }
   const list = async () => need('read the routines', await s.api('admin', 'GET', WATCH_READ_PATH.routines!)) as RoutinesAnswer
-  for (const r of (await list()).deleted) need(`restore routine ${r.id}`, await s.api('admin', 'POST', `/api/routines/${enc(r.id)}/restore`, { ifRev: r.rev }))
-  const after = await list()
-  for (const r of after.routines) {
-    if (after.enabled[r.id] !== false) continue
-    need(`switch routine ${r.id} on`, await s.api('admin', 'PUT', `/api/routines/${enc(r.id)}/enabled`, { on: true, ifRev: r.rev }))
+  for (let pass = 1; ; pass++) {
+    const now = await list()
+    const off = now.routines.filter(r => now.enabled[r.id] === false)
+    if (now.deleted.length === 0 && off.length === 0) return
+    if (pass > 3) throw new Error(`The real contract target couldn't put the routines back after 3 passes: deleted ${now.deleted.map(r => r.id).join(', ') || 'none'}, off ${off.map(r => r.id).join(', ') || 'none'}`)
+    for (const r of now.deleted) tolerant(`restore routine ${r.id}`, await s.api('admin', 'POST', `/api/routines/${enc(r.id)}/restore`, { ifRev: r.rev }))
+    const after = await list()
+    for (const r of after.routines.filter(x => after.enabled[x.id] === false)) tolerant(`switch routine ${r.id} on`, await s.api('admin', 'PUT', `/api/routines/${enc(r.id)}/enabled`, { on: true, ifRev: r.rev }))
   }
 }
 

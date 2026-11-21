@@ -68,9 +68,22 @@ describe('the real target\'s P4 parts', () => {
     await resetRoutines(s)
     expect(calls.every(c => c.startsWith('GET'))).toBe(true)
   })
-  it('fails loud when a restore is refused', async () => {
-    const { s } = fake({ routines: [], deleted: [{ id: 'c', rev: 5 }], enabled: {} }, '/api/routines/c/restore')
-    await expect(resetRoutines(s)).rejects.toThrow(/restore routine c.*409/)
+  it('takes a restore that finds the routine already restored (404) as done: another test file got there first', async () => {
+    let listed = 0
+    const s = { api: async (_w: string, method: string, path: string) => {
+      if (path === '/api/routines') return { status: 200, json: ++listed === 1 ? { routines: [], deleted: [{ id: 'c', rev: 5 }], enabled: {} } : { routines: [{ id: 'c', rev: 6 }], deleted: [], enabled: { c: true } } }
+      if (method === 'POST') return { status: 404, json: { error: { code: 'not_found' } } }
+      throw new Error(`unexpected ${method} ${path}`)
+    } } as unknown as Signer
+    await resetRoutines(s)
+  })
+  it('fails loud, naming what is still wrong, when three passes leave a routine deleted', async () => {
+    const s = { api: async (_w: string, _m: string, path: string) => (path === '/api/routines' ? { status: 200, json: { routines: [], deleted: [{ id: 'c', rev: 5 }], enabled: {} } } : { status: 409, json: { error: { code: 'conflict' } } }) } as unknown as Signer
+    await expect(resetRoutines(s)).rejects.toThrow(/after 3 passes: deleted c/)
+  })
+  it('still fails loud on a refusal that is not a lost race', async () => {
+    const s = { api: async (_w: string, _m: string, path: string) => (path === '/api/routines' ? { status: 200, json: { routines: [], deleted: [{ id: 'c', rev: 5 }], enabled: {} } } : { status: 500, json: { error: { code: 'unknown' } } }) } as unknown as Signer
+    await expect(resetRoutines(s)).rejects.toThrow(/restore routine c.*500/)
   })
 
   it('changes a routine elsewhere so it ends as it was: delete then restore when live, restore then delete when deleted', async () => {
