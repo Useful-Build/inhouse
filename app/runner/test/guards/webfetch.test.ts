@@ -8,13 +8,14 @@
 //   `localhost`, a `.local`/`.internal` name, this container's own host or a reserved label passes; a list doesn't
 //   narrow it, or `[]` lets anything through;
 // - in our container (no Internet, a `*` HTTPS intercept: every name resolves to the intercept's placeholder) the
-//   best-effort DNS check refuses every public host (Q2 on the sandbox: example.com refused), or skipping it there also
-//   drops the name, IP and port checks; a deny for a reserved resolution doesn't say what DNS answered.
+//   best-effort DNS check refuses every public host (Q2 on the sandbox: example.com refused; then a `.invalid` probe the
+//   platform resolver NXDOMAINs never fired), or skipping it there also
+//   drops the name, IP and port checks; a deny for a reserved resolution doesn't say what DNS (and the probe) answered.
 import { fc, it } from '@fast-check/vitest'
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect } from 'vitest'
 import { WEBFETCH_DENY } from '../../../shared/protocol/webfetch-denials.ts'
-import { DNS_PROBE_HOST, allowedFetchHost, reservedAddress, resolvesToReserved, webFetchAllowRules, webFetchHook, type Resolve } from '../../src/guards/webfetch.ts'
+import { allowedFetchHost, reservedAddress, resolvesToReserved, webFetchAllowRules, webFetchHook, type Resolve } from '../../src/guards/webfetch.ts'
 
 // No `--` in the third and fourth places: those labels are reserved, and the URL parser refuses an `xn--` one that
 // isn't valid punycode (`xn--a`), so no URL could be built from it.
@@ -48,9 +49,12 @@ const DNS: Record<string, string[]> = {
   'self.example': ['203.0.113.7'],
   'mixed.example': ['93.184.216.34', '192.168.1.1'],
 }
-/** Real DNS: `.invalid` never resolves (RFC 6761), so the hook's synthetic-DNS probe reads no. */
+/** The synthetic-DNS probe's name: a fresh random label under example.com, fully qualified. */
+const PROBE = /^inhouse-dns-probe-[0-9a-f]{12}\.example\.com\.$/
+const isProbe = (h: string) => PROBE.test(h)
+/** Real DNS: example.com has no wildcard, so the probe's random name is NXDOMAIN and the probe reads no. */
 const fakeResolve: Resolve = async (host) => {
-  if (host.endsWith('.invalid.')) throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: 'ENOTFOUND' })
+  if (isProbe(host)) throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: 'ENOTFOUND' })
   return DNS[host] ?? ['93.184.216.34']
 }
 async function decideOpen(url: unknown, resolve: Resolve = fakeResolve) {
@@ -82,27 +86,32 @@ describe('WebFetch open to any public host (null)', () => {
   })
 
   it('a deny for a reserved resolution says what DNS answered here, capped at 4 addresses', async () => {
-    const many: Resolve = async (h) => (h.endsWith('.invalid.') ? Promise.reject(new Error('ENOTFOUND')) : ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4', '10.0.0.5', '93.184.216.34'])
-    expect(await reasonOpen('https://mixed.example/')).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (mixed.example resolved here to 192.168.1.1)` })
-    expect(await reasonOpen('https://many.example/', many)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (many.example resolved here to 10.0.0.1, 10.0.0.2, 10.0.0.3, 10.0.0.4, ...)` })
-    const four: Resolve = async (h) => (h.endsWith('.invalid.') ? Promise.reject(new Error('ENOTFOUND')) : ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4'])
-    expect(await reasonOpen('https://four.example/', four)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (four.example resolved here to 10.0.0.1, 10.0.0.2, 10.0.0.3, 10.0.0.4)` })
+    const many: Resolve = async (h) => (isProbe(h) ? Promise.reject(new Error('ENOTFOUND')) : ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4', '10.0.0.5', '93.184.216.34'])
+    expect(await reasonOpen('https://mixed.example/')).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (mixed.example resolved here to 192.168.1.1; probe: none)` })
+    expect(await reasonOpen('https://many.example/', many)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (many.example resolved here to 10.0.0.1, 10.0.0.2, 10.0.0.3, 10.0.0.4, ...; probe: none)` })
+    const four: Resolve = async (h) => (isProbe(h) ? Promise.reject(new Error('ENOTFOUND')) : ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4'])
+    expect(await reasonOpen('https://four.example/', four)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (four.example resolved here to 10.0.0.1, 10.0.0.2, 10.0.0.3, 10.0.0.4; probe: none)` })
     // The container's own address is named only as such; a zone id is dropped.
-    expect(await reasonOpen('https://self.example/')).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (self.example resolved here to an own address)` })
-    const zoned: Resolve = async (h) => (h.endsWith('.invalid.') ? Promise.reject(new Error('ENOTFOUND')) : ['fe80::1%eth0'])
-    expect(await reasonOpen('https://zoned.example/', zoned)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (zoned.example resolved here to fe80::1)` })
+    expect(await reasonOpen('https://self.example/')).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (self.example resolved here to an own address; probe: none)` })
+    const zoned: Resolve = async (h) => (isProbe(h) ? Promise.reject(new Error('ENOTFOUND')) : ['fe80::1%eth0'])
+    expect(await reasonOpen('https://zoned.example/', zoned)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (zoned.example resolved here to fe80::1; probe: none)` })
     // A refusal by name, IP or port keeps the plain reason (nothing was resolved).
     expect(await reasonOpen('https://127.0.0.1/')).toEqual({ decision: 'deny', reason: WEBFETCH_DENY.publicOnly })
   })
 
   // Our container's DNS (durable-objects/api/container docs): with a `*` intercept every name resolves, to a placeholder
-  // address that routes to the intercept, including names that don't exist. The placeholder here is reserved, as Q2's
-  // sandbox refusal showed it to be.
-  const intercepted: Resolve = async () => ['100.96.0.2']
+  // address that routes to the intercept, including names that don't exist. The placeholder is the one the sandbox showed
+  // (`example.com resolved here to fd00::119:1`, a unique local address).
+  const intercepted: Resolve = async () => ['fd00::119:1']
 
-  it('in the container (synthetic DNS: the .invalid probe resolves) a public host passes; the egress checks it', async () => {
+  it('in the container (synthetic DNS: the random example.com probe resolves to the placeholder) a public host passes', async () => {
     expect(await decideOpen('https://example.com/', intercepted)).toBe('pass')
     expect(await decideOpen('https://127.0.0.1.nip.io/', intercepted)).toBe('pass')
+  })
+
+  it("the sandbox's resolver: special-use names (.invalid) NXDOMAIN, every other name the placeholder; example.com passes", async () => {
+    const platform: Resolve = async (h) => (/\.(invalid|test|localhost)\.?$/.test(h) ? Promise.reject(new Error('ENOTFOUND')) : ['fd00::119:1'])
+    expect(await reasonOpen('https://example.com/', platform)).toEqual({ decision: 'pass', reason: undefined })
   })
 
   it('in the container the name, IP and port checks still refuse', async () => {
@@ -117,13 +126,28 @@ describe('WebFetch open to any public host (null)', () => {
     const hook = webFetchHook(null, OWN, logging)
     expect((await reasonOpen('https://example.com/', logging, hook)).decision).toBe('pass')
     expect((await reasonOpen('https://example.org/', logging, hook)).decision).toBe('pass')
-    expect(asked).toEqual(['inhouse-dns-probe.invalid.'])
-    expect(DNS_PROBE_HOST).toBe('inhouse-dns-probe.invalid.')
+    expect(asked).toHaveLength(1)
+    expect(asked[0]).toMatch(PROBE)
+  })
+
+  it('under real DNS each probe asks a fresh random name', async () => {
+    const probes: string[] = []
+    const logging: Resolve = async (h) => (isProbe(h) && probes.push(h), fakeResolve(h))
+    const hook = webFetchHook(null, OWN, logging)
+    expect((await reasonOpen('https://example.com/', logging, hook)).decision).toBe('pass')
+    expect((await reasonOpen('https://example.org/', logging, hook)).decision).toBe('pass')
+    expect(probes).toHaveLength(2)
+    expect(probes[0]).not.toBe(probes[1])
+  })
+
+  it('a probe answered with a reserved address then a public one is not synthetic (every answer must be reserved)', async () => {
+    const mixedProbe: Resolve = async (h) => (isProbe(h) ? ['fd00::119:1', '198.51.100.10'] : fakeResolve(h))
+    expect(await reasonOpen('https://127.0.0.1.nip.io/', mixedProbe)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (127.0.0.1.nip.io resolved here to 127.0.0.1; probe: fd00::119:1, 198.51.100.10)` })
   })
 
   it('a resolver that answers the probe with a public address (NXDOMAIN hijacking) is real DNS: the check stays on', async () => {
-    const hijacking: Resolve = async (h) => (h.endsWith('.invalid.') ? ['198.51.100.10'] : fakeResolve(h))
-    expect(await decideOpen('https://127.0.0.1.nip.io/', hijacking)).toBe('deny')
+    const hijacking: Resolve = async (h) => (isProbe(h) ? ['198.51.100.10'] : fakeResolve(h))
+    expect(await reasonOpen('https://127.0.0.1.nip.io/', hijacking)).toEqual({ decision: 'deny', reason: `${WEBFETCH_DENY.publicOnly} (127.0.0.1.nip.io resolved here to 127.0.0.1; probe: 198.51.100.10)` })
     expect(await decideOpen('https://example.com/', hijacking)).toBe('pass')
   })
 
