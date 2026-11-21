@@ -1,6 +1,7 @@
 # P3: agent chat (`fleet/agent-chat`)
 
-Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend plan
+Status: locked and approved by Wasim, 2026-11-19. Build state (2026-11-21): every wave and the ship-gate fixes are merged into `fleet/agent-chat`;
+the final PR into `main` is open as a draft (#211); the third ship recording, the QA gate and the ship packet are next, then Wasim's approval of the exact SHA. Phase plan under the backend plan
 (`docs/plans/2026-11-19-backend.md`). Common rules are in its "Phase schedule (waves)" section. P0 records:
 [S1](../decisions/p0-s1-runner.md), [S2](../decisions/p0-s2-container-guards.md),
 [S3](../decisions/p0-s3-previews.md), [S5](../decisions/p0-s5-memory-tool-choice.md).
@@ -123,8 +124,11 @@ Bedrock switch (P8, Wasim's decision Q5). Tools not built here return a typed "n
   decided 20. The probe records which of them register headless and asserts nothing outside the 20 does. S2 didn't
   prove all 20 register, so the four that didn't are re-checked with the real `inhouse` server and the result written
   down, not assumed.
-- **WebFetch.** Its domain list is a technical setting per brand, empty by default, so WebFetch reaches nothing until
-  the Inhouse team lists a domain.
+- **WebFetch.** Its domain list is a technical setting per brand, empty by default. With the list empty, WebFetch
+  reaches any public host on port 443; a brand that sets the list limits it to those hosts. Private and internal
+  addresses are refused on every hop, best effort: the address is checked by DNS before connecting, and a pinned fetch
+  that closes the check-then-connect gap is a Later item. Bash has no network. Decided by Wasim (2026-11-20, item 20
+  and its follow-up C); the decision row is in `inhouse-docs`' `docs/decisions.md`.
 - **Models.** The server refuses a run on a model an admin switched off, whatever the picker sent. A session records
   its provider when it's created and a resume on another provider is refused (BD9), so no later switch can replay a
   half-done run elsewhere.
@@ -214,11 +218,14 @@ most 5 P3 workers run at once, the runner track included.
    Bash (the sandbox's own allowlist-proxy credential is the only one allowed, and no run token is in a process
    environment, command line, MCP config or settings file), one session can't read another's folder, a failing audit
    hook stops the call, `.claude/` isn't writable.
+   *Carried, not done:* the nightly on `main` lands after the final PR opens; until then the proof is the guard
+   probes in CI's container job (E-9).
 6. A run token reaches only its own chat's session and files: the same call with another chat's id is refused at the
    egress, and the refusal is logged.
 7. The configured built-in tool list is exactly the decided 20 (a config test). The observed headless registrations
    are recorded, nothing outside the 20 registers, and the four tools that didn't register in P0 are checked with the
-   real server. All 20 `inhouse` definitions are registered with the agreed split.
+   real server. All 20 `inhouse` definitions are registered with the agreed split. *Today:* 20 tools defined, 7
+   built; 13 answer `not_available_yet` until P4 to P6.
 8. The scheduler runs each due task once when the alarm fires twice (tested), and the audit copy lands in R2 daily.
 9. Pause stops new runs and live runs; resuming starts nothing on its own.
 10. At the cap new runs get `cap_reached`; concurrent runs overshoot by at most one response each; resumed and crashed
@@ -229,17 +236,20 @@ most 5 P3 workers run at once, the runner track included.
 12. A Worker one protocol version ahead of its runner still runs chats; a deploy drains, rolls out and warms up with no
     failed run.
 13. The chosen model and its effort from Settings reach `query()`; a switched-off model is refused by the server;
-    `maxTurns` is set on every run; WebFetch reaches only the brand's listed domains and nothing when the list is
-    empty.
+    `maxTurns` is set on every run; WebFetch reaches any public host on port 443 when the brand's list is empty and
+    only the listed hosts when it isn't, and refuses private and internal addresses on every hop (best effort, checked
+    by DNS before connecting); Bash has no network.
 14. A file the agent wrote to `outputs/` is saved within the caps and downloads only as an attachment with `nosniff`
     and a sandboxing CSP; an oversized or disallowed file is refused with a notice; a resume in a fresh container
     restores the chat's files.
 15. The eval suite has a recorded baseline (tool choice, recall, cost per conversation); recall doesn't drop under the
     softer memory rule; the first exfiltration cases have zero bypasses; Wasim chose the product model.
+    *Carried, not done:* Wasim's gate, handled in the ship packet (P3 ships with Sonnet 5.5 as the default, E-8; the
+    baseline and any other default are P8).
 16. API specs pass for every new route and the socket.
 17. The product and server bundles contain no scripted model; the demo is unchanged.
 18. QA PASS and the ship recording on S1 to S10; after the release, the real-model smoke passes on the house
-    deployment.
+    deployment. *Pending:* the QA gate and the ship recording on the final head.
 
 ## Must not
 

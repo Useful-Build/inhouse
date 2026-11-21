@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "C03",
+  "cat": "connector",
+  "pair": "inventory_levels_get/products_search",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "inventory_levels_get"
+  ],
+  "toolSearches": 1,
+  "answer": "You have 14 Moss mugs in stock (SKU MUG-500-MOSS).",
+  "costUsd": 0.0118637,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__products_search,mcp__shop__inventory_levels_get",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__products_search\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__inventory_levels_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {
+     "product": "Moss mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "You have 14 Moss mugs in stock (SKU MUG-500-MOSS).",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2660,
+   "cacheReadTokens": 32617,
+   "outputTokens": 194
+  },
+  "costUsd": 0.0118637
+ }
+}

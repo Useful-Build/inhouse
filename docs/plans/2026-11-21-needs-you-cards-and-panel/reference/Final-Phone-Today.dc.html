@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phone, Today cards</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2d3bea}a:hover{color:#1f2aa8}
+.t-light{--page:#f2f2f2;--card:#ffffff;--sheet:#f5f6fe;--ink:#171717;--ink-2:#2e2e2e;--ink-3:#545454;--muted:#696969;--brand:#2d3bea;--red-tint:#fcebe6;--red-text:#a3321b;--amber-text:#7d4b00;--primary:#171717;--on-primary:#ffffff;--primary-sheen:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,0));--btn-shadow:0 1px 2px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.08);--soft:#f0f0f0;--logo-tile:#ffffff;--logo-edge:rgba(0,0,0,.08);--kind:#ffffff;--kind-edge:rgba(0,0,0,.07);--frame:rgba(0,0,0,.1);--canvas:#e6e6e6;--lift:0 0 0 1px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.04),0 8px 24px -10px rgba(0,0,0,.08);color-scheme:light}
+.t-dark{--page:#0f0f0f;--card:#191919;--sheet:#1d1f2e;--ink:#ededed;--ink-2:#dcdcdc;--ink-3:#b3b3b3;--muted:#959595;--brand:#7f87ff;--red-tint:#3a1b14;--red-text:#f09a86;--amber-text:#f0c983;--primary:#ededed;--on-primary:#111111;--primary-sheen:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0));--btn-shadow:0 1px 2px rgba(0,0,0,.5);--soft:#262626;--logo-tile:#f2f2f2;--logo-edge:rgba(0,0,0,0);--kind:#2a2c3c;--kind-edge:rgba(255,255,255,.06);--frame:rgba(255,255,255,.12);--canvas:#050505;--lift:0 0 0 1px rgba(255,255,255,.06),inset 0 1px 0 rgba(255,255,255,.035),0 10px 28px -12px rgba(0,0,0,.7);color-scheme:dark}
+.half{background:var(--canvas);color:var(--ink);font-family:Geist,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.btn{font:inherit;border:0;cursor:pointer;white-space:nowrap}
+.btn-primary{background-image:var(--primary-sheen)}
+.btn:focus-visible,.icon-btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.lt{width:22px;height:22px;border-radius:999px;background:var(--logo-tile);box-shadow:0 0 0 2px var(--card),inset 0 0 0 1px var(--logo-edge);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.lt+.lt{margin-left:-5px}
+.lt img{width:12px;height:12px;object-fit:contain;display:block}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+</style>
+</helmet>
+<div style="width:940px;min-height:1640px;display:flex">
+<sc-for list="{{themes}}" as="t" hint-placeholder-count="2">
+<div class="{{t.cls}}" style="flex:1;min-width:0;height:100%;box-sizing:border-box;padding:24px 40px 40px;display:flex;flex-direction:column;align-items:center">
+  <div class="mono" style="align-self:flex-start;color:var(--muted)">{{t.label}}</div>
+  <div style="margin-top:16px;width:390px;min-height:1500px;border-radius:32px;overflow:hidden;background:var(--page);box-shadow:0 0 0 1px var(--frame);box-sizing:border-box;padding:28px 16px 24px">
+    <h1 style="margin:0;font-size:28px;line-height:1.15;font-weight:600;letter-spacing:-0.03em">Good morning, Sam.</h1>
+    <p style="margin:4px 0 0;font-size:28px;line-height:1.15;font-weight:500;letter-spacing:-0.03em;color:var(--muted)">6 things need you. A fix is drafted for each.</p>
+
+    <div style="margin-top:20px;border-radius:22px;background:var(--card);box-shadow:var(--lift);padding:14px 10px 10px 16px">
+      <div style="font-size:15px;color:var(--muted);padding:2px 0 16px">Ask about orders, stock…</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="width:36px;height:36px;border-radius:999px;background:var(--soft);display:flex;align-items:center;justify-content:center;color:var(--ink-2)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg></span>
+        <span style="display:flex"><span class="lt"><img src="/_blob/926fa2db406968a63fc06cc9db4f65c2" alt=""></span><span class="lt"><img src="/_blob/45226e2f78291c36a2d12cd21717cae2" alt=""></span><span class="lt"><img src="/_blob/610f9552eaa837eba0daab0177ceee07" alt=""></span></span>
+        <span style="flex:1"></span>
+        <span style="width:36px;height:36px;border-radius:999px;background:var(--soft);display:flex;align-items:center;justify-content:center;color:var(--ink-2)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><rect x="6" y="2" width="4" height="7.5" rx="2"></rect><path d="M3.8 7.5a4.2 4.2 0 008.4 0M8 11.7V14"></path></svg></span>
+        <span style="width:36px;height:36px;border-radius:999px;background:var(--soft);display:flex;align-items:center;justify-content:center;color:var(--muted)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4"></path></svg></span>
+      </div>
+    </div>
+
+    <div style="margin-top:30px;display:flex;align-items:baseline;gap:8px;padding:0 2px">
+      <h2 style="margin:0;font-size:16px;font-weight:600">Needs you</h2>
+      <span style="font-size:13.5px;color:var(--muted)">6 fixes drafted</span>
+      <span style="flex:1"></span>
+      <span style="font-size:13px;color:var(--ink-3)">Most urgent</span>
+    </div>
+
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:12px">
+      <sc-for list="{{cards}}" as="c" hint-placeholder-count="3">
+      <article style="border-radius:20px;background:var(--card);box-shadow:var(--lift)">
+        <div style="padding:14px 10px 0 16px">
+          <div style="display:flex;align-items:center;gap:7px;height:28px">
+            <sc-if value="{{c.urgent}}" hint-placeholder-val="{{ true }}"><span style="display:inline-flex;align-items:center;height:24px;padding:0 10px;margin-left:-3px;margin-right:2px;border-radius:999px;background:var(--red-tint);color:var(--red-text);font-size:12.5px;font-weight:600">Urgent</span></sc-if>
+            <span style="font-size:13px;font-weight:500;color:var(--ink-3)">{{c.area}}</span>
+            <span style="flex:1"></span>
+            <span style="display:flex;margin-right:2px"><sc-for list="{{c.logos}}" as="l" hint-placeholder-count="2"><span class="lt"><img src="{{l.src}}" alt=""></span></sc-for></span>
+            <button class="icon-btn" aria-label="More actions" style="width:44px;height:44px;margin:-8px -4px -8px 0;border-radius:12px;border:0;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" fill="currentColor"></circle><circle cx="8" cy="8" r="1.2" fill="currentColor"></circle><circle cx="12.5" cy="8" r="1.2" fill="currentColor"></circle></svg></button>
+          </div>
+          <h3 style="margin:10px 6px 0 0;font-size:16.5px;line-height:1.3;font-weight:600;letter-spacing:-0.016em;text-wrap:pretty">{{c.title}}</h3>
+          <p style="margin:5px 6px 0 0;font-size:14px;line-height:1.5;color:var(--ink-3)">{{c.sub}}</p>
+          <div style="display:flex;align-items:baseline;flex-wrap:wrap;column-gap:7px;padding:12px 0 14px"><span class="num" style="font-size:20px;line-height:1;font-weight:600;letter-spacing:-0.03em">{{c.cost}}</span><span style="font-size:13px;color:var(--muted)">{{c.costNote}}</span></div>
+        </div>
+        <div style="margin:0 6px 6px;border-radius:15px;background:var(--sheet);padding:12px 12px 12px">
+          <div style="display:flex;align-items:center;gap:8px;min-height:22px;font-size:12.5px;color:var(--muted);flex-wrap:wrap;row-gap:4px">
+            <span style="width:22px;height:22px;border-radius:7px;background:var(--kind);box-shadow:0 0 0 1px var(--kind-edge);display:flex;align-items:center;justify-content:center;color:var(--ink-3);flex:none">
+              <sc-if value="{{c.isMail}}" hint-placeholder-val="{{ true }}"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.8"></rect><path d="M2.5 4.5L8 8.5l5.5-4"></path></svg></sc-if>
+              <sc-if value="{{c.isPo}}" hint-placeholder-val="{{ false }}"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5L8 2.5 13.5 5v6L8 13.5 2.5 11z"></path><path d="M2.5 5L8 7.5 13.5 5M8 7.5v6"></path></svg></sc-if>
+              <sc-if value="{{c.isCase}}" hint-placeholder-val="{{ false }}"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 2h8v12l-2-1.2L8 14l-2-1.2L4 14z"></path><path d="M6 5.5h4M6 8h4"></path></svg></sc-if>
+            </span>
+            <span>Draft · {{c.kind}}</span>
+            <span style="flex:1"></span>
+            <sc-if value="{{c.risk}}" hint-placeholder-val="{{ false }}"><span class="num" style="font-weight:600;color:var(--amber-text)">{{c.risk}}</span></sc-if>
+          </div>
+          <div style="margin-top:8px;font-size:14.5px;line-height:1.4;font-weight:500;color:var(--ink-2)">{{c.draft}}</div>
+          <div style="margin-top:2px;font-size:12.5px;line-height:1.45;color:var(--muted)">{{c.meta}}</div>
+          <button class="btn btn-primary" style="margin-top:12px;width:100%;height:44px;border-radius:12px;background-color:var(--primary);color:var(--on-primary);box-shadow:var(--btn-shadow);font-size:14.5px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:7px">{{c.cta}}<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8h9M9 4.5L12.5 8 9 11.5"></path></svg></button>
+        </div>
+      </article>
+      </sc-for>
+    </div>
+    <p style="margin:14px 0 0;text-align:center;font-size:13px;color:var(--muted)">3 more below</p>
+  </div>
+</div>
+</sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":940,"height":1640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var L = {
+      shopify: { src: '/_blob/926fa2db406968a63fc06cc9db4f65c2' },
+      amazon: { src: '/_blob/45226e2f78291c36a2d12cd21717cae2' },
+      shipbob: { src: '/_blob/610f9552eaa837eba0daab0177ceee07' },
+      xero: { src: '/_blob/8ace3dafbfca297fbcb9e3dbf873daa2' }
+    };
+    function k(t) { return { isMail: t === 'mail', isPo: t === 'po', isCase: t === 'case' }; }
+    return {
+      themes: [{ cls: 'half t-light', label: 'Light' }, { cls: 'half t-dark', label: 'Dark' }],
+      cards: [
+        Object.assign({ urgent: true, area: 'Orders', logos: [L.shopify, L.shipbob], title: 'Trail Shell Jacket (M, Olive) is oversold by 5', sub: '14 open orders on Shopify, 9 units at ShipBob.', cost: '$1,190', costNote: 'in orders at risk', kind: 'Shopify and 5 emails', risk: 'Goes to customers', draft: 'Pause the variant and email 5 customers', meta: 'Offers each a new ship date, Tue, Dec 8, or a refund.', cta: 'Review draft' }, k('mail')),
+        Object.assign({ urgent: true, area: 'Money', logos: [L.amazon, L.xero], title: 'Amazon paid out $1,240 less than expected', sub: '18 orders charged fees above your rate card.', cost: '$1,240', costNote: 'missing from the payout', kind: 'Amazon case', risk: 'Claims $1,240', draft: 'Open a reimbursement case', meta: 'Claims back the large-item fee on 18 orders.', cta: 'Review draft' }, k('case')),
+        Object.assign({ urgent: false, area: 'Stock', logos: [L.shopify], title: 'Ridge 30L Pack runs out in 9 days', sub: '190 left, selling 21 a day. Kestrel needs 14 days to deliver.', cost: '$8,400', costNote: 'in sales at risk', kind: 'Purchase order', risk: 'Spends $9,600', draft: 'Reorder 600 Ridge 30L Packs', meta: 'To Kestrel Supply as a PDF. 400 Olive, 200 Black.', cta: 'Review draft' }, k('po'))
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

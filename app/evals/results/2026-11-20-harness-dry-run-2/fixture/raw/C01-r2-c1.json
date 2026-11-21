@@ -1,0 +1,54 @@
+{
+ "row": {
+  "caseId": "C01",
+  "cat": "connector",
+  "pair": "orders_search/order_get",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search"
+  ],
+  "toolSearches": 1,
+  "answer": "In the last two weeks (5 to 19 November), one order is over 100 euro:\n\n- Order 1042: Anna Weber, 124.50 euro, paid\n\nThe search also returned order 1043 (J. Moreau, 38 euro, paid), which is under 100 euro, so I left it out. I can search a longer period if you'd like.",
+  "costUsd": 0.0122559,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "min_total_eur": 100,
+     "from": "2026-11-05",
+     "to": "2026-11-19"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "In the last two weeks (5 to 19 November), one order is over 100 euro:\n\n- Order 1042: Anna Weber, 124.50 euro, paid\n\nThe search also returned order 1043 (J. Moreau, 38 euro, paid), which is under 100 euro, so I left it out. I can search a longer period if you'd like.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2361,
+   "cacheReadTokens": 32814,
+   "outputTokens": 306
+  },
+  "costUsd": 0.0122559
+ }
+}

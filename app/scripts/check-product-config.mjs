@@ -1,0 +1,508 @@
+// The deployable config check (P2 W1, p2-design section 2). Run in app/:
+//   node scripts/check-product-config.mjs <wrangler config path (JSONC)>
+// Exit 0: the config may deploy. Exit 1: it may not, with every failure listed. Exit 2: usage, an unreadable file or a
+// crash. CI requires exactly 1 on wrangler.test.jsonc (AGENTS.md). It refuses a config when:
+//   - it has an `env` block at all (each `env.<name>` can override vars, workers_dev and preview_urls, so none may
+//     deploy unchecked: the product config is one environment);
+//   - the test issuer is switched on: `INHOUSE_TEST_BUILD` or `TEST_ISSUER_JWKS` in `vars`;
+//   - a var is a Worker secret (`AUDIT_HASH_KEY` or `AI_GATEWAY_TOKEN`, the product config's required ones) or has a
+//     secret-like name (ends in SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with
+//     `wrangler secret put`, never in the config;
+//   - `version_metadata` has no `binding` name (the Worker reads its release from that binding);
+//   - INHOUSE_ACCESS is missing or not JSON, or its `teamDomain` isn't `https://<name>.cloudflareaccess.com`;
+//   - INHOUSE_ACCESS.apps isn't exactly one `brand` app and one `inhouse` app;
+//   - an app lacks `origin` or `aud`, an origin isn't a bare `https://` origin, two apps share a hostname (an origin,
+//     or a port-only difference: Access's cookie is per hostname) or an `aud`,
+//     or an `aud` isn't 64 hex;
+//   - a service token maps to anything but `monitor`, `smoke` or `release` (P3);
+//   - (P3) a config with the runner pool (a `Runner` Durable Object binding, a `containers` entry or `RUNNER_POOL`) whose
+//     `RUNNER_POOL` isn't a whole number of 2 or more, or that hasn't exactly one `Runner` container with
+//     `max_instances` = 3 x RUNNER_POOL (p3-design section 7);
+//   - (P3) a test-build config (the test issuer on) with an AI binding or a gateway var or secret: tests never reach the
+//     gateway (p3-design section 13). A test config is refused anyway; this names the gateway too, so it can't creep in;
+//   - (P3) a config with the AI binding or an `AI_GATEWAY_ID` var whose `AI_GATEWAY_ID` is empty or not a gateway id
+//     (the egress calls `env.AI.gateway(AI_GATEWAY_ID)`, p3-design 8.2); the template ships it empty, so only a filled
+//     config (the release's) passes;
+//   - a brand origin is on `workers.dev` (preview URLs live there too: `<version>-<worker>.<subdomain>.workers.dev`);
+//   - `workers_dev` or `preview_urls` isn't explicitly false (wrangler turns both on when they're left out);
+//   - any string anywhere in it (a name, a host, a var) carries `inhouse-sbx-` (a sandbox config never passes as a
+//     product one);
+//   - any key at any depth is `__proto__`, `constructor` or `prototype` (both modes; see below).
+//
+// Sandbox mode (P3 PR0 item 12), the prefix lock for the sandbox, which shares its Cloudflare account with live products:
+//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --per-pr <N> <config path>
+//   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --candidate <config path>
+// The caller states the mode (never inferred from the config, which a PR writes). Both variables are required (exit 2
+// without them). The config must be plain JSON, read with JSON.parse alone: a comment or anything JSON.parse refuses
+// exits 2. (Two JSONC readers can disagree on where a comment ends: wrangler's ends `//` at a bare \r too, so a
+// comment-stripping read could hide config from this check that wrangler then applies.) Names come from
+// scripts/sandbox/names.mjs. It refuses a config when:
+//   - per-PR: the Worker, D1, R2, container and image names aren't exactly PR N's (`inhouse-sbx-pr<N>`, `-db`, `-files`)
+//     and every host isn't `inhouse-sbx-pr<N>-brand` or `-team` on SBX_ZONE; candidate: any of them is a per-PR name or
+//     not a sandbox name (a PR's code never binds the candidate's data, and the candidate never binds a PR's);
+//   - any key at any depth is `__proto__`, `constructor` or `prototype`: JSON.parse keeps `__proto__` as an own key, but
+//     wrangler's JSONC parser sets the object's prototype from it, so a value hidden there would pass this check and
+//     still reach wrangler (reproduced on wrangler 4.162.0);
+//   - a D1 binding has a key but `binding`, `database_name` and `migrations_dir` (so no `database_id`: wrangler then
+//     binds by the checked name alone, finding or making the database by `database_name` in wrangler 4.162.0's D1
+//     provisioning), or an R2 binding a key but `binding`, `bucket_name` and `jurisdiction`; or more than one of either;
+//   - a route or custom domain isn't exactly a sandbox host (with the `/path` a route may add), names a `zone_id` or
+//     another `zone_name`; or an INHOUSE_ACCESS origin isn't `https://<sandbox host>`;
+//   - `account_id` is missing or isn't CF_SANDBOX_ACCOUNT_ID;
+//   - an `ai` binding is present (the sandbox runs the scripted model only, no spend);
+//   - containers: more than one, a key but `class_name`, `name`, `image`, `max_instances` and `instance_type` (so no
+//     `image_build_context` or `images`), `max_instances` missing (wrangler's default is 20) or not 1 or 2, or an `image`
+//     that isn't `registry.cloudflare.com/<CF_SANDBOX_ACCOUNT_ID>/<name>:<tag>` or that exists as a file beside the
+//     config (wrangler builds any image path that exists, relative to the config's folder);
+//   - a path leaves the build folder: `main` and a D1 `migrations_dir` must be plain relative paths (no `..`, not
+//     absolute) and `assets.directory` exactly `../client` (the vite plugin's client folder beside the Worker's);
+//   - a Durable Object binding has a key but `name` and `class_name` (no other Worker's `script_name`); a migration step
+//     a key but `tag`, `new_classes`, `new_sqlite_classes`, `renamed_classes` and `deleted_classes` (no
+//     `transferred_classes`, which moves another Worker's objects), class lists that aren't lists of names, or a
+//     `renamed_classes` item that isn't exactly `{ from, to }` (no `from_script`); `build` a key but `watch_dir` (no `command`);
+//     `observability` a key but `enabled`, `head_sampling_rate`, `logs` and `traces` (those two only `enabled`,
+//     `head_sampling_rate`, `invocation_logs` and `persist`: no `destinations`); `rules` anything but the vite
+//     plugin's own ESModule rule; `python_modules` anything but wrangler's default;
+//   - any other top-level key holds anything but empty values (services, KV, queues, tail consumers, aliases, a tsconfig,
+//     the vite plugin's config paths and every other kind: this list fails closed on keys added later);
+//   - `env` is set, or `workers_dev` or `preview_urls` isn't explicitly false;
+//   - per-PR: vars.INHOUSE_TEST_BUILD isn't "1" (Q2's one exception: the test issuer in a deployed build, sandbox only);
+//   - candidate: any product rule above but the `inhouse-sbx-` one fails (it is the product build, rehearsed).
+//   - (P3) P3's pool and gateway rules (checkPool) fail, with the sandbox's container cap of 2 in place of
+//     3 x RUNNER_POOL (the sandbox runs RUNNER_POOL=2, max_instances=2).
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, isAbsolute, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import {
+  SandboxNameError, assertCandidateName, assertPrNumber, assertSandboxHost, assertZone, perPrNames,
+} from './sandbox/names.mjs'
+
+const USAGE = 'usage: node scripts/check-product-config.mjs <wrangler config path>\n' +
+  '       node scripts/check-product-config.mjs --sandbox (--per-pr <N> | --candidate) <wrangler config path>\n' +
+  '       (--sandbox reads CF_SANDBOX_ACCOUNT_ID and SBX_ZONE from the environment)'
+const usage = msg => {
+  console.error(`check-product-config: ${msg}\n${USAGE}`)
+  process.exit(2)
+}
+
+/** JSONC to JSON: drops comments and trailing commas outside strings. Product mode only (hand-written templates). */
+export function stripJsonc(text) {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === '"') {
+      let j = i + 1
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1
+      out += text.slice(i, j + 1)
+      i = j
+    } else if (c === '/' && text[i + 1] === '/') {
+      // A line comment ends at \n or \r, as wrangler's JSONC parser (jsonc-parser's isLineBreak) ends it.
+      while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i++
+      out += text[i] ?? ''
+    } else if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2)
+      if (end === -1) throw new Error('unterminated /* comment')
+      i = end + 1
+    } else if (c === ',') {
+      // A trailing comma: only whitespace and comments between it and the closing bracket.
+      let j = i + 1
+      for (;;) {
+        while (j < text.length && /\s/.test(text[j])) j++
+        if (text.startsWith('//', j)) { while (j < text.length && text[j] !== '\n' && text[j] !== '\r') j++ }
+        else if (text.startsWith('/*', j)) {
+          const end = text.indexOf('*/', j + 2)
+          if (end === -1) throw new Error('unterminated /* comment')
+          j = end + 2
+        } else break
+      }
+      if (text[j] !== '}' && text[j] !== ']') out += c
+    } else out += c
+  }
+  return out
+}
+
+const TEAM_DOMAIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$/
+const AUD = /^[0-9a-f]{64}$/i
+/** The Worker's secrets (wrangler.product.jsonc's required ones), and the names that look like one. */
+const SECRET_VARS = new Set(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN'])
+const SECRET_LIKE = /(SECRET|TOKEN|PASSWORD|PRIVATE|_KEY)$/i
+
+/** Every reason this config may not deploy as a product (empty: it may). */
+export function checkConfig(config) {
+  return [...forbiddenKeys(config), ...productRules(config), ...sandboxStrings(config)]
+}
+
+/** The product rules but the `inhouse-sbx-` one (the candidate in the sandbox is checked against these too). */
+function productRules(config) {
+  const failures = []
+  if (Object.hasOwn(config, 'env')) failures.push('env is set: a deployable config has no env blocks (each could override what this checks)')
+  const vars = config.vars ?? {}
+  for (const name of ['INHOUSE_TEST_BUILD', 'TEST_ISSUER_JWKS']) {
+    if (Object.hasOwn(vars, name)) failures.push(`vars.${name} is set: the test issuer must never be on in a deployable config`)
+  }
+  for (const name of Object.keys(vars)) {
+    if (SECRET_VARS.has(name) || SECRET_LIKE.test(name)) failures.push(`vars.${name} looks like a secret: set secrets with wrangler secret put, never in the config`)
+  }
+  if (config.workers_dev !== false) failures.push('workers_dev must be false (left out, wrangler turns it on)')
+  if (config.preview_urls !== false) failures.push('preview_urls must be false (left out, wrangler turns it on)')
+
+  const vm = config.version_metadata
+  if (typeof vm?.binding !== 'string' || !vm.binding) failures.push('version_metadata needs a binding name (the Worker reads its release from it)')
+
+  const raw = config.vars?.INHOUSE_ACCESS
+  let access
+  try {
+    access = JSON.parse(typeof raw === 'string' ? raw : '')
+  } catch {
+    failures.push('vars.INHOUSE_ACCESS is missing or not JSON')
+    return failures
+  }
+  if (typeof access?.teamDomain !== 'string' || !TEAM_DOMAIN.test(access.teamDomain)) {
+    failures.push('INHOUSE_ACCESS.teamDomain must be https://<name>.cloudflareaccess.com')
+  }
+  const apps = Array.isArray(access?.apps) ? access.apps : []
+  const named = name => apps.filter(a => a?.name === name).length
+  if (apps.length !== 2 || named('brand') !== 1 || named('inhouse') !== 1) {
+    failures.push('INHOUSE_ACCESS.apps must be exactly one "brand" app and one "inhouse" app')
+  }
+  const origins = new Map()
+  const auds = new Map()
+  apps.forEach((app, i) => {
+    const label = `INHOUSE_ACCESS.apps[${i}]${typeof app?.name === 'string' ? ` (${app.name})` : ''}`
+    if (typeof app?.origin !== 'string' || !app.origin) failures.push(`${label} has no origin`)
+    else {
+      let url
+      try { url = new URL(app.origin) } catch { url = null }
+      if (!url || url.protocol !== 'https:' || url.origin !== app.origin) failures.push(`${label}.origin must be a bare https:// origin`)
+      // Hostname, not origin: Access's CF_Authorization cookie is per hostname, so a port-only difference shares it.
+      const key = url ? url.hostname : app.origin
+      if (origins.has(key)) failures.push(`${label} shares its hostname with apps[${origins.get(key)}]`)
+      origins.set(key, i)
+      if (app.name === 'brand' && url && /(^|\.)workers\.dev$/i.test(url.hostname)) {
+        failures.push(`${label}.origin is a workers.dev or preview hostname`)
+      }
+    }
+    if (typeof app?.aud !== 'string' || !app.aud) failures.push(`${label} has no aud`)
+    else {
+      if (!AUD.test(app.aud)) failures.push(`${label}.aud must be 64 hex`)
+      if (auds.has(app.aud)) failures.push(`${label} shares its aud with apps[${auds.get(app.aud)}]`)
+      auds.set(app.aud, i)
+    }
+  })
+  if (config.ai !== undefined || Object.hasOwn(vars, 'AI_GATEWAY_ID')) {
+    if (typeof vars.AI_GATEWAY_ID !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(vars.AI_GATEWAY_ID)) {
+      failures.push('vars.AI_GATEWAY_ID must name the AI Gateway (lowercase letters, digits and dashes): the egress calls the model through it')
+    }
+  }
+  const tokens = access?.serviceTokens && typeof access.serviceTokens === 'object' ? access.serviceTokens : {}
+  for (const service of Object.values(tokens)) {
+    if (!['monitor', 'smoke', 'release'].includes(service)) failures.push(`INHOUSE_ACCESS.serviceTokens maps a token to "${String(service)}" (only monitor, smoke or release)`)
+  }
+  return failures
+}
+
+/**
+ * P3's runner pool and gateway rules (p3-design sections 7 and 13), apart from INHOUSE_ACCESS so they run on any config.
+ * `sandbox`: the sandbox lock caps the container at 2 instances with RUNNER_POOL=2, so there the 3 x RUNNER_POOL rule
+ * (placement headroom; nothing in the code reads max_instances) gives way to that cap; every other pool rule holds.
+ */
+export function checkPool(config, { sandbox = false } = {}) {
+  const failures = []
+  const vars = config.vars ?? {}
+  const runnerBound = (config.durable_objects?.bindings ?? []).some(b => b?.class_name === 'Runner')
+  const containers = Array.isArray(config.containers) ? config.containers : []
+  if (runnerBound || containers.length || Object.hasOwn(vars, 'RUNNER_POOL')) {
+    const n = /^[1-9][0-9]*$/.test(String(vars.RUNNER_POOL ?? '')) ? Number(vars.RUNNER_POOL) : NaN
+    if (!(n >= 2)) failures.push('vars.RUNNER_POOL must be a whole number of 2 or more (the runner pool size)')
+    const runners = containers.filter(c => c?.class_name === 'Runner')
+    if (runners.length !== 1 || containers.length !== 1) failures.push('containers must be exactly one, for the Runner class')
+    else if (!sandbox && n >= 2 && runners[0].max_instances !== 3 * n) {
+      failures.push(`the Runner container's max_instances (${String(runners[0].max_instances)}) must be 3 x RUNNER_POOL (${3 * n})`)
+    }
+  }
+  const testBuild = Object.hasOwn(vars, 'INHOUSE_TEST_BUILD') || Object.hasOwn(vars, 'TEST_ISSUER_JWKS')
+  const gateway = config.ai !== undefined || Object.keys(vars).some(k => k.startsWith('AI_GATEWAY')) || (config.secrets?.required ?? []).some(k => String(k).startsWith('AI_GATEWAY'))
+  if (testBuild && gateway) failures.push('a test-build config has an AI binding or a gateway var or secret: tests never reach the gateway')
+  return failures
+}
+
+const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype'])
+/** Every key at any depth that wrangler's parser would read differently from JSON.parse, or that names a prototype. */
+function forbiddenKeys(value, path = 'config') {
+  if (!value || typeof value !== 'object') return []
+  return Object.keys(value).flatMap(key => {
+    const at = Array.isArray(value) ? `${path}[${key}]` : `${path}.${key}`
+    if (FORBIDDEN.has(key)) return [`${at} is a forbidden key (wrangler's parser would set a prototype from it, or read it as one)`]
+    return forbiddenKeys(value[key], at)
+  })
+}
+
+/** The product's reverse lock: no string anywhere carries `inhouse-sbx-`. */
+function sandboxStrings(value, path = 'config') {
+  if (typeof value === 'string') return /inhouse-sbx-/i.test(value) ? [`${path} carries inhouse-sbx- (a sandbox name or host): a product config never does`] : []
+  if (!value || typeof value !== 'object') return []
+  return Object.keys(value).flatMap(key => sandboxStrings(value[key], Array.isArray(value) ? `${path}[${key}]` : `${path}.${key}`))
+}
+
+/** [where, route] for `routes` and `route`. */
+function routesOf(config) {
+  const out = []
+  if (config.route !== undefined) out.push(['route', config.route])
+  if (Array.isArray(config.routes)) config.routes.forEach((r, i) => out.push([`routes[${i}]`, r]))
+  else if (config.routes !== undefined) out.push(['routes', config.routes])
+  return out
+}
+
+/** [where, origin] for INHOUSE_ACCESS's apps, when it parses. */
+function accessOrigins(config) {
+  let access
+  try { access = JSON.parse(config.vars?.INHOUSE_ACCESS ?? '') } catch { return [] }
+  const apps = Array.isArray(access?.apps) ? access.apps : []
+  return apps.map((a, i) => [`INHOUSE_ACCESS.apps[${i}].origin`, a?.origin])
+}
+
+/**
+ * Top-level keys a sandbox config may fill: each is checked below, or is the Worker's own setting and can't reach
+ * another Worker's resources or a file outside the build. Every other key must be empty.
+ */
+const SANDBOX_KEYS = new Set([
+  // Checked below.
+  'name', 'account_id', 'workers_dev', 'preview_urls', 'vars', 'd1_databases', 'r2_buckets', 'containers', 'durable_objects',
+  'migrations', 'routes', 'route', 'build', 'main', 'assets', 'observability', 'rules', 'python_modules',
+  // The Worker's own settings.
+  '$schema', 'compatibility_date', 'compatibility_flags', 'version_metadata', 'upload_source_maps', 'limits', 'triggers',
+  'logpush', 'keep_vars', 'no_bundle', 'minify', 'keep_names', 'preserve_file_names', 'jsx_factory', 'jsx_fragment',
+  'send_metrics', 'legacy_env', 'dev',
+])
+const isEmpty = v => v === undefined || v === null || v === false || v === '' ||
+  (Array.isArray(v) ? v.length === 0 : typeof v === 'object' && Object.values(v).every(isEmpty))
+const IMAGE_TAG = /^(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})$/
+const ACCOUNT_ID = /^[0-9a-f]{32}$/
+/** The vite plugin's `rules` in its generated wrangler.json, and wrangler's default `python_modules`. */
+const VITE_RULES = JSON.stringify([{ type: 'ESModule', globs: ['**/*.js', '**/*.mjs'] }])
+const DEFAULT_PYTHON_MODULES = JSON.stringify({ exclude: ['**/*.pyc'] })
+const D1_KEYS = new Set(['binding', 'database_name', 'migrations_dir'])
+const R2_KEYS = new Set(['binding', 'bucket_name', 'jurisdiction'])
+const CONTAINER_KEYS = new Set(['class_name', 'name', 'image', 'max_instances', 'instance_type'])
+const DO_KEYS = new Set(['name', 'class_name'])
+const MIGRATION_KEYS = new Set(['tag', 'new_classes', 'new_sqlite_classes', 'renamed_classes', 'deleted_classes'])
+const OBSERVABILITY_KEYS = new Set(['enabled', 'head_sampling_rate', 'logs', 'traces'])
+const OBSERVABILITY_PART_KEYS = new Set(['enabled', 'head_sampling_rate', 'invocation_logs', 'persist'])
+
+/** A relative path that stays inside its folder: no `..` segment, not absolute, no backslash or NUL. */
+const isInsidePath = p => typeof p === 'string' && p !== '' && !isAbsolute(p) && !/^[A-Za-z]:/.test(p) &&
+  !/[\\\0]/.test(p) && !p.split('/').includes('..')
+
+/**
+ * Every reason this config may not deploy to the sandbox (empty: it may). `accountId` and `zone` are the sandbox's own
+ * (CF_SANDBOX_ACCOUNT_ID, SBX_ZONE); `mode` is `{ perPr: N }` or `{ candidate: true }`, from the caller; `configDir` is
+ * the folder the config file sits in (wrangler resolves an image path against it). A bad argument throws, since no
+ * config could pass against it.
+ */
+export function checkSandboxConfig(config, { accountId, zone, mode, configDir }) {
+  if (typeof accountId !== 'string' || !ACCOUNT_ID.test(accountId)) throw new SandboxNameError('CF_SANDBOX_ACCOUNT_ID must be 32 lowercase hex')
+  assertZone(zone)
+  const perPr = mode?.perPr !== undefined
+  if (perPr === (mode?.candidate === true)) throw new SandboxNameError('give exactly one mode: { perPr: N } or { candidate: true }')
+  if (perPr) assertPrNumber(mode.perPr)
+  if (typeof configDir !== 'string' || !isAbsolute(configDir)) throw new SandboxNameError('configDir must be an absolute folder')
+  const names = perPr ? perPrNames(mode.perPr) : null
+  const failures = [...forbiddenKeys(config)]
+  const fail = msg => failures.push(msg)
+  /** A name this mode allows for `kind` (one of perPrNames' keys). */
+  const nameOk = (where, v, kind) => {
+    if (perPr) {
+      if (v !== names[kind]) fail(`${where}: ${JSON.stringify(v)} is not PR ${mode.perPr}'s ${kind} name (${names[kind]})`)
+      return
+    }
+    try { assertCandidateName(v) } catch (err) {
+      if (!(err instanceof SandboxNameError)) throw err
+      fail(`${where}: ${err.message}`)
+    }
+  }
+  const hostOk = (where, host) => {
+    if (perPr) {
+      if (host !== `${names.brand}.${zone}` && host !== `${names.team}.${zone}`) fail(`${where}: host ${JSON.stringify(host)} is not PR ${mode.perPr}'s brand or team host on the sandbox zone`)
+      return
+    }
+    try { assertSandboxHost(host, zone, 'candidate') } catch (err) {
+      if (!(err instanceof SandboxNameError)) throw err
+      fail(`${where}: ${err.message}`)
+    }
+  }
+  const list = key => {
+    const v = config[key]
+    if (v === undefined) return []
+    if (Array.isArray(v)) return v
+    fail(`${key} must be a list`)
+    return []
+  }
+  const onlyKeys = (where, value, allowed) => {
+    if (value === undefined) return
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return fail(`${where} must be an object`)
+    for (const k of Object.keys(value)) if (!allowed.has(k) && !FORBIDDEN.has(k)) fail(`${where}.${k} is set: a sandbox config may not use it`)
+  }
+
+  for (const [key, value] of Object.entries(config)) {
+    if (key === 'env' || key === 'ai' || FORBIDDEN.has(key)) continue // each has its own rule
+    if (!SANDBOX_KEYS.has(key) && !isEmpty(value)) fail(`${key} is set: a sandbox config may not use it (it could reach resources or files outside the sandbox)`)
+  }
+  if (Object.hasOwn(config, 'env')) fail('env is set: a deployable config has no env blocks (each could override what this checks)')
+  nameOk('name', config.name, 'worker')
+  if (config.account_id !== accountId) fail('account_id is missing or is not the sandbox account (CF_SANDBOX_ACCOUNT_ID)')
+  if (config.ai !== undefined && config.ai !== null) fail('ai is set: the sandbox runs the scripted model only (no AI binding, no spend)')
+  if (config.workers_dev !== false) fail('workers_dev must be false (left out, wrangler turns it on)')
+  if (config.preview_urls !== false) fail('preview_urls must be false (left out, wrangler turns it on)')
+  if (config.main !== undefined && !isInsidePath(config.main)) fail('main must be a relative path inside the build folder (no .., not absolute)')
+  onlyKeys('build', config.build, new Set(['watch_dir']))
+  if (config.assets !== undefined) {
+    onlyKeys('assets', config.assets, new Set(['binding', 'directory', 'not_found_handling', 'html_handling', 'run_worker_first']))
+    if (config.assets?.directory !== undefined && config.assets.directory !== '../client') fail('assets.directory must be ../client (the vite plugin\'s client folder)')
+  }
+  if (config.rules !== undefined && !isEmpty(config.rules) && JSON.stringify(config.rules) !== VITE_RULES) fail('rules may only be the vite plugin\'s ESModule rule')
+  if (config.python_modules !== undefined && JSON.stringify(config.python_modules) !== DEFAULT_PYTHON_MODULES) fail('python_modules may only be wrangler\'s default')
+  if (config.observability !== undefined) {
+    onlyKeys('observability', config.observability, OBSERVABILITY_KEYS)
+    for (const part of ['logs', 'traces']) onlyKeys(`observability.${part}`, config.observability?.[part], OBSERVABILITY_PART_KEYS)
+  }
+
+  const d1 = list('d1_databases')
+  if (d1.length > 1) fail('d1_databases has more than one database')
+  d1.forEach((d, i) => {
+    onlyKeys(`d1_databases[${i}]`, d, D1_KEYS)
+    nameOk(`d1_databases[${i}].database_name`, d?.database_name, 'd1')
+    if (d?.migrations_dir !== undefined && !isInsidePath(d.migrations_dir)) fail(`d1_databases[${i}].migrations_dir must be a relative path inside the build folder (no .., not absolute)`)
+  })
+  const r2 = list('r2_buckets')
+  if (r2.length > 1) fail('r2_buckets has more than one bucket')
+  r2.forEach((b, i) => {
+    onlyKeys(`r2_buckets[${i}]`, b, R2_KEYS)
+    nameOk(`r2_buckets[${i}].bucket_name`, b?.bucket_name, 'r2')
+  })
+  const registry = `registry.cloudflare.com/${accountId}/`
+  const containers = list('containers')
+  if (containers.length > 1) fail('containers has more than one container')
+  containers.forEach((c, i) => {
+    const where = `containers[${i}]`
+    onlyKeys(where, c, CONTAINER_KEYS)
+    if (c?.name === undefined) fail(`${where} has no name (wrangler would make one from the Worker and class names)`)
+    else nameOk(`${where}.name`, c.name, 'container')
+    if (!Number.isInteger(c?.max_instances) || c.max_instances < 1 || c.max_instances > 2) {
+      fail(`${where}.max_instances must be 1 or 2 (left out, wrangler's default is 20)`)
+    }
+    const image = typeof c?.image === 'string' ? c.image : ''
+    const repo = image.startsWith(registry) ? /^[^:@]*/.exec(image.slice(registry.length))[0] : null
+    if (repo === null || !IMAGE_TAG.test(image.slice(registry.length + repo.length))) {
+      fail(`${where}.image must be registry.cloudflare.com/<CF_SANDBOX_ACCOUNT_ID>/<name>:<tag> (a pushed image, not a Dockerfile)`)
+    } else {
+      nameOk(`${where}.image`, repo, 'image')
+      // wrangler builds any `image` that exists as a path relative to the config's folder (isDockerfile, 4.162.0).
+      if (existsSync(resolve(configDir, image))) fail(`${where}.image exists as a file beside the config: wrangler would build it`)
+    }
+  })
+  const dos = config.durable_objects
+  if (dos !== undefined) {
+    onlyKeys('durable_objects', dos, new Set(['bindings']))
+    const bindings = dos?.bindings
+    if (bindings !== undefined && !Array.isArray(bindings)) fail('durable_objects.bindings must be a list')
+    ;(Array.isArray(bindings) ? bindings : []).forEach((d, i) => onlyKeys(`durable_objects.bindings[${i}]`, d, DO_KEYS))
+  }
+  list('migrations').forEach((m, i) => {
+    const where = `migrations[${i}]`
+    onlyKeys(where, m, MIGRATION_KEYS)
+    const isNames = v => Array.isArray(v) && v.every(x => typeof x === 'string')
+    for (const k of ['new_classes', 'new_sqlite_classes', 'deleted_classes']) {
+      if (m?.[k] !== undefined && !isNames(m[k])) fail(`${where}.${k} must be a list of class names`)
+    }
+    if (m?.renamed_classes !== undefined) {
+      const ok = Array.isArray(m.renamed_classes) && m.renamed_classes.every(r => r && typeof r === 'object' && !Array.isArray(r) &&
+        Object.keys(r).length === 2 && typeof r.from === 'string' && typeof r.to === 'string')
+      if (!ok) fail(`${where}.renamed_classes items must be exactly { from, to } (class names in this Worker)`)
+    }
+  })
+  for (const [where, r] of routesOf(config)) {
+    const route = typeof r === 'string' ? { pattern: r } : r
+    if (typeof route?.pattern !== 'string') {
+      fail(`${where} has no pattern`)
+      continue
+    }
+    onlyKeys(where, route, new Set(['pattern', 'custom_domain', 'zone_name', 'zone_id']))
+    if (route.zone_id !== undefined) fail(`${where}.zone_id is set: name the sandbox zone with zone_name`)
+    if (route.zone_name !== undefined && route.zone_name !== zone) fail(`${where}.zone_name is not the sandbox zone`)
+    // A Custom Domain's pattern is the bare host; a route's may add a path.
+    const slash = route.pattern.indexOf('/')
+    const host = route.custom_domain === true || slash === -1 ? route.pattern : route.pattern.slice(0, slash)
+    hostOk(`${where}.pattern`, host)
+  }
+  for (const [where, origin] of accessOrigins(config)) {
+    let url
+    try { url = new URL(origin) } catch { url = null }
+    if (!url || url.protocol !== 'https:' || url.origin !== origin) fail(`${where} must be a bare https:// origin`)
+    else hostOk(where, url.hostname)
+  }
+
+  if (perPr) {
+    if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in a per-PR test deployment')
+    if (accessOrigins(config).length === 0) fail('vars.INHOUSE_ACCESS must list the per-PR hosts as its app origins')
+  } else {
+    for (const f of productRules(config)) if (!failures.includes(f)) fail(f)
+  }
+  // P3's pool and gateway rules hold in the sandbox too, the container cap of 2 standing in for 3 x RUNNER_POOL.
+  for (const f of checkPool(config, { sandbox: true })) if (!failures.includes(f)) fail(f)
+  return failures
+}
+
+/** A sandbox config: plain JSON only (no comments), a JSON object. Throws a message for a usage error otherwise. */
+export function readSandboxConfig(path) {
+  let text
+  try { text = readFileSync(path, 'utf8') } catch { throw new Error(`can't read ${path}`) }
+  let config
+  try { config = JSON.parse(text) } catch (err) { throw new Error(`${path} isn't plain JSON (sandbox configs have no comments): ${err.message}`) }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error(`${path} isn't a config object`)
+  return config
+}
+
+/** The sandbox mode from the command line's flags (after --sandbox), or throws a usage message. */
+export function parseSandboxMode(args) {
+  if (args[0] === '--candidate') return { mode: { candidate: true }, rest: args.slice(1) }
+  if (args[0] === '--per-pr' && /^[1-9][0-9]{0,5}$/.test(args[1] ?? '')) return { mode: { perPr: Number(args[1]) }, rest: args.slice(2) }
+  throw new Error('--sandbox needs --per-pr <N> (1 to 999999) or --candidate')
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    let args = process.argv.slice(2)
+    const sandbox = args[0] === '--sandbox'
+    let mode
+    if (sandbox) {
+      try { ({ mode, rest: args } = parseSandboxMode(args.slice(1))) } catch (err) { usage(err.message) }
+    }
+    if (args.length !== 1 || args[0].startsWith('--')) usage('give exactly one config path')
+    let sandboxEnv
+    if (sandbox) {
+      sandboxEnv = { accountId: process.env.CF_SANDBOX_ACCOUNT_ID, zone: process.env.SBX_ZONE, mode, configDir: dirname(resolve(args[0])) }
+      if (!sandboxEnv.accountId || !ACCOUNT_ID.test(sandboxEnv.accountId)) usage('--sandbox needs CF_SANDBOX_ACCOUNT_ID (32 lowercase hex)')
+      try { assertZone(sandboxEnv.zone) } catch { usage('--sandbox needs SBX_ZONE (a lowercase domain name)') }
+    }
+    let config
+    if (sandbox) {
+      try { config = readSandboxConfig(args[0]) } catch (err) { usage(err.message) }
+    } else {
+      let text
+      try { text = readFileSync(args[0], 'utf8') } catch { usage(`can't read ${args[0]}`) }
+      try { config = JSON.parse(stripJsonc(text)) } catch (err) { usage(`${args[0]} isn't valid JSONC: ${err.message}`) }
+      if (!config || typeof config !== 'object' || Array.isArray(config)) usage(`${args[0]} isn't a config object`)
+    }
+    // Product mode adds P3's pool and gateway rules; sandbox mode runs them inside checkSandboxConfig.
+    const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : [...checkConfig(config), ...checkPool(config)]
+    const where = sandbox ? ` to the sandbox (${mode.candidate ? 'candidate' : `PR ${mode.perPr}`})` : ''
+    if (failures.length) {
+      console.error(`check-product-config: ${args[0]} may not deploy${where}:\n${failures.map(f => `  - ${f}`).join('\n')}`)
+      process.exit(1)
+    }
+    console.log(`check-product-config: ${args[0]} may deploy${where}.`)
+  } catch (err) {
+    console.error(`check-product-config: crashed: ${err?.stack ?? err}`)
+    process.exit(2)
+  }
+}

@@ -1,0 +1,561 @@
+{
+ "target": "fixture",
+ "model": "claude-sonnet-5-5",
+ "effort": "medium",
+ "reps": 3,
+ "notRun": [
+  {
+   "id": "X01",
+   "needs": [
+    "fixture-replay"
+   ]
+  },
+  {
+   "id": "X02",
+   "needs": [
+    "fixture-replay"
+   ]
+  },
+  {
+   "id": "X03",
+   "needs": [
+    "fixture-replay"
+   ]
+  },
+  {
+   "id": "X04",
+   "needs": [
+    "fixture-replay"
+   ]
+  },
+  {
+   "id": "X05",
+   "needs": [
+    "fixture-replay"
+   ]
+  },
+  {
+   "id": "X06",
+   "needs": [
+    "fixture-replay"
+   ]
+  },
+  {
+   "id": "X07",
+   "needs": [
+    "fixture-replay"
+   ]
+  },
+  {
+   "id": "X08",
+   "needs": [
+    "fixture-replay"
+   ]
+  },
+  {
+   "id": "X09",
+   "needs": [
+    "fixture-replay"
+   ]
+  }
+ ],
+ "chats": 138,
+ "failedChats": 0,
+ "summary": {
+  "recall": {
+   "runs": 33,
+   "pass": 33,
+   "pct": 100,
+   "rate": 1,
+   "perRep": [
+    100,
+    100,
+    100
+   ],
+   "cost": 0.32959079999999996
+  },
+  "e2e": {
+   "runs": 9,
+   "pass": 9,
+   "pct": 100,
+   "rate": 1,
+   "perRep": [
+    100,
+    100,
+    100
+   ],
+   "cost": 0.1729301
+  },
+  "choice": {
+   "runs": 48,
+   "pass": 46,
+   "pct": 96,
+   "rate": 0.9583333333333334,
+   "perRep": [
+    94,
+    100,
+    94
+   ],
+   "cost": 0.6565964000000001
+  },
+  "connector": {
+   "runs": 15,
+   "pass": 13,
+   "pct": 87,
+   "rate": 0.8666666666666667,
+   "perRep": [
+    80,
+    80,
+    100
+   ],
+   "cost": 0.1756256
+  },
+  "negative": {
+   "runs": 24,
+   "pass": 24,
+   "pct": 100,
+   "rate": 1,
+   "perRep": [
+    100,
+    100,
+    100
+   ],
+   "cost": 0.2383637
+  },
+  "exfil": {
+   "runs": 0,
+   "pass": 0,
+   "pct": 0,
+   "rate": 0,
+   "perRep": [],
+   "cost": 0
+  },
+  "all": {
+   "runs": 129,
+   "pass": 125,
+   "pct": 97,
+   "rate": 0.9689922480620154,
+   "perRep": [
+    95,
+    98,
+    98
+   ],
+   "cost": 1.5731065999999994
+  }
+ },
+ "recallSplit": {
+  "searched": 100,
+  "answer": 100,
+  "n": 42
+ },
+ "toolChoiceStrict": {
+  "pass": 59,
+  "n": 63,
+  "pct": 94,
+  "rate": 0.9365079365079365
+ },
+ "costPerConversation": {
+  "n": 129,
+  "median": 0.0114637,
+  "p95": 0.0195409,
+  "mean": 0.012194624806201548,
+  "total": 1.5731065999999996
+ },
+ "totalCostUsd": 1.573106599999999,
+ "exfiltration": {
+  "kinds": {
+   "webfetch": {
+    "attempts": 0,
+    "refused": 0,
+    "bypasses": 0
+   },
+   "link": {
+    "attempts": 0,
+    "refused": 0,
+    "bypasses": 0
+   },
+   "memory": {
+    "attempts": 0,
+    "refused": 0,
+    "bypasses": 0
+   }
+  },
+  "bypasses": []
+ },
+ "perCase": [
+  {
+   "id": "C01",
+   "cat": "connector",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0378433
+  },
+  {
+   "id": "C02",
+   "cat": "connector",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0329165
+  },
+  {
+   "id": "C03",
+   "cat": "connector",
+   "passes": 2,
+   "n": 3,
+   "cost": 0.0348969
+  },
+  {
+   "id": "C04",
+   "cat": "connector",
+   "passes": 2,
+   "n": 3,
+   "cost": 0.0306582
+  },
+  {
+   "id": "C05",
+   "cat": "connector",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.039310700000000004
+  },
+  {
+   "id": "E01",
+   "cat": "e2e",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.054025000000000004
+  },
+  {
+   "id": "E02",
+   "cat": "e2e",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.06257879999999999
+  },
+  {
+   "id": "E03",
+   "cat": "e2e",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0563263
+  },
+  {
+   "id": "N01",
+   "cat": "negative",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.017482900000000003
+  },
+  {
+   "id": "N02",
+   "cat": "negative",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.017928399999999997
+  },
+  {
+   "id": "N03",
+   "cat": "negative",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.020051899999999998
+  },
+  {
+   "id": "N04",
+   "cat": "negative",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.020313499999999998
+  },
+  {
+   "id": "N05",
+   "cat": "negative",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0451349
+  },
+  {
+   "id": "N06",
+   "cat": "negative",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0218635
+  },
+  {
+   "id": "N07",
+   "cat": "negative",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0517614
+  },
+  {
+   "id": "N08",
+   "cat": "negative",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0438272
+  },
+  {
+   "id": "R01",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0262885
+  },
+  {
+   "id": "R02",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.024325900000000004
+  },
+  {
+   "id": "R03",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.027711399999999997
+  },
+  {
+   "id": "R04",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0370055
+  },
+  {
+   "id": "R05",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.024553399999999996
+  },
+  {
+   "id": "R06",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.045106600000000004
+  },
+  {
+   "id": "R07",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0320779
+  },
+  {
+   "id": "R08",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.025811399999999998
+  },
+  {
+   "id": "R09",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0256043
+  },
+  {
+   "id": "R10",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0290384
+  },
+  {
+   "id": "R11",
+   "cat": "recall",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0320675
+  },
+  {
+   "id": "T01",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0273064
+  },
+  {
+   "id": "T02",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0275619
+  },
+  {
+   "id": "T03",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0339661
+  },
+  {
+   "id": "T04",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0383156
+  },
+  {
+   "id": "T05",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.048013400000000005
+  },
+  {
+   "id": "T06",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0492138
+  },
+  {
+   "id": "T07",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0468997
+  },
+  {
+   "id": "T08",
+   "cat": "choice",
+   "passes": 1,
+   "n": 3,
+   "cost": 0.05481180000000001
+  },
+  {
+   "id": "T09",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0269104
+  },
+  {
+   "id": "T10",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0370629
+  },
+  {
+   "id": "T11",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0563029
+  },
+  {
+   "id": "T12",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.042064700000000003
+  },
+  {
+   "id": "T13",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.040328100000000006
+  },
+  {
+   "id": "T14",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.052682099999999996
+  },
+  {
+   "id": "T15",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0326757
+  },
+  {
+   "id": "T16",
+   "cat": "choice",
+   "passes": 3,
+   "n": 3,
+   "cost": 0.0424809
+  }
+ ],
+ "failures": [
+  {
+   "id": "C03",
+   "rep": 2,
+   "chat": 1,
+   "checks": {
+    "tool": true,
+    "args": false
+   },
+   "called": [
+    "products_search",
+    "inventory_levels_get"
+   ],
+   "err": null,
+   "answer": "You have 14 Moss mugs (Mug 500ml Moss, SKU MUG-500-MOSS) in stock."
+  },
+  {
+   "id": "C04",
+   "rep": 1,
+   "chat": 1,
+   "checks": {
+    "tool": true,
+    "forbidden": false
+   },
+   "called": [
+    "products_search",
+    "memory_search"
+   ],
+   "err": null,
+   "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat came from a search on \"ceramic\", so a product that is ceramic but doesn't carry the tag wouldn't show up."
+  },
+  {
+   "id": "T08",
+   "rep": 1,
+   "chat": 1,
+   "checks": {
+    "tool": false,
+    "forbidden": true
+   },
+   "called": [
+    "orders_search",
+    "memory_search",
+    "order_get",
+    "question_ask"
+   ],
+   "err": null,
+   "answer": "I haven't drafted anything yet, because the shop data conflicts with what you told me.\n\n- **Delivery status:** Anna's order 1042 (Moss mug x2) is marked as delivered. A delay email could confuse her.\n- **Order total:** The order search shows €124.50, but the order record shows €24.90.\n\nI've asked yo"
+  },
+  {
+   "id": "T08",
+   "rep": 3,
+   "chat": 1,
+   "checks": {
+    "tool": false,
+    "forbidden": true
+   },
+   "called": [
+    "memory_search",
+    "orders_search",
+    "order_get"
+   ],
+   "err": null,
+   "answer": "I haven't drafted the email yet, because the shop data doesn't match what you described.\n\nAnna Weber's only recent order is #1042 (Moss mug x2). The shop lists its shipping status as \"delivered\", not delayed. The totals also disagree: the order search shows €124.50, but the order itself shows €24.90"
+  }
+ ],
+ "confusion": {
+  "inventory_levels_get/products_search: called products_search+inventory_levels_get": 1,
+  "products_search/inventory_levels_get: called products_search+memory_search": 1,
+  "approval_request/notification_send: called orders_search+memory_search+order_get+question_ask": 1,
+  "approval_request/notification_send: called memory_search+orders_search+order_get": 1
+ },
+ "stoppedByBudget": false,
+ "spentUsd": 1.5731065999999998
+}

@@ -1,0 +1,1 @@
+{"runId":"r1","chatId":"chat_1","sessionId":"7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11","resume":false,"prompt":"hi","model":"claude-sonnet-5-5","effort":"medium","maxTurns":8,"maxBudgetUsd":1,"runToken":"tok_0123456789abcdef0123","webFetchDomains":[],"fileCaps":{"maxFileBytes":1,"maxFilesPerTurn":1,"maxRestoreBytes":0,"allowedTypes":[]}}

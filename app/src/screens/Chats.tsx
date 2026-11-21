@@ -1,9 +1,12 @@
 // Chats: the thread (one card per answer, D2), hover actions under each answer and your own messages, the "···" menu,
 // long messages that fold, Retry on a stopped answer, Jump to latest, the queued messages and the ask box.
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
+import { traceOf, useTraces } from './chat/traces'
+import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted, mergeHistory } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
+import { fileIcon, fileSize } from '@/lib/file-meta'
 import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'
 import { fmtAnswerBar } from '../lib/format'
 import { display } from '../state/display'
@@ -16,6 +19,8 @@ import { Button as UiButton } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentPart } from './chat/Parts'
+import { FileChip } from './chat/FileChip'
+import { filesOfTurns } from './chat/view'
 import { ChatList } from './chat/ChatList'
 import { SuggestionChip } from '../ui/chat'
 import { copyText } from './chat/copy'
@@ -129,11 +134,14 @@ function Thinking({ text }: { text: string }) {
 }
 
 function Thread() {
+  useTraces()
   const ctx = useCtx()
   const { fresh, chatId, extras, hidden, phone, feedback } = useUi()
   const run = useUi(openRun)
   const thinking = !!run
-  const thinkingText = run?.text ?? ''
+  const view = useUi(s => { const k = openChatKey(s, agent.read()); return k !== null && Object.hasOwn(s.views, k) ? s.views[k] : undefined })
+  const link = useSyncExternalStore(agent.onLink, agent.link)
+  const thinkingText = view?.budgetWait ? NOTICE_TEXT.budget_busy : run?.text ?? ''
   const editingId = useUi(s => s.editMsg?.id)
   const { ask, openTrace, patch, showToast, openTeam, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue, sendQueuedNow } = useUi.getState()
   const [menuId, setMenuId] = useState<string | null>(null)
@@ -146,7 +154,10 @@ function Thread() {
 
   // Null for a new chat, and when there are no chats at all (day one): the thread then starts empty.
   const openId = openChatKey({ fresh, chatId }, ctx.data)
-  const queue = useUi(s => (openId === null ? NO_QUEUE : s.queued[openId] ?? NO_QUEUE))
+  const localQueue = useUi(s => (openId === null ? NO_QUEUE : s.queued[openId] ?? NO_QUEUE))
+  // What the agent holds waiting in the run, then what waits paused here (after a reload).
+  const sentQueue = run?.sent
+  const queue = useMemo(() => (sentQueue?.length ? [...sentQueue, ...localQueue] : localQueue), [sentQueue, localQueue])
   // After Send now or Remove, focus goes to the chip that takes that one's place (the same button), else to the field;
   // on a phone to Send instead (the field would pop the keyboard), or to "+" while Send is off or Stop holds its place
   // (a tap or Enter there would stop the answer just asked).
@@ -168,10 +179,15 @@ function Thread() {
     focusAfter.current = { at: queue.indexOf(q), button }
     if (button === 'send') sendQueuedNow(q.id); else unqueue(q.id)
     // Nothing changed (it had already gone): no focus move waits for a later change.
-    if (openId === null || useUi.getState().queued[openId] === queue) focusAfter.current = null
+    if (openId === null || (useUi.getState().queued[openId] ?? NO_QUEUE) === localQueue && (openRun(useUi.getState())?.sent ?? NO_QUEUE) === (run?.sent ?? NO_QUEUE)) focusAfter.current = null
   }
   const queueStatus = queue.length === 0 ? '' : `${queue.length} ${queue.length === 1 ? 'message' : 'messages'} ${queue.every(q => q.paused) ? 'paused' : 'queued'}`
-  const all = useMemo(() => (openId === null ? [] : chatMessages(ctx, openId)).concat(extras), [ctx, openId, extras])
+  const history = useUi(s => (openId === null ? undefined : s.history[openId]))
+  const noSeed = historyWanted(ctx.data.chat.chats, openId)
+  const loadHistory = useUi(s => s.loadHistory)
+  // A chat the agent keeps (no sample turns) reads its past when it opens.
+  useEffect(() => { if (openId !== null && noSeed) loadHistory(openId) }, [openId, noSeed, loadHistory])
+  const all = useMemo(() => mergeHistory(history?.messages, openId === null ? [] : chatMessages(ctx, openId), extras), [ctx, openId, extras, history?.messages])
   const msgs = all.filter(m => !hidden[m.id])
 
   // Keep the view at the bottom as messages and thinking steps arrive, but only while the person is near it:
@@ -274,7 +290,7 @@ function Thread() {
     const i = b.at + b.ms.length - 1
     const next = msgs[i + 1]
     const menuOpen = menuId === m.id
-    const tr = agent.getTrace(m.trace)
+    const tr = traceOf(m.trace)
     const failed = m.part.type === 'error'
     // Mode, step count, time taken and when it answered, as far as they're known.
     const modelLabel = m.model ? ctx.data.models.find(x => x.id === m.model)?.label : undefined
@@ -401,6 +417,13 @@ function Thread() {
 
           {/* The conversation as a log, so screen readers hear each new answer once (not every thinking step).
               Keyed by chat, so opening a chat doesn't read out its whole history. */}
+          {history && (history.next !== null || history.state === 'error') && (
+            <div className="mt-2 flex justify-center">
+              <Button variant="soft" size="sm" disabled={history.state === 'loading'} onClick={() => loadHistory(openId!, history.state !== 'error' || history.next !== null)}>
+                {history.state === 'error' ? "Couldn't load earlier messages. Try again" : 'Show earlier messages'}
+              </Button>
+            </div>
+          )}
           <div key={threadKey} role="log" aria-label="Conversation" className="flex flex-col">
           {blocks.map((b, k) => {
             const mt = k === 0 ? 'mt-2' : b.kind === 'event' ? 'mt-3.5' : 'mt-5.5'
@@ -429,7 +452,9 @@ function Thread() {
                   {m.atts && m.atts.length > 0 && (
                     <div className="mt-1.5 flex flex-wrap justify-end gap-1.5 self-end">
                       {m.atts.map((f, j) => (
-                        <AttachmentChip key={f.name + j} icon={f.icon} name={f.name} meta={f.meta} />
+                        f.fileId !== undefined
+                          ? <FileChip key={f.name + j} fileId={f.fileId} icon={f.icon} name={f.name} meta={f.meta} tap={phone} />
+                          : <AttachmentChip key={f.name + j} icon={f.icon} name={f.name} meta={f.meta} />
                       ))}
                     </div>
                   )}
@@ -461,9 +486,18 @@ function Thread() {
                 {/* One white card per answer (D2): its text, tables, drafts and routines inside, and while it streams
                     the thinking line at its foot, so no second card shows. */}
                 <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
-                  {b.ms.map(x => <AgentPart key={x.id} part={x.part} trace={x.trace} />)}
+                  {b.ms.map(x => <AgentPart key={x.id} id={x.id} part={x.part} trace={x.trace} />)}
                   {streaming && <Thinking text={thinkingText} />}
                 </div>
+                {/* The files this answer saved, each with Download. */}
+                {(() => {
+                  const files = filesOfTurns(view, new Set(b.ms.map(m => m.trace)))
+                  return files.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 self-start">
+                      {files.map(f => <FileChip key={f.fileId} fileId={f.fileId} icon={fileIcon(f.name)} name={f.name} meta={fileSize(f.bytes)} tap={phone} />)}
+                    </div>
+                  )
+                })()}
                 {/* The actions show once the turn is done, so the live log announces them once, not with every streamed part. */}
                 {endsTurn && answerBar(b)}
               </div>
@@ -503,6 +537,31 @@ function Thread() {
                   <QueuedChip q={q} editing={editingId !== undefined} onEdit={editQueued} onSendNow={x => chipAction(x, 'send')} onRemove={x => chipAction(x, 'remove')} />
                 </div>
               ))}
+            </div>
+          )}
+          {/* What holds the agent back, said where the person is about to type: a pause, a busy budget, a damaged session, a lost link. */}
+          {(ctx.agent.paused !== null || view?.notice || view?.damaged || link !== 'live') && (
+            <div data-chat-notice role="status" className="mb-2 flex flex-col gap-1.5">
+              {link !== 'live' && (
+                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
+                  <Icon name={link === 'held' ? 'refresh' : 'info'} size={16} className="flex-none" />
+                  <span className="min-w-0 flex-1">{CONNECTION_TEXT[link]}</span>
+                  {(link === 'reload' || link === 'grantEnded') && <Button variant="soft" size="sm" onClick={() => location.reload()}>Reload</Button>}
+                </div>
+              )}
+              {ctx.agent.paused !== null && (
+                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3"><Icon name="pause" size={16} className="flex-none" /><span className="min-w-0 flex-1">{NOTICE_TEXT.paused}</span></div>
+              )}
+              {view?.notice && !view.damaged && view.notice.code !== 'paused' && !view.budgetWait && (
+                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3"><Icon name="info" size={16} className="flex-none" /><span className="min-w-0 flex-1">{view.notice.text}</span></div>
+              )}
+              {view?.damaged && openId !== null && (
+                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
+                  <Icon name="error" size={16} className="flex-none" />
+                  <span className="min-w-0 flex-1">{NOTICE_TEXT.session_damaged}</span>
+                  <Button variant="soft" size="sm" onClick={() => useUi.getState().resetSession(openId)}>Start fresh</Button>
+                </div>
+              )}
             </div>
           )}
           {/* Always there, so a screen reader hears each change to the queue. */}

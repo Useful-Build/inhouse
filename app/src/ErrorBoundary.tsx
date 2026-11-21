@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { demo as demoControls } from './agent'
 import { useUi } from './state/store'
 import { Button } from './ui'
+import { hashBar } from './shell/hash-bar'
 import { demoCrash, reportError } from './report-error'
 
 /** Session storage: a line about the crash, read on the next load (App.tsx) to open Report a bug with it. */
@@ -28,14 +29,14 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
     const line = crashLine('The app crashed', this.state.message)
     try { sessionStorage.setItem(CRASH_KEY, line) }
     catch (e) { console.warn('Inhouse: could not keep the crash note for the team window.', e) }
-    history.replaceState(null, '', '#/today')
+    hashBar.replace('#/today')
     location.reload()
   }
 
   reset = () => {
     try { useUi.getState().resetDemo() }
     finally {
-      history.replaceState(null, '', '#/today')
+      hashBar.replace('#/today')
       location.reload()
     }
   }

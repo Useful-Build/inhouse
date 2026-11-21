@@ -18,6 +18,11 @@ const walk = suite => {
       const last = t.results?.at(-1)
       const video = last?.attachments?.find(a => a.name === 'video' && a.path)?.path
       tests.push({ project: t.projectName, title: spec.title, video: video?.replace(/^.*[\\/]results[\\/]/, '') })
+      // A spec that signs a second person in (their own browser context) attaches their video as `video-<who>`, in the order
+      // they were made. Each follows the test's own clip in the reel, its card naming the person.
+      for (const x of last?.attachments?.filter(x => /^video-./.test(x.name) && x.path) ?? []) {
+        tests.push({ project: t.projectName, title: `${spec.title} (${x.name.slice('video-'.length)})`, video: x.path.replace(/^.*[\\/]results[\\/]/, '') })
+      }
     }
   }
   for (const s of suite.suites ?? []) walk(s)

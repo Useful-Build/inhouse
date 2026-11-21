@@ -9,6 +9,12 @@
     },
     {
       "path": "./tsconfig.worker.json"
+    },
+    {
+      "path": "./tsconfig.server.json"
+    },
+    {
+      "path": "./tsconfig.server-test.json"
     }
   ],
   "compilerOptions": {

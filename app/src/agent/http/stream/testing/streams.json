@@ -1,0 +1,756 @@
+[
+ {
+  "name": "one question, a step and two parts",
+  "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+  "frames": [
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 1,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "run.started",
+     "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+     "chatId": "chat-one"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 2,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.queued",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.u",
+     "text": "Which orders are stuck?",
+     "attachments": [],
+     "priority": "next",
+     "by": "m_sam"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 3,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.started",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "model": "sonnet"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 4,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "step",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "stepId": "t_Aaaaaaaaaaaaaaaaaaaaaa.s0",
+     "label": "Reading your question…"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 5,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "part",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.0",
+     "part": {
+      "type": "text",
+      "text": "Three orders are stuck."
+     },
+     "model": "sonnet",
+     "at": {
+      "iso": "2026-11-20T10:00:00.000Z",
+      "ms": 1795168800000
+     }
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 6,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "part",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.1",
+     "part": {
+      "type": "text",
+      "text": "Two are with the carrier."
+     },
+     "model": "sonnet",
+     "at": {
+      "iso": "2026-11-20T10:00:00.000Z",
+      "ms": 1795168800000
+     }
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 7,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.finished",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "outcome": "done"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 8,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "run.finished",
+     "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+     "turns": 1,
+     "durationMs": 4200,
+     "cost": {
+      "minor": 12,
+      "currency": "USD"
+     }
+    }
+   }
+  ],
+  "rows": [
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.u",
+    "role": "user",
+    "text": "Which orders are stuck?"
+   },
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.0",
+    "role": "agent",
+    "text": "Three orders are stuck."
+   },
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.1",
+    "role": "agent",
+    "text": "Two are with the carrier."
+   }
+  ]
+ },
+ {
+  "name": "a second question queued behind the first, which is stopped",
+  "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+  "frames": [
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 1,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "run.started",
+     "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+     "chatId": "chat-one"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 2,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.queued",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.u",
+     "text": "First",
+     "attachments": [],
+     "priority": "next",
+     "by": "m_sam"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 3,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.started",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "model": "sonnet"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 4,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.queued",
+     "turnId": "t_Bbbbbbbbbbbbbbbbbbbbbb",
+     "messageId": "t_Bbbbbbbbbbbbbbbbbbbbbb.u",
+     "text": "Second",
+     "attachments": [],
+     "priority": "later",
+     "by": "m_sam"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 5,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "part",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.0",
+     "part": {
+      "type": "text",
+      "text": "Half an answer"
+     },
+     "model": "sonnet",
+     "at": {
+      "iso": "2026-11-20T10:00:00.000Z",
+      "ms": 1795168800000
+     }
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 6,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.finished",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "outcome": "stopped"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 7,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.started",
+     "turnId": "t_Bbbbbbbbbbbbbbbbbbbbbb",
+     "model": "sonnet"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 8,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "part",
+     "turnId": "t_Bbbbbbbbbbbbbbbbbbbbbb",
+     "messageId": "t_Bbbbbbbbbbbbbbbbbbbbbb.0",
+     "part": {
+      "type": "text",
+      "text": "Answer to the second"
+     },
+     "model": "sonnet",
+     "at": {
+      "iso": "2026-11-20T10:00:00.000Z",
+      "ms": 1795168800000
+     }
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 9,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.finished",
+     "turnId": "t_Bbbbbbbbbbbbbbbbbbbbbb",
+     "outcome": "done"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 10,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "run.finished",
+     "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+     "turns": 2,
+     "durationMs": 9000,
+     "cost": {
+      "minor": 30,
+      "currency": "USD"
+     }
+    }
+   }
+  ],
+  "rows": [
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.u",
+    "role": "user",
+    "text": "First"
+   },
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.0",
+    "role": "agent",
+    "text": "Half an answer"
+   },
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.x",
+    "role": "event",
+    "text": "You stopped your Inhouse agent. Nothing was changed."
+   },
+   {
+    "id": "t_Bbbbbbbbbbbbbbbbbbbbbb.u",
+    "role": "user",
+    "text": "Second"
+   },
+   {
+    "id": "t_Bbbbbbbbbbbbbbbbbbbbbb.0",
+    "role": "agent",
+    "text": "Answer to the second"
+   }
+  ]
+ },
+ {
+  "name": "a turn that fails after its step cap, and one cancelled by a pause",
+  "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+  "frames": [
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 1,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "run.started",
+     "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+     "chatId": "chat-one"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 2,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.queued",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.u",
+     "text": "Do a lot",
+     "attachments": [],
+     "priority": "next",
+     "by": "m_sam"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 3,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.started",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "model": "sonnet"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 4,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.queued",
+     "turnId": "t_Bbbbbbbbbbbbbbbbbbbbbb",
+     "messageId": "t_Bbbbbbbbbbbbbbbbbbbbbb.u",
+     "text": "And this",
+     "attachments": [],
+     "priority": "later",
+     "by": "m_sam"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 5,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "part",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.0",
+     "part": {
+      "type": "text",
+      "text": "Started on it"
+     },
+     "model": "sonnet",
+     "at": {
+      "iso": "2026-11-20T10:00:00.000Z",
+      "ms": 1795168800000
+     }
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 6,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "notice",
+     "code": "paused"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 7,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.finished",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "outcome": "failed",
+     "reason": "max_turns"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 8,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.cancelled",
+     "turnId": "t_Bbbbbbbbbbbbbbbbbbbbbb",
+     "why": "paused"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 9,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "run.finished",
+     "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+     "turns": 1,
+     "durationMs": 3000,
+     "cost": {
+      "minor": 5,
+      "currency": "USD"
+     }
+    }
+   }
+  ],
+  "rows": [
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.u",
+    "role": "user",
+    "text": "Do a lot"
+   },
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.0",
+    "role": "agent",
+    "text": "Started on it"
+   },
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.f",
+    "role": "agent",
+    "text": "This answer needed more steps than your team allows, so it stopped. Ask again, or raise the limit in Settings."
+   },
+   {
+    "id": "t_Bbbbbbbbbbbbbbbbbbbbbb.u",
+    "role": "user",
+    "text": "And this"
+   },
+   {
+    "id": "t_Bbbbbbbbbbbbbbbbbbbbbb.x",
+    "role": "event",
+    "text": "Your Inhouse agent was paused, so this question was not asked."
+   }
+  ]
+ },
+ {
+  "name": "an event this build cannot read in the middle (skipped, no loop), and a turn the person removed",
+  "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+  "frames": [
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 1,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "run.started",
+     "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+     "chatId": "chat-one"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 2,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.queued",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.u",
+     "text": "Hello",
+     "attachments": [],
+     "priority": "next",
+     "by": "m_sam"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 3,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.started",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "model": "sonnet"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 4,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "future.event",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "anything": [
+      1,
+      2,
+      3
+     ]
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 5,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "part",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "messageId": "t_Aaaaaaaaaaaaaaaaaaaaaa.0",
+     "part": {
+      "type": "text",
+      "text": "Hi there"
+     },
+     "model": "sonnet",
+     "at": {
+      "iso": "2026-11-20T10:00:00.000Z",
+      "ms": 1795168800000
+     }
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 6,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.queued",
+     "turnId": "t_Cccccccccccccccccccccc",
+     "messageId": "t_Cccccccccccccccccccccc.u",
+     "text": "Never mind",
+     "attachments": [],
+     "priority": "later",
+     "by": "m_sam"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 7,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.cancelled",
+     "turnId": "t_Cccccccccccccccccccccc",
+     "why": "removed"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 8,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "turn.finished",
+     "turnId": "t_Aaaaaaaaaaaaaaaaaaaaaa",
+     "outcome": "done"
+    }
+   },
+   {
+    "v": 1,
+    "chatId": "chat-one",
+    "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+    "seq": 9,
+    "at": {
+     "iso": "2026-11-20T10:00:00.000Z",
+     "ms": 1795168800000
+    },
+    "event": {
+     "type": "run.finished",
+     "runId": "r_Rrrrrrrrrrrrrrrrrrrrrr",
+     "turns": 1,
+     "durationMs": 1000,
+     "cost": {
+      "minor": 1,
+      "currency": "USD"
+     }
+    }
+   }
+  ],
+  "rows": [
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.u",
+    "role": "user",
+    "text": "Hello"
+   },
+   {
+    "id": "t_Aaaaaaaaaaaaaaaaaaaaaa.0",
+    "role": "agent",
+    "text": "Hi there"
+   }
+  ]
+ }
+]

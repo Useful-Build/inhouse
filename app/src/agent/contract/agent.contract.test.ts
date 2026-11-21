@@ -11,7 +11,11 @@
 //  - a write that doesn't show at once (optimistic), or doesn't tell its listeners;
 //  - a failed write that stays applied, resolves, rejects with something other than an AgentError (or the wrong code),
 //    tells nobody, tells twice, tells with the wrong kind of notice, or still sends what it was taken back from;
-//  - a listener that fires after it unsubscribed.
+//  - a listener that fires after it unsubscribed;
+//  - (P2) a write to a record changed behind the client that applies anyway, or rejects without the record as it is now
+//    (`conflict` with `current`); a setting key or value outside the registry, or a role, photo or grant sent through a
+//    setting, that is taken; `me()` that doesn't parse or whose `can` disagrees with the role; a team left with no Admin;
+//    an email invited twice; two live support grants; a failed read that `retry` doesn't bring back.
 // The properties at the end cover the first and third at once (any sequence of writes and runs keeps everything parseable)
 // and the failure case at once (a write that fails never changes the snapshot).
 //
@@ -20,13 +24,20 @@ import { fc } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import {
-  AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, InstantSchema, LibraryFileSchema,
-  RoutineRunSchema, RunEventSchema, ToolSetupSchema, TraceSchema,
+  AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, ErrorReasonSchema, InstantSchema,
+  ActiveRunSchema, ChatListSchema, ChatPageSchema, ChatSummarySchema, LibraryFileSchema, MeSchema, MemberRecordSchema, MessageIdSchema, RoutineRunSchema, RunEventSchema, RunFrameSchema, SendTurnResultSchema, SettingRecordSchema, SupportGrantSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
-import type { AgentNotice, RunEvent, Scenario, SendPriority, Stage } from '../types'
-import { AgentError, photoKey, SCENARIOS, STAGES } from '../types'
+import type { AgentClient, AgentNotice, AgentState, RunEvent, RunFrame, Scenario, SendPriority, SendTurnResult, Stage } from '../types'
+import { AgentError, SCENARIOS, STAGES } from '../types'
 import type { ContractTarget, WriteMethod } from './targets'
 import { targets } from './targets'
+
+/** The server's access rows, as far as the Admin's `can` check reads them. */
+interface AccessRows {
+  accessMatrix: { method: string; pattern: string; class: string; allow: string[]; adminWrite?: boolean }[]
+  canRows: Record<string, { method: string; pattern: string; as?: string }>
+}
+const ACCESS_ROWS = '../../../server/access-matrix.ts'
 
 const numRuns = Number(import.meta.env.VITE_PROP_RUNS) || 100
 const seedText = import.meta.env.VITE_PROP_SEED
@@ -38,7 +49,7 @@ const parse = <S extends z.ZodType>(schema: S, value: unknown, where: string): z
   return r.data
 }
 
-const TERMINAL = ['run.finished', 'run.failed', 'run.stopped']
+const TERMINAL = ['run.finished']
 /** How far the clock moves between looks at a run, and the most demo time one event may take before the run is called stuck. */
 const STEP_MS = 1000
 const STUCK_MS = 10 * 60 * 1000
@@ -48,6 +59,21 @@ type Started = Extract<RunEvent, { type: 'run.started' }>
 
 describe.each(targets)('contract: $name', (t: ContractTarget) => {
   const fx = t.fixtures
+  /**
+   * A case that needs a client method runs only on a target that serves it (`serves`): the real target serves the P2 methods
+   * and nothing else until its phase, so what needs a run, an approval, a routine, the library or a stage's sample data
+   * belongs to the targets that have them.
+   */
+  const lacks = (...methods: (keyof AgentClient)[]) => !methods.every(m => t.serves(m))
+  /** `only('send')('title', fn)` and `only('send').each(rows)('title', fn)`: the test, or a skipped one by that name. */
+  const only = (...methods: (keyof AgentClient)[]) => (lacks(...methods) ? test.skip : test)
+  /** An example write the target serves: `pause` where it has it, else a text setting. `shown` says whether its change is on a snapshot. */
+  const probe = () => (t.serves('pause')
+    ? { method: 'pause' as const, run: () => t.client.pause(), undo: () => t.client.resume(), shown: (s: AgentState) => s.paused !== null }
+    : { method: 'setSetting' as const, run: () => t.client.setSetting(fx.settingKey, fx.settingValue), undo: () => t.client.setSetting(fx.settingKey, null), shown: (s: AgentState) => s.settings[fx.settingKey] === fx.settingValue })
+  const describeIf = (...methods: (keyof AgentClient)[]) => (lacks(...methods) ? describe.skip : describe)
+  /** Property runs: the env's count, capped by the target's own (a real target makes several HTTP round trips per run). */
+  const runParams: fc.Parameters<unknown> = { ...params, numRuns: Math.min(numRuns, t.propertyRuns ?? numRuns) }
   let notices: AgentNotice[]
   let unsubscribe: () => void
   /** Every `subscribe` listener a test adds: the mock is one shared instance, so each comes off after the test, pass or fail. */
@@ -87,49 +113,69 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     notices.length = 0
   }
 
-  /** One answer being read. It moves the target's clock on until the next event is there; it never counts loops. */
-  const startRun = (question: string, opts: { chatId?: string; replacesRun?: string } = {}) => {
-    const it = t.client.ask(question, { chatId: opts.chatId ?? chatId(), ...(opts.replacesRun ? { replacesRun: opts.replacesRun } : {}) })[Symbol.asyncIterator]()
+  let keySeq = 0
+  const nextKey = () => `contract-key-${++keySeq}`
+  /** The picker's model id a send names. */
+  const model = () => fx.model ?? 'sonnet'
+  /** One answer being read: a send, then the run's frames through `attach`. It moves the target's clock on until the next event is there; it never counts loops. */
+  const startRun = (question: string, opts: { chatId?: string; replacesRun?: string; priority?: SendPriority; key?: string; quote?: string } = {}) => {
     const events: RunEvent[] = []
+    const frames: RunFrame[] = []
+    let result: SendTurnResult | undefined
+    let failure: unknown
+    let off: () => void = () => undefined
+    const cid = opts.chatId ?? chatId()
+    void t.client.send(cid, {
+      clientTurnKey: opts.key ?? nextKey(), text: question, model: model(),
+      ...(opts.priority ? { priority: opts.priority } : {}), ...(opts.replacesRun ? { replacesRun: opts.replacesRun } : {}), ...(opts.quote ? { quote: opts.quote } : {}),
+    }).then(r => { result = r; off = t.client.attach(r.runId, f => frames.push(f)) }, (e: unknown) => { failure = e })
+    let read = 0
     let over = false
     return {
-      events,
+      events, frames, chatId: cid,
+      /** What the send answered. Only after the first event. */
+      get result(): SendTurnResult { if (!result) throw new Error('the send has not answered yet'); return result },
       /** The next event, or undefined once the run ended. */
       async next(): Promise<RunEvent | undefined> {
         if (over) return undefined
-        const pending = it.next()
-        let settled = false
-        pending.then(() => { settled = true }, () => { settled = true })
         for (let waited = 0; ; waited += STEP_MS) {
           await t.settle() // an event already on its way arrives before the clock moves
-          if (settled) break
+          if (failure !== undefined) throw failure
+          if (read < frames.length) break
           if (waited > STUCK_MS) throw new Error(`no event after ${STUCK_MS / 1000} s of demo time; events so far: ${events.map(e => e.type).join(', ')}`)
           await t.advance(STEP_MS)
         }
-        const r = await pending
-        if (r.done) { over = true; return undefined }
-        events.push(r.value)
-        // The terminal event is the end: nothing after it is read.
-        if (TERMINAL.includes(r.value.type)) { over = true; await it.return?.(undefined) }
-        return r.value
+        const f = frames[read++]
+        events.push(f.event)
+        // The run's end is the end: nothing after it is read.
+        if (f.event.type === 'run.finished') { over = true; off() }
+        return f.event
       },
-      /** Reads to the run's terminal event. */
+      /** Reads to the run's end. Every frame parses and the seqs run 1, 2, 3 with no gap. */
       async toEnd(): Promise<RunEvent[]> {
         while (await this.next()) { /* each event is collected by next() */ }
+        frames.forEach((f, i) => { parse(RunFrameSchema, f, `frame ${i}`); expect(f.seq, `frame ${i}'s seq`).toBe(i + 1) })
         return events
       },
     }
   }
-  const drain = (question: string, opts?: { chatId?: string; replacesRun?: string }) => startRun(question, opts).toEnd()
+  const drain = (question: string, opts?: { chatId?: string; replacesRun?: string; priority?: SendPriority; key?: string }) => startRun(question, opts).toEnd()
 
   const checkRun = (events: RunEvent[]) => {
     events.forEach((e, i) => parse(RunEventSchema, e, `event ${i} (${e.type})`))
     expect(events[0]?.type).toBe('run.started')
     const ends = events.filter(e => TERMINAL.includes(e.type))
-    expect(ends, 'exactly one terminal event').toHaveLength(1)
-    expect(events.at(-1)!.type, 'the run ends on its terminal event').toBe(ends[0].type)
+    expect(ends, 'exactly one run.finished').toHaveLength(1)
+    expect(events.at(-1)!.type, 'the run ends on run.finished').toBe('run.finished')
     const started = events[0] as Started
     expect((ends[0] as { runId: string }).runId).toBe(started.runId)
+    // Every turn that was asked ends once, and a turn that started was asked first.
+    const queued = events.flatMap(e => (e.type === 'turn.queued' ? [e.turnId] : []))
+    for (const id of queued) {
+      const ends = events.filter(e => (e.type === 'turn.finished' || e.type === 'turn.cancelled') && e.turnId === id)
+      expect(ends, `turn ${id} ends once`).toHaveLength(1)
+    }
+    for (const e of events) if (e.type === 'turn.started' || e.type === 'part' || e.type === 'step') expect(queued, `${e.type} of a turn nobody asked`).toContain(e.turnId)
     return events
   }
   /** The state and the data a run left behind still parse. */
@@ -176,7 +222,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
   // ---------- reads ----------
   describe('reads parse through their schema', () => {
-    test.each(stageAndScenario)('every read in %s, %s', async (stage, scenario) => {
+    only('send').each(stageAndScenario)('every read in %s, %s', async (stage, scenario) => {
       await t.seed({ stage, scenario })
       const c = t.client
       const data = parse(AgentDataSchema, c.read(), 'read()')
@@ -187,11 +233,11 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       const ids = [...data.problems.flatMap(p => (p.trace ? [p.trace] : [])), ...data.chat.chats.flatMap(ch => ch.turns.flatMap(turn => (turn.role === 'agent' ? [turn.trace] : [])))]
       if (scenario === 'Normal') expect(ids.length, 'the Normal scenario points at traces').toBeGreaterThan(0)
       for (const id of ids) {
-        const trace = c.getTrace(id)
+        const trace = await c.getTrace(id)
         expect(trace, `getTrace("${id}") is null`).not.toBeNull()
         parse(TraceSchema, trace, `getTrace("${id}")`)
       }
-      expect(c.getTrace(fx.unknownTraceId)).toBeNull()
+      expect(await c.getTrace(fx.unknownTraceId)).toBeNull()
       const all = c.allChatIds()
       all.forEach((id, i) => expect(id, `allChatIds()[${i}]`).toEqual(expect.any(String)))
       expect(all.length).toBeGreaterThanOrEqual(data.chat.chats.length)
@@ -227,7 +273,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       }
     })
 
-    test('a tool whose login failed reads as disconnected since an instant; with every login working, none does', async () => {
+    only('send')('a tool whose login failed reads as disconnected since an instant; with every login working, none does', async () => {
       await fresh('Act', 'Normal')
       expect(t.client.read().tools.connection).toEqual({})
       await fresh('Act', 'Tool disconnected')
@@ -237,7 +283,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       parse(InstantSchema, lost[0].since, 'tools.connection[].since')
     })
 
-    test('before the first tool is live the setup list names tools being connected; once tools read, it is empty', async () => {
+    only('send')('before the first tool is live the setup list names tools being connected; once tools read, it is empty', async () => {
       await fresh('Act', 'First day')
       const first = t.client.read().tools
       expect(first.connected).toEqual([])
@@ -252,16 +298,16 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
   })
 
   // ---------- run events ----------
-  describe('ask() streams events that parse', () => {
+  describeIf('send')('send() starts a run whose events parse', () => {
     test.each(STAGES)('every suggested question, in %s', async stage => {
       await fresh(stage)
       const questions = t.client.read().chat.suggestions
       expect(questions.length).toBeGreaterThan(0)
       for (const q of questions) {
         const events = checkRun(await drain(q))
-        expect(events.at(-1)!.type, q).toBe('run.finished')
         expect(events.some(e => e.type === 'step'), `${q} shows a step before it answers`).toBe(true)
         expect(events.some(e => e.type === 'part'), `${q} answers with a part`).toBe(true)
+        expect(events.some(e => e.type === 'turn.finished' && e.outcome === 'done'), `${q} ends its turn done`).toBe(true)
         checkWorld(`after "${q}"`)
       }
     })
@@ -272,23 +318,31 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(chips && chips.type === 'suggestions' && chips.questions).toEqual(t.client.read().chat.suggestions)
     })
 
-    test('a run opens its trace: the run id, and the trace on each part', async () => {
-      const events = checkRun(await drain(fx.questions.table))
-      const runId = (events[0] as Started).runId
-      parse(TraceSchema, t.client.getTrace(runId), `getTrace("${runId}")`)
+    test('the send answers with ids that follow the design, and the events use the same ones', async () => {
+      const run = startRun(fx.questions.table)
+      const events = checkRun(await run.toEnd())
+      const r = parse(SendTurnResultSchema, run.result, 'the send result')
+      expect(r.position).toBe('starting')
+      expect(r.messageId, 'the question is <turnId>.u').toBe(`${r.turnId}.u`)
+      expect(events[0]).toMatchObject({ type: 'run.started', runId: r.runId })
+      expect(events.find(e => e.type === 'turn.queued')).toMatchObject({ turnId: r.turnId, messageId: r.messageId, text: fx.questions.table })
       const parts = events.flatMap(e => (e.type === 'part' ? [e] : []))
       expect(parts.length).toBeGreaterThan(0)
-      for (const e of parts) parse(TraceSchema, t.client.getTrace(e.trace), `getTrace("${e.trace}")`)
+      parts.forEach((e, n) => {
+        parse(MessageIdSchema, e.messageId, 'part.messageId')
+        expect(e.messageId, 'agent parts are <turnId>.<n>').toBe(`${r.turnId}.${n}`)
+        expect(e.model, 'the part names the model that was asked').toBe(model())
+        parse(InstantSchema, e.at, 'part.at')
+      })
     })
 
-    test('a part may carry the model that answered and when; if it does they are a string and an instant', async () => {
-      const events = await drain(fx.questions.table)
-      const parts = events.flatMap(e => (e.type === 'part' ? [e] : []))
-      expect(parts.length).toBeGreaterThan(0)
-      for (const e of parts) {
-        if (e.model !== undefined) expect(typeof e.model).toBe('string')
-        if (e.at !== undefined) parse(InstantSchema, e.at, 'part.at')
-      }
+    test('a run opens its trace by run id, by turn id, and by the turn on each part', async () => {
+      const run = startRun(fx.questions.table)
+      const events = checkRun(await run.toEnd())
+      parse(TraceSchema, await t.client.getTrace(run.result.runId), `getTrace("${run.result.runId}")`)
+      parse(TraceSchema, await t.client.getTrace(run.result.turnId), `getTrace("${run.result.turnId}")`)
+      for (const e of events) if (e.type === 'part') parse(TraceSchema, await t.client.getTrace(e.turnId), `getTrace("${e.turnId}")`)
+      expect(await t.client.getTrace(fx.unknownTraceId), 'an id the agent never made').toBeNull()
     })
 
     test('a question with a table answers with a table part, in every stage', async () => {
@@ -299,19 +353,16 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       }
     })
 
-    test('a request that needs an approval: an approval part and approval.requested in Act, a refusal in Watch', async () => {
+    test('a request that needs an approval: an approval part in Act, a refusal in Watch', async () => {
       const act = checkRun(await drain(fx.questions.approval))
       const part = act.flatMap(e => (e.type === 'part' ? [e.part] : [])).find(p => p.type === 'approval')
       expect(part, 'an approval part').toBeDefined()
-      const requested = act.find(e => e.type === 'approval.requested')
-      expect(requested, 'approval.requested').toBeDefined()
-      expect(requested && requested.type === 'approval.requested' && requested.approvalId).toBe(part && part.type === 'approval' && part.problemId)
       expect(t.client.read().problems.some(p => p.id === (part && part.type === 'approval' ? part.problemId : ''))).toBe(true)
 
       await fresh('Watch')
       const watch = checkRun(await drain(fx.questions.approval))
       expect(watch.flatMap(e => (e.type === 'part' ? [e.part] : [])).some(p => p.type === 'notInThisStage'), 'notInThisStage in Watch').toBe(true)
-      expect(watch.some(e => e.type === 'approval.requested')).toBe(false)
+      expect(watch.flatMap(e => (e.type === 'part' ? [e.part] : [])).some(p => p.type === 'approval')).toBe(false)
     })
 
     test('a routine request makes a routine that is saved in state', async () => {
@@ -333,13 +384,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       checkWorld('after a skill request')
     })
 
-    test('a question with a disconnected tool ends in run.failed with an error part, and the failed run still opens its trace', async () => {
+    test('a question with a disconnected tool answers with an error part, and its turn still opens its trace', async () => {
       await fresh('Act', 'Tool disconnected')
-      const events = checkRun(await drain(fx.questions.disconnectedTool))
-      expect(events.at(-1)!.type).toBe('run.failed')
+      const run = startRun(fx.questions.disconnectedTool)
+      const events = checkRun(await run.toEnd())
       expect(events.some(e => e.type === 'part' && e.part.type === 'error')).toBe(true)
-      const runId = (events[0] as Started).runId
-      parse(TraceSchema, t.client.getTrace(runId), `getTrace("${runId}") of the failed run`)
+      parse(TraceSchema, await t.client.getTrace(run.result.turnId), `getTrace("${run.result.turnId}") of the turn`)
     })
 
     test.each(['First day', 'Loading'] as const)('%s answers that it has nothing to read yet', async scenario => {
@@ -348,82 +398,492 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(events.some(e => e.type === 'part' && e.part.type === 'text')).toBe(true)
     })
 
-    test.each(['now', 'next', 'later'] as const)('a message sent into a running answer with priority %s starts a turn with its own trace', async (priority: SendPriority) => {
+    test.each(['now', 'next', 'later'] as const)('a message sent into a live run with priority %s queues a turn of that run, with its own turn id', async (priority: SendPriority) => {
       const run = startRun(fx.questions.table)
-      const first = await run.next()
-      expect(first?.type).toBe('run.started')
-      const runId = (first as Started).runId
-      await t.client.send(runId, fx.questions.followUp, { priority })
+      expect((await run.next())?.type).toBe('run.started')
+      const follow = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model(), priority })
+      parse(SendTurnResultSchema, follow, 'the second send result')
+      expect(follow.runId, 'it joins the live run').toBe(run.result.runId)
+      expect(follow.position).toBe('queued')
+      expect(follow.turnId).not.toBe(run.result.turnId)
       const events = checkRun(await run.toEnd())
-      expect(events.some(e => e.type === 'turn.started' && e.text === fx.questions.followUp)).toBe(true)
-      // The new turn's trace id is the one on its first part, whatever the client calls it.
-      const turn = events.findIndex(e => e.type === 'turn.started' && e.text === fx.questions.followUp)
-      expect(turn, 'the follow-up opens a turn').toBeGreaterThanOrEqual(0)
-      const part = events.slice(turn + 1).find(e => e.type === 'part')
-      expect(part, 'the new turn answers with a part').toBeDefined()
-      const traceId = (part as Extract<RunEvent, { type: 'part' }>).trace
-      expect(traceId).not.toBe(runId)
-      parse(TraceSchema, t.client.getTrace(traceId), `getTrace("${traceId}")`)
+      const asked = events.findIndex(e => e.type === 'turn.queued' && e.turnId === follow.turnId)
+      expect(asked, 'the follow-up is queued').toBeGreaterThanOrEqual(0)
+      expect(events[asked]).toMatchObject({ text: fx.questions.followUp, priority })
+      const started = events.findIndex(e => e.type === 'turn.started' && e.turnId === follow.turnId)
+      expect(started, 'it starts after it was queued').toBeGreaterThan(asked)
+      const part = events.slice(started + 1).find(e => e.type === 'part' && e.turnId === follow.turnId)
+      expect(part, 'its turn answers with a part').toBeDefined()
+      expect(events.at(-1)).toMatchObject({ type: 'run.finished', turns: 2 })
       checkWorld('after a message sent into a run')
     })
 
-    test('a message sent after the run ended is refused with a conflict and a notice, and so is an interrupt', async () => {
-      const events = checkRun(await drain(fx.questions.table))
-      const runId = (events[0] as Started).runId
-      const sent = await errorOf(t.client.send(runId, fx.questions.tooLate))
-      expect(sent).toBeInstanceOf(AgentError)
-      expect(parse(AgentErrorCodeSchema, (sent as AgentError).code, 'send() error code')).toBe('conflict')
-      const interrupted = await errorOf(t.client.interrupt(runId))
+    test('a send after the run ended starts a run of its own', async () => {
+      const first = startRun(fx.questions.table)
+      await first.toEnd()
+      const second = startRun(fx.questions.followUp)
+      const events = checkRun(await second.toEnd())
+      expect(second.result.runId).not.toBe(first.result.runId)
+      expect(second.result.position).toBe('starting')
+      expect(events.some(e => e.type === 'part')).toBe(true)
+    })
+
+    test('the same clientTurnKey and text answers the same turn and asks once; the same key with other text is refused', async () => {
+      const key = nextKey()
+      const run = startRun(fx.questions.table, { key })
+      await run.next()
+      const again = await t.client.send(run.chatId, { clientTurnKey: key, text: fx.questions.table, model: model() })
+      expect(again, 'a retried send answers the original').toEqual(run.result)
+      const events = checkRun(await run.toEnd())
+      expect(events.filter(e => e.type === 'turn.queued'), 'one turn, however often it was sent').toHaveLength(1)
+      const reused = await errorOf(t.client.send(run.chatId, { clientTurnKey: key, text: 'Something else', model: model() }))
+      expect(reused).toBeInstanceOf(AgentError)
+      expect(parse(AgentErrorCodeSchema, (reused as AgentError).code, 'send() error code')).toBe('conflict')
+      expect((reused as AgentError).reason).toBe('key_reused')
+    })
+
+    test('interrupt on a live turn ends that turn as interrupted; the run ends once nothing waits', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      expect(await t.client.interrupt(run.result.turnId), 'interrupt() resolves to nothing').toBeUndefined()
+      const events = checkRun(await run.toEnd())
+      expect(events.find(e => e.type === 'turn.finished')).toMatchObject({ turnId: run.result.turnId, outcome: 'interrupted' })
+      expect(events.at(-1)!.type).toBe('run.finished')
+      expect(notices).toEqual([])
+    })
+
+    test('interrupt cuts a live turn short: the parts before the cut stay and none come after', async () => {
+      const whole = checkRun(await drain(fx.questions.table))
+      expect(whole.some(e => e.type === 'part'), 'left alone, the answer has parts').toBe(true)
+      const run = startRun(fx.questions.table)
+      await run.next()
+      expect((await run.next())?.type, 'the turn is queued').toBe('turn.queued')
+      expect((await run.next())?.type, 'the turn is under way').toBe('turn.started')
+      const cut = run.events.length
+      await t.client.interrupt(run.result.turnId)
+      const events = checkRun(await run.toEnd())
+      expect(events.slice(cut).filter(e => e.type === 'part'), 'no part after the cut').toEqual([])
+      expect(events.filter(e => e.type === 'part').length, 'the answer was cut short').toBeLessThan(whole.filter(e => e.type === 'part').length)
+    })
+
+    test('stop ends that turn only: the turn queued behind it still runs to its end', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      const follow = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() })
+      await t.client.stop(run.result.turnId)
+      const events = checkRun(await run.toEnd())
+      expect(events.find(e => e.type === 'turn.finished' && e.turnId === run.result.turnId)).toMatchObject({ outcome: 'stopped' })
+      expect(events.find(e => e.type === 'turn.finished' && e.turnId === follow.turnId), 'the queued turn carried on').toMatchObject({ outcome: 'done' })
+      expect(events.at(-1)).toMatchObject({ type: 'run.finished', turns: 2 })
+      checkWorld('after a stop')
+    })
+
+    test('stop and interrupt on a turn that is still waiting cancel it; on one that ended they are refused with conflict (turn_ended) and a notice', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      const waiting = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() })
+      await t.client.stop(waiting.turnId)
+      const events = checkRun(await run.toEnd())
+      expect(events.find(e => e.type === 'turn.cancelled' && e.turnId === waiting.turnId), 'the waiting turn was cancelled').toBeDefined()
+      expect(events.some(e => e.type === 'turn.started' && e.turnId === waiting.turnId), 'and never started').toBe(false)
+      const stopped = await errorOf(t.client.stop(run.result.turnId))
+      expect(stopped).toBeInstanceOf(AgentError)
+      expect(parse(AgentErrorCodeSchema, (stopped as AgentError).code, 'stop() error code')).toBe('conflict')
+      expect((stopped as AgentError).reason).toBe('turn_ended')
+      const interrupted = await errorOf(t.client.interrupt(run.result.turnId))
       expect(interrupted).toBeInstanceOf(AgentError)
-      expect((interrupted as AgentError).code).toBe('conflict')
+      expect((interrupted as AgentError).reason).toBe('turn_ended')
       expect(notices.filter(n => n.type === 'error' && n.code === 'conflict')).toHaveLength(2)
       expect(notices).toHaveLength(2)
     })
 
-    test('interrupt on a live run ends its turn; with nothing waiting the run ends', async () => {
-      const run = startRun(fx.questions.table)
-      const first = await run.next()
-      expect(await t.client.interrupt((first as Started).runId), 'interrupt() resolves to nothing').toBeUndefined()
-      const events = checkRun(await run.toEnd())
-      expect(TERMINAL).toContain(events.at(-1)!.type)
-      expect(notices).toEqual([])
+    test('replacesRun is a run id: a turn id, an empty string or anything else is refused with invalid', async () => {
+      const c = chatId()
+      const real = startRun(fx.questions.table)
+      await real.toEnd()
+      for (const replacesRun of [real.result.turnId, '', 'r_short', 'run-1']) {
+        const failure = await errorOf(t.client.send(c, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model(), replacesRun }))
+        expect(failure, `replacesRun "${replacesRun}"`).toBeInstanceOf(AgentError)
+        expect((failure as AgentError).code).toBe('invalid')
+      }
+      checkRun(await drain(fx.questions.followUp, { replacesRun: real.result.runId }))
     })
 
-    test('interrupt cuts a live run short mid-turn: it ends as stopped, with the parts before the cut and none after', async () => {
-      const whole = checkRun(await drain(fx.questions.table))
-      expect(whole.some(e => e.type === 'part'), 'left alone, the answer has parts').toBe(true)
-      const run = startRun(fx.questions.table)
-      const first = await run.next()
-      expect((await run.next())?.type, 'the turn is under way').toBe('step')
-      const cut = run.events.length
-      await t.client.interrupt((first as Started).runId)
-      const events = checkRun(await run.toEnd())
-      expect(events.at(-1)!.type, 'an interrupt with nothing waiting ends the run as stopped').toBe('run.stopped')
-      expect(events.slice(cut).filter(e => e.type === 'part'), 'no part after the cut').toEqual([])
-      expect(events.filter(e => e.type === 'part').length, 'the answer was cut short').toBeLessThan(whole.filter(e => e.type === 'part').length)
-      expect(notices).toEqual([])
+    test('the key is checked before the pause: a retried send answers its turn even while paused; a new one is refused', async () => {
+      const key = nextKey()
+      const run = startRun(fx.questions.table, { key })
+      await run.next()
+      await t.client.pause()
+      const again = await t.client.send(run.chatId, { clientTurnKey: key, text: fx.questions.table, model: model() })
+      expect(again, 'the retry answers the original, paused or not').toEqual(run.result)
+      const fresh = await errorOf(t.client.send(run.chatId, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() }))
+      expect((fresh as AgentError).reason).toBe('paused')
+      await t.client.resume()
+      await run.toEnd()
     })
 
-    test('stop ends the run with run.stopped', async () => {
+    test('turns queued in a run start by priority (now, next, later) and first come first served within one', async () => {
       const run = startRun(fx.questions.table)
-      const first = await run.next()
-      expect(first?.type).toBe('run.started')
-      t.client.stop((first as Started).runId)
+      await run.next()
+      const ask = (text: string, priority: SendPriority) => t.client.send(run.chatId, { clientTurnKey: nextKey(), text, model: model(), priority })
+      const later1 = await ask('later one', 'later')
+      const next1 = await ask('next one', 'next')
+      const later2 = await ask('later two', 'later')
+      const next2 = await ask('next two', 'next')
       const events = checkRun(await run.toEnd())
-      expect(events.at(-1)!.type).toBe('run.stopped')
-      checkWorld('after a stop')
+      const order = events.flatMap(e => (e.type === 'turn.started' ? [e.turnId] : []))
+      expect(order, 'the first turn, then next in order, then later in order').toEqual([run.result.turnId, next1.turnId, next2.turnId, later1.turnId, later2.turnId])
     })
 
-    test('asking in a chat the client never made fails loud', async () => {
-      const failure = await errorOf(startRun(fx.questions.table, { chatId: fx.unknownChatId }).next())
+    test('now interrupts only the turn that is live: the turns queued behind it still finish', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      const queued = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: 'queued one', model: model(), priority: 'next' })
+      const urgent = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: 'urgent', model: model(), priority: 'now' })
+      const events = checkRun(await run.toEnd())
+      const outcome = (turnId: string) => (events.find(e => e.type === 'turn.finished' && e.turnId === turnId) as { outcome: string } | undefined)?.outcome
+      expect(outcome(run.result.turnId), 'the live turn was interrupted').toBe('interrupted')
+      expect(outcome(urgent.turnId), 'the urgent turn was not').toBe('done')
+      expect(outcome(queued.turnId), 'nor the one queued before it').toBe('done')
+      expect(events.flatMap(e => (e.type === 'turn.started' ? [e.turnId] : []))).toEqual([run.result.turnId, urgent.turnId, queued.turnId])
+    })
+
+    test('ten messages can wait in a chat and the eleventh is refused with rate_limited (queue_full)', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      for (let i = 0; i < 10; i++) await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: `waiting ${i}`, model: model(), priority: 'later' })
+      const refused = await errorOf(t.client.send(run.chatId, { clientTurnKey: nextKey(), text: 'one too many', model: model(), priority: 'later' }))
+      expect(refused).toBeInstanceOf(AgentError)
+      expect((refused as AgentError).code).toBe('rate_limited')
+      expect((refused as AgentError).reason).toBe('queue_full')
+      await run.toEnd()
+    })
+
+    test('attach to a run nobody has is refused: onRefused hears not_found and no frame comes', async () => {
+      const refused: string[] = []
+      const frames: number[] = []
+      const off = t.client.attach('r_Zzzzzzzzzzzzzzzzzzzzzz', f => frames.push(f.seq), 0, code => refused.push(code))
+      off()
+      await t.settle()
+      expect(refused).toEqual(['not_found'])
+      expect(frames).toEqual([])
+    })
+
+    test('a turn that never started (cancelled while waiting) keeps its question in the history', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      const waiting = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: 'never asked', model: model(), priority: 'later' })
+      await t.client.stop(waiting.turnId)
+      await run.toEnd()
+      const page = await t.client.getChat(run.chatId)
+      expect(page.messages.find(m => m.id === waiting.messageId), 'the question is stored').toMatchObject({ role: 'user', text: 'never asked' })
+    })
+
+    test('sending into a chat the client never made fails loud', async () => {
+      const failure = await errorOf(t.client.send(fx.unknownChatId, { clientTurnKey: nextKey(), text: fx.questions.table, model: model() }))
       expect(failure).toBeInstanceOf(AgentError)
-      expect(parse(AgentErrorCodeSchema, (failure as AgentError).code, 'ask() error code')).toBe('not_found')
+      expect(parse(AgentErrorCodeSchema, (failure as AgentError).code, 'send() error code')).toBe('not_found')
+    })
+
+    test('a send needs a valid key, a model it knows and some text', async () => {
+      const c = chatId()
+      for (const bad of [{ clientTurnKey: 'short', text: 'x', model: model() }, { clientTurnKey: nextKey(), text: '   ', model: model() }, { clientTurnKey: nextKey(), text: 'x', model: 'no-such-model' }]) {
+        const failure = await errorOf(t.client.send(c, bad))
+        expect(failure).toBeInstanceOf(AgentError)
+        expect((failure as AgentError).code).toBe('invalid')
+      }
+    })
+
+    test('activeRuns lists a live run, and not one that ended', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      const live = (await t.client.activeRuns()).map(r => parse(ActiveRunSchema, r, 'activeRuns()'))
+      expect(live.find(r => r.runId === run.result.runId)).toMatchObject({ chatId: run.chatId, live: true })
+      await run.toEnd()
+      expect((await t.client.activeRuns()).some(r => r.runId === run.result.runId)).toBe(false)
+    })
+
+    test('attach replays from the seq it is given, once each and in order, and detach stops it', async () => {
+      const run = startRun(fx.questions.table)
+      const all = checkRun(await run.toEnd())
+      const runId = run.result.runId
+      const tail: number[] = []
+      const off = t.client.attach(runId, f => tail.push(f.seq), 2)
+      off()
+      expect(tail, 'the frames after seq 2 only').toEqual(Array.from({ length: all.length - 2 }, (_, i) => i + 3))
+      // A live run: attach in the middle, then the rest arrives by itself.
+      const live = startRun(fx.questions.table)
+      await live.next()
+      const seen: number[] = []
+      const stop = t.client.attach(live.result.runId, f => seen.push(f.seq), 1)
+      await t.settle()
+      const first = seen.length
+      await live.toEnd()
+      expect(seen[0], 'it starts after seq 1').toBe(2)
+      expect(seen.every((s, i) => i === 0 || s === seen[i - 1] + 1), 'in order with no gap or repeat').toBe(true)
+      expect(seen.length, 'the rest arrived').toBeGreaterThan(first)
+      stop()
+      const before = seen.length
+      await drain(fx.questions.followUp, { chatId: live.chatId })
+      expect(seen.length, 'a detached listener hears nothing more').toBe(before)
+    })
+
+    test('the link is live on a target with no socket, and onLink tells nobody', () => {
+      expect(t.client.link()).toBe('live')
+      const off = t.client.onLink(() => { throw new Error('nothing changed') })
+      off()
+    })
+
+    describe.runIf(t.serves('pause'))('pause and the spending cap', () => {
+      test('a paused agent refuses a send with forbidden (paused); resume lets it through', async () => {
+        await t.client.pause()
+        const refused = await errorOf(t.client.send(chatId(), { clientTurnKey: nextKey(), text: fx.questions.table, model: model() }))
+        expect(refused).toBeInstanceOf(AgentError)
+        expect((refused as AgentError).code).toBe('forbidden')
+        expect((refused as AgentError).reason).toBe('paused')
+        await t.client.resume()
+        checkRun(await drain(fx.questions.table))
+      })
+
+      test('pause ends the live turn as stopped, cancels what waits (paused) and says so in a notice event', async () => {
+        const run = startRun(fx.questions.table)
+        await run.next()
+        const waiting = await t.client.send(run.chatId, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() })
+        await t.client.pause()
+        const events = checkRun(await run.toEnd())
+        expect(events.find(e => e.type === 'turn.finished' && e.turnId === run.result.turnId)).toMatchObject({ outcome: 'stopped' })
+        expect(events.find(e => e.type === 'turn.cancelled' && e.turnId === waiting.turnId)).toMatchObject({ why: 'paused' })
+        expect(events.some(e => e.type === 'notice' && e.code === 'paused')).toBe(true)
+        await t.client.resume()
+      })
+    })
+
+    describe.runIf(!!t.scriptNextTurn)('turn outcomes the spending rules and the engine decide', () => {
+      const script = (kind: Parameters<NonNullable<ContractTarget['scriptNextTurn']>>[0]) => t.scriptNextTurn!(kind)
+      const finished = (events: RunEvent[]) => events.find(e => e.type === 'turn.finished') as Extract<RunEvent, { type: 'turn.finished' }>
+
+      test.each([['turnBudget', 'turn_budget'], ['maxTurns', 'max_turns'], ['crash', 'session_crashed']] as const)('%s ends the turn failed as %s and the run still finishes', async (kind, reason) => {
+        await script(kind)
+        const events = checkRun(await drain(fx.questions.table))
+        expect(finished(events)).toMatchObject({ outcome: 'failed', reason })
+      })
+
+      test('cap_reached fails the turn with its own notice event, and the next send after the cap clears works', async () => {
+        await script('capReached')
+        const events = checkRun(await drain(fx.questions.table))
+        expect(events.some(e => e.type === 'notice' && e.code === 'cap_reached')).toBe(true)
+        expect(finished(events)).toMatchObject({ outcome: 'failed', reason: 'cap_reached' })
+        checkRun(await drain(fx.questions.table))
+      })
+
+      test('budget_busy is waiting, not failed: a notice, then the turn starts', async () => {
+        await script('budgetBusyThenStart')
+        const events = checkRun(await drain(fx.questions.table))
+        const notice = events.findIndex(e => e.type === 'notice' && e.code === 'budget_busy')
+        const started = events.findIndex(e => e.type === 'turn.started')
+        expect(notice, 'the notice came first').toBeGreaterThanOrEqual(0)
+        expect(started, 'then the turn started').toBeGreaterThan(notice)
+        expect(finished(events)).toMatchObject({ outcome: 'done' })
+      })
+
+      test('budget_busy that never clears fails the turn with budget_busy', async () => {
+        await script('budgetBusyThenFail')
+        const events = checkRun(await drain(fx.questions.table))
+        expect(events.some(e => e.type === 'turn.started')).toBe(false)
+        expect(finished(events)).toMatchObject({ outcome: 'failed', reason: 'budget_busy' })
+      })
+
+      test('a turn that fails before it starts keeps its question in the history', async () => {
+        await script('capReached')
+        const run = startRun(fx.questions.table)
+        await run.toEnd()
+        const page = await t.client.getChat(run.chatId)
+        expect(page.messages.find(m => m.id === run.result.messageId)).toMatchObject({ role: 'user', text: fx.questions.table })
+      })
+
+      test('a paused agent says paused even when the chat is also damaged (the pause is checked first)', async () => {
+        const c = chatId()
+        await script('sessionDamaged')
+        await drain(fx.questions.table, { chatId: c })
+        await t.client.pause()
+        const refused = await errorOf(t.client.send(c, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() }))
+        expect((refused as AgentError).reason).toBe('paused')
+        await t.client.resume()
+        const damaged = await errorOf(t.client.send(c, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() }))
+        expect((damaged as AgentError).reason).toBe('session_damaged')
+      })
+
+      test('a damaged session refuses sends (conflict, session_damaged) until resetSession; the history stays', async () => {
+        const c = chatId()
+        await script('sessionDamaged')
+        const events = checkRun(await drain(fx.questions.table, { chatId: c }))
+        expect(events.some(e => e.type === 'notice' && e.code === 'session_damaged')).toBe(true)
+        const refused = await errorOf(t.client.send(c, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() }))
+        expect(refused).toBeInstanceOf(AgentError)
+        expect((refused as AgentError).code).toBe('conflict')
+        expect((refused as AgentError).reason).toBe('session_damaged')
+        const before = (await t.client.getChat(c)).messages.length
+        await t.client.resetSession(c)
+        expect((await t.client.getChat(c)).messages.length, 'the history stays').toBe(before)
+        checkRun(await drain(fx.questions.followUp, { chatId: c }))
+      })
+    })
+  })
+
+  // ---------- chats (C4) ----------
+  describeIf('listChats', 'getChat')('the chat list and a chat\'s history (C4)', () => {
+    const made = async (n: number) => {
+      const ids: string[] = []
+      for (let i = 0; i < n; i++) {
+        const id = `${fx.newChat.id}-${i}`
+        await t.client.createChat({ id, title: `${fx.newChat.title} ${i}` })
+        ids.push(id)
+        await t.advance(1000)
+      }
+      return ids
+    }
+
+    test('listChats pages newest first with a cursor, and every page parses', async () => {
+      const ids = await made(3)
+      const first = parse(ChatListSchema, await t.client.listChats({ limit: 2 }), 'listChats()')
+      expect(first.items).toHaveLength(2)
+      expect(first.nextCursor, 'there is a next page').not.toBeNull()
+      const rest = parse(ChatListSchema, await t.client.listChats({ limit: 100, cursor: first.nextCursor! }), 'listChats(cursor)')
+      const all = [...first.items, ...rest.items]
+      expect(new Set(all.map(c => c.id)).size, 'no chat twice').toBe(all.length)
+      expect(all.slice(0, 3).map(c => c.id), 'newest first').toEqual([...ids].reverse())
+      for (let i = 1; i < all.length; i++) expect(all[i - 1].at.ms, 'by last activity, newest first').toBeGreaterThanOrEqual(all[i].at.ms)
+      expect(all.every(c => !c.deleted)).toBe(true)
+    })
+
+    test('a page size outside 1 to 100 and a cursor nobody made are refused with invalid', async () => {
+      for (const opts of [{ limit: 0 }, { limit: 101 }, { cursor: '!!' }]) {
+        const failure = await errorOf(t.client.listChats(opts))
+        expect(failure).toBeInstanceOf(AgentError)
+        expect((failure as AgentError).code).toBe('invalid')
+      }
+    })
+
+    test('deleted chats leave the list and come back with restore; `deleted` lists them', async () => {
+      const [a, b] = await made(2)
+      await t.client.deleteChats([a])
+      const live = (await t.client.listChats()).items.map(c => c.id)
+      expect(live).not.toContain(a)
+      expect(live).toContain(b)
+      const gone = parse(ChatListSchema, await t.client.listChats({ deleted: true }), 'listChats(deleted)')
+      expect(gone.items.map(c => c.id)).toEqual([a])
+      expect(gone.items[0].deleted).toBe(true)
+      await t.client.restoreChats([a])
+      expect((await t.client.listChats()).items.map(c => c.id)).toContain(a)
+    })
+
+    test('delete and restore take 1 to 50 chats: none or more than 50 are refused with invalid, an unknown id with not_found and nothing changes', async () => {
+      const [a] = await made(1)
+      for (const ids of [[], Array.from({ length: 51 }, (_, i) => `x${i}`)]) {
+        const failure = await errorOf(t.client.deleteChats(ids))
+        expect(failure).toBeInstanceOf(AgentError)
+        expect((failure as AgentError).code).toBe('invalid')
+        expect(await errorOf(t.client.restoreChats(ids))).toBeInstanceOf(AgentError)
+      }
+      const unknown = await errorOf(t.client.deleteChats([a, fx.unknownChatId]))
+      expect(unknown).toBeInstanceOf(AgentError)
+      expect((unknown as AgentError).code).toBe('not_found')
+      expect((await t.client.listChats()).items.map(c => c.id), 'nothing was deleted').toContain(a)
+    })
+
+    test('a chat that was deleted refuses a send and its live turn is stopped', async () => {
+      const run = startRun(fx.questions.table)
+      await run.next()
+      await t.client.deleteChats([run.chatId])
+      const events = checkRun(await run.toEnd())
+      expect(events.find(e => e.type === 'turn.finished' && e.turnId === run.result.turnId)).toMatchObject({ outcome: 'stopped' })
+      const refused = await errorOf(t.client.send(run.chatId, { clientTurnKey: nextKey(), text: fx.questions.followUp, model: model() }))
+      expect(refused).toBeInstanceOf(AgentError)
+      expect((refused as AgentError).code).toBe('not_found')
+      await t.client.restoreChats([run.chatId])
+    })
+
+    test('rename and pin carry the chat\'s rev: a stale one rejects with conflict and the chat as it is now', async () => {
+      const [id] = await made(1)
+      const before = (await t.client.listChats()).items.find(c => c.id === id)!
+      await t.client.renameChat(id, 'First name')
+      const renamed = (await t.client.listChats()).items.find(c => c.id === id)!
+      expect(renamed).toMatchObject({ title: 'First name', customTitle: 'First name' })
+      expect(renamed.rev, 'a write moves the rev').toBeGreaterThan(before.rev)
+      await t.writeElsewhere({ kind: 'chat', id })
+      const stale = await errorOf(t.client.pinChat(id, true))
+      expect(stale).toBeInstanceOf(AgentError)
+      expect((stale as AgentError).code).toBe('conflict')
+      const current = parse(ChatSummarySchema, (stale as AgentError).current, 'current')
+      expect(current.id).toBe(id)
+      expect(current.pinned, 'the stale pin never applied').toBe(false)
+      expect(current.rev).toBeGreaterThan(renamed.rev)
+    })
+
+    test('a stale rename never applies: it rejects with conflict and the chat as it is now', async () => {
+      const [id] = await made(1)
+      await t.client.listChats()
+      await t.writeElsewhere({ kind: 'chat', id })
+      const stale = await errorOf(t.client.renameChat(id, 'Mine'))
+      expect(stale).toBeInstanceOf(AgentError)
+      expect((stale as AgentError).code).toBe('conflict')
+      expect(parse(ChatSummarySchema, (stale as AgentError).current, 'current').customTitle, 'it never applied').toBeNull()
+    })
+
+    test('getChat: the chat, its messages newest first by pos with stable ids, and the live run to attach to', async () => {
+      const [id] = await made(1)
+      const run = startRun(fx.questions.table, { chatId: id })
+      await run.next()
+      const mid = parse(ChatPageSchema, await t.client.getChat(id), 'getChat() during a run')
+      expect(mid.runs.map(r => r.runId), 'the live run is there to attach to').toEqual([run.result.runId])
+      expect(mid.chat.running).toBe(true)
+      await run.toEnd()
+      const page = parse(ChatPageSchema, await t.client.getChat(id), 'getChat()')
+      expect(page.runs).toEqual([])
+      expect(page.chat.running).toBe(false)
+      const pos = page.messages.map(m => m.pos)
+      expect(pos, 'newest first').toEqual([...pos].sort((x, y) => y - x))
+      const user = page.messages.find(m => m.role === 'user')!
+      expect(user.id, 'the question has the id the send named').toBe(run.result.messageId)
+      expect(page.messages.filter(m => m.role === 'agent').map(m => m.id).sort(), 'agent parts have the ids the events had')
+        .toEqual(run.events.flatMap(e => (e.type === 'part' ? [e.messageId] : [])).sort())
+      expect(page.messages.every(m => m.turnId === run.result.turnId && m.runId === run.result.runId)).toBe(true)
+    })
+
+    test('getChat of a chat the person does not have is not_found, and a cursor nobody made is invalid', async () => {
+      const gone = await errorOf(t.client.getChat(fx.unknownChatId))
+      expect(gone).toBeInstanceOf(AgentError)
+      expect((gone as AgentError).code).toBe('not_found')
+      const bad = await errorOf(t.client.getChat(chatId(), '!!'))
+      expect((bad as AgentError).code).toBe('invalid')
+    })
+
+    test('the history pages: every message once, newest first, across pages', async () => {
+      const [id] = await made(1)
+      for (let i = 0; i < 26; i++) await drain(`Question ${i}`, { chatId: id })
+      let cursor: string | undefined
+      const ids: string[] = []
+      let pages = 0
+      do {
+        const page = parse(ChatPageSchema, await t.client.getChat(id, cursor), 'getChat(cursor)')
+        ids.push(...page.messages.map(m => m.id))
+        cursor = page.nextCursor ?? undefined
+        pages++
+      } while (cursor)
+      expect(pages, 'more than one page').toBeGreaterThan(1)
+      expect(new Set(ids).size, 'no message twice').toBe(ids.length)
+      expect(ids.length).toBeGreaterThanOrEqual(52)
+    })
+
+    test('resetSession of a chat that is not there is not_found', async () => {
+      const failure = await errorOf(t.client.resetSession(fx.unknownChatId))
+      expect((failure as AgentError).code).toBe('not_found')
     })
   })
 
   // ---------- writes ----------
   describe('write results parse and change state', () => {
-    test('approve a held draft: the result parses, the hold ends in a sent notice', async () => {
+    only('approve')('approve a held draft: the result parses, the hold ends in a sent notice', async () => {
       const id = heldProblem()
       const result = parse(ApproveResultSchema, await t.client.approve(id), 'approve()')
       expect(result.held).toBe(true)
@@ -435,14 +895,14 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       checkWorld('after a hold ended')
     })
 
-    test('approve twice returns the first record, parsed, and still holds', async () => {
+    only('approve')('approve twice returns the first record, parsed, and still holds', async () => {
       const id = heldProblem()
       const first = await t.client.approve(id)
       const second = parse(ApproveResultSchema, await t.client.approve(id), 'the second approve()')
       expect(second).toEqual({ ...first, held: true })
     })
 
-    test('undo inside the hold stops the send; undo after it went out rejects with conflict and a notice', async () => {
+    only('approve', 'undo')('undo inside the hold stops the send; undo after it went out rejects with conflict and a notice', async () => {
       const id = heldProblem()
       await t.client.approve(id)
       await t.client.undo(id)
@@ -459,20 +919,20 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot(), 'a refused undo changes nothing').toBe(snap)
     })
 
-    test('a reversible draft finishes at once, and its result parses', async () => {
+    only('approve')('a reversible draft finishes at once, and its result parses', async () => {
       const id = reversibleProblem()
       expect(id, 'the Act scenario has a reversible draft').toBeDefined()
       const result = parse(ApproveResultSchema, await t.client.approve(id!), 'approve() of a reversible draft')
       expect(result.held).toBe(false)
     })
 
-    test('edit a draft', async () => {
+    only('approve', 'editDraft')('edit a draft', async () => {
       const id = heldProblem()
       await t.client.editDraft(id, 'New wording')
       expect(t.client.getSnapshot().edits[id]).toBe('New wording')
     })
 
-    test('run a routine now: the result parses and heads the list of runs', async () => {
+    only('runRoutine')('run a routine now: the result parses and heads the list of runs', async () => {
       await fresh('Run')
       const routines = t.client.read().routines
       expect(routines.length).toBeGreaterThan(0)
@@ -483,7 +943,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       }
     })
 
-    test('delete a routine and restore it', async () => {
+    only('deleteRoutine')('delete a routine and restore it', async () => {
       const id = firstRoutine()
       await t.client.deleteRoutine(id)
       expect(t.client.getSnapshot().routinesDeleted[id]).toBe(true)
@@ -491,7 +951,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().routinesDeleted[id]).toBeUndefined()
     })
 
-    test.each(['snoozed', 'dismissed', 'declined'] as const)('set a problem aside as %s, then bring it back', async reason => {
+    only('approve', 'setAside').each(['snoozed', 'dismissed', 'declined'] as const)('set a problem aside as %s, then bring it back', async reason => {
       const id = heldProblem()
       await t.client.setAside(id, reason)
       expect(t.client.getSnapshot().setAside[id]).toMatchObject({ reason })
@@ -499,14 +959,14 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().setAside[id]).toBeUndefined()
     })
 
-    test('approving a problem that was set aside clears it', async () => {
+    only('approve', 'setAside')('approving a problem that was set aside clears it', async () => {
       const id = heldProblem()
       await t.client.setAside(id, 'snoozed')
       await t.client.approve(id)
       expect(t.client.getSnapshot().setAside[id]).toBeUndefined()
     })
 
-    test('pause resolves to when, resume clears it', async () => {
+    only('pause')('pause resolves to when, resume clears it', async () => {
       const at = parse(InstantSchema, await t.client.pause(), 'pause()')
       expect(parse(AgentStateSchema, t.client.getSnapshot(), 'getSnapshot()').paused).toEqual(at)
       expect(Date.parse(at.iso), 'iso and ms name one moment').toBe(at.ms)
@@ -514,7 +974,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().paused).toBeNull()
     })
 
-    test('undo what the agent handled, then redo it', async () => {
+    only('undoHandled')('undo what the agent handled, then redo it', async () => {
       await fresh('Run')
       const id = heldProblem()
       const toast = parse(z.string(), await t.client.undoHandled(id), 'undoHandled()')
@@ -524,15 +984,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().undone[id]).toBeUndefined()
     })
 
-    test('send a team request', async () => {
+    only('sendTeamRequest')('send a team request', async () => {
       await t.client.sendTeamRequest(fx.teamRequest)
       expect(t.client.getSnapshot().teamRequests[0]).toEqual(fx.teamRequest)
     })
 
-    test('toggles, requests, pauses, memory, settings and photos', async () => {
+    only('requestTool', 'requestSkill', 'setToolPaused', 'forgetMemory')('requests, tool pauses and memory', async () => {
       const c = t.client
-      await c.setToggle(fx.toggleKey, false)
-      expect(c.getSnapshot().toggles[fx.toggleKey]).toBe(false)
       await c.requestTool(fx.toolKey, true)
       expect(c.getSnapshot().requestedTools[fx.toolKey]).toBe(true)
       await c.requestTool(fx.toolKey, false)
@@ -547,18 +1005,27 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(c.getSnapshot().forgot[fx.memoryKey]).toBe(true)
       await c.forgetMemory(fx.memoryKey, false)
       expect(c.getSnapshot().forgot[fx.memoryKey]).toBeUndefined()
+      checkWorld('after the plain writes')
+    })
+
+    only('setToggle', 'setSetting', 'setPhoto')('toggles, settings and photos', async () => {
+      const c = t.client
+      await c.setToggle(fx.toggleKey, false)
+      expect(c.getSnapshot().toggles[fx.toggleKey]).toBe(false)
       await c.setSetting(fx.settingKey, fx.settingValue)
       expect(c.getSnapshot().settings[fx.settingKey]).toBe(fx.settingValue)
       await c.setSetting(fx.settingKey, null)
       expect(c.getSnapshot().settings[fx.settingKey]).toBeUndefined()
+      const photoOf = () => c.read().people.members.find(m => m.id === fx.personId)?.photo
       await c.setPhoto(fx.personId, fx.photoDataUrl)
-      expect(c.getSnapshot().settings[photoKey(fx.personId)]).toBe(fx.photoDataUrl)
+      expect(photoOf(), 'the photo reads as the target says it does once set').toEqual(fx.photoAfterSet instanceof RegExp ? expect.stringMatching(fx.photoAfterSet) : fx.photoAfterSet)
       await c.setPhoto(fx.personId, null)
-      expect(c.getSnapshot().settings[photoKey(fx.personId)], 'a removed photo no longer reads as the photo').not.toBe(fx.photoDataUrl)
+      expect(photoOf(), 'a removed photo no longer reads as the photo').toBeNull()
+      expect(Object.keys(c.getSnapshot().settings).filter(k => k.startsWith('photo:')), 'a photo is not a setting').toEqual([])
       checkWorld('after the plain writes')
     })
 
-    test('mark notifications read: only the new ones change state', async () => {
+    only('markNoticesRead')('mark notifications read: only the new ones change state', async () => {
       const ids = t.client.listNotifications().map(n => n.id)
       expect(ids.length).toBeGreaterThan(0)
       await t.client.markNoticesRead(ids)
@@ -569,7 +1036,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.listNotifications().every(n => !n.unread)).toBe(true)
     })
 
-    test('delete library files and restore them', async () => {
+    only('deleteFiles')('delete library files and restore them', async () => {
       const files = t.client.listFiles()
       expect(files.length).toBeGreaterThan(1)
       const ids = files.slice(0, 2).map(f => f.id)
@@ -580,13 +1047,13 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.listFiles().map(f => f.id)).toEqual(files.map(f => f.id))
     })
 
-    test('createChat changes the snapshot (a write changes identity, so React sees the new chat)', async () => {
+    only('createChat')('createChat changes the snapshot (a write changes identity, so React sees the new chat)', async () => {
       const before = t.client.getSnapshot()
       await t.client.createChat(fx.newChat)
       expect(t.client.getSnapshot()).not.toBe(before)
     })
 
-    test('chats: create, rename, pin, delete, restore', async () => {
+    only('createChat')('chats: create, rename, pin, delete, restore', async () => {
       const c = t.client
       const { id, title } = fx.newChat
       await c.createChat({ id, title })
@@ -610,7 +1077,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices[0].type).toBe('error')
     })
 
-    test('a question asked in a chat made with createChat is answered', async () => {
+    only('send')('a question asked in a chat made with createChat is answered', async () => {
       await t.client.createChat(fx.newChat)
       checkRun(await drain(fx.questions.table, { chatId: fx.newChat.id }))
     })
@@ -628,17 +1095,18 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     test('a write gives a new state object and leaves read() alone', async () => {
+      const w = probe()
       const before = t.client.getSnapshot()
       const data = t.client.read()
-      await t.client.pause()
+      await w.run()
       expect(t.client.getSnapshot()).not.toBe(before)
-      expect(before.paused).toBeNull()
+      expect(w.shown(before)).toBe(false)
       expect(t.client.read(), 'a write does not change the scenario data').toBe(data)
       const after = t.client.getSnapshot()
       expect(t.client.getSnapshot(), 'reading changes nothing').toBe(after)
     })
 
-    test('files are a new array after a delete, notifications after a read mark, data after a scenario change', async () => {
+    only('deleteFiles', 'markNoticesRead')('files are a new array after a delete, notifications after a read mark, data after a scenario change', async () => {
       const files = t.client.listFiles()
       await t.client.deleteFiles([firstFile()])
       expect(t.client.listFiles()).not.toBe(files)
@@ -654,21 +1122,25 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test('subscribe tells listeners of every change, and stops after unsubscribe', async () => {
       // `seed` resolves only once the client shows the new world, so a listener has heard it by the time it returns.
+      const w = probe()
       const calls = vi.fn(() => t.client.getSnapshot())
       const off = subscribe(calls)
       const before = t.client.getSnapshot()
-      await t.client.pause()
+      await w.run()
       expect(calls.mock.calls.length, 'a write tells the listener').toBeGreaterThanOrEqual(1)
       expect(calls.mock.results.at(-1)!.value, 'what the listener saw is the new state').toBe(t.client.getSnapshot())
       expect(t.client.getSnapshot()).not.toBe(before)
       const afterWrite = calls.mock.calls.length
-      const data = t.client.read()
-      await t.seed({ stage: 'Act', scenario: 'Cap reached' })
-      expect(calls.mock.calls.length, 'a scenario change tells the listener').toBeGreaterThan(afterWrite)
-      expect(t.client.read()).not.toBe(data)
+      // A scenario change is the demo's (a target with no scenarios has no data to change).
+      if (t.serves('send')) {
+        const data = t.client.read()
+        await t.seed({ stage: 'Act', scenario: 'Cap reached' })
+        expect(calls.mock.calls.length, 'a scenario change tells the listener').toBeGreaterThan(afterWrite)
+        expect(t.client.read()).not.toBe(data)
+      }
       off()
       const heard = calls.mock.calls.length
-      await t.client.resume()
+      await w.undo()
       expect(calls.mock.calls.length, 'nothing after unsubscribe').toBe(heard)
     })
   })
@@ -687,14 +1159,16 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       saves?: boolean
     }
     const noop = async () => undefined
+    const endLiveGrant = async (c: ContractTarget['client']) => { const g = c.read().people.supportGrant; if (g?.live) await c.endSupportGrant(g.id) }
+    const ensureLiveGrant = async (c: ContractTarget['client']) => { if (!c.read().people.supportGrant?.live) await c.grantSupport(4) }
     let deletedFile = ''
-    const cases: WriteCase[] = [
+    const allCases: WriteCase[] = [
       { label: 'approve', method: 'approve', run: c => c.approve(heldProblem()) },
       { label: 'undo', method: 'undo', prepare: c => c.approve(heldProblem()), run: c => c.undo(heldProblem()) },
       { label: 'editDraft', method: 'editDraft', run: c => c.editDraft(heldProblem(), 'x') },
       { label: 'undoHandled', method: 'undoHandled', run: c => c.undoHandled(heldProblem()) },
       { label: 'redoHandled', method: 'redoHandled', prepare: c => c.undoHandled(heldProblem()), run: c => c.redoHandled(heldProblem()) },
-      { label: 'createChat', method: 'createChat', run: c => c.createChat(fx.newChat), observe: c => c.allChatIds(), saves: false },
+      { label: 'createChat', method: 'createChat', run: c => c.createChat(fx.newChat), observe: c => c.allChatIds(), saves: true },
       { label: 'pause', method: 'pause', run: c => c.pause() },
       { label: 'resume', method: 'resume', prepare: c => c.pause(), run: c => c.resume() },
       { label: 'setToggle', method: 'setToggle', run: c => c.setToggle(fx.toggleKey, false) },
@@ -703,7 +1177,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       { label: 'setToolPaused', method: 'setToolPaused', run: c => c.setToolPaused(fx.toolKey, true) },
       { label: 'forgetMemory', method: 'forgetMemory', run: c => c.forgetMemory(fx.memoryKey, true) },
       { label: 'setSetting', method: 'setSetting', run: c => c.setSetting(fx.settingKey, fx.settingValue) },
-      { label: 'setPhoto', method: 'setPhoto', run: c => c.setPhoto(fx.personId, fx.photoDataUrl) },
+      { label: 'setPhoto', method: 'setPhoto', run: c => c.setPhoto(fx.personId, fx.photoDataUrl), observe: c => c.read().people.members },
+      { label: 'inviteMember', method: 'inviteMember', run: c => c.inviteMember(fx.invite), observe: c => c.read().people.members },
+      { label: 'setMemberRole', method: 'setMemberRole', run: c => c.setMemberRole(fx.otherMemberId, 'admin'), observe: c => c.read().people.members },
+      { label: 'removeMember', method: 'removeMember', run: c => c.removeMember(fx.otherMemberId), observe: c => c.read().people.members },
+      { label: 'grantSupport', method: 'grantSupport', prepare: endLiveGrant, run: c => c.grantSupport(4), observe: c => c.read().people.supportGrant },
+      { label: 'endSupportGrant', method: 'endSupportGrant', prepare: ensureLiveGrant, run: c => c.endSupportGrant(c.read().people.supportGrant!.id), observe: c => c.read().people.supportGrant },
       { label: 'sendTeamRequest', method: 'sendTeamRequest', run: c => c.sendTeamRequest(fx.teamRequest) },
       { label: 'markNoticesRead', method: 'markNoticesRead', run: c => c.markNoticesRead(c.listNotifications().map(n => n.id)) },
       { label: 'deleteFiles', method: 'deleteFiles', run: c => c.deleteFiles([firstFile()]) },
@@ -718,6 +1197,8 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       { label: 'deleteChats', method: 'deleteChats', run: c => c.deleteChats([chatId()]) },
       { label: 'restoreChats', method: 'restoreChats', prepare: c => c.deleteChats([chatId()]), run: c => c.restoreChats([chatId()]) },
     ]
+    /** Only the writes this target serves. */
+    const cases = allCases.filter(w => t.serves(w.method))
     const observe = (w: WriteCase) => (w.observe ?? ((c: ContractTarget['client']) => c.getSnapshot()))(t.client)
 
     /** The client in the scenario, the write's prerequisite done, listeners and notices fresh. */
@@ -792,25 +1273,27 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
 
     test('a write that is not awaited still tells the person when the server refuses it', async () => {
-      await t.injectError('pause', 'forbidden')
-      void t.client.pause()
+      const w = probe()
+      await t.injectError(w.method, 'forbidden')
+      void w.run()
       await until(() => notices.length > 0, 'the notice')
       expect(notices).toEqual([{ type: 'error', code: 'forbidden', text: expect.any(String) }])
     })
 
     test('a refused write takes back only itself: a write made while it was in flight stays', async () => {
-      await t.injectError('pause', 'forbidden')
-      const refused = errorOf(t.client.pause())
+      const w = probe()
+      await t.injectError(w.method, 'forbidden')
+      const refused = errorOf(w.run())
       await t.client.setToggle(fx.toggleKey, false) // lands before the refusal does
       expect(await refused).toBeInstanceOf(AgentError)
       const snap = t.client.getSnapshot()
       expect(snap.toggles[fx.toggleKey], 'the write that worked is kept').toBe(false)
-      expect(snap.paused, 'the refused write is taken back').toBeNull()
+      expect(w.shown(snap), 'the refused write is taken back').toBe(false)
       expect(notices).toHaveLength(1)
       expect(notices[0]).toMatchObject({ type: 'error', code: 'forbidden' })
     })
 
-    test('a refused pause leaves the hold of an approve made while it was in flight: it still sends', async () => {
+    only('approve', 'pause')('a refused pause leaves the hold of an approve made while it was in flight: it still sends', async () => {
       const id = heldProblem()
       await t.injectError('pause', 'forbidden')
       const refused = errorOf(t.client.pause())
@@ -822,27 +1305,37 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(notices.some(n => n.type === 'approval.sent' && n.id === id)).toBe(true)
     })
 
-    test('a refused setting takes back only its own entry: a photo saved while it was in flight stays', async () => {
+    test('a refused setting takes back only its own entry: a setting saved while it was in flight stays', async () => {
       await t.injectError('setSetting', 'forbidden')
       const refused = errorOf(t.client.setSetting(fx.settingKey, fx.settingValue))
-      await t.client.setPhoto(fx.personId, fx.photoDataUrl) // replaces the same settings record before the refusal lands
+      const disarmed = t.injectError('setSetting', null) // not awaited: the second write must start before the refusal lands
+      const meanwhile = t.client.setSetting(fx.otherSetting.key, fx.otherSetting.value) // replaces the same settings record before the refusal lands
+      await disarmed
+      await meanwhile
       expect(await refused).toBeInstanceOf(AgentError)
       const settings = t.client.getSnapshot().settings
       expect(settings[fx.settingKey], 'the refused setting is gone').toBeUndefined()
-      expect(settings[photoKey(fx.personId)], 'the photo stays').toBe(fx.photoDataUrl)
+      expect(settings[fx.otherSetting.key], 'the setting saved meanwhile stays').toBe(fx.otherSetting.value)
     })
 
     test('a refusal on one method leaves the others working', async () => {
-      await t.injectError('pause', 'forbidden')
-      await expect(t.client.pause()).rejects.toBeInstanceOf(AgentError)
-      await t.client.setToggle(fx.toggleKey, false)
-      expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(false)
-      await t.injectError('pause', null)
-      await t.client.pause()
-      expect(t.client.getSnapshot().paused).not.toBeNull()
+      const w = probe()
+      await t.injectError(w.method, 'forbidden')
+      await expect(w.run()).rejects.toBeInstanceOf(AgentError)
+      // Another method, on another route where the target serves one: the refusal belongs to the method, not to what it touches.
+      if (t.serves('setMemberRole')) {
+        await t.client.setMemberRole(fx.otherMemberId, 'admin')
+        expect(t.client.read().people.members.find(m => m.id === fx.otherMemberId)?.role).toBe('admin')
+      } else {
+        await t.client.setToggle(fx.toggleKey, false)
+        expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(false)
+      }
+      await t.injectError(w.method, null)
+      await w.run()
+      expect(w.shown(t.client.getSnapshot())).toBe(true)
     })
 
-    test('the Cap reached scenario reads at the cap, and the agent still answers and writes there', async () => {
+    only('send')('the Cap reached scenario reads at the cap, and the agent still answers and writes there', async () => {
       const normal = parse(AgentDataSchema, t.client.read(), 'read()').usage
       expect(normal.total.currency, 'spend and cap share a currency').toBe(normal.cap.currency)
       expect(normal.total.minor, 'a normal month is under the cap').toBeLessThan(normal.cap.minor)
@@ -859,7 +1352,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test('a write that fails does not raise an unhandled rejection when nobody awaits it', async () => {
       await t.failSaves(true)
-      void t.client.pause()
+      void probe().run()
       await until(() => notices.some(n => n.type === t.failedSaveNotice), 'the failed-save notice')
     })
 
@@ -887,12 +1380,396 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     })
   })
 
+  // ---------- P2: who is signed in, the team, revisions, settings, support access, paging and retry ----------
+  describe('P2: members, revisions, settings and support access', () => {
+    const members = () => t.client.read().people.members
+    const member = (id: string) => members().find(m => m.id === id)
+    /** The rejection a call makes, which must be an AgentError. */
+    const refusal = async (p: Promise<unknown>): Promise<AgentError> => {
+      const e = await errorOf(p)
+      expect(e, 'rejects with an AgentError').toBeInstanceOf(AgentError)
+      parse(AgentErrorCodeSchema, (e as AgentError).code, 'the error code')
+      return e as AgentError
+    }
+    const skipUnless = (...methods: (keyof ContractTarget['client'])[]) => !methods.every(m => t.serves(m))
+
+    test.skipIf(skipUnless('me'))('me() parses, names the signed-in person and is null while loading', async () => {
+      const me = parse(MeSchema, t.client.me(), 'me()')
+      expect(me.memberId).toBe(fx.me.memberId)
+      expect(me.role).toBe(fx.me.role)
+      expect(member(me.memberId), 'the signed-in person is on the team list').toBeDefined()
+      expect(t.client.me(), 'a snapshot keeps its identity until something changes').toBe(t.client.me())
+      await fresh('Act', 'Loading')
+      expect(t.client.me()).toBeNull()
+    })
+
+    test.skipIf(skipUnless('me', 'setMemberRole'))('can follows the role: an Admin may do what a Member may not, and every person may read', async () => {
+      const admin = parse(MeSchema, t.client.me(), 'me()')
+      if (t.capabilities.adminCanDoEverything) expect(Object.values(admin.can).every(Boolean), 'the demo Admin can do everything').toBe(true)
+      // The product's Admin can what the access rows let an Admin do: no technical write but a model's switch (`adminWrite`).
+      else {
+        // The rows are the server's (read at run time: the client program has no Workers types to compile them with).
+        const rows = (await import(/* @vite-ignore */ ACCESS_ROWS)) as AccessRows
+        for (const [k, row] of Object.entries(rows.canRows)) {
+          const r = rows.accessMatrix.find(x => x.method === row.method && x.pattern === row.pattern)!
+          const expected = r.class === 'technical' ? row.as === 'adminWrite' && !!r.adminWrite && r.allow.includes('admin') : r.allow.includes('admin')
+          expect(admin.can[k as keyof typeof admin.can], `an Admin's can.${k}`).toBe(expected)
+        }
+      }
+      await t.client.setMemberRole(fx.otherMemberId, 'admin')
+      await t.client.setMemberRole(fx.me.memberId, 'member')
+      const member = parse(MeSchema, t.client.me(), 'me() after the role change')
+      expect(member.role).toBe('member')
+      for (const k of ['invite', 'changeRole', 'remove', 'editBrandSettings', 'editTechnical', 'switchModel', 'grantSupport'] as const) expect(member.can[k], `a Member can't ${k}`).toBe(false)
+      for (const k of ['viewMembers', 'viewAudit', 'exportAudit'] as const) expect(member.can[k], `a Member can ${k}`).toBe(true)
+    })
+
+    test('the team lists members by member id with a role of member or admin, and no role called Approver', async () => {
+      const list = members()
+      expect(list.length).toBeGreaterThan(0)
+      list.forEach(m => parse(MemberRecordSchema, m, `member ${m.id}`))
+      expect(new Set(list.map(m => m.id)).size, 'ids are unique').toBe(list.length)
+      expect(list.filter(m => m.role === 'admin').length, 'there is an Admin').toBeGreaterThanOrEqual(1)
+    })
+
+    test('an approval rule names its approver by member id, or anyone', async () => {
+      const { approvalRules } = t.client.read().people
+      const ids = new Set(members().map(m => m.id))
+      for (const r of approvalRules) expect(r.approver === 'anyone' || ids.has(r.approver), `${r.what}: ${r.approver}`).toBe(true)
+    })
+
+    only('approve', 'setAside')('records of the people name member ids: an approval, an undo and a set aside', async () => {
+      const id = heldProblem()
+      await t.client.approve(id)
+      const other = t.client.read().problems.map(p => p.id).find(x => x !== id)
+      if (!other) throw new Error('a second problem to set aside')
+      await t.client.setAside(other, 'dismissed')
+      const ids = new Set(members().map(m => m.id))
+      const snap = t.client.getSnapshot()
+      expect(ids.has(snap.approved[id].by), 'approved.by is a member id').toBe(true)
+      for (const rec of Object.values(snap.setAside)) expect(ids.has(rec.by), 'setAside.by is a member id').toBe(true)
+      t.client.read().auditLog.forEach(l => expect(l.actorId).toMatch(/^m_/))
+    })
+
+    test.skipIf(skipUnless('inviteMember', 'removeMember'))('invite, then remove, then invite again; an email already on the team is refused', async () => {
+      await t.client.inviteMember(fx.invite)
+      const invited = members().find(m => m.email === fx.invite.email)
+      expect(invited, 'the invited person is on the list').toBeDefined()
+      expect(invited).toMatchObject({ name: fx.invite.name, title: fx.invite.title, role: fx.invite.role, status: 'invited', photo: null })
+      const again = await refusal(t.client.inviteMember({ ...fx.invite, email: fx.invite.email.toUpperCase() }))
+      expect(again.code).toBe('conflict')
+      expect(again.reason).toBe('already_member')
+      await t.client.removeMember(invited!.id)
+      expect(member(invited!.id)?.status ?? 'gone', 'a removed person is no longer active').toMatch(/removed|gone/)
+      await t.client.inviteMember(fx.invite)
+      expect(members().filter(m => m.email === fx.invite.email && m.status !== 'removed'), 'one open invitation').toHaveLength(1)
+      checkWorld('after invite and remove')
+    })
+
+    test.skipIf(skipUnless('inviteMember'))('an invitation that fails its schema is invalid, and changes nothing', async () => {
+      const before = t.client.read()
+      for (const bad of [{ ...fx.invite, email: 'not-an-email' }, { ...fx.invite, name: '   ' }, { ...fx.invite, role: 'inhouse' as never }]) {
+        const e = await refusal(t.client.inviteMember(bad))
+        expect(e.code).toBe('invalid')
+      }
+      expect(t.client.read()).toBe(before)
+    })
+
+    test.skipIf(skipUnless('setMemberRole', 'removeMember'))('the last Admin can be neither demoted nor removed', async () => {
+      const admins = members().filter(m => m.status === 'active' && m.role === 'admin')
+      expect(admins, 'a first-run team has one Admin').toHaveLength(1)
+      const [last] = admins
+      for (const run of [() => t.client.setMemberRole(last.id, 'member'), () => t.client.removeMember(last.id)]) {
+        const e = await refusal(run())
+        expect(e.code).toBe('conflict')
+        expect(e.reason).toBe('last_admin')
+      }
+      expect(member(last.id)).toMatchObject({ role: 'admin', status: 'active' })
+      await t.client.setMemberRole(fx.otherMemberId, 'admin')
+      await t.client.setMemberRole(last.id, 'member') // another Admin now stands
+      expect(member(last.id)?.role).toBe('member')
+    })
+
+    test.skipIf(skipUnless('setMemberRole'))('a role change bumps the member rev, and an unknown member is not found', async () => {
+      const before = member(fx.otherMemberId)!
+      await t.client.setMemberRole(fx.otherMemberId, 'admin')
+      expect(member(fx.otherMemberId)).toMatchObject({ role: 'admin' })
+      expect(member(fx.otherMemberId)!.rev).toBeGreaterThan(before.rev)
+      expect((await refusal(t.client.setMemberRole('m_nobody', 'admin'))).code).toBe('not_found')
+      expect((await refusal(t.client.setMemberRole(fx.otherMemberId, 'inhouse' as never))).code).toBe('invalid')
+    })
+
+    test.skipIf(skipUnless('setMemberRole'))('a member changed behind the client: the next write rejects with conflict and the current record, and the snapshot shows it', async () => {
+      await t.writeElsewhere({ kind: 'member', id: fx.otherMemberId }, 'admin')
+      const e = await refusal(t.client.setMemberRole(fx.otherMemberId, 'member'))
+      expect(e.code).toBe('conflict')
+      expect(parse(MemberRecordSchema, e.current, 'current')).toMatchObject({ id: fx.otherMemberId, role: 'admin' })
+      expect(member(fx.otherMemberId)?.role, 'the snapshot already holds the current value').toBe('admin')
+      expect(notices.at(-1)).toMatchObject({ type: 'error', code: 'conflict' })
+      await t.client.setMemberRole(fx.otherMemberId, 'member') // the client has seen it now, so this one lands
+      expect(member(fx.otherMemberId)?.role).toBe('member')
+    })
+
+    test.skipIf(skipUnless('removeMember'))('removing a member changed behind the client is a conflict too, and removes nothing', async () => {
+      await t.writeElsewhere({ kind: 'member', id: fx.otherMemberId }, 'admin')
+      const e = await refusal(t.client.removeMember(fx.otherMemberId))
+      expect(e.code).toBe('conflict')
+      expect(member(fx.otherMemberId)?.status).toBe('active')
+    })
+
+    test('a setting changed behind the client: the next write rejects with conflict and the current setting, and the snapshot takes it', async () => {
+      await t.writeElsewhere({ kind: 'setting', key: fx.settingKey }, 'Changed Elsewhere')
+      const e = await refusal(t.client.setSetting(fx.settingKey, fx.settingValue))
+      expect(e.code).toBe('conflict')
+      expect(parse(SettingRecordSchema, e.current, 'current')).toMatchObject({ key: fx.settingKey, value: 'Changed Elsewhere' })
+      expect(t.client.getSnapshot().settings[fx.settingKey]).toBe('Changed Elsewhere')
+      await t.client.setSetting(fx.settingKey, fx.settingValue)
+      expect(t.client.getSnapshot().settings[fx.settingKey]).toBe(fx.settingValue)
+    })
+
+    test('a switch changed behind the client is a conflict too, and a record of another kind stays writable', async () => {
+      await t.writeElsewhere({ kind: 'setting', key: fx.toggleKey }, true)
+      expect((await refusal(t.client.setToggle(fx.toggleKey, false))).code).toBe('conflict')
+      expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(true)
+      await t.client.setSetting(fx.otherSetting.key, fx.otherSetting.value) // another record: not stale
+    })
+
+    test.skipIf(skipUnless('setToggle'))('two writes to one record, started together, both save in order: no notice, and the last one stays', async () => {
+      const first = t.client.setToggle(fx.toggleKey, false)
+      const second = t.client.setToggle(fx.toggleKey, true)
+      await Promise.all([first, second])
+      expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(true)
+      expect(notices).toEqual([])
+    })
+
+    only('forgetMemory', 'deleteRoutine', 'deleteFiles')('a memory line, a routine and a file changed behind the client: forget, delete and restore reject with conflict', async () => {
+      const line = t.client.read().memory.team.flatMap(g => g.lines)[0]
+      const routine = t.client.read().routines[0]
+      const file = t.client.listFiles()[0]
+      await t.writeElsewhere({ kind: 'memory', id: line.key })
+      expect((await refusal(t.client.forgetMemory(line.key, true))).code).toBe('conflict')
+      await t.writeElsewhere({ kind: 'routine', id: routine.id })
+      expect((await refusal(t.client.deleteRoutine(routine.id))).code).toBe('conflict')
+      await t.writeElsewhere({ kind: 'file', id: file.id })
+      expect((await refusal(t.client.deleteFiles([file.id]))).code).toBe('conflict')
+      expect(t.client.getSnapshot().forgot[line.key], 'nothing applied').toBeUndefined()
+      expect(t.client.read().routines.find(r => r.id === routine.id)!.rev, 'the rev reads').toBeGreaterThan(routine.rev)
+    })
+
+    test.skipIf(skipUnless('setMemberRole', 'setSetting', 'grantSupport', 'endSupportGrant'))('a member, a setting and a grant carry a rev that a write bumps', async () => {
+      members().forEach(m => expect(m.rev, `${m.id}`).toBeGreaterThanOrEqual(1))
+      const before = member(fx.otherMemberId)!.rev
+      await t.client.setMemberRole(fx.otherMemberId, 'admin')
+      expect(member(fx.otherMemberId)!.rev, 'a role change bumps the member').toBeGreaterThan(before)
+      // A setting's rev shows in the record a stale write is refused with: it counts up with every write.
+      await t.client.setSetting(fx.settingKey, fx.settingValue)
+      const revOf = async () => {
+        await t.writeElsewhere({ kind: 'setting', key: fx.settingKey }, fx.settingValue)
+        const e = await errorOf(t.client.setSetting(fx.settingKey, fx.settingValue))
+        return parse(SettingRecordSchema, (e as AgentError).current, 'current').rev
+      }
+      const r1 = await revOf()
+      expect(r1).toBeGreaterThanOrEqual(2)
+      expect(await revOf(), 'each write bumps it').toBeGreaterThan(r1)
+      const live = t.client.read().people.supportGrant
+      if (live?.live) await t.client.endSupportGrant(live.id)
+      await t.client.grantSupport(1)
+      const g = t.client.read().people.supportGrant!
+      expect(g.rev).toBeGreaterThanOrEqual(1)
+      await t.client.endSupportGrant(g.id)
+      expect(t.client.read().people.supportGrant!.rev, 'ending it bumps it').toBeGreaterThan(g.rev)
+    })
+
+    only('deleteRoutine')('every editable record carries a rev that a write bumps', async () => {
+      const d = t.client.read()
+      d.routines.forEach(r => expect(r.rev).toBeGreaterThanOrEqual(1))
+      d.memory.team.flatMap(g => g.lines).concat(d.memory.personal).forEach(l => expect(l.rev).toBeGreaterThanOrEqual(1))
+      t.client.listFiles().forEach(f => expect(f.rev).toBeGreaterThanOrEqual(1))
+      const id = d.routines[0].id
+      await t.client.deleteRoutine(id)
+      expect(t.client.read().routines.find(r => r.id === id)!.rev).toBeGreaterThan(d.routines[0].rev)
+    })
+
+    test('a setting outside the registry, or with a value it refuses, is invalid and changes nothing', async () => {
+      const snap = t.client.getSnapshot()
+      for (const [key, value] of [['no:such-key', 'x'], [fx.settingKey, ''], ['g:theme', 'Neon'], ['g:tz', 'Mars/Olympus'], ['s:cap', 'lots'], ['g:name', 'x'.repeat(81)]] as const) {
+        const e = await refusal(t.client.setSetting(key, value))
+        expect(e.code, `${key} = ${value}`).toBe('invalid')
+      }
+      expect((await refusal(t.client.setToggle('no:such-key', true))).code).toBe('invalid')
+      expect((await refusal(t.client.setToggle(fx.settingKey, true))).code, 'a text setting is not a switch').toBe('invalid')
+      expect((await refusal(t.client.setSetting('n:slack', 'yes'))).code, 'a switch is not text').toBe('invalid')
+      expect(t.client.getSnapshot(), 'nothing was written').toBe(snap)
+      expect(notices.every(n => n.type === 'error' && n.code === 'invalid')).toBe(true)
+    })
+
+    test('a role, a photo and a grant can no longer be written as a setting', async () => {
+      const snap = t.client.getSnapshot()
+      for (const run of [
+        () => t.client.setSetting(`p:${fx.personId}`, 'Admin'), () => t.client.setSetting(`photo:${fx.personId}`, fx.photoDataUrl),
+        () => t.client.setSetting('d:support', 'on'), () => t.client.setToggle('d:support', true), () => t.client.setToggle(`p:${fx.personId}`, true),
+      ]) expect((await refusal(run())).code).toBe('invalid')
+      expect(t.client.getSnapshot()).toBe(snap)
+      expect(member(fx.personId)?.role).toBe('admin')
+    })
+
+    test('the settings a person saves keep working: each accepted key and value, then the reset', async () => {
+      for (const [key, value] of [[fx.settingKey, fx.settingValue], [fx.otherSetting.key, fx.otherSetting.value], [fx.choices.key, fx.choices.values[1]]] as const) {
+        await t.client.setSetting(key, value)
+        expect(t.client.getSnapshot().settings[key]).toBe(value)
+        await t.client.setSetting(key, null)
+        expect(t.client.getSnapshot().settings[key]).toBeUndefined()
+      }
+      await t.client.setToggle('n:slack', true)
+      expect(t.client.getSnapshot().toggles['n:slack']).toBe(true)
+    })
+
+    test('setPhoto for a member that does not exist is not found', async () => {
+      expect((await refusal(t.client.setPhoto('m_nobody', fx.photoDataUrl))).code).toBe('not_found')
+    })
+
+    test.skipIf(skipUnless('grantSupport', 'endSupportGrant'))('support access: one live grant at a time, of 1, 4, 24 or 72 hours, that an Admin can end', async () => {
+      const grant = () => t.client.read().people.supportGrant
+      const live = grant()
+      if (live?.live) await t.client.endSupportGrant(live.id)
+      expect(grant()?.live ?? false).toBe(false)
+      for (const bad of [0, 2, 100]) expect((await refusal(t.client.grantSupport(bad))).code).toBe('invalid')
+      await t.client.grantSupport(4)
+      const g = parse(SupportGrantSchema, grant(), 'the grant')
+      expect(g.live).toBe(true)
+      expect(g.endsAt.ms - g.createdAt.ms).toBe(4 * 3_600_000)
+      const second = await refusal(t.client.grantSupport(1))
+      expect([second.code, second.reason]).toEqual(['conflict', 'grant_live'])
+      await t.client.endSupportGrant(g.id)
+      expect(grant()).toMatchObject({ id: g.id, live: false })
+      expect(grant()!.endedAt).not.toBeNull()
+      expect((await refusal(t.client.endSupportGrant(g.id))).code, 'an ended grant is not there to end').toBe('not_found')
+      await t.client.grantSupport(1)
+      expect(grant()?.live).toBe(true)
+    })
+
+    test.skipIf(skipUnless('grantSupport'))('a grant ends by itself when its hours pass', async () => {
+      const live = t.client.read().people.supportGrant
+      if (live?.live) await t.client.endSupportGrant(live.id)
+      await t.client.grantSupport(1)
+      expect(t.client.read().people.supportGrant?.live).toBe(true)
+      await t.advance(3_600_000 + STEP_MS)
+      expect(t.client.read().people.supportGrant?.live, 'one hour later it is over').toBe(false)
+    })
+
+    test.skipIf(skipUnless('grantSupport', 'endSupportGrant'))('ending a grant changed behind the client is a conflict with the current grant; one the other session ended is not found', async () => {
+      const grant = () => t.client.read().people.supportGrant
+      if (!grant()?.live) await t.client.grantSupport(4)
+      const g = grant()!
+      expect(g.live, 'a live grant to end').toBe(true)
+      await t.writeElsewhere({ kind: 'grant', id: g.id })
+      const e = await refusal(t.client.endSupportGrant(g.id))
+      expect(e.code).toBe('conflict')
+      expect(parse(SupportGrantSchema, e.current, 'current')).toMatchObject({ id: g.id, live: true })
+      expect(grant()?.live, 'nothing was ended').toBe(true)
+      await t.writeElsewhere({ kind: 'grant', id: g.id }, 'end')
+      expect((await refusal(t.client.endSupportGrant(g.id))).code, 'the other session ended it: nothing live is left').toBe('not_found')
+    })
+
+    test.skipIf(skipUnless('retry'))('a resource whose read failed says so, with the error; retry reads it again; the rest stays ready', async () => {
+      const ready = t.client.read()
+      for (const k of Object.keys(ready.resources)) expect(ready.resources[k as keyof typeof ready.resources].status).toBe('ready')
+      await t.failRead('members')
+      const failed = t.client.read()
+      expect(failed.resources.members.status).toBe('error')
+      expect(parse(AgentErrorCodeSchema, failed.resources.members.error, 'the error code')).toBeDefined()
+      expect(failed.resources.audit.status, 'only that resource failed').toBe('ready')
+      expect(failed.status, 'the top-level status is the Loading scenario only').toBe('ready')
+      let heard = 0
+      subscribe(() => { heard++ })
+      await t.client.retry('members')
+      expect(t.client.read().resources.members).toEqual({ status: 'ready' })
+      expect(members().length, 'the list is back').toBeGreaterThan(0)
+      expect(heard, 'listeners were told').toBeGreaterThanOrEqual(1)
+      parse(AgentDataSchema, t.client.read(), 'read() after retry')
+    })
+
+    test('Loading reports every resource loading, and the rest report ready', async () => {
+      await fresh('Act', 'Loading')
+      for (const r of Object.values(t.client.read().resources)) expect(r.status).toBe('loading')
+      await fresh('Act', 'First day')
+      for (const r of Object.values(t.client.read().resources)) expect(r.status).toBe('ready')
+    })
+
+    test.skipIf(t.capabilities.pagesLists)('a list that does not page says there is no more, and loadMore does nothing', async () => {
+      const before = t.client.read()
+      expect(before.more).toEqual({ audit: false, members: false })
+      await t.client.loadMore('audit')
+      await t.client.loadMore('members')
+      expect(t.client.read()).toBe(before)
+    })
+
+    test('the audit log names each line by its actor member id and orders it newest first', async () => {
+      const log = t.client.read().auditLog
+      log.forEach(l => expect(l.actorId).toMatch(/^m_[A-Za-z0-9_-]+$/))
+      expect(log.map(l => l.id)).toEqual([...log.map(l => l.id)].sort((a, b) => b - a))
+    })
+
+    test('the export and sign out links are what the target names', async () => {
+      expect(t.client.auditExportUrl()).toBe(fx.links.auditExport)
+      expect(t.client.signOutUrl()).toBe(fx.links.signOut)
+    })
+
+    test.skipIf(skipUnless('inviteMember'))('a refusal carries its reason, and the reason parses', async () => {
+      await t.client.inviteMember(fx.invite)
+      const e = await refusal(t.client.inviteMember(fx.invite))
+      expect(parse(ErrorReasonSchema, e.reason, 'reason')).toBe('already_member')
+    })
+
+    test.skipIf(skipUnless('inviteMember', 'removeMember'))('a member who was in the data at the start, removed and invited again, is one record, invited', async () => {
+      const before = member(fx.otherMemberId)!
+      await t.client.removeMember(fx.otherMemberId)
+      await t.client.inviteMember({ name: before.name, email: before.email!, role: 'member' })
+      const same = members().filter(m => m.id === fx.otherMemberId)
+      expect(same, 'exactly one record with that id').toHaveLength(1)
+      expect(same[0].status).toBe('invited')
+      expect(new Set(members().map(m => m.id)).size, 'ids stay unique').toBe(members().length)
+    })
+
+    test('a photo and a new name move the member rev', async () => {
+      const rev = () => member(fx.me.memberId)!.rev
+      const r0 = rev()
+      await t.client.setPhoto(fx.me.memberId, fx.photoDataUrl)
+      const r1 = rev()
+      expect(r1, 'a photo bumps it').toBeGreaterThan(r0)
+      await t.client.setSetting('g:name', fx.settingValue)
+      expect(rev(), 'the name bumps it').toBeGreaterThan(r1)
+    })
+
+    only('send', 'deleteRoutine')('a routine made in a chat carries a rev that delete, restore, regenerate and take-back move', async () => {
+      const cards = () => t.client.getSnapshot().routinesExtra
+      const events = await drain(fx.questions.routineRequest)
+      const runId = (events[0] as Started).runId
+      const made = cards()[0]
+      expect(made, 'the answer made a routine').toBeDefined()
+      const r1 = made.rev ?? 1
+      await t.client.deleteRoutine(made.id)
+      const r2 = cards()[0].rev!
+      expect(r2, 'delete moves it').toBeGreaterThan(r1)
+      await t.client.restoreRoutine(made.id)
+      const r3 = cards()[0].rev!
+      expect(r3, 'restore moves it').toBeGreaterThan(r2)
+      const again = await drain(fx.questions.routineRequest, { replacesRun: runId })
+      expect(cards(), 'regenerate updates it in place').toHaveLength(1)
+      const r4 = cards()[0].rev!
+      expect(r4, 'regenerate moves it').toBeGreaterThan(r3)
+      await drain(fx.questions.offScript, { replacesRun: (again[0] as Started).runId })
+      expect(cards()[0].rev!, 'taking it back moves it').toBeGreaterThan(r4)
+    })
+
+  })
+
   // ---------- properties ----------
   describe('properties', () => {
     // Ids come from the client, so the sequence acts on things that exist and the failure it finds is the client's.
     const ids = () => {
       const d = t.client.read()
-      return { problems: d.problems.map(p => p.id), routines: d.routines.map(r => r.id), files: t.client.listFiles().map(f => f.id), chats: t.client.allChatIds() }
+      return { problems: d.problems.map(p => p.id), routines: d.routines.map(r => r.id), files: t.client.listFiles().map(f => f.id), chats: t.client.allChatIds(), members: d.people.members.map(m => m.id) }
     }
     const key = fc.string({ unit: 'grapheme-ascii', minLength: 1, maxLength: 8 })
     const pick = (n: number) => fc.nat(n === 0 ? 0 : n - 1)
@@ -910,18 +1787,35 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
     const step = (name: string, run: Op): Step => ({ name, run })
 
     /** Writes: each one saves, so with saves failing each one must reject. */
-    const writeOps: fc.Arbitrary<Step>[] = [
+    const earlierWriteOps: fc.Arbitrary<Step>[] = [
       fc.tuple(pick(50), fc.boolean()).map(([n, hold]) => step(`approve#${n}`, (c, i, forSave) => on(i.problems, n, id => (hold ? (c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.approve(id)) : forSave && !c.getSnapshot().approved[id] ? Promise.resolve(SKIP) : c.undo(id))))),
       fc.tuple(pick(50), fc.string()).map(([n, s]) => step('editDraft', (c, i) => on(i.problems, n, id => c.editDraft(id, s)))),
       fc.tuple(pick(50), fc.boolean()).map(([n, undo]) => step('undoHandled', (c, i) => on(i.problems, n, id => (undo ? c.undoHandled(id) : c.redoHandled(id))))),
       fc.boolean().map(p => step('pause', c => (p ? c.pause() : c.resume()))),
-      fc.tuple(key, fc.boolean()).map(([k, b]) => step('setToggle', c => c.setToggle(k, b))),
+      // A switch is a routine or skill switch (`r:`, `s:`) or a registry switch; any other key is `invalid` (the tests below), not a save failure.
+      fc.tuple(key, fc.boolean()).map(([k, b]) => step('setToggle', c => c.setToggle(`r:${k}`, b))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('requestTool', c => c.requestTool(k, b))),
       key.map(k => step('requestSkill', c => c.requestSkill(k))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('setToolPaused', c => c.setToolPaused(k, b))),
       fc.tuple(key, fc.boolean()).map(([k, b]) => step('forgetMemory', c => c.forgetMemory(k, b))),
-      fc.tuple(key, fc.option(fc.string(), { nil: null })).map(([k, v]) => step('setSetting', c => c.setSetting(k, v))),
-      fc.tuple(key, fc.option(fc.string(), { nil: null })).map(([k, v]) => step('setPhoto', c => c.setPhoto(k, v))),
+    ]
+    /** The writes the P2 methods serve: what a target without runs, approvals or a library still runs. */
+    const p2WriteOps: fc.Arbitrary<Step>[] = [
+      fc.tuple(fc.constantFrom(fx.settingKey, fx.otherSetting.key, fx.choices.key), fc.boolean()).map(([k, reset]) => step('setSetting', c => c.setSetting(k, reset ? null : k === fx.choices.key ? fx.choices.values[0] : k === fx.settingKey ? fx.settingValue : fx.otherSetting.value))),
+      // `forSave` takes an active member: a removed member's photo is refused (`not_found`) before any save, and that is not a save failure.
+      fc.tuple(pick(50), fc.option(fc.string(), { nil: null })).map(([n, v]) => step('setPhoto', (c, i, forSave) => on(forSave ? c.read().people.members.filter(m => m.status !== 'removed').map(m => m.id) : i.members, n, id => c.setPhoto(id, v)))),
+      // `forSave` skips what the client refuses for its own reason (the last Admin, a live grant, an email already invited), so a save failure is the only way it can reject.
+      fc.tuple(pick(50), fc.constantFrom('admin', 'member', 'remove', 'invite', 'grant', 'end')).map(([n, a]) => step(`member-${a}`, (c, i, forSave) => {
+        const live = c.read().people.supportGrant?.live
+        const active = c.read().people.members.filter(m => m.status !== 'removed').map(m => m.id)
+        if (a === 'invite') return c.inviteMember({ ...fx.invite, email: forSave ? 'save-fails@example.test' : `person${n}@example.test` })
+        if (a === 'grant') return forSave && live ? Promise.resolve(SKIP) : c.grantSupport(1)
+        if (a === 'end') { const g = c.read().people.supportGrant; return g?.live ? c.endSupportGrant(g.id) : Promise.resolve(SKIP) }
+        if (forSave && a !== 'admin') return Promise.resolve(SKIP)
+        return on(forSave ? active : i.members, n, id => (a === 'remove' ? c.removeMember(id) : c.setMemberRole(id, a)))
+      })),
+    ]
+    const laterWriteOps: fc.Arbitrary<Step>[] = [
       fc.tuple(fc.string(), fc.string(), fc.string(), instant, fc.string(), fc.option(instant, { nil: undefined })).map(([icon, title, sub, at, status, statusAt]) => step('sendTeamRequest', c => c.sendTeamRequest({ icon, title, sub, at, status, ...(statusAt ? { statusAt } : {}) }))),
       fc.boolean().map(all => step('markNoticesRead', c => {
         const fresh = c.listNotifications().filter(n => n.unread).map(n => n.id)
@@ -937,31 +1831,33 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       fc.tuple(pick(50), fc.constantFrom('rename', 'clear', 'pin', 'unpin', 'delete', 'restore'), fc.string()).map(([n, a, s]) => step(`chat-${a}`,
         (c, i) => on(i.chats, n, id => (a === 'rename' ? c.renameChat(id, s) : a === 'clear' ? c.renameChat(id, null) : a === 'pin' ? c.pinChat(id, true) : a === 'unpin' ? c.pinChat(id, false) : a === 'delete' ? c.deleteChats([id]) : c.restoreChats([id]))))),
     ]
+    const writeOps = [...earlierWriteOps, ...p2WriteOps, ...laterWriteOps]
     /** Answers: asked, interrupted, stopped, or sent into, each read to its end. */
     const runOps: fc.Arbitrary<Step>[] = [
       question.map(q => step('ask', async () => { checkRun(await drain(q)) })),
       fc.tuple(question, fc.constantFrom('now', 'next', 'later'), fc.string()).map(([q, priority, text]) => step(`send ${priority}`, async c => {
         const run = startRun(q)
-        const first = await run.next()
-        await c.send((first as Started).runId, text, { priority })
+        await run.next()
+        await c.send(run.chatId, { clientTurnKey: nextKey(), text, model: model(), priority })
         checkRun(await run.toEnd())
       })),
       question.map(q => step('interrupt', async c => {
         const run = startRun(q)
-        const first = await run.next()
-        await c.interrupt((first as Started).runId)
+        await run.next()
+        await c.interrupt(run.result.turnId)
         checkRun(await run.toEnd())
       })),
       question.map(q => step('stop', async c => {
         const run = startRun(q)
-        const first = await run.next()
-        c.stop((first as Started).runId)
+        await run.next()
+        await c.stop(run.result.turnId)
         checkRun(await run.toEnd())
       })),
     ]
     const seedOp: fc.Arbitrary<Step> = fc.tuple(fc.constantFrom(...STAGES), fc.constantFrom(...SCENARIOS)).map(([stage, scenario]) => step(`seed ${stage}/${scenario}`, async () => t.seed({ stage, scenario })))
-    const op = fc.oneof(...writeOps, ...runOps, seedOp)
-    const writeOp = fc.oneof(...writeOps)
+    // A target that serves no runs (the real one, in P2) takes the P2 writes only: a seed there is a client that never heard back.
+    const op = lacks('send') ? fc.oneof(...p2WriteOps) : fc.oneof(...writeOps, ...runOps, seedOp)
+    const writeOp = fc.oneof(...(lacks('send') ? p2WriteOps : writeOps))
 
     test('any sequence of writes and answers keeps every read parseable', async () => {
       await fc.assert(fc.asyncProperty(fc.array(op, { maxLength: 25 }), async steps => {
@@ -980,7 +1876,36 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
           c.listNotifications().forEach(n => parse(AgentNotificationSchema, n, `listNotifications() ${where}`))
         }
         notices.forEach(n => parse(AgentNoticeSchema, n, `a notice after ${log.join(', ')}`))
-      }), params)
+      }), runParams)
+    })
+
+    test('any sequence of fresh and stale writes: a stale one never applies and always returns the current record; a fresh one always lands', async () => {
+      const { key, values } = fx.choices
+      let stale = 0
+      await fc.assert(fc.asyncProperty(fc.array(fc.tuple(fc.boolean(), fc.constantFrom(...values), fc.constantFrom(...values)), { minLength: 1, maxLength: 12 }), async steps => {
+        await fresh()
+        let lastRev = 0
+        for (const [isStale, elsewhere, mine] of steps) {
+          const snap = () => t.client.getSnapshot().settings[key]
+          if (isStale) {
+            await t.writeElsewhere({ kind: 'setting', key }, elsewhere)
+            const e = await errorOf(t.client.setSetting(key, mine))
+            expect(e, 'a stale write rejects').toBeInstanceOf(AgentError)
+            expect((e as AgentError).code).toBe('conflict')
+            const current = parse(SettingRecordSchema, (e as AgentError).current, 'current')
+            expect(current.value, 'it returns the record as it is now').toBe(elsewhere)
+            expect(current.rev, 'revisions only go up').toBeGreaterThan(lastRev)
+            lastRev = current.rev
+            expect(snap(), 'it never applied: the snapshot holds the current value').toBe(elsewhere)
+            stale++
+          } else {
+            await t.client.setSetting(key, mine)
+            expect(snap(), 'a fresh write lands').toBe(mine)
+            lastRev += 1
+          }
+        }
+      }), runParams)
+      expect(stale, 'the property reached stale writes').toBeGreaterThan(0)
     })
 
     test('a write that fails to save rejects with an AgentError, tells the person, and never changes the snapshot', async () => {
@@ -1002,7 +1927,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
         expect(notices.some(n => n.type === t.failedSaveNotice), `${failing.name} sends the failed-save notice`).toBe(true)
         expect(t.client.getSnapshot(), `after ${failing.name} failed to save`).toBe(snap)
         rejected++
-      }), params)
+      }), runParams)
       expect(rejected, 'the property reached failing writes').toBeGreaterThan(0)
     })
   })

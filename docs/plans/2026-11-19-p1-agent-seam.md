@@ -139,7 +139,7 @@ wide typed refactor where a missed field shows only in a screenshot.
 - `.github/workflows/ci.yml`: the step that runs `build:product` and the product build check. It lands as the
   orchestrator's commit on W4's PR, so the check and its required run arrive together. No placeholder step.
 - `e2e/product/no-demo.spec.ts` (after W4: the product build shows no sample name, no demo switches, ignores `?demo`,
-  runs on today's date and shows the "Not connected yet" screen).
+  runs on today's date and shows the "Not connected yet" screen). (P1-era: under P2 a Worker without INHOUSE_ACCESS answers 503 and the app shows "Couldn't load Inhouse", #123.)
 - `e2e/demo-upgrade.spec.ts` (after W1 and W4: the stored-demo fixture loads through `fx.seedRaw` with its chat,
   draft, model pick and approval state intact).
 - `app/package.json`'s `lint:tokens` line gains `check-format.mjs` when W1 lands it.
@@ -188,7 +188,7 @@ wide typed refactor where a missed field shows only in a screenshot.
 8. `npm run build:product` succeeds. The product build check passes on it (canaries, module graph, copied files) and
    fails on the demo build, proving each part; CI runs both, and the check landed in the same PR as its CI step.
 9. The `product` Playwright project passes on its own URL: no sample name, no demo switches, `?demo` ignored, today's
-   date, the "Not connected yet" screen. No other project runs `e2e/product/`.
+   date, the "Not connected yet" screen (P1-era; under P2 a Worker without INHOUSE_ACCESS answers 503 and shows "Couldn't load Inhouse", #123). No other project runs `e2e/product/`.
 10. `npm run lint` fails on an `inhouse.demo.` storage key or a sample-data import in a spec outside `e2e/support/`;
     none remain.
 11. The upgrade spec passes: a demo stored by the build before P1 opens with its chat, draft, model pick and approval

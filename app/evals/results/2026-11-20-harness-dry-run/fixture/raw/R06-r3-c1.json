@@ -1,0 +1,67 @@
+{
+ "row": {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "products_search",
+   "inventory_levels_get",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Offer Fern, with one catch.\n\nOur notes say the Moss glaze was discontinued in September, so the standing guidance is to offer Fern instead. But the shop still lists Mug 500ml Moss (MUG-500-MOSS) with 14 on hand. Those are probably leftover units.\n\nMy search for a Fern mug returned nothing, so I can'",
+  "costUsd": 0.014710900000000002,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "substitute mug offer out of stock policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] The Moss glaze is discontinued since September. Offer Fern instead.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Moss glaze mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Fern mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Offer Fern, with one catch.\n\nOur notes say the Moss glaze was discontinued in September, so the standing guidance is to offer Fern instead. But the shop still lists Mug 500ml Moss (MUG-500-MOSS) with 14 on hand. Those are probably leftover units.\n\nMy search for a Fern mug returned nothing, so I can't confirm that Fern is listed or in stock. Check that before you promise it.\n\nHere is what I'd say to the customer:\n- **If Fern is in stock:** tell them Moss is discontinued and offer Fern as the replacement.\n- **If they really want Moss:** you could mention the last few pieces still in stock, but the shop data may be out of date. Count the physical stock first.\n\nDo you want me to draft the customer reply for approval? Tell me which option to use.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2445,
+   "cacheReadTokens": 32964,
+   "outputTokens": 529
+  },
+  "costUsd": 0.014710900000000002
+ }
+}

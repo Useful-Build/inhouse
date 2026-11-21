@@ -114,7 +114,9 @@ test('Settings: Who approves what and the spending cap dropdowns change their va
   await start(fx, 'Run', '#/settings/team-approvals')
   const rule = page.getByRole('combobox', { name: /^Orders over \$5,000: Dana Kim/ })
   await rule.click()
-  await expect(page.getByRole('option')).toHaveCount(4)
+  // Call 3 (P2): approving is a job per rule, not a role, so every member is offered (Sam, Dana, Leo, Priya) and Anyone who approves.
+  await expect(page.getByRole('option')).toHaveCount(5)
+  await expect(page.getByRole('option', { name: 'Priya Shah' })).toBeVisible()
   await page.getByRole('option', { name: 'Sam Mercer' }).click()
   await expect(page.getByRole('combobox', { name: 'Orders over $5,000: Sam Mercer' })).toBeVisible()
   await page.goto('/?demo#/settings/team-spend')
@@ -388,7 +390,7 @@ test('Data: no text a person reads holds a 24-hour time, "2025", an old "17 Nov"
   // The answers written in code, not in the data: the formatted query answer and the ask-for-a-time reply.
   const mock = mockSource()
   const inCode = [/const QUERY_ANSWER = \[([\s\S]*?)\]\.join/, /const ASK_FOR_TIME = ('.*')/].map(re => re.exec(mock)?.[1])
-  expect(inCode.every(Boolean), 'the answers in mock.ts were found').toBe(true)
+  expect(inCode.every(Boolean), 'the answers in the demo agent were found').toBe(true)
   for (const text of inCode as string[]) {
     for (const [re, what] of [[/\b(sample|demo|mock)\b/i, 'sample, demo or mock'], [/\b2025\b/, '2025'], [/\b(colour|summaris|fulfilment|centre|organis|favour|behaviour|catalogue)/i, 'UK spelling'], [/\b\d{1,2}:[0-5]\d\b(?!( |\\u00a0)[AP]M)/, '24-hour time']] as [RegExp, string][]) {
       if (re.test(text)) bad.push(`mock.ts (${what}): ${text.slice(0, 80)}`)

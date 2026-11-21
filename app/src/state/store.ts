@@ -3,8 +3,14 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { agent, demo as demoControls, now } from '../agent'
-import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, Scenario, SetAsideReason, Stage } from '../agent/types'
-import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
+import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, Stage } from '../agent/types'
+import { AgentError, SCENARIOS, STAGES, stageIndex } from '../agent/types'
+import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
+import type { ChatView } from '../screens/chat/view'
+import { NO_MODEL_TEXT, RELOAD_NOTE, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from '../screens/chat/notes'
+import { productStage } from './stage'
+import { heldFile, dropFile, withoutPending } from './pending-files'
+import type { AbortSet } from '../screens/chat/upload'
 import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/upgrade-times'
 import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
@@ -26,10 +32,13 @@ export type ApprovalSort = 'oldest' | 'newest' | 'stake'
  *  the agent's. `at` is when it was last active: the lists show it and group by its day. */
 export interface ChatEntry { id: string; title: string; at: Instant; pinned?: boolean }
 
-/** Every chat that wasn't deleted, newest first (the ones started here, then the agent's), with the person's titles. */
-const liveChats = (data: AgentData, started: ChatEntry[], st: AgentState): ChatEntry[] =>
-  [...started, ...data.chat.chats].filter(c => !st.chatDeleted[c.id])
+/** Every chat that wasn't deleted, newest first (the ones started here, then the agent's), with the person's titles. A chat
+ *  started here that the agent lists too (the real client lists it once saved) is listed once, as the agent's. */
+const liveChats = (data: AgentData, started: ChatEntry[], st: AgentState): ChatEntry[] => {
+  const agents = new Set(data.chat.chats.map(c => c.id))
+  return [...started.filter(c => !agents.has(c.id)), ...data.chat.chats].filter(c => !st.chatDeleted[c.id])
     .map(c => ({ id: c.id, title: st.chatTitles[c.id] ?? c.title, at: c.at, pinned: !!st.chatPinned[c.id] }))
+}
 
 /** The chat list the sidebar, See all and the top bar read: deleted chats hidden, pinned ones first, then newest first. */
 export const chatEntries = (data: AgentData, started: ChatEntry[], st: AgentState): ChatEntry[] => {
@@ -50,7 +59,7 @@ interface ToastOpts { undo?: () => void; ms?: number; icon?: string; key?: strin
 
 /** A chat that is answering: the agent's run id once it started, the thinking line, the ask that owns it, and the
  *  messages sent into it that wait for their turn (`turn.started` shows each with its quote and files). */
-interface ChatRun { runId: string | null; text: string; token: number; sent: QueuedMsg[] }
+interface ChatRun { runId: string | null; /** The turn being answered, once it starts: what Stop ends. */ turnId: string | null; text: string; token: number; sent: QueuedMsg[]; /** Stop was pressed while the send was still on its way. */ stopAsked?: true }
 /** A message typed while its chat was answering: it waits above the composer until the answer ends, or goes now (H8).
  *  `paused`: Stop (or a reload) stopped the answer it waited for, so it goes only by Send now (D). */
 export interface QueuedMsg { id: string; text: string; quote?: string; atts?: Attachment[]; model: string | null; paused?: true }
@@ -73,6 +82,9 @@ export const openRun = (s: Pick<UiState, 'fresh' | 'chatId' | 'runs'>): ChatRun 
   const key = openChatKey(s, agent.read())
   return key === null ? undefined : own(s.runs, key)
 }
+
+/** A chat's stored messages in the order the agent stored them (by position), and where the page before them starts. */
+export interface ChatHistory { messages: ChatMessage[]; next: string | null; state: 'loading' | 'ready' | 'error' }
 
 export interface UiState {
   // demo switches (dev only)
@@ -124,6 +136,10 @@ export interface UiState {
   /** Every chat that is answering, by chat id. Several may answer at once; leaving a chat doesn't stop its answer.
    *  The open chat's run is `openRun(state)`. */
   runs: Record<string, ChatRun>
+  /** What each chat's run events built (queued turns, notices, a damaged session). Not saved: a reload attaches again. */
+  views: Record<string, ChatView>
+  /** What the agent holds of a chat's past (`getChat`), by chat id: read when a chat that has no seed turns opens. Not saved. */
+  history: Record<string, ChatHistory>
   /** Messages waiting for a chat's answer to end, by chat id, oldest first. Saved (D7): after a reload they wait paused. */
   queued: Record<string, QueuedMsg[]>
   /** The question being edited in the composer, or null. */
@@ -185,6 +201,8 @@ export interface UiActions {
   ask(question: string, opts?: { replacesRun?: string; fromComposer?: boolean; quote?: string; atts?: Attachment[] }): Promise<void>
   /** Stops one chat's answer (the open chat's by default) and notes it in that chat. */
   stopRun(chatId?: string): void
+  /** Try again on a failed answer: a failed send goes again under its own key (once, however often it reached the agent); a failed turn is asked as a new question that replaces its run, with its quote and files. */
+  retryAnswer(lineId: string, trace: string, question: string): void
   /** The open composer's message waits for the open chat's answer to end (H8). */
   queueMessage(): void
   /** A waiting message goes now: the answer stops (a note says so) and this one is answered in the same run. */
@@ -218,6 +236,12 @@ export interface UiActions {
   pinChat(id: string, pinned: boolean): void
   /** Copies the chat's full URL. */
   copyChatLink(id: string): void
+  /** Asks the composer to open its model menu (a switched-off model's failed answer offers it). */
+  openModelMenu(): void
+  /** Reads a chat's history (the newest page, or with `more` the page before what is shown). A chat with seed turns has none to read. */
+  loadHistory(chatId: string, more?: boolean): void
+  /** The recovery for a chat whose session is damaged: the history stays and the next message starts fresh. */
+  resetSession(chatId: string): void
   /** Deletes with an Undo toast. Deleting the open chat opens the newest one left, or a new chat. */
   deleteChats(ids: string[]): void
   // ---------- navigation (PR 5) ----------
@@ -286,12 +310,8 @@ const heldText = (approved: number, waiting: number) => approved === 1 && waitin
 const chatSession = Date.now().toString(36)
 let msgSeq = 0
 const msgId = () => `m-${chatSession}-${++msgSeq}`
-const STOPPED_NOTE = 'You stopped your Inhouse agent. Nothing was changed.'
-/** On a chat that was answering when the page reloaded: runs aren't saved, so the answer stopped there. */
-const RELOAD_NOTE = 'Your Inhouse agent stopped when the page reloaded. Nothing was changed.'
-const RUN_FAILED = "Your Inhouse agent couldn't finish this answer. Nothing was changed."
-/** A run id the agent made (its messages carry it as their trace), as opposed to a recorded trace key on a seeded answer. */
-const RUN_ID = /^run-/
+/** A turn id the agent made (its answers carry it as their trace), as opposed to a recorded trace key on a seeded answer. */
+const TURN_ID = /^t_/
 let chatSeq = 0
 /** Now on the client entry's clock: the demo clock in the demo, the real clock in the product (agent/index.ts). */
 const demoTime = () => new Date(now())
@@ -349,6 +369,8 @@ export interface UiState {
   drafts: Record<string, ComposerDraft>
   /** Bumped to ask the open composer to take focus (setComposerText with focus). */
   composerFocus: number
+  /** Bumped to ask the chat's composer to open its model menu. */
+  modelMenuAsk: number
 }
 export interface UiActions {
   /** Puts text into the open composer (Today's, or the open chat's), replacing its draft. `focus` focuses it, caret at the end. */
@@ -472,26 +494,29 @@ function loadSession(): SavedSession | null {
   const chats: Record<string, ChatAdds> = {}
   for (const [id, c] of Object.entries(isRec(raw.chats) ? raw.chats : {})) {
     if (!exists(id) || !isAdds(c)) continue
-    const extras = c.extras.map(upgradeMsg).filter(isMsg)
+    const extras = c.extras.map(upgradeMsg).filter(isMsg).map(m => (m.role === 'user' && m.atts ? { ...m, atts: withoutPending(m.atts) } : m))
     // A message it can't read (or convert from before C1) is dropped, and said so.
     if (extras.length < c.extras.length) console.warn(`Inhouse: dropped ${c.extras.length - extras.length} saved message(s) it could not read in chat ${id}.`)
     chats[id] = { extras, hidden: Object.fromEntries(Object.entries(c.hidden).filter(([, v]) => v === true)) as Record<string, true> }
   }
   const drafts: Record<string, ComposerDraft> = {}
   for (const [k, d] of Object.entries(isRec(raw.drafts) ? raw.drafts : {})) {
-    if ((k === 'today' || exists(k)) && isRec(d) && isStr(d.text) && isAtts(d.atts)) drafts[k] = { text: d.text, atts: d.atts }
+    if ((k === 'today' || exists(k)) && isRec(d) && isStr(d.text) && isAtts(d.atts)) drafts[k] = { text: d.text, atts: withoutPending(d.atts) }
   }
   return {
     started, chats, drafts,
     todayDraft: isStr(raw.todayDraft) ? raw.todayDraft : '',
-    modelSel: isStr(raw.modelSel) && data.models.some(m => m.id === raw.modelSel) ? raw.modelSel : null,
+    // The choice is the person's, kept in this browser like a draft. The product reads its models after the app starts, so with none
+    // known yet the saved id can't be checked and is kept; `activeMode` falls back to the default for one the team can't use, and
+    // a send names the mode it resolved, never the raw id.
+    modelSel: isStr(raw.modelSel) && (data.models.length === 0 || data.models.some(m => m.id === raw.modelSel)) ? raw.modelSel : null,
     feedback: Object.fromEntries(Object.entries(isRec(raw.feedback) ? raw.feedback : {}).filter(([, v]) => v === 'up' || v === 'down')) as SavedSession['feedback'],
     libraryView: LIBRARY_VIEWS.find(v => v === raw.libraryView) ?? 'masonry',
     answering: (Array.isArray(raw.answering) ? raw.answering : []).filter((id): id is string => isStr(id) && exists(id)),
     queued: Object.fromEntries(Object.entries(isRec(raw.queued) ? raw.queued : {}).flatMap(([id, list]) => {
       const ok = exists(id) && Array.isArray(list) ? list.filter(isQueued) : []
       // A model the team can't use any more falls back to the default; the reload stopped the answer, so each waits paused.
-      return ok.length ? [[id, ok.map(q => ({ id: q.id, text: q.text, quote: q.quote, atts: q.atts, paused: true as const,
+      return ok.length ? [[id, ok.map(q => ({ id: q.id, text: q.text, quote: q.quote, atts: q.atts && withoutPending(q.atts), paused: true as const,
         model: q.model !== null && data.models.some(m => m.id === q.model) ? q.model : null }))]] : []
     })),
   }
@@ -569,9 +594,9 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
   team: { type: 'tool', text: '', shot: true }, traceId: null, toasts: [], phone: false, sideOpen: false,
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
   chatId: null, chatList: false, fresh: false, extras: [], hidden: {}, stash: {}, started: [], replyTo: null,
-  runs: {}, queued: {}, editMsg: null, libraryView: 'masonry',
+  runs: {}, views: {}, history: {}, queued: {}, editMsg: null, libraryView: 'masonry',
   actFilter: 'all', actOpen: null, usageTab: 'person', usageMonth: 0, skillTab: 'all', todaySort: 'default',
-  drafts: {}, composerFocus: 0,
+  drafts: {}, composerFocus: 0, modelMenuAsk: 0,
   feedback: {},
   approvalSort: 'oldest',
   setMenu: false,
@@ -579,7 +604,7 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
 
 export const useUi = create<UiState & UiActions>()((set, get) => {
   // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: its stage comes
-  // from the client in P2, so `stage` and `scenario` here are placeholders there.
+  // from the client's `stage` setting (`useCtx`, `./stage`), so `stage` here is a placeholder there, and so is `scenario`.
   const demo = demoControls ? loadDemo() : DEFAULT_DEMO
   demoControls?.setDemo({ stage: demo.stage, scenario: demo.scenario })
   const session = restoreSession(loadSession())
@@ -649,8 +674,19 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   agent.onNotice(n => {
     // A sent notice removes only the toasts whose holds all went out, then shows itself: it never replaces another toast.
     if (n.type === 'approval.sent') { settleHolds(); showToast(n.text, { ms: 4000 }) }
-    else if (n.type === 'error') showToast(n.text, { icon: 'error' })
+    // A stale save: the Settings screen follows with what the record is now, in this same toast (key `conflict`).
+    else if (n.type === 'error') showToast(n.text, { icon: 'error', ...(n.code === 'conflict' ? { key: 'conflict' } : {}) })
     else showToast(n.text, { icon: 'info' })
+  })
+
+  let historyEpoch = 0
+  // A support grant ended (close 4403): what the grant showed is dropped, the chats' messages and runs with it. The agent client
+  // already dropped its own copy and detached every run.
+  agent.onLink(state => {
+    if (state !== 'grantEnded') return
+    // A history read still on its way when the grant ended must not write what it read back.
+    historyEpoch++
+    set({ runs: {}, views: {}, history: {}, extras: [], hidden: {}, stash: {}, queued: {}, started: [] })
   })
 
   // ---------- runs ----------
@@ -659,30 +695,52 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     if (openChatKey(s, agent.read()) === chatId) return fn({ extras: s.extras, hidden: s.hidden })
     return { stash: { ...s.stash, [chatId]: fn(own(s.stash, chatId) ?? { extras: [], hidden: {} }) } }
   })
-  const addTo = (chatId: string, m: ChatMessage) => updateChat(chatId, c => ({ ...c, extras: [...c.extras, m] }))
-  /** Ends a chat's run: its later events are ignored (its token is gone) and the agent stops it. False when it wasn't answering. */
-  const endRun = (chatId: string): boolean => {
+  /** Adds a message, or replaces the one with its id where it stands (a stable id never doubles a message). */
+  const addTo = (chatId: string, m: ChatMessage) => updateChat(chatId, c => ({ ...c, extras: upsert(c.extras, m) }))
+  /** The agent's socket for each chat's run: one attach per chat at a time. */
+  const attached = new Map<string, () => void>()
+  const detachRun = (chatId: string) => { attached.get(chatId)?.(); attached.delete(chatId) }
+  /** Tokens of runs that finished, and of runs dropped here while their send was still on its way: what a late send answer needs to know. */
+  const ended = new Set<number>()
+  const cancelledSends = new Set<number>()
+  /** The upload of a send that is still putting its files on the server, by the send's token: Stop ends it. */
+  const uploadAborts = new Map<number, AbortSet>()
+  /** A message's id when it was first shown here (`local-…`) to the stable one the run gave it: Undo of a Regenerate looks it up. */
+  const renamed = new Map<string, string>()
+  /** Forgets a chat's run here: its later events are ignored (its token is gone). The agent's run goes on, or is ended by whatever asked. */
+  const forgetRun = (chatId: string): ChatRun | undefined => {
+    const r = own(get().runs, chatId)
+    detachRun(chatId)
+    if (r) {
+      // A send still on its way: when its answer comes, the turn it made is stopped (nobody is following it).
+      if (r.runId === null) cancelledSends.add(r.token)
+      set(s => ({ runs: without(s.runs, chatId) }))
+    }
+    return r
+  }
+  /** Stops the answer being written now, that turn only: the messages waiting go on (plan S4). False when nothing was answering. */
+  const stopLive = (chatId: string): boolean => {
     const r = own(get().runs, chatId)
     if (!r) return false
-    // Messages sent into it that the agent hadn't started on go back to the front of the queue, so none is lost.
-    set(s => ({ runs: without(s.runs, chatId), ...(r.sent.length ? { queued: { ...s.queued, [chatId]: [...r.sent, ...(own(s.queued, chatId) ?? [])] } } : {}) }))
-    // A run that hasn't started yet has no id: it is stopped when `run.started` arrives and finds its token gone.
-    if (r.runId) agent.stop(r.runId)
+    // A send still on its way: it stops the moment its turn is known. A turn waiting on the budget has no live turn: the waiting one is stopped.
+    const waiting = own(get().views, chatId)
+    if (r.turnId) agent.stop(r.turnId).catch(logFailure('could not stop the answer'))
+    else if (r.runId && waiting?.budgetWait && waiting.queued[0]) agent.stop(waiting.queued[0].turnId).catch(logFailure('could not stop the answer'))
+    else if (!r.runId) { uploadAborts.get(r.token)?.abortAll(); set(s => { const cur = own(s.runs, chatId); return cur ? { runs: { ...s.runs, [chatId]: { ...cur, stopAsked: true } } } : {} }) }
     return true
   }
-  /** The messages waiting in a chat stay, paused: the answer they waited for was stopped, so only Send now sends them (D). */
-  const pauseQueue = (chatId: string) => set(s => {
-    const list = own(s.queued, chatId)
-    return list?.length ? { queued: { ...s.queued, [chatId]: list.map(q => (q.paused ? q : { ...q, paused: true as const })) } } : {}
-  })
-  /** Stop: the chat's answer ends, says so, and what was queued in it waits paused. False when it wasn't answering. */
-  const stopChat = (chatId: string): boolean => {
-    if (!endRun(chatId)) return false
-    pauseQueue(chatId)
-    // Once: a Send now that just stopped the turn already said so.
-    const note: ChatMessage = { id: msgId(), role: 'event', text: STOPPED_NOTE }
-    updateChat(chatId, c => { const last = c.extras.at(-1); return last && isStoppedNote(last) ? c : { ...c, extras: [...c.extras, note] } })
-    return true
+  const stopChat = stopLive
+  /** A chat's run ends for good here (it was deleted, or its question was taken back): what waited in it goes back to the
+   *  person's queue, paused, so none is lost, and `note` says the answer stopped (once). The agent cancels its own queue. */
+  const parkRun = (chatId: string, note: boolean) => {
+    const r = own(get().runs, chatId)
+    if (!r) return
+    if (r.sent.length) {
+      const held = r.sent.map(q => ({ ...q, paused: true as const }))
+      set(s => ({ queued: { ...s.queued, [chatId]: [...held, ...(own(s.queued, chatId) ?? [])] } }))
+    }
+    if (note) updateChat(chatId, c => { const last = c.extras.at(-1); return last && isStoppedNote(last) ? c : { ...c, extras: [...c.extras, { id: msgId(), role: 'event', text: STOPPED_NOTE }] } })
+    forgetRun(chatId)
   }
   /** Ends the edit open in the composer: it gets back what it held before (only while that chat is open). */
   const restoreEdit = (focus: boolean) => {
@@ -696,6 +754,9 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   /** An ask starting in a chat (Regenerate, Retry, a suggestion, the queue) ends an edit open there first (F). */
   const dropEdit = (chatId: string) => { if (get().editMsg?.chatId === chatId) restoreEdit(false) }
   let askSeq = 0
+  let keySeq = 0
+  /** What a send that didn't come back was sent with, by the id of its failed line: Try again sends the same thing under the same key, so a send that did reach the agent is never asked twice. */
+  const failedSends = new Map<string, { key: string; q: string; o: SendOpts }>()
   /** Tells the agent about a chat the person started. A failure shows the agent's notice; the chat stays on screen. */
   const createChat = (c: ChatEntry) => {
     // The agent's error notice already told the person.
@@ -704,93 +765,151 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   // Chats started before a reload: the agent learns them again before anything reads the chat list.
   session.started?.forEach(createChat)
 
-  /** Asks `q` in chat `cid`, open or not, and writes the answer there. Synchronous up to and including adding the
-   *  person's message: regenerate() reads it right after calling ask(). */
-  const runAsk = async (cid: string, q: string, o: { quote?: string; atts: Attachment[]; model: string | null; replacesRun?: string }) => {
-    dropEdit(cid)
-    // A chat that is already answering stops that answer first. Other chats keep answering.
-    endRun(cid)
-    const token = ++askSeq
-    const live = () => own(get().runs, cid)?.token === token
-    set(s => ({ runs: { ...s.runs, [cid]: { runId: null, text: 'Reading your question…', token, sent: [] } } }))
-    addTo(cid, { id: msgId(), role: 'user', text: q, quote: o.quote, atts: o.atts.length ? o.atts : undefined })
-    let errorShown = false
-    let runId = ''
-    // The turn being answered: its trace id is the run's for the first, `${runId}-t${n}` for one started by `send` (types.ts).
-    let turn = 1
-    // Set once this ask ended its own run (not Stop, a newer ask, a delete or Reset): the queue goes on from there.
-    let ended = false
-    const setRun = (p: Partial<ChatRun>) => set(s => (own(s.runs, cid)?.token === token ? { runs: { ...s.runs, [cid]: { ...s.runs[cid], ...p } } } : {}))
-    // The run is over the moment the agent says so, so a Send now after this point asks anew instead of sending into it.
-    // Messages sent into it that it didn't get to (a failed turn ends the run) go back to the front of the queue, as in endRun.
-    const finish = () => {
-      if (!live()) return
-      const left = own(get().runs, cid)?.sent ?? []
-      set(s => ({ runs: without(s.runs, cid), ...(left.length ? { queued: { ...s.queued, [cid]: [...left, ...(own(s.queued, cid) ?? [])] } } : {}) }))
-      ended = true
-    }
-    const at = () => instantOf(demoTime().getTime())
-    // The failing turn's trace; a run that failed before starting has none.
-    const showError = (text: string) => addTo(cid, { id: msgId(), role: 'agent', trace: turn === 1 || !runId ? runId : `${runId}-t${turn}`, at: at(), part: { type: 'error', text, retryQuestion: q } })
-    try {
-      const mode = activeMode(agent.read(), agent.getSnapshot().settings, o.model)
-      const events = agent.ask(q, { chatId: cid, quote: o.quote, replacesRun: o.replacesRun, attachments: o.atts, mode: mode.id, effort: mode.effort })
-      for await (const ev of events) {
-        if (ev.type === 'run.started') {
-          runId = ev.runId
-          if (live()) setRun({ runId: ev.runId })
-          else agent.stop(ev.runId) // stopped, replaced, deleted or reset before it started
-          continue
-        }
-        if (!live()) continue
-        switch (ev.type) {
-          case 'step': setRun({ text: ev.label }); break
-          case 'part':
-            if (ev.part.type === 'error') errorShown = true
-            // Phase 2: the agent stamps the model and time on the part; until then the store does. The trace is the
-            // turn's id (the agent maps it to its steps), so a saved answer still opens its steps.
-            addTo(cid, { id: msgId(), role: 'agent', part: ev.part, trace: ev.trace, model: ev.model ?? mode.id, at: ev.at ?? at() })
-            break
-          case 'turn.started': {
-            // A message sent into this run is being answered now: it joins the chat as the person's message, with the
-            // quote and files it was sent with.
-            turn++
-            const sent = own(get().runs, cid)?.sent ?? []
-            const i = sent.findIndex(x => x.text === ev.text)
-            const m = i < 0 ? undefined : sent[i]
-            setRun({ text: 'Reading your question…', sent: i < 0 ? sent : sent.filter((_, j) => j !== i) })
-            addTo(cid, { id: msgId(), role: 'user', text: ev.text, quote: m?.quote, atts: m?.atts })
-            break
-          }
-          case 'run.failed':
-            if (!errorShown) showError(ev.message || RUN_FAILED)
-            finish()
-            break
-          case 'run.finished':
-          case 'run.stopped': finish(); break
-          case 'approval.requested': break
-        }
+  /** The run reducer and the words about a turn's end load with the first send, not with the page (Today's JS budget). */
+  let chat: typeof import('../screens/chat/run') | null = null
+  const loadChat = async () => (chat ??= await import('../screens/chat/run'))
+  const lib = () => { if (!chat) throw new Error('The chat code is not loaded: a run starts only after loadChat().'); return chat }
+
+  /** What one send carries. */
+  interface SendOpts { quote?: string; atts: Attachment[]; model: string | null; replacesRun?: string; priority?: 'now' | 'next' | 'later' }
+
+  /** What a frame changes in the store: the chat's view, its messages and the run's line above the composer. */
+  const takeFrame = (cid: string, token: number, f: RunFrame) => {
+    const cur = own(get().runs, cid)
+    if (cur?.token !== token) return
+    const prev = own(get().views, cid) ?? emptyView()
+    const next = lib().reduce(prev, f.event, f.at, f.runId)
+    if (next === prev) return
+    for (const m of next.messages) if (!prev.messages.includes(m)) addTo(cid, m)
+    const done = f.event.type === 'run.finished'
+    set(s => {
+      const views = { ...s.views, [cid]: next }
+      const r = own(s.runs, cid)
+      if (!r || r.token !== token) return { views }
+      if (done) return { views, runs: without(s.runs, cid) }
+      return {
+        views,
+        runs: { ...s.runs, [cid]: { ...r, turnId: next.live, text: next.thinking ?? r.text, sent: next.queued.map(q => ({ id: q.turnId, text: q.text, quote: q.quote, atts: q.atts.length ? q.atts : undefined, model: null })) } },
       }
-    } catch (e) {
-      console.error('Inhouse: the run threw.', e)
-      if (live()) showError(RUN_FAILED)
-    } finally {
-      // Only while this ask still owns the chat's run: a newer ask, Stop, a delete or Reset already took it.
-      finish()
-      if (ended) drain(cid)
+    })
+    if (done) { ended.add(token); detachRun(cid) }
+  }
+  /** Follows a run: a chat's frames go through `takeFrame` from the first (a replay shows what the live stream showed). */
+  const follow = (cid: string, token: number, runId: string) => {
+    detachRun(cid)
+    // The detach is filed first: the replay can end the run inside `attach`, before it has returned.
+    let off: (() => void) | null = null
+    let over = false
+    attached.set(cid, () => { over = true; off?.() })
+    off = agent.attach(runId, f => takeFrame(cid, token, f), 0, code => {
+      // Refused (not found, not the person's): nothing will come, so the run is dropped here.
+      console.warn(`Inhouse: the agent refused the run (${code}).`)
+      if (own(get().runs, cid)?.token === token) forgetRun(cid)
+    })
+    if (over) off()
+  }
+
+  // Answers still being written on the agent's side (the page reloaded, or another tab sent): follow each from its first event.
+  // Messages are keyed by id, so what the history already shows isn't added twice. The reload note was about a run that
+  // stopped; this one didn't, so its note goes.
+  /** Follows each run from its first event, unless its chat is already answering here or isn't one the agent has. */
+  const followRuns = async (list: readonly { runId: string; chatId: string }[]) => {
+    if (list.length) await loadChat()
+    const known = new Set(agent.allChatIds())
+    for (const r of list) {
+      if (own(get().runs, r.chatId) || !known.has(r.chatId)) continue
+      const token = ++askSeq
+      set(s => ({ runs: { ...s.runs, [r.chatId]: { runId: r.runId, turnId: null, text: 'Reading your question…', token, sent: [] } } }))
+      updateChat(r.chatId, c => ({ ...c, extras: c.extras.filter(m => !(m.role === 'event' && m.text === RELOAD_NOTE)) }))
+      follow(r.chatId, token, r.runId)
     }
   }
-  /** A chat that isn't answering asks the first message waiting in it, as a new question (in the background too, D9).
-   *  Paused ones wait for Send now. */
-  const drain = (cid: string) => {
-    if (own(get().runs, cid)) return
-    const waiting = own(get().queued, cid) ?? []
-    const at = waiting.findIndex(x => !x.paused)
-    if (at < 0) return
-    const first = waiting[at]
-    const rest = waiting.filter((_, j) => j !== at)
-    set(s => ({ queued: rest.length ? { ...s.queued, [cid]: rest } : without(s.queued, cid) }))
-    void runAsk(cid, first.text, { quote: first.quote, atts: first.atts ?? [], model: first.model })
+  void agent.activeRuns().then(followRuns, logFailure('could not read the answers being written'))
+
+  /** Sends `q` into chat `cid`, open or not: a new run, or a turn queued in the chat's live run. Synchronous up to and including
+   *  adding the person's message (when it starts a run): regenerate() reads it right after calling ask(). */
+  const runAsk = async (cid: string, q: string, o: SendOpts & { key?: string; failedLine?: string }) => {
+    dropEdit(cid)
+    const existing = own(get().runs, cid)
+    const token = existing?.token ?? ++askSeq
+    const mode = activeMode(agent.read(), agent.getSnapshot().settings, o.model)
+    const at = () => instantOf(demoTime().getTime())
+    const priority = o.priority ?? (existing ? 'now' : 'next')
+    // One key per send action (never per text: two identical quick sends are two turns); a retry of a failed send brings its own.
+    const key = o.key ?? `k${chatSession}${(++keySeq).toString(36)}`
+    const local = `local-${key}`
+    if (o.failedLine) { const gone = o.failedLine; updateChat(cid, c => ({ ...c, extras: c.extras.filter(m => m.id !== gone) })) }
+    // Words about a send that didn't go: the agent's notice told the person too, so this is the chat's own line.
+    const failed = (text: string) => {
+      failedSends.set(`${local}.f`, { key, q, o: { quote: o.quote, atts: o.atts, model: o.model, replacesRun: o.replacesRun, priority } })
+      addTo(cid, { id: `${local}.f`, role: 'agent', trace: '', at: at(), part: { type: 'error', text, retryQuestion: q } })
+    }
+    if (!mode) { failed(NO_MODEL_TEXT); return }
+    if (!existing) {
+      set(s => ({ runs: { ...s.runs, [cid]: { runId: null, turnId: null, text: 'Reading your question…', token, sent: [] } } }))
+      addTo(cid, { id: local, role: 'user', text: q, quote: o.quote, atts: o.atts.length ? o.atts : undefined })
+    }
+    // The real client keeps a file on the server before the message names it (route 39, which needs the chat to exist: its save
+    // goes first). The demo names a made-up id and keeps nothing.
+    const showAtts = (list: Attachment[]) => { if (!existing) updateChat(cid, c => ({ ...c, extras: c.extras.map(m => (m.id === local && m.role === 'user' ? { ...m, atts: list.length ? list : undefined } : m)) })) }
+    try {
+      const lib0 = await loadChat()
+      const { refOf, rememberAttachments } = lib0
+      let refs: { fileId: string; name: string }[] | undefined
+      if (agent.uploadsFiles() && o.atts.length) {
+        const asked = o.atts
+        if (asked.some(a => a.pending !== undefined)) showAtts(asked.map(a => (a.pending === undefined ? a : { ...a, meta: 'Uploading…' })))
+        const set0 = uploadAborts.get(token) ?? new lib0.AbortSet()
+        uploadAborts.set(token, set0)
+        const ctl = set0.add()
+        let at: Awaited<ReturnType<typeof lib0.attemptUpload>>
+        try {
+          at = await lib0.attemptUpload(asked, { fileOf: heldFile, upload: (f, signal) => agent.uploadFile(cid, f, signal), signal: ctl.signal }, dropFile)
+        } finally { set0.remove(ctl); if (!set0.size) uploadAborts.delete(token) }
+        o = { ...o, atts: at.atts }
+        showAtts(at.atts)
+        if (at.kind === 'cancelled') throw new lib0.UploadStopped()
+        if (at.kind === 'failed') throw at.error
+        if (at.kind === 'refused') {
+          // The message doesn't go without the files the person chose: the reasons say what to change, and Try again sends the rest.
+          if (own(get().runs, cid)?.token === token && !existing) { forgetRun(cid); cancelledSends.delete(token) }
+          failed(at.text)
+          return
+        }
+        refs = at.refs
+      }
+      rememberAttachments(o.atts)
+      const result = await agent.send(cid, {
+        clientTurnKey: key, text: q, ...(o.quote !== undefined ? { quote: o.quote } : {}), priority, model: mode.id,
+        ...(o.replacesRun !== undefined ? { replacesRun: o.replacesRun } : {}), ...(refs ? (refs.length ? { attachments: refs } : {}) : o.atts.length ? { attachments: o.atts.map(refOf) } : {}),
+      })
+      failedSends.delete(`${local}.f`)
+      const run = own(get().runs, cid)
+      if (!run) {
+        // The chat or the run was dropped while the send was on its way: what it started is stopped, as nobody follows it.
+        if (cancelledSends.delete(token)) { agent.stop(result.turnId).catch(logFailure('could not stop the answer')); return }
+        if (!ended.has(token)) return
+        // The run ended before the send came back, so the agent started a new run for it: follow that one from its first event.
+        const next = ++askSeq
+        set(s => ({ runs: { ...s.runs, [cid]: { runId: result.runId, turnId: null, text: 'Reading your question…', token: next, sent: [] } } }))
+        follow(cid, next, result.runId)
+        return
+      }
+      if (run.token !== token) { return }
+      if (!existing || run.runId === null || run.runId !== result.runId) {
+        // The person's message takes its stable id, so the run's own events upsert it instead of adding it again.
+        if (!existing) { renamed.set(local, result.messageId); updateChat(cid, c => ({ ...c, extras: c.extras.map(m => (m.id === local ? { ...m, id: result.messageId } : m)) })) }
+        set(s => { const cur = own(s.runs, cid); return cur?.token === token ? { runs: { ...s.runs, [cid]: { ...cur, runId: result.runId } } } : {} })
+        follow(cid, token, result.runId)
+      }
+      if (own(get().runs, cid)?.stopAsked) { agent.stop(result.turnId).catch(logFailure('could not stop the answer')) }
+    } catch (e) {
+      // A refusal by the agent is final; one that only says it couldn't be reached is worth asking again with the same key.
+      console.warn('Inhouse: the agent did not take the message.', e)
+      if (e instanceof AgentError && e.reason === REASON.sessionDamaged) set(s => ({ views: { ...s.views, [cid]: { ...(own(s.views, cid) ?? emptyView()), damaged: true } } }))
+      if (own(get().runs, cid)?.token === token && !existing) { forgetRun(cid); cancelledSends.delete(token) }
+      failed(chat && e instanceof chat.UploadStopped ? chat.UPLOAD_STOPPED : e instanceof AgentError && chat ? chat.sendFailureText(e) : RUN_FAILED)
+    }
   }
 
   return {
@@ -891,6 +1010,14 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const quote = fromComposer ? replyTo ?? undefined : askOpts.quote
       return runAsk(chatId, q, { quote, atts: fromComposer ? before.atts : askOpts.atts ?? [], model: modelSel, replacesRun: askOpts.replacesRun })
     },
+    retryAnswer: (lineId, trace, question) => {
+      const cid = openChatKey(get(), agent.read())
+      if (cid === null) return
+      const failed = failedSends.get(lineId)
+      if (failed) { void runAsk(cid, failed.q, { ...failed.o, key: failed.key, failedLine: lineId }); return }
+      const t = own(own(get().views, cid)?.turns ?? {}, trace)
+      void get().ask(question, { replacesRun: t?.runId || undefined, quote: t?.quote, atts: t?.atts })
+    },
     stopRun: chatId => {
       const id = chatId ?? openChatKey(get(), agent.read())
       if (id !== null) stopChat(id)
@@ -900,14 +1027,23 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const cid = openChatKey(s, agent.read())
       const text = s.chatDraft.trim()
       if (cid === null || !own(s.runs, cid) || !text) return
-      const item: QueuedMsg = { id: msgId(), text, quote: s.replyTo ?? undefined, atts: s.atts.length ? s.atts : undefined, model: s.modelSel }
-      set(u => ({ queued: { ...u.queued, [cid]: [...(own(u.queued, cid) ?? []), item] }, chatDraft: '', atts: [], replyTo: null, drafts: dropDraft(u.drafts, cid) }))
+      const item = { text, quote: s.replyTo ?? undefined, atts: s.atts, model: s.modelSel }
+      set(u => ({ chatDraft: '', atts: [], replyTo: null, drafts: dropDraft(u.drafts, cid) }))
+      // The agent queues it: it shows above the composer (`turn.queued`) and starts when the answer ends, or goes next.
+      void runAsk(cid, item.text, { quote: item.quote, atts: item.atts, model: item.model, priority: 'next' })
     },
     unqueue: id => {
       const cid = openChatKey(get(), agent.read())
-      const list = cid === null ? undefined : own(get().queued, cid)
+      if (cid === null) return undefined
+      // A turn the agent holds in its queue: cancelled there.
+      const waiting = own(get().runs, cid)?.sent.find(x => x.id === id)
+      if (waiting) {
+        agent.stop(id).catch(logFailure('could not take the message out of the queue'))
+        return waiting
+      }
+      const list = own(get().queued, cid)
       const item = list?.find(x => x.id === id)
-      if (cid === null || !list || !item) return undefined
+      if (!list || !item) return undefined
       const rest = list.filter(x => x.id !== id)
       set(s => ({ queued: rest.length ? { ...s.queued, [cid]: rest } : without(s.queued, cid) }))
       return item
@@ -918,46 +1054,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       if (cid === null || !queuedItem) return
       // Sent, it waits for nothing any more.
       const { paused: _paused, ...item } = queuedItem
-      const r = own(get().runs, cid)
-      const ask = () => { void runAsk(cid, item.text, { quote: item.quote, atts: item.atts ?? [], model: item.model }) }
-      // Nothing answering (it was stopped, or the page reloaded): it's simply asked.
-      if (!r) { ask(); return }
-      // Send now always interrupts what is running (E), a turn an earlier Send now started too: that one keeps its note.
-      // An earlier Send now whose turn hasn't started shows as asked and stopped (its Retry asks it again), and this one
-      // starts a run of its own, so the agent can't answer the earlier one after it.
-      if (r.sent.length) {
-        const earlier = r.sent
-        // Out of the run first, so ending it doesn't put them back in the queue.
-        set(s => { const cur = own(s.runs, cid); return cur?.token === r.token ? { runs: { ...s.runs, [cid]: { ...cur, sent: [] } } } : {} })
-        for (const m of earlier) {
-          addTo(cid, { id: msgId(), role: 'user', text: m.text, quote: m.quote, atts: m.atts })
-          addTo(cid, { id: msgId(), role: 'event', text: STOPPED_NOTE })
-        }
-        ask()
-        return
-      }
-      const note: ChatMessage = { id: msgId(), role: 'event', text: STOPPED_NOTE }
-      addTo(cid, note)
-      // Not started yet: a new question takes its place.
-      if (!r.runId) { ask(); return }
-      // Steer: the agent ends the current turn and answers this one next, in the same run (`turn.started` shows it).
-      const { runId, token } = r
-      const mine = (s: UiState) => { const cur = own(s.runs, cid); return cur?.token === token ? cur : undefined }
-      set(s => { const cur = mine(s); return cur ? { runs: { ...s.runs, [cid]: { ...cur, sent: [...cur.sent, item] } } } : {} })
-      agent.send(runId, item.text, { priority: 'now', attachments: item.atts }).catch(e => {
-        // The run ended before the agent took it (its notice already showed), so nothing was stopped: the note goes.
-        // Only while this run is still the chat's: after Stop, a newer ask or a delete, the note stands for that.
-        console.warn('Inhouse: the agent did not take the message.', e)
-        if (mine(get())) updateChat(cid, c => ({ ...c, extras: c.extras.filter(m => m.id !== note.id) }))
-        // Still in the run's list: it waits at the front again and goes as soon as nothing answers in the chat. Gone from
-        // it: Stop or the run's end already put it back in the queue.
-        set(s => {
-          const cur = mine(s)
-          if (!cur?.sent.some(x => x.id === item.id)) return {}
-          return { runs: { ...s.runs, [cid]: { ...cur, sent: cur.sent.filter(x => x.id !== item.id) } }, queued: { ...s.queued, [cid]: [item, ...(own(s.queued, cid) ?? [])] } }
-        })
-        drain(cid)
-      })
+      // Send now ends what is running (E) and goes next in the same run; with nothing answering it is simply asked.
+      void runAsk(cid, item.text, { quote: item.quote, atts: item.atts ?? [], model: item.model, priority: own(get().runs, cid) ? 'now' : 'next' })
     },
     startEdit: (m, hide) => {
       const s = get()
@@ -1009,7 +1107,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     togglePause: () => {
       if (agent.getSnapshot().paused) { agent.resume().catch(logFailure('could not resume')); showToast('Your Inhouse agent is running again', { ms: 4000 }); return }
       agent.pause().catch(logFailure('could not pause'))
-      showToast('Your Inhouse agent is paused. Routines and jobs are stopped. Questions still work.', { undo: () => { agent.resume().catch(logFailure('could not resume')) } })
+      showToast('Your Inhouse agent is paused. Routines, jobs and questions are stopped.', { undo: () => { agent.resume().catch(logFailure('could not resume')) } })
     },
 
     setDemo: p => {
@@ -1031,7 +1129,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     },
     resetDemo: () => {
       // Every answer stops: the runs go with the state, so their late events find no token.
-      for (const r of Object.values(get().runs)) if (r.runId) agent.stop(r.runId)
+      for (const id of Object.keys(get().runs)) forgetRun(id)
       demoControls?.reset()
       clearSession()
       // The stage and scenario go back to their defaults with everything else; the dot sweep and mark animation stay.
@@ -1085,6 +1183,45 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       agent.pinChat(id, pinned).catch(logFailure('could not pin the chat'))
       showToast(pinned ? 'Chat pinned' : 'Chat unpinned', { icon: 'keep', ms: 4000 })
     },
+    openModelMenu: () => set(s => ({ modelMenuAsk: s.modelMenuAsk + 1 })),
+    loadHistory: (chatId, more = false) => {
+      const have = own(get().history, chatId)
+      if (have?.state === 'loading' || (have && have.state !== 'error' && !more) || (more && (!have || have.next === null))) return
+      const cursor = more ? have?.next ?? undefined : undefined
+      const epoch = historyEpoch
+      set(s => ({ history: { ...s.history, [chatId]: { messages: have?.messages ?? [], next: have?.next ?? null, state: 'loading' } } }))
+      agent.getChat(chatId, cursor).then(async page => {
+        if (epoch !== historyEpoch) return
+        // `runs`: the live run and any ended run whose turns aren't all stored yet (route 24). Each is replayed from its first event;
+        // what the history already holds shows once (stable ids).
+        void followRuns(page.runs).catch(logFailure('could not follow the answers being written'))
+        // The page is newest first; the thread reads oldest first, by stored position. A turn's stored end row is put in
+        // the words the live stream used (they load with the chat code, as at a send).
+        const sorted = [...page.messages].sort((a, b) => a.pos - b.pos)
+        const older: ChatMessage[] = sorted.some(m => m.role === 'event' && m.end !== undefined) ? (await loadChat()).historyMessages(sorted) : sorted
+        if (epoch !== historyEpoch) return
+        set(s => {
+          const cur = own(s.history, chatId)
+          return { history: { ...s.history, [chatId]: { messages: more ? [...older, ...(cur?.messages ?? [])] : older, next: page.nextCursor, state: 'ready' } } }
+        })
+      }).catch((e: unknown) => {
+        // The read failed, or the chat code for the page's end rows didn't load: either way the page isn't shown.
+        if (epoch !== historyEpoch) return
+        // A chat this tab just started whose save failed (or never reached the agent) has no history: it reads as empty, not as an error.
+        if (e instanceof AgentError && e.code === NOT_FOUND && get().started.some(c => c.id === chatId)) {
+          set(s => ({ history: { ...s.history, [chatId]: { messages: [], next: null, state: 'ready' } } }))
+          return
+        }
+        console.warn('Inhouse: could not read the chat history.', e)
+        set(s => ({ history: { ...s.history, [chatId]: { messages: have?.messages ?? [], next: have?.next ?? null, state: 'error' } } }))
+      })
+    },
+    resetSession: chatId => {
+      agent.resetSession(chatId).then(() => {
+        set(s => { const v = own(s.views, chatId); return v ? { views: { ...s.views, [chatId]: { ...v, damaged: false, notice: null } } } : {} })
+        showToast('Ready for a fresh start. Your messages are still here.', { icon: 'refresh', ms: 4000 })
+      }, logFailure('could not start the chat fresh'))
+    },
     copyChatLink: id => {
       const url = `${location.origin}${location.pathname}#/chats/${encodeURIComponent(id)}`
       const failed = () => showToast("Couldn't copy the link.", { icon: 'error' })
@@ -1099,7 +1236,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       // A second delete while the first toast is still up joins it (same key, replaced in place), so one Undo brings back both.
       const earlier = lastChatDelete && s.toasts.some(t => t.key === CHAT_DELETE && t.undo === lastChatDelete?.undo) ? lastChatDelete : null
       // Every deleted chat that is answering, open or not, stops, and says so (Undo brings it back with the note).
-      for (const id of ids) stopChat(id)
+      // The agent cancels what waits in them and stops what answers; here their runs are forgotten.
+      for (const id of ids) { stopLive(id); parkRun(id, true) }
       agent.deleteChats(ids).catch(logFailure('could not delete the chats'))
       // The open chat was deleted: move to the newest chat left (or a new chat), and remember both for Undo.
       // A second delete keeps the first `from`, so Undo goes back to the chat the person was really on.
@@ -1131,28 +1269,30 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       const s0 = get()
       const chatId = open
       // The run that wrote the old answer, so the agent updates what it made (a routine, a skill) instead of adding one.
-      const replaces = s0.extras.find(m => m.role === 'agent' && hideIdList.includes(m.id) && RUN_ID.test(m.trace))
-      const replacesRun = replaces?.role === 'agent' ? replaces.trace : undefined
+      const replaces = s0.extras.find(m => m.role === 'agent' && hideIdList.includes(m.id) && TURN_ID.test(m.trace))
+      // The run that wrote it, when this page saw it (a run id, which is all the agent takes); after a reload nothing here knows it, so none is sent.
+      const replacesRun = replaces?.role === 'agent' ? own(s0.views, chatId)?.turns[replaces.trace]?.runId || undefined : undefined
       // The routine the replaced run made, if it still stands: if the new answer makes none, the agent deletes it, and Undo
       // brings it back (one the person had deleted already stays deleted). Only that run's: a later turn's routine is
       // hidden with the tail but stays live, so the person can delete it themselves, and Undo mustn't bring that back.
       const was = agent.getSnapshot().routinesDeleted
-      const routines = s0.extras.flatMap(m => (m.role === 'agent' && replacesRun !== undefined && m.trace === replacesRun && hideIdList.includes(m.id) && m.part.type === 'routine' && !was[m.part.routine.id] ? [m.part.routine.id] : []))
+      const routines = s0.extras.flatMap(m => (m.role === 'agent' && replacesRun !== undefined && replaces?.role === 'agent' && m.trace === replaces.trace && hideIdList.includes(m.id) && m.part.type === 'routine' && !was[m.part.routine.id] ? [m.part.routine.id] : []))
       // The question goes with its own quote and files; the composer's draft stays as it is.
       set(s => ({ hidden: hideIds(s.hidden, hideIdList) }))
       void get().ask(question.text, { replacesRun, quote: question.quote, atts: question.atts })
       // ask() has added the question before its first await: it is the newest message of the open chat.
-      const asked = get().extras.at(-1)?.id
+      const askedFirst = get().extras.at(-1)?.id
       // Undo brings the old turn back and drops the new question with whatever it answered so far, wherever the chat is now.
       const undo = () => {
         const deleted = agent.getSnapshot().routinesDeleted
         for (const id of routines) if (deleted[id]) agent.restoreRoutine(id).catch(logFailure('could not restore the routine'))
         const u = get()
         const now = openChatKey(u, agent.read()) === chatId ? u.extras : own(u.stash, chatId)?.extras ?? []
+        // The question may have taken its stable id since it was asked.
+        const asked = askedFirst === undefined ? undefined : renamed.get(askedFirst) ?? askedFirst
         const at = now.findIndex(m => m.id === asked)
         // Still answering it (no newer question): stop that run. The dropped turn needs no stopped note.
-        // What was queued behind it waits paused, as after Stop.
-        if (at >= 0 && !now.some((m, j) => j > at && m.role === 'user') && endRun(chatId)) pauseQueue(chatId)
+        if (at >= 0 && !now.some((m, j) => j > at && m.role === 'user') && stopLive(chatId)) parkRun(chatId, false)
         updateChat(chatId, c => {
           const i = c.extras.findIndex(m => m.id === asked)
           if (i < 0) return { ...c, hidden: unhideIds(c.hidden, hideIdList) }
@@ -1196,7 +1336,9 @@ export const useAgentData = (): AgentData => useSyncExternalStore(agent.subscrib
 export function useCtx(): Ctx {
   const agentState = useAgentState()
   const data = useAgentData()
-  const stage = useUi(s => s.stage)
+  const demoStage = useUi(s => s.stage)
+  // The demo's switch drives the stage there; on the product it is the agent's technical `stage` setting.
+  const stage = demoControls ? demoStage : productStage(agentState.settings)
   return useMemo(() => ({ S: stageIndex(stage), agent: agentState, data }), [stage, agentState, data])
 }
 

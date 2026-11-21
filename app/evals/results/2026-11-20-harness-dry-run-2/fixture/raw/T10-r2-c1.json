@@ -1,0 +1,57 @@
+{
+ "row": {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I've put the question to you with four options: Norda, the cheaper supplier, a split order, or a small test batch from the cheaper one first. I found nothing saved about Norda, so I have no background on them. Pick one and I'll draft the purchase order for approval.",
+  "costUsd": 0.012272499999999999,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Norda supplier mugs"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Which supplier should we go with for the mug reorder?",
+     "options": [
+      "Norda (current supplier)",
+      "The cheaper supplier",
+      "Split the order between both",
+      "Order a small test batch from the cheaper one first"
+     ]
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"The question is shown to the person. Stop here and wait for their answer.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I've put the question to you with four options: Norda, the cheaper supplier, a split order, or a small test batch from the cheaper one first. I found nothing saved about Norda, so I have no background on them. Pick one and I'll draft the purchase order for approval.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2225,
+   "cacheReadTokens": 32780,
+   "outputTokens": 342
+  },
+  "costUsd": 0.012272499999999999
+ }
+}

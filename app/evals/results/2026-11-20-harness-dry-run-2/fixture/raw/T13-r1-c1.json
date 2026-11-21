@@ -1,0 +1,59 @@
+{
+ "row": {
+  "caseId": "T13",
+  "cat": "choice",
+  "pair": "routine_delete/memory_forget",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_delete"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the daily orders summary routine, which ran daily at 18:00. The Monday stock report is still active.",
+  "costUsd": 0.0139327,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_list,mcp__inhouse__routine_delete",
+     "max_results": 5
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_delete\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"routine_id\\\":\\\"r_mon_stock\\\",\\\"name\\\":\\\"Monday stock report\\\",\\\"schedule\\\":\\\"Mondays 07:30\\\",\\\"state\\\":\\\"active\\\"},{\\\"routine_id\\\":\\\"r_daily_orders\\\",\\\"name\\\":\\\"Daily orders summary\\\",\\\"schedule\\\":\\\"daily 18:00\\\",\\\"state\\\":\\\"active\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_delete",
+    "input": {
+     "routine_id": "r_daily_orders"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Deleted r_daily_orders.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I deleted the daily orders summary routine, which ran daily at 18:00. The Monday stock report is still active.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2810,
+   "cacheReadTokens": 44617,
+   "outputTokens": 243
+  },
+  "costUsd": 0.0139327
+ }
+}

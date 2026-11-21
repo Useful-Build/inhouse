@@ -60,5 +60,7 @@ export const LibraryFileSchema = z.object({
   entries: z.array(z.string()).optional(),
   /** Calendar files: the events. */
   lines: z.array(PairSchema).optional(),
+  /** Revision of this file (a delete or a restore bumps it): a write sends it back as `ifRev`. */
+  rev: z.number().int().min(1),
 })
 export type LibraryFile = z.infer<typeof LibraryFileSchema>

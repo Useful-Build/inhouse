@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "C04",
+  "cat": "connector",
+  "pair": "products_search/inventory_levels_get",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": true,
+   "forbidden": false
+  },
+  "called": [
+   "products_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat came from a search on \"ceramic\", so a product that is ceramic but doesn't carry the tag wouldn't show up.",
+  "costUsd": 0.010150099999999999,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "ceramic"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "ceramic tag"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Only one product is tagged ceramic: the Mug 500ml Moss (SKU MUG-500-MOSS).\n\nThat came from a search on \"ceramic\", so a product that is ceramic but doesn't carry the tag wouldn't show up.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2438,
+   "cacheReadTokens": 20771,
+   "outputTokens": 197
+  },
+  "costUsd": 0.010150099999999999
+ }
+}
