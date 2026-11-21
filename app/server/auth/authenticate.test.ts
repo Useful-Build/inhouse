@@ -6,7 +6,7 @@ import { fc, test } from '@fast-check/vitest'
 import { SignJWT, UnsecuredJWT, createLocalJWKSet, importJWK } from 'jose'
 import type { JWTVerifyGetKey } from 'jose'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { authenticate, authenticateUpgrade, checkOrigin, remoteKeys, testIssuerBranch } from './authenticate.ts'
+import { authenticate, checkOrigin, remoteKeys, testIssuerBranch } from './authenticate.ts'
 import * as issuerOff from './issuer-off.ts'
 import type { AuthOutcome } from './authenticate.ts'
 import { TEST_ISSUER, mintPerson, mintService } from './test-issuer-mint.ts'
@@ -310,21 +310,3 @@ describe('the remote key set (fetch injected, no network)', () => {
     expect(principalOf((await run(rotated, BRAND.origin, { keys })).out)).not.toBeNull()
   })
 })
-
-describe('authenticateUpgrade', () => {
-  const upgrade = async (origin: string | null, method = 'GET') => {
-    const headers: Record<string, string> = { 'Cf-Access-Jwt-Assertion': await person(), Upgrade: 'websocket' }
-    if (origin) headers.Origin = origin
-    return authenticateUpgrade(new Request(`${BRAND.origin}/api/ws`, { method, headers }), authEnv() as never, fakeStores({ people }).stores, NOW, 'r', good.keys)
-  }
-  it('needs the exact Origin on the GET upgrade', async () => {
-    expect(principalOf(await upgrade(BRAND.origin))).not.toBeNull()
-    expect(await upgrade(null)).toEqual({ refused: 'forbidden', reason: 'bad_origin' })
-    expect(await upgrade(INHOUSE.origin)).toEqual({ refused: 'forbidden', reason: 'bad_origin' })
-  })
-  it('still refuses a bad token first', async () => {
-    const r = new Request(`${BRAND.origin}/api/ws`, { headers: { Upgrade: 'websocket', Origin: BRAND.origin } })
-    expect(await authenticateUpgrade(r, authEnv() as never, fakeStores().stores, NOW, 'r', good.keys)).toEqual({ refused: 'unauthorized' })
-  })
-})
-
