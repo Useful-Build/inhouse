@@ -11,6 +11,7 @@ export interface AuditText {
 }
 
 const ROLE = { member: 'Member', admin: 'Admin' } as const
+const REVIVE = { revived: 'restarted', not_quarantined: 'wasn’t stuck', not_found: 'not found' } as const
 
 const ROUTE: Record<string, string> = {
   '/api/members': 'The team',
@@ -61,5 +62,6 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'support.attach': return { what: 'watched a live answer', detail: '' }
     case 'memory.forgotten': return { what: 'forgot a team memory', detail: '' }
     case 'memory.restored': return { what: 'brought back a team memory', detail: 'It waits for an admin’s OK' }
+    case 'ops_task_revive': return { what: 'restarted a stuck background task', detail: `${args.kind}: ${REVIVE[args.result]}` }
   }
 }

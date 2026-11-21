@@ -109,6 +109,8 @@ export const CASES: Record<string, RouteCase> = {
   // Route 50, the test build's undrain (W2): 200 here (the test build); the product build answers 404 (server/ops/drain.test.ts).
   'DELETE /api/ops/drain': { design: d('open', [], ['release']), path: '/api/ops/drain', passes: 200 },
   'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, passes: 503 },
+  // Route 51 (W1 PR 6): an empty body passes access, then fails its schema (400), so the sweep revives nothing.
+  'POST /api/ops/tasks/revive': { design: d('open', [], ['release']), path: '/api/ops/tasks/revive', json: {}, passes: 400 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 

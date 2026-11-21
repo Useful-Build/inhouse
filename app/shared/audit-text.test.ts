@@ -28,6 +28,7 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'support.attach': { action: 'support.attach', grantId: 'g_1', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA' },
   'memory.forgotten': { action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
   'memory.restored': { action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' },
+  'ops_task_revive': { action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_AAAAAAAAAAAAAAAAAAAAAA', result: 'revived' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -90,6 +91,8 @@ describe('P3 memory lines (W6, item 19)', () => {
   it('says what happened to a team fact, and an Inhouse forget reads as a change, not a look', () => {
     expect(auditText({ action: 'memory.forgotten', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' }, names)).toEqual({ what: 'forgot a team memory', detail: '' })
     expect(auditText({ action: 'memory.restored', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA' }, names)).toEqual({ what: 'brought back a team memory', detail: 'It waits for an admin’s OK' })
+    expect(auditText({ action: 'ops_task_revive', kind: 'deferred-hook', id: 'deferred-hook:q_A', result: 'revived' }, names)).toEqual({ what: 'restarted a stuck background task', detail: 'deferred-hook: restarted' })
+    expect(auditText({ action: 'ops_task_revive', kind: 'routine-end', id: 'x', result: 'not_quarantined' }, names)).toEqual({ what: 'restarted a stuck background task', detail: 'routine-end: wasn’t stuck' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'PUT', route: '/api/memory/brand/:id/forgotten' }, names)).toEqual({ what: 'changed brand data', detail: 'Team memory' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/memory' }, names)).toEqual({ what: 'looked at brand data', detail: 'Memory' })
   })

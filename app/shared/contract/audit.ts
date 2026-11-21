@@ -21,6 +21,8 @@ export const AuditActionSchema = z.enum([
   'agent.paused', 'agent.resumed', 'support.attach',
   // P3 (p3-design section 10, item 19): an Admin or the Inhouse team (under a live grant) forgets a team fact, or undoes that.
   'memory.forgotten', 'memory.restored',
+  // P3 W1 PR 6 (route 51): the release job revived one quarantined due task (P4's and P6's runbooks).
+  'ops_task_revive',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -41,6 +43,13 @@ const RoutePatternSchema = z.enum([
 const WritePatternSchema = z.enum(['/api/memory/brand/:id/forgotten'])
 const MemoryIdArgSchema = z.string().regex(/^mem_[A-Za-z0-9_-]{22}$/)
 const PhotoTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp'])
+/**
+ * A due task's kind and id as route 51 takes them: ids the server makes, never a name, an email or a text. An id is a
+ * kind-shaped seed id (`outbox-sweep`) or `<kind-shaped prefix>:<server id>` (`deferred-hook:q_...`).
+ */
+export const TaskKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
+export const TaskIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}(:[A-Za-z0-9_:.-]{1,200})?$/)
+export const ReviveResultSchema = z.enum(['revived', 'not_quarantined', 'not_found'])
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
@@ -80,6 +89,8 @@ const otherLines = [
   /** A team fact forgotten, or that undone (it then waits for an admin's OK again). Ids only, never the fact's text. */
   line('memory.forgotten', { memoryId: MemoryIdArgSchema }),
   line('memory.restored', { memoryId: MemoryIdArgSchema }),
+  /** Route 51: one due task revived (or found not quarantined, or not there), by the release job. */
+  line('ops_task_revive', { kind: TaskKindSchema, id: TaskIdSchema, result: ReviveResultSchema }),
 ] as const
 
 /**

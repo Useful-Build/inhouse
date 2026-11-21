@@ -139,6 +139,8 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'DELETE', pattern: '/api/ops/drain', class: 'open', allow: [], services: ['release'] },
   { method: 'POST', pattern: '/api/ops/warmup', class: 'open', allow: [], services: ['release'] },
   { method: 'POST', pattern: '/api/chats/:id/session/reset', class: 'personal', allow: ['member', 'admin'] },
+  // Route 51 (W1 PR 6): revive one quarantined due task, release only like drain.
+  { method: 'POST', pattern: '/api/ops/tasks/revive', class: 'open', allow: [], services: ['release'] },
 ]
 
 /** `CanRows` as section 3 maps them. */
