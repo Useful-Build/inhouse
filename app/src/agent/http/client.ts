@@ -17,6 +17,7 @@ import type { ChatSummary } from '../../../shared/contract/chats'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
 import { ACTIVITY_PAGE, readActivityPage, splitActivity } from './activity'
 import { postNoticesRead, readNotifications } from './bell'
+import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibraryFile } from './library'
 import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -31,8 +32,8 @@ import type { Contract, TransportOptions } from './transport'
 const UNAVAILABLE = 'Not connected yet.'
 
 /** The resources this client reads. Every other key has nothing to read until its phase, so it reads as ready and empty. */
-type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications'
-const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications'] satisfies readonly Loaded[]
+type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library'
+const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library'] satisfies readonly Loaded[]
 
 export interface HttpAgentOptions extends TransportOptions {
   /** Epoch ms. The real clock by default; the contract target moves it on (`advance`). */
@@ -93,6 +94,8 @@ const EMPTY_STATE: AgentState = {
   chatTitles: {}, chatPinned: {}, chatDeleted: {},
 }
 const NO_FILES: LibraryFile[] = []
+/** The Library's order: newest first, ties by id (the server's order). */
+const byNewest = (a: LibraryFile, b: LibraryFile) => b.at.ms - a.at.ms || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
 /** How many chats the sidebar lists under Recent chats (the demo's number). */
 const RECENT_CHATS = 4
 
@@ -141,6 +144,10 @@ interface Slices {
   activity: ActivityLine[]
   /** Route 60: the bell's notifications, newest first. Replaced, never changed in place, so `listNotifications()` is stable between changes. */
   notifications: AgentNotification[]
+  /** Route 62: the Library's live files, newest first. Replaced, never changed in place, so `listFiles()` is stable between changes. */
+  files: LibraryFile[]
+  /** Files this client deleted, as last known (their `rev` is what an Undo sends): out of `files` until restored. */
+  gone: Record<string, LibraryFile>
   /** The record revision last read for each setting key (a key never set is absent: rev 0). */
   revs: Record<string, number>
   state: AgentState
@@ -170,7 +177,7 @@ export class HttpAgent implements AgentClient {
   private readonly now: () => number
   private s: Slices = {
     me: null, members: [], membersNext: null, audit: [], auditNext: null, grant: null, memory: EMPTY_DATA.memory, chats: [], chatsNext: null, served: null, modelList: [],
-    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
+    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], files: NO_FILES, gone: {}, revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
   }
   private readonly socket: ChatSocket
   private readonly origin: string
@@ -278,6 +285,7 @@ export class HttpAgent implements AgentClient {
       models: this.s.modelList,
       defaultModel: this.s.served?.default ?? '',
       chat: { chats: this.s.chats.map(c => ({ id: c.id, title: c.title, at: c.at, turns: [] })), recentCount: Math.min(this.s.chats.length, RECENT_CHATS), suggestions: [] },
+      library: { places: PLACES },
       more: { audit: this.s.auditNext !== null, members: this.s.membersNext !== null },
       resources: this.s.res,
     }
@@ -303,7 +311,7 @@ export class HttpAgent implements AgentClient {
 
   private async loadAll() {
     if (!(await this.loadMeta())) return
-    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications()])
+    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary()])
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
@@ -440,6 +448,18 @@ export class HttpAgent implements AgentClient {
     }
   }
 
+  /** Route 62, every page. As Activity: the Inhouse team reads it only when asked (each read writes a `support.access` line). */
+  private async loadLibrary(asked = false) {
+    if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('library', { status: 'ready' })
+    try {
+      const files = await readLibrary(this.http)
+      this.patch({ files, res: { ...this.s.res, library: { status: 'ready' } } })
+    } catch (e) {
+      if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('library', { status: 'ready' })
+      this.failStatus('library', e)
+    }
+  }
+
   /** Route 60. The Inhouse team has no bell (the route is the brand team's), so it isn't asked. */
   private async loadNotifications() {
     if (this.s.me?.role === 'inhouse') return this.setStatus('notifications', { status: 'ready' })
@@ -483,7 +503,7 @@ export class HttpAgent implements AgentClient {
    * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
    */
   retry = (resource: ResourceKey): Promise<void> => {
-    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications() }[resource as Loaded] as (() => Promise<unknown>) | undefined
+    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
     const running = this.retrying.get(resource)
     if (running) return running
@@ -493,7 +513,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private async reloadMeta() {
-    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications()])
+    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary()])
   }
 
   /** The next page of a list. A second call while one is in flight for the same list does nothing. */
@@ -929,9 +949,29 @@ export class HttpAgent implements AgentClient {
   approve = (_id: string) => this.refuse<Awaited<ReturnType<AgentClient['approve']>>>()
   undo = (_id: string) => this.refuse()
   editDraft = (_id: string, _body: string) => this.refuse()
-  // The Library's upload and download: W5 replaces these two with the real routes.
-  uploadFiles = (_files: File[]) => this.refuse<LibraryFile[]>()
-  fileDownloadUrl = (_id: string): string | null => null
+  /**
+   * Row 63, one file after another: each joins the list as the server kept it. The first refusal stops the rest and
+   * rejects with what the person can act on (the size, the type, the name); the files already kept stay.
+   */
+  uploadFiles = async (files: File[]): Promise<LibraryFile[]> => {
+    const kept: LibraryFile[] = []
+    for (const file of files) {
+      let one: LibraryFile
+      try {
+        one = await uploadLibraryFile(this.http, file)
+      } catch (e) {
+        const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
+        // files.ts loads lazily (Today's first-load budget, build-support/entry-without-zod.test.ts).
+        const { uploadRefusalText } = await import('./files')
+        throw this.fail(new AgentError(err.code, uploadRefusalText(file.name, err), err.reason ? { reason: err.reason } : {}))
+      }
+      kept.push(one)
+      this.patch({ files: [one, ...this.s.files.filter(f => f.id !== one.id)].sort(byNewest) })
+    }
+    return kept
+  }
+  /** Row 64, on this page's origin. */
+  fileDownloadUrl = (id: string): string | null => `${this.origin}${libraryDownloadPath(id)}`
   undoHandled = (_id: string) => this.refuse<string>()
   redoHandled = (_id: string) => this.refuse()
 
@@ -1119,9 +1159,43 @@ export class HttpAgent implements AgentClient {
     })
   })
 
-  listFiles = () => NO_FILES
-  deleteFiles = (_ids: string[]) => this.refuse()
-  restoreFiles = (_ids: string[]) => this.refuse()
+  listFiles = () => this.s.files
+  /**
+   * Rows 65 and 66: the files leave the list (or come back) at once; the write sends each file's `rev` as it is when the
+   * write leaves (one lane, so an Undo waits for its delete's answer and sends the rev that answer gave). A refusal puts
+   * the files back where they were; a `conflict` takes the revisions it carries.
+   */
+  private libraryWrite(k: Contract, ids: string[], to: 'delete' | 'restore'): Promise<void> {
+    if (ids.length < 1 || ids.length > 100 || new Set(ids).size !== ids.length) return this.refuseLocal('invalid', 'Choose 1 to 100 files.')
+    const pick = new Set(ids)
+    const from = (s: Slices) => (to === 'delete' ? s.files.filter(f => pick.has(f.id)) : ids.flatMap(id => (s.gone[id] ? [s.gone[id]] : [])))
+    if (from(this.s).length !== ids.length) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
+    /** The files `rows` put live (`restore`) or gone (`delete`), whatever side they were on. */
+    const place = (s: Slices, rows: readonly LibraryFile[], side: 'live' | 'gone'): Slices => {
+      const ours = new Set(rows.map(f => f.id))
+      const gone = Object.fromEntries(Object.entries(s.gone).filter(([id]) => !ours.has(id)))
+      const files = s.files.filter(f => !ours.has(f.id))
+      if (side === 'gone') for (const f of rows) gone[f.id] = f
+      return { ...s, gone, files: side === 'live' ? [...files, ...rows].sort(byNewest) : files }
+    }
+    const before = from(this.s)
+    const revOf = (id: string) => (this.s.gone[id] ?? this.s.files.find(f => f.id === id))?.rev ?? 1
+    return this.write({
+      lane: 'library',
+      apply: s => place(s, before, to === 'delete' ? 'gone' : 'live'),
+      send: () => postLibraryWrite(this.http, k, to, ids.map(id => ({ id, ifRev: revOf(id) }))),
+      done: (s, r) => place(s, r.items, to === 'delete' ? 'gone' : 'live'),
+      undo: s => place(s, before, to === 'delete' ? 'live' : 'gone'),
+      onConflict: (s, current) => {
+        const c = k.ANSWERS.libraryFiles.safeParse(current)
+        if (!c.success) return s
+        // Each file as it is now, on the side it was on before this write.
+        return place(s, c.data.items, to === 'delete' ? 'live' : 'gone')
+      },
+    })
+  }
+  deleteFiles = this.needs((k, ids: string[]) => this.libraryWrite(k, ids, 'delete'))
+  restoreFiles = this.needs((k, ids: string[]) => this.libraryWrite(k, ids, 'restore'))
 
   setAside = (_id: string, _reason: Parameters<AgentClient['setAside']>[1]) => this.refuse()
   runRoutine = (_id: string) => this.refuse<RoutineRun>()

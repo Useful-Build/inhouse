@@ -3,16 +3,7 @@
 import { z } from 'zod'
 import { FileIdSchema } from './chat-ids.ts'
 import { LibraryFileSchema } from './library.ts'
-import type { LibraryPlace } from './library.ts'
 import { PageRequestSchema, pageOf } from './paging.ts'
-
-/** The Library's places, in the order the screen shows them (approvals stays empty until P6). */
-export const LIBRARY_PLACES: readonly LibraryPlace[] = [
-  { id: 'chats', name: 'Chats', icon: 'chat_bubble' },
-  { id: 'routines', name: 'Routines', icon: 'event_repeat' },
-  { id: 'approvals', name: 'Approvals', icon: 'task_alt' },
-  { id: 'uploads', name: 'Uploaded by the team', icon: 'upload_file' },
-]
 
 /** Route 62, `GET /api/library?cursor&limit&deleted`: newest first, 50 a page; `deleted=1` lists the deleted files only. */
 export const LibraryQuerySchema = PageRequestSchema.extend({ deleted: z.enum(['0', '1']).optional() }).strict()

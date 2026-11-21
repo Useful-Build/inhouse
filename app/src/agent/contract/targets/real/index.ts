@@ -20,6 +20,8 @@ import { resetSettings, settingFixtures } from './settings'
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
+  // P4 W5 (p4-w5.md addendum): the Library's upload and download URL.
+  'uploadFiles', 'fileDownloadUrl',
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([

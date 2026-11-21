@@ -41,7 +41,7 @@ export const ALL_MODELS = [
 
 export const chatRow = (id: string, o: Record<string, unknown> = {}) => ({ id, title: `Chat ${id}`, customTitle: null, pinned: false, deleted: false, at: iso(1000), rev: 1, running: false, ...o })
 
-export const reads = (o: { chats?: unknown[]; models?: unknown; usage?: unknown; pause?: unknown; activity?: unknown[]; notifications?: unknown[] } = {}): Record<string, Answer> => ({
+export const reads = (o: { chats?: unknown[]; models?: unknown; usage?: unknown; pause?: unknown; activity?: unknown[]; notifications?: unknown[]; library?: unknown[] } = {}): Record<string, Answer> => ({
   'GET /api/me': { body: me() },
   'GET /api/settings/personal': { body: { items: [] } },
   'GET /api/settings/brand': { body: { items: [] } },
@@ -52,6 +52,7 @@ export const reads = (o: { chats?: unknown[]; models?: unknown; usage?: unknown;
   'GET /api/memory': { body: { team: [], personal: [] } },
   'GET /api/activity?limit=100': { body: { items: o.activity ?? [], nextCursor: null } },
   'GET /api/notifications': { body: { items: o.notifications ?? [] } },
+  'GET /api/library?limit=100': { body: { items: o.library ?? [], nextCursor: null } },
   'GET /api/chats?limit=50': { body: { items: o.chats ?? [], nextCursor: null } },
   'GET /api/models': { body: o.models ?? { default: 'opus', modes: ALL_MODELS } },
   'GET /api/usage': { body: o.usage ?? usage() },
