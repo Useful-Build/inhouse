@@ -82,7 +82,11 @@ export default defineConfig({
               // P4: wrangler.test.jsonc binds the hub's ReadGateway as HUB (p4-h1.md OC 4), and workerd refuses to start
               // with a binding to a Worker it doesn't run. The server tests never reach the hub (H1's route takes a
               // `ReadGatewayLike` it's handed), so HUB here is a stand-in that answers 503 and names itself.
-              serviceBindings: { HUB: () => new Response('HUB is a stand-in in the server tests (vitest.config.ts)', { status: 503 }) },
+              // P5 W1: HUB_CONNECT (the hub's ConnectGateway) likewise; connect.test.ts hands its handlers a fake gateway.
+              serviceBindings: {
+                HUB: () => new Response('HUB is a stand-in in the server tests (vitest.config.ts)', { status: 503 }),
+                HUB_CONNECT: () => new Response('HUB_CONNECT is a stand-in in the server tests (vitest.config.ts)', { status: 503 }),
+              },
             },
           })),
         ],

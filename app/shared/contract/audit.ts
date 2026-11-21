@@ -28,6 +28,8 @@ export const AuditActionSchema = z.enum([
   'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
   'library.uploaded', 'library.deleted', 'library.restored',
   'today.set_aside',
+  // P5 (p5-w1): the Inhouse team starts connecting a tool, and how the connect ended.
+  'tools.connect_start', 'tools.connect',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -106,6 +108,16 @@ export const LibraryTypeSchema = z.enum([
 /** P3's chat file cap (20 MiB, caps.ts `maxFileBytes`). */
 const LIBRARY_MAX_BYTES = 20_971_520
 const FileIdsSchema = z.array(FileIdSchema).min(1).max(100)
+// P5 (p5-w1): a connector account and how a connect ended. W3's audit block reuses both.
+/** The hub's account id (H0's pattern, app/hub/index/schemas.ts `ACCOUNT_ID`): `slack:workspace`, `shopify:store`. */
+export const ConnectorAccountIdSchema = z.string().regex(/^[a-z]+(:[a-z0-9-]{1,40})?$/)
+/** `ok`, or one of the hub's closed error codes (app/hub/index/contract.ts `HubErrorCode`), never upstream text. */
+export const ConnectOutcomeSchema = z.enum([
+  'ok', 'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch',
+  'key_unavailable', 'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited',
+  'result_too_large', 'internal', 'state_invalid', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'paused',
+])
+export type ConnectOutcome = z.infer<typeof ConnectOutcomeSchema>
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
@@ -172,6 +184,9 @@ const otherLines = [
   line('library.restored', { fileIds: FileIdsSchema }),
   /** `reason: null`: the item was put back (a snooze or a dismissal undone). */
   line('today.set_aside', { itemId: TodayItemIdSchema, reason: z.enum(['snoozed', 'dismissed', 'declined']).nullable() }),
+  // P5 (p5-w1): connect start (route A) and its end (route B), the account id and the outcome code only.
+  line('tools.connect_start', { accountId: ConnectorAccountIdSchema }),
+  line('tools.connect', { accountId: ConnectorAccountIdSchema, outcome: ConnectOutcomeSchema }),
 ] as const
 
 /**

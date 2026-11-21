@@ -7,7 +7,8 @@
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { AuditActionSchema, AuditArgsSchema, LibraryTypeSchema } from './audit.ts'
-import type { AuditAction, AuditArgs } from './audit.ts'
+import type { AuditAction, AuditArgs, ConnectOutcome } from './audit.ts'
+import type { HubErrorCode } from '../../hub/index/contract.ts'
 import { settingSpec } from './settings.ts'
 import { FILE_CAPS } from '../../server/files-io/caps.ts'
 import { INHOUSE_BRAND_WRITES } from '../../server/testing/inhouse-brand-writes.ts'
@@ -47,6 +48,9 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'library.deleted': { action: 'library.deleted', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA', 'f_BBBBBBBBBBBBBBBBBBBBBB'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
+  // P5 (p5-w1)
+  'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
+  'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'scope_mismatch' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -268,7 +272,8 @@ describe('P4 lines (wave-4 PR0)', () => {
 
   it('appends its block after P3\'s, in this order', () => {
     const all = AuditActionSchema.options
-    expect(all.slice(all.indexOf('ops_task_revive'))).toEqual([
+    // P5 W1 appends its block after this one, so the check ends at P4's last action rather than at the list's end.
+    expect(all.slice(all.indexOf('ops_task_revive'), all.indexOf('today.set_aside') + 1)).toEqual([
       'ops_task_revive',
       'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
       'library.uploaded', 'library.deleted', 'library.restored',
@@ -314,4 +319,28 @@ describe('support.access write pairs (P4 review fold)', () => {
   it('INHOUSE_BRAND_WRITES is exactly the write pairs support.access takes', () => {
     expect([...INHOUSE_BRAND_WRITES].sort()).toEqual(WRITES.map(([m, r]) => `${m} ${r}`).sort())
   })
+})
+
+describe('P5 (p5-w1): connect lines carry an account id and a closed outcome only', () => {
+  it("appends its block after P4's, in this order", () => {
+    const all = AuditActionSchema.options
+    expect(all.slice(all.indexOf('today.set_aside'))).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect'])
+  })
+
+  it('refuses free text, an unknown outcome and an extra field', () => {
+    expect(ok({ action: 'tools.connect_start', accountId: 'slack:workspace' })).toBe(true)
+    expect(ok({ action: 'tools.connect', accountId: 'shopify:store', outcome: 'ok' })).toBe(true)
+    expect(ok({ action: 'tools.connect_start', accountId: 'Slack Workspace' })).toBe(false)
+    expect(ok({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'invalid_code from slack' })).toBe(false)
+    expect(ok({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok', code: 'abc' })).toBe(false)
+    expect(ok({ action: 'tools.connect_start', accountId: 'slack:workspace', memberId: m, email: 'a@example.com' })).toBe(false)
+  })
+})
+
+// Review fold (#251): ConnectOutcomeSchema is the hub's HubErrorCode plus `ok`, both ways, so a new hub code can't
+// silently become `internal` at route B. A type check: tsc fails here on any drift.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const outcomesAreHubCodes: Same<Exclude<ConnectOutcome, 'ok'>, HubErrorCode> = true
+describe('P5 (p5-w1): ConnectOutcomeSchema and HubErrorCode', () => {
+  it('match both ways (checked by the type above)', () => expect(outcomesAreHubCodes).toBe(true))
 })

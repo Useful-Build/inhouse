@@ -120,6 +120,11 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/activity': { design: d('brand_data', ALL), path: '/api/activity', passes: 200 },
   'GET /api/notifications': { design: d('personal', PEOPLE), path: '/api/notifications', passes: 200 },
   'POST /api/notifications/read': { design: d('personal', PEOPLE), path: '/api/notifications/read', json: { ids: ['n_e2e_nobody'] }, passes: 200 },
+  // P5 W1, routes 68 and 69. The start names an account no connector has, so the hub answers unknown_tool (404) and
+  // nothing is written; the callback with no code or state redirects to /tools?connect_error=state_invalid (303) and
+  // writes nothing (connect.test.ts proves both).
+  'POST /api/connect/:accountId/start': { design: d('technical', ['inhouse']), path: '/api/connect/nothing:here/start', json: {}, passes: 404 },
+  'GET /api/connect/callback': { design: d('technical', ['inhouse']), path: '/api/connect/callback', passes: 303 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 

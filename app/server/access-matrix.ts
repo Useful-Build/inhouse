@@ -67,6 +67,11 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // P5 W1 (p5-w1.md section 9): technical, the Inhouse team alone. Route B is a GET the AS redirects the browser to, on
+  // the Inhouse team's host (OC-W1-11): it needs that host's Access session like any route (401 before routing without
+  // one; a top-level redirect carries it), so no open row. Its CSRF guard is the state's member binding at the hub.
+  /* 68 */ { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
+  /* 69 */ { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

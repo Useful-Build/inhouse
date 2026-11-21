@@ -1,6 +1,6 @@
 // check-product-config fixture: refused, rule "hub-second-entry" (a second inhouse-hub entry; invented values).
 {
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {

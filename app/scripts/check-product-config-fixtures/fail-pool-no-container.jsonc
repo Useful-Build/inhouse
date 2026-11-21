@@ -1,6 +1,6 @@
 // check-product-config fixture: the Runner is bound with no container (invented values).
 {
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {

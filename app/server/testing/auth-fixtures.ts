@@ -147,6 +147,9 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // Routes 68 and 69 (P5 W1, p5-w1.md section 9): connect start and the OAuth callback, the Inhouse team alone.
+  { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
+  { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

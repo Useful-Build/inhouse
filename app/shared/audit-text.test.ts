@@ -39,6 +39,9 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'library.deleted': { action: 'library.deleted', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
+  // P5 (p5-w1)
+  'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
+  'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -160,5 +163,14 @@ describe('support.access writes (P4 review fold): a write reads as a change, nev
       ['PUT', '/api/today/:id/aside', 'An item on Today'],
       ['POST', '/api/library/delete', 'The Library'], ['POST', '/api/library/restore', 'The Library'],
     ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method, route }, names), `${method} ${route}`).toEqual({ what: 'changed brand data', detail })
+  })
+})
+
+describe('P5 (p5-w1): connect lines', () => {
+  it('names the connector and the outcome in words, never upstream text', () => {
+    expect(auditText({ action: 'tools.connect_start', accountId: 'slack:workspace' }, names)).toEqual({ what: 'started connecting a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok' }, names)).toEqual({ what: 'connected a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'workspace_mismatch' }, names)).toEqual({ what: 'couldn’t connect a tool', detail: 'Slack: another workspace was chosen' })
+    expect(auditText({ action: 'tools.connect', accountId: 'notes:test', outcome: 'rate_limited' }, names)).toEqual({ what: 'couldn’t connect a tool', detail: 'notes:test: rate_limited' })
   })
 })
