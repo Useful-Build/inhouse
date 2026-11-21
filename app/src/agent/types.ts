@@ -208,6 +208,8 @@ export interface AgentClient {
   retry(resource: ResourceKey): Promise<void>
   /** Where the audit log downloads from, or null when the client builds the file itself (the demo, with shared/csv.ts). */
   auditExportUrl(): string | null
+  /** Route 41: one chat file's bytes, and the name the server gave it (null when it gave none). Rejects with an `AgentError`. The demo serves a sample file. */
+  downloadFile(fileId: string): Promise<{ blob: Blob; name: string | null }>
   /** Closes the chat socket. Sign out calls it first, so nothing is followed while the sign-in ends (a no-op where there is no socket). */
   disconnect(): void
   /** Where signing out goes (`/cdn-cgi/access/logout` in the product), or null where there is no sign-in (the demo). */

@@ -237,7 +237,7 @@ export class ChatEngine {
   project(run: MockRun, turn: MockTurn, parts: { messageId: string; part: MessagePart; at: Instant }[], info: RunInfo, model: string) {
     const list = this.h.history.get(turn.chatId) ?? []
     let pos = this.seedMessages(turn.chatId).length + list.length
-    const atts = turn.input.attachments?.map(a => ({ name: a.name, meta: '', icon: 'description' }))
+    const atts = turn.input.attachments?.map(a => ({ name: a.name, meta: '', icon: 'description', fileId: a.fileId }))
     const user: StoredMessage = {
       id: `${turn.turnId}.u`, role: 'user', text: turn.input.text, ...(turn.input.quote !== undefined ? { quote: turn.input.quote } : {}), ...(atts?.length ? { atts } : {}),
       turnId: turn.turnId, runId: run.runId, pos: pos++, at: turn.queuedAt,

@@ -6,6 +6,7 @@ import { traceOf, useTraces } from './chat/traces'
 import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted, mergeHistory } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
+import { fileIcon, fileSize } from '@/lib/file-meta'
 import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'
 import { fmtAnswerBar } from '../lib/format'
 import { display } from '../state/display'
@@ -18,6 +19,8 @@ import { Button as UiButton } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentPart } from './chat/Parts'
+import { FileChip } from './chat/FileChip'
+import { filesOfTurns } from './chat/view'
 import { ChatList } from './chat/ChatList'
 import { SuggestionChip } from '../ui/chat'
 import { copyText } from './chat/copy'
@@ -449,7 +452,9 @@ function Thread() {
                   {m.atts && m.atts.length > 0 && (
                     <div className="mt-1.5 flex flex-wrap justify-end gap-1.5 self-end">
                       {m.atts.map((f, j) => (
-                        <AttachmentChip key={f.name + j} icon={f.icon} name={f.name} meta={f.meta} />
+                        f.fileId !== undefined
+                          ? <FileChip key={f.name + j} fileId={f.fileId} icon={f.icon} name={f.name} meta={f.meta} tap={phone} />
+                          : <AttachmentChip key={f.name + j} icon={f.icon} name={f.name} meta={f.meta} />
                       ))}
                     </div>
                   )}
@@ -484,6 +489,15 @@ function Thread() {
                   {b.ms.map(x => <AgentPart key={x.id} id={x.id} part={x.part} trace={x.trace} />)}
                   {streaming && <Thinking text={thinkingText} />}
                 </div>
+                {/* The files this answer saved, each with Download. */}
+                {(() => {
+                  const files = filesOfTurns(view, new Set(b.ms.map(m => m.trace)))
+                  return files.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 self-start">
+                      {files.map(f => <FileChip key={f.fileId} fileId={f.fileId} icon={fileIcon(f.name)} name={f.name} meta={fileSize(f.bytes)} tap={phone} />)}
+                    </div>
+                  )
+                })()}
                 {/* The actions show once the turn is done, so the live log announces them once, not with every streamed part. */}
                 {endsTurn && answerBar(b)}
               </div>

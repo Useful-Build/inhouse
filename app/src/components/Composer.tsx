@@ -9,6 +9,7 @@ import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AttachmentChip, Button, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
 import { TAP } from '../ui/fields'
+import { fileIcon, fileSize } from '@/lib/file-meta'
 import { ATTACHMENT_NAME_TOO_LONG, NO_MODEL_NOTE, NO_MODEL_YET, attachmentNameTooLong } from '../screens/chat/notes'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -61,8 +62,6 @@ function useTouchOnly() {
 /** Browsers without field-sizing get the field's height measured instead. */
 const AUTO_SIZE = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content')
 
-const fileSize = (b: number) => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB'
-const fileIcon = (n: string) => /\.(png|jpe?g|gif|webp|heic)$/i.test(n) ? 'image' : /\.(csv|xlsx?|numbers)$/i.test(n) ? 'table_view' : /\.pdf$/i.test(n) ? 'picture_as_pdf' : 'description'
 
 export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat'; showToolsLabel: boolean }) {
   const ctx = useCtx()

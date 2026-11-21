@@ -4,7 +4,7 @@
 // that clears on its own.
 import { describe, expect, test } from 'vitest'
 import type { ChatEvent } from '../../../shared/contract/runs'
-import { emptyView, reduce } from './view'
+import { emptyView, filesOfTurns, reduce } from './view'
 import type { ChatView } from './view'
 
 const AT = { iso: '2026-11-20T10:00:00.000Z', ms: Date.UTC(2026, 10, 20, 10, 0, 0) }
@@ -79,5 +79,29 @@ describe('a turn ends once', () => {
     expect(twice).toBe(once)
     expect(twice.messages.filter(m => m.id === `${T}.f`)).toHaveLength(1)
     expect(twice.turns[T].state).toBe('failed')
+  })
+})
+
+describe('saved files (the `file` event)', () => {
+  const T2 = 't_Bbbbbbbbbbbbbbbbbbbbbb'
+  const file = (turnId: string, fileId: string, name = 'a.csv'): ChatEvent => ({ type: 'file', turnId, fileId, name, bytes: 10, contentType: 'text/csv' })
+  const F1 = 'f_Aaaaaaaaaaaaaaaaaaaaaa'
+  const F2 = 'f_Bbbbbbbbbbbbbbbbbbbbbb'
+
+  test('a file event adds the file under its turn, once, however often it is sent', () => {
+    const v = run(queued, file(T, F1), file(T, F1), file(T, F2, 'b.pdf'))
+    expect(v.files).toEqual([
+      { turnId: T, fileId: F1, name: 'a.csv', bytes: 10, contentType: 'text/csv' },
+      { turnId: T, fileId: F2, name: 'b.pdf', bytes: 10, contentType: 'text/csv' },
+    ])
+  })
+
+  test('filesOfTurns gives each turn its own files, and a block of two turns gets both', () => {
+    const v = run(queued, file(T, F1), file(T2, F2, 'b.pdf'))
+    expect(filesOfTurns(v, new Set([T])).map(f => f.fileId)).toEqual([F1])
+    expect(filesOfTurns(v, new Set([T2])).map(f => f.fileId)).toEqual([F2])
+    expect(filesOfTurns(v, new Set([T, T2])).map(f => f.fileId)).toEqual([F1, F2])
+    expect(filesOfTurns(v, new Set(['t_Cccccccccccccccccccccc']))).toEqual([])
+    expect(filesOfTurns(undefined, new Set([T]))).toEqual([])
   })
 })

@@ -1212,6 +1212,8 @@ export class MockAgent implements AgentClient {
   }
 
   auditExportUrl = (): string | null => null
+  /** The demo has no stored files: every id answers a small sample, named by the chip that asked. */
+  downloadFile = (): Promise<{ blob: Blob; name: string | null }> => Promise.resolve({ blob: new Blob(['A sample file from the demo.\n'], { type: 'text/plain' }), name: null })
   signOutUrl = (): string | null => null
   disconnect = (): void => undefined
 

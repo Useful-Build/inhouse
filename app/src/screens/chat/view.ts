@@ -73,7 +73,7 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       return v.openRuns.includes(ev.runId) ? v : { ...v, openRuns: [...v.openRuns, ev.runId] }
     case 'turn.queued': {
       if (v.turns[ev.turnId]) return v
-      const atts = ev.attachments.map(a => attOf(a.name))
+      const atts = ev.attachments.map(a => ({ ...attOf(a.name), fileId: a.fileId }))
       const info: TurnInfo = { turnId: ev.turnId, runId, state: 'queued', text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts }
       const q: QueuedTurn = { turnId: ev.turnId, messageId: ev.messageId, text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts, priority: ev.priority }
       return { ...v, turns: { ...v.turns, [ev.turnId]: info }, queued: [...v.queued, q] }
@@ -134,6 +134,9 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       return { ...v, openRuns: v.openRuns.filter(r => r !== ev.runId), thinking: null, live: null, notice: v.damaged ? v.notice : null, budgetWait: false }
   }
 }
+
+/** The files these turns saved, in the order they came. A block of the thread can hold more than one turn's parts. */
+export const filesOfTurns = (v: ChatView | undefined, turnIds: ReadonlySet<string>): ChatView['files'] => (v ? v.files.filter(f => turnIds.has(f.turnId)) : [])
 
 /** A whole stream through the reducer, from an empty view. */
 export const viewOf = (events: readonly ChatEvent[], at: Instant, runId = ''): ChatView => events.reduce((v, e) => reduce(v, e, at, runId), emptyView())

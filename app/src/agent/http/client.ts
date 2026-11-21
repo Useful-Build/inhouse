@@ -15,6 +15,7 @@ import type {
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
+import { downloadFile } from './files'
 import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -860,6 +861,13 @@ export class HttpAgent implements AgentClient {
   /** Where the audit log downloads from. A relative path: the browser sends it to its own origin, with its sign-in. */
   auditExportUrl = (): string | null => '/api/audit/export.csv'
   signOutUrl = (): string | null => '/cdn-cgi/access/logout'
+  /** Route 41. A 401, or a 403 for a person who was removed, is the signed-out state, as on every other call. */
+  downloadFile = async (fileId: string): Promise<{ blob: Blob; name: string | null }> => {
+    try { return await downloadFile(this.http, fileId) } catch (e) {
+      if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
+      throw e
+    }
+  }
 
   // ---------- everything else: the P1 stub, until its phase ----------
 
