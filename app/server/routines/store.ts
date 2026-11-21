@@ -14,12 +14,18 @@ import { renderSlot } from './render.ts'
 import { slotInsert } from './rows.ts'
 import type { RoutineRow, SlotRow } from './rows.ts'
 import { intlZone } from './slots.ts'
-import { ON_TIME_MS } from './tick.ts'
+import { ON_TIME_MS } from './limits.ts'
+import { routinesSignal } from './signal.ts'
 
 export interface At {
   actorId: string
   requestId: string
   nowMs: number
+  /**
+   * The Inhouse team's grant id: Inhouse may change any routine (OC 5) while that grant is live, checked again inside the
+   * write's statement (the matrix's check ran before the handler, and a grant can end in between).
+   */
+  inhouseGrant?: string
 }
 
 type Gate = { sql: string; params: (string | number)[] }
@@ -42,8 +48,11 @@ const stamped = (id: string, stamp: string): Gate => ({ sql: 'EXISTS (SELECT 1 F
 const personLine = (db: D1Database, template: ActivityTemplateId, at: At, key: string, guard?: Gate) =>
   recordActivity(db, { template, fields: {}, kind: 'change', actorId: at.actorId, atMs: at.nowMs }, { source: 'routine', key }, guard)
 
-/** The creator, or an active Admin, inside the statement. Two params: the actor twice. */
-const MAY_MANAGE = "(creator_id = ? OR EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active'))"
+/** The Inhouse team under a grant, the creator, or an active Admin, inside the statement. Params: `manageParams(at)`. */
+const MAY_MANAGE = `(EXISTS (SELECT 1 FROM support_grants WHERE id = ? AND ended_at_ms IS NULL AND ends_at_ms > ?) OR creator_id = ?
+  OR EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active'))`
+/** No grant names the empty id, so a person's write never passes the grant arm. */
+const manageParams = (at: At): (string | number)[] => [at.inhouseGrant ?? '', at.nowMs, at.actorId, at.actorId]
 
 /** The row a write's `RETURNING *` gave back: no read after the commit, so a committed write never answers an error. */
 function written(r: D1Result, what: string): RoutineRow {
@@ -55,19 +64,22 @@ function written(r: D1Result, what: string): RoutineRow {
 export const readRoutine = (db: D1Database, id: string): Promise<RoutineRow | null> =>
   db.prepare('SELECT * FROM routines WHERE id = ?').bind(id).first<RoutineRow>()
 
-export async function mayManage(db: D1Database, r: RoutineRow, memberId: string): Promise<boolean> {
-  if (r.creator_id === memberId) return true
-  return (await db.prepare("SELECT 1 AS ok FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active'").bind(memberId).first()) !== null
+export async function mayManage(db: D1Database, r: RoutineRow, at: Pick<At, 'actorId' | 'inhouseGrant' | 'nowMs'>): Promise<boolean> {
+  if (r.creator_id === at.actorId) return true
+  return (await db.prepare(
+    `SELECT 1 AS ok WHERE EXISTS (SELECT 1 FROM support_grants WHERE id = ? AND ended_at_ms IS NULL AND ends_at_ms > ?)
+      OR EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active')`,
+  ).bind(at.inhouseGrant ?? '', at.nowMs, at.actorId).first()) !== null
 }
 
 export type WriteOutcome = { ok: RoutineRow } | { conflict: RoutineRow } | { refused: 'not_found' | 'not_allowed' | 'stage' }
 
 /** Why a guarded write matched nothing: gone, a newer `rev`, or not this person's to change. */
-async function whyNot(db: D1Database, id: string, ifRev: number, memberId: string, deleted: 'live' | 'deleted'): Promise<WriteOutcome> {
+async function whyNot(db: D1Database, id: string, ifRev: number, at: At, deleted: 'live' | 'deleted'): Promise<WriteOutcome> {
   const now = await readRoutine(db, id)
   if (!now || (deleted === 'live') !== (now.deleted_at_ms === null)) return { refused: 'not_found' }
   if (now.rev !== ifRev) return { conflict: now }
-  return (await mayManage(db, now, memberId)) ? { conflict: now } : { refused: 'not_allowed' }
+  return (await mayManage(db, now, at)) ? { conflict: now } : { refused: 'not_allowed' }
 }
 
 export interface NewRoutine {
@@ -125,7 +137,7 @@ export async function updateRoutine(db: D1Database, id: string, ifRev: number, p
   const enabledChanged = next.enabled !== r.enabled
   if (changed.length === 0 && !enabledChanged) {
     if (r.rev !== ifRev) return { conflict: r }
-    return (await mayManage(db, r, at.actorId)) ? { ok: r } : { refused: 'not_allowed' }
+    return (await mayManage(db, r, at)) ? { ok: r } : { refused: 'not_allowed' }
   }
   const stamp = writeStamp(at.requestId)
   const resetCursor = changed.includes('schedule') || enabledChanged ? 1 : 0
@@ -134,13 +146,13 @@ export async function updateRoutine(db: D1Database, id: string, ifRev: number, p
       `UPDATE routines SET instruction = ?, days_mask = ?, hour = ?, minute = ?, missed = ?, enabled = ?,
           checked_until_ms = CASE WHEN ? = 1 THEN ? ELSE checked_until_ms END, updated_at_ms = ?, rev = rev + 1, req_id = ?
         WHERE id = ? AND rev = ? AND deleted_at_ms IS NULL AND ${MAY_MANAGE} RETURNING *`,
-    ).bind(next.instruction, next.days_mask, next.hour, next.minute, next.missed, next.enabled, resetCursor, at.nowMs, at.nowMs, stamp, id, ifRev, at.actorId, at.actorId),
+    ).bind(next.instruction, next.days_mask, next.hour, next.minute, next.missed, next.enabled, resetCursor, at.nowMs, at.nowMs, stamp, id, ifRev, ...manageParams(at)),
   ]
   if (changed.length > 0) stmts.push(routineAudit(db, at, { action: 'routine.updated', routineId: id, changed }, id, stamped(id, stamp)))
   if (enabledChanged) stmts.push(routineAudit(db, at, { action: 'routine.enabled', routineId: id, on: next.enabled === 1 }, id, stamped(id, stamp)))
   stmts.push(personLine(db, 'routine_changed', at, `${id}|rev${ifRev + 1}`, stamped(id, stamp)))
   const [res] = await db.batch(stmts)
-  if (res.meta.changes === 0) return whyNot(db, id, ifRev, at.actorId, 'live')
+  if (res.meta.changes === 0) return whyNot(db, id, ifRev, at, 'live')
   return { ok: written(res, 'updateRoutine') }
 }
 
@@ -151,12 +163,27 @@ export async function deleteRoutine(db: D1Database, id: string, ifRev: number, a
     db.prepare(
       `UPDATE routines SET deleted_at_ms = ?, updated_at_ms = ?, rev = rev + 1, req_id = ?
         WHERE id = ? AND rev = ? AND deleted_at_ms IS NULL AND ${MAY_MANAGE} RETURNING *`,
-    ).bind(at.nowMs, at.nowMs, stamp, id, ifRev, at.actorId, at.actorId),
+    ).bind(at.nowMs, at.nowMs, stamp, id, ifRev, ...manageParams(at)),
     routineAudit(db, at, { action: 'routine.deleted', routineId: id }, id, stamped(id, stamp)),
     personLine(db, 'routine_deleted', at, `${id}|rev${ifRev + 1}`, stamped(id, stamp)),
   ])
-  if (res.meta.changes === 0) return whyNot(db, id, ifRev, at.actorId, 'live')
+  if (res.meta.changes === 0) return whyNot(db, id, ifRev, at, 'live')
   return { ok: written(res, 'deleteRoutine') }
+}
+
+/** Undo of a delete (route 56) by the creator or an Admin, against `ifRev`: back with its cursor at now (no backfill). */
+export async function restoreRoutine(db: D1Database, id: string, ifRev: number, at: At): Promise<WriteOutcome> {
+  const stamp = writeStamp(at.requestId)
+  const [res] = await db.batch([
+    db.prepare(
+      `UPDATE routines SET deleted_at_ms = NULL, checked_until_ms = ?, updated_at_ms = ?, rev = rev + 1, req_id = ?
+        WHERE id = ? AND rev = ? AND deleted_at_ms IS NOT NULL AND ${MAY_MANAGE} RETURNING *`,
+    ).bind(at.nowMs, at.nowMs, stamp, id, ifRev, ...manageParams(at)),
+    routineAudit(db, at, { action: 'routine.restored', routineId: id }, id, stamped(id, stamp)),
+    personLine(db, 'routine_restored', at, `${id}|rev${ifRev + 1}`, stamped(id, stamp)),
+  ])
+  if (res.meta.changes === 0) return whyNot(db, id, ifRev, at, 'deleted')
+  return { ok: written(res, 'restoreRoutine') }
 }
 
 export type RunNowOutcome =
@@ -235,3 +262,63 @@ export async function listRoutines(db: D1Database, after: { ms: number; id: stri
       WHERE r.deleted_at_ms IS NULL ${page} ORDER BY r.created_at_ms DESC, r.id DESC LIMIT ?`,
   ).bind(...params).all<ListedRoutine>()).results
 }
+
+/** Route 52's read: every routine, newest first; the deleted ones (for Undo) are the 50 deleted most recently. */
+export async function allRoutines(db: D1Database): Promise<{ live: ListedRoutine[]; deleted: ListedRoutine[] }> {
+  const select = `SELECT r.*, s.state AS last_state, s.ended_at_ms AS last_ended_at_ms, s.result_text AS last_result_text,
+      s.failure AS last_failure, s.outcome AS last_outcome, s.reason AS last_reason
+    FROM routines r LEFT JOIN routine_slots s ON s.slot_key = r.last_slot_key`
+  const [live, deleted] = await db.batch<ListedRoutine>([
+    db.prepare(`${select} WHERE r.deleted_at_ms IS NULL ORDER BY r.created_at_ms DESC, r.id DESC`),
+    db.prepare(`${select} WHERE r.deleted_at_ms IS NOT NULL ORDER BY r.deleted_at_ms DESC, r.id DESC LIMIT 50`),
+  ])
+  return { live: live.results, deleted: deleted.results }
+}
+
+/** Whether a run or turn id is a routine run's: its slot names it and its chat is the routine principal's (route 33). */
+export async function isRoutineRun(db: D1Database, id: string): Promise<boolean> {
+  const hit = await db.prepare(
+    `SELECT 1 AS ok FROM routine_slots s JOIN chats c ON c.id = s.chat_id
+      WHERE c.owner_id = 'm_system' AND (s.run_id = ? OR s.turn_id = ?) LIMIT 1`,
+  ).bind(id, id).first()
+  return hit !== null
+}
+
+type LastFields = Pick<ListedRoutine, 'last_state' | 'last_ended_at_ms' | 'last_result_text' | 'last_failure' | 'last_outcome' | 'last_reason'>
+const NO_LAST: LastFields = { last_state: null, last_ended_at_ms: null, last_result_text: null, last_failure: null, last_outcome: null, last_reason: null }
+
+/** A routine's last ended slot's fields, read before a write so its answer carries `last` with no read after the commit. */
+async function lastOf(db: D1Database, id: string): Promise<LastFields> {
+  return (await db.prepare(
+    `SELECT s.state AS last_state, s.ended_at_ms AS last_ended_at_ms, s.result_text AS last_result_text, s.failure AS last_failure,
+        s.outcome AS last_outcome, s.reason AS last_reason
+      FROM routines r JOIN routine_slots s ON s.slot_key = r.last_slot_key WHERE r.id = ?`,
+  ).bind(id).first<LastFields>()) ?? NO_LAST
+}
+
+export type ListedOutcome = { ok: ListedRoutine } | { conflict: ListedRoutine } | { refused: 'not_found' | 'not_allowed' | 'stage' }
+
+/** A route write with its routine's `last` (switching, deleting or restoring never changes which slot ended last). */
+async function withLast(db: D1Database, id: string, write: () => Promise<WriteOutcome>): Promise<ListedOutcome> {
+  const last = await lastOf(db, id)
+  const o = await write()
+  if ('ok' in o) return { ok: { ...o.ok, ...last } }
+  if ('conflict' in o) return { conflict: { ...o.conflict, ...last } }
+  return o
+}
+
+/** The routines slot of the D1 stores (server/db/stores.ts): data in, data out, for routes 33 and 52 to 56 and the signal. */
+export function routineStore({ db }: { db: D1Database }) {
+  return {
+    signal: (nowMs: number) => routinesSignal(db, nowMs),
+    list: () => allRoutines(db),
+    /** The brand's zone (or why it can't be used), for the routines' `next`. */
+    zone: async () => (await brandFacts(db)).tz,
+    setEnabled: (id: string, on: boolean, ifRev: number, at: At) => withLast(db, id, () => updateRoutine(db, id, ifRev, { enabled: on }, at)),
+    runNow: (id: string, clientKey: string, at: At) => runNow(db, id, clientKey, at),
+    remove: (id: string, ifRev: number, at: At) => withLast(db, id, () => deleteRoutine(db, id, ifRev, at)),
+    restore: (id: string, ifRev: number, at: At) => withLast(db, id, () => restoreRoutine(db, id, ifRev, at)),
+    isRoutineRun: (id: string) => isRoutineRun(db, id),
+  }
+}
+export type RoutineStore = ReturnType<typeof routineStore>

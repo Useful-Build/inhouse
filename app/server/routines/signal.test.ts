@@ -1,7 +1,7 @@
 // The routines signal (p4-w2.md section 11; test 12), on literal states. Ways it can fail: a stopped heartbeat stays
 // green; a missed system routine stays green; a clean day goes red; a slot waiting on a question turns it red.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { SYSTEM_ROUTINE_PROMPTS } from './prompts.ts'
+import { SYSTEM_ROUTINE_DESCRIPTIONS, SYSTEM_ROUTINE_PROMPTS } from './prompts.ts'
 import { routinesSignal } from './signal.ts'
 import { MIN, addPerson, at, db, fresh, harness, insertRoutine, routine, setStage, setZone, slotsOf } from './test-kit.ts'
 
@@ -11,6 +11,7 @@ const SIX = at('2026-06-01T10:00:00Z')
 beforeAll(async () => {
   await addPerson(CREATOR)
   ;(SYSTEM_ROUTINE_PROMPTS as Record<string, string>)['test-signal-check'] = 'Run the check.'
+  ;(SYSTEM_ROUTINE_DESCRIPTIONS as Record<string, string>)['test-signal-check'] = 'A test system routine.'
 })
 beforeEach(async () => {
   await fresh()

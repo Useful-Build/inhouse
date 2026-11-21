@@ -4,8 +4,8 @@
 import { settingSpec } from '../../shared/contract/settings.ts'
 import type { SettingRecord } from '../../shared/contract/settings.ts'
 import { STAGES } from '../../shared/contract/settings-table.ts'
-import { DEFAULT_MODEL_ID } from '../api/models.ts'
-import { resolveTurnSettings } from '../api/runs.ts'
+// The two route modules load on first use: statically they would pull the request path's Vite-only imports into
+// everything that imports the routine store (the D1 stores, which Node scripts load: scripts/sandbox/seed-remote.mjs).
 import type { ResolvedTurn } from '../api/runs.ts'
 import { CATALOG, resolveModel } from '../model/catalog.ts'
 import type { SettingsView } from '../model/catalog.ts'
@@ -66,6 +66,7 @@ export async function submitSettings(db: D1Database): Promise<SubmitSettings | {
     .map(r => ({ key: r.key, value: parse(r.value_json) as SettingRecord['value'], rev: r.rev, updatedAt: null, updatedBy: null }))
   const view: SettingsView = Object.fromEntries(technical.map(r => [r.key, r.value as string | boolean | null]))
   const byLabel = CATALOG.find(m => m.label === view['g:mode'])
+  const [{ DEFAULT_MODEL_ID }, { resolveTurnSettings }] = await Promise.all([import('../api/models.ts'), import('../api/runs.ts')])
   const choices = [byLabel?.id, DEFAULT_MODEL_ID, ...CATALOG.map(m => m.id)].filter((id): id is string => id !== undefined)
   const pickerId = choices.find(id => !('refused' in resolveModel(id, view))) ?? DEFAULT_MODEL_ID
   const resolved = await resolveTurnSettings({ list: async () => technical }, pickerId)

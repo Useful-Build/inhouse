@@ -5,7 +5,7 @@
 // a drain spins the alarm or starves rows; a slot waiting on a question is closed as lost or opens a second Run now; a
 // submit goes into a trashed chat; a transient refusal ends a row, a final one doesn't, or `key_reused` is taken as final.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { SYSTEM_ROUTINE_PROMPTS } from './prompts.ts'
+import { SYSTEM_ROUTINE_DESCRIPTIONS, SYSTEM_ROUTINE_PROMPTS } from './prompts.ts'
 import { routinesSignal } from './signal.ts'
 import { runNow } from './store.ts'
 import { POKE_ID, TICK_ID } from './tick.ts'
@@ -19,6 +19,7 @@ const six = (date: string) => at(`${date}T10:00:00Z`)
 beforeAll(async () => {
   await addPerson(CREATOR)
   ;(SYSTEM_ROUTINE_PROMPTS as Record<string, string>)['test-system-check'] = 'Run the test system check.'
+  ;(SYSTEM_ROUTINE_DESCRIPTIONS as Record<string, string>)['test-system-check'] = 'A test system routine.'
 })
 beforeEach(async () => {
   await fresh()

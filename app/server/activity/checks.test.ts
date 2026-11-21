@@ -64,7 +64,7 @@ describe('the tables (failure 2)', () => {
   it('the activity template ids are the literal list', () => {
     expect(Object.keys(ACTIVITY_TEMPLATES).sort()).toEqual([
       'library_deleted', 'library_restored', 'library_uploaded', 'morning_check_ran', 'routine_changed', 'routine_deleted', 'routine_failed',
-      'routine_lost', 'routine_made', 'routine_missed', 'routine_ran', 'today_set_aside',
+      'routine_lost', 'routine_made', 'routine_missed', 'routine_ran', 'routine_restored', 'today_set_aside',
     ])
   })
   it('every notice row fills only declared field slots and person; none takes a body today', () => {

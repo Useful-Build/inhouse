@@ -144,6 +144,17 @@ describe('one batch, idempotent (test 11)', () => {
   })
 })
 
+describe('the line links the slot\'s own run (#262 L7)', () => {
+  it('an end that names another run (a resumed turn\'s) still links the run the slot started', async () => {
+    const h = harness()
+    const { id, turn, slotKey } = await started(h)
+    const resumed = { ...turn, runId: 'r_ResumedRunAAAAAAAAAAAA', turnId: 't_ResumedTurnAAAAAAAAAAA' }
+    await h.end(resumed, SIX + 5 * MIN, { structuredOutput: { found: 1 } })
+    expect((await linesOf(id)).map(l => [l.source_key, l.trace])).toEqual([[slotKey, turn.runId]])
+    expect((await slotsOf(id)).map(s => [s.run_id, s.turn_id])).toEqual([[turn.runId, turn.turnId]])
+  })
+})
+
 describe('an exhausted end (test 14)', () => {
   it('a handler that always throws writes nothing; the slot closes lost and the signal is red; the revived task lands once', async () => {
     const h = harness()
