@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import type { PlaywrightTestProject } from '@playwright/test'
 import { existsSync } from 'node:fs'
-import { TEST_BUILD_WORKER_CONFIG, testAccessConfig, testBuildPort, testIssuerJwks } from './e2e/support/test-build/issuer.ts'
+import { TEST_BUILD_HUB_CONFIG, TEST_BUILD_WORKER_CONFIG, testAccessConfig, testBuildPort, testIssuerJwks } from './e2e/support/test-build/issuer.ts'
 
 // Artifacts go to VERIFY_DIR when it's set, else to e2e-artifacts/. Runs against the
 // production build.
@@ -114,10 +114,11 @@ const productServer = {
 // The test build's server: a fresh local D1 (prepare.mjs migrates and seeds it), then `wrangler dev` on the test build's
 // own Worker config with this run's public JWKS and INHOUSE_ACCESS on this run's port, both as --var (wrangler keeps
 // everything after the first ':' as the value). The private key stays in the test runner (e2e/support/test-build/issuer.ts).
+// P4 wave 4: the hub's test config rides along as the second config (issuer.ts, TEST_BUILD_HUB_CONFIG).
 const testBuildServer = () => ({
   command: [
     'node e2e/support/test-build/prepare.mjs &&',
-    `npx wrangler dev --config ${TEST_BUILD_WORKER_CONFIG} --port ${testBuildPortNumber} --persist-to .wrangler/test-build`,
+    `npx wrangler dev --config ${TEST_BUILD_WORKER_CONFIG} --config ${TEST_BUILD_HUB_CONFIG} --port ${testBuildPortNumber} --persist-to .wrangler/test-build`,
     `--var 'TEST_ISSUER_JWKS:${testIssuerJwks()}'`,
     `--var 'INHOUSE_ACCESS:${JSON.stringify(testAccessConfig())}'`,
   ].join(' '),

@@ -1,5 +1,6 @@
 // check-product-config fixture: a deployable config with the AI binding and its gateway id filled (invented values).
 {
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"ai": { "binding": "AI" },

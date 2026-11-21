@@ -216,6 +216,9 @@ export default defineConfig(({ mode }) => {
         // The scripted model (P3, app/test/scripted-model/) the same way: only the test build's Worker can import it; every
         // other build gets server/model/scripted-off.ts (check-product-build.mjs proves it).
         '@scripted-model': fileURLToPath(new URL(mode === PRODUCT_TEST ? './test/scripted-model/index.ts' : './server/model/scripted-off.ts', import.meta.url)),
+        // P4's test-build controls (server/ops/test-controls.ts, route 67) the same way: every other build gets
+        // server/ops/test-controls-off.ts (check-product-build.mjs proves it).
+        '@test-controls': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/ops/test-controls.ts' : './server/ops/test-controls-off.ts', import.meta.url)),
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
