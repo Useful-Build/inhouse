@@ -5,7 +5,7 @@
 //
 // Failure modes: the RpcTarget never reaches the sandbox (3); a script reaches the network (4) or writes, reads a
 // protected field or filters on one (5); a cap doesn't hold (6); the hub trusts what the sandbox returns (7); a late
-// call or a kept `shop` reaches Shopify (8); the loader asks for the same code twice (9); pause or readiness doesn't
+// call or a kept `shop` reaches Shopify (8); the id passed to the loader depends on more than the code (9); pause or readiness doesn't
 // cover the tool (10); the token leaks anywhere (11); the S4 answers drift (12).
 import { env, reset } from 'cloudflare:test'
 import { exports } from 'cloudflare:workers'
@@ -278,14 +278,26 @@ describe('A.7.8 late calls', () => {
 })
 
 describe('A.7.9 keyed by hash', () => {
-  it('the same code twice asks the loader for code once; another code is another id', async () => {
-    const asked: string[] = []
-    await script('return "same"', { onCodeRequested: id => asked.push(id) })
-    await script('return "same"', { onCodeRequested: id => asked.push(id) })
-    expect(asked).toHaveLength(1)
-    await script('return "samf"', { onCodeRequested: id => asked.push(id) })
-    expect(asked).toHaveLength(2)
-    expect(asked[0]).not.toBe(asked[1])
+  // The loader's cache isn't guaranteed (docs: api-reference), so this asserts what the hub controls: the id it passes,
+  // not how often the callback runs (B2, 2026-11-21).
+  it('the same code passes the same id each time and answers right both times; another code is another id', async () => {
+    const ids: string[] = []
+    const loader: WorkerLoader = {
+      get: (id, cb) => {
+        ids.push(id ?? '')
+        return LOADER.get(id, cb)
+      },
+      load: () => {
+        throw new Error('code mode never calls load()')
+      },
+    }
+    expect((await script('return "same"', { loader })).result).toBe('same')
+    expect((await script('return "same"', { loader })).result).toBe('same')
+    expect((await script('return "samf"', { loader })).result).toBe('samf')
+    expect(ids).toHaveLength(3)
+    expect(ids[0]).toMatch(/^cm1-[0-9a-f]{64}$/)
+    expect(ids[1]).toBe(ids[0])
+    expect(ids[2]).not.toBe(ids[0])
   })
 })
 
