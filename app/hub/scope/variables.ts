@@ -25,10 +25,14 @@ function copy(v: unknown, depth: number, budget: { left: number }): unknown {
   if (v === null || typeof v === 'boolean') return v
   if (typeof v === 'number') return Number.isFinite(v) ? v : refuse()
   if (typeof v !== 'object') return refuse()
+  // The prototype first, and an array's length against the budget, before Object.keys materialises anything.
+  const isArray = Array.isArray(v)
+  const proto = Object.getPrototypeOf(v)
+  if (isArray ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) refuse()
+  if (isArray && (v as unknown[]).length > budget.left) refuse()
   const keys = Object.keys(v)
   if (Object.getOwnPropertySymbols(v).length > 0) refuse()
-  if (Array.isArray(v)) {
-    if (Object.getPrototypeOf(v) !== Array.prototype) refuse()
+  if (isArray) {
     // Index keys only: a named own property (`toJSON`, anything) is refused.
     if (keys.length !== v.length) refuse()
     const out: unknown[] = []
@@ -38,8 +42,6 @@ function copy(v: unknown, depth: number, budget: { left: number }): unknown {
     }
     return out
   }
-  const proto = Object.getPrototypeOf(v)
-  if (proto !== Object.prototype && proto !== null) refuse()
   const out: Record<string, unknown> = {}
   for (const key of keys) {
     if ((budget.left -= key.length) < 0) refuse()

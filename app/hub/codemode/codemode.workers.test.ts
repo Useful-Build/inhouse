@@ -182,6 +182,8 @@ describe('A.7.5 read-only and level 1 at runtime', () => {
     ['a function variable', `{ q: () => 'sku:"a"' }`],
     ['a toJSON callback', `{ q: { toJSON() { globalThis.called = true; return 'sku:"a"' } } }`],
     ['an oversize variable', `{ q: 'x'.repeat(20000) }`],
+    // Defence in depth: SignIn.query refuses a top-level array before checkVariables (core.ts), and so does ScriptApi.
+    ['an array with a toJSON as the whole variables', `Object.assign(['a'], { toJSON() { globalThis.called = true; return {} } })`],
   ] as const) {
     it(`${label} is refused before Shopify`, async () => {
       const doc = 'query Q($q: String) { orders(first: 1, query: $q) { nodes { id } } }'
@@ -193,9 +195,9 @@ describe('A.7.5 read-only and level 1 at runtime', () => {
   // Review round 2 (H1b, L2): cases only checkVariables catches. A `toJSON` on an array (named own props survive RPC)
   // or on a declared but unused variable passes the field check, so without checkVariables the hub's JSON.stringify
   // would call it back into the sandbox.
-  const UNUSED = 'query Q($q: String, $z: [String]) { orders(first: 1, query: $q) { nodes { id } } }'
+  const UNUSED = 'query Q($q: String, $z: [String], $o: OrderInput) { orders(first: 1, query: $q) { nodes { id } } }'
   for (const [label, vars] of [
-    ['an array with a toJSON, top level', `Object.assign(['a'], { toJSON() { globalThis.called = true; return {} } })`],
+    ['an array with a toJSON, nested under a declared unused object variable', `{ q: 'sku:"a"', o: { list: Object.assign(['a'], { toJSON() { globalThis.called = true; return ['a'] } }) } }`],
     ['an array with a toJSON, nested in a declared unused variable', `{ q: 'sku:"a"', z: Object.assign(['a'], { toJSON() { globalThis.called = true; return ['a'] } }) }`],
     ['a toJSON on a declared unused variable', `{ q: 'sku:"a"', z: { toJSON() { globalThis.called = true; return ['a'] } } }`],
   ] as const) {
