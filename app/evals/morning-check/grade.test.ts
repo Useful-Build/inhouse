@@ -15,6 +15,7 @@ import { grade, showsName, summarise } from './grade.ts'
 import type { Observed } from './grade.ts'
 import { openResults, resultPath, writeResults } from './results.ts'
 import { ROUTINE_ID, observe, parseFixed, runAll, runCase } from './runner.ts'
+import type { ResultFile } from './results.ts'
 import type { Reader, RunnerEnv, SlotRow } from './runner.ts'
 import { fixedWords } from '../../server/today/words.ts'
 
@@ -240,15 +241,25 @@ describe('the runner', () => {
     expect(r.settled).toBe(true)
   })
 
-  it('a slot that never settles is recorded as `settled: false`, and the next case then fails with the run_open text', async () => {
+  it('stops the run when a timed-out case\'s slot does not settle: the rest are not run, the file says why and is partial', async () => {
     const { env } = fakeEnv(() => ({ slot: {}, items: [] }))
     env.reader.slot = async key => ({ slot_key: key, state: 'started', failure: null, result_text: null, turn_id: null, claimed_at_ms: 1 })
-    const real = env.trigger
-    let n = 0
-    env.trigger = async k => { if (++n === 2) throw new Error('POST run answered 409: run_open'); return real(k) }
-    const file = await runAll({ ...env, caseTimeoutMs: 3_000, settleMs: 4_000 }, META.slice(0, 2), { date: '2026-11-22', sha: 'abc1234', model: 'fake' })
-    expect(file.cases[0]).toMatchObject({ observed: { cause: 'timed_out' }, settled: false })
-    expect(file.cases[1]!.observed).toMatchObject({ cause: 'trigger: POST run answered 409: run_open' })
+    const writes: ResultFile[] = []
+    const some = META.slice(0, 4)
+    const file = await runAll({ ...env, caseTimeoutMs: 3_000, settleMs: 4_000 }, some, { date: '2026-11-22', sha: 'abc1234', model: 'fake' }, f => writes.push(f))
+    expect(file.cases.map(c => c.id)).toEqual([some[0]!.id])
+    expect(file.notRun).toEqual(some.slice(1).map(c => c.id))
+    expect(file.stopped).toMatchObject({ at: some[0]!.id })
+    expect(file.stopped!.reason).toMatch(/still open: every later Run now would answer run_open/)
+    expect(file.summary).toMatchObject({ partial: true, thresholdMet: false })
+    expect(writes).toHaveLength(1)
+  })
+
+  it('goes on when nothing is left open, and lists nothing as not run', async () => {
+    const { env } = fakeEnv(perfectAnswer)
+    const file = await runAll(env, META.slice(0, 2), { date: '2026-11-22', sha: 'abc1234', model: 'fake' })
+    expect(file.notRun).toEqual([])
+    expect(file.stopped).toBeUndefined()
   })
 
   it('gives up on a slot that never appears, at the deadline, without a sleep', async () => {
@@ -297,7 +308,7 @@ describe('the runner', () => {
 describe('the result file', () => {
   it('names the file by date and sha and never overwrites one', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mc-results-'))
-    const file = { date: '2026-11-22', sha: 'abc1234', model: 'm', summary: summarise([], META), cases: [] }
+    const file = { date: '2026-11-22', sha: 'abc1234', model: 'm', summary: summarise([], META), cases: [], notRun: [] }
     const first = writeResults(dir, file)
     const second = writeResults(dir, { ...file, model: 'second' })
     expect([first.endsWith('2026-11-22-abc1234.json'), second.endsWith('2026-11-22-abc1234-2.json')]).toEqual([true, true])
@@ -306,7 +317,7 @@ describe('the result file', () => {
   })
   it('a run\'s file is created once and rewritten after each case, never over another run\'s', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mc-open-'))
-    const base = { date: '2026-11-22', sha: 'abc1234', model: 'm', summary: summarise([], META), cases: [] }
+    const base = { date: '2026-11-22', sha: 'abc1234', model: 'm', summary: summarise([], META), cases: [], notRun: [] }
     const other = writeResults(dir, base)
     const mine = openResults(dir, '2026-11-22', 'abc1234')
     expect(mine.path).not.toBe(other)
@@ -317,7 +328,7 @@ describe('the result file', () => {
   })
   it('never overwrites a file another run made at the same path, even one made after the path was chosen', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mc-wx-'))
-    const base = { date: '2026-11-22', sha: 'abc1234', model: 'mine', summary: summarise([], META), cases: [] }
+    const base = { date: '2026-11-22', sha: 'abc1234', model: 'mine', summary: summarise([], META), cases: [], notRun: [] }
     const mine = openResults(dir, '2026-11-22', 'abc1234')
     writeFileSync(mine.path, 'another run\n')
     expect(() => mine.write(base)).toThrow(/EEXIST/)

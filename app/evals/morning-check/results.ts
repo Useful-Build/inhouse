@@ -24,6 +24,10 @@ export interface ResultFile {
   model: string
   summary: Summary
   cases: CaseResult[]
+  /** The cases a stopped run never ran (empty for a run that went through). */
+  notRun: string[]
+  /** Set when the run stopped early: where and why. */
+  stopped?: { at: string; reason: string }
 }
 
 /** `<dir>/<date>-<sha>.json`, or `<date>-<sha>-2.json` and on when it exists: a result is never overwritten. */

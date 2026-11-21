@@ -14,7 +14,7 @@ export interface Child {
 }
 
 export interface RestartDeps {
-  /** Starts the restart command in its own process group with SHOPIFY_SHOP set. */
+  /** Starts the restart command in its own process group, on the case's hub config. */
   start(shop: string): Child
   /** Signals the whole group (`process.kill(-pid, signal)`). */
   killGroup(pid: number, signal: 'SIGTERM' | 'SIGKILL'): void
@@ -27,6 +27,17 @@ export interface RestartDeps {
   /** Whether the startup output shows the live shop (wrangler prints its vars: `SHOPIFY_SHOP ("example-mc-late-orders")`). */
   shopShown(output: string, shop: string): boolean
 }
+
+/**
+ * What the startup output must show, with `{shop}` for the shop: wrangler prints a config `vars` value as
+ * `env.SHOPIFY_SHOP ("example-mc-late-orders")`. The right edge keeps `late-orders` from matching `late-orders-red`.
+ */
+export const DEFAULT_SHOP_PATTERN = 'SHOPIFY_SHOP\\W{1,4}{shop}(?![A-Za-z0-9-])'
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** `RestartDeps.shopShown` for a pattern. */
+export const shopShownBy = (pattern: string) => (output: string, shop: string): boolean => new RegExp(pattern.replace('{shop}', escapeRe(shop))).test(output)
 
 export class RestartError extends Error {
   readonly step: string
@@ -52,11 +63,14 @@ export class Build {
     }
   }
 
-  /** Stops the running build, if any, and waits until it is gone. */
+  /**
+   * Stops the running build, if any, and waits until it is gone. The build stays tracked until the stop is confirmed (its port
+   * seen down), so a failed stop can be retried: when the leader exits but a child (workerd) keeps the port, the group is
+   * SIGKILLed.
+   */
   async stop(): Promise<void> {
     const old = this.child
     if (!old) return
-    this.child = null
     let gone = false
     void old.exited.then(() => { gone = true })
     this.d.killGroup(old.pid, 'SIGTERM')
@@ -66,7 +80,15 @@ export class Build {
       this.d.killGroup(old.pid, 'SIGKILL')
       await this.until('the old build exiting after SIGKILL', () => gone)
     }
-    await this.until('the old build to stop answering', async () => !(await this.d.answers()))
+    const down = async () => !(await this.d.answers())
+    try {
+      await this.until('the old build to stop answering', down)
+    } catch {
+      // The leader is gone and something in its group still holds the port: the group's pgid outlives the leader.
+      this.d.killGroup(old.pid, 'SIGKILL')
+      await this.until('the old build to stop answering after SIGKILL', down)
+    }
+    this.child = null
   }
 
   /** Restarts the build for `shop` and returns once it answers and its output shows that shop. */

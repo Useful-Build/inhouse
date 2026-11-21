@@ -126,16 +126,27 @@ export async function runCase(env: RunnerEnv, c: MorningCaseMeta): Promise<CaseR
 
 /**
  * Every case in order, one at a time. `onCase` gets the file after each case, so a crash keeps the finished ones; a run of
- * fewer cases than the set is `partial` and never meets the threshold.
+ * fewer cases than the set is `partial` and never meets the threshold. A case that timed out and whose slot doesn't settle
+ * leaves its slot `started` for up to 45 minutes (the sweep's LOST_AFTER_MS), so every later Run now would answer `run_open`:
+ * the run stops there, the cases after it are listed as `notRun`, and `stopped` says why.
  */
 export async function runAll(
   env: RunnerEnv, cases: readonly MorningCaseMeta[], meta: { date: string; sha: string; model: string }, onCase?: (file: ResultFile) => void,
 ): Promise<ResultFile> {
   const results: CaseResult[] = []
-  const file = (): ResultFile => ({ ...meta, summary: summarise(results.map(r => ({ id: r.id, group: r.group, pass: r.verdict.pass })), META), cases: [...results] })
+  let stopped: ResultFile['stopped']
+  const file = (): ResultFile => ({
+    ...meta, summary: summarise(results.map(r => ({ id: r.id, group: r.group, pass: r.verdict.pass })), META), cases: [...results],
+    notRun: stopped ? cases.slice(results.length).map(c => c.id) : [], ...(stopped ? { stopped } : {}),
+  })
   for (const c of cases) {
-    results.push(await runCase(env, c))
+    const r = await runCase(env, c)
+    results.push(r)
+    if (r.settled === false) {
+      stopped = { at: c.id, reason: `${c.id} timed out and its slot (${r.slotKey}) is still open: every later Run now would answer run_open, so the run stops here` }
+    }
     onCase?.(file())
+    if (stopped) break
   }
   return file()
 }
