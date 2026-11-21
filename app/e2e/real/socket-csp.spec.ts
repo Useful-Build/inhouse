@@ -8,6 +8,9 @@ import { open, originFor, signInAs } from '../support/clients/real.js'
 
 test('A chat sent from the composer is answered over a same-origin socket, with no CSP violation', async ({ page, context }) => {
   test.skip(!process.env.E2E_TEST_BUILD_REMOTE, 'a turn needs a container: this runs on the per-PR test deployment')
+  // A cold container start can take a minute or two: the test's own timeout is longer than the wait for the answer below, so a
+  // failed wait reports its error instead of the test timing out first.
+  test.setTimeout(240_000)
   const reports: string[] = []
   page.on('request', r => { if (r.url().endsWith('/api/client-error')) reports.push(r.postData() ?? '') })
   const sockets: { url: string; received: number; closed: boolean }[] = []
@@ -20,10 +23,22 @@ test('A chat sent from the composer is answered over a same-origin socket, with 
   await signInAs(context, 'dana')
   await open(page, 'dana', '#/today')
   await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('scenario:hello can you hear me?')
+  // Pick the model like a person would. The composer's default is Opus, but the scripted model answers only for the harness model
+  // (Sonnet, the picker's "Fast"): on a phone the choices sit in the "+" menu, elsewhere in the model menu.
+  const modelMenu = page.getByRole('button', { name: /^Model:/ })
+  if (await modelMenu.isVisible()) await modelMenu.click()
+  else await page.getByRole('button', { name: 'Attach, tools and model' }).click()
+  await page.getByRole('menuitemradio', { name: /^Fast/ }).click()
+  await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Send', exact: true }).click()
 
-  // The answer reaches the page.
-  await expect(page.getByText('Hello from the scripted model.')).toBeVisible({ timeout: 120_000 })
+  // The answer reaches the page. A scripted-model miss (the agent's own error text) is shown instead of the answer: fail on it at once
+  // with what the page says, not after a timeout.
+  const answer = page.getByText('Hello from the scripted model.')
+  const miss = page.getByText(/scripted model miss/)
+  await expect(answer.or(miss).first()).toBeVisible({ timeout: 150_000 })
+  expect(await miss.count(), `the agent answered with an error: ${await miss.allTextContents().then(t => t.join(' | '))}`).toBe(0)
+  await expect(answer).toBeVisible()
 
   // It came over the chat socket: same origin (ws or wss), the route and version of the design, frames received, still open.
   const expected = `${originFor('dana').replace(/^http/, 'ws')}/api/socket?v=1`
