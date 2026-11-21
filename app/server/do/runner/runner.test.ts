@@ -329,6 +329,17 @@ describe('an exit says whether its container came up (failure 9)', () => {
     expect(m.ups).toEqual([[1, true]])
   }))
 
+  it('a container that answered /protocol with no shared version (stored null) and then exited: reported as up', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2])
+    const m = make(c, state, [3])
+    expect(await m.core.admit(RS)).toEqual({ protocol: 'none', gen: 1 })
+    expect(state.protocol(1)).toBeNull()
+    c.exit(1)
+    await settle()
+    expect(m.ups).toEqual([[1, true]])
+  }))
+
   it('a container that dies while its admission is in flight (after /protocol): reported as up', t(async state => {
     const c = new FakeContainer()
     c.route = v2Runner([2], (_p, init) => new Promise<Response>((_res, rej) => init!.signal!.addEventListener('abort', () => rej(init!.signal!.reason))))
