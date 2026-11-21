@@ -178,10 +178,37 @@ describe('item 6: pause and resume run in order with their hooks', () => {
     const p = h.core.pause(ADMIN)
     expect(h.core.isPaused()).toBe(true)
     const r = h.core.resume(ADMIN)
+    // r2: the flag changes at call time; only the hooks wait their turn.
+    expect(h.core.isPaused()).toBe(false)
     await settle()
+    expect(log).toEqual(['pause:start'])
     gate.resolve()
     await Promise.all([p, r])
     expect([log, hookState, h.core.isPaused()]).toEqual([['pause:start', 'pause:end', 'resume'], 'resumed', false])
+  }))
+})
+
+describe('r2: a hook that never settles never holds back a later flag change', () => {
+  it("a never-settling onResume, then pause: the flag is set at once and the live turn fenced; a throwing hook doesn't block the next", () => inAgent(async h => {
+    const log: string[] = []
+    let throwOnce = true
+    h.core.registerPauseHook({
+      async onPause() { log.push('pause'); if (throwOnce) { throwOnce = false; throw new Error('T10 failed') } },
+      async onResume() { log.push('resume'); await new Promise<void>(() => {}) },
+    })
+    await expect(h.core.pause(ADMIN)).rejects.toThrow('T10 failed')
+    expect(h.core.isPaused()).toBe(true)
+    void h.core.resume(ADMIN)
+    expect(h.core.isPaused()).toBe(false)
+    const a = ok(await h.submit('c-hang', 'key-hang01')); await settle()
+    h.push(a.turnId, ev.started(), ev.text('a'))
+    expect(h.turn(a.turnId).state).toBe('live')
+    void h.core.pause(ADMIN)
+    expect(h.core.isPaused()).toBe(true)
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ending', fenced: 1 })
+    await settle()
+    // The second pause's hook waits behind the hung onResume (call order), never ahead of it.
+    expect(log).toEqual(['pause', 'resume'])
   }))
 })
 

@@ -1416,18 +1416,15 @@ export class AgentCore {
   }
 
   /**
-   * Pauses and resumes run one at a time, each flag change with its hooks (r1): a resume landing while a pause's hooks
-   * are awaited waits for them, so the hooks' last word always matches the flag. With nothing in flight the flag step
-   * runs at once, in the caller's step.
+   * The flag changes at call time, always in the caller's synchronous step, so a hook that never settles can't hold
+   * back a later pause (the emergency one included) (r2). Only the hook loops are chained, in call order, so the hooks'
+   * last word matches the last flag. A throwing hook rejects its own call (the flag kept) and never blocks the next.
    */
   private pauseTail: Promise<void> | null = null
   private inOrder(step: () => PauseState, hook: (h: PauseHook) => Promise<void>): Promise<PauseState> {
-    const run = async () => {
-      const state = step()
-      for (const h of this.pauseHooks) await hook(h)
-      return state
-    }
-    const p = this.pauseTail === null ? run() : this.pauseTail.then(run)
+    const state = step()
+    const hooks = async () => { for (const h of this.pauseHooks) await hook(h) }
+    const p = (this.pauseTail === null ? hooks() : this.pauseTail.then(hooks)).then(() => state)
     const tail = p.then(() => {}, () => {})
     this.pauseTail = tail
     void tail.then(() => { if (this.pauseTail === tail) this.pauseTail = null })
