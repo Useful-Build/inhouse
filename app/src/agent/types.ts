@@ -21,7 +21,7 @@ import type { RunFrame } from '../../shared/contract/run-event'
 
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
-export type { ProblemSource, Draft, Problem } from '../../shared/contract/problem'
+export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
 export type { SkillDef, SkillSuggestion } from '../../shared/contract/skill'
@@ -168,6 +168,10 @@ export interface AgentClient {
   deleteFiles(ids: string[]): Promise<void>
   /** Undo a delete. */
   restoreFiles(ids: string[]): Promise<void>
+  /** Adds files to the Library and answers them. Rejects with an `AgentError` (the demo: `unavailable`, with a notice, since nothing is kept). */
+  uploadFiles(files: File[]): Promise<LibraryFile[]>
+  /** Where a Library file downloads from, or null where it can't (the demo). */
+  fileDownloadUrl(id: string): string | null
 
   /** Take a problem off Today and Approvals for a reason, stamped with the time. Null brings it back (Undo). Approving it clears it too. */
   setAside(id: string, reason: SetAsideReason | null): Promise<void>

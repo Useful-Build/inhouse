@@ -19,12 +19,13 @@ export function routeTitleFocusTests(phone: boolean) {
       await page.keyboard.press('Enter')
     }
   }
-  /** Settings isn't in the sidebar's nav: a person opens it from the account menu. */
-  async function openSettings(page: Page) {
+  /** Settings and Usage aren't in the sidebar's nav: a person opens them from the account menu. */
+  async function fromAccount(page: Page, item: string) {
     if (phone) await page.getByRole('button', { name: 'Menu' }).click()
     await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /account and settings/i }).click()
-    await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Your settings', exact: true }).click()
+    await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: item, exact: true }).click()
   }
+  const openSettings = (page: Page) => fromAccount(page, 'Your settings')
   const h1 = (page: Page, name: string | RegExp) => page.getByRole('heading', { level: 1, name })
 
   test('First load sets the title and leaves focus alone; a route change names the page and focuses its h1', async ({ fx, page }) => {
@@ -33,7 +34,7 @@ export function routeTitleFocusTests(phone: boolean) {
     await expect(page).toHaveTitle('Today · Inhouse')
     await expect(page.locator('h1').first()).not.toBeFocused()
 
-    await open(page, 'Usage')
+    await fromAccount(page, 'Usage')
     await expect(page).toHaveTitle('Usage · Inhouse')
     await expect(h1(page, 'Usage')).toBeFocused()
 
@@ -57,7 +58,7 @@ export function routeTitleFocusTests(phone: boolean) {
     await expect(h1(page, /./)).toBeVisible()
     // Vite names a lazy chunk after its module: assets/Usage-<hash>.js.
     const usageChunk = page.waitForRequest(r => /\/assets\/Usage-[^/]*\.js$/.test(r.url()))
-    await open(page, 'Usage')
+    await fromAccount(page, 'Usage')
     await usageChunk
     await expect(h1(page, 'Usage')).toBeVisible()
   })

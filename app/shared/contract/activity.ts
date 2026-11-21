@@ -2,6 +2,7 @@
 import { z } from 'zod'
 import { InstantSchema, ProseSchema, StageSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'
+import { pageOf } from './paging.ts'
 
 export const ActivityLineSchema = z.object({
   at: InstantSchema,
@@ -20,3 +21,7 @@ export const ActivityLineSchema = z.object({
   trace: z.string().optional(),
 })
 export type ActivityLine = z.infer<typeof ActivityLineSchema>
+
+/** Route 59: a page of lines, newest first. */
+export const ActivityPageSchema = pageOf(ActivityLineSchema)
+export type ActivityPage = z.infer<typeof ActivityPageSchema>

@@ -41,6 +41,13 @@
 		]
 	},
 	"migrations": [{ "tag": "p3-v1", "new_sqlite_classes": ["BrandAgent", "Runner"] }],
+	// The connector hub (P4 p4-h1.md OC 4, P5 p5-w1.md section 3): `HUB` is its ReadGateway, for the runner's `/hub/`
+	// egress route; `HUB_CONNECT` its ConnectGateway, for product server code only (the connect routes). Never
+	// `ServerGateway`. Every entrypoint of a Worker shares its env, so keeping the runner off HUB_CONNECT is code
+	// discipline plus checks (the import-boundary rule in .oxlintrc.json), not this config.
+	// scripts/check-product-config.mjs refuses any list but exactly these two.
+	// https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/ (named entrypoints, read 2026-11-21)
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }],
 	// The runner image, built from app/ as CI's runner job builds it (it bundles app/shared/protocol). max_instances is
 	// 3 x RUNNER_POOL (scripts/check-product-config.mjs compares them).
 	// https://developers.cloudflare.com/containers/ and the Wrangler configuration's `containers` (read 2026-11-20)

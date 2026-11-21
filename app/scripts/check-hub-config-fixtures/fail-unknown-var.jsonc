@@ -1,0 +1,46 @@
+// Fails: a var outside the known list.
+/* "routes": ["not-a-real-route/*"], in a comment: ignored */
+{
+  "name": "inhouse-hub",
+  "main": "hub/index/index.ts",
+  "compatibility_date": "2026-11-11",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SIGNIN",
+        "class_name": "SignIn"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "SignIn"
+      ]
+    }
+  ],
+  "define": {
+    "__INHOUSE_HUB_TEST__": "false"
+  },
+  "vars": {
+    "SHOPIFY_SHOP": "",
+    "SHOPIFY_CLIENT_ID": "",
+    "SLACK_CLIENT_ID": "",
+    "SLACK_TEAM_ID": "",
+    "SLACK_PRIVATE_SEARCH": "off",
+    "CONNECT_REDIRECT_URI": "",
+    "SOME_OTHER_VAR": "x"
+  },
+  "secrets": {
+    "required": [
+      "HUB_TOKEN_KEYS",
+      "SHOPIFY_CLIENT_SECRET"
+    ]
+  },
+}

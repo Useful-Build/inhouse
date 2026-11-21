@@ -4,7 +4,9 @@
 //  2. the rendered SQL, replayed on a freshly migrated database, leaves different rows than the seed wrote (a write not
 //     recorded, a rolled-back batch recorded, a value rendered wrong);
 //  3. it seeds a database that already has people, or seeds before checking;
-//  4. it runs with a missing argument instead of stopping (exit 2).
+//  4. it runs with a missing argument instead of stopping (exit 2);
+//  5. (eval, p3-eval-observability rev 2 rec 2) in eval mode it seeds any database but the eval deployment's own, or the
+//     candidate mode seeds the eval deployment's.
 // Oracles: a fake wrangler that records every call; for 2, the literal seed facts (the brand's people, roles and
 // statuses, and its audit lines by action, as server/seed/seed.test.ts counts them) checked on the REPLAYED database,
 // and the replayed tables compared row for row with the database the seed wrote.
@@ -18,6 +20,7 @@ import { applyMigrations, freshDb, recordingD1, renderSeedSql } from './seed-rem
 
 const script = fileURLToPath(new URL('./seed-remote.mjs', import.meta.url))
 const fixture = fileURLToPath(new URL('../check-product-config-fixtures/sandbox/pass-per-pr.json', import.meta.url))
+const evalFixture = fileURLToPath(new URL('../check-product-config-fixtures/sandbox/pass-eval.json', import.meta.url))
 const ENV = { CF_SANDBOX_ACCOUNT_ID: '0123456789abcdef0123456789abcdef', SBX_ZONE: 'zone.example.test' }
 const dir = mkdtempSync(join(tmpdir(), 'seed-remote-test-'))
 
@@ -56,12 +59,21 @@ describe('refuses before any wrangler call (failure 1)', () => {
       expect(w.calls()).toEqual([])
     })
   }
-  for (const name of ['inhouse-sbx-pr12-db', 'live-product-db', 'inhouse-app']) {
+  for (const name of ['inhouse-sbx-pr12-db', 'live-product-db', 'inhouse-app', 'inhouse-sbx-eval-db']) {
     test(`a database that is not the candidate's: ${name}`, () => {
       const w = fakeWrangler(0)
       const r = run(['--candidate', '--config', fixture, '--database', name], w.fake)
       expect(r.status).toBe(1)
-      expect(r.stderr).toMatch(/is a per-PR name, not the candidate's|is not a sandbox name/)
+      expect(r.stderr).toMatch(/is a per-PR name, not the candidate's|is not a sandbox name|is the eval deployment's name, not the candidate's/)
+      expect(w.calls()).toEqual([])
+    })
+  }
+  for (const name of ['inhouse-sbx-db', 'inhouse-sbx-pr12-db', 'inhouse-sbx-eval', 'inhouse-sbx-eval-files', 'live-product-db', 'INHOUSE-SBX-EVAL-DB', 'inhouse-sbx-eval-db\n']) {
+    test(`eval mode: a database that is not the eval deployment's: ${JSON.stringify(name)} (failure 5)`, () => {
+      const w = fakeWrangler(0)
+      const r = run(['--eval', '--config', evalFixture, '--database', name], w.fake, { ...ENV, AUDIT_HASH_KEY: 'key-from-the-environment-0123456789' })
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain("is not the eval deployment's D1 name (inhouse-sbx-eval-db)")
       expect(w.calls()).toEqual([])
     })
   }
@@ -126,6 +138,17 @@ describe('the remote steps (failure 3)', () => {
     expect(calls[1].sql).toContain("'s:cap'")
     expect(calls[1].sql).not.toContain(';;')
     expect(calls[1].sql.trim().endsWith(';')).toBe(true)
+  })
+  test('eval mode seeds the eval deployment\'s own database, with the hash key from the environment (failure 5)', () => {
+    const w = fakeWrangler(0)
+    const r = run(['--eval', '--config', evalFixture, '--database', 'inhouse-sbx-eval-db'], w.fake, { ...ENV, AUDIT_HASH_KEY: 'key-from-the-environment-0123456789' })
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(w.calls().map(c => c.args.slice(0, 6))).toEqual([
+      ['d1', 'execute', 'inhouse-sbx-eval-db', '--remote', '--config', evalFixture],
+      ['d1', 'execute', 'inhouse-sbx-eval-db', '--remote', '--config', evalFixture],
+    ])
+    expect(w.calls().map(c => c.auditKeyInEnv)).toEqual([false, false])
   })
   test('wrangler never gets AUDIT_HASH_KEY in its environment, though the seed reads it from there', () => {
     const w = fakeWrangler(0)
