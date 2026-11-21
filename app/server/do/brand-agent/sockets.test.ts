@@ -647,4 +647,30 @@ describe('round 1 fold', () => {
     h.push(a.turnId, ev.text('next'))
     expect(ws.take()).toEqual(['frame 4 part'])
   }))
+
+  // #166 round 2 (N1): a pending mark an attach leaves behind holds one of the socket's 100 slots for good.
+  it('a failed support.attach releases its slot: 100 more runs fit afterwards', () => inAgent(async h => {
+    const ws = accepted(h, inhouse)
+    const runs = (n: number, pad: string) => Array.from({ length: n }, (_, i) => {
+      const id = `r_${String(i).padStart(22, pad)}`
+      h.sql.exec("INSERT INTO runs (run_id, chat_id, owner_id, state, last_seq, started_at_ms) VALUES (?, ?, ?, 'ended', 0, ?)", id, `c${pad}${i}`, MEMBER, T0)
+      return id
+    })
+    const [failing] = runs(1, 'X')
+    h.attachAudit.fails = true
+    const quiet = console.error
+    console.error = () => {}
+    try {
+      await attach(h, ws, failing)
+    } finally {
+      console.error = quiet
+    }
+    expect(ws.take()).toEqual(['refused unavailable'])
+    expect((ws.deserializeAttachment() as { pending?: Record<string, number> }).pending ?? {}).toEqual({})
+    h.attachAudit.fails = false
+    for (const id of runs(100, 'Y')) await attach(h, ws, id)
+    const lines = ws.take()
+    expect(lines.filter(l => l === 'attached 0 ended')).toHaveLength(100)
+    expect(lines.filter(l => l.startsWith('refused'))).toEqual([])
+  }))
 })

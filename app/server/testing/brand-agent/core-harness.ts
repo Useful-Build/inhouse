@@ -82,7 +82,8 @@ let objects = 0
 export const MEMBER = 'm_owner'
 export const OTHER = 'm_other'
 
-export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: number } = {}): Promise<void> {
+/** `db`: the D1 the engine writes its projection and `tool_calls` to (default the test D1; tests pass a failing one). */
+export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: number; db?: D1Database } = {}): Promise<void> {
   const stub = env.BRAND_AGENT.getByName(`core-${++objects}-${Math.random()}`)
   await runInDurableObject(stub, async (_i, state) => {
     const sql = state.storage.sql
@@ -133,7 +134,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
       })
       core = new AgentCore({
         onEvent: e => hub.onEvent(e), sockets: hub,
-        sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: env.DB,
+        sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: o.db ?? env.DB,
         newSessionId: () => `00000000-0000-4000-8000-${String(++sessions).padStart(12, '0')}`,
         modelUsable: async id => {
           if (modelCheck.throws) throw new Error('settings read failed')

@@ -46,6 +46,8 @@ export interface AgentTasks {
   watch(turnId: string): Promise<TaskResult>
   advanceTask(runId: string): Promise<TaskResult>
   leaseTask(turnId: string): Promise<TaskResult>
+  /** The turn's fixed rows into D1; true once they're in. */
+  flushTurn(turnId: string): Promise<boolean>
   /** The `authority-sweep` task (authority.ts). */
   authoritySweep(): Promise<TaskResult>
   /** A `grant-expiry:<grantId>` task, by its task id (authority.ts). */
