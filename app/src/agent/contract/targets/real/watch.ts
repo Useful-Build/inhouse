@@ -11,12 +11,7 @@ import type { ResourceKey } from '../../../types'
 import type { Signer } from './me'
 
 /** The P4 methods the real client serves over HTTP besides the Library five W5 already added to index.ts's SERVED. */
-export const WATCH_SERVED = ['runRoutine', 'deleteRoutine', 'restoreRoutine', 'markNoticesRead', 'listNotifications'] as const
-
-/** Client methods the real target doesn't serve yet, each with why (the suite skips them by name). */
-export const WATCH_EXEMPT: Readonly<Record<string, string>> = {
-  setAside: 'the real client still refuses setAside until W3 PR 2 (#270, the Today client) merges; then add it to SERVED and its route to routeOf (watchRoute already has it)',
-}
+export const WATCH_SERVED = ['runRoutine', 'deleteRoutine', 'restoreRoutine', 'markNoticesRead', 'listNotifications', 'setAside'] as const
 
 /** The paths the client reads each P4 resource from (`readRoutines`, `readActivityPage`, `readNotifications`, the Library list). */
 export const WATCH_READ_PATH: Partial<Record<ResourceKey, string>> = {
@@ -76,8 +71,16 @@ export interface RoutineSession {
   restoreRoutine(id: string): Promise<void>
 }
 
-/** A routine changed behind the client: deleted and restored in the other session, so the first session's next write is stale. */
-export async function changeRoutineElsewhere(other: RoutineSession, id: string): Promise<void> {
-  await other.deleteRoutine(id)
-  await other.restoreRoutine(id)
+/**
+ * A routine changed behind the client: a delete then a restore in the other session when it is live (a restore then a delete
+ * when it is deleted), so it ends as it was, two revisions on, and the first session's next write is stale.
+ */
+export async function changeRoutineElsewhere(other: RoutineSession, id: string, startsDeleted = false): Promise<void> {
+  if (startsDeleted) {
+    await other.restoreRoutine(id)
+    await other.deleteRoutine(id)
+  } else {
+    await other.deleteRoutine(id)
+    await other.restoreRoutine(id)
+  }
 }

@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { WATCH_EXEMPT, WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
+import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
 import type { Signer } from './me'
 
 describe('the real target\'s P4 parts', () => {
   it('serves exactly these methods besides the Library five (literal)', () => {
-    expect([...WATCH_SERVED]).toEqual(['runRoutine', 'deleteRoutine', 'restoreRoutine', 'markNoticesRead', 'listNotifications'])
-    expect(Object.keys(WATCH_EXEMPT)).toEqual(['setAside'])
+    expect([...WATCH_SERVED]).toEqual(['runRoutine', 'deleteRoutine', 'restoreRoutine', 'markNoticesRead', 'listNotifications', 'setAside'])
   })
   it('reads each resource from the route the design numbers (literal)', () => {
     expect(WATCH_READ_PATH).toEqual({ routines: '/api/routines', activity: '/api/activity', notifications: '/api/notifications', library: '/api/library' })
@@ -68,9 +67,11 @@ describe('the real target\'s P4 parts', () => {
     await expect(resetRoutines(s)).rejects.toThrow(/restore routine c.*409/)
   })
 
-  it('changes a routine elsewhere with a delete then a restore, in that order', async () => {
+  it('changes a routine elsewhere so it ends as it was: delete then restore when live, restore then delete when deleted', async () => {
     const seen: string[] = []
-    await changeRoutineElsewhere({ deleteRoutine: async id => { seen.push(`delete ${id}`) }, restoreRoutine: async id => { seen.push(`restore ${id}`) } }, 'r1')
-    expect(seen).toEqual(['delete r1', 'restore r1'])
+    const other = { deleteRoutine: async (id: string) => { seen.push(`delete ${id}`) }, restoreRoutine: async (id: string) => { seen.push(`restore ${id}`) } }
+    await changeRoutineElsewhere(other, 'r1')
+    await changeRoutineElsewhere(other, 'r2', true)
+    expect(seen).toEqual(['delete r1', 'restore r1', 'restore r2', 'delete r2'])
   })
 })
