@@ -44,6 +44,7 @@ import type { KeyRing, KeyRingResult } from '../crypto/keyring'
 import { checkGrantedScopes, describeScopeMismatch } from '../scope/scopes'
 import { checkReadDocument } from '../scope/graphql'
 import { checkShopifyFields, FIELD_NOT_ALLOWED } from '../scope/fields'
+import { checkVariables } from '../scope/variables'
 import { API_VERSION, requestGrant, sendRead, type ShopifyConfig, type Upstream } from './providers/shopify'
 
 export type SignInRecord = {
@@ -455,7 +456,9 @@ export class SignInCore {
     // The read-only check comes before any token is opened.
     const doc = checkReadDocument(document)
     if (!doc.ok) return err(doc.code)
-    // P5 (p5-w2): the level 1 allowlist of fields, arguments, `query` keys and sort keys, for every document.
+    // P5 (p5-w2): variables are plain JSON within 16 KiB, and the level 1 allowlist of fields, arguments, `query` keys and
+    // sort keys holds, for every document.
+    if (!checkVariables(variables).ok) return err('invalid_args', 'variables')
     if (!checkShopifyFields(document as string, variables).ok) return err('invalid_args', FIELD_NOT_ALLOWED)
 
     const r = this.#recordFor(accountId)

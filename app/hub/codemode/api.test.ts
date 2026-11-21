@@ -130,6 +130,39 @@ describe('ScriptApi', () => {
     await expect(api.graphql('{ a }')).rejects.toThrow(/^write_refused: writes are refused$/)
   })
 
+  it('after the 4 MiB total is crossed, later calls never reach the client (review L2)', async () => {
+    const c = instant(i => (i === 0 ? 'x'.repeat(MAX_READ_BYTES) : 0))
+    const api = new ScriptApi(c, '2026-10')
+    await expect(api.graphql('{ a }')).rejects.toThrow(BYTES_MESSAGE)
+    await expect(api.graphql('{ a }')).rejects.toThrow(BYTES_MESSAGE)
+    expect(c.calls).toBe(1)
+  })
+
+  it('variables: functions, toJSON callbacks, class instances and over 16 KiB never reach the client; the client gets a plain copy (review H1)', async () => {
+    const seen: unknown[] = []
+    const c = { async graphql(_d: string, v?: Record<string, unknown>) { seen.push(v); return { ok: true as const, value: { data: null } } } }
+    const api = new ScriptApi(c, '2026-10')
+    let called = false
+    const refused: unknown[] = [
+      { f: () => 1 },
+      { nested: { deep: [1, { g() {} }] } },
+      { toJSON: () => { called = true; return {} } },
+      { a: { toJSON: () => { called = true; return 1 } } },
+      { d: new Date() },
+      { n: Number.NaN },
+      { big: 'x'.repeat(16 * 1024) },
+      { many: Array.from({ length: 20_000 }, () => 0) },
+      { get g() { called = true; return 1 } },
+    ]
+    for (const v of refused) await expect(api.graphql('{ a }', v), JSON.stringify(Object.keys(v as object))).rejects.toThrow(/^invalid_args: /)
+    expect(called).toBe(false)
+    expect(seen).toEqual([])
+    const ok = { first: 1, q: 'sku:"a"', list: [1, 'b', null, true], o: { x: 1 } }
+    await api.graphql('{ a }', ok)
+    expect(seen).toEqual([ok])
+    expect(seen[0]).not.toBe(ok)
+  })
+
   it('a non-string query or non-plain variables never reach the client', async () => {
     const c = instant(() => null)
     const api = new ScriptApi(c, '2026-10')

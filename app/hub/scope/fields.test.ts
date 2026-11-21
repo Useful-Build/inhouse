@@ -291,6 +291,9 @@ describe('checkShopifyFields: literal cases', () => {
     expect(passes('query Q($s: OrderSortKeys) { orders(first: 5, sortKey: $s) { nodes { id } } }', { s: 'CUSTOMER_NAME' })).toBe(false)
     // A variable the operation doesn't declare.
     expect(passes('query Q { orders(first: 5, query: $q) { nodes { id } } }', { q: 'sku:"a"' })).toBe(false)
+    // A variable the operation doesn't use or declare is never forwarded (review H1).
+    expect(passes('{ orders(first: 5) { nodes { id } } }', { junk: 'x'.repeat(100) })).toBe(false)
+    expect(passes('query Q($q: String) { orders(first: 5, query: $q) { nodes { id } } }', { q: 'sku:"a"', extra: 1 })).toBe(false)
     expect(passes('{ a: orders(first: 1) { nodes { id } } b: orders(first: 1) { nodes { id } } c: shop { currencyCode } }')).toBe(true)
   })
 

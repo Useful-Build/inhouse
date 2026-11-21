@@ -9,7 +9,7 @@ import fc from 'fast-check'
 import { test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { BAD_RETURN, errorText, readReturn, scriptId, userModule, workerCode, WRAPPER, WRAPPER_VERSION } from './script'
-import { MAX_ERROR_CHARS, MAX_RETURN_BYTES } from './caps'
+import { COMPATIBILITY_DATE, MAX_ERROR_CHARS, MAX_RETURN_BYTES } from './caps'
 
 /** The reference: SHA-256 over `<version>\n<code>`, by node:crypto. */
 const reference = (code: string) => `cm1-${createHash('sha256').update(`${WRAPPER_VERSION}\n${code}`, 'utf8').digest('hex')}`
@@ -24,6 +24,25 @@ describe('scriptId', () => {
     const i = Math.min(at, code.length)
     const other = code.slice(0, i) + ch + code.slice(i)
     expect(await scriptId(other)).not.toBe(await scriptId(code))
+  })
+})
+
+/**
+ * The wrapper and runtime each version pins (review L5). A cached isolate is keyed by the id, which hashes only the
+ * code and WRAPPER_VERSION: change WRAPPER or COMPATIBILITY_DATE without a bump and old ids would serve old wrappers.
+ * Add a line here with the new version's hash when you bump it.
+ */
+const PINNED: Record<number, string> = {
+  3: 'ea3abb2157b890671ec317d254fc09ff4b24117a1bf8bb42ac0fdd4ead43cdfd',
+}
+
+describe('WRAPPER_VERSION', () => {
+  it('pins the wrapper text and compatibility date', () => {
+    const hash = createHash('sha256').update(`${COMPATIBILITY_DATE}\n${WRAPPER}`, 'utf8').digest('hex')
+    if (PINNED[WRAPPER_VERSION] !== hash) {
+      throw new Error(`WRAPPER or COMPATIBILITY_DATE changed: bump WRAPPER_VERSION and pin its hash (${hash}) in script.test.ts`)
+    }
+    expect(Object.entries(PINNED).filter(([v, h]) => Number(v) !== WRAPPER_VERSION && h === hash)).toEqual([])
   })
 })
 

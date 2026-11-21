@@ -4,10 +4,13 @@
 //   code is module source, never evaluated at runtime.
 // - The id is `cm1-` + SHA-256 of WRAPPER_VERSION and the code alone (the loader's "same id, same code" rule, and the
 //   pricing's count per id): never a run id, a time or a random value. Nothing per call is in `env`.
-// - The hub trusts nothing the sandbox returns: a string of at most MAX_RETURN_BYTES (UTF-8), parsed here.
+// - The hub trusts nothing the sandbox returns: a string of at most MAX_RETURN_BYTES (UTF-8), parsed here. The wrapper
+//   refuses a non-string or over-long return before it crosses (review round 1 L1); the hub's check stays.
 import { COMPATIBILITY_DATE, MAX_ERROR_CHARS, MAX_RETURN_BYTES } from './caps'
 
-export const WRAPPER_VERSION = 2
+export const WRAPPER_VERSION = 3
+
+export const BAD_RETURN = 'script must return a small JSON value'
 
 export const WRAPPER = `import { WorkerEntrypoint } from 'cloudflare:workers'
 import script from './user.js'
@@ -15,7 +18,10 @@ import script from './user.js'
 export class Script extends WorkerEntrypoint {
   async run(shop) {
     const result = await script(shop)
-    return JSON.stringify(result === undefined ? null : result)
+    const s = JSON.stringify(result === undefined ? null : result)
+    // A big or non-string return never crosses into the hub (which checks again).
+    if (typeof s !== 'string' || s.length > ${MAX_RETURN_BYTES}) throw new Error('${BAD_RETURN}')
+    return s
   }
 }
 
@@ -28,7 +34,6 @@ export default {
 
 export const userModule = (code: string): string => `export default async (shop) => {\n${code}\n}\n`
 
-export const BAD_RETURN = 'script must return a small JSON value'
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))

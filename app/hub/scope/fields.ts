@@ -77,6 +77,8 @@ export function checkShopifyFields(document: string | DocumentNode, variables: R
       }
     }
     for (const v of op.variableDefinitions ?? []) w.declared.set(v.variable.name.value, v.defaultValue)
+    // A variable the operation doesn't declare would still be sent upstream: refused.
+    for (const name of Object.keys(variables)) if (!w.declared.has(name)) return { ok: false }
     checkDirectives(op.directives)
     const roots = { count: 0 }
     selections(w, op.selectionSet, [], [], roots)

@@ -22,15 +22,16 @@ export const CODEMODE_ACCOUNT = shopifyConnector.accountId
 export const MAX_CODE_CHARS = 20_000
 
 const DESCRIPTION =
-  'Run a short JavaScript function body over many Shopify orders or products, when the bounded tools would need many ' +
-  'pages: counts, totals, rankings, "which of all". Not for one order, one product or a short list: use the other ' +
+  'Run a short JavaScript function body over many Shopify orders or products when the bounded tools would need many ' +
+  'pages: counts, totals, rankings, "which of all". Not for one order or a short list: use the other ' +
   'Shopify tools. API: `declare const shop: { graphql(query: string, variables?: Record<string, unknown>): Promise<{ ' +
   'data: any }> }`, read-only Admin GraphQL `2026-10`. Only the fields, filters (`query` keys) and sort keys the ' +
-  'Shopify tools use are allowed, others are refused; no free-text search on orders; at most 3 root fields. Use ' +
+  'Shopify tools use are allowed; no free text on orders; at most 3 root fields. Use ' +
   '`nodes`, not `edges`; `first` at most 250, page with `pageInfo.endCursor`. At most ' +
   `${MAX_CALLS} calls per script, one at a time. \`return\` a small JSON value (at most 8 KB): counts, ids and the ` +
-  'few fields the answer needs, never the raw pages. No `fetch`, no network. Order filters: financial_status, ' +
-  "fulfillment_status, return_status, sku, name, processed_at:>='<ISO>'; products: status, sku, inventory_total:<n."
+  'few fields the answer needs, no raw pages. No network. Filter values go in double quotes ' +
+  '(sku:"A-1"); instants as processed_at:>=\'YYYY-MM-DDTHH:MM:SSZ\', no milliseconds. Order keys: financial_status, ' +
+  'fulfillment_status, return_status, sku, name, processed_at, updated_at; products: status, sku, inventory_total:<n.'
 
 const Input = z.strictObject({ code: z.string().min(1).max(MAX_CODE_CHARS) })
 

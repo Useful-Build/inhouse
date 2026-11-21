@@ -8,6 +8,7 @@
 import type { HubError, HubResult } from '../index/contract'
 import { hubError } from '../index/errors'
 import { FIELD_NOT_ALLOWED } from '../scope/fields'
+import { checkVariables } from '../scope/variables'
 import { MAX_CALLS, MAX_READ_BYTES } from './caps'
 
 /** What ScriptApi calls: the Shopify read client (the SignIn stub's `query`). */
@@ -24,12 +25,6 @@ export function scriptErrorText(e: HubError): string {
   const withField = hubError('invalid_args', FIELD_NOT_ALLOWED).message
   const text = e.code === 'invalid_args' && e.message === withField ? withField : hubError(e.code).message
   return `${e.code}: ${text}`
-}
-
-const isPlainObject = (v: unknown): v is Record<string, unknown> => {
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
-  const proto = Object.getPrototypeOf(v)
-  return proto === Object.prototype || proto === null
 }
 
 const jsonBytes = (v: unknown): number => new TextEncoder().encode(JSON.stringify(v) ?? 'null').byteLength
@@ -72,8 +67,10 @@ export class ScriptApi {
     if (this.#closed) return Promise.reject(this.#refusedClosed())
     if (++this.#calls > MAX_CALLS) return Promise.reject(new Error(CALLS_MESSAGE))
     if (typeof query !== 'string') return Promise.reject(new Error(scriptErrorText(hubError('invalid_args'))))
-    if (variables !== undefined && !isPlainObject(variables)) return Promise.reject(new Error(scriptErrorText(hubError('invalid_args'))))
-    const turn = this.#tail.then(() => this.#send(query, variables))
+    // Plain JSON only, at every depth, at most 16 KiB: a function or stub never reaches the hub's JSON.stringify.
+    const vars = checkVariables(variables)
+    if (!vars.ok) return Promise.reject(new Error(scriptErrorText(hubError('invalid_args'))))
+    const turn = this.#tail.then(() => this.#send(query, vars.value))
     this.#tail = turn.catch(() => {})
     return turn
   }
@@ -85,6 +82,8 @@ export class ScriptApi {
 
   async #send(query: string, variables: Record<string, unknown> | undefined): Promise<{ data: unknown }> {
     if (this.#closed) throw this.#refusedClosed()
+    // Once the total is past the cap, nothing more goes upstream.
+    if (this.#bytes > MAX_READ_BYTES) throw new Error(BYTES_MESSAGE)
     const r = await this.#client.graphql(query, variables, this.#apiVersion)
     // An answer that lands after the deadline is dropped.
     if (this.#closed) throw this.#refusedClosed()

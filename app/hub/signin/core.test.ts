@@ -40,6 +40,16 @@ describe('grants and reads', () => {
     expect(codeOf(await h.core.query(null as never))).toBe('invalid_args')
   })
 
+  it('P5 W2 (review H1): junk, undeclared, function and oversize variables are refused before any token or upstream call', async () => {
+    const h = harness()
+    const doc = 'query Q($q: String) { orders(first: 1, query: $q) { nodes { id } } }'
+    const q = (variables: unknown) => h.core.query({ accountId: ACCOUNT, document: doc, apiVersion: API, variables: variables as never })
+    expect(await q({ q: 'sku:"a"', junk: 'x'.repeat(1000) })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: field not allowed' } })
+    expect(await q({ q: () => 'sku:"a"' })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: variables' } })
+    expect(await q({ q: 'x'.repeat(16 * 1024) })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: variables' } })
+    expect(h.shop.grants + h.shop.reads.length).toBe(0)
+  })
+
   it('a call naming another account is internal and logged', async () => {
     const h = harness()
     await readQuery(h)

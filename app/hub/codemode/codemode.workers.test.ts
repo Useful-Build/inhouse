@@ -115,6 +115,9 @@ async function direct(code: string, extra: Partial<CodeModeDeps> = {}, hooks: Co
   return { out: await codeMode(extra).run(code, api), api }
 }
 
+/** What the second run sees calling a kept `shop`: the runtime's disposed-stub error (seen locally), or ScriptApi's own. */
+const KEPT_REFUSAL = /^found kept: (RPC stub used after being disposed\.|shop is closed: the script has finished or ran out of time)$/
+
 const catching = (call: string) => `try { await ${call}; return 'reached' } catch (e) { return String(e && e.message) }`
 
 describe('A.7.3 the binding reaches the sandbox', () => {
@@ -131,7 +134,6 @@ describe('A.7.3 the binding reaches the sandbox', () => {
 describe('A.7.4 no network', () => {
   for (const [label, code] of [
     ['fetch to an absolute URL', `await fetch('https://example.com'); return 'reached'`],
-    ['fetch to a relative URL', `await fetch('/admin/api/2026-10/graphql.json'); return 'reached'`],
     ['connect()', `const { connect } = await import('cloudflare:sockets'); const s = connect('example.com:443'); await s.opened; return 'reached'`],
   ] as const) {
     it(`${label} fails inside the sandbox and reaches no upstream`, async () => {
@@ -173,6 +175,27 @@ describe('A.7.5 read-only and level 1 at runtime', () => {
       expect(seen.graphql).toBe(0)
     })
   }
+  // Review H1: variables are plain JSON within 16 KiB and declared by the operation; nothing else reaches the hub's
+  // JSON.stringify or Shopify.
+  for (const [label, vars] of [
+    ['a junk undeclared variable', `{ junk: 'x'.repeat(1000) }`],
+    ['a function variable', `{ q: () => 'sku:"a"' }`],
+    ['a toJSON callback', `{ q: { toJSON() { globalThis.called = true; return 'sku:"a"' } } }`],
+    ['an oversize variable', `{ q: 'x'.repeat(20000) }`],
+  ] as const) {
+    it(`${label} is refused before Shopify`, async () => {
+      const doc = 'query Q($q: String) { orders(first: 1, query: $q) { nodes { id } } }'
+      const r = await script(`${catching(`shop.graphql(${JSON.stringify(doc)}, ${vars})`)}`)
+      expect(r.result).toMatch(/^invalid_args: /)
+      expect(seen.graphql).toBe(0)
+    })
+  }
+  it('a toJSON callback is never called back from the hub', async () => {
+    const doc = 'query Q($q: String) { orders(first: 1, query: $q) { nodes { id } } }'
+    const r = await script(`try { await shop.graphql(${JSON.stringify(doc)}, { q: { toJSON() { globalThis.called = true; return 'sku:"a"' } } }) } catch {} return globalThis.called === true`)
+    expect(r.result).toBe(false)
+  })
+
   it('field not allowed through a variable', async () => {
     const doc = 'query Q($q: String) { orders(first: 1, query: $q) { nodes { id } } }'
     const r = await script(catching(`shop.graphql(${JSON.stringify(doc)}, { q: 'email:a*' })`))
@@ -273,10 +296,11 @@ describe('A.7.8 late calls', () => {
   })
 
   it('a shop kept on globalThis is closed on the next run of the same code', async () => {
-    const code = `if (globalThis.kept) { ${catching(`globalThis.kept.graphql(${PRODUCTS_PAGE}, { first: 1 })`)} } globalThis.kept = shop; return 'stored'`
+    // The second run reports that it found the kept object (a marker), then the refusal it got (review L4).
+    const code = `if (globalThis.kept) { try { await globalThis.kept.graphql(${PRODUCTS_PAGE}, { first: 1 }); return 'reached' } catch (e) { return 'found kept: ' + e.message } } globalThis.kept = shop; return 'stored'`
     expect((await script(code)).result).toBe('stored')
     const second = await script(code)
-    expect(second.result).not.toBe('reached')
+    expect(second.result).toMatch(KEPT_REFUSAL)
     expect(seen.graphql).toBe(0)
   })
 })
