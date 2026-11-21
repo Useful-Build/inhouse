@@ -134,4 +134,37 @@ describe('history around a grant ending and a chat just started', () => {
     l.ui().openModelMenu(); l.ui().openModelMenu()
     expect(l.ui().modelMenuAsk).toBe(before + 2)
   })
+
+  test('opening a chat follows the runs its page names (the live run and an ended one not stored yet), from the first event', async () => {
+    const l = await load()
+    const id = l.mock.allChatIds()[0]
+    const R1 = 'r_AAAAAAAAAAAAAAAAAAAAAA', R2 = 'r_BBBBBBBBBBBBBBBBBBBBBB'
+    const attach = vi.spyOn(l.mock, 'attach').mockReturnValue(() => {})
+    vi.spyOn(l.mock, 'getChat').mockResolvedValue({
+      chat: { id, title: 't', customTitle: null, pinned: false, deleted: false, at: { iso: '2026-11-20T00:00:00.000Z', ms: 1 }, rev: 1, running: true },
+      messages: [], nextCursor: null, runs: [{ runId: R1, chatId: id, lastSeq: 9, live: true }, { runId: R2, chatId: id, lastSeq: 3, live: false }],
+    })
+    l.ui().loadHistory(id)
+    await settle()
+    // One run is followed per chat at a time (the first); each from seq 0.
+    expect(attach).toHaveBeenCalledTimes(1)
+    expect(attach.mock.calls[0].slice(0, 1)).toEqual([R1])
+    expect(attach.mock.calls[0][2]).toBe(0)
+    expect(l.ui().runs[id]?.runId).toBe(R1)
+  })
+
+  test('one unknown-chat navigation raises one notice: the demo\'s getChat on an unknown id is itself a notice, so the thread must not ask for it', async () => {
+    const l = await load()
+    const heard: string[] = []
+    l.mock.onNotice(n => heard.push(n.type === 'error' ? n.text : n.type))
+    const { historyWanted } = await import('../screens/chat/notes')
+    // What the thread does when a link names a chat that doesn't exist: it asks only when `historyWanted` says so.
+    const id = 'no-such-chat'
+    if (historyWanted(l.mock.read().chat.chats, id)) l.ui().loadHistory(id)
+    await settle()
+    expect(heard).toEqual([])
+    // The read itself would have raised the second notice (this is the double the e2e saw).
+    await l.mock.getChat(id).catch(() => undefined)
+    expect(heard).toEqual(["That chat isn't available. It may have been deleted."])
+  })
 })

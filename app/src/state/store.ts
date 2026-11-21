@@ -802,7 +802,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
   // Answers still being written on the agent's side (the page reloaded, or another tab sent): follow each from its first event.
   // Messages are keyed by id, so what the history already shows isn't added twice. The reload note was about a run that
   // stopped; this one didn't, so its note goes.
-  void agent.activeRuns().then(async list => {
+  /** Follows each run from its first event, unless its chat is already answering here or isn't one the agent has. */
+  const followRuns = async (list: readonly { runId: string; chatId: string }[]) => {
     if (list.length) await loadChat()
     const known = new Set(agent.allChatIds())
     for (const r of list) {
@@ -812,7 +813,8 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       updateChat(r.chatId, c => ({ ...c, extras: c.extras.filter(m => !(m.role === 'event' && m.text === RELOAD_NOTE)) }))
       follow(r.chatId, token, r.runId)
     }
-  }, logFailure('could not read the answers being written'))
+  }
+  void agent.activeRuns().then(followRuns, logFailure('could not read the answers being written'))
 
   /** Sends `q` into chat `cid`, open or not: a new run, or a turn queued in the chat's live run. Synchronous up to and including
    *  adding the person's message (when it starts a run): regenerate() reads it right after calling ask(). */
@@ -1153,6 +1155,9 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
       set(s => ({ history: { ...s.history, [chatId]: { messages: have?.messages ?? [], next: have?.next ?? null, state: 'loading' } } }))
       agent.getChat(chatId, cursor).then(page => {
         if (epoch !== historyEpoch) return
+        // `runs`: the live run and any ended run whose turns aren't all stored yet (route 24). Each is replayed from its first event;
+        // what the history already holds shows once (stable ids).
+        void followRuns(page.runs).catch(logFailure('could not follow the answers being written'))
         // The page is newest first; the thread reads oldest first, by stored position.
         const older = [...page.messages].sort((a, b) => a.pos - b.pos)
         set(s => {

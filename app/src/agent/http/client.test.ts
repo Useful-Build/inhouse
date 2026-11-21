@@ -1120,10 +1120,8 @@ describe('the parts that stay the stub until their phase', () => {
     expect(heard).toEqual([{ type: 'error', code: 'unavailable', text: (e as AgentError).message }])
   })
 
-  test('the run replay (route 32) stays off until #163 is in, a listener that unsubscribed hears nothing, and the lists are empty and stable', async () => {
-    const { agent, heard, calls } = await loaded(reads())
-    expect(await agent.activeRuns()).toEqual([])
-    expect(calls.map(c => c.path)).not.toContain('/api/runs/active')
+  test('a listener that unsubscribed hears nothing, and the lists are empty and stable', async () => {
+    const { agent, heard } = await loaded(reads())
     expect(agent.link()).toBe('live')
     expect(heard).toEqual([])
     const quiet: AgentNotice[] = []

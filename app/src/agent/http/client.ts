@@ -42,10 +42,10 @@ export interface HttpAgentOptions extends TransportOptions {
 }
 
 /**
- * Route 32 (the run replay) isn't wired until W1's history PR (#163, which flushes a turn's rows before it answers) is in
- * `fleet/agent-chat`: until then `activeRuns()` answers none and a reload doesn't follow a run. The orchestrator flips it.
+ * Route 32 (the run replay) is served since W1's history PR (#163, which flushes a turn's rows before it answers) is in
+ * `fleet/agent-chat`: `activeRuns()` reads it, and a reload follows the runs it names. A test pins it on.
  */
-export const ACTIVE_RUNS_WIRED = false
+export const ACTIVE_RUNS_WIRED = true
 
 /** The chat socket's version in the URL (`?v=`): the contract's `CHAT_PROTOCOL_VERSION`, which this plain file can't import. */
 const SOCKET_VERSION = 1
@@ -969,7 +969,13 @@ export class HttpAgent implements AgentClient {
   /** Routes 30 and 31. */
   interrupt = (turnId: string): Promise<void> => guard(postTurnAction(this.http, turnId, 'interrupt').then(() => undefined, (e: unknown) => { throw this.fail(e) }))
   stop = (turnId: string): Promise<void> => guard(postTurnAction(this.http, turnId, 'stop').then(() => undefined, (e: unknown) => { throw this.fail(e) }))
-  activeRuns = (): Promise<Awaited<ReturnType<AgentClient['activeRuns']>>> => (ACTIVE_RUNS_WIRED ? readActiveRuns(this.http) : Promise.resolve([]))
+  // Read after the first reads, so the chats the runs belong to are known when the app follows them.
+  activeRuns = async (): Promise<Awaited<ReturnType<AgentClient['activeRuns']>>> => {
+    if (!ACTIVE_RUNS_WIRED) return []
+    await this.whenLoaded()
+    // A run of a chat the first page didn't hold is followed when that chat opens (route 24 names it in `runs`).
+    return readActiveRuns(this.http)
+  }
 
   attach = (runId: string, onFrame: Parameters<AgentClient['attach']>[1], fromSeq = 0, onRefused?: Parameters<AgentClient['attach']>[3]): (() => void) =>
     this.socket.attach(runId, f => { onFrame(f); if (f.event.type === 'run.finished') void this.refreshUsage() }, fromSeq, onRefused)

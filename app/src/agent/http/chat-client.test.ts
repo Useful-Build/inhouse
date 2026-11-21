@@ -7,7 +7,7 @@
 //  - a model switched off that vanishes from the Models page (it must stay, off), or one that route 38 doesn't serve showing as on;
 //  - the pause state that disagrees with the server after a refused pause, or a Member's pause that isn't refused;
 //  - the cap that isn't re-read after its save, or a spending page that keeps an old total after a turn ends;
-//  - route 32 asked for before #163 is in.
+//  - route 32 (the run replay) not asked for once #163 is in, or asked for before the chats it names are known.
 import { describe, expect, test } from 'vitest'
 import type { AgentNotice } from '../types'
 import { AgentError } from '../types'
@@ -278,11 +278,22 @@ describe('send, interrupt and stop', () => {
     expect(heard.filter(n => n.type === 'error')).toHaveLength(1)
   })
 
-  test('the run replay (route 32) is not asked for until #163 is in; the trace route answers a trace or null for a 404', async () => {
+  test('the run replay (route 32) is read after the first reads, and answers the runs the server names', async () => {
+    const run = { runId: RUN, chatId: 'c1', lastSeq: 4, live: true }
+    const { agent, calls } = await loaded({ ...reads({ chats: [chatRow('c1')] }), 'GET /api/runs/active': { body: { runs: [run] } } })
+    expect(await agent.activeRuns()).toEqual([run])
+    // Asked before the chat list was read (the app asks at start): it waits for the first reads, so its chat is known.
+    const early = server({ ...reads({ chats: [chatRow('c1')] }), 'GET /api/runs/active': { body: { runs: [run] } } })
+    const a2 = new HttpAgent({ fetch: early.fetch })
+    expect(await a2.activeRuns()).toEqual([run])
+    expect(a2.allChatIds()).toEqual(['c1'])
+    expect(early.calls.map(c => c.path).indexOf('/api/runs/active')).toBeGreaterThan(early.calls.map(c => c.path).indexOf('/api/chats?limit=50'))
+    expect(calls.filter(c => c.path === '/api/runs/active')).toHaveLength(1)
+  })
+
+  test('the trace route answers a trace or null for a 404', async () => {
     const trace = { id: RUN, title: 'A run', durationMs: 1200, cost: { minor: 3, currency: 'USD' }, tokens: '1k', steps: [] }
-    const { agent, calls } = await loaded({ ...reads(), [`GET /api/traces/${RUN}`]: { body: trace }, 'GET /api/traces/gone': refusal(404, 'not_found') })
-    expect(await agent.activeRuns()).toEqual([])
-    expect(calls.map(c => c.path)).not.toContain('/api/runs/active')
+    const { agent } = await loaded({ ...reads(), [`GET /api/traces/${RUN}`]: { body: trace }, 'GET /api/traces/gone': refusal(404, 'not_found') })
     expect(await agent.getTrace(RUN)).toEqual(trace)
     expect(await agent.getTrace('gone')).toBeNull()
   })

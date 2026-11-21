@@ -63,5 +63,16 @@ export function mergeHistory(history: readonly ChatMessage[] | undefined, seed: 
   return [...history, ...seed, ...extras.filter(m => !stored.has(m.id))]
 }
 
+/**
+ * Whether opening chat `id` reads its history from the agent: the chat is one the agent has and has no sample turns. An unknown
+ * id (a stale or typed link, a deleted chat) reads nothing: the app's own "That chat isn't available" notice is the one answer,
+ * and a read that fails with the same words would be a second toast for one navigation.
+ */
+export const historyWanted = (chats: readonly { id: string; turns: readonly unknown[] }[], id: string | null): boolean => {
+  if (id === null) return false
+  const thread = chats.find(c => c.id === id)
+  return thread !== undefined && thread.turns.length === 0
+}
+
 /** A chat with nothing in it yet. */
 export const emptyView = (): ChatView => ({ messages: [], queued: [], turns: {}, live: null, thinking: null, notice: null, budgetWait: false, damaged: false, openRuns: [], files: [] })

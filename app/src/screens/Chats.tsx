@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
-import { CONNECTION_TEXT, NOTICE_TEXT, mergeHistory } from './chat/notes'
+import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted, mergeHistory } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { chatMessages, listNames, readingTools, toolDetail } from '../state/derive'
@@ -180,7 +180,7 @@ function Thread() {
   }
   const queueStatus = queue.length === 0 ? '' : `${queue.length} ${queue.length === 1 ? 'message' : 'messages'} ${queue.every(q => q.paused) ? 'paused' : 'queued'}`
   const history = useUi(s => (openId === null ? undefined : s.history[openId]))
-  const noSeed = openId !== null && !ctx.data.chat.chats.find(c => c.id === openId)?.turns.length
+  const noSeed = historyWanted(ctx.data.chat.chats, openId)
   const loadHistory = useUi(s => s.loadHistory)
   // A chat the agent keeps (no sample turns) reads its past when it opens.
   useEffect(() => { if (openId !== null && noSeed) loadHistory(openId) }, [openId, noSeed, loadHistory])

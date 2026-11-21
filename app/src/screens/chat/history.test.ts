@@ -5,7 +5,7 @@
 // The expected lists are written out here, not produced by `mergeHistory`.
 import { describe, expect, test } from 'vitest'
 import type { ChatMessage } from '../../agent/types'
-import { mergeHistory } from './notes'
+import { historyWanted, mergeHistory } from './notes'
 
 const T1 = 't_AAAAAAAAAAAAAAAAAAAAAA'
 const T2 = 't_BBBBBBBBBBBBBBBBBBBBBB'
@@ -38,5 +38,18 @@ describe('mergeHistory', () => {
     mergeHistory(stored, [], live)
     expect(stored).toHaveLength(1)
     expect(live).toHaveLength(1)
+  })
+})
+
+describe('historyWanted', () => {
+  const chats = [{ id: 'kept', turns: [] }, { id: 'sample', turns: [{}] }]
+  test('only a chat the agent has, with no sample turns, reads its history', () => {
+    expect(historyWanted(chats, 'kept')).toBe(true)
+    expect(historyWanted(chats, 'sample')).toBe(false)
+  })
+  test('an unknown chat (a stale link) reads nothing, so its failed read can\'t raise a second notice beside the app\'s own', () => {
+    expect(historyWanted(chats, 'no-such-chat')).toBe(false)
+    expect(historyWanted(chats, null)).toBe(false)
+    expect(historyWanted([], 'kept')).toBe(false)
   })
 })
