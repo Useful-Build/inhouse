@@ -50,6 +50,11 @@ const Activity = lazyRoute(() => import('./screens/Activity'), m => m.Activity)
 const Tools = lazyRoute(() => import('./screens/Tools'), m => m.Tools)
 const ToolPage = lazyRoute(() => import('./screens/Tools'), m => m.ToolPage)
 const Skills = lazyRoute(() => import('./screens/Skills'), m => m.Skills)
+// Once the shell has painted and the browser is idle, these five load in the background, so a first visit finds its chunk
+// already there (the skeleton shows only on a slow link). Library, Usage and Settings stay on first visit: they are the big ones.
+const PREFETCH: (() => Promise<unknown>)[] = [
+  () => import('./screens/Approvals'), () => import('./screens/Routines'), () => import('./screens/Activity'), () => import('./screens/Tools'), () => import('./screens/Skills'),
+]
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
@@ -102,7 +107,7 @@ function PageFallback() {
   const [text, setText] = useState('')
   useEffect(() => { const t = setTimeout(() => setText('Loading'), 50); return () => clearTimeout(t) }, [])
   return (
-    <PageBox width="wide" role="status">
+    <PageBox width="wide" role="status" data-page-loading>
       <span className="sr-only">{text}</span>
       <Skeleton className="h-9 w-44 animate-none rounded-sm bg-fill-hover" />
       <Skeleton className="mt-4 h-4 w-80 max-w-full animate-none rounded-sm" />
@@ -265,6 +270,12 @@ function useHashRoute() {
 }
 
 function Shell() {
+  useEffect(() => {
+    const go = () => { for (const load of PREFETCH) load().catch(() => {}) }
+    if (typeof requestIdleCallback === 'function') { const id = requestIdleCallback(go, { timeout: 4000 }); return () => cancelIdleCallback(id) }
+    const t = setTimeout(go, 2000)
+    return () => clearTimeout(t)
+  }, [])
   const page = useUi(s => s.page)
   const appKey = useUi(s => s.appKey)
   const toolKnown = !!toolName(useAgentData().tools, appKey)

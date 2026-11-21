@@ -61,3 +61,17 @@ describe('the screens Today does not need load on first visit, not with the entr
     })
   }
 })
+
+describe('the five screens moved out of the entry are prefetched when the shell is idle', () => {
+  // So a first visit finds its chunk already loaded; the skeleton shows only on a slow link. Library, Usage and Settings are not prefetched.
+  for (const name of ['Approvals', 'Routines', 'Activity', 'Tools', 'Skills']) {
+    it(`${name}'s chunk is imported by the lazy route and by the prefetch list`, () => {
+      expect(read('src/App.tsx').split(`import('./screens/${name}')`).length - 1).toBeGreaterThanOrEqual(2)
+    })
+  }
+  for (const name of ['Library', 'Usage', 'Settings']) {
+    it(`${name} is not prefetched`, () => {
+      expect(read('src/App.tsx').split(`import('./screens/${name}')`).length - 1).toBe(1)
+    })
+  }
+})
