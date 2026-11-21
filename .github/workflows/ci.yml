@@ -116,7 +116,7 @@ jobs:
       # pointer back when it ends, so the uploaded demo build is untouched either way.
       # P2: the test build too (built after, never beside, the product build), for the check's server bundle scan: no
       # test issuer in the deployable Worker, and the canary found in the test build's.
-      # The eval build too (p3-eval-observability rev 2, rec 1), for part 5: the eval trace in neither the deployable
+      # The eval build too (p3-eval-observability rev 2, rec 1), for part 6: the eval trace in neither the deployable
       # Worker nor the test build, its canary found in the eval build's, and no scripted model there.
       - if: matrix.shard == 1 && !cancelled()
         run: npm run build:product && npm run build:product-test && npm run build:product-eval && node scripts/check-product-build.mjs
@@ -409,7 +409,7 @@ jobs:
           retention-days: 7
       # As e2e shard 1: the product build ships no demo code, and the deployable Worker no test issuer.
       - if: ${{ !cancelled() }}
-        run: npm run build:product && npm run build:product-test && node scripts/check-product-build.mjs
+        run: npm run build:product && npm run build:product-test && npm run build:product-eval && node scripts/check-product-build.mjs
       # As the test-build job: every migration on an empty local D1 (the fresh install), so a broken migration shows on
       # its own fleet PR, not a few merges later.
       - name: Migrations, fresh install

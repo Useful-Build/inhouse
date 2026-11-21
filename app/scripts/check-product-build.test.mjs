@@ -1,5 +1,5 @@
 // scripts/check-product-build.mjs part 4: the test-build proof is always hard (exit 1 when the test build has no canary),
-// whatever the server folder holds. Part 5: the eval trace in the eval build only. Builds are fixtures in temp dirs.
+// whatever the server folder holds. Part 6: the eval trace in the eval build only. Builds are fixtures in temp dirs.
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -178,7 +178,7 @@ test.each([['product'], ['productTest']])('no server-modules.json in the %s buil
   expect(r.status).toBe(2)
 })
 
-// Part 5 (p3-eval-observability rev 2, rec 1): the eval trace (`@eval-trace`, server/eval-trace/on.ts) is in the eval build
+// Part 6 (p3-eval-observability rev 2, rec 1): the eval trace (`@eval-trace`, server/eval-trace/on.ts) is in the eval build
 // and nowhere else; the eval build has no scripted model. Ways it can fail, written down first:
 //  1. the eval trace's canary or module reaches the deployable Worker;
 //  2. it reaches the test build (built from PR code on every PR, so its `io` path must not ride along);

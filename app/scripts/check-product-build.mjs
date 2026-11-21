@@ -1,9 +1,9 @@
-// The product build check (P1, C8; part 4 P2; part 5 the eval build). Run in app/ after `npm run build`,
+// The product build check (P1, C8; part 4 P2; part 5 the hub, P4; part 6 the eval build). Run in app/ after `npm run build`,
 // `npm run build:product`, `npm run build:product-test` and `npm run build:product-eval`:
 //   node scripts/check-product-build.mjs                      checks dist-product/ (must pass) and dist/ (must fail)
 //   node scripts/check-product-build.mjs --product DIR --demo DIR --product-test DIR --product-eval DIR   other folders
 //   ... --server DIR   the server source part 4 looks in for the test issuer (default server/; its tests use fixtures)
-// The product build ships no sample data, mock code, demo controls or demo clock. Three parts, each run on both builds:
+// The product build ships no sample data, mock code, demo controls or demo clock. Three client-output parts (1 to 3), each run on both builds:
 //   1. Canary strings in the client output: the sample brand's and people's names, the brand's email domain and the user's
 //      email (read from src/agent/sample-data/) and a
 //      marker constant each from mock.ts, demo-controls.ts and demo-clock.ts. Unique strings only, never common words or
