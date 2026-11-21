@@ -412,6 +412,9 @@ test('S8: Pause the agent; a new question is refused with a notice; resume', asy
       test.setTimeout(240_000)
       await ask(member, 'scenario:hello now that it is back')
       await expect(log(member).getByText(HELLO, { exact: true })).toBeVisible({ timeout: 150_000 })
+      // The agent took the message, so the banner that said it was paused is gone (QA round 2: it stayed, the page read the
+      // pause state only on load).
+      await expect(member.locator('[data-chat-notice]').getByText(PAUSED_NOTICE)).toHaveCount(0)
       await closeDrawer(member)
       await shot(member, 'S8-resumed-and-answered')
     }
@@ -432,7 +435,9 @@ test('S8: A live answer stops when the agent is paused, and resuming starts noth
     await setPaused(admin, true)
     // The answer is no longer running: its Stop button goes, and the rest of it never arrives.
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 60_000 })
-    // The paused notice is transient (the chat clears a notice when the run ends), so the answer simply stops where it was.
+    // What was streamed stays, with a note that says what happened to the answer (not that the question was never asked).
+    await expect(log(page).getByText('Waiting a while.', { exact: true })).toBeVisible()
+    await expect(log(page).getByText('Your Inhouse agent was paused, so this answer stopped.', { exact: true })).toBeVisible({ timeout: 60_000 })
     await shot(page, 'S8-live-answer-stopped-by-the-pause')
     await setPaused(admin, false)
     // Resuming starts nothing by itself: a fresh question gets its own answer, and the stopped one never finishes.
