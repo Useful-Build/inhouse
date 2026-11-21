@@ -5,7 +5,7 @@ import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, toolCounts, toolDetail, toolView } from '../state/derive'
 import type { ToolState } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
-import { useState, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type { ToolChannel } from '../agent/types'
 import { fmtDay } from '../lib/format'
@@ -49,6 +49,15 @@ function useToolControls() {
  * this app's own: nothing to go to, so it says so, as every other action that isn't connected in the demo does.
  */
 const CONNECT_FAILED = "We couldn't connect the tool. Try again."
+/** Back from the tool's sign-in page can restore this page as it was (the browser's back-forward cache): run `reset` then. */
+function useResetOnRestore(reset: () => void) {
+  useEffect(() => {
+    const on = (e: PageTransitionEvent) => { if (e.persisted) reset() }
+    window.addEventListener('pageshow', on)
+    return () => window.removeEventListener('pageshow', on)
+  })
+}
+
 /** Resolves true when the browser is on its way to the tool (stay disabled), false when there is nothing to wait for. */
 async function connectTool(key: string, label: string, say: (text: string) => void): Promise<boolean> {
   try {
@@ -91,6 +100,7 @@ export function Tools() {
   const requestCustom = () => openTeam('tool')
   const { manage } = useToolControls()
   const [connecting, setConnecting] = useState<string | null>(null)
+  useResetOnRestore(() => setConnecting(null))
   const connect = async (k: string) => { setConnecting(k); if (!(await connectTool(k, 'Connect', say))) setConnecting(null) }
   const say = (text: string) => { showToast(text, { icon: 'info', ms: 4000 }) }
 
@@ -222,7 +232,9 @@ export function ToolPage() {
   const { channels, details } = data.tools
   const channel = channels.find(c => c.key === key)
   // A link to a tool that arrives before the tools have been read (the sign-in's return) waits for them, not for a redirect.
-  if (toolRoute(data.tools, key, data.resources.tools.status) === 'wait') return <ToolsLoading />
+  const route = toolRoute(data.tools, key, data.resources.tools.status)
+  if (route === 'wait') return <ToolsLoading />
+  if (route === 'failed') return <ToolsFailed />
   // A channel that is also a tool the agent reads (Slack) gets the tool page, which carries the controls.
   return channel && !Object.hasOwn(details, key) ? <ChannelPage channel={channel} /> : <ToolDetailPage />
 }
@@ -232,6 +244,18 @@ function ToolsLoading() {
     <Page className="pt-4.5">
       <PageHeader title="Tools" description="The tools your Inhouse agent works with." />
       <EmptyState className="mt-6" variant="inline">Loading your tools.</EmptyState>
+    </Page>
+  )
+}
+
+/** The tools couldn't be read: the link stays, and the page says so with a way to try again. */
+function ToolsFailed() {
+  const [again, setAgain] = useState(false)
+  return (
+    <Page className="pt-4.5">
+      <PageHeader title="Tools" description="The tools your Inhouse agent works with." />
+      <EmptyState className="mt-6" variant="inline">We couldn't load your tools.</EmptyState>
+      <Button className="mt-4" size="lg" disabled={again} onClick={() => { setAgain(true); void agent.retry('tools').finally(() => setAgain(false)) }}>Try again</Button>
     </Page>
   )
 }
@@ -281,6 +305,7 @@ function ToolDetailPage() {
   const { manage, adminLine } = useToolControls()
   const [confirming, setConfirming] = useState(false)
   const [signingIn, setSigningIn] = useState(false)
+  useResetOnRestore(() => setSigningIn(false))
   // Status, abilities, last read and suggested questions all follow the tool's state (M17).
   const view = toolView(ctx, key)
   const bad = view.state === 'disconnected'
@@ -381,7 +406,7 @@ function ToolDetailPage() {
           </div>
         )}
         {adminLine && <div className={`basis-full ${DESC}`}>Your Inhouse team manages tools.</div>}
-        {bad && manage && A.canDisconnect && <div className={`basis-full ${DESC}`}>The tool's permissions changed. Disconnect it, then connect again.</div>}
+        {bad && manage && A.canDisconnect && <div className={`basis-full ${DESC}`}>If Reconnect doesn't work, disconnect it, then connect again.</div>}
         {A.revokeFailed && <div className="basis-full text-sm text-pretty text-warning-text">{`${A.name}'s access wasn't removed on its side when it was last disconnected. Remove the app there too.`}</div>}
       </div>
       {confirming && (

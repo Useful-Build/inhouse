@@ -123,6 +123,16 @@ describe('route C: the merge', () => {
     expect(d.details.slack).toMatchObject({ accountId: 'slack:workspace', revokeFailed: true, canDisconnect: false })
     expect(d.details.slack!.since).toBeUndefined()
   })
+  it('the hub alone: a disconnected or failed account with NO row still shows (state from the hub, no time invented)', () => {
+    const off = buildToolsData({ accounts: [acct('slack:workspace', { state: 'disconnected', revokeFailedAt: inst(NOW - MIN) })], rows: [], nowMs: NOW })
+    expect(off.connected).toEqual([])
+    expect(off.details.slack).toMatchObject({ accountId: 'slack:workspace', revokeFailed: true })
+    expect(off.catalog.map(c => c.k)).toEqual(['slack'])
+    const lost = buildToolsData({ accounts: [acct('slack:workspace', { state: 'failed' })], rows: [], nowMs: NOW })
+    expect(lost.connected).toEqual(['slack'])
+    expect(lost.connection).toEqual({ slack: { status: 'disconnected', since: inst(0) } })
+    expect(Object.keys(lost.details)).toEqual(['slack'])
+  })
   it('a first connect that failed or was declined leaves a row but no hub state: the details stay, so its page opens', () => {
     for (const lastState of ['never', 'failed', 'disconnected'] as const) {
       const d = buildToolsData({ accounts: [acct('slack:workspace', { state: 'empty' })], rows: [row('slack:workspace', lastState, NOW - MIN)], nowMs: NOW })

@@ -13,9 +13,12 @@ describe('toolRoute', () => {
   test('before the tools are read, an unlisted key waits (the sign-in return), it is not unknown', () => {
     expect(toolRoute(tools(), 'slack', 'loading')).toBe('wait')
   })
-  test('once the read has answered, an unlisted key is unknown, whether the read worked or failed', () => {
+  test('once the read has worked, an unlisted key is unknown', () => {
     expect(toolRoute(tools(), 'slack', 'ready')).toBe('unknown')
-    expect(toolRoute(tools(), 'slack', 'error')).toBe('unknown')
+  })
+  test('a read that failed says nothing about the key: it stays, and the page shows the failure (never a "page does not exist")', () => {
+    expect(toolRoute(tools(), 'slack', 'error')).toBe('failed')
+    expect(toolRoute(tools({ details: { slack: detail } }), 'slack', 'error')).toBe('known')
   })
   test('a tool or channel in the data is known, whatever the status', () => {
     expect(toolRoute(tools({ details: { slack: detail } }), 'slack', 'ready')).toBe('known')
