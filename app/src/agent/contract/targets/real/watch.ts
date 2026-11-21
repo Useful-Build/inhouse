@@ -96,6 +96,9 @@ interface Fs { readdirSync(dir: string, o: { recursive: true; withFileTypes: tru
 const node = async <T>(name: string): Promise<T> => (await import(/* @vite-ignore */ name)) as T
 const proc = (globalThis as unknown as { process?: { env: Record<string, string | undefined>; cwd(): string } }).process
 
+/** Whether the multi-config build with containers runs (the orchestrator's `E2E_WATCH_BUILD=1`): only then can a Run now end, so only then do the cases that run a turn mean anything. */
+export const watchBuild = (): boolean => proc?.env.E2E_WATCH_BUILD === '1'
+
 /** The local D1 the test build under `wrangler dev --persist-to` keeps (`.wrangler/test-build`, as e2e/api/db.ts reads it). */
 export const persistDir = (): string => proc?.env.CONTRACT_PERSIST_DIR ?? `${proc?.cwd() ?? '.'}/.wrangler/test-build`
 

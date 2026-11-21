@@ -87,7 +87,8 @@ const markerOf = (m: MessagesRequest['messages'][number]): string | undefined =>
 /**
  * The scenario a request plays and where its conversation starts: the newest user message with a marker (`from`, its
  * index), else (test build routes, P4 W6) the scenario of the first route whose text the first user message contains, from the
- * start, else the default from the start. A marker always wins over a route. A tool result carries no marker, so a tool loop
+ * start, else the default from the start. A route is read from the first user message only (a system routine's turn is its own
+ * chat, so its prompt is that message; test build only). A marker always wins over a route. A tool result carries no marker, so a tool loop
  * keeps its prompt's scenario.
  */
 export function scenarioStart(request: MessagesRequest, routes: readonly ScenarioRoute[] = TEST_ROUTES): { scenario: string; from: number } {

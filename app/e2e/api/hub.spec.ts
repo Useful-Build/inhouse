@@ -130,8 +130,8 @@ test.describe('no token or secret leaves the hub (acceptance 4: the canary sweep
     // secret is the test-only one in the hub's test config, and the run tokens the root proxy's test hook captured.
     const secret = /export const TEST_CLIENT_SECRET = '([^']+)'/.exec(appFile('test/upstreams/shopify/server.ts'))?.[1]
     expect(secret, 'the upstream\'s test client secret is in test/upstreams/shopify/server.ts').toBeTruthy()
-    // The hook's file is `<runId> <token>` per line, and must hold exactly these two runs (the morning check's and the env run's),
-    // so the sweep looks for the tokens of the runs it just made, not for an older file's.
+    // The hook's file is `<runId> <token>` per line, and may hold other runs too, but must hold these two (the morning check's
+    // and the env run's): the sweep looks for the tokens of the runs it just made, matched by run id, not for an older file's.
     const captured = new Map(textOfArtifact(ARTIFACTS.runTokens).split('\n').map(l => l.trim().split(/\s+/)).filter(p => p.length === 2).map(([id, token]) => [id!, token!]))
     for (const e of events) expect(captured.has(e.id), `run-tokens.txt holds run ${e.id}`).toBe(true)
     const needles: Record<string, string | RegExp> = { accessToken: /shpat_test_\d+/, clientSecret: secret! }

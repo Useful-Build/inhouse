@@ -180,10 +180,6 @@ test.describe('routes 52 to 56: who may do what to which routine', () => {
     expect(again.status, again.text).toBe(200)
     expect(again.json).toEqual(first.json)
     expect(slotsOf(id).filter(s => s.slot_key === `now|${id}|${key}`)).toHaveLength(1)
-    // Another key while that run is open.
-    const open = await call(request, admin, 'POST', `/api/routines/${id}/run`, { json: { clientKey: runKey() } })
-    expect(open.status, open.text).toBe(409)
-    expect(open.json.error).toMatchObject({ code: 'conflict', reason: 'run_open', current: { routine: id } })
     for (const bad of ['short', 'has a space in it', 'a.b.c.d.e.f.g.h', 'x'.repeat(65)]) {
       expect((await call(request, dana, 'POST', `/api/routines/${id}/run`, { json: { clientKey: bad } })).status, bad).toBe(400)
     }
@@ -191,6 +187,24 @@ test.describe('routes 52 to 56: who may do what to which routine', () => {
     // Run now is audited once, by the person who pressed it.
     const lines = auditWhere('routine.run_now').filter(l => (JSON.parse(l.args_json) as { routineId: string }).routineId === id)
     expect(lines).toHaveLength(1)
+  })
+
+  test('a second Run now while one is open is a conflict that carries the open run: the open run is a claimed row the tick will not touch for an hour, so no timing decides it', async ({ request }) => {
+    const id = seedRoutine({ creatorId: danaId, hour: 6, minute: 0, instruction: 'scenario:hello E2E open run', need: 0 })
+    const now = Date.now()
+    // A manual slot as route 54 writes it, left `claimed`: its next attempt and deadline are an hour away, so neither the heartbeat
+    // nor a poke submits or closes it while the spec asks (a containerless build included).
+    writeSql(
+      `INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key, prompt_text, submit_json, routine_rev, creator_id, next_attempt_ms, claimed_at_ms)
+       VALUES (?, ?, 'manual', ?, NULL, ?, ?, ?, 'claimed', ?, ?, 'held', '{}', 1, ?, ?, ?)`,
+      `now|${id}|e2eheldopenrun01`, id, localSlot(0).date, BRAND_TZ, now, now + HOUR, `rc_e2eHeld${id.slice(3, 15)}`, 'e2eheldopenrun01', danaId, now + HOUR, now,
+    )
+    for (const who of [admin, leo]) {
+      const open = await call(request, who, 'POST', `/api/routines/${id}/run`, { json: { clientKey: runKey() } })
+      expect(open.status, open.text).toBe(409)
+      expect(open.json.error).toMatchObject({ code: 'conflict', reason: 'run_open', current: { routine: id } })
+    }
+    expect(slotsOf(id), 'the refused calls wrote nothing').toHaveLength(1)
   })
 })
 

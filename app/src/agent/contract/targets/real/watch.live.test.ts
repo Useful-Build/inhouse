@@ -13,12 +13,16 @@ import { RoutinesListSchema } from '../../../../../shared/contract/routines'
 import { TodayAnswerSchema } from '../../../../../shared/contract/today'
 import { HttpAgent } from '../../../http/client'
 import { AgentError } from '../../../types'
-import { WATCH_READ_PATH, changeRoutineElsewhere, resetRoutines, seedUnreadNotice, settleRuns, watchRoute } from './watch'
+import { WATCH_READ_PATH, changeRoutineElsewhere, resetRoutines, seedUnreadNotice, settleRuns, watchBuild, watchRoute } from './watch'
 import { signer } from './me'
 import type { Signer } from './me'
 
 const origin = inject('contractRealOrigin')
 const MORNING_CHECK = 'routine-morning-check'
+// The cases that need a Run now to end (a Today card comes from a morning check run) need the multi-config build with containers
+// (the orchestrator's E2E_WATCH_BUILD=1). A containerless build (CI's contract step) runs only what it can serve, and says so.
+const watch = watchBuild()
+if (origin && !watch) console.warn('WATCH CONTRACT CASES SKIPPED in watch.live.test.ts: E2E_WATCH_BUILD is not 1, so the set-aside property and rollback (they need a morning check run, which needs a container) do not run')
 
 describe.skipIf(!origin)('the real client\'s P4 methods', () => {
   // Built when the first test starts, not when the file is read: the signer needs the test build's key in the environment.
@@ -57,7 +61,7 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
 
   beforeAll(async () => {
     s = signer(origin)
-    await settleRuns()
+    if (watch) await settleRuns()
     await resetRoutines(s)
     await seedUnreadNotice()
   })
@@ -155,7 +159,7 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
       const other = await loaded()
       await other.restoreFiles([fileId]).catch(() => undefined)
     })
-    it('setAside: a refused snooze leaves the card where it was', async () => {
+    it.skipIf(!watch)('setAside: a refused snooze leaves the card where it was', async () => {
       const id = await todayItem()
       const a = await loaded(failing('setAside', [id]))
       const before = a.getSnapshot()
@@ -209,7 +213,7 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
       },
     )
 
-    fcTest.prop([fc.array(fc.boolean(), { minLength: 1, maxLength: 5 })], runs)(
+    ;(watch ? fcTest : fcTest.skip).prop([fc.array(fc.boolean(), { minLength: 1, maxLength: 5 })], runs)(
       'a Today card\'s set-aside: a fresh snooze or undo lands and raises the rev by one; a stale one never applies, answers the current record (a higher rev) and leaves the reason as it was',
       async stales => {
         const id = await todayItem()
