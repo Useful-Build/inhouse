@@ -67,13 +67,17 @@ describe('the tables (failure 2)', () => {
       'routine_lost', 'routine_made', 'routine_missed', 'routine_ran', 'today_set_aside',
     ])
   })
-  it('every notice row fills only declared field slots and person; none takes a body today', () => {
+  it("every notice row fills only declared field slots and person; P4's own rows take no body", () => {
     for (const [id, t] of Object.entries(NOTICE_TEMPLATES)) {
       const allowed = new Set([...Object.keys(t.fields), 'person'])
       for (const s of slotsOfRow([t.text, t.who])) expect(allowed.has(s), `${id} slot ${s}`).toBe(true)
-      expect(t.body, id).toBeUndefined()
     }
-    expect(Object.keys(NOTICE_TEMPLATES).sort()).toEqual(['morning_check_found', 'routine_failed'])
+    for (const id of ['morning_check_found', 'routine_failed']) expect(NOTICE_TEMPLATES[id]!.body, id).toBeUndefined()
+    // P5 W4's eleven rows (p5-w4 section 3) carry a body; its own test checks them against a hand-copied list.
+    expect(Object.keys(NOTICE_TEMPLATES).sort()).toEqual([
+      'approval_expired', 'approval_failed', 'approval_lapsed', 'approval_sent', 'approval_waiting', 'morning_check_found',
+      'needs_check', 'notify_message', 'notify_report', 'question_closed', 'question_waiting', 'restore_reconciled', 'routine_failed',
+    ])
   })
 })
 
