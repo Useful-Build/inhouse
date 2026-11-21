@@ -1258,3 +1258,24 @@ describe('memory (P3 W6: routes 43 to 45)', () => {
     expect(await errorOf(agent.forgetMemory('mem_CCCCCCCCCCCCCCCCCCCCCC', true))).toMatchObject({ code: 'not_found' })
   })
 })
+
+describe('files (route 41)', () => {
+  const FILE = 'f_0123456789abcdefABCDEF'
+  test('a 401 is the signed-out state and still rejects with its code', async () => {
+    const { agent } = await loaded({ ...reads(), [`GET /api/files/${FILE}`]: refusal(401, 'unauthorized') })
+    expect(await errorOf(agent.downloadFile(FILE))).toMatchObject({ code: 'unauthorized' })
+    expect(agent.read().resources.meta).toMatchObject({ status: 'error', error: 'unauthorized' })
+  })
+
+  test('a 403 for a removed member is the signed-out state too', async () => {
+    const { agent } = await loaded({ ...reads(), [`GET /api/files/${FILE}`]: refusal(403, 'forbidden', { reason: 'removed' }) })
+    expect(await errorOf(agent.downloadFile(FILE))).toMatchObject({ code: 'forbidden' })
+    expect(agent.read().resources.meta).toMatchObject({ status: 'error', error: 'forbidden' })
+  })
+
+  test('a 404 is only that file: the app stays signed in', async () => {
+    const { agent } = await loaded({ ...reads(), [`GET /api/files/${FILE}`]: refusal(404, 'not_found') })
+    expect(await errorOf(agent.downloadFile(FILE))).toMatchObject({ code: 'not_found' })
+    expect(agent.read().resources.meta).toMatchObject({ status: 'ready' })
+  })
+})

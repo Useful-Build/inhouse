@@ -10,10 +10,16 @@ export function nameFromDisposition(header: string | null): string | null {
   if (header === null) return null
   const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header)
   if (star) {
-    try { return decodeURIComponent(star[1]!.trim()) } catch { /* a bad escape: try the plain form */ }
+    try { return cleanName(decodeURIComponent(star[1]!.trim())) } catch { /* a bad escape: try the plain form */ }
   }
   const plain = /filename\s*=\s*"((?:[^"\\]|\\.)*)"/i.exec(header)
-  return plain ? plain[1]!.replace(/\\(.)/g, '$1') : null
+  return plain ? cleanName(plain[1]!.replace(/\\(.)/g, '$1')) : null
+}
+
+/** A name that is safe to save under: control characters, `/` and `\` become `_`, leading dots go, it is trimmed and capped at 200; null when nothing is left. */
+export function cleanName(raw: string): string | null {
+  const name = raw.replace(/[\p{Cc}/\\]/gu, '_').replace(/^\.+/, '').trim().slice(0, 200).trim()
+  return name === '' ? null : name
 }
 
 /** Route 41, `GET /api/files/:fileId`: the file and the name the server gave it (null when it gave none). Rejects with an `AgentError`. */

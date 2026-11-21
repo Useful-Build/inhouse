@@ -20,7 +20,8 @@ export function FileChip({ fileId, icon, name, meta, tap }: { fileId: string; ic
       saveBlob(got.name ?? name, got.blob)
     } catch (e) {
       if (!(e instanceof AgentError)) console.error('Inhouse: could not download a file.', e)
-      useUi.getState().showToast(downloadFailedText(name, e), { icon: 'error' })
+      // A sign-in that has ended takes the whole app to the signed-out screen: no "try again" over it.
+      if (!(e instanceof AgentError && e.code === 'unauthorized')) useUi.getState().showToast(downloadFailedText(name, e), { icon: 'error' })
     } finally { setBusy(false) }
   }
   return <AttachmentChip icon={icon} name={name} meta={meta} tap={tap} downloading={busy} onDownload={() => { void run() }} />

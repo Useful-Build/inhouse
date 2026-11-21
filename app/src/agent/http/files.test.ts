@@ -6,7 +6,7 @@
 //  - a refusal (404 not yours, 401 signed out, a dropped connection) comes back as a file, or as a bare error.
 import { describe, expect, test } from 'vitest'
 import { AgentError } from '../types'
-import { downloadFile, nameFromDisposition } from './files'
+import { cleanName, downloadFile, nameFromDisposition } from './files'
 import { Transport } from './transport'
 
 type Seen = { url: string; method: string; headers: Record<string, string>; credentials: string | undefined }
@@ -79,4 +79,22 @@ describe('nameFromDisposition', () => {
     ["attachment; filename*=UTF-8''%E0%A4%A", null],
     [null, null],
   ])('%s', (header, want) => { expect(nameFromDisposition(header)).toBe(want) })
+})
+
+describe('cleanName', () => {
+  test.each([
+    ['../x', '_x'],
+    ['', null],
+    ['a\nb.txt', 'a_b.txt'],
+    ['..\\..\\win.ini', '_.._win.ini'],
+    ['.hidden', 'hidden'],
+    ['   ', null],
+    ['x'.repeat(300), 'x'.repeat(200)],
+    ['plain.csv', 'plain.csv'],
+  ])('%j', (raw, want) => { expect(cleanName(raw)).toBe(want) })
+
+  test('a hostile Content-Disposition name comes out safe', () => {
+    expect(nameFromDisposition("attachment; filename*=UTF-8''..%2F..%2Fetc%2Fpasswd")).toBe('_.._etc_passwd')
+    expect(nameFromDisposition('attachment; filename=""')).toBeNull()
+  })
 })

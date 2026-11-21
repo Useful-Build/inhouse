@@ -1,9 +1,10 @@
 // A file in the conversation has a Download button: Download <file name>, which fetches it through the client and saves it.
-// The demo serves a small sample file, so the whole path (chip, click, saved file) runs without a server.
+// The demo serves a small sample file, so the whole path (chip, click, saved file) runs without a server. On the real client
+// an attachment's download answers 404 until the composer's upload is wired to route 39 (the upload PR).
 import { readFileSync } from 'node:fs'
 import { expect, fxFor, test } from './support/fx.js'
 
-test('Download: a sent attachment has a Download button that saves a file named like the chip, and is off while it runs', async ({ page }) => {
+test('Download: a sent attachment has a Download button that saves a file named like the chip', async ({ page }) => {
   await fxFor(page, undefined).seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/stuck')
   const field = page.getByRole('textbox', { name: 'Message your Inhouse agent' })

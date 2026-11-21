@@ -20,6 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenu
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentPart } from './chat/Parts'
 import { FileChip } from './chat/FileChip'
+import { filesOfTurns } from './chat/view'
 import { ChatList } from './chat/ChatList'
 import { SuggestionChip } from '../ui/chat'
 import { copyText } from './chat/copy'
@@ -140,7 +141,6 @@ function Thread() {
   const thinking = !!run
   const view = useUi(s => { const k = openChatKey(s, agent.read()); return k !== null && Object.hasOwn(s.views, k) ? s.views[k] : undefined })
   const link = useSyncExternalStore(agent.onLink, agent.link)
-  const savedFiles = (turnId: string | undefined) => (turnId === undefined ? [] : view?.files.filter(f => f.turnId === turnId) ?? [])
   const thinkingText = view?.budgetWait ? NOTICE_TEXT.budget_busy : run?.text ?? ''
   const editingId = useUi(s => s.editMsg?.id)
   const { ask, openTrace, patch, showToast, openTeam, regenerate, rateAnswer, go, deleteMessages, startEdit, unqueue, sendQueuedNow } = useUi.getState()
@@ -490,11 +490,14 @@ function Thread() {
                   {streaming && <Thinking text={thinkingText} />}
                 </div>
                 {/* The files this answer saved, each with Download. */}
-                {savedFiles(b.ms[0].trace).length > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1.5 self-start">
-                    {savedFiles(b.ms[0].trace).map(f => <FileChip key={f.fileId} fileId={f.fileId} icon={fileIcon(f.name)} name={f.name} meta={fileSize(f.bytes)} tap={phone} />)}
-                  </div>
-                )}
+                {(() => {
+                  const files = filesOfTurns(view, new Set(b.ms.map(m => m.trace)))
+                  return files.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 self-start">
+                      {files.map(f => <FileChip key={f.fileId} fileId={f.fileId} icon={fileIcon(f.name)} name={f.name} meta={fileSize(f.bytes)} tap={phone} />)}
+                    </div>
+                  )
+                })()}
                 {/* The actions show once the turn is done, so the live log announces them once, not with every streamed part. */}
                 {endsTurn && answerBar(b)}
               </div>
