@@ -10,7 +10,7 @@ import type { ActiveRun, PauseState, SendTurnInput, SendTurnResult } from '../..
 import type { Effort } from '../../../shared/contract/common.ts'
 import type { SignalResult } from '../../ops/signals/types.ts'
 import type { EgressRoute, RunGrant, TokenRefusal } from './tokens.ts'
-import type { Scheduler } from './scheduler.ts'
+import type { Scheduler, TaskContext } from './scheduler.ts'
 
 /** A refusal the API answers with its code and reason (P2's error body). */
 export type Refusal = { refused: { code: AgentErrorCode; reason?: ErrorReason } }
@@ -220,6 +220,59 @@ export interface TurnEndPayload {
   structuredOutput: unknown
 }
 
+// ---------- PR 6: the P6 seams (p6-design section 14, asks 3-5) and P8 C1's person data ----------
+
+/** Who paused or resumed, and when; what a pause hook gets. */
+export interface PauseEvent { by: Actor; atMs: number }
+
+/**
+ * A pause hook (P6 ask 3): `onPause` after the flag is set, `onResume` after it's cleared, each awaited in registration
+ * order. A throw makes `pause()`/`resume()` throw with the flag change kept; a retried call runs every hook again.
+ */
+export interface PauseHook {
+  onPause(e: PauseEvent): Promise<void>
+  onResume(e: PauseEvent): Promise<void>
+}
+
+export type DeferDecision = 'allow' | 'deny'
+
+/** The question a deferred tool call left (P6 ask 4): what `onDeferred` gets, the `deferred-hook` task's payload. */
+export interface DeferredQuestion {
+  /** P3's id for it (`q_` and the deferred turn id's random part): `resumeDeferred` names it. */
+  questionId: string
+  chatId: string
+  /** The turn that deferred (its run ended there; the resume is a new turn). */
+  turnId: string
+  runId: string
+  /** The chat's owner: a member id, or `m_system` for a routine's chat. */
+  ownerId: string
+  toolUseId: string
+  toolName: string
+  /** The deferred call's input as the runner sent it (at most 64 KiB, the protocol's cap). */
+  input: unknown
+}
+
+/**
+ * P6's `onDeferred` (ask 4), run by the `deferred-hook:<questionId>` task, never inline: `{ ok: true }` ends it; a
+ * `retry` (or a throw) runs it again with the default backoff, and 10 failures quarantine it.
+ */
+export type OnDeferredHook = (q: DeferredQuestion, ctx: TaskContext) => Promise<{ ok: true } | { retry: string }>
+
+/** `TaskContext.chats.status` (P4, B2): whether the chat waits on a question, and its live run. */
+export interface ChatStatus { waiting: boolean; liveRunId: string | null }
+
+/**
+ * The BrandAgent's SQLite tables that hold a person's rows (P8 C1; the count keys, named exactly as the tables). Not
+ * here: `flags` (`paused_by` keeps the pseudonymous id), `authority` (a removed member's id must outlive them: it
+ * refuses their sends until the sweep confirms a re-invite), `pool_runners` and `pool_marks` (no person data).
+ */
+export const PERSON_DATA_TABLES = [
+  'runs', 'turns', 'events', 'chat_state', 'run_tokens', 'model_calls', 'ledger_queue', 'pool_queue', 'due_tasks',
+  'turn_effects', 'turn_trace',
+] as const
+export type PersonDataTable = (typeof PERSON_DATA_TABLES)[number]
+export type PersonDataAnswer = { counts: Record<PersonDataTable, number> } | { busy: true }
+
 /** Route 47's answer: what's still running, and until when a drain holds. */
 export interface DrainState {
   live: number
@@ -290,4 +343,12 @@ export interface BrandAgentRpc {
    * an unregistered kind; a task of another kind is `not_found`.
    */
   revive(p: { kind: string; id: string }): Promise<'revived' | 'not_quarantined' | 'not_found'>
+  /**
+   * Answers the question a chat waits on (P6 ask 5): submits the resume turn, idempotent by `questionId`. `not_found`
+   * when the chat doesn't wait on it, or is in the trash (its parked end task then fires `cancelled`/`deleted`). A
+   * wait (paused, draining, a full queue) is answered as refused and tried again by P3 itself.
+   */
+  resumeDeferred(chatId: string, decision: DeferDecision, questionId: string): Promise<SendTurnResult | Refusal>
+  /** P8 C1: a person's rows in this object's SQLite, counted or deleted (`busy` while any of their turns is live or waiting). */
+  personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer>
 }

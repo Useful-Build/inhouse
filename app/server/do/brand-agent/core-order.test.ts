@@ -131,7 +131,7 @@ test.prop([fc.array(opArb, { minLength: 1, maxLength: 30 })], { numRuns: 60 })('
       h.core.pause({ kind: 'person', memberId: 'm_admin' })
       m.pause()
     } else {
-      h.core.resume()
+      void h.core.resume({ kind: 'person', memberId: 'm_admin' })
       m.resume()
     }
     await settle()

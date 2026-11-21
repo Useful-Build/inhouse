@@ -7,6 +7,8 @@ import { flushTurn } from './flush-turn.ts'
 import { grantExpiry } from './grant-expiry.ts'
 import { runAdvance } from './run-advance.ts'
 import { turnWatch } from './turn-watch.ts'
+import { deferredHook } from './deferred-hook.ts'
+import { deferredResume } from './deferred-resume.ts'
 import { auditCopy } from '../../../audit-copy.ts'
 import { createUsageSweep } from '../../../usage/sweep.ts'
 import { turnCalls } from '../turn-calls.ts'
@@ -20,6 +22,9 @@ export const taskHandlers: Readonly<Record<string, TaskHandler>> = {
   'run-advance': runAdvance,
   'call-lease': callLease,
   'flush-turn': flushTurn,
+  // W1 PR 6 (the P6 seams, A2's brief): P6's `onDeferred` and a resume waiting out a pause.
+  'deferred-hook': deferredHook,
+  'deferred-resume': deferredResume,
   // W4
   'audit-copy': auditCopy,
   // W1 PR 2b gives the sweep the BrandAgent's reader over `model_calls` (A4-approved line).

@@ -7,7 +7,7 @@
 // `alarm()` at a time per object ("Only one alarm() invocation runs per instance at a given moment", alarms docs).
 // https://developers.cloudflare.com/durable-objects/api/alarms/ and /api/sqlite-storage-api/ (read 2026-11-20)
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
-import type { BrandAgentPorts, InternalSubmit, Refusal } from './ports.ts'
+import type { BrandAgentPorts, ChatStatus, DeferDecision, InternalSubmit, Refusal } from './ports.ts'
 import type { RunTokens } from './tokens.ts'
 
 export interface DueTask {
@@ -81,6 +81,10 @@ export interface AgentTasks {
   authoritySweep(): Promise<TaskResult>
   /** A `grant-expiry:<grantId>` task, by its task id (authority.ts). */
   grantExpiry(taskId: string): Promise<TaskResult>
+  /** A `deferred-hook:<questionId>` task: P6's `onDeferred` (PR 6, core.ts). */
+  deferredHook(task: DueTask, ctx: TaskContext): Promise<TaskResult>
+  /** A `deferred-resume:<questionId>` task: a resume that waited out a pause, a drain or a full queue (PR 6). */
+  deferredResume(task: DueTask): Promise<TaskResult>
 }
 
 /** What a handler gets: the BrandAgent's parts. */
@@ -94,6 +98,12 @@ export interface TaskContext {
   agent: AgentTasks
   /** Submits a turn through the same in-object path as `BrandAgentRpc.submitTurn` (core.ts `submitTurn`). */
   runs: TaskRuns
+  /** Whether the brand is paused, read from the stored flag at each access (P6 ask 3). */
+  readonly paused: boolean
+  /** `BrandAgentRpc.resumeDeferred` (P6 ask 5), the same in-object path. */
+  resumeDeferred(chatId: string, decision: DeferDecision, questionId: string): Promise<SendTurnResult | Refusal>
+  /** Read-only chat state (P4, B2): `{ waiting: false, liveRunId: null }` for a chat the object doesn't know. */
+  chats: { status(chatId: string): ChatStatus }
 }
 
 /** The object's alarm. Only the scheduler holds one (a test scans the folder for any other `setAlarm`). */

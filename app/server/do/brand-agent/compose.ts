@@ -2,7 +2,7 @@
 // Each owner fills only its own anchor, in its own PR; nobody edits another's. W1's first PR typed each anchor with its
 // port (ports.ts) and made it return the fake under testing/; each owner then returns its real port there. The pool
 // lives in the BrandAgent, so its anchor also gets the object's parts (its SQLite, scheduler, clock and placement hooks).
-import type { BrandAgentParts, BrandAgentPorts, FileLedgerPort, RunnerPoolPort, UsageLedgerPort } from './ports.ts'
+import type { BrandAgentParts, BrandAgentPorts, FileLedgerPort, OnDeferredHook, PauseHook, RunnerPoolPort, UsageLedgerPort } from './ports.ts'
 import { createUsageLedger } from '../../usage/ledger.ts'
 import { fileStore } from '../../files-io/store.ts'
 import type { StoredFile } from '../../files-io/store.ts'
@@ -46,4 +46,23 @@ function filesPort(env: Env): FileLedgerPort {
 // The D1 ledger (usage/ledger.ts). Its `settle` also takes the runner's cost as a 4th argument (stored, never added).
 function usagePort(env: Env): UsageLedgerPort {
   return createUsageLedger({ db: env.DB })
+}
+
+// ---------- P6's anchor (p6-design section 14, asks 3 and 4): pause hooks and onDeferred ----------
+// P6 W1 (the pause hook, T10) and P6 W3 (`onDeferred`) fill only this function, lines only, in wave 5 (A4, 2026-11-20).
+
+/** What P6 hooks into the BrandAgent. */
+export interface P6Hooks {
+  pause: PauseHook[]
+  onDeferred: OnDeferredHook | null
+}
+
+export function p6Hooks(_env: Env, _parts: BrandAgentParts): P6Hooks {
+  return { pause: [], onDeferred: null }
+}
+
+/** Registers P6's hooks on the engine (index.ts, once per object): each pause hook in order, `onDeferred` when set. */
+export function wireP6(core: { registerPauseHook(h: PauseHook): void; setOnDeferred(h: OnDeferredHook | null): void }, hooks: P6Hooks): void {
+  for (const h of hooks.pause) core.registerPauseHook(h)
+  if (hooks.onDeferred !== null) core.setOnDeferred(hooks.onDeferred)
 }

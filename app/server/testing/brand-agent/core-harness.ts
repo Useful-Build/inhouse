@@ -22,6 +22,7 @@ import { FakeSocket } from '../../do/brand-agent/testing/fake-socket.ts'
 import { SocketHub } from '../../do/brand-agent/sockets.ts'
 import type { OpenAnswer, SocketPrincipal } from '../../do/brand-agent/sockets.ts'
 import { SWEEP_EVERY_MS, sweepBy } from '../../do/brand-agent/authority.ts'
+import { chatStore } from '../../db/chats.ts'
 
 /** Far past the wall clock, so the runtime never fires an alarm itself. */
 export const T0 = 4_102_444_800_000
@@ -127,6 +128,9 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
         context: (nowMs): TaskContext => ({
           nowMs, env, sql, scheduler: sched, tokens, ports: { pool, usage, files }, agent: core,
           runs: { submit: t => internalSubmit(core, sql, registry, t) },
+          get paused() { return core.isPaused() },
+          resumeDeferred: (chatId, decision, questionId) => core.resumeDeferred(chatId, decision, questionId),
+          chats: { status: chatId => core.chatStatus(chatId) },
         }),
       })
       hub = new SocketHub({
@@ -143,6 +147,11 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
         onEvent: e => hub.onEvent(e), sockets: hub,
         sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: env.DB,
         taskSeeds: registrySeeds(registry),
+        // D1's `chats` as the real object reads it (index.ts): gone or in the trash.
+        chatGone: async chatId => {
+          const c = await chatStore({ db: env.DB }).ownerOf(chatId)
+          return c === null || c.deleted
+        },
         newSessionId: () => `00000000-0000-4000-8000-${String(++sessions).padStart(12, '0')}`,
         modelUsable: async id => {
           if (modelCheck.throws) throw new Error('settings read failed')
@@ -194,6 +203,18 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
     }
     await fn(build())
   })
+}
+
+/**
+ * A chat row in D1 as route 23 (or `ensureChat`) leaves it, its owner a person member (made if absent); `deletedAtMs`
+ * puts it in the trash. What an internal submit into a person's chat and every resume read first (PR 6, A7).
+ */
+export async function d1Chat(chatId: string, ownerId: string, deletedAtMs: number | null = null): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO members (id, kind, role, status, created_at_ms) VALUES (?, 'person', 'member', 'active', 0)").bind(ownerId),
+    env.DB.prepare('INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES (?, ?, ?, 0, 0, ?) ON CONFLICT(id) DO UPDATE SET deleted_at_ms = excluded.deleted_at_ms')
+      .bind(chatId, ownerId, 'A chat', deletedAtMs),
+  ])
 }
 
 // ---------- literal runner events (protocol v2) ----------
