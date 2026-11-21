@@ -74,6 +74,27 @@ describe('the wire schema', () => {
     expect(JSON.stringify(wire).length).toBeLessThan(16 * 1024)
   })
 
+  it('has no anyOf node with a sibling type or properties, and no oneOf, allOf, not or $ref anywhere', () => {
+    const bad: string[] = []
+    const walk = (n: unknown, path: string): void => {
+      if (Array.isArray(n)) return n.forEach((x, i) => walk(x, `${path}[${i}]`))
+      if (n === null || typeof n !== 'object') return
+      const o = n as Record<string, unknown>
+      if ('anyOf' in o && ('type' in o || 'properties' in o)) bad.push(`${path}: anyOf beside type or properties`)
+      for (const k of ['oneOf', 'allOf', 'not', '$ref']) if (k in o) bad.push(`${path}: ${k}`)
+      for (const [k, v] of Object.entries(o)) {
+        if (k === 'properties') for (const [p, sch] of Object.entries(v as object)) walk(sch, `${path}.${p}`)
+        else walk(v, `${path}.${k}`)
+      }
+    }
+    walk(wire, 'wire')
+    expect(bad).toEqual([])
+  })
+
+  it('refuses oneOf, allOf, not and $ref when it reduces', () => {
+    for (const k of ['oneOf', 'allOf', 'not', '$ref']) expect(() => reduceSchema({ [k]: [] })).toThrow(k)
+  })
+
   it('refuses a union that is not a nullable', () => {
     expect(() => reduceSchema({ anyOf: [{ type: 'string' }, { type: 'number' }] })).toThrow()
   })

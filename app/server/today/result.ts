@@ -11,7 +11,7 @@ import type { EndSlot, ResultContext, ResultHandler, ResultOutput } from '../rou
 import { itemId } from './ids.ts'
 import { normaliseResult } from './normalise.ts'
 import type { Normalised } from './normalise.ts'
-import { incompleteSummary, thingsWords } from './words.ts'
+import { fixedWords, incompleteSummary, thingsWords } from './words.ts'
 
 /** The hub's connector name for a Shopify store (`ToolInfo.connector`). */
 export const SHOPIFY = 'shopify'
@@ -87,8 +87,8 @@ export async function morningCheck(slot: EndSlot, end: Parameters<ResultHandler[
   }
   const base = { statements, normalised: counts }
   // 4. Incomplete: the items are saved and W2 tells the admins; the summary names the gaps from the fixed list.
-  if (coverage === 'incomplete') return { ...base, summary: incompleteSummary(items.length, gaps), failure: 'incomplete' }
-  return { ...base, summary: thingsWords(items.length), activity: { template: 'morning_check_ran', fields: { items: items.length } } }
+  if (coverage === 'incomplete') return { ...base, summary: incompleteSummary(items.length, gaps) + fixedWords(counts), failure: 'incomplete' }
+  return { ...base, summary: thingsWords(items.length) + fixedWords(counts), activity: { template: 'morning_check_ran', fields: { items: items.length } } }
 }
 
 export const morningCheckHandler: ResultHandler = {

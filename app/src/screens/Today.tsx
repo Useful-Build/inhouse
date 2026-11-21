@@ -159,7 +159,8 @@ export function Today() {
                     {/* The space sits above the amount, so amounts and bottom blocks line up across a row. */}
                     <div className="min-h-3.5 flex-1" />
                     <div className={`flex flex-wrap items-baseline gap-x-2 pb-4 ${done}`}>
-                      <span className="text-2xl leading-none font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>
+                      {/* A card with no money at stake (a status card, an item the check couldn't put a value on) shows no amount. */}
+                      {p.cost.minor > 0 && <span className="text-2xl leading-none font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>}
                       <span className="text-sm text-pretty text-muted-foreground">{p.costNote}</span>
                     </div>
                   </div>

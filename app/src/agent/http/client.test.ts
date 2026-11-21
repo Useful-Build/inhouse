@@ -73,6 +73,8 @@ const reads = (o: { me?: unknown; members?: unknown[]; settings?: Record<string,
   'GET /api/library?limit=100': { body: { items: [], nextCursor: null } },
   // P4 W2: route 52.
   'GET /api/routines': { body: { routines: [], deleted: [], enabled: {} } },
+  // P4 W3: route 57.
+  'GET /api/today': { body: { items: [], aside: {} } },
 })
 const EMPTY_USAGE = {
   month: 'November', cap: { minor: 32000, currency: 'USD' }, alertAt: 80, total: { minor: 0, currency: 'USD' }, conversations: 0, questionsAsked: 0, jobsRun: 0,
