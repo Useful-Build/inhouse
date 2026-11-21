@@ -196,6 +196,16 @@ describe('the runner', () => {
     expect(second.observed).toMatchObject({ ok: true, items: [] })
   })
 
+  it('a refused Run now (an earlier slot still open) fails that case with the text and the run goes on', async () => {
+    const { env } = fakeEnv(perfectAnswer)
+    const real = env.trigger
+    let n = 0
+    env.trigger = async k => { if (++n === 1) throw new Error('POST run answered 409: run_open'); return real(k) }
+    const file = await runAll(env, META.slice(0, 2), { date: '2026-11-22', sha: 'abc1234', model: 'fake' })
+    expect(file.cases[0]).toMatchObject({ verdict: { pass: false }, observed: { ok: false, cause: 'trigger: POST run answered 409: run_open' } })
+    expect(file.cases[1]!.verdict.pass).toBe(true)
+  })
+
   it('gives up on a slot that never appears, at the deadline, without a sleep', async () => {
     const { env } = fakeEnv(() => 'never')
     const r = await runCase(env, byId('late-orders'))

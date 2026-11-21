@@ -9,7 +9,7 @@ export interface CaseResult {
   id: string
   group: 'graded' | 'clean' | 'outage'
   verdict: Verdict
-  observed: Observed | { ok: false; cause: 'timed_out' | 'no_slot'; calls: string[]; fixed: null }
+  observed: Observed | { ok: false; cause: string; calls: string[]; fixed: null }
   slotKey: string | null
   failure: string | null
   resultText: string | null

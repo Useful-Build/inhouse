@@ -79,7 +79,13 @@ export async function runCase(env: RunnerEnv, c: MorningCaseMeta): Promise<CaseR
   await env.useShop(hostOf(c.id))
   const clientKey = env.newKey()
   const slotKey = `now|${ROUTINE_ID}|${clientKey}`
-  await env.trigger(clientKey)
+  try {
+    await env.trigger(clientKey)
+  } catch (e) {
+    // Run now refused (an earlier case's slot is still open: conflict/run_open) or the call failed: this case fails with the text.
+    const observed = { ok: false as const, cause: `trigger: ${e instanceof Error ? e.message : String(e)}`, calls: [], fixed: null }
+    return { id: c.id, group: c.group, verdict: grade(c, observed), observed, slotKey, failure: null, resultText: null, ms: env.nowMs() - started }
+  }
   let slot: SlotRow | null = null
   while (env.nowMs() - started < env.caseTimeoutMs) {
     slot = await env.reader.slot(slotKey)
