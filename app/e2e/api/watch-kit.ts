@@ -11,13 +11,35 @@ import { readSql, writeSql } from './db.ts'
 import { localClock } from '../support/watch-pure.ts'
 
 /**
- * Skips unless the multi-config test build runs here with containers and its local D1: the orchestrator's run sets
- * `E2E_WATCH_BUILD=1` (the one switch this adds; `needsContainer()` is for the per-PR deployment, which has no local D1 to
- * seed, and `writeSql` skips there). Call first in the test body or `beforeAll`.
+ * The switches the P4 Watch specs read, all set by the orchestrator's run under the heavy lock (the multi-config test build:
+ * product Worker with containers, hub, recorded Shopify fixture, scripted model, test issuer):
+ *   E2E_WATCH_BUILD=1     the multi-config build runs here with containers and its local D1. Without it the specs that
+ *                         seed routines, read slot rows or run a turn skip, and say so on stderr (`skipLoudly`).
+ *   E2E_HUB_ORIGIN        the hub Worker's own origin (hub.spec.ts: no public route). Without it that group skips, loudly.
+ *   WATCH_ARTIFACTS_DIR   where the orchestrator drops the canary sweep's inputs (hub.spec.ts `ARTIFACTS`: product-wrangler.log,
+ *                         hub-wrangler.log, runner-container.log, d1-dump.sql, r2/, run-tokens.txt). Without it the log checks
+ *                         and the sweep skip, loudly; a named file that is missing fails the spec.
+ * API-only tests (roles, Library uploads, paging) need none of them.
  */
+
+const warned = new Set<string>()
+/** The spec file that called, from the stack (`routines.spec.ts`), for the warning's label. */
+const callerOf = (): string => /([\w.-]+\.spec\.ts)/.exec(new Error().stack?.split('\n').slice(3).join('\n') ?? '')?.[1] ?? 'a Watch spec'
+
+/** `test.skip(condition, reason)` that also says, once per file and reason on stderr, which spec is being skipped and why. */
+export function skipLoudly(condition: boolean, reason: string, label: string = callerOf()): void {
+  if (condition && !warned.has(`${label}|${reason}`)) {
+    warned.add(`${label}|${reason}`)
+    process.stderr.write(`\nWATCH SPECS SKIPPED in ${label}: ${reason}\n`)
+  }
+  test.skip(condition, reason)
+}
+
+/** Skips unless `E2E_WATCH_BUILD=1` (see the switches above), and never on a deployed test build (no local D1). Call first in a describe or test. */
 export function needsWatchBuild(): void {
-  test.skip(process.env.E2E_WATCH_BUILD !== '1', 'needs the multi-config test build with containers and its local D1 (E2E_WATCH_BUILD=1, started by the orchestrator under the heavy lock)')
-  test.skip(!!process.env.E2E_TEST_BUILD_REMOTE, 'reads and seeds the local D1, which a deployed test build has no copy of')
+  const label = callerOf()
+  skipLoudly(process.env.E2E_WATCH_BUILD !== '1', 'E2E_WATCH_BUILD is not 1: the multi-config test build with containers and its local D1 is not declared here', label)
+  skipLoudly(!!process.env.E2E_TEST_BUILD_REMOTE, 'E2E_TEST_BUILD_REMOTE is set: a deployed test build has no local D1 to seed and read', label)
 }
 
 /** The brand's zone as the specs run: the default (`g:tz` unset), the seed's. */

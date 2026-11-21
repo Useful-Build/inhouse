@@ -75,3 +75,13 @@ export function expectedNextDaily(tz: TableZone, hour: number, minute: number, a
 export function leaks(text: string, needles: Record<string, string | RegExp>): string[] {
   return Object.entries(needles).filter(([, n]) => (typeof n === 'string' ? text.includes(n) : n.test(text))).map(([name]) => name)
 }
+
+/**
+ * `text` without the lines that echo one plain config variable: those that name `name` and hold `value`. `wrangler dev` lists
+ * a Worker's plain `vars` when it starts, and the hub's test config holds the invented test client secret as one, so the
+ * hub's output may carry it once, there. Only that echo is removed, and only for exactly that name and value: any other line
+ * with the value stays in, and is a leak.
+ */
+export function withoutConfigEcho(text: string, name: string, value: string): string {
+  return text.split('\n').filter(line => !(line.includes(name) && line.includes(value))).join('\n')
+}

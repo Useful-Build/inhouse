@@ -1,7 +1,7 @@
 // The literals the Watch specs lean on, checked on their own: written from the zones' rules, not from the code under test.
 import { fc, test as fcTest } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
-import { TABLE_COVERS, expectedNextDaily, leaks, localClock, offsetMinutes } from './watch-pure.ts'
+import { TABLE_COVERS, expectedNextDaily, leaks, localClock, offsetMinutes, withoutConfigEcho } from './watch-pure.ts'
 
 describe('localClock', () => {
   it('reads the wall clock of an instant, either side of a New York fall-back', () => {
@@ -61,5 +61,19 @@ describe('leaks', () => {
   it('names each needle found, by text or pattern, and nothing else', () => {
     expect(leaks('a shpat_test_2 b secret-x', { token: /shpat_test_\d+/, secret: 'secret-x', other: 'nope' })).toEqual(['token', 'secret'])
     expect(leaks('clean', { token: /shpat_test_\d+/ })).toEqual([])
+  })
+})
+
+describe('withoutConfigEcho', () => {
+  const log = ['starting', 'env.SHOPIFY_CLIENT_SECRET ("test-secret-value")   Environment Variable', 'hub_call {"x":"test-secret-value"}', 'env.OTHER ("test-secret-value")', 'end'].join('\n')
+  it('removes only the line that names the variable and holds its value', () => {
+    expect(withoutConfigEcho(log, 'SHOPIFY_CLIENT_SECRET', 'test-secret-value').split('\n')).toEqual(['starting', 'hub_call {"x":"test-secret-value"}', 'env.OTHER ("test-secret-value")', 'end'])
+  })
+  it('leaves every line that carries the value anywhere else, so a leak elsewhere is still found', () => {
+    const left = withoutConfigEcho(log, 'SHOPIFY_CLIENT_SECRET', 'test-secret-value')
+    expect(leaks(left, { secret: 'test-secret-value' })).toEqual(['secret'])
+  })
+  it('changes nothing when no line echoes it', () => {
+    expect(withoutConfigEcho('a\nb', 'N', 'v')).toBe('a\nb')
   })
 })

@@ -7,17 +7,18 @@
 //   4. the canary sweep (4): after the morning check ran, neither the upstream's access token nor the test client secret nor
 //      a run token appears in either Worker's output, the runner container's log, a full D1 dump, every R2 object, the
 //      runner's environment (a scripted `Bash` call printing `env` into a file read back here) or the run's events.
-// The orchestrator starts the multi-config test build under the heavy lock and collects the artifacts into
-// `WATCH_ARTIFACTS_DIR` (layout in `ARTIFACTS` below and in the PR body); `E2E_HUB_ORIGIN` is the hub Worker's own port.
-// Groups 2 to 4 skip when the multi-config build (or, for 3 and the file sweeps, its inputs) isn't there. A sweep input that
-// is named but missing fails loud: a sweep over nothing proves nothing.
+// The orchestrator starts the multi-config test build under the heavy lock and sets three switches (documented in watch-kit.ts):
+// `E2E_WATCH_BUILD=1`; `E2E_HUB_ORIGIN`, the hub Worker's own origin; `WATCH_ARTIFACTS_DIR`, where it collects the sweep's
+// inputs: product-wrangler.log, hub-wrangler.log, runner-container.log, d1-dump.sql, r2/ (every object) and run-tokens.txt
+// (`ARTIFACTS` below). A group whose switch is missing skips and says so on stderr; an input that is named but missing fails
+// loud: a sweep over nothing proves nothing.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { actor, call } from './kit.ts'
 import { answerOf, createChat, send, textOf } from './chat-kit.ts'
-import { needsWatchBuild, slotWhere } from './watch-kit.ts'
-import { leaks } from '../support/watch-pure.ts'
+import { needsWatchBuild, skipLoudly, slotWhere } from './watch-kit.ts'
+import { leaks, withoutConfigEcho } from '../support/watch-pure.ts'
 import { HUB_WRITE_REFUSED_ANSWER } from '../../test/scripted-model/scenarios.ts'
 
 const dana = actor('memberA')
@@ -94,7 +95,7 @@ test.describe('a write sent through the runner\'s scope is refused at the hub (a
 
 test.describe('the hub has no public route', () => {
   const origin = process.env.E2E_HUB_ORIGIN
-  test.skip(!origin, 'no E2E_HUB_ORIGIN: the orchestrator passes the hub Worker\'s own port of the multi-config build')
+  skipLoudly(!origin, 'no E2E_HUB_ORIGIN: the orchestrator passes the hub Worker\'s own port of the multi-config build')
   for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']) {
     test(`${method} answers 404 on every path tried`, async ({ request }) => {
       for (const path of ['/', '/mcp', '/hub/', '/rpc', '/api/health', '/admin/oauth/access_token', '/tools/call']) {
@@ -107,7 +108,7 @@ test.describe('the hub has no public route', () => {
 
 test.describe('no token or secret leaves the hub (acceptance 4: the canary sweep)', () => {
   needsWatchBuild()
-  test.skip(!artifactsDir, 'no WATCH_ARTIFACTS_DIR: the orchestrator collects the artifacts and passes the directory')
+  skipLoudly(!artifactsDir, 'no WATCH_ARTIFACTS_DIR: the orchestrator collects the artifacts and passes the directory')
   test.describe.configure({ timeout: 900_000 })
 
   test('after the morning check ran: the access token, the client secret and the run tokens appear nowhere', async ({ request }) => {
@@ -143,11 +144,16 @@ test.describe('no token or secret leaves the hub (acceptance 4: the canary sweep
     const runTokens = textOfArtifact(ARTIFACTS.runTokens).split('\n').map(l => l.trim()).filter(Boolean)
     expect(runTokens.length, 'the root proxy hook captured the runs\' tokens').toBeGreaterThan(0)
     const needles: Record<string, string | RegExp> = { accessToken: /shpat_test_\d+/, clientSecret: secret! }
+    // `wrangler dev` echoes a Worker's plain `vars` at start, and the hub's test config holds the invented test client secret as
+    // one (its value is read from that file, and must be the upstream's). Only that echo line is dropped from the hub's output,
+    // for exactly that name and value; the same value anywhere else in it is a leak.
+    const configSecret = /"SHOPIFY_CLIENT_SECRET"\s*:\s*"([^"]+)"/.exec(appFile('wrangler.hub.test.jsonc'))?.[1]
+    expect(configSecret, 'wrangler.hub.test.jsonc names the test client secret').toBe(secret)
     runTokens.forEach((t, i) => { needles[`runToken${i}`] = t })
 
     const swept: { where: string; text: string }[] = [
       { where: 'product Worker output', text: textOfArtifact(ARTIFACTS.productLog) },
-      { where: 'hub Worker output', text: textOfArtifact(ARTIFACTS.hubLog) },
+      { where: 'hub Worker output (without wrangler\'s echo of its own config var)', text: withoutConfigEcho(textOfArtifact(ARTIFACTS.hubLog), 'SHOPIFY_CLIENT_SECRET', configSecret!) },
       { where: 'runner container log', text: textOfArtifact(ARTIFACTS.runnerLog) },
       { where: 'local D1 dump', text: textOfArtifact(ARTIFACTS.d1Dump) },
       { where: 'the runner\'s environment (outputs/env.txt)', text: envText },

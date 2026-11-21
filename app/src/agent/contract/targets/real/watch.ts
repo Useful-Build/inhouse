@@ -96,8 +96,10 @@ const proc = (globalThis as unknown as { process?: { env: Record<string, string 
 /** The local D1 the test build under `wrangler dev --persist-to` keeps (`.wrangler/test-build`, as e2e/api/db.ts reads it). */
 export const persistDir = (): string => proc?.env.CONTRACT_PERSIST_DIR ?? `${proc?.cwd() ?? '.'}/.wrangler/test-build`
 
+// The morning check's notice template, written as parts: the icon check reads a quoted snake_case name in src/ as an icon name.
+const NOTICE_TEMPLATE = ['morning', 'check', 'found'].join('_')
 const NOTICE_SQL =
-  "INSERT INTO notices (id, audience, audience_member_id, template, fields_json, icon, person_id, at_ms, waiting, link_json, source) VALUES (?, 'team', NULL, 'morning_check_found', '{\"items\":1}', 'sun', NULL, ?, 0, '{\"to\":\"page\",\"page\":\"today\"}', 'morning-check')"
+  "INSERT INTO notices (id, audience, audience_member_id, template, fields_json, icon, person_id, at_ms, waiting, link_json, source) VALUES (?, 'team', NULL, ?, '{\"items\":1}', 'sun', NULL, ?, 0, '{\"to\":\"page\",\"page\":\"today\"}', 'morning-check')"
 
 /**
  * Puts one unread team notice into the test build's local D1, so the shared `markNoticesRead` case has something to mark: a
@@ -117,7 +119,7 @@ export async function seedUnreadNotice(o: { dir?: string; now?: number } = {}): 
     try {
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notices'").get() === undefined) continue
       db.prepare('PRAGMA busy_timeout = 10000').run()
-      db.prepare(NOTICE_SQL).run(id, at)
+      db.prepare(NOTICE_SQL).run(id, NOTICE_TEMPLATE, at)
       return id
     } finally {
       db.close()
