@@ -1,6 +1,7 @@
 // Headers: every `/api/*` answer, errors included, carries the security headers from public/_headers and
-// `Cache-Control: no-store`. The one exception is a member's photo bytes (route 15), which carry a stricter CSP and
-// `private, no-cache`, and nothing else differs. The API serves no CORS.
+// `Cache-Control: no-store`. The exceptions are a member's photo bytes (route 15), which carry a stricter CSP and
+// `private, no-cache`, and nothing else differs, and a chat file download (route 41, attachments.spec.ts: the same CSP
+// and `private, no-store`). The API serves no CORS.
 import { expect, test } from '@playwright/test'
 import { caseFor } from './cases.ts'
 import { actor, appOrigin, call, endLiveGrants, imageBytes, matrixRows, me, rowKey, securityHeaders } from './kit.ts'

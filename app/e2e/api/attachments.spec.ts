@@ -60,7 +60,7 @@ test('the owner uploads a CSV, sees it listed first-hand and downloads the same 
   expect(got.headers['content-disposition']).toMatch(/^attachment;/)
   expect(got.headers['x-content-type-options']).toBe('nosniff')
   expect(got.headers['content-security-policy']).toBe("default-src 'none'; sandbox")
-  expect(got.headers['cache-control']).toBe('private, no-cache')
+  expect(got.headers['cache-control']).toBe('private, no-store')
 })
 
 test('two uploads with one name never collide: each has its own path', async ({ request }) => {
@@ -163,6 +163,7 @@ test('a file the agent wrote to outputs/ is listed, and downloads for any member
     expect(got.headers['content-disposition']).toMatch(/^attachment;/)
     expect(got.headers['x-content-type-options']).toBe('nosniff')
     expect(got.headers['content-security-policy']).toBe("default-src 'none'; sandbox")
+    expect(got.headers['cache-control']).toBe('private, no-store')
   }
   // The chat's own file list stays the owner's.
   for (const other of [leo, admin]) expectError(await call(request, other, 'GET', `/api/chats/${chat}/files`), 404, 'not_found')

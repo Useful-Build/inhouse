@@ -3,7 +3,8 @@
 //  1. an upload to another person's chat is kept, or answers anything but 404; a bad name or type is kept;
 //  2. a person lists another's chat files; Inhouse under a grant can't;
 //  3. an input downloads to someone who isn't its chat's owner (or Inhouse); an output doesn't download to a colleague;
-//  4. a download goes out without `attachment`, the sandbox CSP or private caching, or with a sniffed type.
+//  4. a download goes out without `attachment`, the sandbox CSP or `private, no-store`, or with a sniffed type, or the
+//     API's wrap drops one of them.
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -13,6 +14,8 @@ import { ctx, personPrincipal } from '../db/test-support.ts'
 import { newFileId } from '../files-io/bytes.ts'
 import { TYPE_EXTENSIONS, downloadName } from '../files-io/caps.ts'
 import { fileStore } from '../files-io/store.ts'
+import { SECURITY_HEADERS, keepPhotoHeaders } from '../http.ts'
+import { withSecurityHeaders } from '../../shared/security-headers.ts'
 import { getFile, listChatFiles, uploadAttachment } from './attachments.ts'
 
 const db = env.DB
@@ -83,6 +86,16 @@ describe('route 40 (failure 2)', () => {
   })
 })
 
+/** A handler's response as the API sends it: the site headers, then the route's own kept (api.ts's last step). */
+const wrapped = (res: Response) => keepPhotoHeaders(res, withSecurityHeaders(SECURITY_HEADERS, res))
+/** What every download carries after the wrap, whatever the file. */
+const expectDownloadHeaders = (res: Response) => {
+  expect(res.headers.get('cache-control')).toBe('private, no-store')
+  expect(res.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox")
+  expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+  expect(res.headers.get('content-disposition')).toMatch(/^attachment; /)
+}
+
 describe('route 41 (failures 3, 4)', () => {
   it('an input to its owner and Inhouse only; an output to any person on the brand; literal download headers', async () => {
     const chatId = await newChat()
@@ -99,9 +112,10 @@ describe('route 41 (failures 3, 4)', () => {
       'content-length': '8',
       'content-disposition': `attachment; filename="stock _Q1_.csv"; filename*=UTF-8''stock%20%22Q1%22.csv`,
       'content-security-policy': "default-src 'none'; sandbox",
-      'cache-control': 'private, no-cache',
+      'cache-control': 'private, no-store',
     })
     expect(await res.text()).toBe('sku,qty\n')
+    expectDownloadHeaders(wrapped(await get(personPrincipal(OWNER, 'member'), up.fileId)))
 
     // An output another person on the brand may download.
     const turnId = `t_${uniq()}`
@@ -113,8 +127,9 @@ describe('route 41 (failures 3, 4)', () => {
     await files.completeOutput(id, { contentType: 'text/csv', bytes: 4, sha256: h })
     expect((await get(personPrincipal(OTHER, 'member'), id)).status).toBe(404)
     await files.confirm(chatId, turnId, 'outputs/r.csv', h, 2)
-    const colleague = await get(personPrincipal(OTHER, 'member'), id)
+    const colleague = wrapped(await get(personPrincipal(OTHER, 'member'), id))
     expect(colleague.status).toBe(200)
+    expectDownloadHeaders(colleague)
     expect(await colleague.text()).toBe('r,1\n')
     expect((await get(personPrincipal(OWNER, 'member'), 'f_not_a_real_id')).status).toBe(404)
   })
