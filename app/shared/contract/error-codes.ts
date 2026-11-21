@@ -20,6 +20,9 @@ export const REASON = {
   tooLarge: 'too_large', typeNotAllowed: 'type_not_allowed',
   // P5 (p5-w3): the Tools routes' refusals.
   notConfigured: 'not_configured', notDisconnectable: 'not_disconnectable', notConnected: 'not_connected',
+  // P5 (p5-w4): the notice channel list's refusals.
+  sharedChannel: 'shared_channel', archived: 'archived', notPublic: 'not_public', notMember: 'not_member', channelNotFound: 'not_found',
+  nameTaken: 'name_taken', slackNotConnected: 'slack_not_connected',
 } as const satisfies Record<string, ErrorReason>
 /** Why the runner didn't save a file the agent made (the `file.refused` event), as the chat names them. */
 export const FILE_REFUSAL = {

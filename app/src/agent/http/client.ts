@@ -25,6 +25,8 @@ import { postTurn, postTurnAction, readActiveRuns, readTrace } from './runs'
 import { ChatSocket } from './stream/socket'
 import type { SocketLike, SocketParts } from './stream/socket'
 import { readUsage, readUsageMonths } from './usage'
+import { putNotifyChannels, readAvailableChannels, readNotifyChannels } from './notifications'
+import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../../shared/contract/notify-slack'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
 
@@ -896,6 +898,11 @@ export class HttpAgent implements AgentClient {
   /** Where the audit log downloads from. A relative path: the browser sends it to its own origin, with its sign-in. */
   auditExportUrl = (): string | null => '/api/audit/export.csv'
   signOutUrl = (): string | null => '/cdn-cgi/access/logout'
+
+  // P5 (p5-w4): the Slack notice channels, routes 73 to 75. The Settings page holds the list; a refusal rejects as it came.
+  listNotifyChannels = (): Promise<NotifyChannelList> => readNotifyChannels(this.http)
+  availableNotifyChannels = (cursor?: string): Promise<AvailableChannels> => readAvailableChannels(this.http, cursor)
+  saveNotifyChannels = async (input: PutNotifyChannels): Promise<NotifyChannelList> => putNotifyChannels(this.http, this.k ?? await this.http.contract(), input)
   uploadsFiles = (): boolean => true
   /** Route 39, after the chat's own save (`createChat`) has answered: the route is a 404 for a chat the server doesn't have yet. */
   uploadFile = async (chatId: string, file: File, signal?: AbortSignal): Promise<{ fileId: string; name: string }> => {

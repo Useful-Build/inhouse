@@ -21,6 +21,7 @@ import { CreateChatInputSchema } from '../../../shared/contract/requests'
 import { ActiveRunsSchema, ChatEventSchema, PauseStateSchema, SendTurnInputSchema, SendTurnResultSchema, SocketServerMsgSchema, acceptsChatVersion } from '../../../shared/contract/runs'
 import { TraceSchema } from '../../../shared/contract/trace'
 import { ToolConnectResultSchema, ToolDisconnectResultSchema, ToolPausedInputSchema, ToolPausedResultSchema, ToolsDataSchema } from '../../../shared/contract/tools'
+import { AvailableChannelsSchema, NotifyChannelListSchema, PutNotifyChannelsSchema } from '../../../shared/contract/notify-slack'
 
 /** What each route answers with. */
 export const ANSWERS = {
@@ -36,6 +37,8 @@ export const ANSWERS = {
   tools: ToolsDataSchema, toolPaused: ToolPausedResultSchema, toolDisconnect: ToolDisconnectResultSchema, toolConnect: ToolConnectResultSchema,
   // P4 (W4): Activity (route 59) and the bell (route 60; route 61 answers `ack`).
   activityPage: ActivityPageSchema, notifications: NotificationsListSchema,
+  // P5 (W4): the Slack notice channels, routes 73 to 75.
+  notifyChannels: NotifyChannelListSchema, availableChannels: AvailableChannelsSchema,
 }
 
 /** What each write sends. */
@@ -46,6 +49,7 @@ export const BODIES = {
   notificationsRead: NotificationsReadInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
   toolPaused: ToolPausedInputSchema,
+  notifyChannels: PutNotifyChannelsSchema,
 }
 
 /** What the socket sends the browser and the events inside its frames; `accepts` is whether this build reads a frame's version. */

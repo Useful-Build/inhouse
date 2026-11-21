@@ -26,12 +26,17 @@ function allRows(): Row[] {
     openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
     me: agent.me(), invite: noop, removeMember: noop, grantUi: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null,
+    // P5 W4: Slack notices as an Admin sees it, so its rows are checked too.
+    notify: {
+      status: 'ready', list: { rev: 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }] },
+      available: [{ channelId: 'C0DEMO0002', name: 'warehouse' }], pickerError: null, canEdit: true, busy: false, add: noop, remove: noop, setAlerts: noop, retry: noop,
+    },
   }
   return MENU.flatMap(g => g.items).flatMap(([tab]) => settingsPage(tab, env).sections.flatMap(s => s.rows))
 }
 const rows = allRows()
-/** Never settings: a role, a grant. */
-const refused = (key: string) => key.startsWith('p:') || key === 'd:support'
+/** Never settings: a role, a grant, the Slack notice channel list (P5 W4: saved by its own route, 75). */
+const refused = (key: string) => key.startsWith('p:') || key === 'd:support' || key.startsWith('nc:')
 const parses = (key: string, v: unknown) => settingSpec(key)!.value.safeParse(v).success
 
 describe('the page and the registry (failures 1 to 3)', () => {

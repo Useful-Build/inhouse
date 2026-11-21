@@ -18,6 +18,7 @@ import { allowance, pageResources } from './settings/allowance'
 import { readParts } from './settings/read-text'
 import { single } from './settings/single'
 import { tell } from './settings/write'
+import { useNotifyChannels } from './settings/notify-channels'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
@@ -268,6 +269,8 @@ export function Settings() {
     contentRef.current.scrollTop = positions.current.get(setTab) ?? 0
   }, [setTab, phone])
 
+  // P5 W4: the Slack notices page reads its channels while it's open; an Admin or the Inhouse team also reads the picker.
+  const notify = useNotifyChannels(setTab === 'team-slack', demo !== null || (!!me && (me.role === 'admin' || me.role === 'inhouse')))
   const pick = (k: string) => ui.patch({ setTab: k, setMenu: false })
   const { theme, setTheme } = useTheme()
   const env: Env = {
@@ -302,6 +305,7 @@ export function Settings() {
     loadingMore,
     loadMore: list => { more(list) },
     exportFromServer: agent.auditExportUrl() ? () => { window.location.assign(agent.auditExportUrl()!) } : null,
+    notify,
   }
   const page = settingsPage(setTab, env)
   const readOnly = phone && setTab.startsWith('team-')

@@ -16,6 +16,7 @@ export const ChannelUnavailableSchema = z.enum(['shared_channel', 'not_member'])
 
 /** Route G: public, unarchived channels; a shared or non-member one comes disabled with its reason. */
 export const AvailableChannelSchema = z.object({ channelId: SlackChannelIdSchema, name: z.string().min(1).max(80), disabled: ChannelUnavailableSchema.optional() })
+export type AvailableChannel = z.infer<typeof AvailableChannelSchema>
 export const AvailableChannelsSchema = z.object({ channels: z.array(AvailableChannelSchema), nextCursor: z.string().nullable() })
 export type AvailableChannels = z.infer<typeof AvailableChannelsSchema>
 

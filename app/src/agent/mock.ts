@@ -25,6 +25,7 @@ import type { SupportGrant } from '../../shared/contract/grants'
 import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS } from '../../shared/contract/keys'
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
+import type { AvailableChannels, NotifyChannel, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
 import { pendingIds, visibleProblems } from '../state/derive'
 
@@ -580,6 +581,14 @@ const loadRunInfo = (): Map<string, RunInfo> => {
 
 /** A unique string the product build check (scripts/check-product-build.mjs) looks for: it must never be in the product build. */
 export const MOCK_MARKER = 'inhouse-canary:mock'
+
+/** The demo's Slack channels (invented): what Settings, Slack notices, can pick from. */
+const DEMO_SLACK_CHANNELS = [
+  { id: 'C0DEMO0001', name: 'ops-alerts', shared: false, member: true },
+  { id: 'C0DEMO0002', name: 'warehouse', shared: false, member: true },
+  { id: 'C0DEMO0003', name: 'supplier-kestrel', shared: true, member: true },
+  { id: 'C0DEMO0004', name: 'design', shared: false, member: false },
+] as const
 
 export class MockAgent implements AgentClient {
   readonly marker = MOCK_MARKER
@@ -1221,6 +1230,38 @@ export class MockAgent implements AgentClient {
   /** The demo has no stored files: every id answers a small sample, named by the chip that asked. */
   downloadFile = (): Promise<{ blob: Blob; name: string | null }> => Promise.resolve({ blob: new Blob(['A sample file from the demo.\n'], { type: 'text/plain' }), name: null })
   signOutUrl = (): string | null => null
+
+  // ---------- P5 (p5-w4): the Slack channels listed for notices ----------
+  // Kept in memory only: a reload or Reset demo starts again from none listed. The demo's Slack has invented channels,
+  // one shared with another company and one the connected account isn't in, so the page shows both refusals.
+  private notifyRev = 0
+  private notifyListed: NotifyChannel[] = []
+
+  listNotifyChannels(): Promise<NotifyChannelList> {
+    return Promise.resolve({ rev: this.notifyRev, channels: this.notifyListed.map(c => ({ ...c })) })
+  }
+
+  availableNotifyChannels(): Promise<AvailableChannels> {
+    return Promise.resolve({
+      channels: DEMO_SLACK_CHANNELS.map(c => ({ channelId: c.id, name: c.name, ...(c.shared ? { disabled: REASON.sharedChannel } : !c.member ? { disabled: REASON.notMember } : {}) })),
+      nextCursor: null,
+    })
+  }
+
+  saveNotifyChannels(input: PutNotifyChannels): Promise<NotifyChannelList> {
+    if (input.ifRev !== this.notifyRev) return this.rejected('conflict', 'Someone changed the channel list.', false, { current: { rev: this.notifyRev, channels: this.notifyListed } })
+    const ids = [...new Set(input.channelIds)]
+    const found = ids.map(id => DEMO_SLACK_CHANNELS.find(c => c.id === id))
+    const missing = ids.find((_, i) => !found[i])
+    if (missing) return this.rejected('conflict', "That channel isn't in Slack any more.", false, { reason: REASON.channelNotFound, current: { channelId: missing } })
+    const refused = found.find(c => c!.shared || !c!.member)
+    if (refused) return this.rejected('conflict', "That channel can't be listed.", false, { reason: refused.shared ? REASON.sharedChannel : REASON.notMember, current: { channelId: refused.id } })
+    const alerts = input.alertsChannelId ?? null
+    if (alerts !== null && !ids.includes(alerts)) return this.rejected('invalid', 'The alerts channel must be one of the listed channels.', false)
+    this.notifyListed = found.map(c => ({ channelId: c!.id, name: c!.name, alerts: c!.id === alerts })).sort((a, b) => a.name.localeCompare(b.name))
+    this.notifyRev += 1
+    return this.listNotifyChannels()
+  }
   disconnect = (): void => undefined
 
   // ----- traces -----
