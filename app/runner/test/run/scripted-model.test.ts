@@ -6,10 +6,13 @@
 // - a script's own `expect` or `hold` throws and the CLI gets a 500 (which it retries for minutes) instead of a miss;
 // - a side request the CLI makes on its own (a title, a summary: no tool list) takes a scripted turn;
 // - the `ask` scenario's resume answers a request that doesn't carry the question's result.
-// The real CLI against it is in test/store/eager.test.ts.
+// - a tool scenario misses the real CLI's own requests (deferred tools left out of the tool list, WebFetch's page
+//   summary as a side request of its own), so the CLI's 400 step-down spends calls before turn 0 and turn 1 never matches.
+// The real CLI against it is in test/store/eager.test.ts; its captured requests are fixtures/cli-requests.json.
+import { readFileSync } from 'node:fs'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
-import { createScriptedModel, type ScriptedBranch, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
+import { createScriptedModel, type MessagesRequest, type ScriptedBranch, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
 import { HARNESS_MODEL, SCENARIOS, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
 
 type Msg = { role: 'user' | 'assistant'; content: unknown }
@@ -93,7 +96,8 @@ describe('the scripted model', () => {
     const model = createScriptedModel(SCENARIOS)
     expect((await model.handle(req(convo(0), false, { model: HARNESS_MODEL }), name)).status).toBe(400)
     expect((await model.handle(req(convo(0), false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
-    expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn', 'the request does not match the turn'])
+    // The miss names the failed check (#tool-turns): no tool list, then the wrong model.
+    expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: no tool list (a side request)', `the request does not match the turn: model claude-haiku-5-5, not ${HARNESS_MODEL}`])
     expect((await model.handle(mainFor(name)(convo(0)), name)).status).toBe(200)
   })
 
@@ -103,7 +107,7 @@ describe('the scripted model', () => {
   ])('%s: turn 0 makes one WebFetch to the literal URL; turn 1 answers only a request carrying its result', async (name, id, url, answer) => {
     const model = createScriptedModel(SCENARIOS)
     const first = (await (await model.handle(webReq(convo(0)), name)).json()) as { content: { type: string; name?: string; input?: unknown }[] }
-    expect(first.content).toEqual([expect.objectContaining({ type: 'tool_use', name: 'WebFetch', input: { url, prompt: 'Summarise the page' } })])
+    expect(first.content).toEqual([expect.objectContaining({ type: 'tool_use', name: 'WebFetch', input: { url, prompt: name === 'webfetch-allowed' ? 'Summarise the page (scenario:webfetch-allowed)' : 'Summarise the page' } })])
     const asked: Msg = { role: 'assistant', content: SCENARIOS[name]!.turns[0]!.content }
     expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: 'go on' }]), name)).status).toBe(400)
     const res = await model.handle(webReq([{ role: 'user', content: 'q' }, asked, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', ...(name === 'webfetch-refused' ? { is_error: true } : {}) }] }]), name)
@@ -128,7 +132,7 @@ describe('the scripted model', () => {
     const asked: Msg = { role: 'assistant', content: SCENARIOS[name]!.turns[0]!.content }
     const wrong: Msg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', ...(wrongError ? { is_error: true } : { is_error: false }) }] }
     expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, wrong]), name)).status).toBe(400)
-    expect(model.misses.at(-1)!.reason).toBe('the request does not match the turn')
+    expect(model.misses.at(-1)!.reason).toBe(`the request does not match the turn: the result for ${id} has is_error ${wrongError}, not ${!wrongError}`)
     const right: Msg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', ...(wrongError ? {} : { is_error: true }) }] }
     expect((await model.handle(webReq([{ role: 'user', content: 'q' }, asked, right]), name)).status).toBe(200)
   })
@@ -288,5 +292,51 @@ describe('structured scenarios', () => {
       expect(typeof body.content[0]!.input.late_orders).toBe('string')
     }
     expect(model.misses).toEqual([])
+  })
+})
+
+// The requests the real CLI sent (fixtures/cli-requests.json: SDK 0.3.328, the runner's tool list, captured over
+// loopback). Each must take its scripted turn on the first try: a miss there is a 400 the CLI's step-down retries
+// (Q2 saw 3 refused calls before turn 0, and turn 1 never matching).
+describe("the real CLI's requests", () => {
+  const captured = JSON.parse(readFileSync(new URL('../../../test/scripted-model/fixtures/cli-requests.json', import.meta.url), 'utf8')) as Record<string, Record<string, MessagesRequest>>
+  const post = (body: MessagesRequest) => new Request('http://proxy/model/v1/messages?beta=true', { method: 'POST', body: JSON.stringify({ ...body, stream: false }) })
+  const answer = async (model: ReturnType<typeof createScriptedModel>, body: MessagesRequest, scenario: string) => {
+    const res = await model.handle(post(body), scenario)
+    return { status: res.status, content: ((await res.json()) as { content?: { type: string; text?: string; name?: string }[] }).content?.map((b) => b.text ?? b.name) }
+  }
+
+  it('the CLI leaves deferred tools out of its list: WebFetch is not listed, a defer_loading placeholder is', () => {
+    const tools = captured['webfetch-allowed']!.turn0!.tools!
+    expect(tools.some((t) => t.name === 'WebFetch')).toBe(false)
+    expect(tools.filter((t) => t.defer_loading === true).map((t) => t.name)).toEqual(['DeferredToolPlaceholder'])
+  })
+
+  it.each([
+    ['webfetch-allowed', ['WebFetch'], ['Read the page.']],
+    ['webfetch-refused', ['WebFetch'], ['The page could not be read.']],
+    ['write-output', ['Writing the table.', 'Bash'], ['Saved outputs/table.csv.']],
+    ['memory-save', ['mcp__inhouse__memory_save'], ['Saved.']],
+  ])('%s: turn 0 and turn 1 answer the captured requests on the first try', async (name, turn0, turn1) => {
+    const model = createScriptedModel(SCENARIOS)
+    expect(await answer(model, captured[name]!.turn0!, name)).toEqual({ status: 200, content: turn0 })
+    expect(await answer(model, captured[name]!.turn1!, name)).toEqual({ status: 200, content: turn1 })
+    expect(model.misses).toEqual([])
+  })
+
+  it("webfetch-allowed: WebFetch's page summary (its own side request, the prompt's marker in it) gets an answer", async () => {
+    const summary = captured['webfetch-allowed']!['page-summary']!
+    expect(JSON.stringify(summary.messages)).toContain('scenario:webfetch-allowed')
+    const model = createScriptedModel(SCENARIOS)
+    expect(await answer(model, summary, 'webfetch-allowed')).toEqual({ status: 200, content: ['A page kept for documentation examples.'] })
+    expect(model.log.at(-1)).toMatchObject({ branch: 'page-summary', turn: 0, missed: false })
+  })
+
+  it('webfetch-refused: the captured turn 1 with is_error flipped is still a miss that says so', async () => {
+    const turn1 = captured['webfetch-refused']!.turn1!
+    const flipped = { ...turn1, messages: turn1.messages.map((m, i) => (i === turn1.messages.length - 1 ? { ...m, content: (m.content as Record<string, unknown>[]).map((b) => ({ ...b, is_error: false })) } : m)) }
+    const model = createScriptedModel(SCENARIOS)
+    expect((await answer(model, flipped, 'webfetch-refused')).status).toBe(400)
+    expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: the result for toolu_scripted_fetch_refused has is_error false, not true'])
   })
 })
