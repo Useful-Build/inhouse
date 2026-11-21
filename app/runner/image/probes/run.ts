@@ -1196,7 +1196,7 @@ async function spawnDirect(key: string, user: PoolUser, variant: DirectVariant, 
 
 async function probeDirect() {
   // The four tools, with canUseTool and a stub inhouse server that has a resource.
-  const four = await direct('four-tools', { prompt: 'Say hi.', webFetchDomains: [], mcpUrl: `http://127.0.0.1:${egress.port}/mcp` }, { steps: [] })
+  const four = await direct('four-tools', { prompt: 'Say hi.', webFetchDomains: [], mcpProxyUrl: `http://127.0.0.1:${egress.port}` }, { steps: [] })
   const init = four.lines.find((l) => l.type === 'init') as { tools: string[]; mcp_servers: unknown } | undefined
   if (init) {
     const outside = init.tools.map((t) => TOOL_ALIASES[t] ?? t).filter((t) => !(BUILT_IN_TOOLS as readonly string[]).includes(t) && !t.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`))

@@ -181,13 +181,13 @@ describe('runSession', () => {
     expect(h.events().at(-1)).toEqual({ type: 'finished', subtype: 'success', isError: false, numTurns: 2, costUsd: 0.01, usage: { input_tokens: 5 } })
   })
 
-  it("the inhouse server goes through the proxy, and the system prompt is the run's own", async () => {
+  it("the inhouse and apps servers go through the proxy, and the system prompt is the run's own", async () => {
     const q = fakeQuery([assistant, result])
     const h = harness(q.query, testQueryGuards, { env: { INHOUSE_PROXY_URL: 'http://127.0.0.1:8081' } })
     h.deliver({ type: 'run', config: config({ systemPrompt: 'You answer for the brand.' }) })
     await h.done
     const { options } = q.calls[0]!
-    expect(options.mcpServers).toEqual({ inhouse: { type: 'http', url: 'http://127.0.0.1:8081/mcp/' } })
+    expect(options.mcpServers).toEqual({ inhouse: { type: 'http', url: 'http://127.0.0.1:8081/mcp/' }, apps: { type: 'http', url: 'http://127.0.0.1:8081/hub/' } })
     expect(options.systemPrompt).toBe('You answer for the brand.')
   })
 
