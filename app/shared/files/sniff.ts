@@ -24,23 +24,75 @@ export function sniffType(bytes: Uint8Array, name: string): string {
 }
 
 function zipType(bytes: Uint8Array): string {
-  // Walk the local file headers' names (PK\x03\x04, name length at 26, extra length at 28, name at 30).
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  let contentTypes = false
-  let folder: string | null = null
-  for (let at = 0; at + 30 <= bytes.length && startsWith(bytes, [0x50, 0x4b, 0x03, 0x04], at); ) {
-    const nameLen = view.getUint16(at + 26, true)
-    const extraLen = view.getUint16(at + 28, true)
-    const size = view.getUint32(at + 18, true)
-    const flags = view.getUint16(at + 6, true)
-    const n = new TextDecoder().decode(bytes.subarray(at + 30, at + 30 + nameLen))
-    if (n === '[Content_Types].xml') contentTypes = true
-    folder ??= OFFICE.find(([f]) => n.startsWith(f))?.[1] ?? null
-    // A size known only after the data (bit 3) can't be skipped over: stop at what we have.
-    if (flags & 0x08) break
-    at += 30 + nameLen + extraLen + size
+  const walk = new ZipWalk()
+  walk.push(bytes)
+  return walk.type()
+}
+
+const LOCAL_HEADER = [0x50, 0x4b, 0x03, 0x04]
+
+/**
+ * A walk over a zip's local file headers (PK\x03\x04, flags at 6, size at 18, name length at 26, extra length at 28,
+ * name at 30), fed its bytes in order in pieces of any size: what tells the OOXML formats apart. It holds at most one
+ * header that straddles two pieces (30 bytes and its name), never the entries' data. It stops for good at a header that
+ * isn't one, or at an entry whose size is known only after its data (bit 3), which can't be skipped over.
+ */
+export class ZipWalk {
+  /** `[Content_Types].xml` has been seen. */
+  contentTypes = false
+  /** The Office type of the first entry under `xl/`, `word/` or `ppt/`, or null. */
+  folder: string | null = null
+  /** The walk ended before the bytes did (not a header, or a bit-3 entry). */
+  stopped = false
+  private pos = 0
+  private next = 0
+  private header: Uint8Array | null = null
+
+  push(piece: Uint8Array): void {
+    const start = this.pos
+    this.pos += piece.length
+    let i = 0
+    while (!this.stopped) {
+      if (this.header === null) {
+        if (this.next >= this.pos) return
+        i = this.next - start
+        this.header = new Uint8Array(0)
+      }
+      const h: Uint8Array = this.header
+      const need = h.length < 30 ? 30 : 30 + (h[26]! | (h[27]! << 8))
+      const take = Math.min(need - h.length, piece.length - i)
+      const grown = new Uint8Array(h.length + take)
+      grown.set(h)
+      grown.set(piece.subarray(i, i + take), h.length)
+      this.header = grown
+      i += take
+      if (grown.length >= 30 && !startsWith(grown, LOCAL_HEADER)) {
+        this.stopped = true
+        return
+      }
+      const full = grown.length >= 30 && grown.length === 30 + (grown[26]! | (grown[27]! << 8))
+      if (!full) {
+        if (i >= piece.length) return
+        continue
+      }
+      const view = new DataView(grown.buffer, grown.byteOffset, grown.byteLength)
+      const nameLen = view.getUint16(26, true)
+      const n = new TextDecoder().decode(grown.subarray(30, 30 + nameLen))
+      if (n === '[Content_Types].xml') this.contentTypes = true
+      this.folder ??= OFFICE.find(([f]) => n.startsWith(f))?.[1] ?? null
+      if (view.getUint16(6, true) & 0x08) {
+        this.stopped = true
+        return
+      }
+      this.next += 30 + nameLen + view.getUint16(28, true) + view.getUint32(18, true)
+      this.header = null
+    }
   }
-  return contentTypes && folder !== null ? folder : 'application/zip'
+
+  /** The type the headers so far say: an Office type once both its folder and `[Content_Types].xml` were seen. */
+  type(): string {
+    return this.contentTypes && this.folder !== null ? this.folder : 'application/zip'
+  }
 }
 
 function textType(bytes: Uint8Array, name: string): string {

@@ -79,15 +79,18 @@ describe('an R2 write that fails (failure 1)', () => {
 
 describe('a streamed PUT (p3-design 8.5, a streamed size)', () => {
   const MiB3 = 3_145_728
-  const SHA_3MIB_C = 'e5a3d280947668d629845cc4cba971906a04d63724069bb00bf3899ca547c603'
+  // Letters by position (`0x61 + (i * 7 % 26)`): a reordered or repeated chunk changes the hash (shasum literal).
+  const SHA_3MIB_C = '6f97f83d8f09e4a4ff2346a040e4cdb2bdbec92c42547d6cf600e231e2396d26'
   const stream = (total: number) => {
     let at = 0
     return new ReadableStream<Uint8Array>({
       pull(c) {
         if (at >= total) return c.close()
         const len = Math.min(65_536, total - at)
+        const b = new Uint8Array(len)
+        for (let i = 0; i < len; i++) b[i] = 0x61 + (((at + i) * 7) % 26)
         at += len
-        c.enqueue(new Uint8Array(len).fill(0x63))
+        c.enqueue(b)
       },
     }, { highWaterMark: 0 })
   }
@@ -104,6 +107,8 @@ describe('a streamed PUT (p3-design 8.5, a streamed size)', () => {
     const head = await env.FILES.head(row!.r2_key)
     expect(head?.size).toBe(MiB3)
     expect([...new Uint8Array(head!.checksums.sha256!)].map(x => x.toString(16).padStart(2, '0')).join('')).toBe(SHA_3MIB_C)
+    const back = await (await env.FILES.get(row!.r2_key))!.arrayBuffer()
+    expect([...new Uint8Array(await crypto.subtle.digest('SHA-256', back))].map(x => x.toString(16).padStart(2, '0')).join('')).toBe(SHA_3MIB_C)
   })
   it('short, long or wrong-hash 3 MiB bodies: 400 with their code, the slot freed, nothing in R2', async () => {
     const { grant, h } = await setup()

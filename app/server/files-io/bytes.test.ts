@@ -15,7 +15,9 @@ import type { FilePut } from './bytes.ts'
 const MAX = 20_971_520
 const MiB = 1_048_576
 const CHUNK = 65_536
-const SHA_20MIB_A = '48b6fb8f1c2fec38d030604889d674722c4af237733c913b698400b59c9294b4'
+/** Letters by position (`0x61 + (i * 7 % 26)`), so a reordered or repeated chunk changes the hash. */
+const letters = (i: number) => 0x61 + ((i * 7) % 26)
+const SHA_20MIB_LETTERS = '9be77affb0891938fa8364033438bd7f0afe6f632cd4eae0ea974de5f1eea384'
 const SHA_2MIB_D = '74f67726cae446e21e6c25e6b545cc1d39de1c6fd01bcdb7fe37b1062d6105f0'
 let n = 0
 const key = () => `files/stream-test/${++n}-${Math.random().toString(36).slice(2, 8)}`
@@ -70,10 +72,10 @@ const r2Put = (k: string): FilePut => (body, contentType) => env.FILES.put(k, bo
 
 describe('a large body is never held whole (failure 1)', () => {
   it('20 MiB of text: the pulls never run more than the prefix and a few chunks ahead of the put; literal hash and size', async () => {
-    const src = source(MAX, () => 0x61)
+    const src = source(MAX, letters)
     const { c, put } = countingPut(src)
     const r = await streamFile(request(src.stream, MAX), 'big.txt', { max: MAX, put })
-    expect(r).toEqual({ contentType: 'text/plain', sha256: SHA_20MIB_A, bytes: MAX })
+    expect(r).toEqual({ contentType: 'text/plain', sha256: SHA_20MIB_LETTERS, bytes: MAX })
     expect(c.consumed).toBe(MAX)
     // Prefix (1 MiB) plus at most four chunks in flight: far below the 20 MiB a whole-body buffer holds.
     expect(c.maxAhead).toBeLessThanOrEqual(SNIFF_PREFIX_BYTES + 4 * CHUNK)
@@ -81,12 +83,12 @@ describe('a large body is never held whole (failure 1)', () => {
 
   it('20 MiB into the real R2: kept whole, the bytes read back hash to the literal', async () => {
     const k = key()
-    const src = source(MAX, () => 0x61)
+    const src = source(MAX, letters)
     const r = await streamFile(request(src.stream, MAX), 'big.txt', { max: MAX, put: r2Put(k) })
-    expect(r).toEqual({ contentType: 'text/plain', sha256: SHA_20MIB_A, bytes: MAX })
+    expect(r).toEqual({ contentType: 'text/plain', sha256: SHA_20MIB_LETTERS, bytes: MAX })
     const back = await env.FILES.get(k)
     const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await back!.arrayBuffer()))].map(x => x.toString(16).padStart(2, '0')).join('')
-    expect(hash).toBe(SHA_20MIB_A)
+    expect(hash).toBe(SHA_20MIB_LETTERS)
   })
 
   it('one byte over the cap is refused before anything is read or written', async () => {
@@ -136,6 +138,7 @@ describe('the type check past the prefix (failure 3)', () => {
     ['a UTF-8 sequence cut by the body end', text2MiB(2 * MiB - 1, [0xe2]), 'd.md'],
     ['HTML at the start of a long body', text2MiB(0, [...new TextEncoder().encode('<html><script>x</script>')]), 'd.csv'],
     ['SVG at the start of a long body', text2MiB(0, [...new TextEncoder().encode('<svg onload="x">')]), 'd.png'],
+    ['a NUL after the prefix of a .json body', text2MiB(MiB + 100, [0x00]), 'data.json'],
   ]
   for (const [name, byte, file] of refusedCases) {
     it(`${name}: type_not_allowed, nothing in R2`, async () => {
@@ -156,9 +159,11 @@ describe('the type check past the prefix (failure 3)', () => {
     ['a four-byte character cut by the prefix end', text2MiB(MiB - 2, [0xf0, 0x9f, 0x98, 0x80]), 'd.csv', 'text/csv'],
     ['a long PNG (magic bytes only, the rest binary)', text2MiB(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]), 'a.bin', 'image/png'],
     ['a long PDF with a NUL inside', text2MiB(0, [...new TextEncoder().encode('%PDF-1.7\n'), 0x00]), 'a.pdf', 'application/pdf'],
-    // JSON is JSON only when the whole body parses: a long one is kept as plain text (its download name gains .txt),
-    // even when its prefix alone parses (all digits).
-    ['a long JSON body whose prefix parses', () => 0x31, 'n.json', 'text/plain'],
+    // A long body named .json passing the text check keeps the JSON label (no `.json.txt` download name), whether or not
+    // its prefix alone parses; one not named .json whose prefix parses is plain text.
+    ['a long .json body whose prefix parses', () => 0x31, 'n.json', 'application/json'],
+    ['a long .json body whose prefix does not parse', text2MiB(0, [...new TextEncoder().encode('{"a":"')]), 'data.JSON', 'application/json'],
+    ['a long all-digits body named .txt', () => 0x31, 'n.txt', 'text/plain'],
   ]
   for (const [name, byte, file, type] of keptCases) {
     it(`${name}: kept as ${type}`, async () => {
@@ -168,6 +173,90 @@ describe('the type check past the prefix (failure 3)', () => {
       expect((await env.FILES.head(k))?.httpMetadata?.contentType).toBe(type)
     })
   }
+})
+
+describe('an Office file naming [Content_Types].xml last (openpyxl)', () => {
+  /** A stored zip: local file headers (sizes known, flag bit 3 off) and data, in this order. */
+  function zipOf(entries: [string, Uint8Array][]): Uint8Array {
+    const enc = new TextEncoder()
+    const parts = entries.flatMap(([name, data]) => {
+      const n = enc.encode(name)
+      const h = new DataView(new ArrayBuffer(30))
+      h.setUint32(0, 0x04034b50, true)
+      h.setUint16(4, 20, true)
+      h.setUint32(18, data.length, true)
+      h.setUint32(22, data.length, true)
+      h.setUint16(26, n.length, true)
+      return [new Uint8Array(h.buffer), n, data]
+    })
+    const out = new Uint8Array(parts.reduce((t, p) => t + p.length, 0))
+    let at = 0
+    for (const p of parts) {
+      out.set(p, at)
+      at += p.length
+    }
+    return out
+  }
+  const xml = (s: string) => new TextEncoder().encode(s)
+  // openpyxl's order: the big sheet before the workbook, the content types last (past the 1 MiB prefix).
+  const openpyxl = (withContentTypes: boolean) => zipOf([
+    ['docProps/app.xml', xml('<Properties/>')],
+    ['docProps/core.xml', xml('<cp:coreProperties/>')],
+    ['xl/theme/theme1.xml', xml('<a:theme/>')],
+    ['xl/worksheets/sheet1.xml', new Uint8Array(1_600_000).fill(0x78)],
+    ['xl/styles.xml', xml('<styleSheet/>')],
+    ['xl/workbook.xml', xml('<workbook/>')],
+    ['_rels/.rels', xml('<Relationships/>')],
+    ...(withContentTypes ? [['[Content_Types].xml', xml('<Types/>')] as [string, Uint8Array]] : []),
+  ])
+  /** The bytes in pieces of an odd size, so headers straddle pieces. */
+  const pieces = (b: Uint8Array, size = 4099) => {
+    let at = 0
+    return new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (at >= b.length) return c.close()
+        c.enqueue(b.slice(at, at + size))
+        at += size
+      },
+    }, { highWaterMark: 0 })
+  }
+  const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  it('past 1 MiB with the content types last: kept as xlsx', async () => {
+    const b = openpyxl(true)
+    expect(b.length).toBeGreaterThan(SNIFF_PREFIX_BYTES)
+    const k = key()
+    expect(await streamFile(request(pieces(b), b.length), 'report.xlsx', { max: MAX, put: r2Put(k) })).toMatchObject({ contentType: XLSX, bytes: b.length })
+    expect((await env.FILES.head(k))?.httpMetadata?.contentType).toBe(XLSX)
+  })
+  it('the same without [Content_Types].xml: refused, nothing in R2', async () => {
+    const b = openpyxl(false)
+    const k = key()
+    expect(await streamFile(request(pieces(b), b.length), 'report.xlsx', { max: MAX, put: r2Put(k) })).toEqual({ refused: 'type_not_allowed' })
+    expect(await env.FILES.head(k)).toBeNull()
+  })
+})
+
+describe('a body whose read fails (a client that went away)', () => {
+  it('the error is rethrown and the put is not left open', async () => {
+    let at = 0
+    const broken = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (at >= 2 * MiB) return c.error(new Error('client gone'))
+        at += CHUNK
+        c.enqueue(new Uint8Array(CHUNK).fill(0x64))
+      },
+    }, { highWaterMark: 0 })
+    let settled = false
+    const put: FilePut = async body => {
+      try {
+        await new Response(body).arrayBuffer()
+      } finally {
+        settled = true
+      }
+    }
+    await expect(streamFile(request(broken, 3 * MiB), 'd.txt', { max: MAX, put })).rejects.toThrow()
+    expect(settled).toBe(true)
+  })
 })
 
 describe('the last chunk waits for every check (failures 2, 3, 4)', () => {

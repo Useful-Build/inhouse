@@ -3,10 +3,11 @@
 // its SHA-256 counted as it streams. Both the egress's PUT and route 39 use it.
 //
 // Peak memory is a bounded prefix (`SNIFF_PREFIX_BYTES`) plus a chunk or two, never the file. The bytes go to R2 through
-// a `FixedLengthStream` of the declared length (R2's `put` takes a stream only when its length is known; the stream
-// errors if too few or too many bytes go through it). The last chunk is held back until the body has ended and every
-// check passed; any refusal aborts the stream instead, so R2 never commits a refused body.
-import { sniffType } from '../../shared/files/sniff.ts'
+// a `FixedLengthStream` of the declared length (R2's `put` takes a stream only when its length is known). The last chunk
+// is held back until the body has ended and every check passed. So a refused body never has its declared length written:
+// the guarantee rests on that hold-back and on the documented `FixedLengthStream` error when too few bytes go through it.
+// A refusal also aborts the stream, which (observed on the local R2, not documented) fails the put at once.
+import { ZipWalk, sniffType } from '../../shared/files/sniff.ts'
 import { typeAllowed } from './caps.ts'
 
 /** How much of a body the sniffer sees when the body is longer. A body this size or smaller is sniffed whole. */
@@ -78,9 +79,23 @@ export async function streamFile(request: Request, name: string, o: { max: numbe
   }
   const whole = length === prefixLength
   let contentType = sniffType(whole ? prefix : utf8Whole(prefix), name)
+  // An Office file can name `[Content_Types].xml` last (openpyxl does): when the prefix's walk saw an Office folder and
+  // ran out of bytes before that entry, the walk goes on as the body streams, and the body is refused at its end
+  // (before its last chunk) if the entry never comes.
+  let zip: ZipWalk | null = null
+  if (!whole && contentType === 'application/zip') {
+    const walk = new ZipWalk()
+    walk.push(prefix)
+    if (walk.folder !== null && !walk.contentTypes && !walk.stopped) {
+      zip = walk
+      contentType = walk.folder
+    }
+  }
   if (!typeAllowed(contentType)) return refuse('type_not_allowed')
-  // JSON is JSON only when the whole body parses, which a longer body can't show without holding all of it.
-  if (!whole && contentType === 'application/json') contentType = 'text/plain'
+  // JSON is JSON only when the whole body parses, which a longer body can't show without holding all of it. A longer
+  // body named `.json` keeps the JSON label once it passes the text check below (a label only: every download is an
+  // attachment with nosniff and the sandbox CSP); otherwise it's plain text.
+  if (!whole && (contentType === 'application/json' || contentType === 'text/plain')) contentType = /\.json$/i.test(name) ? 'application/json' : 'text/plain'
   // A longer text body stays text to its end: no NUL byte, valid UTF-8 (the sniffer's own rule, over every byte).
   const text = !whole && TEXT_TYPES.has(contentType) ? new TextDecoder('utf-8', { fatal: true }) : null
   const isText = (c: Uint8Array | null) => {
@@ -110,8 +125,9 @@ export async function streamFile(request: Request, name: string, o: { max: numbe
     (e: unknown) => ({ ok: false, e }),
   )
   const stop = async (refused: FileRefusal | null) => {
-    // Aborting the writer errors R2's read of the stream, so the put fails and keeps nothing. The writer is already
-    // errored when the put failed first; its abort then has nothing left to do.
+    // The declared length was never written (the last chunk is held), so the put can't complete; aborting the writer
+    // also fails it at once (observed, not documented). The writer is already errored when the put failed first; its
+    // abort then has nothing left to do.
     await out.abort(new Error(refused ?? 'put_failed')).catch(() => undefined)
     await hashing.abort()
     const put = await putDone
@@ -130,29 +146,38 @@ export async function streamFile(request: Request, name: string, o: { max: numbe
     putDone.then(() => false),
   ])
 
-  let held: Uint8Array | null = prefixLength > 0 ? prefix : null
-  if (held && !(await feed(held))) return stop('type_not_allowed')
-  for (;;) {
-    const c = carry ?? (await next())
-    carry = null
-    if (!c) break
-    if (read + c.byteLength > length) return stop('length_mismatch')
-    if (!(await feed(c))) return stop('type_not_allowed')
-    read += c.byteLength
-    if (held && !(await send(held))) return stop(null)
-    held = c
+  try {
+    let held: Uint8Array | null = prefixLength > 0 ? prefix : null
+    if (held && !(await feed(held))) return await stop('type_not_allowed')
+    for (;;) {
+      const c = carry ?? (await next())
+      carry = null
+      if (!c) break
+      if (read + c.byteLength > length) return await stop('length_mismatch')
+      if (!(await feed(c))) return await stop('type_not_allowed')
+      zip?.push(c)
+      read += c.byteLength
+      if (held && !(await send(held))) return await stop(null)
+      held = c
+    }
+    if (read !== length) return await stop('length_mismatch')
+    if (!isText(null)) return await stop('type_not_allowed')
+    if (zip && !zip.contentTypes) return await stop('type_not_allowed')
+    await hashing.close()
+    const sha256 = hex(await digest.digest)
+    if (o.sha256 !== undefined && sha256 !== o.sha256) return await stop('hash')
+    if (held && !(await send(held))) return await stop(null)
+    // A close that fails means the put failed too: its error is the one to answer.
+    await Promise.race([out.close().catch(() => undefined), putDone])
+    const put = await putDone
+    if (!put.ok) return { failed: put.e }
+    return { contentType, sha256, bytes: length }
+  } catch (e) {
+    // The body's read failed (a client that went away): stop the put too, so it doesn't stay open, then rethrow. The
+    // stop's own cleanup can fail on the same broken body; the read's error is the one that matters.
+    await stop(null).catch(() => undefined)
+    throw e
   }
-  if (read !== length) return stop('length_mismatch')
-  if (!isText(null)) return stop('type_not_allowed')
-  await hashing.close()
-  const sha256 = hex(await digest.digest)
-  if (o.sha256 !== undefined && sha256 !== o.sha256) return stop('hash')
-  if (held && !(await send(held))) return stop(null)
-  // A close that fails means the put failed too: its error is the one to answer.
-  await Promise.race([out.close().catch(() => undefined), putDone])
-  const put = await putDone
-  if (!put.ok) return { failed: put.e }
-  return { contentType, sha256, bytes: length }
 }
 
 /** A chat file id: `f_` + 128 random bits, base64url (FileIdSchema). */
