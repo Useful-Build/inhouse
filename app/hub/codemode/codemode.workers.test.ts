@@ -2,6 +2,8 @@
 // real Shopify SignIn on SQLite and the recorded fixture upstream through H0's seam. Needs the orchestrator's lines:
 // `worker_loaders` (LOADER) in wrangler.hub.test.jsonc, `codeModeConnector` in connectors/index.ts (test 10) and the
 // index.ts wiring (ReadGateway passes codemode). Tests 3 to 9, 11 and 12 build code mode themselves over env.LOADER.
+// The never-settling deadline case lives in codemode-deadline.workers.test.ts: its sandbox call stays pending, and a
+// `reset()` after it crashes workerd ("Promise callback destroyed itself"), so no test may follow it in a file.
 //
 // Failure modes: the RpcTarget never reaches the sandbox (3); a script reaches the network (4) or writes, reads a
 // protected field or filters on one (5); a cap doesn't hold (6); the hub trusts what the sandbox returns (7); a late
@@ -63,6 +65,9 @@ function install(token?: string) {
   })
 }
 let realToken = ''
+
+// Every test fails fast on a hung RPC instead of eating the CI job (B2, 2026-11-21); the measurement cases get 15 s.
+vi.setConfig({ testTimeout: 10_000 })
 
 let lines: string[] = []
 beforeEach(async () => {
@@ -190,32 +195,31 @@ describe('A.7.6 caps', () => {
     expect(seen.maxInFlight).toBe(1)
   })
 
-  it('an infinite loop is stopped by the CPU limit and comes back as the error', async () => {
-    const r = await script('for (;;) {}')
-    expect(r.result).toBeUndefined()
-    expect(r.error).toEqual(expect.any(String))
-  })
-
-  it('a never-settling promise ends at the deadline (injected timer)', async () => {
-    let fire: () => void = () => {}
-    const fired = new Promise<void>(resolve => {
-      fire = resolve
-    })
-    // The deadline fires once the script has made its one call.
-    const base = createShopifyUpstream(dataset)
-    testUpstreams.set(HOST, async req => {
-      const res = await base(req)
-      if (new URL(req.url).pathname.endsWith('/graphql.json')) fire()
-      return res
-    })
-    const r = await script(`await shop.graphql(${PRODUCTS_PAGE}, { first: 1 }); await new Promise(() => {})`, {
-      setTimer: (ms, fn) => {
-        expect(ms).toBe(20_000)
-        void fired.then(fn)
-        return () => {}
+  // Change to the brief's test 6 (B2, 2026-11-21): local workerd doesn't enforce `limits.cpuMs` on a Dynamic Worker, and
+  // an infinite loop blocks the thread the hub and the runner share, so no timer (the deadline, vitest's) can fire.
+  // The loop itself is checked at the P5 live check on the deployed hub. Here: the limits the hub asks for, and a
+  // bounded CPU script that completes.
+  it('opens the entrypoint with the CPU and subrequest limits, and a bounded CPU script completes', async () => {
+    const asked: unknown[] = []
+    const loader: WorkerLoader = {
+      get: (id, cb) => {
+        const worker = LOADER.get(id, cb)
+        return {
+          getEntrypoint: (name, options) => {
+            asked.push({ name, options })
+            return worker.getEntrypoint(name, options)
+          },
+          getDurableObjectClass: (name, options) => worker.getDurableObjectClass(name, options),
+        }
       },
-    })
-    expect(r.error).toMatch(/ran past 20 s/)
+      load: () => {
+        throw new Error('code mode never calls load()')
+      },
+    }
+    const r = await script('let x = 0; for (let i = 0; i < 2e6; i++) x = (x + i) % 1000003; return x', { loader })
+    expect(r.error).toBeUndefined()
+    expect(typeof r.result).toBe('number')
+    expect(asked).toEqual([{ name: 'Script', options: { limits: { cpuMs: 1_000, subRequests: 20 } } }])
   })
 
   it('a return over 8 KiB and non-JSON returns are refused', async () => {
@@ -342,7 +346,7 @@ return out`
   })
 })
 
-describe('A.7.12 the S4 measurement in a real Dynamic Worker', () => {
+describe('A.7.12 the S4 measurement in a real Dynamic Worker', { timeout: 15_000 }, () => {
   const expected: Record<string, unknown> = {
     'lowest-stock': lowestStock(d),
     'unfulfilled-3-days': unfulfilledOverThreeDays(d, ASKED_AT),
