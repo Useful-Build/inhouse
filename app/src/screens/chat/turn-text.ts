@@ -42,10 +42,15 @@ export function fileRefusedText(name: string, reason: FileRefusalReason): string
 /** The most left-out files a note names; the rest are counted. */
 const LEFT_OUT_NAMED = 5
 
+/** The runner's last `leftOut` entry past its cap (runner files.ts `capLeftOut`): how many more there were. A path never looks like it (it starts with its folder). */
+const MORE_TAIL = /^and (\d+) more$/
+
 /** The chat's earlier files a run couldn't bring back (the `files.restored` event's `leftOut`), named without their folder. */
 export function filesLeftOutText(leftOut: readonly string[]): string {
-  const names = leftOut.slice(0, LEFT_OUT_NAMED).map(p => p.replace(/^(inputs|outputs)\//, ''))
-  const more = leftOut.length - names.length
+  const tail = MORE_TAIL.exec(leftOut.at(-1) ?? '')
+  const paths = tail ? leftOut.slice(0, -1) : leftOut
+  const names = paths.slice(0, LEFT_OUT_NAMED).map(p => p.replace(/^(inputs|outputs)\//, ''))
+  const more = paths.length - names.length + (tail ? Number(tail[1]) : 0)
   const list = more > 0 ? `${names.join(', ')} and ${more} more` : names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]
   return `Some of this chat's earlier files were too big to bring back together, so your Inhouse agent can't use these in this answer: ${list}.`
 }

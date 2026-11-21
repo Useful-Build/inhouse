@@ -138,6 +138,13 @@ describe('files the agent made but could not save, and earlier files left out', 
     expect(notes(v)).toEqual([[`${T}.l`, "Some of this chat's earlier files were too big to bring back together, so your Inhouse agent can't use these in this answer: a.pdf, b.pdf, c.pdf, d.pdf, e.pdf and 2 more."]])
   })
 
+  test("past the runner's 1000 names, its last entry counts the rest: the total stays right", () => {
+    // The runner's cap (files.ts capLeftOut): 999 names, then `and <n> more` for the 1501 past them (2500 in all).
+    const leftOut = [...Array.from({ length: 999 }, (_, i) => `inputs/f${i}.pdf`), 'and 1501 more']
+    const v = run(queued, started, { type: 'files.restored', turnId: T, restored: 0, leftOut })
+    expect(notes(v)).toEqual([[`${T}.l`, "Some of this chat's earlier files were too big to bring back together, so your Inhouse agent can't use these in this answer: f0.pdf, f1.pdf, f2.pdf, f3.pdf, f4.pdf and 2495 more."]])
+  })
+
   test('a restore with nothing left out shows nothing', () => {
     const before = run(queued, started)
     const after = reduce(before, { type: 'files.restored', turnId: T, restored: 3, leftOut: [] }, AT)
