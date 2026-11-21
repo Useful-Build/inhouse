@@ -21,7 +21,7 @@ const AVAILABLE = [
 function view(over: Partial<View> = {}) {
   const calls: string[] = []
   const v: View = {
-    status: 'ready', list: LIST, available: AVAILABLE, pickerError: null, canEdit: true, busy: false,
+    status: 'ready', list: LIST, available: AVAILABLE, pickerError: null, pickerLoading: false, truncated: false, canEdit: true, busy: false,
     add: id => calls.push(`add:${id}`), remove: id => calls.push(`remove:${id}`), setAlerts: id => calls.push(`alerts:${id}`), retry: () => calls.push('retry'), ...over,
   }
   return { v, calls }

@@ -59,7 +59,7 @@ export interface Row {
   /** The `me().can` key the row's control needs. Without it the control follows the setting's scope (brand or technical). Not allowed: it shows as text. */
   can?: CanKey
   /** A Remove button beside the control: the question that names the person, and what confirming does. */
-  remove?: { label: string; title: string; text: string; action: string; go: () => void }
+  remove?: { label: string; title: string; text: string; action: string; go: () => void; /** The `me().can` key Remove needs (P5 W4); without it, `remove` (a member's removal). */ can?: CanKey }
 }
 
 export type FieldType = 'money' | 'email' | 'hosts'
@@ -156,6 +156,10 @@ export interface NotifyView {
   available: AvailableChannel[] | null
   /** Why the picker isn't offered: Slack isn't connected (or is paused or needs a reconnect), or it couldn't be reached. */
   pickerError: 'disconnected' | 'unavailable' | null
+  /** The picker's channels are being read. */
+  pickerLoading: boolean
+  /** The picker stopped at its page limit (2,000 channels). */
+  truncated: boolean
   /** Whether this person may change the list: an Admin or the Inhouse team. */
   canEdit: boolean
   busy: boolean
@@ -180,18 +184,20 @@ function slackPage(nv: NotifyView): Page {
     ] }
   }
   const channelRows = listed.map((c): Row => ({
-    ...R(`#${c.name}`, c.alerts ? 'The alerts channel. Approvals and problems post here too.' : 'Your Inhouse agent can post notices here.', 'value'),
-    ...(nv.canEdit ? { remove: { label: `Remove #${c.name}`, title: `Remove #${c.name}?`, text: 'Your Inhouse agent stops posting there. Notices already posted stay in Slack.', action: 'Remove', go: () => nv.remove(c.channelId) } } : {}),
+    ...R(`#${c.name}`, c.alerts ? 'The alerts channel. Approvals, questions and problems post here too.' : 'Your Inhouse agent can post notices here.', 'value'),
+    ...(nv.canEdit ? { remove: { label: `Remove #${c.name}`, title: `Remove #${c.name}?`, text: 'Your Inhouse agent stops posting there. Notices already posted stay in Slack.', action: 'Remove', go: () => nv.remove(c.channelId), can: 'editBrandSettings' as const } } : {}),
   }))
   const editRows: Row[] = []
   if (nv.canEdit) {
     if (nv.pickerError) {
-      editRows.push(R('Add a channel', nv.pickerError === 'disconnected' ? "Slack isn't connected, or it's paused or needs a reconnect on the Tools page." : "Slack couldn't be reached. Try again in a moment.", 'button', 'Try again', 0, undefined, undefined, nv.retry))
+      editRows.push({ ...R('Add a channel', nv.pickerError === 'disconnected' ? "Slack isn't connected, or it's paused or needs a reconnect on the Tools page." : "Slack couldn't be reached. Try again in a moment.", 'button', 'Try again', 0, undefined, undefined, nv.retry), busy: nv.pickerLoading })
+    } else if (nv.pickerLoading && !nv.available) {
+      editRows.push({ ...R('Add a channel', 'Reading the channels from Slack.', 'button', 'Loading'), busy: true })
     } else if (nv.available) {
       const open = nv.available.filter(a => !a.disabled && !listed.some(l => l.channelId === a.channelId))
       const blocked = nv.available.some(a => a.disabled)
       editRows.push({
-        ...SEL('Add a channel', blocked ? "Channels shared with another company, and ones the connected Slack account isn't in, can't be added." : 'Public channels in your Slack.', 'nc:add', '', open.map(a => `#${a.name}`)),
+        ...SEL('Add a channel', [blocked ? "Channels shared with another company, and ones the connected Slack account isn't in, can't be added." : 'Public channels in your Slack.', nv.truncated ? 'Showing the first 2,000 channels.' : ''].filter(Boolean).join(' '), 'nc:add', '', open.map(a => `#${a.name}`)),
         display: open.length > 0 ? 'Choose a channel' : 'None to add', busy: nv.busy, can: 'editBrandSettings', keywords: 'slack channel add list',
         save: v => { const a = open.find(x => `#${x.name}` === v); if (a) nv.add(a.channelId) },
       })
@@ -199,7 +205,7 @@ function slackPage(nv: NotifyView): Page {
     if (listed.length > 0) {
       const current = listed.find(c => c.alerts)
       editRows.push({
-        ...SEL('Alerts channel', 'Where approvals waiting and problems are posted.', 'nc:alerts', current ? `#${current.name}` : 'None', ['None', ...listed.map(c => `#${c.name}`)]),
+        ...SEL('Alerts channel', 'Where approvals, questions and problems are posted.', 'nc:alerts', current ? `#${current.name}` : 'None', ['None', ...listed.map(c => `#${c.name}`)]),
         can: 'editBrandSettings', keywords: 'slack alerts approvals',
         save: v => nv.setAlerts(v === 'None' ? null : listed.find(c => `#${c.name}` === v)?.channelId ?? null),
       })

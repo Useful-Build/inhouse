@@ -16,6 +16,8 @@ export type WriteMethod =
   | 'markNoticesRead' | 'deleteFiles' | 'restoreFiles' | 'setAside' | 'runRoutine' | 'deleteRoutine' | 'restoreRoutine'
   | 'renameChat' | 'pinChat' | 'deleteChats' | 'restoreChats'
   | 'inviteMember' | 'setMemberRole' | 'removeMember' | 'grantSupport' | 'endSupportGrant'
+  // P5 (p5-w4): the Slack notice channel list.
+  | 'saveNotifyChannels'
 
 /** A record a test changes behind the client (`writeElsewhere`), so the client's next write to it is stale. */
 export type RecordRef =
@@ -170,6 +172,7 @@ const WRITE_METHODS: ReadonlySet<string> = new Set<WriteMethod>([
   'requestSkill', 'setToolPaused', 'connectTool', 'disconnectTool', 'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles',
   'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine', 'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats',
   'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
+  'saveNotifyChannels',
 ])
 
 /** The parts of the mock an injected failure has to undo. Test-only access: the mock has no hook for a server's refusal. */

@@ -29,7 +29,7 @@ function allRows(): Row[] {
     // P5 W4: Slack notices as an Admin sees it, so its rows are checked too.
     notify: {
       status: 'ready', list: { rev: 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }] },
-      available: [{ channelId: 'C0DEMO0002', name: 'warehouse' }], pickerError: null, canEdit: true, busy: false, add: noop, remove: noop, setAlerts: noop, retry: noop,
+      available: [{ channelId: 'C0DEMO0002', name: 'warehouse' }], pickerError: null, pickerLoading: false, truncated: false, canEdit: true, busy: false, add: noop, remove: noop, setAlerts: noop, retry: noop,
     },
   }
   return MENU.flatMap(g => g.items).flatMap(([tab]) => settingsPage(tab, env).sections.flatMap(s => s.rows))

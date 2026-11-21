@@ -270,7 +270,7 @@ export function Settings() {
   }, [setTab, phone])
 
   // P5 W4: the Slack notices page reads its channels while it's open; an Admin or the Inhouse team also reads the picker.
-  const notify = useNotifyChannels(setTab === 'team-slack', demo !== null || (!!me && (me.role === 'admin' || me.role === 'inhouse')))
+  const notify = useNotifyChannels(setTab === 'team-slack', !!me?.can.editBrandSettings)
   const pick = (k: string) => ui.patch({ setTab: k, setMenu: false })
   const { theme, setTheme } = useTheme()
   const env: Env = {
@@ -406,7 +406,7 @@ export function Settings() {
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
                       <Control readOnly={readOnly || denied} denied={denied} effortOk={al.effort} switchOk={al.switch} grant={data.people.supportGrant} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : tell(agent.setToggle(row.key!, !on), row))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
-                      {row.remove && me?.can.remove !== false && !readOnly && <Button variant="outline" size="lg" aria-label={row.remove.label} onClick={() => setAsk({ title: row.remove!.title, text: row.remove!.text, action: row.remove!.action, go: row.remove!.go })}>Remove</Button>}
+                      {row.remove && me?.can[row.remove.can ?? 'remove'] !== false && !readOnly && <Button variant="outline" size="lg" aria-label={row.remove.label} onClick={() => setAsk({ title: row.remove!.title, text: row.remove!.text, action: row.remove!.action, go: row.remove!.go })}>Remove</Button>}
                     </div>
                   )
                 })}

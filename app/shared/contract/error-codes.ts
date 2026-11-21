@@ -20,7 +20,12 @@ export const REASON = {
   tooLarge: 'too_large', typeNotAllowed: 'type_not_allowed',
   // P5 (p5-w3): the Tools routes' refusals.
   notConfigured: 'not_configured', notDisconnectable: 'not_disconnectable', notConnected: 'not_connected',
-  // P5 (p5-w4): the notice channel list's refusals.
+} as const satisfies Record<string, ErrorReason>
+/**
+ * P5 (p5-w4): the notice channel list's refusals, a separate object so Today's first load (which reads REASON) doesn't
+ * carry them: only the Settings page and the demo's lazily loaded channel list name them.
+ */
+export const NOTIFY_REASON = {
   sharedChannel: 'shared_channel', archived: 'archived', notPublic: 'not_public', notMember: 'not_member', channelNotFound: 'not_found',
   nameTaken: 'name_taken', slackNotConnected: 'slack_not_connected',
 } as const satisfies Record<string, ErrorReason>

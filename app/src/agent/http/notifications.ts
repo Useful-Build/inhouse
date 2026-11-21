@@ -3,6 +3,8 @@
 // entry's size budget, schemas.ts): the transport parses each answer with the lazily loaded schemas, and the save's
 // body is built from them by the caller's `Contract`. Refusals reject with an AgentError (`conflict` and its reason).
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../../shared/contract/notify-slack'
+import { AgentError } from '../types'
+import { MESSAGE } from './transport'
 import type { Contract, Transport } from './transport'
 
 const PATH = '/api/notify/channels'
@@ -14,6 +16,13 @@ export const readNotifyChannels = (http: Transport): Promise<NotifyChannelList> 
 export const readAvailableChannels = (http: Transport, cursor?: string): Promise<AvailableChannels> =>
   http.call({ method: 'GET', path: cursor ? `${PATH}/available?cursor=${encodeURIComponent(cursor)}` : `${PATH}/available`, schema: 'availableChannels' })
 
-/** Route 75: the whole list. A stale `ifRev` rejects with `conflict` and the current list as `current`. */
-export const putNotifyChannels = (http: Transport, k: Contract, input: PutNotifyChannels): Promise<NotifyChannelList> =>
-  http.call({ method: 'PUT', path: PATH, schema: 'notifyChannels', json: k.BODIES.notifyChannels.parse(input) })
+/**
+ * Route 75: the whole list. A body the shared schema refuses (an alerts channel outside the list, a 51st channel, a
+ * key it doesn't know) rejects with `invalid` and is never sent. A stale `ifRev` rejects with `conflict` and the current
+ * list as `current`.
+ */
+export function putNotifyChannels(http: Transport, k: Contract, input: PutNotifyChannels): Promise<NotifyChannelList> {
+  const body = k.BODIES.notifyChannels.safeParse(input)
+  if (!body.success) return Promise.reject(new AgentError('invalid', MESSAGE.invalid))
+  return http.call({ method: 'PUT', path: PATH, schema: 'notifyChannels', json: body.data })
+}

@@ -40,13 +40,22 @@ describe('notice channel calls', () => {
     expect(await putNotifyChannels(s.transport, k, { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0001', ifRev: 2 })).toEqual(LIST)
     expect(s.calls).toEqual([{ method: 'PUT', path: '/api/notify/channels', body: { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0001', ifRev: 2 } }])
   })
-  test('a body the schema refuses is never sent', async () => {
+  test('a body the schema refuses rejects with an AgentError (invalid), never a ZodError, and is never sent', async () => {
     const s = server(200, LIST)
     const k = await s.transport.contract()
-    expect(() => putNotifyChannels(s.transport, k, { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0002', ifRev: 2 })).toThrow()
-    expect(() => putNotifyChannels(s.transport, k, { channelIds: ['U0TEST0001'], ifRev: 2 })).toThrow()
-    expect(() => putNotifyChannels(s.transport, k, { channelIds: [], ifRev: 2, link_names: true } as never)).toThrow()
-    expect(s.calls).toEqual([])
+    const ids51 = Array.from({ length: 51 }, (_, i) => `C1TEST${String(i).padStart(4, '0')}`)
+    for (const bad of [
+      { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0002', ifRev: 2 },
+      { channelIds: ['U0TEST0001'], ifRev: 2 },
+      { channelIds: ids51, ifRev: 2 },
+      { channelIds: [], ifRev: 2, link_names: true },
+    ]) {
+      const e = await putNotifyChannels(s.transport, k, bad as never).catch((x: unknown) => x)
+      expect(e).toBeInstanceOf(AgentError)
+      expect(e).toMatchObject({ code: 'invalid' })
+    }
+    expect(await putNotifyChannels(s.transport, k, { channelIds: ids51.slice(0, 50), ifRev: 2 })).toEqual(LIST)
+    expect(s.calls.length).toBe(1)
   })
   test('a refusal keeps its reason, a stale save its current list', async () => {
     const a = server(409, { error: { code: 'conflict', reason: 'shared_channel', current: { channelId: 'C0TEST0003' } } })

@@ -138,6 +138,7 @@ describe('routes F, G and H', () => {
   it('every refusal body these routes send parses as the client reads it (ErrorBodySchema)', async () => {
     const { hub } = fakeHub()
     const p = await admin()
+    await db.prepare('DELETE FROM notify_channels').run()
     const bodies = [
       await put(p, hub, { channelIds: ['C0TEST0003'], ifRev: await rev() }),
       await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0007'], ifRev: await rev() }),
@@ -147,21 +148,35 @@ describe('routes F, G and H', () => {
     for (const r of bodies) expect(ErrorBodySchema.safeParse(await r.json()).success, String(r.status)).toBe(true)
   })
 
-  it('review round 1: two kept channels swapping names at Slack, or a chain of renames, save without a 500', async () => {
-    const { hub } = fakeHub()
+  it('review round 1: the store saves kept channels swapping names, or a chain of renames, without a constraint error', async () => {
+    const store = stores.notify
+    await db.prepare('DELETE FROM notify_channels').run()
+    const who = (await admin() as Extract<Principal, { kind: 'person' }>).memberId
+    const at = (n: number) => ({ actorId: who, requestId: reqId(), nowMs: n })
+    let list = await store.list()
+    const first = await store.save({ channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts' }, { channelId: 'C0TEST0002', name: 'general' }], alertsChannelId: null, ifRev: list.rev }, at(1))
+    if (!('ok' in first)) throw new Error('first save conflicted')
+    const swap = await store.save({ channels: [{ channelId: 'C0TEST0001', name: 'general' }, { channelId: 'C0TEST0002', name: 'ops-alerts' }], alertsChannelId: null, ifRev: first.ok.rev }, at(2))
+    expect(swap).toEqual({ ok: { rev: first.ok.rev + 1, channels: [{ channelId: 'C0TEST0001', name: 'general', alerts: false }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] } })
+    list = await store.list()
+    const chain = await store.save({ channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts' }, { channelId: 'C0TEST0002', name: 'ops-old' }], alertsChannelId: null, ifRev: list.rev }, at(3))
+    expect('ok' in chain && chain.ok.channels.map(c => c.name)).toEqual(['ops-alerts', 'ops-old'])
+  })
+
+  it('review round 1: only added channels are checked at Slack, so removing or moving the alerts mark saves while Slack is paused', async () => {
+    const { hub, calls } = fakeHub()
     const p = await admin()
     await db.prepare('DELETE FROM notify_channels').run()
     const r0 = await rev()
-    expect((await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 })).status).toBe(200)
-    // Slack now names them the other way round.
-    const swapped = { ...SLACK.C0TEST0001!, name: 'general' }, swapped2 = { ...SLACK.C0TEST0002!, name: 'ops-alerts' }
-    const renamed = { ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => ({ ok: true as const, value: req.channelId === 'C0TEST0001' ? swapped : swapped2 }) }
-    const r = await json(await put(p, renamed as never, { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 + 1 }))
-    expect(r).toEqual({ status: 200, body: { rev: r0 + 2, channels: [{ channelId: 'C0TEST0001', name: 'general', alerts: false }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] } })
-    // A chain: 1 takes 2's name, 2 takes a new one.
-    const chain = { ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => ({ ok: true as const, value: req.channelId === 'C0TEST0001' ? { ...swapped, name: 'ops-alerts' } : { ...swapped2, name: 'ops-old' } }) }
-    const c = await json(await put(p, chain as never, { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 + 2 }))
-    expect(c.status).toBe(200)
-    expect((c.body.channels as { name: string }[]).map(x => x.name)).toEqual(['ops-alerts', 'ops-old'])
+    expect((await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 })).status).toBe(200)
+    const paused = { ...hub, checkChannel: async () => ({ ok: false as const, error: { code: 'paused' as const, message: 'connector paused' } }) }
+    const moved = await json(await put(p, paused, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0002', ifRev: r0 + 1 }))
+    expect(moved.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: true }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: false }] })
+    const removed = await json(await put(p, paused, { channelIds: ['C0TEST0002'], alertsChannelId: 'C0TEST0002', ifRev: r0 + 2 }))
+    expect(removed.status).toBe(200)
+    // Adding one still needs Slack.
+    const added = await json(await put(p, paused, { channelIds: ['C0TEST0002', 'C0TEST0001'], ifRev: r0 + 3 }))
+    expect([added.status, (added.body.error as { reason: string }).reason]).toEqual([503, 'slack_not_connected'])
+    expect(calls).toEqual(['check:server:C0TEST0001', 'check:server:C0TEST0002'])
   })
 })

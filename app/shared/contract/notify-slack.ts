@@ -37,3 +37,4 @@ export type PutNotifyChannels = z.infer<typeof PutNotifyChannelsSchema>
  * would share a lowercase name. A stale `ifRev` is a `conflict` with no reason and the current list as `current`.
  */
 export const ChannelRefusalSchema = z.enum(['shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'name_taken'])
+export type ChannelRefusal = z.infer<typeof ChannelRefusalSchema>
