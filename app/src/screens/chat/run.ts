@@ -2,3 +2,4 @@
 // `import()`, so none of it is in the first load (Today's JS budget, scripts/check-bundle.mjs).
 export * from './view'
 export * from './turn-text'
+export * from './upload'

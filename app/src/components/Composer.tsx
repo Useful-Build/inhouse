@@ -3,7 +3,9 @@
 // On a phone both boxes keep attach and send: the tools and the model move into "+", the logo stack and dictate leave (M27).
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, DragEvent, ReactElement } from 'react'
+import { agent } from '../agent'
 import type { Attachment } from '../agent/types'
+import { dropFile, keepFile } from '../state/pending-files'
 import { activeMode, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
 import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
@@ -121,7 +123,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
       if (file.size > MAX_MB * 1e6) bad.push({ name: file.name, reason: `Over the ${MAX_MB} MB limit` })
       else if (attachmentNameTooLong(file.name)) bad.push({ name: file.name, reason: ATTACHMENT_NAME_TOO_LONG })
       else if (have + ok.length >= MAX_FILES) bad.push({ name: file.name, reason: `Only ${MAX_FILES} files per message` })
-      else ok.push({ name: file.name, meta: fileSize(file.size), icon: fileIcon(file.name) })
+      // The real client keeps the file until the send, which uploads it; the demo's chip is only its name and size.
+      else ok.push({ name: file.name, meta: fileSize(file.size), icon: fileIcon(file.name), ...(agent.uploadsFiles() ? { pending: keepFile(file) } : {}) })
     }
     if (ok.length) addAtts(ok)
     setRejected(bad)
@@ -279,7 +282,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
       {(atts.length > 0 || rejected.length > 0) && (
         <div className="mb-2.5 -ml-1.5 flex flex-wrap gap-1.5">
           {atts.map((a, i) => (
-            <AttachmentChip key={a.name + i} icon={a.icon} name={a.name} meta={a.meta} tap={phone} onRemove={() => patch({ atts: atts.filter((_, j) => j !== i) })} />
+            <AttachmentChip key={a.name + i} icon={a.icon} name={a.name} meta={a.meta} tap={phone} onRemove={() => { if (a.pending !== undefined) dropFile(a.pending); patch({ atts: atts.filter((_, j) => j !== i) }) }} />
           ))}
           {rejected.length > 0 && (
             // One alert for all the rejected files, so a screen reader reads them together once.

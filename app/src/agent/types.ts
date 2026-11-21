@@ -210,6 +210,10 @@ export interface AgentClient {
   auditExportUrl(): string | null
   /** Route 41: one chat file's bytes, and the name the server gave it (null when it gave none). Rejects with an `AgentError`. The demo serves a sample file. */
   downloadFile(fileId: string): Promise<{ blob: Blob; name: string | null }>
+  /** Whether this client keeps attachments on the server (the real one). The demo doesn't: its files stay in the composer and the send names them by a made-up id. */
+  uploadsFiles(): boolean
+  /** Route 39: keeps `file` in the chat (which must exist) and answers its id. Rejects with an `AgentError` (a refusal has its `reason`) or `UploadCancelled` when `signal` aborts. */
+  uploadFile(chatId: string, file: File, signal?: AbortSignal): Promise<{ fileId: string; name: string }>
   /** Closes the chat socket. Sign out calls it first, so nothing is followed while the sign-in ends (a no-op where there is no socket). */
   disconnect(): void
   /** Where signing out goes (`/cdn-cgi/access/logout` in the product), or null where there is no sign-in (the demo). */

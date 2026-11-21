@@ -19,7 +19,8 @@ describe('runtimeImports', () => {
 })
 
 describe('the entry reaches no zod', () => {
-  for (const file of ['src/agent/mock.ts', 'src/agent/http/client.ts', 'src/agent/types.ts', 'src/state/store.ts', 'src/state/derive.ts']) {
+  for (const file of ['src/agent/mock.ts', 'src/agent/http/client.ts', 'src/agent/types.ts', 'src/state/store.ts', 'src/state/derive.ts',
+    'src/agent/http/files.ts', 'src/screens/chat/upload.ts', 'src/state/pending-files.ts']) {
     it(`${file} takes only plain values from shared/contract`, () => {
       const contract = runtimeImports(read(file)).filter(i => i.includes('shared/contract'))
       for (const i of contract) expect(PLAIN, `${file} imports ${i}`).toContain(i.split('/').pop()!.replace(/\.ts$/, ''))
@@ -28,6 +29,16 @@ describe('the entry reaches no zod', () => {
   for (const name of PLAIN) {
     it(`shared/contract/${name}.ts imports nothing at run time`, () => {
       expect(runtimeImports(read(`shared/contract/${name}.ts`))).toEqual([])
+    })
+  }
+})
+
+describe('the upload and download code loads with the first file, not with Today', () => {
+  // scripts/check-bundle.mjs holds Today's first load to 240 KB gzip: files.ts and chat/upload.ts load lazily (a dynamic import in the client, the chat chunk for the store).
+  const LAZY = [/\/files$/, /chat\/upload$/]
+  for (const file of ['src/agent/http/client.ts', 'src/state/store.ts', 'src/components/Composer.tsx', 'src/screens/Chats.tsx']) {
+    it(`${file} imports them only as types or at run time later`, () => {
+      for (const i of runtimeImports(read(file))) for (const re of LAZY) expect(re.test(i), `${file} imports ${i} up front`).toBe(false)
     })
   }
 })

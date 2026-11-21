@@ -48,8 +48,19 @@ export interface Call<K extends Answer> {
   schema: K
   /** A JSON body, built from the shared schema by the caller. */
   json?: unknown
-  /** Raw bytes with their type (the photo). */
-  bytes?: { data: Uint8Array; type: string }
+  /** Raw bytes with their type (the photo), or a `File` the browser streams (an attachment). */
+  bytes?: { data: Uint8Array | Blob; type: string }
+  /** Extra request headers for this call (an upload's `X-File-Name`). */
+  headers?: Record<string, string>
+  /** Cancels the request: it rejects with `UploadCancelled` and a request not yet sent is never sent. */
+  signal?: AbortSignal
+  /** This call's time limit in place of the transport's (an upload of a big file on a slow line). */
+  timeoutMs?: number
+}
+
+/** A call the caller cancelled with its `signal`. Not a failure to tell the person about. */
+export class UploadCancelled extends Error {
+  constructor() { super('Cancelled.'); this.name = 'UploadCancelled' }
 }
 
 export class Transport {
@@ -79,7 +90,8 @@ export class Transport {
     k.catch(() => undefined)
     // A write waits for the schemas before it is sent: it must not be saved by a server and then taken back for want of a parser.
     if (c.method !== 'GET') await k
-    const body = await this.send(c.method, c.path, c.json, c.bytes, k)
+    if (c.signal?.aborted) throw new UploadCancelled()
+    const body = await this.send(c.method, c.path, c.json, c.bytes, k, c.headers, c.signal, c.timeoutMs)
     const parsed = (await k).ANSWERS[c.schema].safeParse(body) as z.ZodSafeParseResult<z.infer<Contract['ANSWERS'][K]>>
     if (!parsed.success) {
       console.error(`Inhouse: ${c.method} ${c.path} answered something its schema refuses: ${parsed.error.message}`)
@@ -111,20 +123,25 @@ export class Transport {
     } finally { clearTimeout(timer) }
   }
 
-  private async send(method: string, path: string, json: unknown, bytes: Call<Answer>['bytes'], k: Promise<Contract>): Promise<unknown> {
-    const headers: Record<string, string> = { Accept: 'application/json', ...(await this.extra?.()) }
+  private async send(method: string, path: string, json: unknown, bytes: Call<Answer>['bytes'], k: Promise<Contract>, extraHeaders?: Record<string, string>, signal?: AbortSignal, timeoutMs?: number): Promise<unknown> {
+    const headers: Record<string, string> = { Accept: 'application/json', ...(await this.extra?.()), ...extraHeaders }
     let body: BodyInit | undefined
     if (bytes) { headers['Content-Type'] = bytes.type; body = bytes.data as BodyInit } else if (json !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(json) }
     // A request that never answers is given up: a write waiting behind it (its record's queue) would otherwise wait for ever.
     // The timer is `setTimeout`, not `AbortSignal.timeout`, so a test with fake timers can move it on.
     const ctl = new AbortController()
     let timedOut = false
-    const timer = setTimeout(() => { timedOut = true; ctl.abort() }, this.timeoutMs)
+    const timer = setTimeout(() => { timedOut = true; ctl.abort() }, timeoutMs ?? this.timeoutMs)
+    const cancel = () => ctl.abort()
+    signal?.addEventListener('abort', cancel, { once: true })
+    // Aborted while the schemas or the headers were awaited: the listener missed it.
+    if (signal?.aborted) ctl.abort()
     try {
       let res: Response
       try {
         res = await this.doFetch(this.origin + path, { method, headers, body, credentials: 'same-origin', redirect: 'manual', signal: ctl.signal })
       } catch {
+        if (signal?.aborted) throw new UploadCancelled()
         // Nothing came back: a timeout is the server not answering (told as `unavailable`, as a 5xx is), anything else is the connection.
         throw timedOut ? new AgentError('unavailable', MESSAGE.unavailable) : new AgentError('offline', MESSAGE.offline)
       }
@@ -133,7 +150,7 @@ export class Transport {
       const text = await res.text().catch(() => '')
       if (timedOut) throw new AgentError('unavailable', MESSAGE.unavailable)
       return await this.answer(res, text, k)
-    } finally { clearTimeout(timer) }
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel) }
   }
 
   private async answer(res: Response, text: string, k: Promise<Contract>): Promise<unknown> {

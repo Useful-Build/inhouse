@@ -30,6 +30,8 @@ export const ErrorReasonSchema = z.enum([
   // P3 (p3-design sections 4.3, 4.9 and 8; every P3 reason lands here in W1's first PR).
   'paused', 'draining', 'model_off', 'turn_ended', 'provider_changed', 'queue_full', 'key_reused', 'session_damaged',
   'waiting_answer', 'pool_full', 'budget_busy', 'too_many', 'bad_name',
+  // Route 39's refusals (the server sends them as `invalid`; the client tells them apart).
+  'type_not_allowed', 'length_required', 'length_mismatch', 'hash',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 
