@@ -17,6 +17,8 @@ export const ToolDetailSchema = z.object({
   since: InstantSchema.optional(),
   /** A tool being connected: when it goes live. */
   liveBy: InstantSchema.optional(),
+  /** P5: the hub's account id (`slack:workspace`). The client sends this, never the connector key, to the connect, pause and disconnect routes. */
+  accountId: z.string().optional(),
   /** P5: the member id of who connected it. */
   connectedBy: z.string().optional(),
   /** P5: the Inhouse team can disconnect it here (OAuth tools only; a tool set up in the deployment's config can't be). */

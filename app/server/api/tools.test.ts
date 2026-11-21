@@ -41,7 +41,7 @@ describe('route C: the merge', () => {
     expect(data.catalog).toEqual([])
     expect(data.readDone).toBe(2)
     expect(data.channels.map(c => [c.key, c.since.ms])).toEqual([['slack', NOW - 86_400_000]])
-    expect(data.details.slack).toMatchObject({ connectedBy: 'm_inhouse1', canDisconnect: true, paused: false, since: inst(NOW - 86_400_000) })
+    expect(data.details.slack).toMatchObject({ accountId: 'slack:workspace', connectedBy: 'm_inhouse1', canDisconnect: true, paused: false, since: inst(NOW - 86_400_000) })
     expect(data.details.shopify).toMatchObject({ paused: false })
     expect(data.details.shopify!.canDisconnect).toBeUndefined()
     expect(ToolsDataSchema.safeParse(data).success).toBe(true)
@@ -170,9 +170,9 @@ describe('route C handler', () => {
 
 describe('route D handler', () => {
   const put = (f: ReturnType<typeof fake>, p: Principal, key: string, body: unknown) => f.handlers.setToolPaused(ctx(p, 'PUT', `/api/tools/${key}/paused`, { accountId: key }, body))
-  it('Inhouse sets the pause by key or account id: the hub is called with the account id, one audit line, the new state answered', async () => {
+  it('Inhouse sets the pause by account id: the hub is called with the account id, one audit line, the new state answered', async () => {
     const f = fake()
-    const res = await put(f, inhouse, 'slack', { paused: true })
+    const res = await put(f, inhouse, 'slack:workspace', { paused: true })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ paused: true })
     expect(f.hubCalls).toEqual(['pause:slack:workspace:true'])
@@ -180,11 +180,14 @@ describe('route D handler', () => {
     const again = fake()
     expect((await put(again, inhouse, 'slack:workspace', { paused: false })).status).toBe(200)
     expect(again.hubCalls).toEqual(['pause:slack:workspace:false'])
+    // A connector key is not an account id: 404, no hub call.
+    expect((await put(again, inhouse, 'slack', { paused: true })).status).toBe(404)
+    expect(again.hubCalls).toEqual(['pause:slack:workspace:false'])
   })
   it('an Admin or Member that reached the handler is refused with no hub call and no line', async () => {
     for (const p of [admin, member]) {
       const f = fake()
-      expect((await put(f, p, 'slack', { paused: true })).status).toBe(403)
+      expect((await put(f, p, 'slack:workspace', { paused: true })).status).toBe(403)
       expect(f.hubCalls).toEqual([])
       expect(f.lines).toEqual([])
     }
@@ -192,11 +195,11 @@ describe('route D handler', () => {
   it('an unknown key is 404, a bad body is 400, a hub failure writes no line', async () => {
     const f = fake()
     expect((await put(f, inhouse, 'zendesk', { paused: true })).status).toBe(404)
-    expect((await put(f, inhouse, 'slack', { paused: 'yes' })).status).toBe(400)
-    expect((await put(f, inhouse, 'slack', { paused: true, ifRev: 1 })).status).toBe(400)
+    expect((await put(f, inhouse, 'slack:workspace', { paused: 'yes' })).status).toBe(400)
+    expect((await put(f, inhouse, 'slack:workspace', { paused: true, ifRev: 1 })).status).toBe(400)
     expect(f.hubCalls).toEqual([])
     const bad = fake({ hubFails: 'not_configured' })
-    const res = await put(bad, inhouse, 'slack', { paused: true })
+    const res = await put(bad, inhouse, 'slack:workspace', { paused: true })
     expect(res.status).toBe(409)
     expect(((await res.json()) as { error: { reason: string } }).error.reason).toBe('not_configured')
     expect(bad.lines).toEqual([])
@@ -208,7 +211,7 @@ describe('route E handler', () => {
   it('Inhouse disconnects Slack: the hub, the row write and one audit line; revoked is passed through true or false', async () => {
     for (const revoked of [true, false]) {
       const f = fake({ revoked })
-      const res = await post(f, inhouse, 'slack')
+      const res = await post(f, inhouse, 'slack:workspace')
       expect(res.status).toBe(200)
       expect(await res.json()).toEqual({ revoked })
       expect(f.hubCalls).toEqual(['disconnect:slack:workspace'])
@@ -218,7 +221,7 @@ describe('route E handler', () => {
   })
   it('Shopify is 409 not_disconnectable before any hub call or line', async () => {
     const f = fake()
-    const res = await post(f, inhouse, 'shopify')
+    const res = await post(f, inhouse, 'shopify:store')
     expect(res.status).toBe(409)
     expect(((await res.json()) as { error: { reason: string } }).error.reason).toBe('not_disconnectable')
     expect(f.hubCalls).toEqual([])
@@ -228,15 +231,16 @@ describe('route E handler', () => {
   it('an Admin or Member is refused, an unknown key is 404, a hub failure changes nothing', async () => {
     for (const p of [admin, member]) {
       const f = fake()
-      expect((await post(f, p, 'slack')).status).toBe(403)
+      expect((await post(f, p, 'slack:workspace')).status).toBe(403)
       expect(f.hubCalls).toEqual([])
       expect(f.lines).toEqual([])
     }
     const f = fake()
     expect((await post(f, inhouse, 'zendesk')).status).toBe(404)
-    expect((await post(f, inhouse, 'slack', { x: 1 })).status).toBe(400)
+    expect((await post(f, inhouse, 'slack')).status).toBe(404)
+    expect((await post(f, inhouse, 'slack:workspace', { x: 1 })).status).toBe(400)
     const bad = fake({ hubFails: 'internal' })
-    expect((await post(bad, inhouse, 'slack')).status).toBe(500)
+    expect((await post(bad, inhouse, 'slack:workspace')).status).toBe(500)
     expect(bad.lines).toEqual([])
     expect(bad.rowWrites).toEqual([])
   })

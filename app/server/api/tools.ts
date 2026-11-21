@@ -1,6 +1,6 @@
 // The Tools page's server side (P5 W3, p5-w3.md): route C reads the tools (the hub's accounts, the product's
 // `connector_accounts` rows and the catalog, merged, never inventing a tool), route D pauses or resumes one, route E
-// disconnects an OAuth one. Connect is W1's (`api/connect.ts`), not here. Technical routes: the Inhouse team writes, an
+// disconnects an OAuth one. Routes D and E take the hub's account id (`:accountId`), as W1's route A does. Connect is W1's (`api/connect.ts`), not here. Technical routes: the Inhouse team writes, an
 // Admin reads, a Member reads (the composer needs the list).
 //
 // The gateway and the D1 side arrive as ports (`ToolsDeps`), built per request by the orchestrator's wiring line
@@ -14,7 +14,7 @@ import { readBody, writer } from '../db/handler-kit.ts'
 import type { At } from '../db/members.ts'
 import { apiError, apiJson } from '../http.ts'
 import type { Handler, HandlerContext } from '../routes.ts'
-import { TOOL_CATALOG, catalogByAccount, catalogByKey } from './tools-catalog.ts'
+import { TOOL_CATALOG, catalogByAccount } from './tools-catalog.ts'
 import type { CatalogEntry } from './tools-catalog.ts'
 
 // ---- The hub's `ConnectGateway` (p5-w1.md section 3), mirrored for the types this file uses. ----
@@ -124,7 +124,7 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     }
     if (connecting) beingConnected.push(e.key)
 
-    const d: ToolDetail = { name: e.name, desc: e.desc, ex: e.ex, read: e.read, draft: e.draft, run: e.run, conn: e.conn, site: e.site }
+    const d: ToolDetail = { accountId: e.accountId, name: e.name, desc: e.desc, ex: e.ex, read: e.read, draft: e.draft, run: e.run, conn: e.conn, site: e.site }
     if (isConnected && connectedAtMs !== null) d.since = instant(connectedAtMs)
     if (connecting && row) d.liveBy = instant(row.lastStateAtMs + CONNECT_STATE_TTL_MS)
     if (connectedBy !== null) d.connectedBy = connectedBy
@@ -154,9 +154,8 @@ export function hubFailure(code: HubErrorCode): Response {
   return code === 'not_configured' ? apiError(api, { reason: 'not_configured' }) : apiError(api)
 }
 
-/** The catalog entry a path's `:accountId` names: the connector key (what the client sends) or the hub's account id. */
-const entryOf = (param: string | undefined): CatalogEntry | undefined =>
-  param === undefined ? undefined : catalogByKey(param) ?? catalogByAccount(param)
+/** The catalog entry a path's `:accountId` names: the hub's account id only (a connector key is unknown, 404). */
+const entryOf = (param: string | undefined): CatalogEntry | undefined => (param === undefined ? undefined : catalogByAccount(param))
 
 export function toolsHandlers(resolve: (c: HandlerContext) => ToolsDeps): { listTools: Handler; setToolPaused: Handler; disconnectTool: Handler } {
   /** Route C, `GET /api/tools`. */

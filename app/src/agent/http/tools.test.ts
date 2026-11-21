@@ -8,7 +8,7 @@ import { postToolConnect, postToolDisconnect, putToolPaused, readTools } from '.
 const instant = { iso: '2026-11-20T10:00:00.000Z', ms: Date.parse('2026-11-20T10:00:00.000Z') }
 const TOOLS = {
   connected: ['slack'], channels: [], beingConnected: [], lastRead: { default: instant }, catalog: [],
-  details: { slack: { name: 'Slack', desc: 'd', ex: [], read: 'r', draft: 'd', run: 'r', conn: 'c', site: 'slack.com', paused: false, canDisconnect: true } },
+  details: { slack: { accountId: 'slack:workspace', name: 'Slack', desc: 'd', ex: [], read: 'r', draft: 'd', run: 'r', conn: 'c', site: 'slack.com', paused: false, canDisconnect: true } },
   connection: {}, setup: {}, readDone: 1,
 }
 
@@ -34,27 +34,37 @@ describe('tools calls', () => {
   })
   test('route D sends the key and a body of exactly { paused }', async () => {
     const s = server(200, { paused: true })
-    expect(await putToolPaused(s.transport, await s.transport.contract(), 'slack', true)).toEqual({ paused: true })
-    expect(s.calls).toEqual([{ method: 'PUT', path: '/api/tools/slack/paused', body: { paused: true } }])
+    expect(await putToolPaused(s.transport, await s.transport.contract(), 'slack:workspace', true)).toEqual({ paused: true })
+    expect(s.calls).toEqual([{ method: 'PUT', path: '/api/tools/slack%3Aworkspace/paused', body: { paused: true } }])
   })
   test('route E posts to the key and answers revoked as the server said', async () => {
     const s = server(200, { revoked: false })
-    expect(await postToolDisconnect(s.transport, 'slack')).toEqual({ revoked: false })
-    expect(s.calls).toEqual([{ method: 'POST', path: '/api/tools/slack/disconnect', body: {} }])
+    expect(await postToolDisconnect(s.transport, 'slack:workspace')).toEqual({ revoked: false })
+    expect(s.calls).toEqual([{ method: 'POST', path: '/api/tools/slack%3Aworkspace/disconnect', body: {} }])
   })
   test('connect answers only the authorize URL, whatever else the server adds', async () => {
     const s = server(200, { authorizeUrl: 'https://slack.com/oauth/v2/authorize?x=1', expiresAt: instant })
-    expect(await postToolConnect(s.transport, 'slack')).toEqual({ authorizeUrl: 'https://slack.com/oauth/v2/authorize?x=1' })
-    expect(s.calls[0]).toEqual({ method: 'POST', path: '/api/connect/slack/start', body: {} })
+    expect(await postToolConnect(s.transport, 'slack:workspace')).toEqual({ authorizeUrl: 'https://slack.com/oauth/v2/authorize?x=1' })
+    expect(s.calls[0]).toEqual({ method: 'POST', path: '/api/connect/slack%3Aworkspace/start', body: {} })
   })
-  test('a key is escaped into the path', async () => {
+  test('the account id from the Tools data is what every route gets, never the connector key', async () => {
+    const s = server(200, { revoked: true, paused: true, authorizeUrl: 'https://slack.com/a' })
+    const id = TOOLS.details.slack.accountId
+    await postToolConnect(s.transport, id)
+    await putToolPaused(s.transport, await s.transport.contract(), id, true)
+    await postToolDisconnect(s.transport, id)
+    expect(id).toBe('slack:workspace')
+    expect(s.calls.map(c => c.path)).toEqual(['/api/connect/slack%3Aworkspace/start', '/api/tools/slack%3Aworkspace/paused', '/api/tools/slack%3Aworkspace/disconnect'])
+    for (const c of s.calls) expect(decodeURIComponent(c.path).split('/')).not.toContain('slack')
+  })
+  test('an id is escaped into the path', async () => {
     const s = server(200, { revoked: true })
     await postToolDisconnect(s.transport, 'a/b')
     expect(s.calls[0]?.path).toBe('/api/tools/a%2Fb/disconnect')
   })
   test('a refusal rejects with the error code', async () => {
     const s = server(409, { error: { code: 'conflict', reason: 'not_disconnectable' } })
-    const e = await postToolDisconnect(s.transport, 'shopify').catch((x: unknown) => x)
+    const e = await postToolDisconnect(s.transport, 'shopify:store').catch((x: unknown) => x)
     expect(e).toBeInstanceOf(AgentError)
     expect(e).toMatchObject({ code: 'conflict', reason: 'not_disconnectable' })
   })
