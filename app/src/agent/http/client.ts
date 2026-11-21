@@ -986,8 +986,17 @@ export class HttpAgent implements AgentClient {
   send = async (chatId: string, input: Parameters<AgentClient['send']>[1]) => {
     const k = await this.http.contract().catch((e: unknown): never => { console.error('Inhouse: the schemas chunk did not load.', e); throw new AgentError('unavailable', MESSAGE.unavailable) })
     await this.lanes.get(`chat:${chatId}`)
-    try { return await postTurn(this.http, k, chatId, input) } catch (e) {
+    try {
+      const sent = await postTurn(this.http, k, chatId, input)
+      // The agent took the message, so it is not paused now: the page read the pause state when it loaded and nothing tells it
+      // an Admin resumed since, so the send is the proof. (A send is the one moment the person acts on that state.)
+      if (this.s.pause.paused) this.patch({ pause: { paused: false, at: null, by: null } })
+      return sent
+    } catch (e) {
       if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
+      // Refused as paused: the page may not know yet (an Admin paused after it loaded), and a known pause may carry another
+      // time and person: read the real state, once, instead of guessing it.
+      if (e instanceof AgentError && e.reason === REASON.paused) void this.loadPause()
       throw e
     }
   }

@@ -331,6 +331,38 @@ describe('models (route 38)', () => {
   })
 })
 
+describe('the pause state a send proves or reveals (QA round 2: a Member\'s page kept the paused banner after an Admin resumed)', () => {
+  const input = { clientTurnKey: 'key-12345', text: 'What is low on stock?', model: 'sonnet' }
+  const sentOk = { status: 202, body: { runId: RUN, turnId: TURN, messageId: `${TURN}.u`, position: 'starting' } }
+  test('a send the agent accepts clears the paused state the page read on load', async () => {
+    const { agent, calls } = await loaded({ ...reads({ pause: { paused: true, at: iso(4000), by: ME_ID } }), 'POST /api/chats/c1/turns': sentOk })
+    expect(agent.getSnapshot().paused).toEqual(iso(4000))
+    await agent.send('c1', input)
+    expect(agent.getSnapshot().paused).toBeNull()
+    expect(calls.filter(c => c.path === '/api/pause')).toHaveLength(1) // no extra read: the send is the proof
+  })
+  test('a send refused as paused reads the real state once, so a page that did not know shows the pause (with its real time)', async () => {
+    let paused = false
+    const { agent, calls } = await loaded({
+      ...reads(),
+      'GET /api/pause': () => ({ body: paused ? { paused: true, at: iso(7000), by: ME_ID } : { paused: false, at: null, by: null } }),
+      'POST /api/chats/c1/turns': refusal(403, 'forbidden', { reason: 'paused' }),
+    })
+    expect(agent.getSnapshot().paused).toBeNull()
+    paused = true // an Admin pauses after the page loaded
+    expect(await errorOf(agent.send('c1', input))).toMatchObject({ code: 'forbidden', reason: 'paused' })
+    await new Promise(r => setTimeout(r, 0))
+    expect(agent.getSnapshot().paused).toEqual(iso(7000))
+    expect(calls.filter(c => c.path === '/api/pause')).toHaveLength(2)
+  })
+  test('a send refused for another reason leaves the pause state alone and reads nothing', async () => {
+    const { agent, calls } = await loaded({ ...reads({ pause: { paused: true, at: iso(4000), by: ME_ID } }), 'POST /api/chats/c1/turns': refusal(403, 'forbidden', { reason: 'model_off' }) })
+    await errorOf(agent.send('c1', input))
+    expect(agent.getSnapshot().paused).toEqual(iso(4000))
+    expect(calls.filter(c => c.path === '/api/pause')).toHaveLength(1)
+  })
+})
+
 describe('pause and resume (routes 35 to 37)', () => {
   test('the pause state is read on start and is the snapshot\'s `paused`', async () => {
     const { agent } = await loaded(reads({ pause: { paused: true, at: iso(4000), by: ME_ID } }))
