@@ -146,7 +146,8 @@ test('a file the agent wrote to outputs/ is listed, and downloads for any member
   needsContainer()
   const chat = await createChat(request, dana)
   const sent = await send(request, dana, chat, 'scenario:write-output make the table')
-  expect(textOf(await answerOf(request, dana, chat, sent.turnId))).toBe('Saved outputs/table.csv.')
+  // The turn says two things in order: the text before its Bash call, then the answer after it (textOf joins the parts).
+  expect(textOf(await answerOf(request, dana, chat, sent.turnId))).toBe('Writing the table.\nSaved outputs/table.csv.')
   let out: { fileId: string; kind: string; name: string; path: string; bytes: number }[] = []
   await expect.poll(async () => {
     const l = await call(request, dana, 'GET', `/api/chats/${chat}/files`)

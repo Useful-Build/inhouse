@@ -20,7 +20,7 @@ import type { Sent } from './chat-kit.ts'
 
 const dana = actor('memberA')
 const admin = actor('admin')
-test.describe.configure({ mode: 'serial' })
+// Not `serial`: each test has its own chat and cleans up after itself, so one failing test doesn't hide the others.
 
 interface Stored { id: string; role: string; turnId: string; end?: Record<string, unknown>; part?: unknown }
 const stored = async (request: APIRequestContext, chat: string): Promise<Stored[]> => {
