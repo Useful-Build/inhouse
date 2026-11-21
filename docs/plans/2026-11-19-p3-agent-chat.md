@@ -1,6 +1,7 @@
 # P3: agent chat (`fleet/agent-chat`)
 
-Status: locked and approved by Wasim, 2026-11-19. Phase plan under the backend plan
+Status: locked and approved by Wasim, 2026-11-19. Build state (2026-11-21): every wave is merged into `fleet/agent-chat`;
+the ship gate and the final PR are next, and the model choice waits on Wasim. Phase plan under the backend plan
 (`docs/plans/2026-11-19-backend.md`). Common rules are in its "Phase schedule (waves)" section. P0 records:
 [S1](../decisions/p0-s1-runner.md), [S2](../decisions/p0-s2-container-guards.md),
 [S3](../decisions/p0-s3-previews.md), [S5](../decisions/p0-s5-memory-tool-choice.md).
