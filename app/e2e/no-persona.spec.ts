@@ -7,6 +7,7 @@
 import { expect, test, type Fx } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 import { everything } from './page-text.js'
+import { openTraceFrom } from './support/steps.js'
 
 const STAGES = ['Watch', 'Act', 'Run'] as const
 const SCENARIOS = ['Normal', 'First day', 'Loading', 'Tool disconnected', 'Cap reached'] as const
@@ -248,7 +249,7 @@ for (const size of SIZES) {
         if (!noData) {
           await go(page, '#/chats/stuck')
           await expect(main.getByText('Which orders are stuck over 3 days?').first()).toBeVisible()
-          await main.getByRole('button', { name: /\d+ steps/ }).last().click()
+          await openTraceFrom(main.getByRole('button', { name: /\d+ steps/ }).last())
           await traceWindow(page, `${label} chat trace (stuck)`, true)
 
           await go(page, '#/chats/refunds')
@@ -275,7 +276,7 @@ for (const size of SIZES) {
           await composerMenus(page, `${label} chat`, phone)
           const generic = main.getByRole('button', { name: /\d+ steps/ })
           if (await generic.count()) {
-            await generic.last().click()
+            await openTraceFrom(generic.last())
             await traceWindow(page, `${label} chat trace (generic)`, true)
           }
         } else {
@@ -297,7 +298,7 @@ for (const size of SIZES) {
           await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
           await expect(main.getByRole('button', { name: /\d+ steps/ })).toHaveCount(before + 1, { timeout: 30_000 })
           await check(page, `${label} routine answer`)
-          await main.getByRole('button', { name: /\d+ steps/ }).last().click()
+          await openTraceFrom(main.getByRole('button', { name: /\d+ steps/ }).last())
           await traceWindow(page, `${label} chat trace (routine)`, true)
         }
       })

@@ -40,7 +40,7 @@ async function dotsBehind(page: Page, selectors: string[]) {
   expect(tops).toEqual(selectors.map(() => 'ok'))
 }
 
-test('All chats has the plain background; dots sit behind the cards on Today and in a chat', async ({ page }) => {
+test('All chats and a chat that has started have the plain background; dots sit behind the cards on Today and in an empty new chat', async ({ page }) => {
   await start(page, '#/chats/all')
   await expect(page.getByRole('heading', { name: 'All chats' })).toBeVisible()
   await expect(page.locator('div:has(> main) > div[aria-hidden="true"]')).toHaveCount(0)
@@ -50,10 +50,17 @@ test('All chats has the plain background; dots sit behind the cards on Today and
   await expect(page.getByRole('heading', { level: 1 })).toContainText('things need you')
   await dotsBehind(page, ['.today-card', '[data-composer]'])
 
+  // A chat with messages has no dot grid, only the page colour.
   await page.goto('/?demo#/chats')
   await expect(page.getByRole('textbox', { name: 'Message your Inhouse agent' })).toBeVisible()
-  await dotsBehind(page, ['[data-composer]', '[data-chat-msg]'])
+  await expect(page.locator('[data-chat-msg]').first()).toBeVisible()
+  await expect(page.locator('div:has(> main) > div[aria-hidden="true"]')).toHaveCount(0)
   await shot(page, 'chat-1440')
+
+  // An empty new chat keeps the dots.
+  await page.goto('/?demo#/chats/new')
+  await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+  await dotsBehind(page, ['[data-composer]'])
 })
 
 test('Today shows only the title, the composer and the Needs you cards, at every stage', async ({ page }) => {

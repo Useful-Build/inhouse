@@ -3,6 +3,7 @@
 import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 import { atRest } from './states.js'
+import { openTraceFrom } from './support/steps.js'
 
 async function start(page: Page, stage: 'Watch' | 'Act' | 'Run', scenario = 'Normal', hash = '#/today') {
   await fxFor(page, undefined).seed({ stage, scenario, demo: { ambient: 'Always', animateMark: true } })
@@ -78,7 +79,7 @@ test('Chat: the stuck-orders question always gives the same table and a 6-step, 
   await expect(chat.getByText('Not picked at ShipBob')).toHaveCount(1)
   await page.screenshot({ path: test.info().outputPath('chat-stuck.png') })
 
-  await chat.getByRole('button', { name: /6 steps/ }).last().click()
+  await openTraceFrom(chat.getByRole('button', { name: /6 steps/ }).last())
   const trace = page.getByRole('dialog', { name: /What your Inhouse agent did/ })
   await expect(trace).toContainText('Which orders are stuck over 3 days?')
   await expect(trace).toContainText('9.4s')

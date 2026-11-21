@@ -145,9 +145,12 @@ test('Dark, by keyboard: the problem panel, the trace window, a file viewer and 
   await attach(page, 'problem-panel')
   await escapeTo(page, panel, review)
 
-  // The trace window, from an answer's steps link.
+  // The trace window, from the Details link in an answer's step list (its steps line opens the list).
   await open(page, fx, '#/chats/stuck', '3 orders · $556')
-  const steps = page.locator('main').getByRole('button', { name: /6 steps/ }).last()
+  const stepsLine = page.locator('main').getByRole('button', { name: /6 steps/ }).last()
+  await press(stepsLine)
+  await expect(stepsLine).toHaveAttribute('aria-expanded', 'true')
+  const steps = stepsLine.locator('xpath=..').getByRole('button', { name: 'Details', exact: true })
   await press(steps)
   const trace = page.getByRole('dialog', { name: /What your Inhouse agent did/ })
   await expect(trace).toContainText('9.4s')

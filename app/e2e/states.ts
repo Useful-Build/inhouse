@@ -5,6 +5,7 @@
 import { expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { mockClient, routeReady } from './support/clients/mock.js'
+import { openTraceFrom } from './support/steps.js'
 
 export const THEMES = ['light', 'dark'] as const
 export type Theme = (typeof THEMES)[number]
@@ -102,7 +103,7 @@ export const STATES: UiState[] = [
   {
     name: 'pop-trace', stage: 'Act', scenario: 'Normal', hash: '#/chats/stuck', ready: '3 orders · $556', a11y: true,
     act: async page => {
-      await page.locator('main').getByRole('button', { name: /6 steps/ }).last().click()
+      await openTraceFrom(page.locator('main').getByRole('button', { name: /6 steps/ }).last())
       await expect(page.getByRole('dialog', { name: /What your Inhouse agent did/ })).toContainText('9.4s')
     },
   },

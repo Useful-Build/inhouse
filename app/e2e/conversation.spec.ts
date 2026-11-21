@@ -1,5 +1,5 @@
 // PR 4, the conversation: auto-scroll only near the bottom with Jump to latest, Copy and Edit on your own messages,
-// Regenerate and thumbs on answers, the mode and time in the steps button, the steps link on an error turn, and
+// Regenerate and thumbs on answers, the mode and time in the opened step list, the steps line on an error turn, and
 // markdown answers (a code block with Copy, a wide table that scrolls inside its wrapper).
 import { expect, fxFor, test } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
@@ -55,8 +55,12 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await expect(log(page).getByRole('region', { name: 'Code block 1, sql' })).toHaveAttribute('tabindex', '0')
   await expect(log(page).getByRole('region', { name: /^Table 1: SKU, Product, Units$/ })).toHaveAttribute('tabindex', '0')
 
-  // The answer shows the mode that answered and when, inside the steps button.
-  await expect(stepsButtons(page).last()).toHaveText(/^Smart · \d+ steps · [\d.]+m?s · \d{1,2}:\d\d\s[AP]M(chevron_right)?$/)
+  // The answer's steps line names the tools it read and the step count; opened, the list ends with the mode that answered,
+  // how long it took and when.
+  await expect(stepsButtons(page).last()).toContainText(/Checked Shopify · \d+ steps/)
+  await stepsButtons(page).last().click()
+  await expect(stepsButtons(page).last()).toHaveAttribute('aria-expanded', 'true')
+  await expect(log(page).locator('[data-steps-meta]').last()).toHaveText(/^Smart · [\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
 
   // Copy code puts the query on the clipboard.
   await code.getByRole('button', { name: 'Copy code block 1, sql' }).click()
@@ -90,28 +94,27 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   expect((await scrollState(page)).fromBottom).toBeLessThanOrEqual(1)
   await expect(jump).toHaveCount(0)
 
-  // An earlier answer: its actions hide until hover while its steps line shows, at the row's left edge, and doesn't move
-  // when the actions show.
+  // An earlier answer: its actions hide until hover, sit at the row's left edge, and don't move when they show. Its steps
+  // line is above its card, so it is not part of the row.
   await page.mouse.move(5, 5)
-  const earlier = stepsButtons(page).first()
-  const bar = earlier.locator('xpath=..')
-  const actions = bar.locator('[data-answer-actions]')
+  const earlier = log(page).locator('[data-answer]').first()
+  const actions = earlier.locator('[data-answer-actions]')
+  const bar = actions.locator('xpath=..')
   const opacity = (l: Locator) => l.evaluate(el => getComputedStyle(el).opacity)
   await expect.poll(() => opacity(actions)).toBe('0')
-  expect(await opacity(earlier)).toBe('1')
   expect(await opacity(bar)).toBe('1')
   const x = async (l: Locator) => (await l.boundingBox())!.x
-  const atRest = await x(earlier)
+  const atRest = await x(actions)
   expect(atRest - await x(bar)).toBeLessThanOrEqual(8)
   await bar.hover()
   await expect.poll(() => opacity(actions)).toBe('1')
-  expect(await x(earlier)).toBe(atRest)
-  // Opening More doesn't move the steps line or the More button under the pointer.
+  expect(await x(actions)).toBe(atRest)
+  // Opening More doesn't move the actions or the More button under the pointer.
   const more = bar.getByRole('button', { name: 'More' })
   const moreAt = await x(more)
   await more.click()
   await expect(page.getByRole('menu', { name: 'Message actions' })).toBeVisible()
-  expect(await x(earlier)).toBe(atRest)
+  expect(await x(actions)).toBe(atRest)
   expect(await x(more)).toBe(moreAt)
   await page.keyboard.press('Escape')
   await expect(page.getByRole('menu', { name: 'Message actions' })).toHaveCount(0)
@@ -152,14 +155,13 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   expect(await old!.evaluate(el => el.isConnected)).toBe(false)
   await expect(log(page).locator('[data-chat-msg]').getByText(REFUNDS_Q, { exact: true })).toHaveCount(1)
   await expect(stepsButtons(page)).toHaveCount(before + 1)
-  await expect(stepsButtons(page).last()).toHaveText(/^Smart · /)
+  await expect(stepsButtons(page).last()).toContainText(/Checked Gorgias and Shopify · \d+ steps/)
   await expect(composer(page)).toHaveValue('Draft I keep')
 
-  // The newest answer behaves like the earlier ones: at rest only its steps line shows; hover or keyboard focus shows
-  // the actions.
+  // The newest answer behaves like the earlier ones: at rest its actions are hidden; hover or keyboard focus shows them.
   const fresh = msg(page, REFUNDS_A).last()
   const freshSteps = stepsButtons(page).last()
-  const freshActions = freshSteps.locator('xpath=..').locator('[data-answer-actions]')
+  const freshActions = fresh.locator('[data-answer-actions]')
   await page.mouse.move(5, 5)
   await expect.poll(() => opacity(freshActions)).toBe('0')
   expect(await opacity(freshSteps)).toBe('1')
@@ -169,8 +171,7 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await shot(page, 'newest-answer-hover')
   await page.mouse.move(5, 5)
   await expect.poll(() => opacity(freshActions)).toBe('0')
-  await freshSteps.focus()
-  await page.keyboard.press('Tab')
+  await fresh.getByRole('button', { name: 'Reply', exact: true }).focus()
   await expect(fresh.getByRole('button', { name: 'Reply', exact: true })).toBeFocused()
   await expect.poll(() => opacity(freshActions)).toBe('1')
   await shot(page, 'newest-answer-focus')
@@ -212,7 +213,7 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await expect(msg(page, REFUNDS_A).last().getByRole('button', { name: 'Bad answer' })).toHaveAttribute('aria-pressed', 'true')
 })
 
-test('Conversation: an error turn has a steps link that opens the trace, and the empty chat names only connected tools', async ({ page }) => {
+test('Conversation: an error turn has a steps line that opens the trace, and the empty chat names only connected tools', async ({ page }) => {
   await start(page, 'Tool disconnected', '#/chats/stuck')
   await expect(main(page).getByText('Which orders are stuck over 3 days?').first()).toBeVisible()
 
@@ -222,9 +223,12 @@ test('Conversation: an error turn has a steps link that opens the trace, and the
   await expect(err).toBeVisible({ timeout: 15_000 })
   const steps = err.getByRole('button', { name: /\d+ steps/ })
   await expect(steps).toBeVisible()
-  await expect(steps).toHaveText(/\d+ steps · [\d.]+m?s · \d{1,2}:\d\d\s[AP]M(chevron_right)?$/)
-  await shot(page, 'error-turn-steps')
+  // No tool was read, so the line is only the step count; opened, the list ends with how long it took and when.
+  await expect(steps).toContainText(/^check\d+ stepsexpand_more$/)
   await steps.click()
+  await expect(err.locator('[data-steps-meta]')).toHaveText(/^[\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
+  await shot(page, 'error-turn-steps')
+  await err.getByRole('button', { name: 'Details', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toHaveCount(0)

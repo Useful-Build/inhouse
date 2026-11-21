@@ -8,11 +8,12 @@
 // gives back the draft, its file and its quote, and another chat or a new one never shows the quote from before the
 // edit; a suggestion asks without the composer's file or quote and leaves them there, in an edit or not; deleting a chat mid-answer pauses its queue (Undo brings it back paused);
 // a queued message's Edit waits while another is edited; All chats keeps its time column on the
-// card's edge through Select. On a phone: the answer row is Copy, steps and "···" (D3) with the thumbs as radio items,
+// card's edge through Select. On a phone: the answer row is Copy and "···" (D3; its steps line is above the card) with the thumbs as radio items,
 // every step name in the trace reads in full, Send now on the last queued message puts focus on "+" (never Stop), and
 // Select mode's bar never covers the last chat.
 import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
+import { openTraceFrom } from './support/steps.js'
 import { atRest } from './states.js'
 
 async function start(page: Page, hash: string) {
@@ -159,7 +160,7 @@ test.describe('desktop', () => {
     const mdAnswer = log(page).locator('[data-answer]').filter({ has: page.locator('[data-md-code]') })
     await expect(mdAnswer).toHaveCount(1)
     await expect(mdAnswer.getByRole('button', { name: /\d+ steps/ })).toContainText('3 steps')
-    await mdAnswer.getByRole('button', { name: /\d+ steps/ }).click()
+    await openTraceFrom(mdAnswer.getByRole('button', { name: /\d+ steps/ }))
     const trace = page.getByRole('dialog', { name: 'What your Inhouse agent did' })
     await expect(trace).toBeVisible()
     await expect(trace.getByText('Last week by SKU')).toBeVisible()
@@ -641,13 +642,13 @@ test.describe('desktop', () => {
 test.describe('phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
 
-  test('Phone: the answer row is Copy, steps and More, and every step name in the trace reads in full', async ({ page }) => {
+  test('Phone: the answer row is Copy and More, and every step name in the trace reads in full', async ({ page }) => {
     await start(page, '#/chats/stuck')
     const answer = log(page).locator('[data-answer]').first()
     await expect(answer).toBeVisible()
     const bar = answer.getByRole('button', { name: 'Copy message' }).locator('xpath=..')
-    const names = await bar.locator('button').evaluateAll(els => els.map(el => el.getAttribute('aria-label') ?? (el.textContent?.includes('steps') ? 'steps' : '')))
-    expect(names).toEqual(['Copy message', 'steps', 'More'])
+    const names = await bar.locator('button').evaluateAll(els => els.map(el => el.getAttribute('aria-label') ?? ''))
+    expect(names).toEqual(['Copy message', 'More'])
     await answer.getByRole('button', { name: 'More', exact: true }).click()
     const menu = page.getByRole('menu', { name: 'Message actions' })
     for (const n of ['Reply', 'Report a wrong answer', 'Delete']) await expect(menu.getByRole('menuitem', { name: n })).toBeVisible()
@@ -662,7 +663,7 @@ test.describe('phone', () => {
     await expect(menu).toHaveCount(0)
 
     // The steps open as a plain list: every name wraps inside the window, none is cut.
-    await answer.getByRole('button', { name: /\d+ steps/ }).click()
+    await openTraceFrom(answer.getByRole('button', { name: /\d+ steps/ }))
     const trace = page.getByRole('dialog', { name: 'What your Inhouse agent did' })
     await expect(trace).toBeVisible()
     const list = trace.getByRole('list', { name: 'Steps' })

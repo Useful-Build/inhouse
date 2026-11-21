@@ -126,8 +126,14 @@ Chat: Dictate
 Chat: answer actions
   Path:     answer -> hover or Tab into the row -> Reply, Copy, Regenerate, thumbs, More; More -> Send to #channel, Report a wrong answer, Delete
   Selector: answer row buttons, `[data-answer-actions]`, menu "Message actions"
-  Expected: at rest every answer (the newest too) shows only its steps line; hover or keyboard focus shows the actions and an open More menu keeps them; the menu has exactly Send to #channel (when a channel is connected), Report a wrong answer and Delete; the phone row is Copy, steps and More; markdown renders, Jump to latest appears when scrolled up mid-stream, steps open the trace
+  Expected: at rest every answer (the newest too) hides its actions; hover or keyboard focus shows them and an open More menu keeps them; the menu has exactly Send to #channel (when a channel is connected), Report a wrong answer and Delete; the phone row is Copy and More; markdown renders, Jump to latest appears when scrolled up mid-stream
   Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts
+
+Chat: working line, steps and sources
+  Path:     ask a question -> watch the answer's card while it writes -> the finished answer
+  Selector: `[data-thinking]`, `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
+  Expected: while it writes, one line: the moving agent mark, the logo of the tool a step names (round), and the step's text with a light sweep (plain muted text under reduced motion), new text fading up; text arrives a few words at a time and is all there when the answer ends (not under reduced motion); a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" when no connected tool was read) that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill (overlapping round tool logos, up to 3 then +N, "{N} sources", chevron) that opens a plain list of title, "{tool} · what it read" and time, with no numbered chips anywhere and no pill when the answer cites nothing; a draft to approve is its own brand-tint card after the answer's card; a chat with messages has no dot grid (Today and an empty new chat keep it); the column is 880px, an answer's text about 620px and your message about 520px
+  Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts, e2e/sample-data.spec.ts, e2e/memory.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts, e2e/overlays-keyboard.spec.ts, e2e/no-persona.spec.ts
 
 Chat: queue and edit
   Path:     send two messages mid-answer, Edit a question

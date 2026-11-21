@@ -1,6 +1,7 @@
 // A small markdown renderer for the agent's text parts: paragraphs and line breaks, headings, rules, bold, italic,
 // inline code, code blocks (with Copy), quotes, bullet and numbered lists (one level of nesting), links and tables
 // (which scroll sideways when wide). No HTML is ever passed through: everything renders as React text.
+import { Fragment } from 'react'
 import type { ReactNode } from 'react'
 import { IconButton } from '../../ui'
 import { copyText } from './copy'
@@ -123,42 +124,48 @@ const LINK = /^\[([^\]]+)\]\((.+)\)$/
 const SAFE_HREF = /^(https?:|mailto:|#)/i
 const WORD = /\w/
 
-function inline(text: string, key = 'i'): ReactNode[] {
+/** Plain text as words, each in its own span. A span keeps its key as the text grows, so only the words that are new mount, and the mount fades them in. */
+function words(text: string, key: string): ReactNode {
+  return <Fragment key={key}>{(text.match(/\S+\s*|\s+/g) ?? []).map((w, i) => <span key={i} className="animate-word-in">{w}</span>)}</Fragment>
+}
+
+function inline(text: string, key = 'i', fade = false): ReactNode[] {
   const out: ReactNode[] = []
+  const plain = (t: string) => (fade ? words(t, `${key}-s${out.length}`) : t)
   const re = new RegExp(INLINE.source, 'g')
   let from = 0, n = 0
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const before = text[m.index - 1] ?? ''
     // An italic star or underscore must not follow a letter (or another star): try again one character on.
     if ((m[4] && (WORD.test(before) || before === '*')) || (m[5] && WORD.test(before))) { re.lastIndex = m.index + 1; continue }
-    if (m.index > from) out.push(text.slice(from, m.index))
+    if (m.index > from) out.push(plain(text.slice(from, m.index)))
     const tok = m[0], k = `${key}-${n++}`
     if (m[1]) out.push(<code key={k} className="rounded-sm bg-muted px-1 py-0.5 font-mono text-sm">{tok.slice(1, -1)}</code>)
     else if (m[2]) {
       const [, label, href] = LINK.exec(tok)!
       const external = /^https?:/i.test(href)
       out.push(SAFE_HREF.test(href)
-        ? <a key={k} href={href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})} className="font-medium underline underline-offset-2 hover:text-foreground-2">{inline(label, k)}</a>
+        ? <a key={k} href={href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})} className="font-medium underline underline-offset-2 hover:text-foreground-2">{inline(label, k, fade)}</a>
         : label)
     }
-    else if (m[3]) out.push(<strong key={k} className="font-semibold">{inline(tok.slice(2, -2), k)}</strong>)
-    else out.push(<em key={k}>{inline(tok.slice(1, -1), k)}</em>)
+    else if (m[3]) out.push(<strong key={k} className="font-semibold">{inline(tok.slice(2, -2), k, fade)}</strong>)
+    else out.push(<em key={k}>{inline(tok.slice(1, -1), k, fade)}</em>)
     from = m.index + tok.length
   }
-  if (from < text.length) out.push(text.slice(from))
+  if (from < text.length) out.push(plain(text.slice(from)))
   return out
 }
 
-const withBreaks = (lines: string[], key: string) =>
-  lines.flatMap((l, j) => (j ? [<br key={`${key}-br${j}`} />, ...inline(l, `${key}-${j}`)] : inline(l, `${key}-${j}`)))
+const withBreaks = (lines: string[], key: string, fade: boolean) =>
+  lines.flatMap((l, j) => (j ? [<br key={`${key}-br${j}`} />, ...inline(l, `${key}-${j}`, fade)] : inline(l, `${key}-${j}`, fade)))
 
 const HEADING_LOOK = ['text-xl font-semibold tracking-section', 'text-lg font-semibold', 'text-md font-semibold']
 
-function ListView({ list, k }: { list: List; k: string }) {
+function ListView({ list, k, fade }: { list: List; k: string; fade: boolean }) {
   const items = list.items.map((it, j) => (
     <li key={j}>
-      {inline(it.text, `${k}-${j}`)}
-      {it.sub && <ListView list={it.sub} k={`${k}-${j}s`} />}
+      {inline(it.text, `${k}-${j}`, fade)}
+      {it.sub && <ListView list={it.sub} k={`${k}-${j}s`} fade={fade} />}
     </li>
   ))
   return list.ordered
@@ -167,7 +174,8 @@ function ListView({ list, k }: { list: List; k: string }) {
 }
 
 /** The blocks of a text part. A blank line between paragraphs keeps its old height (one line). */
-export function Markdown({ text }: { text: string }) {
+/** `fade`: the text is being revealed, so its plain words each fade in as they first show (reveal.ts). */
+export function Markdown({ text, fade = false }: { text: string; fade?: boolean }) {
   const blocks = parseBlocks(text)
   // Code blocks and tables are numbered, so each scroll area and Copy button has its own name.
   const numbered = (kind: Block['k']) => { let n = 0; return blocks.map(b => (b.k === kind ? ++n : 0)) }
@@ -177,16 +185,16 @@ export function Markdown({ text }: { text: string }) {
       {blocks.map((b, i) => {
         const key = `b${i}`
         switch (b.k) {
-          case 'p': return <p key={key}>{withBreaks(b.lines, key)}</p>
+          case 'p': return <p key={key}>{withBreaks(b.lines, key, fade)}</p>
           case 'h': {
             // The chat page has no h1 or h2 of its own (its title is in the top bar), so an answer's # is an h2, ## an h3
             // and so on down to h6.
             const Tag = (['h2', 'h3', 'h4', 'h5', 'h6', 'h6'] as const)[b.level - 1]
-            return <Tag key={key} className={`-mb-3 leading-heading ${HEADING_LOOK[Math.min(b.level, 3) - 1]}`}>{inline(b.text, key)}</Tag>
+            return <Tag key={key} className={`-mb-3 leading-heading ${HEADING_LOOK[Math.min(b.level, 3) - 1]}`}>{inline(b.text, key, fade)}</Tag>
           }
           case 'hr': return <hr key={key} className="border-0 border-t border-divider" />
-          case 'quote': return <blockquote key={key} className="border-l-2 border-border-strong pl-3.5 text-foreground-2">{withBreaks(b.lines, key)}</blockquote>
-          case 'list': return <ListView key={key} list={b.list} k={key} />
+          case 'quote': return <blockquote key={key} className="border-l-2 border-border-strong pl-3.5 text-foreground-2">{withBreaks(b.lines, key, fade)}</blockquote>
+          case 'list': return <ListView key={key} list={b.list} k={key} fade={fade} />
           case 'code': {
             const label = `Code block ${codeNo[i]}${b.lang ? `, ${b.lang}` : ''}`
             return (
