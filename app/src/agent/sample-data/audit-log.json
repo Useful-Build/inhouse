@@ -1,0 +1,47 @@
+{
+  "note": "Only changes to how the agent is allowed to work. Work itself belongs in Activity. Pausing the agent adds a row at the top.",
+  "entries": [
+    {
+      "who": "Sam Mercer",
+      "what": "changed an approval rule",
+      "detail": "Orders over $5,000: anyone who approves → Dana Kim",
+      "at": "0d 07:52"
+    },
+    {
+      "who": "Inhouse team",
+      "what": "connected Meta Ads",
+      "detail": "Read only",
+      "at": "-3d 15:30"
+    },
+    {
+      "who": "Inhouse team",
+      "what": "added a skill",
+      "detail": "Supplier chase, tested on 6 past orders",
+      "at": "-4d 11:20"
+    },
+    {
+      "who": "Alex Romero (Inhouse team)",
+      "what": "signed in to fix a connection",
+      "detail": "Xero · 14 minutes",
+      "at": "-5d 16:05"
+    },
+    {
+      "who": "Dana Kim",
+      "what": "raised the spending cap",
+      "detail": "$200 → $250 a month",
+      "at": "-5d 10:40"
+    },
+    {
+      "who": "Sam Mercer",
+      "what": "changed a role",
+      "detail": "Leo Park: Member → Approver",
+      "at": "-6d 14:15"
+    },
+    {
+      "who": "Leo Park",
+      "what": "taught your Inhouse agent a team rule",
+      "detail": "Offer a refund before a discount",
+      "at": "-11d 09:30"
+    }
+  ]
+}

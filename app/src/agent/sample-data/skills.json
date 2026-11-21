@@ -1,0 +1,104 @@
+{
+  "fieldGuide": {
+    "need": "lowest stage index",
+    "mine": "made by the brand team in a chat"
+  },
+  "skills": [
+    {
+      "n": "Morning check",
+      "d": "Reads every tool at 6:00 AM and ranks what needs you.",
+      "icon": "wb_twilight",
+      "need": 0,
+      "by": "Inhouse team",
+      "used": "Every weekday"
+    },
+    {
+      "n": "Answers with sources",
+      "d": "Answers in plain English and cites the tool behind each number.",
+      "icon": "chat_bubble",
+      "need": 0,
+      "by": "Inhouse team",
+      "used": "268 times this month"
+    },
+    {
+      "n": "Payout check",
+      "d": "Compares Amazon payouts with what Xero expected.",
+      "icon": "payments",
+      "need": 1,
+      "by": "Inhouse team",
+      "used": "Daily"
+    },
+    {
+      "n": "Reorder drafting",
+      "d": "Works out how much to reorder and drafts the PO in the supplier's format.",
+      "icon": "inventory_2",
+      "need": 1,
+      "by": "Inhouse team",
+      "used": "12 times"
+    },
+    {
+      "n": "Supplier chase",
+      "d": "Writes a short, polite chase when a purchase order is late.",
+      "icon": "forward_to_inbox",
+      "need": 1,
+      "by": "Inhouse team",
+      "used": "7 times"
+    },
+    {
+      "n": "Stuck order nudge",
+      "d": "Asks ShipBob about orders not picked after 3 days.",
+      "icon": "local_shipping",
+      "need": 1,
+      "by": "Sam Mercer, in a chat",
+      "used": "New today",
+      "mine": true
+    },
+    {
+      "n": "Customer reply drafts",
+      "d": "Drafts replies to tickets in your tone, for a person to send.",
+      "icon": "support_agent",
+      "need": 1,
+      "by": "Inhouse team",
+      "used": "41 times"
+    },
+    {
+      "n": "Returns restock",
+      "d": "Puts sellable returns back on sale on Shopify.",
+      "icon": "assignment_return",
+      "need": 2,
+      "by": "Inhouse team",
+      "used": "Runs by itself"
+    },
+    {
+      "n": "Oversell guard",
+      "d": "Pauses a variant when orders pass the stock on hand.",
+      "icon": "block",
+      "need": 2,
+      "by": "Inhouse team",
+      "used": "Runs by itself"
+    }
+  ],
+  "suggestedTitle": "Suggested for Shopify brands",
+  "suggested": [
+    {
+      "n": "Black Friday stock plan",
+      "d": "Finds products that will run out during the sale and drafts reorders.",
+      "icon": "local_fire_department"
+    },
+    {
+      "n": "Review replies",
+      "d": "Drafts replies to new product reviews in your tone.",
+      "icon": "reviews"
+    },
+    {
+      "n": "Wholesale order check",
+      "d": "Checks Faire and wholesale orders against stock.",
+      "icon": "storefront"
+    },
+    {
+      "n": "Ad spend vs stock",
+      "d": "Flags ads that spend on products that are nearly out.",
+      "icon": "campaign"
+    }
+  ]
+}

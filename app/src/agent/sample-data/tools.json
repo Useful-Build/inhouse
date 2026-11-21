@@ -1,0 +1,185 @@
+{
+  "connected": [
+    "shopify",
+    "amazon",
+    "shipbob",
+    "xero",
+    "gorgias",
+    "meta-ads"
+  ],
+  "channels": [
+    {
+      "key": "slack",
+      "name": "Slack",
+      "site": "slack.com",
+      "desc": "Alerts and approvals reach your team in #ops, and anyone can ask your Inhouse agent there.",
+      "need": 1,
+      "since": "-14d 09:00",
+      "channel": "#ops",
+      "sends": [
+        "Approvals waiting for you",
+        "Problems it finds, like a tool that needs its login renewed"
+      ],
+      "ask": "Anyone in #ops"
+    }
+  ],
+  "attachExamples": [
+    {
+      "name": "Order #4821",
+      "meta": "Shopify · Jamie Ortiz",
+      "icon": "sell",
+      "label": "An order, product or customer",
+      "sources": [
+        "shopify",
+        "amazon",
+        "gorgias"
+      ]
+    }
+  ],
+  "beingConnected": [
+    "klaviyo"
+  ],
+  "lastRead": {
+    "default": "0d 06:00",
+    "meta-ads": "0d 05:58"
+  },
+  "catalog": [
+    {
+      "k": "zendesk",
+      "name": "Zendesk",
+      "desc": "Customer service · tickets and help center"
+    },
+    {
+      "k": "shipstation",
+      "name": "ShipStation",
+      "desc": "Shipping · labels and shipments"
+    },
+    {
+      "k": "quickbooks",
+      "name": "QuickBooks",
+      "desc": "Finance · accounting for US brands"
+    },
+    {
+      "k": "google-analytics",
+      "name": "Google Analytics",
+      "desc": "Marketing · traffic and conversions"
+    }
+  ],
+  "details": {
+    "shopify": {
+      "name": "Shopify",
+      "desc": "Orders, products, inventory and customers",
+      "ex": [
+        "Which products will run out before Black Friday?",
+        "Show me orders stuck over 3 days.",
+        "What were last week's best sellers?"
+      ],
+      "read": "Orders, products, inventory, customers and discounts",
+      "draft": "Pause a variant, restock returns, update stock counts",
+      "run": "Restock returns and pause oversold variants, within your limits",
+      "conn": "Custom app on your Shopify store, built by the Inhouse team",
+      "site": "shopify.com",
+      "since": "-14d 09:00"
+    },
+    "amazon": {
+      "name": "Amazon",
+      "desc": "Orders, settlements and fees",
+      "ex": [
+        "Why was this week's payout low?",
+        "Which listings get the most returns?",
+        "Compare Amazon and Shopify sales this month."
+      ],
+      "read": "Orders, settlements, fees and inventory",
+      "draft": "Reimbursement cases and listing fixes",
+      "run": "Daily payout check. Cases still wait for you",
+      "conn": "Amazon Selling Partner, connected with your seller login",
+      "site": "sellercentral.amazon.com",
+      "since": "-7d 09:00"
+    },
+    "shipbob": {
+      "name": "ShipBob",
+      "desc": "Inventory, shipments and returns",
+      "ex": [
+        "Which orders are stuck over 3 days?",
+        "How many returns came back this week?",
+        "What's our average time to ship?"
+      ],
+      "read": "Inventory, shipments and returns",
+      "draft": "Support tickets and restock requests",
+      "run": "Nudge ShipBob on stuck orders",
+      "conn": "ShipBob official connection",
+      "site": "shipbob.com",
+      "since": "-14d 09:00"
+    },
+    "xero": {
+      "name": "Xero",
+      "desc": "Invoices, payouts and accounts",
+      "ex": [
+        "What's our cash position this week?",
+        "Which invoices are overdue?",
+        "How did margin change in October?"
+      ],
+      "read": "Invoices, bank feeds, payouts and accounts",
+      "draft": "Bills from supplier invoices",
+      "run": "Match payouts to orders",
+      "conn": "Xero official connection, read only by default",
+      "site": "xero.com",
+      "since": "-5d 09:00"
+    },
+    "gorgias": {
+      "name": "Gorgias",
+      "desc": "Tickets and customer replies",
+      "ex": [
+        "Why did refund requests jump?",
+        "What are customers asking about most?",
+        "Draft replies to the sizing tickets."
+      ],
+      "read": "Tickets, tags and customers",
+      "draft": "Replies in your tone",
+      "run": "Tag and sort new tickets. Replies always wait for you",
+      "conn": "Gorgias official connection",
+      "site": "gorgias.com",
+      "since": "-4d 09:00"
+    },
+    "meta-ads": {
+      "name": "Meta Ads",
+      "desc": "Campaigns, spend and results",
+      "ex": [
+        "Which ads are spending on low-stock products?",
+        "What was ROAS last week?",
+        "Which campaign should we pause?"
+      ],
+      "read": "Campaigns, spend and results",
+      "draft": "Pause or adjust a campaign",
+      "run": "Pause ads for out-of-stock products. Budget changes wait for you",
+      "conn": "Meta Marketing connection, read only",
+      "site": "facebook.com/business",
+      "since": "-3d 09:00"
+    },
+    "klaviyo": {
+      "name": "Klaviyo",
+      "desc": "Email and SMS results",
+      "progress": true,
+      "ex": [
+        "How did Friday's email perform?",
+        "Which flows bring in the most revenue?",
+        "Should we feature the trail jacket this week?"
+      ],
+      "read": "Campaigns, flows and results",
+      "draft": "Campaign drafts and segment changes",
+      "run": "Pull low-stock products out of scheduled emails",
+      "conn": "Klaviyo official connection, being set up by the Inhouse team",
+      "site": "klaviyo.com",
+      "liveBy": "+4d 09:00"
+    }
+  },
+  "fieldGuide": {
+    "ex": "example questions on the tool page",
+    "read": "what your Inhouse agent reads (Watch)",
+    "draft": "what your Inhouse agent drafts for approval (Act)",
+    "run": "what your Inhouse agent does by itself (Run)",
+    "conn": "how it is connected",
+    "catalog.need": "lowest stage index that includes it (0 Watch, 1 Act, 2 Run)",
+    "channels": "where the team hears from the agent (decision D6): not a tool it reads. need is the stage it starts at; since is when it was connected"
+  }
+}

@@ -1,0 +1,280 @@
+{
+  "note": "The mock agent answers from this file only. No model call. Match on the pattern, play the steps with the timings, then deliver the parts in order.",
+  "suggestions": [
+    "Which orders are stuck over 3 days?",
+    "Why did refunds jump this week?",
+    "What should we feature in Friday's email?",
+    "Every Monday at 7, list products under 3 weeks of stock"
+  ],
+  "seedThread": {
+    "title": "Stuck orders over 3 days",
+    "turns": [
+      {
+        "user": "Which orders are stuck over 3 days?"
+      },
+      {
+        "agent": [
+          {
+            "type": "text",
+            "text": "3 orders are stuck over 3 days. All three are paid and waiting at ShipBob. #4821 is the one to chase first: it's a repeat customer."
+          },
+          {
+            "type": "table",
+            "title": "Stuck over 3 days",
+            "summary": "3 orders · $556",
+            "rows": [
+              {
+                "order": "#4821",
+                "age": "4 days",
+                "why": "Not picked at ShipBob",
+                "value": "$312"
+              },
+              {
+                "order": "#4807",
+                "age": "5 days",
+                "why": "Address check failed",
+                "value": "$148"
+              },
+              {
+                "order": "#4799",
+                "age": "6 days",
+                "why": "Waiting on Summit Fleece",
+                "value": "$96"
+              }
+            ],
+            "sources": [
+              "Shopify · Orders",
+              "ShipBob · Shipments"
+            ]
+          }
+        ],
+        "trace": "stuck",
+        "model": "sonnet"
+      },
+      {
+        "user": "Chase ShipBob on #4821, and check for stuck orders every morning from now on."
+      },
+      {
+        "stage": "Watch",
+        "agent": [
+          {
+            "type": "text",
+            "text": "In Watch I only read, so I can't message ShipBob or set up a routine yet. Here's what I'd send, if you want to copy it:\n\n\"Hi, order #4821 was released to you on Nov 12 and still shows as not picked. Can you check what's holding it and ship it today? It's for a repeat customer.\""
+          },
+          {
+            "type": "notInThisStage",
+            "text": "Approvals and routines start in Act"
+          }
+        ],
+        "trace": "stuck-watch",
+        "model": "sonnet"
+      },
+      {
+        "stage": "Act",
+        "agent": [
+          {
+            "type": "text",
+            "text": "Done. I drafted a message to ShipBob for you to approve, and set up a morning check. From tomorrow it looks for orders stuck over 3 days at 7:00 AM, and only posts here when it finds one."
+          },
+          {
+            "type": "approval",
+            "problemId": "stuck"
+          },
+          {
+            "type": "routine",
+            "name": "Stuck orders check",
+            "next": "+1d 07:00",
+            "note": "Posts here only when it finds a stuck order"
+          }
+        ],
+        "trace": "routine",
+        "model": "sonnet"
+      },
+      {
+        "stage": "Run",
+        "agent": [
+          {
+            "type": "text",
+            "text": "Done. I asked ShipBob about #4821 myself, because that's inside your Run limits, and set up a morning check. From tomorrow it looks for orders stuck over 3 days at 7:00 AM and nudges ShipBob. I'll only post here when something needs you."
+          },
+          {
+            "type": "routine",
+            "name": "Stuck orders check",
+            "next": "+1d 07:00",
+            "note": "Nudges ShipBob by itself, within your limits"
+          }
+        ],
+        "trace": "routine (without the approval step)",
+        "model": "sonnet"
+      }
+    ]
+  },
+  "scripted": [
+    {
+      "match": "stuck",
+      "thinking": [
+        "Reading Shopify orders…",
+        "Checking ShipBob shipments…",
+        "Writing the answer…"
+      ],
+      "delayMs": 2600,
+      "reply": "same text and table as the first seed turn",
+      "trace": "stuck"
+    },
+    {
+      "match": "every|each|daily|weekly|remind|routine|schedule",
+      "thinking": [
+        "Checking what the routine needs…",
+        "Setting up the routine…",
+        "Testing it on last week…"
+      ],
+      "delayMs": 2600,
+      "Watch": [
+        {
+          "type": "text",
+          "text": "I can set that up once you're on Act. In Watch I only read and answer questions."
+        },
+        {
+          "type": "notInThisStage",
+          "text": "Routines start in Act"
+        }
+      ],
+      "ActRun": [
+        {
+          "type": "text",
+          "text": "Done. I set that up as a routine. It posts here only when it finds something."
+        },
+        {
+          "type": "routine",
+          "note": {
+            "Act": "Anything it drafts waits for your approval",
+            "Run": "Runs by itself, within your limits"
+          }
+        }
+      ],
+      "example": {
+        "ask": "Every Monday at 7, list products under 3 weeks of stock",
+        "routine": {
+          "name": "Low stock list",
+          "freq": "Weekly",
+          "day": "Monday",
+          "time": "07:00"
+        }
+      },
+      "trace": "routine-new"
+    },
+    {
+      "match": "(create|make|build|add|new|teach) … skill",
+      "thinking": [
+        "Writing the skill…",
+        "Testing it…"
+      ],
+      "delayMs": 1800,
+      "reply": [
+        {
+          "type": "text",
+          "text": "Done. I've saved that as a skill, so you can ask for it by name."
+        },
+        {
+          "type": "skill",
+          "mode": {
+            "Watch": "Read only in Watch",
+            "Act": "Drafts wait for approval",
+            "Run": "Can run by itself, within limits"
+          }
+        }
+      ],
+      "trace": "skill-new"
+    },
+    {
+      "match": "refund",
+      "thinking": [
+        "Reading this morning's findings…",
+        "Reading Gorgias tickets…",
+        "Writing the answer…"
+      ],
+      "delayMs": 2600,
+      "reply": [
+        {
+          "type": "text",
+          "text": "Refund requests rose from 14 last week to 31 this week. 19 of them are for the Trail Shell Jacket in size M, and most say it runs small. Every other product is flat. A sizing note on the product page would cut these."
+        }
+      ],
+      "sampleFacts": "new sample numbers, consistent with the oversold jacket",
+      "trace": "refunds"
+    },
+    {
+      "match": "friday|feature|email",
+      "thinking": [
+        "Reading this morning's findings…",
+        "Checking stock on Shopify…",
+        "Writing the answer…"
+      ],
+      "delayMs": 2600,
+      "reply": [
+        {
+          "type": "text",
+          "text": "I'd avoid three products this Friday. The Trail Shell Jacket is oversold, the Ridge 30L Pack runs out in 9 days, and the Summit Fleece has 12 days of stock with its purchase order running late. The Cairn Insulated Bottle is the safe pick: 1,240 in stock, selling 18 a day."
+        }
+      ],
+      "sampleFacts": "Cairn Insulated Bottle is a new sample product",
+      "trace": "friday"
+    },
+    {
+      "match": "black friday|run out",
+      "thinking": [
+        "Reading Shopify stock and sales…",
+        "Checking open purchase orders…",
+        "Writing the answer…"
+      ],
+      "delayMs": 2600,
+      "reply": [
+        {
+          "type": "text",
+          "text": "Two will run out before Black Friday. The Ridge 30L Pack sells out on Wed, Nov 25, and the Trail Shell Jacket in M, Olive is already oversold by 5. The Summit Fleece lasts until about Sat, Nov 28, so it is tight if PO-1187 slips again."
+        }
+      ],
+      "trace": "black-friday"
+    },
+    {
+      "match": "Tell me more about: {problem title}",
+      "thinking": [
+        "Reading this morning's findings…",
+        "Writing the answer…"
+      ],
+      "delayMs": 1800,
+      "reply": "the finding text of that problem (problems[].found joined), then one sentence with the suggested next step",
+      "trace": "generic"
+    },
+    {
+      "match": "gorgias|ticket|refund|customer service",
+      "delayMs": 1500,
+      "reply": [
+        {
+          "type": "error",
+          "text": "I couldn't read Gorgias: the login expired at 5:41 AM. Reconnect it in Tools, then try again. Nothing was changed."
+        }
+      ],
+      "trace": "gorgias-failed"
+    }
+  ],
+  "fallback": {
+    "thinking": [
+      "Reading this morning's findings…",
+      "Looking across your tools…",
+      "Writing the answer…"
+    ],
+    "delayMs": 2600,
+    "reply": [
+      {
+        "type": "text",
+        "text": "I can't answer that from your tools yet. I can read {tools}. Try one of these questions:"
+      }
+    ],
+    "trace": "generic"
+  },
+  "firstDay": "I can't see any of your tools yet. Your Inhouse team is connecting Shopify today, and I'll have answers after the first morning check.",
+  "firstDayTrace": "first-day",
+  "loading": "I'm still reading your tools. The morning check takes about two minutes, so ask me again once your list is on Today.",
+  "loadingTrace": "loading"
+}

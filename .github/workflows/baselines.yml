@@ -1,0 +1,43 @@
+# Renders the Linux visual baselines on a branch: gh workflow run baselines --ref <branch>. It runs the visual
+# projects with --update-snapshots in the same Playwright image as ci.yml and uploads the -linux.png files as the
+# visual-baselines artifact. Download them into app/e2e/visual.spec.ts-snapshots/, look at each one and commit.
+name: baselines
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baselines:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Same image as ci.yml: bump the tag and digest together, everywhere.
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      options: --user 1001 --ipc=host
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: npm ci
+      - run: npx playwright test --project=visual-desktop --project=visual-phone --update-snapshots
+      # Only a fully successful run uploads the baselines, so a failed run never leaves committed PNGs or a mix
+      # of new and stale ones under that name.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-baselines
+          path: app/e2e/visual.spec.ts-snapshots/*-linux.png
+          if-no-files-found: error
+          retention-days: 7
+      - if: ${{ !success() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: baselines-report
+          path: app/e2e-artifacts
+          if-no-files-found: warn
+          retention-days: 7

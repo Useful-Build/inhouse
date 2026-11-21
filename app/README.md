@@ -1,0 +1,120 @@
+# Inhouse web app
+
+The brand team's app: Today, Library, Approvals, Routines, Activity, Tools, Skills, Usage and Settings, plus chats from the sidebar (New chat, Recent chats, See all), at the stages Watch, Act and Run.
+
+**Phase 1 (this code):** runs on sample data only, through a deterministic mock agent. Nothing real is connected.
+
+## Stack
+
+- React 19 + TypeScript, built with Vite.
+- Tailwind v4 + shadcn/ui (Radix base) from ui-base (the base registry), with light and dark themes. The base's rules are in [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) (rewritten on every update), Inhouse's own layer in [`DESIGN_APP.md`](DESIGN_APP.md).
+- Cloudflare Workers with static assets (the `create-cloudflare` React template). `worker/index.ts` returns 404 for anything that is not a static asset; everything else is the single-page app.
+- Staff login will be Cloudflare Access in front of the Worker (no login code in the app).
+- State: a small zustand store for UI state; domain state lives in the agent client.
+
+## Run it
+
+```bash
+npm install
+npm run dev        # http://localhost:5173 (the demo switcher shows in dev)
+npm run typecheck  # tsc -b
+npm run lint       # oxlint
+npm run test:unit  # Vitest: src/**/*.test.ts (property tests included) and build-support/; VITE_PROP_RUNS=1000 for a long run
+npm run test:e2e   # Playwright against the production build
+```
+
+Two builds share one source tree. `npm run build` (and `npm run dev`) is the demo: the mock agent, the sample data and the demo switches. `npm run build:product` (`vite build --mode product`) is the product: its client is the HTTP stub in `src/agent/http/`, so every read stays `loading` and every write rejects with `unavailable`, and the shell shows one "Not connected yet" screen. The build picks the client through the `@client` alias: `src/agent/client.demo.ts` (mock plus `DemoControls`) or `src/agent/client.product.ts`, both a `ClientEntry` (`{ agent, demo, now() }`). `demo` is `null` in the product, so `?demo`, the switcher and Reset demo do nothing there, and `now()` is the real clock. The zod schemas in `shared/contract/` define every value the `AgentClient` returns, and the contract suite (`src/agent/contract/`) holds the mock to them. `scripts/check-product-build.mjs` fails the product build on sample data, mock code, demo controls or the demo clock.
+
+Open any build with `?demo` to show the demo switcher (stage, scenario, dot sweep, the agent's mark, Reset demo). State changes are kept in local storage until you press Reset demo.
+
+## UI regression suite
+
+Two specs guard the look and the basics of accessibility. Both read the states they cover from `e2e/states.ts`: every page, stage, scenario and pop-up from the tour, plus the problem panel, the trace window, a Settings dropdown, the Library and See all.
+
+```bash
+npm run test:visual:linux         # compare with the committed baselines, in the Playwright Docker image
+npm run test:visual:linux:update  # regenerate the baselines on purpose, in that image
+npm run test:a11y                 # axe, WCAG 2.1 A and AA
+```
+
+- **Visual** (`e2e/visual.spec.ts`): each state in light and dark, at desktop (1440x900) and phone (390x844), compared with the PNGs in `e2e/visual.spec.ts-snapshots/`. Animations are off, the agent mark and dot sweep are off, and every shot waits for Geist, Geist Mono and the Material Symbols font (all self-hosted in `public/fonts`). Page states grow the window's height until `main` shows everything, so a shot covers the whole page. A shot fails when more than 100 of its pixels differ, a fixed count so one missing icon fails even on a tall page.
+- **Accessibility** (`e2e/a11y.spec.ts`): axe on the main pages and pop-ups, light and dark, at desktop size. Known issues that need a design call are listed at the top of the spec, each scoped to one rule and one selector.
+
+**Changing the UI on purpose.** Run `npm run test:visual:linux:update` and commit the new PNGs with the change. The image diff then shows in the PR, so a reviewer sees exactly what moved. Never update baselines to make an unexplained failure go away.
+
+**Linux baselines.** The baselines are rendered on Linux (`-linux` in the file names) in the official Playwright image, `mcr.microsoft.com/playwright` at the same version as `@playwright/test` in `package-lock.json`. Fonts render differently on macOS and Windows, so there the visual projects only run through Docker: `test:visual:linux` mounts the app into that image, installs its own Linux `node_modules` and runs the visual projects. An Apple silicon Mac (arm64) renders within the 100-pixel limit of the runner's (amd64) baselines. On macOS outside a container, `playwright.config.ts` makes the visual projects match no test, so native `npm run test:e2e` and `npm run test:visual` print a message and compare or write nothing. On Windows, native runs fail the visual projects (they look for `-win32` files, so delete any they write); run the rest there with `npx playwright test --project=desktop --project=phone --project=a11y`. `@playwright/test` is pinned exactly and the image by tag and digest: when you bump Playwright, bump the image tag and digest in `.github/workflows/ci.yml`, `.github/workflows/baselines.yml` and the two `test:visual:linux` scripts with it, then rerender. On a Linux host the container runs as root, so the files it writes into the repo (`dist/`, `e2e-artifacts/`, new baselines) are root-owned: run `sudo chown -R "$(id -u):$(id -g)" .` afterwards.
+
+## CI
+
+`.github/workflows/ci.yml` is the required `ci` check. It runs on every pull request into `main` and `fleet/**` and on dispatch, in the Playwright image on GitHub's Linux runners:
+
+- Two `e2e` jobs. Playwright splits shards by test count, not time, and the slow desktop specs come first, so the suite is cut in four by test (`--fully-parallel --shard=n/4`): job 1 runs quarters 1 and 3, job 2 quarters 2 and 4, one test at a time. Job 1 also runs `npm run typecheck`, `npm run lint` and `npm run test:unit`. Each job runs `npm run build` once and its quarters serve that build. Every Playwright project runs: desktop, phone, visual-desktop, visual-phone and a11y.
+- A final job named `ci` passes only when both shards pass, so a ruleset requires one name. It always runs, so a cancelled or skipped shard makes it fail, never skip. A committed `test.only` fails the run (`--forbid-only`).
+- On failure, a timeout or a cancel each job uploads its HTML reports and test results (expected, actual and diff PNGs, and traces and videos of the failed tests), one folder per quarter, as the `playwright-shard-<n>` artifact, kept 7 days. Download it with `gh run download <run id>` and open `quarter-<n>/report/index.html`.
+- After `ci` passes on a same-repo PR, `preview.yml` (trusted code from `main`) deploys the build as a Cloudflare Workers Preview and comments its URLs; `preview-cleanup.yml` deletes previews of closed PRs. `ship.yml` records a PR's ship specs against that preview (see the `verify` skill).
+
+**Baselines from CI.** Without Docker, run the `baselines` workflow from the Actions tab (or `gh workflow run baselines --ref <branch>`) on your branch: it renders the visual projects with `--update-snapshots` and uploads the `-linux.png` files as the `visual-baselines` artifact. Download it into `e2e/visual.spec.ts-snapshots/`, look at every changed PNG and commit them. A failed run uploads no baselines, only a `baselines-report` artifact.
+
+## Deploy
+
+Production deploys from `main` on every merge (`.github/workflows/deploy.yml`), with a rollback by version id; see
+[the runbook](../docs/runbook.md). In a fork, deploy to your own Cloudflare account with:
+
+```bash
+npm run deploy     # build, then wrangler deploy to your Cloudflare account
+```
+
+Phase 1 deploys as one Cloudflare Worker and serves invented sample data only. Every PR gets a Workers Preview, which
+sends `noindex`; production's pages are indexable.
+
+## The mock agent, and how phase 2 swaps it
+
+Everything the screens know comes through one interface, `AgentClient` in `src/agent/types.ts`. The build picks the client through the `@client` alias (`client.demo.ts` or `client.product.ts`): phase 2 fills in the product client, and `mock.ts` and the sample data stay demo-only. No screen, store or selector reads the sample data or names a mock key.
+
+- **The mock.** `src/agent/mock.ts` reads only `src/agent/sample-data/`: no randomness, no model calls. Chat answers come from `chat-script.json` (thinking steps every 800 ms, then the parts); a question a seeded chat already asked replays that turn, this chat's first. Chats come from `chats.json`, newest first by their `iso` time.
+- **One clock** (`src/agent/demo-clock.ts`, demo-only). The demo is Monday, November 16, 2026 from 8:00 AM in the device's local time (the Settings time zone is the one shown there; it doesn't move the clock): `demoNow(demoStartedAt)` is that plus the real time since the demo started, stopping at 11:59 AM. Everything a person does is stamped on it, never the computer's own time. Times travel as `Instant`s and are shown only through `src/lib/format.ts`. Formats: `fmtTime` "8:03 AM", `fmtDay` "Nov 16", `fmtWeekday` "Mon, Nov 16", `fmtCount` "1,314". A shown time keeps a no-break space before AM or PM (`fmtTime`, and every sample-data string as it loads), so it never wraps. Lists show today as a time, the six days before as a weekday, older as a date. The demo's start is saved at the first load (demo-only, in `DemoControls`), so a reload never restarts the clock. Anything sorted by time is sorted on its `Instant`; nothing sorts a display string.
+- **Writes are async.** Every method that changes state applies the change at once, resolves when saved, and on failure takes it back, rejects with `AgentError { code: 'offline' | 'forbidden' | 'conflict' | 'unknown' }` and also sends a notice (`save.failed` when the browser couldn't save it, else `error`), so a caller that doesn't await still tells the person. Reads React uses stay synchronous snapshots: `getSnapshot`, `read`, `listFiles`, `listNotifications`, `getTrace`.
+- **Chats and runs.** The app makes a chat's id and tells the agent with `createChat({ id, title })`; `ask(question, { chatId, quote, replacesRun, attachments, mode, effort })` streams `RunEvent`s (`run.started`, `step`, `part`, `turn.started`, `approval.requested`, `run.finished`, `run.failed`, `run.stopped`), and an unknown `chatId` throws. `send(runId, text, { priority })` puts a message into a running answer (`now`, `next` or `later`), `interrupt(runId)` ends the current turn and keeps the session, `stop(runId)` is the hard stop. `replacesRun` (Regenerate, or Try again on a failed answer) updates the routine or skill the earlier run made instead of adding one; a routine the new answer doesn't make again is deleted (`routinesDeleted`, and Regenerate's Undo restores it), unless the new answer failed: then the routine stays and the failed run carries it on, so the answer after it updates it rather than adding a second. A skill is never taken back. Run ids are unique across reloads and the mock saves its run-to-trace map, so a saved answer's steps still open.
+- **Runs per chat (decision [0009](../docs/decisions/0009-leaving-a-chat-finishes-the-answer.md)).** The store keeps `runs` by chat id, and `updateChat` is the one writer of a chat's messages, open or not. Leaving a chat never stops its answer: it finishes in the background and the chat shows a running dot in the sidebar and See all. Several chats can answer at once; Stop stops only the open chat's. `openRun(state)` is the open chat's run. Deleting an answer (`deleteMessages`) has an Undo that works from any chat. A chat that was answering when the page reloaded says the answer stopped.
+- **Off-script questions (decision [0008](../docs/decisions/0008-off-script-answer.md)).** The answer says it can't answer that from your tools yet, names the six tools, and offers the suggested questions as chips (a `suggestions` part) that ask them.
+- **Routines** are made only from a request with a schedule and a time; a schedule without a time gets "What time should it run?".
+- **Status and scenarios.** `AgentData.status` is `loading` or `ready`. `read()` follows the demo scenario, one stable object each: Normal, Tool disconnected and Cap reached (its own usage, spend at the cap) are the full data; First day has nothing found, asked, run or spent yet (no chats, problems, Activity, audit lines, files, notifications or usage, no tools or Slack connected, the routines and skills the team set up but not run or used); Loading is `status: 'loading'` with empty lists while the tools are read. Pages without their own first-day or loading look show their normal empty state.
+- **Tools and Slack (decision [0006](../docs/decisions/0006-slack-is-a-connected-channel.md)).** `toolView` and `toolCounts` in `src/state/derive.ts` give a tool's state (connected, paused by a person, disconnected, being connected), its status, Read and Draft lines, last read and suggested questions, so Tools, a tool page and the composer agree. Slack is a connected channel from Act (`tools.channels`), not a tool the agent reads; in Watch it shows as included from Act.
+- **Your name and the cap** come from Settings (`userName`, `usageCap`, `usageAlertAt`, `capStatus`). A new cap never changes what was spent: only "reached" and the banner compare spend with it.
+- **Notifications and the approver come from the agent.** `listNotifications()` returns each line with where it opens (a tool, a page or a chat); approval and set-aside records carry `by`, the person's name when they did it.
+- **Toasts.** `src/shell/Toasts.tsx` is a stack (at most four, newest at the bottom). Each toast keeps its own Undo and countdown; hover or focus pauses them, a toast that holds an approval going out leaves when it went out, a `key` replaces a toast in place ("Saved", a second delete joining the first), and a notice never pushes out a toast with Undo: over four that all have Undo it shows as a fifth. Approvals going out share one toast with one Undo ("Approved 3 drafts. They go out in 10 seconds."), never pushed out; a new Undo toast over four Undo toasts pushes out the oldest that holds nothing, so the stack never passes five. F6 moves focus to the newest toast and Escape or F6 goes back, with no trap; while a window, sheet or confirm is open F6 does nothing (the modal keeps focus). The stack portals to `body` above every window and sits above anything docked at the bottom (`data-bottom-dock`).
+- **Stubs.** What isn't connected in phase 1 says so: "Download isn't connected in this demo." (Library), Send to Slack, Reconnect, Export, dictation, Google Drive, asking in Slack, asking an approver from the problem panel ("Asking Leo isn't connected in this demo."), Sign out. The audit log downloads a real CSV.
+- **Phase 1 memory (decision [0007](../docs/decisions/0007-phase-1-memory-in-local-storage.md)).** The chats a person started, what they added to any chat, the composer drafts, the model pick, thumbs and the Library view survive a reload, saved under `inhouse.ui.session.v1` (sanitized on load) until Reset demo. The agent's state is `inhouse.demo.v2`, its run-to-trace map `inhouse.demo.runs.v1`, the demo switches `inhouse.demo.switches.v1`, the sidebar choice `inhouse.ui.sidebar.v1`. Reset demo clears them and puts the stage and scenario back to Act and Normal.
+- **Links and errors.** See all is `#/chats/all`, a chat `#/chats/<id>` (a started chat too, after a reload), a tool `#/tools/<key>`, a settings page `#/settings/<tab>`. A link to something that doesn't exist lands where it would anyway and says so in a toast. The crash screen offers Reload and "Message the team".
+- **Page actions.** Each `Problem` carries `draftedAt` (an `Instant`: when the agent made its draft; the mock takes it from the draft's file in the Library), which Activity shows as a time and Approvals sorts by. `setAside(id, reason)` takes a problem off Today and Approvals as `snoozed`, `dismissed` or `declined` (Don't send) and stores `AgentState.setAside[id] = { reason, at, by, loggedAt }`, so a real client can end a snooze the next day (the mock's date never moves, so it keeps it); `setAside(id, null)` is Undo, and `approve(id)` clears it, so an approved problem counts as a normal approval everywhere. Activity logs each set-aside problem with Undo. Every `RoutineDef` and `RoutineCard` carries the agent's own stable `id`: `runRoutine(id)` returns a `RoutineRun` (`{ routine, at, trace? }`) and adds it to `AgentState.routineRuns` (newest first), and `deleteRoutine(id)` and `restoreRoutine(id)` change `AgentState.routinesDeleted`. All of it is saved with the rest of `AgentState` and cleared by Reset demo.
+- **Chats.** There is no Chats item in the nav. The sidebar lists the first four chats under Recent chats, and See all opens a list of every chat with a search box that filters by title. Each chat opens its own conversation; what a person adds to a chat stays with it across a reload, until Reset demo. See all is `#/chats/all` and each chat is `#/chats/<id>` (for example `#/chats/refunds`), so Back and Forward move between them and a reload keeps the view; `#/chats`, or an id that doesn't exist, opens the newest chat. Asking from Today or a tool page starts a new chat, and once it has a question it is listed first in Recent chats and See all (until Reset demo). Every chat row (sidebar and See all) has a "···" menu, shown on hover and focus and always on a phone: Rename (in place: Enter or leaving the field saves, Escape cancels, an empty title keeps the old one), Pin or Unpin, Copy link (the chat's full `#/chats/<id>` URL) and Delete. Pinned chats sit under Pinned above Recent chats and first in See all, with a pin marker. Delete asks nothing and the toast has Undo; deleting the open chat opens the newest chat left, or a new chat when none are. A chat that is answering carries a running dot, open or not, and a title that is cut off shows in full in a tooltip. The open chat's title in the top bar has the same menu plus Export (a stub in phase 1: it shows a toast), and none for a new chat with nothing asked. See all has Select to delete several chats at once, with one Undo. Titles, pins and deletes come through `AgentClient`: `renameChat(id, title)`, `pinChat(id, pinned)`, `deleteChats(ids)` and `restoreChats(ids)` change `AgentState.chatTitles`, `chatPinned` and `chatDeleted` (saved in local storage, cleared by Reset demo), keyed by chat id for the agent's chats and started ones alike. `chatEntries()` in `src/state/store.ts` is the one chat list the UI reads: it applies the titles, hides deleted chats and lists pinned ones first.
+- **Navigation.** ⌘K (Ctrl+K elsewhere), or Search in the top bar, opens the command palette: every page (a locked one shows its stage and says so instead of opening), every settings page, every chat by title, and actions (New chat, Message the team, Report a bug, switch the theme, and Reset demo under `?demo`). Arrows move, Enter opens, Escape closes and focus goes back where it was. Shortcuts: ⌘K palette, ⌘⇧O new chat, ⌘\ collapse or expand the sidebar; only ⌘K works while typing in a field, and each shows in its button's tooltip. On desktop the sidebar collapses to an icon rail (each item named in a tooltip, the waiting count as a dot, New chat, Search and the account avatar); the choice is saved per browser (`inhouse.ui.sidebar.v1`, a UI preference, not agent state) and the phone drawer always shows the full sidebar. The account row shows the person's name (the Name setting). On a phone the top bar names every page. The bell's name carries the unread count; opening a notification marks it read, and with none unread the pop-up says "You're all caught up".
+- **Library.** Item right after Today (`#/library`): every file Inhouse agent made or the team shared, 38 files for Northline. Left panel: search, All files and four places (Chats, Routines, Approvals, Uploaded by the team), each with a count. Top: the title of the selection, tabs with counts (All, Images, Documents, Code, Audio and video, Other), a view switch (masonry, grid, list) and Select. Search filters by name inside the current tab and place. A click opens a viewer window (preview, type, size, date, where it came from with a link back to the chat, Routines or approval, Download). Select picks files for Download and Delete; Delete asks first and the toast has Undo. Everything comes through `AgentClient`: `listFiles()` returns the files that weren't deleted, `deleteFiles(ids)` and `restoreFiles(ids)` change `AgentState.libraryDeleted` (saved in local storage, cleared by Reset demo). Each `LibraryFile` in `library.json` carries what its preview needs: images are SVG art in `public-demo/library/`, documents Inhouse agent made carry a small first page (`doc`) that the Library draws, and code, tables, ZIP and calendar files carry their contents. Download is a stub in phase 1: it shows a toast. Phase 2 puts real files behind the same fields.
+- **Models.** Max, Smart (the default), Fast and Instant, from `models.json`. Settings, Models sets each one's effort and on switch (`tm:<id>:effort`, `tm:<id>:on`); `activeMode()` in `derive.ts` gives `ask()` the model and its `effort`.
+- **Scrolling.** The sidebar and the top bar never scroll with the page. On desktop, Settings and the Library fill the space under the top bar and scroll inside; everything else scrolls in `main`. On a phone every page scrolls in `main`.
+- **Settings.** Every dropdown is the `Select` in `src/ui/fields.tsx` (on the Radix Select) and every text field is editable. Values live in `AgentState.settings`, saved with the rest of the agent's state.
+
+## Layout
+
+```
+src/agent/       AgentClient interface, typed sample data, mock agent, the two client entries, http/ (the product's stub)
+shared/contract/ zod schemas for every value and event the AgentClient returns
+public-demo/     the demo's sample files (Library, avatars), copied only into the demo build
+src/state/       selectors (derive.ts) and the UI store
+src/ui-base.css  the base's tokens: every color, scale and both themes (from ui-base, never edited)
+src/index.css    the app's CSS: fonts, the override block and the --app-* tokens
+src/components/ui/  ui-base's shadcn components (Button, Dialog, Select, DropdownMenu...), plus the app's icon.tsx
+src/lib/         cn(), the app's merge-config.ts and the theme module (light, dark, system)
+src/ui/          app primitives on the components: Icon, Button, Switch, Segmented, Select, Logo, AgentMark, Window
+src/shell/       sidebar, top bar, banner, the toast stack, demo switcher
+src/components/  the composer (Today and Chats)
+src/screens/     one file per page (library/ holds the Library's previews and viewer)
+src/overlays/    problem panel, trace window, pop-ups
+e2e/             Playwright specs (the acceptance checks); support/ is the fixtures layer, product/ the product build's specs
+public/logos/    tool logos (official marks, see public/logos/SOURCES.md)
+```
+
+## Dev notes
+
+- `@emnapi/core` and `@emnapi/runtime` are devDependencies only to work around an npm bug: npm 11.6.2 writes a lockfile that its own `npm ci` rejects ("Missing: @emnapi/core@2.0.0-beta.2"). Drop them on the next lockfile that `npm ci` accepts without them.
+- `vitest.config.ts` runs the unit tests with `--no-sparkplug` because of a V8 crash in Node 24.11.1 (see the comment there for when to remove it).

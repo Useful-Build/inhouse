@@ -1,0 +1,26 @@
+{
+  "note": "Deterministic sample data for the Inhouse app. Everything is invented. No real customer data.",
+  "brand": {
+    "name": "Northline Outdoor",
+    "staff": 40,
+    "sells": "outdoor gear",
+    "emailDomain": "northline.example"
+  },
+  "agent": {
+    "tone": "Friendly and short",
+    "signsEmailsAs": "The Northline team"
+  },
+  "currentUser": {
+    "id": "sam",
+    "name": "Sam Mercer",
+    "initials": "SM",
+    "email": "sam@northline.example",
+    "title": "Head of Ops",
+    "role": "Admin"
+  },
+  "fixedClock": {
+    "label": "Monday, November 16, 2026",
+    "timeZone": "America/New_York",
+    "rule": "One clock (decision D5): the demo opens at 8:00 AM on Monday, November 16, 2026, in the device's local time. The time zone in Settings is the one shown there; it doesn't move the clock. Shown times are 12-hour (\"6:00 AM\"); in a list, today shows a time, the six days before a weekday (\"Fri, Nov 13\"), older a date (\"Nov 2\"). Sample times are written from the demo's Monday (\"-1d 16:40\") and the app shows them through src/lib/format.ts."
+  }
+}

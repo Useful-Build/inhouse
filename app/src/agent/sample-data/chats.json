@@ -1,0 +1,259 @@
+{
+  "note": "Every chat in the sidebar and in See all, newest first by \"at\" (the mock checks it): days from the demo's Monday and a local time (\"-1d 16:40\" is Sunday at 4:40 PM). The app shows today a time, the six days before a weekday, older a date. The first four are the Recent chats. The stuck-orders chat plays the seed thread in chat-script.json, which changes with the stage; an agent turn with a \"stage\" shows only in that stage. Every agent turn names its own trace in traces.json. All invented. Numbers match problems.json, tools.json, library.json and usage.json.",
+  "recent": 4,
+  "chats": [
+    {
+      "id": "stuck",
+      "title": "Stuck orders over 3 days",
+      "at": "0d 07:42",
+      "turns": "seedThread"
+    },
+    {
+      "id": "refunds",
+      "title": "Why did refunds jump?",
+      "at": "0d 07:15",
+      "turns": [
+        {
+          "user": "Why did refunds jump this week?"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "Refund requests rose from 14 last week to 31 this week. 19 of them are for the Trail Shell Jacket in size M, and most say it runs small. Every other product is flat. A sizing note on the product page would cut these."
+            }
+          ],
+          "trace": "refunds",
+          "model": "sonnet"
+        },
+        {
+          "user": "Show me the newest ones."
+        },
+        {
+          "agent": [
+            {
+              "type": "table",
+              "table": {
+                "title": "Jacket refund requests",
+                "summary": "19 tickets · $4,522",
+                "icon": "assignment_return",
+                "rows": [
+                  {
+                    "order": "#4838",
+                    "age": "3 hours",
+                    "why": "Runs small, wants a size L",
+                    "value": "$238"
+                  },
+                  {
+                    "order": "#4836",
+                    "age": "5 hours",
+                    "why": "Too tight in the shoulders",
+                    "value": "$238"
+                  },
+                  {
+                    "order": "#4831",
+                    "age": "1 day",
+                    "why": "Runs small, returning",
+                    "value": "$238"
+                  }
+                ],
+                "sources": [
+                  "Gorgias · Tickets",
+                  "Shopify · Orders"
+                ]
+              }
+            },
+            {
+              "type": "text",
+              "text": "Leo has an answer ready in Gorgias for each of them. Most customers would take an exchange to size L, and we have 62 in stock."
+            }
+          ],
+          "trace": "refunds-list",
+          "model": "sonnet"
+        },
+        {
+          "user": "Draft a sizing note for the product page."
+        },
+        {
+          "stage": "Watch",
+          "agent": [
+            {
+              "type": "text",
+              "text": "Here's a draft you can paste in:\n\n\"The Trail Shell Jacket fits close. If you're between sizes, or you plan to layer a fleece underneath, order one size up.\"\n\nI can't edit the product page in Watch, so it's yours to add."
+            }
+          ],
+          "trace": "sizing-note",
+          "model": "sonnet"
+        },
+        {
+          "stage": "Act",
+          "agent": [
+            {
+              "type": "text",
+              "text": "Here's a draft you can paste in:\n\n\"The Trail Shell Jacket fits close. If you're between sizes, or you plan to layer a fleece underneath, order one size up.\"\n\nEditing a product page isn't one of the jobs I can draft for approval yet, so it's yours to add."
+            }
+          ],
+          "trace": "sizing-note",
+          "model": "sonnet"
+        },
+        {
+          "stage": "Run",
+          "agent": [
+            {
+              "type": "text",
+              "text": "Here's a draft you can paste in:\n\n\"The Trail Shell Jacket fits close. If you're between sizes, or you plan to layer a fleece underneath, order one size up.\"\n\nEditing a product page isn't one of the jobs I can draft for approval yet, so it's yours to add."
+            }
+          ],
+          "trace": "sizing-note",
+          "model": "sonnet"
+        }
+      ]
+    },
+    {
+      "id": "friday",
+      "title": "What to feature in Friday's email",
+      "at": "-1d 16:40",
+      "turns": [
+        {
+          "user": "What should we feature in Friday's email?"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "The Cairn Insulated Bottle is the safe pick: 1,240 in stock, selling 18 a day, so about 69 days of cover. I'd stay away from the Ridge 30L Pack, which has 10 days of stock left, and the Summit Fleece, because PO-1187 from Kestrel hasn't shipped."
+            }
+          ],
+          "trace": "friday",
+          "model": "sonnet"
+        },
+        {
+          "user": "Which bottle color sells best?"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "Slate sells best: 52% of the last 30 days. Sage is 31% and Sand is 17%. Sage has the most stock left, so it's worth showing next to Slate."
+            }
+          ],
+          "trace": "bottle-colors",
+          "model": "sonnet"
+        }
+      ]
+    },
+    {
+      "id": "payout",
+      "title": "Amazon payout gap",
+      "at": "-3d 16:20",
+      "turns": [
+        {
+          "user": "Why was the last Amazon payout lower than Xero expected?"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "The settlement for Oct 30 to Nov 12 paid $18,420. Xero expected $19,660, so the payout is $1,240 short. 18 orders were charged the large-item fee, though they ship as standard size. That's an Amazon error, so it can be claimed back. I can draft the reimbursement case for you to approve."
+            }
+          ],
+          "trace": "payout",
+          "model": "sonnet"
+        },
+        {
+          "user": "Can you check the next one?"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "The Amazon payout check already runs every day at 6:00 AM. It compares each payout with what Xero expected. I'll flag it here if the gap is over $500, so small differences stay quiet."
+            }
+          ],
+          "trace": "payout-check",
+          "model": "haiku"
+        }
+      ]
+    },
+    {
+      "id": "numbers",
+      "title": "Weekly numbers, Nov 7 to 13",
+      "at": "-3d 16:00",
+      "turns": [
+        {
+          "user": "Summarize this week's numbers"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "Here's the week of Nov 7 to 13. It's saved to Library.\n\n| Measure | This week | Last week | Change |\n|---|---|---|---|\n| Revenue | $61,840 | $58,210 | +6% |\n| Orders | 1,284 | 1,196 | +7% |\n| Refund requests | 31 | 14 | +17 |\n| Ad spend | $9,260 | $9,010 | +3% |\n\nGross margin held at 52%. Refund requests more than doubled, mostly for the Trail Shell Jacket in size M, which runs small. The Ridge 30L Pack sells out on Wed, Nov 25 unless a reorder goes out."
+            }
+          ],
+          "trace": "weekly-report",
+          "model": "sonnet"
+        }
+      ]
+    },
+    {
+      "id": "meta",
+      "title": "Meta Ads on low-stock products",
+      "at": "-3d 15:10",
+      "turns": [
+        {
+          "user": "Which ads are spending on low-stock products?"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "Two campaigns. Ridge 30L Autumn spent $420 last week at a return of 3.1. Summit Fleece Layering spent $260 at 2.7. Both products are under 21 days of stock.\n\nI wouldn't pause them yet. If the Summit Fleece order slips again, that's the one to cut first."
+            }
+          ],
+          "trace": "meta-ads",
+          "model": "sonnet"
+        }
+      ]
+    },
+    {
+      "id": "ridge",
+      "title": "Ridge 30L reorder quantity",
+      "at": "-5d 12:05",
+      "turns": [
+        {
+          "user": "How many Ridge 30L Packs should we reorder?"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "You sell about 21 a day and have 295 left, which is 14 days. Kestrel needs 14 days to deliver, so the order has to go out today or you run out before it lands, on Wed, Nov 25.\n\n600 covers about 4 weeks after they arrive: 400 in Olive and 200 in Black, $9,600 in total. Dana approves orders over $5,000."
+            }
+          ],
+          "trace": "ridge",
+          "model": "sonnet"
+        }
+      ]
+    },
+    {
+      "id": "kestrel",
+      "title": "Kestrel delivery times",
+      "at": "-14d 10:29",
+      "turns": [
+        {
+          "user": "How long does Kestrel really take to deliver?"
+        },
+        {
+          "agent": [
+            {
+              "type": "text",
+              "text": "Across your last 6 purchase orders Kestrel took 13 to 16 days, 14 on average. Two came late. Mei Chen answers date questions by email within a day."
+            }
+          ],
+          "trace": "kestrel",
+          "model": "sonnet"
+        }
+      ]
+    }
+  ]
+}

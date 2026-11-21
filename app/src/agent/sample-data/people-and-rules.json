@@ -1,0 +1,73 @@
+{
+  "members": [
+    {
+      "id": "sam",
+      "photo": "/avatars/sam.svg",
+      "name": "Sam Mercer",
+      "email": "sam@northline.example",
+      "title": "Head of Ops",
+      "role": "Admin"
+    },
+    {
+      "id": "dana",
+      "photo": "/avatars/dana.svg",
+      "name": "Dana Kim",
+      "email": "dana@northline.example",
+      "title": "Finance",
+      "role": "Approver"
+    },
+    {
+      "id": "leo",
+      "photo": "/avatars/leo.svg",
+      "name": "Leo Park",
+      "email": "leo@northline.example",
+      "title": "Customer service",
+      "role": "Approver"
+    },
+    {
+      "id": "priya",
+      "photo": "/avatars/priya.svg",
+      "name": "Priya Shah",
+      "email": "priya@northline.example",
+      "title": "Marketing",
+      "role": "Member"
+    }
+  ],
+  "approvalRules": [
+    {
+      "what": "Orders over $5,000",
+      "detail": "Purchase orders and reorders.",
+      "approver": "Dana Kim"
+    },
+    {
+      "what": "Customer emails",
+      "detail": "Replies, refunds and apologies.",
+      "approver": "Leo Park"
+    },
+    {
+      "what": "Supplier emails",
+      "detail": "Chases and questions to suppliers.",
+      "approver": "Anyone who approves"
+    },
+    {
+      "what": "Everything else",
+      "detail": "Restocks, updates and small fixes.",
+      "approver": "Anyone who approves"
+    }
+  ],
+  "runLimits": {
+    "jobsAgentMayFinish": [
+      { "id": "returns", "name": "Restock returns", "desc": "When ShipBob marks a return as sellable." },
+      { "id": "chase", "name": "Chase late suppliers", "desc": "One polite chase per purchase order." },
+      { "id": "nudge", "name": "Nudge ShipBob on stuck orders", "desc": "After 3 days without a pick." },
+      { "id": "pause", "name": "Pause oversold variants", "desc": "Pauses the variant. Customer emails still wait." }
+    ],
+    "alwaysWaitsForAPerson": [
+      "Money",
+      "Customers"
+    ],
+    "dailyActionLimit": 25,
+    "largestRestockUnits": 50,
+    "placeholders": "dailyActionLimit and largestRestockUnits are design placeholders, still to be confirmed."
+  }
+}
