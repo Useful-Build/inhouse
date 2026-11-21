@@ -209,7 +209,7 @@ describe('checkAccess cases', () => {
  * `ownerObject` or `personal` row only through the owner check; Inhouse under a grant reads an `ownerObject` row with
  * no owner; pause and resume are Admin and Inhouse (item 19); drain and warm-up are release's only.
  */
-type Want = 'ok' | 'obj' | 'no' | 'grant' | 'audit'
+type Want = 'ok' | 'obj' | 'no' | 'grant' | 'audit' | 'ro'
 const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]> = {
   'GET /api/health': ['no', 'no', 'no', 'no', 'no', 'ok', 'no'],
   'GET /api/me': ['ok', 'ok', 'ok', 'ok', 'ok', 'no', 'no'],
@@ -269,10 +269,15 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/ops/tasks/revive': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   // Route 67 (P4 wave 4): the test build's alarm-now control, release only; its handler answers 404 outside the test build.
   'POST /api/ops/alarm': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  // Routes 68 and 69 (P5 W1): the Inhouse team alone, grant or not; a Member or an Admin is refused even a GET.
+  'POST /api/connect/:accountId/start': ['no', 'ro', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/connect/callback': ['no', 'no', 'ok', 'ok', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
   grant: { refused: 'forbidden', reason: 'grant_required' }, audit: { ok: true, audit: 'support.access' },
+  // P5 W1: an Admin's write on a technical row that isn't theirs to write (route 68).
+  ro: { refused: 'forbidden', reason: 'admin_read_only' },
 }
 const COLUMNS: readonly [string, () => Principal][] = [
   ['member', () => principals.member()], ['admin', () => principals.admin()], ['inhouse', () => principals.inhouse()],

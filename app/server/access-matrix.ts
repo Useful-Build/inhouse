@@ -63,6 +63,11 @@ export const accessMatrix: readonly AccessRow[] = [
   // P4 wave 4 (p4-w6.md OC 2): the test build's alarm-now control, release only like the undrain (its handler answers
   // 404 outside the test build).
   /* 67 */ { method: 'POST', pattern: '/api/ops/alarm', class: 'open', allow: [], services: ['release'] },
+  // P5 W1 (p5-w1.md section 9): technical, the Inhouse team alone. Route B is a GET the AS redirects the browser to, on
+  // the Inhouse team's host (OC-W1-11): it needs that host's Access session like any route (401 before routing without
+  // one; a top-level redirect carries it), so no open row. Its CSRF guard is the state's member binding at the hub.
+  /* 68 */ { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
+  /* 69 */ { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

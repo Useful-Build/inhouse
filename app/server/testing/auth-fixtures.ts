@@ -143,6 +143,9 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/ops/tasks/revive', class: 'open', allow: [], services: ['release'] },
   // Route 67 (P4 wave 4, p4-w6.md OC 2): the test build's alarm-now control, release only (404 outside the test build).
   { method: 'POST', pattern: '/api/ops/alarm', class: 'open', allow: [], services: ['release'] },
+  // Routes 68 and 69 (P5 W1, p5-w1.md section 9): connect start and the OAuth callback, the Inhouse team alone.
+  { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
+  { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */
