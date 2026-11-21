@@ -98,11 +98,15 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
       } else if (s.state === 'active' && !s.paused) {
         readable += 1
       }
-    } else {
-      catalog.push({ k: e.key, name: e.name, desc: e.desc, need: e.need })
+    } else if (!connecting) {
+      catalog.push({ k: e.key, name: e.name, desc: e.desc, need: e.need, accountId: e.accountId })
     }
     if (connecting) beingConnected.push(e.key)
 
+    // Details for a tool with a history: connected, being connected, or that has an account row or a hub state of its own
+    // (failed or refused first connect, disconnected, a failed revoke). A tool the Inhouse team never touched has none: it
+    // is a catalog entry only, and the UI has no page for it.
+    if (!isConnected && !connecting && s.state === 'empty' && row === undefined) continue
     const d: ToolDetail = { accountId: e.accountId, name: e.name, desc: e.desc, ex: e.ex, read: e.read, draft: e.draft, run: e.run, conn: e.conn, site: e.site }
     if (isConnected && connectedAtMs !== null) d.since = instant(connectedAtMs)
     if (connecting && row) d.liveBy = instant(row.lastStateAtMs + CONNECT_STATE_TTL_MS)

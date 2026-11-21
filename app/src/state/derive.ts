@@ -28,11 +28,15 @@ export const toolDetail = (data: AgentData, key: string): ToolDetail => {
 
 /**
  * A tool's state now. `connecting`: the Inhouse team is still connecting it. `disconnected`: its login failed (the agent's
+
  * data says so, in `tools.connection`). `paused`: a person paused the agent's access. `connected`: the agent reads it.
+ * `off`: the tool has a history here (it was disconnected, or a first connect failed) and nothing is connected or being
+ * connected now; its page offers Connect (P5 W3).
  */
-export type ToolState = 'connecting' | 'connected' | 'paused' | 'disconnected'
+export type ToolState = 'connecting' | 'connected' | 'paused' | 'disconnected' | 'off'
 export const toolState = (ctx: Ctx, key: string): ToolState => {
   const d = toolDetail(ctx.data, key)
+  if (!ctx.data.tools.connected.includes(key) && !d.progress && !ctx.data.tools.beingConnected.includes(key)) return 'off'
   if (d.progress || !ctx.data.tools.connected.includes(key)) return 'connecting'
   if (ctx.data.tools.connection[key]?.status === 'disconnected') return 'disconnected'
   if (ctx.agent.toolPaused[key]) return 'paused'
@@ -150,17 +154,17 @@ export function toolView(ctx: Ctx, key: string): ToolView {
   const lostAt = state === 'disconnected' ? fmtTime(ctx.data.tools.connection[key]!.since, d0) : ''
   const lastRead = ctx.data.tools.lastRead[key] ?? ctx.data.tools.lastRead.default
   const readAt = fmtTime(lastRead, d0)
-  const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet' }[state]
+  const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet', off: 'Off' }[state]
   const setup = Object.hasOwn(ctx.data.tools.setup, key) ? SETUP_DUE[ctx.data.tools.setup[key].due] : null
   const ability = (k: ToolAbility['key'], icon: string, title: string, text: string, need: StageIndex): ToolAbility =>
     ({ key: k, icon, title, text, need, locked: ctx.S < need, tag: ctx.S < need ? STAGE_TAGS[need] : tagOf })
   return {
     key, name: d.name, state,
-    statusText: { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}` }[state],
+    statusText: { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}`, off: 'Not connected' }[state],
     // Being connected: on day one, when Today's setup list says it connects; else when it goes live ("Live by Fri, Nov 20").
-    listLine: { connecting: setup ?? sinceLine(d, d0), connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting' }[state],
-    connectedRow: state === 'connecting' ? 'Not yet' : `${sinceLine(d, d0)}, by your Inhouse team`,
-    lastRead: state === 'connecting' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
+    listLine: state === 'connecting' ? setup ?? sinceLine(d, d0) : { connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting', off: 'Not connected' }[state],
+    connectedRow: state === 'connecting' ? 'Not yet' : state === 'off' ? 'Not connected' : `${sinceLine(d, d0)}, by your Inhouse team`,
+    lastRead: state === 'connecting' || state === 'off' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
     abilities: [
       ability('read', 'visibility', 'Read', d.read, 0),
       ability('draft', 'edit_note', 'Draft for your approval', d.draft, 1),

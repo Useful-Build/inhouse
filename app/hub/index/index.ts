@@ -15,6 +15,7 @@ import { log } from './log'
 import { AccountIdSchema, CallerScopeSchema, ToolNameSchema } from './schemas'
 import { callReadyTool, listReadyTools, toolNameForLog } from '../registry/registry'
 import { loadRegistry, readyGatewayDeps } from '../signin/signin'
+import { codeModeFor } from '../codemode/run'
 
 export { SignIn } from '../signin/signin'
 export { ConnectGateway } from '../oauth/entry'
@@ -62,7 +63,8 @@ export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
     const result = await guarded(async () => {
       if (!parsedScope.success) return err('invalid_args', 'scope')
       if (!parsedName.success) return err('invalid_args', 'name')
-      return callReadyTool(await readyGatewayDeps(this.env), parsedScope.data, parsedName.data, args)
+      // P5 (p5-w2): code mode over env.LOADER, read only by shopify_script_run.
+      return callReadyTool({ ...(await readyGatewayDeps(this.env)), codemode: codeModeFor(this.env) }, parsedScope.data, parsedName.data, args)
     })
     // A malformed registry already logged hub_config_invalid; this line then names no tool.
     const registry = await loadRegistry(this.env).catch(() => null)

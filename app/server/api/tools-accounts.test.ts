@@ -67,7 +67,7 @@ describe('the adapter on the real store', () => {
     const h = hub({ state: 'empty' })
     const res = await handlers(h.gateway, stores).listTools(call(stores, await inhouse(), 'GET', '/api/tools', {}))
     const data = (await res.json()) as { beingConnected: string[]; catalog: { k: string }[] }
-    expect([res.status, data.beingConnected, data.catalog.map(c => c.k)]).toEqual([200, ['slack'], ['slack']])
+    expect([res.status, data.beingConnected, data.catalog.map(c => c.k)]).toEqual([200, ['slack'], []])
   })
 })
 

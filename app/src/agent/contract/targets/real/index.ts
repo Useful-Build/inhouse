@@ -23,7 +23,7 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
-  'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool', 'requestSkill', 'setToolPaused',
+  'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool', 'requestSkill', 'setToolPaused', 'connectTool', 'disconnectTool',
   'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles', 'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine',
   'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
 ])

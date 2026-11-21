@@ -4,7 +4,10 @@
 import { z } from 'zod'
 import type { CallerScope, HubResult, ToolInfo } from '../index/contract'
 import { ACCOUNT_ID } from '../index/schemas'
-import { err, isHubErrorCode, ok } from '../index/errors'
+import { err, hubError, isHubErrorCode, ok } from '../index/errors'
+// P5 (p5-w2)
+import type { CodeMode } from '../codemode/types'
+import { CAP_MESSAGES } from '../codemode/caps'
 
 export type ShopifyReadClient = {
   graphql(document: string, variables?: Record<string, unknown>, apiVersion?: string): Promise<HubResult<{ data: unknown }>>
@@ -16,8 +19,11 @@ export type McpToolResult = { content: { type: 'text'; text: string }[] }
 /** An `oauth_mcp` account's proxy (P5 W1), built over its SignIn's `mcpCall`. Tool code never sees a token. */
 export type McpClient = { call(upstream: string, args: Record<string, unknown>): Promise<HubResult<McpToolResult>> }
 
-/** `mcp` is set for `oauth_mcp` tools by the ready gateway (P5 W1); H0's Shopify tools never read it. */
-export type ToolContext = { shopify: ShopifyReadClient; scope: CallerScope; nowMs: number; mcp?: McpClient }
+/**
+ * `mcp` is set for `oauth_mcp` tools by the ready gateway (P5 W1); H0's Shopify tools never read it. `codemode` is
+ * the hub entry's code mode over env.LOADER (P5 W2), read only by shopify_script_run.
+ */
+export type ToolContext = { shopify: ShopifyReadClient; scope: CallerScope; nowMs: number; mcp?: McpClient; codemode?: CodeMode }
 
 export type ToolDef<I> = {
   name: string
@@ -321,6 +327,8 @@ export type GatewayDeps = {
   /** The read client for a connector's account (the SignIn stub). Tool code never sees a token. */
   shopifyFor(connector: HubConnector): ShopifyReadClient
   nowMs(): number
+  /** P5 (p5-w2): code mode, set by the hub entry (orchestrator wiring). Absent: shopify_script_run is not_configured. */
+  codemode?: CodeMode
 }
 
 /** What an account's SignIn says about serving its tools now (P5 W1). */
@@ -365,13 +373,16 @@ async function runTool(deps: GatewayDeps, scope: CallerScope, t: RegisteredTool,
   if (!parsed.success) return err('invalid_args', name)
   const ctx: ToolContext = { shopify: deps.shopifyFor(t.connector), scope, nowMs: deps.nowMs() }
   if (mcp) ctx.mcp = mcp
+  if (deps.codemode) ctx.codemode = deps.codemode
   const result = await t.run(ctx, parsed.data)
   if (!result.ok) {
     // Rebuilt here from the code alone: a tool's own message could carry upstream text, and it never reaches the runner.
     const code = isHubErrorCode(result.error?.code) ? result.error.code : 'internal'
     const retry = result.error?.retryAfterMs
     // An MCP tool's oversize result keeps its fixed hint (P5 W1); every other message is the code's text and the name.
-    const detail = code === 'result_too_large' && isMcpConnector(t.connector) ? `${name}; ${MCP_TOO_LARGE}` : name
+    // Code mode's two cap messages are kept too (P5 W2): fixed strings, compared whole.
+    const capHint = code === 'rate_limited' ? CAP_MESSAGES.find(m => result.error.message === hubError('rate_limited', m).message) : undefined
+    const detail = code === 'result_too_large' && isMcpConnector(t.connector) ? `${name}; ${MCP_TOO_LARGE}` : capHint ? `${name}; ${capHint}` : name
     return err(code, detail, typeof retry === 'number' && Number.isFinite(retry) && retry >= 0 ? retry : undefined)
   }
   let json: string | undefined

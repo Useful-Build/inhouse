@@ -80,7 +80,7 @@ describe('test 9: H0 unchanged', () => {
         target = name
         switch (o.k) {
           case 'read':
-            out.push(await s.core.query({ accountId: ACCOUNT, document: '{ shop { name } }', apiVersion: API }))
+            out.push(await s.core.query({ accountId: ACCOUNT, document: '{ shop { currencyCode } }', apiVersion: API }))
             break
           case 'advance':
             s.clock.ms += o.ms
