@@ -2,11 +2,11 @@
 // chat) instead of the softer rule (decision log 2026-11-19); the web guard (decision 20) is missing a part; a persona
 // or a brand name creeps in. Expected sentences are literals here.
 import { describe, expect, it } from 'vitest'
-import { SYSTEM_PROMPT_V1, SYSTEM_PROMPT_VERSION } from './system.ts'
+import { CONNECTED_APPS_LINE, SYSTEM_PROMPT_V1, SYSTEM_PROMPT_V2, SYSTEM_PROMPT_VERSION } from './system.ts'
 
 describe('the system prompt v1', () => {
   it('carries the softer memory rule, not the reflex', () => {
-    expect(SYSTEM_PROMPT_VERSION).toBe(1)
+    expect(SYSTEM_PROMPT_VERSION).toBe(2)
     expect(SYSTEM_PROMPT_V1).toContain('search memory when the question could depend on saved context')
     expect(SYSTEM_PROMPT_V1).toContain("You don't need to search on every chat.")
     expect(SYSTEM_PROMPT_V1).not.toMatch(/before answering/i)
@@ -19,5 +19,16 @@ describe('the system prompt v1', () => {
   it('names no persona and no brand', () => {
     expect(SYSTEM_PROMPT_V1).not.toMatch(/\bava\b/i)
     expect(SYSTEM_PROMPT_V1).not.toMatch(/morning email/i)
+  })
+})
+
+describe('the system prompt v2', () => {
+  it('is v1 unchanged plus the connected-apps line, read only, found by tool search', () => {
+    expect(SYSTEM_PROMPT_V2.startsWith(SYSTEM_PROMPT_V1)).toBe(true)
+    expect(SYSTEM_PROMPT_V2.endsWith(CONNECTED_APPS_LINE)).toBe(true)
+    expect(CONNECTED_APPS_LINE).toContain('Shopify (orders, products, inventory, refunds, returns)')
+    expect(CONNECTED_APPS_LINE).toContain('Their tools are read only')
+    expect(CONNECTED_APPS_LINE).toContain('search for them with tool search')
+    expect(SYSTEM_PROMPT_V2).not.toContain('\u2014')
   })
 })
