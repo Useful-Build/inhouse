@@ -85,9 +85,13 @@ export function fileStore({ db, bucket }: { db: D1Database; bucket: Pick<KeyedBu
       return (r?.meta.changes ?? 0) === 1
     },
 
-    /** The reserved output's bytes are in R2: its type, size and hash (still `pending`). */
-    async completeOutput(id: string, f: { contentType: string; bytes: number; sha256: string }): Promise<void> {
-      await runBatch(db, [stmt("UPDATE chat_files SET content_type = ?, bytes = ?, sha256 = ? WHERE id = ? AND state = 'pending'", f.contentType, f.bytes, f.sha256, id)])
+    /**
+     * The reserved output's bytes are in R2: its type, size and hash (still `pending`). False when no pending row of that
+     * id was there to change (the sweep expired it, or a purge deleted it, while the bytes were written).
+     */
+    async completeOutput(id: string, f: { contentType: string; bytes: number; sha256: string }): Promise<boolean> {
+      const [r] = await runBatch(db, [stmt("UPDATE chat_files SET content_type = ?, bytes = ?, sha256 = ? WHERE id = ? AND state = 'pending'", f.contentType, f.bytes, f.sha256, id)])
+      return (r?.meta.changes ?? 0) === 1
     },
 
     /** Frees a refused PUT's slot (only while it's still pending). */
