@@ -16,3 +16,6 @@ export const productLogs: Real['productLogs'] = () => {
 export const runTestFakes: Real['runTestFakes'] = () => {
   throw new Error('The test-fakes hook is not in this build.')
 }
+export const runTestFakesInWorker: Real['runTestFakesInWorker'] = () => {
+  throw new Error('The test-fakes hook is not in this build.')
+}

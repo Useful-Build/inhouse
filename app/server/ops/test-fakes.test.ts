@@ -1,5 +1,5 @@
 // Route 76, `POST /api/ops/test-fakes` (fakes-hook.ts), and its ops (test-fakes.ts). The route through the whole /api/*
-// path (server/api.ts) with the real route table, access matrix, sign-in and BrandAgent; the ops on runTestFakes with
+// path (server/api.ts) with the real route table, access matrix and sign-in, run in the Worker request; the ops on runTestFakes with
 // the real D1 and stand-in hub bindings (the hub side is hub/testing/fakes.workers.test.ts). Ways it can fail, written
 // down first:
 //  1. it answers anything but 404 outside the test build (compiled out, compiled in but not switched on, or the eval
@@ -62,7 +62,7 @@ const quiet = () => {
   return vi.spyOn(console, 'log').mockImplementation(() => {})
 }
 const hookLines = (log: ReturnType<typeof quiet>) => log.mock.calls.filter(([e]) => (e as { event?: unknown })?.event === 'test_fakes')
-/** An op the BrandAgent answers without the hub: an invalid system notice (sendSystemNotice refuses it, writing nothing). */
+/** An op the hook answers without the hub: an invalid system notice (sendSystemNotice refuses it, writing nothing). */
 const NOTICE_INVALID = JSON.stringify({ op: 'systemNotice', notice: { key: 'k' } })
 
 describe('route 76 outside the test build (failure 1)', () => {
@@ -97,7 +97,7 @@ describe('which builds compile the hook in (failure 1, Opus 6)', () => {
 })
 
 describe('route 76 in the test build (failures 2 and 3)', () => {
-  it('release only, with the brand Origin; answers the op through the BrandAgent', async () => {
+  it('release only, with the brand Origin; answers the op in the Worker request', async () => {
     const log = quiet()
     const call = setup({ compiled: true, flag: '1' })
     const h = await release()
@@ -113,6 +113,22 @@ describe('route 76 in the test build (failures 2 and 3)', () => {
     const { Origin: _o, ...noOrigin } = h
     expect(await bodyOf(await call({ headers: noOrigin, body: NOTICE_INVALID }))).toEqual({ error: { code: 'forbidden', reason: 'bad_origin' } })
     expect(hookLines(log)).toHaveLength(1)
+    vi.restoreAllMocks()
+  })
+
+  it('reaches D1 from the Worker request although the handler\'s env has no DB (a notify for an unknown member)', async () => {
+    quiet()
+    const res = await setup({ compiled: true, flag: '1' })({ headers: await release(), body: JSON.stringify({ op: 'notify', as: { memberId: 'm_nobody' }, args: {} }) })
+    expect(res.status).toBe(400)
+    expect(await bodyOf(res)).toEqual({ error: { code: 'unknown_member' } })
+    vi.restoreAllMocks()
+  })
+
+  it('reaches R2 from the Worker request although the handler\'s env has no FILES (transcripts: 200, texts an array)', async () => {
+    quiet()
+    const res = await setup({ compiled: true, flag: '1' })({ headers: await release(), body: JSON.stringify({ op: 'transcripts' }) })
+    expect(res.status).toBe(200)
+    expect(Array.isArray((await bodyOf(res)).texts)).toBe(true)
     vi.restoreAllMocks()
   })
 
