@@ -173,7 +173,7 @@ export function settingsPage(tab: string, env: Env): Page {
     lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 0, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
-  const teach = R('Teach it something', "Tell it a rule in a chat, in your own words. It shows here once it's approved.", 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))
+  const teach = R('Teach it something', "Tell it a rule in a chat, in your own words. It shows here, after an admin's OK if Ask is on.", 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))
   const lim = people.runLimits
   // These rows start at Act, so they name the channel Act connects. None: no channel wording or option.
   const channel = channelFrom(data, 1)?.name
