@@ -44,11 +44,18 @@ const ROOT = (main: string) => RELS(`<Relationship Id="rId1" Type="${OFFICE_DOC}
 const docx = (body: string, rels = '') => zip({ '_rels/.rels': ROOT('word/document.xml'), 'word/document.xml': DOC(body), 'word/_rels/document.xml.rels': RELS(rels) })
 const xlsx = (sheet: string, extra: Record<string, string> = {}) => zip({ '_rels/.rels': ROOT('/xl/workbook.xml'), 'xl/workbook.xml': '<workbook/>', 'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${sheet}</sheetData></worksheet>`, ...extra })
 
+/**
+ * A whole PDF: the objects as numbered, each stream after them with its /Length, a classic xref table pointing at every object,
+ * and a trailer whose /Root is object 1. Written here as its own writer, not the reader under test.
+ */
 function pdf(objects: string[], streams: { dict: string; data: Uint8Array }[] = []): Uint8Array {
   const parts: Buffer[] = [Buffer.from('%PDF-1.7\n')]
-  objects.forEach((o, i) => parts.push(Buffer.from(`${i + 1} 0 obj\n${o}\nendobj\n`)))
-  streams.forEach((s, i) => parts.push(Buffer.from(`${objects.length + i + 1} 0 obj\n<<${s.dict} /Length ${s.data.length}>>\nstream\n`), Buffer.from(s.data), Buffer.from('\nendstream\nendobj\n')))
-  parts.push(Buffer.from('trailer\n<< /Root 1 0 R >>\n%%EOF\n'))
+  const offsets: number[] = []
+  const size = () => parts.reduce((n, b) => n + b.length, 0)
+  objects.forEach((o, i) => { offsets.push(size()); parts.push(Buffer.from(`${i + 1} 0 obj\n${o}\nendobj\n`)) })
+  streams.forEach((s, i) => { offsets.push(size()); parts.push(Buffer.from(`${objects.length + i + 1} 0 obj\n<<${s.dict} /Length ${s.data.length}>>\nstream\n`), Buffer.from(s.data), Buffer.from('\nendstream\nendobj\n')) })
+  const xref = size()
+  parts.push(Buffer.from(`xref\n0 ${offsets.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${offsets.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`))
   return Buffer.concat(parts)
 }
 
@@ -140,7 +147,7 @@ describe('pdf', () => {
     const uri = extractFile('r.pdf', '', pdf(['<< /Type /Annot /A << /S /URI /URI (https://reports.partner.test/t?d=k) >> >>']))
     expect(uri?.references).toEqual([{ kind: 'link', url: 'https://reports.partner.test/t?d=k' }])
     expect(unsafe(uri)).toBe(true)
-    const hidden = extractFile('r.pdf', '', pdf(['<< /Type /Catalog >>'], [{ dict: '/Type /ObjStm /Filter /FlateDecode', data: deflateSync(Buffer.from('<< /S /URI /URI (https://img.partner.test/z) >>')) }]))
+    const hidden = extractFile('r.pdf', '', pdf(['<< /Type /Catalog >>'], [{ dict: '/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode', data: deflateSync(Buffer.from('9 0 << /S /URI /URI (https://img.partner.test/z) >>')) }]))
     expect(hidden?.references.map((r) => r.url)).toEqual(['https://img.partner.test/z'])
     expect(unsafe(hidden)).toBe(true)
   })
@@ -165,7 +172,7 @@ describe('pdf syntax a hostile file can use', () => {
     expect(extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter 9 0 R', data: Buffer.from('<< /S /URI /URI (https://x.partner.test) >>') }]))).toBeNull()
     expect(extractFile('r.pdf', '', Buffer.from('%PDF-1.7\n1 0 obj\n<< /Length 30 >>\nstream \n<< /S /JavaScript /JS (x) >>\nendstream\nendobj\n'))).toBeNull()
     // Detection is a scan of the whole decoded text, not a peel of dictionaries: depth can't hide an action, and size can't make it slow.
-    expect(unsafe(extractFile('r.pdf', '', pdf([`${'<< /A '.repeat(60)}/S /JavaScript${' >>'.repeat(60)}`])))).toBe(true)
+    expect(unsafe(extractFile('r.pdf', '', pdf([`${'<< /A '.repeat(60)}<< /S /JavaScript /JS (x) >>${' >>'.repeat(60)}`])))).toBe(true)
     expect(unsafe(extractFile('r.pdf', '', pdf(Array.from({ length: 20_001 }, () => '<< /T 1 >>'))))).toBe(false)
   })
   // Round 2's probes: each passed the dictionary peel. Every one must now be unsafe or null.
