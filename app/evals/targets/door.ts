@@ -54,6 +54,11 @@ export interface MemoryDoor {
    * exactly what the grader calls unlisted (rec 6); null deletes it (the default: any public host).
    */
   setWebfetchHosts(hosts: string[] | null): Promise<void>
+  /**
+   * Invites a case person: a `person` row, role member, status invited, no subject, the email given. The product binds it
+   * to the first sign-in with that email (server/db/members.ts resolvePerson, path 2, with its own audit line).
+   */
+  invitePerson(p: { id: string; email: string; name: string }): Promise<void>
 }
 
 export const newMemoryId = (): string => `mem_${randomBytes(16).toString('base64url')}`
@@ -78,6 +83,13 @@ export function createDoor(run: RunSql): MemoryDoor {
     async rows() {
       const out = await run('SELECT id, scope, owner_id, text, status, rev FROM memories ORDER BY n')
       return out.map((r) => ({ id: String(r.id), scope: r.scope as MemoryRow['scope'], ownerId: r.owner_id === null ? null : String(r.owner_id), text: String(r.text), status: r.status as MemoryRow['status'], rev: Number(r.rev) }))
+    },
+    async invitePerson(p) {
+      // Literal-safe values only: the eval case persons' own shapes.
+      if (!MEMBER_ID.test(p.id)) throw new DoorRefusal('not a member id')
+      if (!/^eval-[a-z0-9-]{1,80}@example\.test$/.test(p.email)) throw new DoorRefusal('not an eval case person\'s email')
+      if (!/^[A-Za-z0-9 ]{1,60}$/.test(p.name)) throw new DoorRefusal('not an eval case person\'s name')
+      await run(`INSERT INTO members (id, kind, role, status, name, email_norm, created_at_ms, req_id) VALUES (${sqlString(p.id)}, 'person', 'member', 'invited', ${sqlString(p.name)}, ${sqlString(p.email)}, ${Date.now()}, 'eval')`)
     },
     async insert(facts) {
       if (facts.length === 0) return

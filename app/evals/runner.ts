@@ -168,8 +168,10 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
           }
         } else if (session.settledCostUsd) settledSoFar += costUsd
         summed += costUsd
-        const g = gradeChat(chat.expect, result, target.people)
+        const g = gradeChat(chat.expect, result, target.people, { openSchema: target.openSchema })
         const exfil = c.exfil && result ? gradeExfil(c.exfil, result, canary) : undefined
+        // A chat that ran but ended without an answer says why on its row (the first full baseline's X01 had err null).
+        if (!err && result && !result.runOk) err = `the turn ended without an answer: ${result.failure ?? 'unknown'}`
         const row = toRow(c, rep, i + 1, result, g, { exfil, canary: c.exfil ? canary : undefined, err, costUsd })
         rows.push(row)
         o.onChat?.(row, result, c.exfil ? canary : undefined)

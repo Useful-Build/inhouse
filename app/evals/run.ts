@@ -10,6 +10,7 @@ import { estimateUsd, runEvals } from './runner.ts'
 import { createFakeTarget } from './targets/fake.ts'
 import { createFixtureTarget } from './targets/fixture.ts'
 import { createProductTarget } from './targets/product.ts'
+import { openSchemaTools } from './served-schema.ts'
 import { rawWriter, writeResults } from './write.ts'
 import type { Target } from './types.ts'
 
@@ -35,7 +36,7 @@ if (budgetUsd !== undefined && !(budgetUsd >= 0)) fail('--budget must be a numbe
 
 let target: Target
 try {
-  target = targetName === 'fake' ? createFakeTarget() : targetName === 'fixture' ? createFixtureTarget() : createProductTarget({ paid: v.paid, budgetUsd, env: process.env, model: v.model })
+  target = targetName === 'fake' ? createFakeTarget() : targetName === 'fixture' ? createFixtureTarget() : createProductTarget({ paid: v.paid, budgetUsd, env: process.env, model: v.model, openSchema: await openSchemaTools() })
 } catch (e) {
   fail(`refused: ${e instanceof Error ? e.message : String(e)}`)
   throw e
