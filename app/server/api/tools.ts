@@ -82,19 +82,22 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     if (!a || !a.configured) continue
     const row = rows.get(e.accountId)
     const s = a.status
-    const isConnected = s.state === 'active' || s.state === 'failed'
+    const connectedAtMs = s.connectedAt?.ms ?? row?.connectedAtMs ?? null
+    // The contract: connected implies `since` (the client throws on a connected tool with no date). The hub gives a
+    // client-credentials account its first grant's time, an OAuth one its connect time; an account with neither (a first
+    // grant that failed, nothing ever connected) is not connected, so it reads as a catalog entry with its details.
+    const isConnected = (s.state === 'active' || s.state === 'failed') && connectedAtMs !== null
     // A failed or reconnect-needing tool with a fresh connecting row is in `connected` (with its failed state) AND in
     // `beingConnected`: a reconnect is in progress.
     const connecting = row?.lastState === 'connecting' && nowMs - row.lastStateAtMs <= CONNECT_STATE_TTL_MS
-    const connectedAtMs = s.connectedAt?.ms ?? row?.connectedAtMs ?? null
     const connectedBy = s.connectedBy ?? row?.connectedBy ?? null
 
     if (isConnected) {
       connected.push(e.key)
       if (s.state === 'failed' || s.needsReconnect) {
-        // The contract's `since` is required: the hub's error time, else the row's, else when it was connected, else the
-        // epoch (an explicit "unknown" like `lastRead`'s stub, never the clock). Rare: a failure the hub gave no time for.
-        connection[e.key] = { status: 'disconnected', since: instant(s.lastError?.at.ms ?? row?.lastStateAtMs ?? connectedAtMs ?? 0) }
+        // The contract's `since` is required: the hub's error time, else the row's, else when it was connected (never the
+        // clock). Rare: a failure the hub gave no time for.
+        connection[e.key] = { status: 'disconnected', since: instant(s.lastError?.at.ms ?? row?.lastStateAtMs ?? connectedAtMs) }
       } else if (s.state === 'active' && !s.paused) {
         readable += 1
       }
@@ -108,7 +111,7 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     // is a catalog entry only, and the UI has no page for it.
     if (!isConnected && !connecting && s.state === 'empty' && row === undefined) continue
     const d: ToolDetail = { accountId: e.accountId, name: e.name, desc: e.desc, ex: e.ex, read: e.read, draft: e.draft, run: e.run, conn: e.conn, site: e.site }
-    if (isConnected && connectedAtMs !== null) d.since = instant(connectedAtMs)
+    if (isConnected) d.since = instant(connectedAtMs)
     if (connecting && row) d.liveBy = instant(row.lastStateAtMs + CONNECT_STATE_TTL_MS)
     if (connectedBy !== null) d.connectedBy = connectedBy
     if (e.oauth) d.canDisconnect = isConnected

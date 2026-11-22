@@ -539,3 +539,54 @@ describe('the canary token (property 8)', () => {
     },
   )
 })
+
+// P5 fix (Tools screen crash): the Tools page lists an active account as connected only with a "since" date, and a
+// client-credentials account (Shopify) never passes completeConnect, so the hub must give it a stable connectedAt.
+// Ways it can fail, first: connectedAt stays null after a grant; it moves with every refresh grant (it would read as
+// "connected today" every morning); it is the clock at read time; a legacy active record (granted before this field)
+// stays null forever; a first grant that failed gets a date though nothing was ever connected.
+describe('connectedAt for a client-credentials account', () => {
+  const connectedAtOf = async (h: Harness) => {
+    const s = await h.core.accountStatus(ACCOUNT)
+    if (!s.ok) throw new Error(s.error.code)
+    return s.value.connectedAt
+  }
+  const at = (ms: number) => ({ ms, iso: new Date(ms).toISOString() })
+
+  it('is the first grant, and stays there through a refresh grant, a failed refresh and later reads', async () => {
+    const h = harness()
+    expect(await connectedAtOf(h)).toBeNull()
+    await readQuery(h)
+    expect(await connectedAtOf(h)).toEqual(at(START_MS))
+    h.clock.ms = START_MS + (LIFETIME_S * 1000) / 2
+    await h.core.alarm()
+    expect(h.shop.grants).toBe(2)
+    expect(await connectedAtOf(h)).toEqual(at(START_MS))
+    h.shop.grantMode = { kind: 'status', status: 403 }
+    h.clock.ms += LIFETIME_S * 1000
+    await h.core.alarm()
+    expect(h.store.record()).toMatchObject({ state: 'failed' })
+    expect(await connectedAtOf(h)).toEqual(at(START_MS))
+  })
+
+  it('a first grant that failed gives no date: nothing was ever connected', async () => {
+    const h = harness()
+    h.shop.grantMode = { kind: 'status', status: 403 }
+    expect(codeOf(await readQuery(h))).not.toBe('ok')
+    expect(h.store.record()).toMatchObject({ state: 'failed' })
+    expect(await connectedAtOf(h)).toBeNull()
+  })
+
+  it('a legacy active record (granted before connectedAt was kept) reads its token time once, then keeps it', async () => {
+    const h = harness()
+    await readQuery(h)
+    const r = h.store.record()!
+    const { connectedAtMs: _drop, ...legacy } = r
+    h.store.put('record', { ...legacy, obtainedAtMs: START_MS - 3_600_000 })
+    expect(await connectedAtOf(h)).toEqual(at(START_MS - 3_600_000))
+    h.clock.ms = START_MS + (LIFETIME_S * 1000) / 2
+    await h.core.alarm()
+    expect(h.store.record()!.obtainedAtMs).toBe(h.clock.ms)
+    expect(await connectedAtOf(h)).toEqual(at(START_MS - 3_600_000))
+  })
+})

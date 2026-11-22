@@ -74,7 +74,7 @@ describe('route C: the merge', () => {
     expect(CONNECT_STATE_TTL_MS).toBe(10 * MIN)
   })
   it('a failed login stays listed as connected and is reported disconnected since its error', () => {
-    const d = buildToolsData({ accounts: [acct('shopify:store', { state: 'failed', lastError: { code: 'credentials_rejected', at: inst(NOW - 5 * MIN) } })], rows: [], nowMs: NOW })
+    const d = buildToolsData({ accounts: [acct('shopify:store', { state: 'failed', connectedAt: inst(NOW - 60 * MIN), lastError: { code: 'credentials_rejected', at: inst(NOW - 5 * MIN) } })], rows: [], nowMs: NOW })
     expect(d.connected).toEqual(['shopify'])
     expect(d.connection).toEqual({ shopify: { status: 'disconnected', since: inst(NOW - 5 * MIN) } })
   })
@@ -91,21 +91,24 @@ describe('route C: the merge', () => {
   })
   it('a failed tool with a fresh connecting row is in connected (failed) AND in beingConnected: a reconnect is in progress', () => {
     const d = buildToolsData({
-      accounts: [acct('slack:workspace', { state: 'failed', lastError: { code: 'credentials_rejected', at: inst(NOW - 30 * MIN) } })],
+      accounts: [acct('slack:workspace', { state: 'failed', connectedAt: inst(NOW - 60 * MIN), lastError: { code: 'credentials_rejected', at: inst(NOW - 30 * MIN) } })],
       rows: [row('slack:workspace', 'connecting', NOW - MIN)], nowMs: NOW,
     })
     expect(d.connected).toEqual(['slack'])
     expect(d.beingConnected).toEqual(['slack'])
     expect(d.connection).toEqual({ slack: { status: 'disconnected', since: inst(NOW - 30 * MIN) } })
-    const r = buildToolsData({ accounts: [acct('slack:workspace', { needsReconnect: true })], rows: [row('slack:workspace', 'connecting', NOW - MIN)], nowMs: NOW })
+    const r = buildToolsData({ accounts: [acct('slack:workspace', { needsReconnect: true, connectedAt: inst(NOW - 60 * MIN) })], rows: [row('slack:workspace', 'connecting', NOW - MIN)], nowMs: NOW })
     expect([r.connected, r.beingConnected, Object.keys(r.connection)]).toEqual([['slack'], ['slack'], ['slack']])
   })
   it('no time is invented: since falls back to the row, then the hub connect time, never the clock; a channel needs a time', () => {
     const failed = (rows: ConnectorAccountRow[], over: Partial<AccountSummary['status']> = {}) =>
-      buildToolsData({ accounts: [acct('shopify:store', { state: 'failed', ...over })], rows, nowMs: NOW }).connection.shopify!.since
-    expect(failed([row('shopify:store', 'failed', NOW - 20 * MIN)])).toEqual(inst(NOW - 20 * MIN))
+      buildToolsData({ accounts: [acct('shopify:store', { state: 'failed', ...over })], rows, nowMs: NOW }).connection.shopify?.since
+    expect(failed([row('shopify:store', 'failed', NOW - 20 * MIN)], { connectedAt: inst(NOW - 60 * MIN) })).toEqual(inst(NOW - 20 * MIN))
+    expect(failed([row('shopify:store', 'failed', NOW - 20 * MIN, { connectedAtMs: NOW - 60 * MIN })])).toEqual(inst(NOW - 20 * MIN))
     expect(failed([], { connectedAt: inst(NOW - 40 * MIN) })).toEqual(inst(NOW - 40 * MIN))
-    expect(failed([])).toEqual(inst(0))
+    // With no connect time anywhere it was never connected (a failed first grant): not connected, so no epoch "since".
+    // (Before the P5 Tools crash fix this read connected, disconnected since the epoch, and had no details.since.)
+    expect(failed([])).toBeUndefined()
     const slack = (rows: ConnectorAccountRow[], over: Partial<AccountSummary['status']> = {}) =>
       buildToolsData({ accounts: [acct('slack:workspace', over)], rows, nowMs: NOW }).channels.map(c => c.since)
     expect(slack([row('slack:workspace', 'connected', NOW - 3 * MIN)])).toEqual([inst(NOW - 3 * MIN)])
@@ -128,10 +131,16 @@ describe('route C: the merge', () => {
     expect(off.connected).toEqual([])
     expect(off.details.slack).toMatchObject({ accountId: 'slack:workspace', revokeFailed: true })
     expect(off.catalog.map(c => c.k)).toEqual(['slack'])
+    // A failed account with no connect time from the hub or a row was never connected (the P5 Tools crash fix: connected
+    // implies since). Its details stay, so its page opens, and it reads as a catalog entry, not as a connected tool.
     const lost = buildToolsData({ accounts: [acct('slack:workspace', { state: 'failed' })], rows: [], nowMs: NOW })
-    expect(lost.connected).toEqual(['slack'])
-    expect(lost.connection).toEqual({ slack: { status: 'disconnected', since: inst(0) } })
+    expect(lost.connected).toEqual([])
+    expect(lost.connection).toEqual({})
     expect(Object.keys(lost.details)).toEqual(['slack'])
+    expect(lost.catalog.map(c => c.k)).toEqual(['slack'])
+    const was = buildToolsData({ accounts: [acct('slack:workspace', { state: 'failed', connectedAt: inst(NOW - 60 * MIN) })], rows: [], nowMs: NOW })
+    expect(was.connected).toEqual(['slack'])
+    expect(was.connection).toEqual({ slack: { status: 'disconnected', since: inst(NOW - 60 * MIN) } })
   })
   it('a first connect that failed or was declined leaves a row but no hub state: the details stay, so its page opens', () => {
     for (const lastState of ['never', 'failed', 'disconnected'] as const) {
@@ -142,7 +151,8 @@ describe('route C: the merge', () => {
     }
   })
   it('readDone counts only tools the agent can read now: active, not paused, no reconnect needed', () => {
-    const n = (over: Partial<AccountSummary['status']>) => buildToolsData({ accounts: [acct('slack:workspace', over), acct('shopify:store')], rows: [], nowMs: NOW }).readDone
+    const at = { connectedAt: inst(NOW - 60 * MIN) }
+    const n = (over: Partial<AccountSummary['status']>) => buildToolsData({ accounts: [acct('slack:workspace', { ...at, ...over }), acct('shopify:store', at)], rows: [], nowMs: NOW }).readDone
     expect(n({})).toBe(2)
     expect(n({ paused: true })).toBe(1)
     expect(n({ needsReconnect: true })).toBe(1)
@@ -172,6 +182,29 @@ describe('route C: the merge', () => {
       expect(ToolsDataSchema.safeParse(data).success).toBe(true)
     }), { numRuns: 300 })
   })
+  // The Tools screen crash (P5, ship recording 45046093071): Shopify active with no connect time and no row was listed as
+  // connected with no `since`, and the client's sinceLine threw for the whole screen. Ways it can fail: a connected tool
+  // with no `since`; a `since` that is the clock (moves between reads).
+  it('an active client-credentials account with no row: since is the hub connect time, the same on every read', () => {
+    const read = (nowMs: number) => buildToolsData({ accounts: [acct('shopify:store', { connectedAt: inst(NOW - 2 * 86_400_000) })], rows: [], nowMs })
+    expect(read(NOW).connected).toEqual(['shopify'])
+    expect(read(NOW).details.shopify!.since).toEqual(inst(NOW - 2 * 86_400_000))
+    expect(read(NOW + 3 * 3_600_000).details.shopify!.since).toEqual(read(NOW).details.shopify!.since)
+  })
+  it('property: connected implies since (the contract the client reads); a tool with no honest date is not listed as connected', () => {
+    const state = fc.constantFrom('empty', 'active', 'failed', 'disconnected' as const)
+    const summary = (id: string) => fc.record({ state, needsReconnect: fc.boolean(), at: fc.option(fc.integer({ min: 0, max: 30 * MIN }), { nil: null }) })
+      .map(r => [acct(id, { state: r.state, needsReconnect: r.needsReconnect, connectedAt: r.at === null ? null : inst(NOW - r.at) })])
+    const rowFor = (id: string) => fc.option(fc.record({ s: fc.constantFrom('never', 'connecting', 'connected', 'failed', 'disconnected' as const), age: fc.integer({ min: 0, max: 30 * MIN }), at: fc.option(fc.integer({ min: 0, max: 30 * MIN }), { nil: null }) }), { nil: undefined })
+      .map(r => (r ? [row(id, r.s, NOW - r.age, { connectedAtMs: r.at === null ? null : NOW - r.at })] : []))
+    fc.assert(fc.property(summary('shopify:store'), summary('slack:workspace'), rowFor('shopify:store'), rowFor('slack:workspace'), (a, b, c, d) => {
+      const data = buildToolsData({ accounts: [...a, ...b], rows: [...c, ...d], nowMs: NOW })
+      for (const k of data.connected) expect(data.details[k]?.since, k).toBeDefined()
+    }), { numRuns: 300 })
+    const none = buildToolsData({ accounts: [acct('shopify:store')], rows: [], nowMs: NOW })
+    expect(none.connected).toEqual([])
+    expect(none.catalog.map(c => c.k)).toEqual(['shopify'])
+  })
 })
 
 
@@ -198,7 +231,7 @@ function fake(o: FakeOpts = {}) {
   let failNext = o.rowWriteFailsOnce ?? false
   const fail = () => ({ ok: false as const, error: o.hubFails! })
   const gateway: ToolsGateway = {
-    listAccounts: async () => (o.hubFails ? fail() : { ok: true, value: [acct('slack:workspace', o.slack), acct('shopify:store')] }),
+    listAccounts: async () => (o.hubFails ? fail() : { ok: true, value: [acct('slack:workspace', { connectedAt: inst(NOW - 60 * MIN), ...o.slack }), acct('shopify:store', { connectedAt: inst(NOW - 60 * MIN) })] }),
     setPaused: async (_s, id, paused) => { hubCalls.push(`pause:${id}:${paused}`); return o.hubFails ? fail() : { ok: true, value: { paused } } },
     disconnect: async (_s, id) => { hubCalls.push(`disconnect:${id}`); return o.hubFails ? fail() : { ok: true, value: { revoked: o.revoked ?? true } } },
   }

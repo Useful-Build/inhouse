@@ -10,6 +10,7 @@
 //  6. a hub tool is always loaded, or a runner route reaches the delivery binding.
 import { expect, test } from '@playwright/test'
 import { actor, call, expectError } from './kit.ts'
+import { ToolsDataSchema } from '../../shared/contract/tools.ts'
 import {
   CHANNEL, connectSlack, ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, hubCall, hubToolNames, inhouse, newRun, NOTES_ACCOUNT,
   notifySend, readTools, setListedChannels, setStage, SHOPIFY_ACCOUNT, SLACK_ACCOUNT, sourceOf, sourcesUnder, turnPrompt,
@@ -174,6 +175,26 @@ test('code mode: a script selecting email or note, aliased through a fragment, i
     expect(JSON.stringify(out), `${field} is refused`).toContain('field not allowed')
   }
   expect((await fakeState(request)).shopify?.requests.length, 'the recorded upstream saw no request').toBe(shopifyBefore)
+})
+
+// The Tools screen crash (P5, ship recording 45046093071): Shopify (client credentials, no OAuth connect) read once is
+// `active` and listed as connected, but had no `since`, and the client's sinceLine threw for the whole screen.
+test('Shopify read once through the hub: GET /api/tools lists it connected with a stable since, and the client derive accepts it', async ({ request }) => {
+  const read = await hubCall(request, 'callTool', 'orders_search', { first: 1 })
+  expect(read.ok, 'the recorded Shopify answers a read').toBe(true)
+  const first = await call(request, inhouse, 'GET', '/api/tools')
+  expect(first.status, first.text).toBe(200)
+  const data = ToolsDataSchema.parse(first.json)
+  expect(data.connected).toContain('shopify')
+  const since = data.details.shopify?.since
+  expect(since, 'connected implies since').toBeDefined()
+  // The client's sinceLine (src/state/derive.ts) throws when a listed tool has neither `since` nor `liveBy`: that exact
+  // precondition, for every connected tool (this tsconfig's nodenext resolution can't import the client module itself).
+  for (const k of data.connected) expect(data.details[k]?.since ?? data.details[k]?.liveBy, `${k} is connected with a date`).toBeDefined()
+  // Stable: another read (and another hub call) gives the same date, never the clock.
+  expect((await hubCall(request, 'callTool', 'orders_search', { first: 1 })).ok).toBe(true)
+  const again = ToolsDataSchema.parse((await call(request, inhouse, 'GET', '/api/tools')).json)
+  expect(again.details.shopify?.since).toEqual(since)
 })
 
 test('[static] connector tools load on demand: no hub tool is listed with metadata that could load it upfront', async () => {

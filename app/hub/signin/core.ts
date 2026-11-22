@@ -357,6 +357,9 @@ export class SignInCore {
       scopes: check.scopes,
       failures: 0,
       lastError: null,
+      // A client-credentials account has no completeConnect: its first successful grant is when it was connected. Kept
+      // through every refresh grant, so the Tools page's "since" never moves (disconnect leaves only via completeConnect).
+      connectedAtMs: r1.connectedAtMs ?? grant.startMs,
     }
     this.#write(next)
     log('signin_grant', { accountId, code: 'ok', generation: next.generation, kid: token.kid, state: 'active' })
@@ -768,7 +771,15 @@ export class SignInCore {
   async accountStatus(accountId: string): Promise<HubResult<AccountStatus>> {
     const base = this.status(accountId)
     if (!base.ok) return base
-    const r = normalize(this.#read() ?? this.#fresh(accountId))
+    const raw = this.#read()
+    const r = normalize(raw ?? this.#fresh(accountId))
+    // A client-credentials record granted before connectedAtMs was kept: its current token's grant time is the earliest
+    // time the hub knows it connected (a lower bound, never the clock). Written once, here, before any await, so later
+    // reads and refresh grants keep it. A record that never held a token (a failed first grant) gets no date.
+    if (raw && r.kind === 'client_credentials' && r.connectedAtMs === null && r.obtainedAtMs !== null && (r.state === 'active' || r.state === 'failed')) {
+      r.connectedAtMs = r.obtainedAtMs
+      this.#write({ ...raw, connectedAtMs: r.obtainedAtMs })
+    }
     const kind = r.kind === 'oauth_mcp' || (await this.#kind(accountId)) === 'oauth_mcp' ? 'oauth_mcp' : 'client_credentials'
     let needsReconnect = false
     if (kind === 'oauth_mcp') {
