@@ -97,7 +97,9 @@ export const chatCascade: RetentionJob = {
     const units = ctx.sql ? quietChats(ctx.sql, found.units) : found.units
     const counts: Record<string, number> = await countCascade(ctx.db, ctx.bucket, chatsIn(units), units)
     if (ctx.sql) counts.BrandAgent = Object.values(countChatRows(ctx.sql, units)).reduce((a, b) => a + b, 0)
-    return { counts, units, cutoffs: [{ store: 'chats', cutoffMs: past.chatsCut }, { store: 'chats:trash', cutoffMs: past.trashCut }], more: found.more || units.length < found.units.length }
+    // A busy chat is skipped, not waited on: `more` only when this run made progress, so a chat that stays busy can't
+    // keep the handler coming back every minute.
+    return { counts, units, cutoffs: [{ store: 'chats', cutoffMs: past.chatsCut }, { store: 'chats:trash', cutoffMs: past.trashCut }], more: found.more && units.length > 0 }
   },
   async run(ctx, plan, round) {
     const past = pastChats(ctx)
