@@ -55,11 +55,25 @@ function logLines(text: string, event: string): Record<string, unknown>[] {
 }
 
 test.describe('the product Worker\'s hub binding', () => {
+  // P5 (#337 main merge): P4's one ReadGateway binding became P5's three. Each binding names the hub Worker and its own
+  // entrypoint, once: HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway and, where bound, HUB_DELIVERY -> DeliveryGateway.
+  // Never ServerGateway (the runner's egress holds only HUB).
+  const WANT: Record<string, string> = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
   for (const file of ['wrangler.product.jsonc', 'wrangler.test.jsonc']) {
-    test(`${file} binds the hub once, as ReadGateway, and never ServerGateway`, () => {
+    test(`${file} binds the hub once per entrypoint (ReadGateway, ConnectGateway, DeliveryGateway where bound), never ServerGateway`, () => {
       const text = appFile(file).split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
-      expect(text.match(/"service"\s*:\s*"inhouse-hub"/g), 'one binding to the hub Worker').toHaveLength(1)
-      expect(text.match(/"entrypoint"\s*:\s*"ReadGateway"/g), 'its entrypoint is ReadGateway').toHaveLength(1)
+      const entries = [...text.matchAll(/\{\s*"binding"\s*:\s*"([A-Z_]+)"\s*,\s*"service"\s*:\s*"([^"]+)"\s*,\s*"entrypoint"\s*:\s*"([A-Za-z]+)"\s*\}/g)]
+        .map(m => ({ binding: m[1]!, service: m[2]!, entrypoint: m[3]! }))
+      expect(entries.length, 'every hub binding read').toBe(text.match(/"service"\s*:/g)?.length ?? 0)
+      for (const e of entries) {
+        expect(e.service, e.binding).toBe('inhouse-hub')
+        expect(WANT[e.binding], `${e.binding} is a hub binding`).toBeDefined()
+        expect(e.entrypoint, e.binding).toBe(WANT[e.binding])
+      }
+      const named = (entrypoint: string) => entries.filter(e => e.entrypoint === entrypoint).length
+      expect(named('ReadGateway'), 'one ReadGateway').toBe(1)
+      expect(named('ConnectGateway'), 'one ConnectGateway').toBe(1)
+      expect(named('DeliveryGateway'), 'at most one DeliveryGateway').toBeLessThanOrEqual(1)
       expect(text).not.toContain('ServerGateway')
     })
   }

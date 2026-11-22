@@ -30,8 +30,6 @@ import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
 import { MENU } from './screens/settings/menu'
 import { ProblemPanel } from './overlays/ProblemPanel'
-import { TeamWindow } from './overlays/TeamWindow'
-import { HelpWindow } from './overlays/HelpWindow'
 import { CommandPalette } from './overlays/CommandPalette'
 
 /**
@@ -66,6 +64,22 @@ const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
 const NotOnTeam = lazyRoute(() => import('./shell/NotOnTeam'), m => m.NotOnTeam)
 const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.TraceWindow)
+// The Inhouse team and Help windows load when first opened: Today doesn't need them (first-load budget, check-bundle).
+const TeamWindow = lazyRoute(() => import('./overlays/TeamWindow'), m => m.TeamWindow)
+const HelpWindow = lazyRoute(() => import('./overlays/HelpWindow'), m => m.HelpWindow)
+
+/** A window whose chunk can't load closes and says so, instead of taking the app down. */
+class WindowBoundary extends Component<{ children: ReactNode; name: string }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(error: unknown) {
+    console.error(`Inhouse: the ${this.props.name} window crashed and was closed.`, error instanceof Error ? error.message : error, error)
+    reportError('boundary', error)
+    useUi.getState().patch({ pop: null })
+    useUi.getState().showToast(`Couldn't open the ${this.props.name} window. Reload and try again.`, { icon: 'info', key: 'window-error' })
+  }
+  render() { return this.state.failed ? null : this.props.children }
+}
 
 /** A trace window whose chunk can't load closes and says so, instead of taking the app down. */
 class TraceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -327,6 +341,7 @@ function Shell() {
   const sideCollapsed = useUi(s => s.sideCollapsed)
   const chatList = useUi(s => s.chatList)
   const traceId = useUi(s => s.traceId)
+  const pop = useUi(s => s.pop)
   const chatId = useUi(s => s.chatId)
   const fresh = useUi(s => s.fresh)
   const chatBlank = useChatIsBlank()
@@ -422,8 +437,8 @@ function Shell() {
       </div>
       <ProblemPanel />
       {traceId && <TraceBoundary><Suspense fallback={null}><TraceWindow /></Suspense></TraceBoundary>}
-      <TeamWindow />
-      <HelpWindow />
+      {pop === 'team' && <WindowBoundary name="Inhouse team"><Suspense fallback={null}><TeamWindow /></Suspense></WindowBoundary>}
+      {pop === 'help' && <WindowBoundary name="Help"><Suspense fallback={null}><HelpWindow /></Suspense></WindowBoundary>}
       <CommandPalette />
       <Toasts />
       <DevSwitcher />
