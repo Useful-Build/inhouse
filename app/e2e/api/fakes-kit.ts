@@ -3,6 +3,7 @@
 // alone. The fake Slack (FakeMcpServer, FakeSlackWeb) lives inside the hub Worker, so a spec reads its logs and flips its
 // switches only through the hook; `mintTestCode` is stateless HMAC and runs here, so no hook turns an authorize URL into a
 // callback. Every id, name and token here is invented. No fixed waits: nothing here sleeps.
+import { readdirSync, readFileSync } from 'node:fs'
 import { expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { mintTestCode, SLACK_TEST } from '../../test/upstreams/mcp/server.ts'
@@ -31,8 +32,20 @@ export interface FakeState {
     liveTokens: string[]
   }
   web: { requests: WebLogEntry[]; posts: Record<string, string>[]; violations: string[][] }
-  /** The recorded Shopify upstream's requests (every one the hub sent it). */
-  shopify?: { requests: { path: string; method: string }[] }
+  /** The recorded Shopify upstream's requests and the tokens it issued (the Shopify canaries). */
+  shopify: { requests: { path: string; method: string }[]; issuedTokens: string[] }
+  /** The raw ConnectGateway answers the product Worker received, in order (a spec strict-parses each). */
+  connect: { bodies: unknown[] }
+  /** The hub's accounts: id and granted scopes (the hub's AccountStatus). */
+  accounts: { accountId: string; scopes: string[] }[]
+  /** The server's current UTC day, `YYYY-MM-DD` (the notice caps count by it). */
+  serverDay: string
+}
+
+/** What `{op:'seed'}` plants where a read returns it: a Slack message, a refund note on a recorded order. */
+export interface FakeSeed {
+  slack?: { messages: { channel: string; text: string }[] }
+  shopify?: { refundNotes: { order: string; note: string }[] }
 }
 
 /** What `{op:'set'}` takes: the switches of FakeMcpServer and FakeSlackWeb the specs flip. */
@@ -53,8 +66,15 @@ async function hookOk(request: APIRequestContext, body: Record<string, unknown>)
 export const fakeState = async (request: APIRequestContext): Promise<FakeState> => hookOk(request, { op: 'state' })
 export const fakeReset = async (request: APIRequestContext): Promise<void> => { await hookOk(request, { op: 'reset' }) }
 export const fakeSet = async (request: APIRequestContext, s: FakeSwitches): Promise<void> => { await hookOk(request, { op: 'set', ...s }) }
-/** Worker log lines (product and hub) captured since the run began, one string each. */
-export const workerLogs = async (request: APIRequestContext): Promise<string[]> => (await hookOk(request, { op: 'logs' })).lines as string[]
+export type WorkerLog = { worker: 'product' | 'hub'; line: string }
+/** Worker log lines captured since the run began, each tagged with its Worker. */
+export const workerLogEntries = async (request: APIRequestContext): Promise<WorkerLog[]> => {
+  const j = await hookOk(request, { op: 'logs' })
+  return (Array.isArray(j) ? j : j.lines) as WorkerLog[]
+}
+export const workerLogs = async (request: APIRequestContext): Promise<string[]> => (await workerLogEntries(request)).map(e => e.line)
+/** Plants text where a read returns it (cleared by `reset`). */
+export const seedFake = async (request: APIRequestContext, seed: FakeSeed): Promise<void> => { await hookOk(request, { op: 'seed', ...seed }) }
 /** The hub's ReadGateway answer, as a run-scoped call would get it. */
 export const hubCall = async (request: APIRequestContext, method: 'listTools' | 'callTool', name?: string, args?: unknown): Promise<{ ok: boolean; value?: any; error?: { code: string; message: string } }> =>
   hookOk(request, { op: 'hub', method, ...(name === undefined ? {} : { name }), ...(args === undefined ? {} : { args }) })
@@ -185,3 +205,33 @@ export const CHANNEL = {
   leadership: 'C0TEST0006',
   vendorConnect: 'C0TEST0008',
 } as const
+
+// ---------- static source checks (no server): the runner's reach ----------
+
+const appRoot = new URL('../../', import.meta.url)
+/** Every non-test `.ts` file under `dir` (relative to app/), as [path, text]. */
+export function sourcesUnder(dir: string): [string, string][] {
+  return (readdirSync(new URL(`${dir}/`, appRoot), { recursive: true }) as string[])
+    .filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts') && !f.endsWith('.d.ts'))
+    .map(f => [`${dir}/${f}`, readFileSync(new URL(`${dir}/${f}`, appRoot), 'utf8')] as [string, string])
+}
+export const sourceOf = (rel: string): string => readFileSync(new URL(rel, appRoot), 'utf8')
+
+/** The runner's six literal egress routes (the hub's `/hub/` rides the `mcp` grant), read from the Worker's source. */
+export const egressRoutes = (): string[] => {
+  const m = /EGRESS_ROUTES: readonly EgressRoute\[\] = \[([^\]]*)\]/.exec(sourceOf('server/do/brand-agent/tokens.ts'))
+  expect(m, 'EGRESS_ROUTES is in server/do/brand-agent/tokens.ts').not.toBeNull()
+  return m![1]!.split(',').map(x => x.trim().replaceAll("'", '')).sort()
+}
+
+/**
+ * STATIC: the runner has no path to the delivery or connect bindings. The six routes are literals, and no non-test file under
+ * server/egress/ or runner/src/ names `HUB_DELIVERY`, `HUB_CONNECT`, `DeliveryGateway` or `ConnectGateway`. A live proof needs a run
+ * token a spec can't mint, so this reads the source.
+ */
+export function expectNoRunnerPathToDelivery(): void {
+  expect(egressRoutes()).toEqual(['audit', 'events', 'files', 'mcp', 'model', 'store'])
+  for (const [file, text] of [...sourcesUnder('server/egress'), ...sourcesUnder('runner/src')]) {
+    expect(text, `${file} names no delivery or connect binding`).not.toMatch(/HUB_DELIVERY|HUB_CONNECT|DeliveryGateway|ConnectGateway/)
+  }
+}

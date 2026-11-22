@@ -41,6 +41,8 @@ test('a full connect with the fake Slack ends active, and no token is in any ans
   expect(tools.connection.slack, 'an active account has no connection problem').toBeUndefined()
 
   const after = await fakeState(request)
+  // Acceptance 7: the granted scopes are the five, exactly.
+  expect([...(after.accounts.find(a => a.accountId === SLACK_ACCOUNT)?.scopes ?? [])].sort(), "the account's scopes").toEqual([...SLACK_SCOPES])
   const issued = after.mcp.issuedTokens.filter(t => !before.mcp.issuedTokens.includes(t))
   expect(issued.length, 'the fake issued a token for this connect').toBeGreaterThan(0)
   const surfaces = [c.start.text, c.callback.text, JSON.stringify(c.start.headers), JSON.stringify(c.callback.headers), JSON.stringify(tools), ...(await workerLogs(request))]
@@ -130,24 +132,38 @@ test('scope_mismatch: an extra scope is granted, the connect is refused and the 
 test('with the same-token switch on, a refused reconnect does not revoke the live token', async ({ request }) => {
   await fakeSet(request, { mcp: { sameToken: true } })
   await freshConnect(request)
-  const live = (await fakeState(request)).mcp.liveTokens
+  const connected = await fakeState(request)
+  const live = connected.mcp.liveTokens
   expect(live.length).toBeGreaterThan(0)
-  const revokedBefore = (await fakeState(request)).mcp.revoked
+  const revokedBefore = connected.mcp.revoked
   // Reconnecting an active account: the fake re-issues the same token, then the workspace check refuses it.
   const c = await connectSlack(request, { team: TEAM.other })
   expect(c.location).toMatch(/connect_error=workspace_mismatch$/)
   const after = await fakeState(request)
+  // Same-token mode: the received token IS the live one, so nothing new was issued and the live set is unchanged.
+  expect(after.mcp.issuedTokens, 'the fake issued nothing new: the received token is the live one').toEqual(connected.mcp.issuedTokens)
+  expect([...after.mcp.liveTokens].sort()).toEqual([...live].sort())
   for (const t of live) {
     expect(after.mcp.revoked.filter(r => r === t).length, 'the live token is not revoked by the refused reconnect').toBe(revokedBefore.filter(r => r === t).length)
-    expect(after.mcp.liveTokens).toContain(t)
   }
   await fakeSet(request, { mcp: { sameToken: false } })
 })
 
 test('a refresh racing a disconnect: the end state is disconnected, no token, no refresh request after the disconnect', async ({ request }) => {
   await fakeSet(request, { mcp: { rotation: true } })
+  const before = await fakeState(request)
   const c = await freshConnect(request)
   expect(c.location).toBe('/tools/slack?connected=1')
+  const connected = await fakeState(request)
+  const mine = connected.mcp.issuedTokens.filter(t => !before.mcp.issuedTokens.includes(t))
+  expect(mine.length, 'this connect issued a token').toBeGreaterThan(0)
+  // Positive control: the alarm of a connected, due account does refresh. Without it "no refresh after the disconnect" could be
+  // true only because the alarm never refreshes anything in this build.
+  const sendsBefore = connected.mcp.refreshSends.length
+  const live = await hook(request, { op: 'alarm', accountId: SLACK_ACCOUNT })
+  expect(live.status, live.text).toBe(200)
+  expect((await fakeState(request)).mcp.refreshSends.length, 'an alarm on a connected account sends a refresh').toBeGreaterThan(sendsBefore)
+
   const gone = await call(request, inhouse, 'POST', `/api/tools/${encodeURIComponent(SLACK_ACCOUNT)}/disconnect`, { json: {} })
   expect(gone.status, gone.text).toBe(200)
   const mark = (await fakeState(request)).mcp.refreshSends.length
@@ -156,7 +172,9 @@ test('a refresh racing a disconnect: the end state is disconnected, no token, no
   expect(alarm.status, alarm.text).toBe(200)
   const after = await fakeState(request)
   expect(after.mcp.refreshSends.length, 'no refresh request after the disconnect').toBe(mark)
-  expect(after.mcp.liveTokens, 'no live token is left').toEqual([])
+  // This account's tokens (every access token issued since this test began) are not live: a refresh in flight would have made one.
+  const everyoneMine = after.mcp.issuedTokens.filter(t => !before.mcp.issuedTokens.includes(t))
+  for (const t of everyoneMine) expect(after.mcp.liveTokens, 'no token of this account is live').not.toContain(t)
   const t = await readTools(request)
   expect(t.connected).not.toContain('slack')
   expect(t.details.slack?.canDisconnect).toBe(false)
@@ -183,7 +201,48 @@ test('every route answer has no field beyond the contract and carries no token',
   const gone = await call(request, inhouse, 'POST', `/api/tools/${encodeURIComponent(SLACK_ACCOUNT)}/disconnect`, { json: {} })
   expect(Object.keys(gone.json)).toEqual(['revoked'])
   for (const token of issued) expect(gone.text).not.toContain(token)
+
+  // The raw ConnectGateway answers the product Worker received (the hook records them): each is a HubResult with no field beyond
+  // the contract, and none holds a canary.
+  const bodies = (await fakeState(request)).connect.bodies
+  expect(bodies.length, 'the hook recorded the hub answers').toBeGreaterThan(0)
+  for (const [n, body] of bodies.entries()) {
+    const problem = strictHubResult(body)
+    expect(problem, `ConnectGateway body #${n}`).toBeNull()
+    for (const [i, token] of issued.entries()) expect(JSON.stringify(body).includes(token), `ConnectGateway body #${n} holds canary slack#${i}`).toBe(false)
+  }
 })
+
+/** The keys of the hub's `AccountStatus` and `AccountSummary` (app/hub/index/contract.ts), written out: a new field fails here until a person adds it. */
+const STATUS_KEYS = ['accountId', 'state', 'kid', 'expiresAt', 'scopes', 'lastError', 'paused', 'kind', 'connectedBy', 'connectedAt', 'revokeFailedAt', 'needsReconnect']
+const SUMMARY_KEYS = ['accountId', 'connector', 'configured', 'status']
+const VALUE_SHAPES: string[][] = [['authorizeUrl', 'expiresAt'], ['accountId'], ['revoked'], ['paused']]
+const sameKeys = (o: unknown, keys: readonly string[]): boolean => typeof o === 'object' && o !== null && JSON.stringify(Object.keys(o).sort()) === JSON.stringify([...keys].sort())
+const onlyKeys = (o: unknown, keys: readonly string[]): boolean => typeof o === 'object' && o !== null && Object.keys(o).every(k => keys.includes(k))
+
+/** Null when `body` is a HubResult with exactly the contract's fields; else what is wrong, with no value in it. */
+function strictHubResult(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return 'not an object'
+  const b = body as { ok?: unknown; value?: unknown; error?: unknown }
+  if (b.ok === true) {
+    if (!sameKeys(body, ['ok', 'value'])) return 'an ok answer with fields beyond ok and value'
+    const v = b.value
+    if (Array.isArray(v)) {
+      for (const row of v) {
+        if (!sameKeys(row, SUMMARY_KEYS)) return 'an account summary with fields beyond the contract'
+        if (!onlyKeys((row as { status: unknown }).status, STATUS_KEYS)) return 'an account status with fields beyond the contract'
+      }
+      return null
+    }
+    return VALUE_SHAPES.some(keys => sameKeys(v, keys)) ? null : 'a value with fields beyond the contract'
+  }
+  if (b.ok === false) {
+    if (!sameKeys(body, ['ok', 'error'])) return 'an error answer with fields beyond ok and error'
+    const e = b.error as object
+    return onlyKeys(e, ['code', 'message', 'retryAfterMs']) && typeof (e as { code?: unknown }).code === 'string' ? null : 'an error with fields beyond code, message and retryAfterMs'
+  }
+  return 'neither ok nor an error'
+}
 
 /** The first connect's callback, again: its minted code and state are the ones the hub has already used. */
 async function replayOf(request: Parameters<typeof callbackOf>[0], first: Awaited<ReturnType<typeof connectSlack>>) {

@@ -19,7 +19,14 @@ export const SUPPLIER_WORD = 'supplier'
 export const SUPPLIER_PHRASE = 'supplier delay'
 export const RESULT_CAP_BYTES = 32 * 1024
 
-export type NightlyCase = { name: string; run: () => Promise<string | null>; /** Needs the house deployment's Act stage and the notices channel. */ houseOnly?: boolean }
+export type NightlyCase = {
+  name: string
+  run: () => Promise<string | null>
+  /** Needs the house deployment's Act stage and the notices channel. */
+  houseOnly?: boolean
+  /** Why the case doesn't apply in this run (printed as SKIP, never counted as ok). */
+  skip?: string
+}
 export type NightlyEnv = { channelId: string; noticesChannelId: string; rotation: boolean }
 
 const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length
@@ -88,6 +95,14 @@ export function slackCases(hub: NightlyHub, env: NightlyEnv): NightlyCase[] {
         if (!listed.ok) return `listTools: ${listed.code}`
         const offered = listed.value.map(t => t.name).filter(n => n.startsWith('slack_'))
         const problems: string[] = []
+        // The listing and the allowlist agree: every allowlisted tool the config offers is listed, and nothing else is.
+        const expected = slackTools.filter(t => !policyGated(t.name)).map(t => t.name)
+        const missing = expected.filter(n => !offered.includes(n))
+        const extra = offered.filter(n => !slackTools.some(t => t.name === n))
+        if (missing.length > 0) problems.push(`listed tools missing from the hub's listing: ${missing.join(', ')}`)
+        if (extra.length > 0) problems.push(`listed tools the allowlist doesn't have: ${extra.join(', ')}`)
+        const skipped = offered.filter(n => needsThread.has(n) || policyGated(n))
+        if (skipped.length > 0) console.log(`nightly: case 3 does not call (needs a thread id or the private-search policy): ${skipped.join(', ')}`)
         for (const name of offered) {
           if (needsThread.has(name) || policyGated(name)) continue
           if (!(name in args)) { problems.push(`${name} has no fixed argument in readArguments`); continue }
@@ -105,7 +120,8 @@ export function slackCases(hub: NightlyHub, env: NightlyEnv): NightlyCase[] {
         if (!one.ok) return `search for the one word: ${one.code}`
         const both = await hub.callTool('slack_search_public', { keywords: SUPPLIER_PHRASE.split(' ') })
         if (!both.ok) return `search for the phrase: ${both.code}`
-        if (!JSON.stringify(one.value.data).toLowerCase().includes(SUPPLIER_WORD)) return 'the one-word search did not find the seeded message'
+        // The seeded message's own words ("Kestrel"), not the query's: an answer that merely echoes "supplier" proves nothing.
+        if (!JSON.stringify(one.value.data).toLowerCase().includes('kestrel')) return 'the one-word search did not find the seeded message'
         return JSON.stringify(both.value.data).toLowerCase().includes('kestrel') ? 'the two-word search found the message: the AND is gone' : null
       },
     },
@@ -124,8 +140,8 @@ export function slackCases(hub: NightlyHub, env: NightlyEnv): NightlyCase[] {
     },
     {
       name: '6. with rotation on, an alarm-driven refresh succeeds and the old refresh token is refused afterwards',
+      ...(env.rotation ? {} : { skip: 'rotation is off (NIGHTLY_ROTATION is not 1)' }),
       run: async () => {
-        if (!env.rotation) return null
         const r = await hub.rotate(SLACK_ACCOUNT)
         if (!r.ok) return `rotate: ${r.code}`
         if (!r.value.refreshed) return 'the refresh did not succeed'

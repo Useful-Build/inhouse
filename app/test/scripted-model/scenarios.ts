@@ -33,7 +33,7 @@ export const mainLoop =
 const offers = (r: MessagesRequest, tool: string): boolean =>
   Array.isArray(r.tools) && r.tools.some((t) => t.name === tool || (t.defer_loading === true && deferrable(tool)))
 
-const deferrable = (tool: string): boolean => (BUILT_IN_TOOLS as readonly string[]).includes(tool) || tool.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`)
+const deferrable = (tool: string): boolean => (BUILT_IN_TOOLS as readonly string[]).includes(tool) || tool.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`) || tool.startsWith('mcp__apps__')
 
 /** What the last message is, for a miss's reason. */
 const lastShape = (r: MessagesRequest): string => {
@@ -251,6 +251,25 @@ export const SCENARIOS: Record<string, Scenario> = {
 
   /** The same for the team's Friday restock fact: it waits for an admin, so a search can't find it and the answer says nothing is saved. */
   'memory-recall-team': memoryRecall('toolu_scripted_recall_team', 'restock Fridays', MEMORY_SAVE_TEAM_TEXT),
+
+  /**
+   * The connector tools through the runner (P5 W5's canary spec): a Slack search, a notice to a listed channel and a Shopify read,
+   * one call after another, then an answer. The hub's tools are the `apps` server's (`mcp__apps__<tool>`, deferred like the others).
+   */
+  connectors: {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_conn_slack', name: 'mcp__apps__slack_search_public', input: { keywords: ['supplier'] } }], expect: mainLoop('mcp__apps__slack_search_public') },
+      {
+        content: [{ type: 'tool_use', id: 'toolu_scripted_conn_notice', name: 'mcp__inhouse__notification_send', input: { to: { channels: ['#ops-alerts'] }, title: 'Stock low', text: 'Fern mug canary check', format: 'message' } }],
+        expect: both(mainLoop('mcp__inhouse__notification_send'), resultOf('toolu_scripted_conn_slack')),
+      },
+      {
+        content: [{ type: 'tool_use', id: 'toolu_scripted_conn_orders', name: 'mcp__apps__orders_search', input: { first: 1 } }],
+        expect: both(mainLoop('mcp__apps__orders_search'), resultOf('toolu_scripted_conn_notice')),
+      },
+      { content: [{ type: 'text', text: 'Read Slack and Shopify and posted the notice.' }], expect: both(mainLoop('mcp__apps__orders_search'), resultOf('toolu_scripted_conn_orders')) },
+    ],
+  },
 
   /** Saves one fact for the whole team: it waits for an admin's OK, so no page lists it yet (the ship spec's S7). */
   'memory-save-team': {

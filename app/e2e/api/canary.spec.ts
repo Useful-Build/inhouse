@@ -1,28 +1,52 @@
-// The canary-token test (P5 W5, acceptance 3). The fake Slack issues the canary as the Slack access token and the recorded
-// Shopify issues `shpat_test_<n>` as the Shopify token; both client secrets are canaries too. The spec runs a Slack connect,
-// a Slack read, a Shopify read, a code-mode ask (when it is listed) and a `notification_send`, then asserts none of the canaries
-// is in: the Worker logs of both Workers (the hook's `logs` op, the orchestrator's capture of `wrangler dev`'s output; the
-// egress log is among them), the runner's environment (the hook's `runnerEnv` op, which answers hits per needle and never
-// values, remote only), the transcript (the hook's `transcripts` op over the R2 session store, remote only) and every API
-// answer this spec received. Ways it can fail, written first:
-//  1. a token or client secret reaches a log line, an API answer or the runner's environment;
-//  2. the check passes because nothing was captured (every capture below must be non-empty, so an empty log is a failure);
-//  3. the canary list is empty, so nothing could be found.
+// The canary-token test (P5 W5, acceptance 3). The fake Slack issues the canaries as its access tokens (and, with rotation on,
+// its refresh tokens: `xoxe-test-`/`xoxp-test-` shaped), the recorded Shopify issues `shpat_test_<n>`, and both client secrets
+// are canaries too. A Slack connect with rotation on, a Slack read, a Shopify read, a code-mode ask (when listed) and a
+// `notification_send` run through the hook; then none of the canaries may be in: the Worker logs of BOTH Workers (the hook's
+// `logs` op, the orchestrator's capture of `wrangler dev`'s output; the egress log is among them), every API answer this spec
+// received and, on the per-PR deployment, the runner's environment and the transcript of a scripted run that calls the
+// connector tools through the runner. Ways it can fail, written first:
+//  1. a token, refresh token or client secret reaches a log line, an API answer, the runner's environment or the transcript;
+//  2. the check passes because nothing was captured or nothing happened: each capture must be non-empty, both Workers must have
+//     logged, the recorded Shopify must have been asked, and the transcript must hold the tool result (a positive control);
+//  3. a failure prints a secret: only labels (`slack#0`, `secret#1`, `shopify#0`, `refresh-token`) are ever printed.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { actor, call, me } from './kit.ts'
 import { answerOf, createChat, send } from './chat-kit.ts'
 import {
-  CHANNEL, ensureDisconnected, fakeReset, fakeState, freshConnect, hook, hubCall, hubToolNames, inhouse, newRun, notifySend, setListedChannels, setStage, workerLogs,
+  CHANNEL, ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, hubCall, hubToolNames, inhouse, newRun, notifySend, seedFake, setListedChannels,
+  setStage, workerLogEntries,
 } from './fakes-kit.ts'
 
 const dana = actor('memberA')
 test.describe.configure({ mode: 'serial' })
 
-/** Fixed secrets of the test build (invented, in wrangler.hub.test.jsonc and the fakes): found nowhere but where they are configured. */
+/** Fixed secrets of the test build (invented, in wrangler.hub.test.jsonc): found nowhere but where they are configured. */
 const SECRETS = ['test-only-slack-client-secret-9f3b', 'test-only-client-secret-0RW9rVbhXFbVnJw6t1jyOWrJ1E7bMlc6']
-/** The recorded Shopify's token shape: `shpat_test_` and a counter. */
-const SHOPIFY_TOKEN = /shpat_test_\d+/
+/** The shapes of the fake's tokens beyond the literal ones: a Slack refresh token, and the Shopify token's prefix. */
+const REFRESH_SHAPE = /xox[pe]-test-/
+const SHOPIFY_SHAPE = /shpat_test_\d+/
+/** The seeded message the scripted run's Slack search finds: the positive control that the transcript holds a tool result. */
+const KESTREL = 'Kestrel'
+
+type Needle = { label: string; literal?: string; shape?: RegExp }
+const matches = (n: Needle, text: string): boolean => (n.literal !== undefined && text.includes(n.literal)) || (n.shape !== undefined && n.shape.test(text))
+/** The labels of the needles found in any text. Never a value. */
+const found = (needles: readonly Needle[], texts: readonly string[]): string[] => needles.filter(n => texts.some(t => matches(n, t))).map(n => n.label)
+
+/** Every canary known now: the fake's access tokens, the recorded Shopify's, the client secrets and the token shapes. Labels carry an index, never a value. */
+async function canaries(request: APIRequestContext): Promise<Needle[]> {
+  const s = await fakeState(request)
+  expect(s.mcp.issuedTokens.length, 'the fake issued the Slack canaries').toBeGreaterThan(0)
+  expect(s.shopify.issuedTokens.length, 'the recorded Shopify issued a token').toBeGreaterThan(0)
+  return [
+    ...s.mcp.issuedTokens.map((t, i) => ({ label: `slack#${i}`, literal: t })),
+    ...s.shopify.issuedTokens.map((t, i) => ({ label: `shopify#${i}`, literal: t })),
+    ...SECRETS.map((t, i) => ({ label: `secret#${i}`, literal: t })),
+    { label: 'refresh-token', shape: REFRESH_SHAPE },
+    { label: 'shopify-token-shape', shape: SHOPIFY_SHAPE },
+  ]
+}
 
 test.beforeAll(async ({ request }) => { await fakeReset(request); await ensureDisconnected(request) })
 test.afterAll(async ({ request }) => {
@@ -32,15 +56,16 @@ test.afterAll(async ({ request }) => {
   await ensureDisconnected(request)
 })
 
-test('no token or client secret is in the logs, the runner environment, the transcript or any API answer', async ({ request }) => {
+test('no token, refresh token or client secret is in a Worker log (both Workers) or any API answer', async ({ request }) => {
   const answers: string[] = []
+  await fakeSet(request, { mcp: { rotation: true } })
+  const shopifyBefore = (await fakeState(request)).shopify.requests.length
 
-  // The flows: a connect, a Slack read, a Shopify read, a code-mode ask, a notification.
   const c = await freshConnect(request)
   answers.push(c.start.text, c.callback.text, JSON.stringify(c.start.headers), JSON.stringify(c.callback.headers))
   answers.push((await call(request, inhouse, 'GET', '/api/tools')).text)
   const slackRead = await hubCall(request, 'callTool', 'slack_search_public', { keywords: ['supplier'] })
-  expect(slackRead.ok, JSON.stringify(slackRead)).toBe(true)
+  expect(slackRead.ok, 'the Slack read answers').toBe(true)
   answers.push(JSON.stringify(slackRead))
   const shopifyRead = await hubCall(request, 'callTool', 'orders_search', { first: 1 })
   expect(shopifyRead.ok, 'the recorded Shopify answers a read').toBe(true)
@@ -53,41 +78,50 @@ test('no token or client secret is in the logs, the runner environment, the tran
   const owner = (await me(request, dana)).memberId as string
   answers.push(JSON.stringify(await notifySend(request, newRun(owner), { to: { channels: ['#ops-alerts'] }, title: 'Stock low', text: `Fern mug ${crypto.randomUUID()}`, format: 'message' })))
 
-  // The canaries: every token the fake issued this run, plus the secrets and the Shopify token shape.
+  // Positive controls: the flows really happened, so an empty result means "nothing leaked", not "nothing ran".
   const state = await fakeState(request)
-  const slackTokens = state.mcp.issuedTokens
-  expect(slackTokens.length, 'the fake issued the Slack canary').toBeGreaterThan(0)
-  const needles = [...slackTokens, ...SECRETS]
-  const found = (texts: readonly string[]) => [...needles.filter(n => texts.some(t => t.includes(n))), ...(texts.some(t => SHOPIFY_TOKEN.test(t)) ? ['shopify token'] : [])]
-
-  // 1. API answers.
+  expect(state.shopify.requests.length, 'the recorded Shopify was asked').toBeGreaterThan(shopifyBefore)
+  expect(state.web.posts.length, 'the notice reached the fake Slack').toBeGreaterThan(0)
+  const needles = await canaries(request)
   expect(answers.length).toBeGreaterThan(5)
-  expect(found(answers), 'a canary is in an API answer').toEqual([])
-  // 2. Worker logs of both Workers (the egress log included). An empty capture proves nothing.
-  const logs = await workerLogs(request)
-  expect(logs.length, 'the Worker logs were captured').toBeGreaterThan(0)
-  expect(found(logs), 'a canary is in a Worker log line').toEqual([])
-  // 3. The runner's environment and the transcript need a container: the per-PR test deployment only.
-  await runnerAndTranscript(request, needles, slackTokens)
+  expect(found(needles, answers), 'canaries found in an API answer').toEqual([])
+
+  // Both Workers were captured, each with at least one line (an empty capture of either proves nothing).
+  const logs = await workerLogEntries(request)
+  for (const worker of ['product', 'hub'] as const) expect(logs.filter(e => e.worker === worker).length, `the ${worker} Worker's log was captured`).toBeGreaterThan(0)
+  expect(found(needles, logs.map(e => e.line)), 'canaries found in a Worker log line').toEqual([])
+  await fakeSet(request, { mcp: { rotation: false } })
 })
 
-async function runnerAndTranscript(request: APIRequestContext, needles: string[], slackTokens: string[]): Promise<void> {
-  if (!process.env.E2E_TEST_BUILD_REMOTE) {
-    test.info().annotations.push({ type: 'skipped', description: 'the runner environment and transcript checks need a container (E2E_TEST_BUILD_REMOTE)' })
-    return
-  }
-  // A scripted turn first, so the runner has a session and the store has a transcript with the connector tools around.
+test('a scripted run that calls the connector tools leaves no canary in the runner environment, the transcript or the logs', async ({ request }) => {
+  test.skip(!process.env.E2E_TEST_BUILD_REMOTE, 'needs a container (runner, session store): it runs on the per-PR test deployment (E2E_TEST_BUILD_REMOTE)')
+  await fakeReset(request)
+  await freshConnect(request)
+  await seedFake(request, { slack: { messages: [{ channel: CHANNEL.general, text: `Supplier ${KESTREL} Mills says the restock ships late` }] } })
+  await setStage(request, 'Act')
+  await setListedChannels(request, [CHANNEL.opsAlerts], true)
+
+  // The run goes first: the checks below read what it left.
   const chat = await createChat(request, dana)
-  const sent = await send(request, dana, chat, 'scenario:hello say hello')
+  const sent = await send(request, dana, chat, 'scenario:connectors check the connectors')
   await answerOf(request, dana, chat, sent.turnId)
-  const env = await hook(request, { op: 'runnerEnv', needles })
-  expect(env.status, env.text).toBe(200)
-  expect(env.json.keys.length, 'the runner environment was read').toBeGreaterThan(0)
-  expect(env.json.hits, 'no canary is in the runner environment').toEqual([])
+  const needles = await canaries(request)
+
   const tr = await hook(request, { op: 'transcripts' })
-  expect(tr.status, tr.text).toBe(200)
+  expect(tr.status, 'the transcripts op answers').toBe(200)
   const texts = tr.json.texts as string[]
   expect(texts.length, 'the session store held a transcript').toBeGreaterThan(0)
-  for (const n of [...slackTokens, ...needles]) expect(texts.some(t => t.includes(n)), 'a canary is in the transcript').toBe(false)
-  expect(texts.some(t => SHOPIFY_TOKEN.test(t)), 'a Shopify token is in the transcript').toBe(false)
-}
+  // Positive control: the transcript holds a connector tool result, so "no canary" is about real content.
+  expect(texts.some(t => t.includes(KESTREL)), 'the transcript holds the Slack tool result').toBe(true)
+  expect(found(needles, texts), 'canaries found in the transcript').toEqual([])
+
+  const literals = needles.filter(n => n.literal !== undefined)
+  const env = await hook(request, { op: 'runnerEnv', needles: literals.map(n => n.literal) })
+  expect(env.status, 'the runnerEnv op answers').toBe(200)
+  expect(env.json.keys.length, 'the runner environment was read').toBeGreaterThan(0)
+  expect((env.json.hits as number[]).map(i => literals[i]?.label ?? 'unknown-hit'), 'canaries found in the runner environment').toEqual([])
+
+  const logs = await workerLogEntries(request)
+  for (const worker of ['product', 'hub'] as const) expect(logs.filter(e => e.worker === worker).length, `the ${worker} Worker's log was captured`).toBeGreaterThan(0)
+  expect(found(needles, logs.map(e => e.line)), 'canaries found in a Worker log line after the run').toEqual([])
+})

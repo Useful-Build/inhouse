@@ -8,12 +8,11 @@
 //  4. a same-token reconnect revokes the live token or breaks the account;
 //  5. a paused Slack still takes a post;
 //  6. a hub tool is always loaded, or a runner route reaches the delivery binding.
-import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 import { actor, call, expectError } from './kit.ts'
 import {
   CHANNEL, connectSlack, ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, hubCall, hubToolNames, inhouse, newRun, NOTES_ACCOUNT,
-  notifySend, readTools, setListedChannels, setStage, SHOPIFY_ACCOUNT, SLACK_ACCOUNT, turnPrompt,
+  notifySend, readTools, setListedChannels, setStage, SHOPIFY_ACCOUNT, SLACK_ACCOUNT, sourceOf, sourcesUnder, turnPrompt,
 } from './fakes-kit.ts'
 
 const dana = actor('memberA')
@@ -179,22 +178,12 @@ test('code mode: a script selecting email or note, aliased through a fragment, i
   expect((await fakeState(request)).shopify?.requests.length, 'the recorded upstream saw no request').toBe(shopifyBefore)
 })
 
-test('connector tools load on demand: no hub tool is listed with metadata that could load it upfront, and no runner route reaches the delivery binding', async () => {
-  const read = (rel: string) => readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8')
+test('[static] connector tools load on demand: no hub tool is listed with metadata that could load it upfront', async () => {
   // The egress's `tools/list` entry for a hub tool: read only, and no `_meta` (never `anthropic/alwaysLoad`).
-  const listed = /export function listedTool\(t: ToolInfo\) \{([\s\S]*?)\n\}/.exec(read('server/egress/hub.ts'))
+  const listed = /export function listedTool\(t: ToolInfo\) \{([\s\S]*?)\n\}/.exec(sourceOf('server/egress/hub.ts'))
   expect(listed, 'listedTool is in server/egress/hub.ts').not.toBeNull()
   expect(listed![1]).not.toMatch(/_meta|alwaysLoad/)
   expect(listed![1]).toContain('readOnlyHint: true')
-  // The runner's own MCP entry for `apps` marks nothing always-loaded either.
-  expect(read('runner/src/session/mcp-servers.ts')).not.toMatch(/alwaysLoad/)
-  // The runner's routes: six literal routes (the hub's `/hub/` rides the `mcp` grant), none naming delivery, notices or Slack.
-  const routes = /EGRESS_ROUTES: readonly EgressRoute\[\] = \[([^\]]*)\]/.exec(read('server/do/brand-agent/tokens.ts'))
-  expect(routes).not.toBeNull()
-  expect(routes![1]!.split(',').map(s => s.trim().replaceAll("'", '')).sort()).toEqual(['audit', 'events', 'files', 'mcp', 'model', 'store'])
-  // Nothing under the egress takes a delivery or connect binding: only the ReadGateway (`env.HUB`) reaches the hub from the runner.
-  for (const file of ['server/egress/index.ts', 'server/egress/hub.ts']) {
-    const src = read(file)
-    expect(src, `${file} holds no delivery or connect binding`).not.toMatch(/HUB_DELIVERY|HUB_CONNECT|DeliveryGateway|ConnectGateway/)
-  }
+  // Nothing in the runner's source marks a tool always-loaded (its `apps` MCP entry included).
+  for (const [file, text] of sourcesUnder('runner/src')) expect(text, `${file} marks nothing always-loaded`).not.toMatch(/alwaysLoad/)
 })

@@ -7,12 +7,11 @@
 //  3. a refused channel (unlisted, shared, archived, private, not a member) is posted to, or the refusal isn't audited;
 //  4. a cap lets the 4th post of a run or the 21st of a day through, or a system notice eats the agent's allowance;
 //  5. the delivery binding or a Slack write is reachable from the runner.
-import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 import { actor, call, me } from './kit.ts'
 import { auditAfter, auditMax, readSql, writeSql } from './db.ts'
 import {
-  CHANNEL, ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, hubCall, inhouse, newRun, notifySend, setListedChannels, setStage,
+  CHANNEL, ensureDisconnected, expectNoRunnerPathToDelivery, fakeReset, fakeSet, fakeState, freshConnect, hook, hubCall, inhouse, newRun, notifySend, setListedChannels, setStage,
 } from './fakes-kit.ts'
 
 const dana = actor('memberA')
@@ -71,7 +70,7 @@ test('at Act a notice to a listed channel posts once: four parameters, no unfurl
 })
 
 test("the server's own notice posts to the alerts channel and doesn't reduce the agent's remaining daily count", async ({ request }) => {
-  const day = new Date().toISOString().slice(0, 10)
+  const day = (await fakeState(request)).serverDay
   const agentToday = () => readSql<{ n: number }>("SELECT count(*) AS n FROM notify_sends WHERE source = 'agent' AND kind = 'slack' AND day = ?", day)[0]!.n
   const agentBefore = agentToday()
   const before = (await fakeState(request)).web.posts.length
@@ -175,16 +174,11 @@ test('the 4th post in one run is refused (run_cap) and the 21st in a day is refu
   writeSql("DELETE FROM notify_sends WHERE source = 'agent'")
 })
 
-test('the delivery binding is not reachable from the runner, and a direct Slack write through the hub route is write_refused', async ({ request }) => {
-  const read = (rel: string) => readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8')
-  // The runner's routes are six literals (the hub's `/hub/` rides the `mcp` grant); none of them is delivery, notices or Slack.
-  const routes = /EGRESS_ROUTES: readonly EgressRoute\[\] = \[([^\]]*)\]/.exec(read('server/do/brand-agent/tokens.ts'))
-  expect(routes, 'EGRESS_ROUTES is in server/do/brand-agent/tokens.ts').not.toBeNull()
-  expect(routes![1]!.split(',').map(s => s.trim().replaceAll("'", '')).sort()).toEqual(['audit', 'events', 'files', 'mcp', 'model', 'store'])
-  // The egress (the only door the runner has) holds only the ReadGateway binding of the hub.
-  for (const file of ['server/egress/index.ts', 'server/egress/hub.ts']) {
-    expect(read(file), `${file} holds no delivery or connect binding`).not.toMatch(/HUB_DELIVERY|HUB_CONNECT|DeliveryGateway|ConnectGateway/)
-  }
+test('[static] the runner has no path to the delivery binding', async () => {
+  expectNoRunnerPathToDelivery()
+})
+
+test('a direct Slack write through the hub route is write_refused and posts nothing', async ({ request }) => {
   const before = (await fakeState(request)).web.posts.length
   expect(await hubCall(request, 'callTool', 'slack_send_message', { channel_id: CHANNEL.general, message: 'hello' })).toMatchObject({ ok: false, error: { code: 'write_refused' } })
   expect((await fakeState(request)).web.posts.length).toBe(before)

@@ -10,6 +10,10 @@ export async function runCases(cases: readonly NightlyCase[], opts: { house: boo
       print(`SKIP ${c.name} (house deployment only)`)
       continue
     }
+    if (c.skip !== undefined) {
+      print(`SKIP ${c.name} (${c.skip})`)
+      continue
+    }
     let why: string | null
     try {
       why = await c.run()
