@@ -110,6 +110,18 @@ function chatState(s: Slices): AgentState {
   }
   return { ...s.state, chatTitles, chatPinned, chatDeleted, paused: s.pause.paused ? s.pause.at : null }
 }
+/** Two flag or text maps with exactly the same keys and values (`toolPaused`, `chatPinned`, `chatTitles`, ...). */
+function sameFlags<V>(a: Readonly<Record<string, V>>, b: Readonly<Record<string, V>>): boolean {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every(k => Object.hasOwn(b, k) && a[k] === b[k])
+}
+/** Whether `chatState`'s parts in `derived` equal those `state` already holds (the pause instant by its value). */
+function sameChatState(derived: AgentState, state: AgentState): boolean {
+  const pa = derived.paused
+  const pb = state.paused
+  const samePause = pa === pb || (pa !== null && pb !== null && pa.ms === pb.ms && pa.iso === pb.iso)
+  return samePause && sameFlags(derived.chatTitles, state.chatTitles) && sameFlags(derived.chatPinned, state.chatPinned) && sameFlags(derived.chatDeleted, state.chatDeleted)
+}
 const replaceChat = (list: ChatSummary[], c: ChatSummary): ChatSummary[] => (list.some(x => x.id === c.id) ? list.map(x => (x.id === c.id ? c : x)) : [c, ...list])
 /** A chat's place in the list: newest activity first, ties by id (the server's order). */
 const byRecent = (a: ChatSummary, b: ChatSummary) => b.at.ms - a.at.ms || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
@@ -247,8 +259,16 @@ export class HttpAgent implements AgentClient {
   private commit(next: Slices) {
     // What follows from the chats, the pause and the settings is worked out here, so every change to them (a read, a write, a
     // refusal taking one back) keeps it in step.
-    if (next.tools !== this.s.tools) next = { ...next, state: { ...next.state, toolPaused: pausedOf(next.tools) } }
-    if (next.chats !== this.s.chats || next.pause !== this.s.pause) next = { ...next, state: chatState(next) }
+    // Each derived part is put in only when it differs from what `next.state` already holds: a rollback that hands back the
+    // slices it found (write's `commit(before)`) must hand back that very snapshot (useSyncExternalStore reads identity).
+    if (next.tools !== this.s.tools) {
+      const toolPaused = pausedOf(next.tools)
+      if (!sameFlags(toolPaused, next.state.toolPaused)) next = { ...next, state: { ...next.state, toolPaused } }
+    }
+    if (next.chats !== this.s.chats || next.pause !== this.s.pause) {
+      const derived = chatState(next)
+      if (!sameChatState(derived, next.state)) next = { ...next, state: derived }
+    }
     if (next.served !== this.s.served || next.state.settings !== this.s.state.settings) {
       const modelList = listedModels(next.served, next.state.settings)
       if (modelList.length !== next.modelList.length || modelList.some((m, i) => m !== next.modelList[i])) next = { ...next, modelList }

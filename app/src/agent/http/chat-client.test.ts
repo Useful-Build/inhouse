@@ -172,6 +172,16 @@ describe('rename, pin, delete and restore', () => {
     expect(agent.getSnapshot()).toMatchObject({ chatTitles: {}, chatPinned: {} })
   })
 
+  // The pins, titles and deletes derived from the chats must not be rebuilt when a rollback brings the chats back as they were.
+  test('a refused rename or pin hands back the identical snapshot', async () => {
+    const { agent } = await loaded({ ...reads({ chats: two }), 'PUT /api/chats/c1/title': refusal(503, 'unavailable'), 'PUT /api/chats/c1/pin': refusal(403, 'forbidden') })
+    const before = agent.getSnapshot()
+    await errorOf(agent.renameChat('c1', 'Mine'))
+    expect(agent.getSnapshot()).toBe(before)
+    await errorOf(agent.pinChat('c1', true))
+    expect(agent.getSnapshot()).toBe(before)
+  })
+
   test('a chat that isn\'t there is refused locally', async () => {
     const { agent } = await loaded(reads())
     expect(await errorOf(agent.renameChat('nope', 'x'))).toMatchObject({ code: 'not_found' })
@@ -382,6 +392,13 @@ describe('pause and resume (routes 35 to 37)', () => {
     await agent.resume()
     expect(agent.getSnapshot().paused).toBeNull()
     expect(calls.filter(c => c.method === 'POST').map(c => [c.path, c.body])).toEqual([['/api/pause', undefined], ['/api/resume', undefined]])
+  })
+
+  test('a refused pause hands back the identical snapshot', async () => {
+    const { agent } = await loaded({ ...reads(), 'POST /api/pause': refusal(403, 'forbidden') })
+    const before = agent.getSnapshot()
+    await errorOf(agent.pause())
+    expect(agent.getSnapshot()).toBe(before)
   })
 
   test('a refused pause (a Member\'s 403) takes it back and sends one notice', async () => {

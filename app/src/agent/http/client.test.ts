@@ -1317,6 +1317,24 @@ describe('tools (routes C to E and the connect start)', () => {
     expect(heard.filter(n => n.type === 'error')).toHaveLength(1)
   })
 
+  // A rolled-back write hands back the very snapshot it found (useSyncExternalStore and the contract's rollback cases read
+  // identity): the paused flags derived from the tools must not be rebuilt when they come back unchanged.
+  test('a refused or failed pause hands back the identical snapshot; one that works gives a new state with the pause', async () => {
+    for (const answer of [refusal(403, 'forbidden'), refusal(503, 'unavailable'), (): Answer => { throw new TypeError('network down') }]) {
+      const { agent } = await loaded({ ...reads(), [`PUT /api/tools/${SLACK}/paused`]: answer })
+      const before = agent.getSnapshot()
+      const data = agent.read()
+      expect(await errorOf(agent.setToolPaused('slack', true))).toBeInstanceOf(AgentError)
+      expect(agent.getSnapshot()).toBe(before)
+      expect(agent.read()).toBe(data)
+    }
+    const { agent } = await loaded({ ...reads(), [`PUT /api/tools/${SLACK}/paused`]: { body: { paused: true } } })
+    const before = agent.getSnapshot()
+    await agent.setToolPaused('slack', true)
+    expect(agent.getSnapshot()).not.toBe(before)
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+  })
+
   test('a key the read does not list is refused before anything is sent', async () => {
     const { agent, calls } = await loaded(reads())
     const before = calls.length
