@@ -48,6 +48,7 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA', 'f_BBBBBBBBBBBBBBBBBBBBBB'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
   'restore.confirmed': { action: 'restore.confirmed', restoreId: '20261122T191611123Z-0a1b2c3d', backupId: '20261121T020000000Z-ffee0011' },
+  'restore.member_placeholder': { action: 'restore.member_placeholder', memberId: m, restoreId: '20261122T191611123Z-0a1b2c3d' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -274,7 +275,7 @@ describe('P4 lines (wave-4 PR0)', () => {
       'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
       'library.uploaded', 'library.deleted', 'library.restored',
       'today.set_aside',
-      'restore.confirmed',
+      'restore.confirmed', 'restore.member_placeholder',
     ])
   })
 })

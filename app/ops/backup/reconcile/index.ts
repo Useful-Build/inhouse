@@ -9,6 +9,9 @@
 //  5. the deletion-log replay past the watermark (replay.ts).
 // The record stays `restored_unreconciled`; only an admin's audited confirm (confirm.ts) makes it `restored`. A refusal
 // is stored on the record (`reconcile.refusal`) and returned, never thrown.
+// Accepted (A10, 2026-11-22): the audit copy's cursor (`audit_copy_state`) comes back as the backup held it and isn't
+// reset, so the next daily copy copies the re-appended range again under that day's key. A duplicate range in R2, no
+// line lost; `fromDailyCopy` (audit.ts) reads a range written twice as one, and refuses if the two disagree.
 import { z } from 'zod'
 import type { At } from '../../../server/db/members.ts'
 import { restoreKey } from '../../../server/db/r2-keys.ts'
@@ -73,7 +76,7 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileResult> {
     // 2b. The derived indexes (FTS5), first: before the audit re-append and before any status change.
     await ftsRebuilt(deps)
     // 3. The audit lines newer than the backup's.
-    const audit = await reappendAudit(deps.bucket, deps.target, record)
+    const audit = await reappendAudit(deps.bucket, deps.target, record, deps.at)
     // 4. P8b: the outbox hold and the tool check go here, before the replay and the confirm. Not built in P8a.
     // 5. The deletion log past the watermark.
     const replay = await replayDeletionLog({

@@ -30,6 +30,8 @@ export const AuditActionSchema = z.enum([
   'today.set_aside',
   // P8a R: an admin confirmed a restore once its audit re-append and deletion-log replay were done (ops/backup/reconcile).
   'restore.confirmed',
+  // P8a R: the restore's audit re-append put back a pseudonymised member row for an actor added after the backup.
+  'restore.member_placeholder',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -179,6 +181,8 @@ const otherLines = [
   line('today.set_aside', { itemId: TodayItemIdSchema, reason: z.enum(['snoozed', 'dismissed', 'declined']).nullable() }),
   // P8a R. The restore's and the backup's ids only (`timeId`: a UTC stamp and 8 hex characters), never a row of either.
   line('restore.confirmed', { restoreId: RestoreIdSchema, backupId: RestoreIdSchema }),
+  /** The member id the placeholder row keeps (its actor's audit lines need it), and the restore that wrote it. */
+  line('restore.member_placeholder', { memberId: MemberIdSchema, restoreId: RestoreIdSchema }),
 ] as const
 
 /**

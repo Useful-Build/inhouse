@@ -77,7 +77,7 @@ it('refuses a Durable Object a deletion reaches with no recorded recovery time',
 })
 
 it('the record schema refuses restored without every step and the confirm', () => {
-  const steps = { audit: { source: 'snapshot', afterId: 1, throughId: 1, appended: 0, gap: null }, outbox: 'p8b_pending', replay: { watermarkMs: T, throughKey: null, runs: [], skippedRefused: [] }, confirm: { actorId: ids.admin, atMs: T, auditId: 2 }, refusal: null } as const
+  const steps = { audit: { source: 'snapshot', afterId: 1, throughId: 1, appended: 0, gap: null, placeholders: [] }, outbox: 'p8b_pending', replay: { watermarkMs: T, throughKey: null, runs: [], skippedRefused: [] }, confirm: { actorId: ids.admin, atMs: T, auditId: 2 }, refusal: null } as const
   const base = { ...record, status: 'restored', reconciled: true }
   expect(RestoreRecordSchema.safeParse({ ...base, reconcile: steps }).success).toBe(true)
   for (const missing of ['audit', 'replay', 'confirm'] as const) expect(RestoreRecordSchema.safeParse({ ...base, reconcile: { ...steps, [missing]: null } }).success, missing).toBe(false)

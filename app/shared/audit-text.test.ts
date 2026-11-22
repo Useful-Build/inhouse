@@ -40,6 +40,7 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
   'restore.confirmed': { action: 'restore.confirmed', restoreId: '20261122T191611123Z-0a1b2c3d', backupId: '20261121T020000000Z-ffee0011' },
+  'restore.member_placeholder': { action: 'restore.member_placeholder', memberId: 'm_a', restoreId: '20261122T191611123Z-0a1b2c3d' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 

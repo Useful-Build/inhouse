@@ -49,7 +49,7 @@ it('appends the copied lines past the backup once, and records the gap after the
   const first = await reconcile(deps)
   if (!('ok' in first)) throw new Error(first.refused)
   const lastCopied = copied[copied.length - 1].id as number
-  expect(first.ok.reconcile?.audit).toEqual({ source: 'audit_copy', afterId: backupMaxId, throughId: lastCopied, appended: copied.length, gap: { afterId: lastCopied, reason: 'live_unreadable' } })
+  expect(first.ok.reconcile?.audit).toEqual({ source: 'audit_copy', afterId: backupMaxId, throughId: lastCopied, appended: copied.length, gap: { afterId: lastCopied, reason: 'live_unreadable' }, placeholders: [] })
   expect(uncopiedId).toBeGreaterThan(lastCopied)
   expect((await e.RESTORE_DB.prepare('SELECT * FROM audit_log WHERE id > ? ORDER BY id').bind(backupMaxId).all()).results).toEqual(copied)
 

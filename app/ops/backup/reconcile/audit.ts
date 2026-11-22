@@ -5,11 +5,21 @@
 // after the last copied one are lost. Each line goes back with its own id, by plain INSERT (the table's triggers refuse
 // anything else). A re-run appends nothing twice: a target line with the same id and the same values is skipped; one
 // that differs, or a target line the source lacks, refuses (`audit_conflict`), since something else wrote the target.
-// A line whose actor has no member row in the target (a member added after the backup) refuses by name
-// (`audit_actor_missing`): `audit_log.actor_id` references `members(id)`, and dropping the line would rewind history.
+// A line whose actor has no member row in the target (a member added after the backup; `audit_log.actor_id` references
+// `members(id)`) gets a placeholder row first, with the actor's id (A10, 2026-11-22): a person row pseudonymised as
+// P2's person deletion leaves one (name "Former member", no email, title, photo or subject) and `removed`, so it can't
+// sign in; the real person, if still a member, comes back through a normal invite. Each placeholder gets a
+// `restore.member_placeholder` line (actor `m_system`), appended after the re-appended lines so their ids stay theirs;
+// a re-run finds the row and the line and writes neither again. An actor id that isn't a member id refuses by name.
 import { backupManifestKey } from '../../../server/db/r2-keys.ts'
 import { listAll } from '../../delete/r2.ts'
 import { RestoreRefusal } from '../errors.ts'
+import { auditInsert } from '../../../server/db/audit.ts'
+import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
+import { FORMER_MEMBER } from '../../../server/db/members.ts'
+import type { At } from '../../../server/db/members.ts'
+import { runBatch } from '../../../server/db/sql.ts'
+import { isMemberId } from '../../delete/r2.ts'
 import { encodeRow, insertPartSql, isRowLine, linesAsArray, partLines, sha256, tableColumns } from '../format.ts'
 import { BackupManifestSchema, SnapshotManifestSchema } from '../manifest.ts'
 import type { Reconcile, RestoreRecord } from '../manifest.ts'
@@ -90,7 +100,18 @@ async function targetLines(target: D1Database, columns: readonly string[], after
   }
 }
 
-export async function reappendAudit(bucket: R2Bucket, target: D1Database, record: RestoreRecord): Promise<AuditResult> {
+const PLACEHOLDER = 'restore.member_placeholder'
+/** A placeholder row's `req_id`: which restore wrote it, so a re-run finds every one (and writes any line still missing). */
+const stampOf = (restoreId: string) => `restore:${restoreId}`
+
+/** This restore's placeholder lines in the target, by member id (their ids, so the conflict check can allow them). */
+async function placeholderLines(target: D1Database, restoreId: string): Promise<Map<string, number>> {
+  const rows = (await target.prepare(`SELECT id, json_extract(args_json, '$.memberId') AS member FROM audit_log WHERE action = '${PLACEHOLDER}' AND json_extract(args_json, '$.restoreId') = ?`)
+    .bind(restoreId).all<{ id: number; member: string }>()).results
+  return new Map(rows.map(r => [r.member, r.id]))
+}
+
+export async function reappendAudit(bucket: R2Bucket, target: D1Database, record: RestoreRecord, at: At): Promise<AuditResult> {
   const snapshot = record.snapshot
   if (snapshot === null) throw new RestoreRefusal('snapshot_missing', 'the record has none')
   const { columns, maxId: afterId } = await backupAudit(bucket, record.backup.backupId)
@@ -102,6 +123,8 @@ export async function reappendAudit(bucket: R2Bucket, target: D1Database, record
   const idOf = (l: string) => (JSON.parse(l) as number[])[idIdx]
 
   const inTarget = await targetLines(target, columns, afterId)
+  const ours = await placeholderLines(target, record.restoreId)
+  for (const id of ours.values()) inTarget.delete(id)
   const toWrite: string[] = []
   for (const l of lines) {
     const there = inTarget.get(idOf(l))
@@ -113,14 +136,30 @@ export async function reappendAudit(bucket: R2Bucket, target: D1Database, record
   if (extra.length > 0) throw new RestoreRefusal('audit_conflict', `the target has line ${extra[0]} the source lacks`)
 
   const actors = [...new Set(toWrite.map(l => (JSON.parse(l) as string[])[actorIdx]))]
-  if (actors.length > 0) {
-    const found = new Set((await target.prepare('SELECT id FROM members WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(actors)).all<{ id: string }>()).results.map(r => r.id))
-    const missing = actors.filter(a => !found.has(a))
-    if (missing.length > 0) throw new RestoreRefusal('audit_actor_missing', `${missing.length} actor(s) without a member row in the target, first ${missing[0]}`)
+  const found = actors.length === 0 ? new Set<string>()
+    : new Set((await target.prepare('SELECT id FROM members WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(actors)).all<{ id: string }>()).results.map(r => r.id))
+  const missing = actors.filter(a => !found.has(a))
+  const bad = missing.find(a => !isMemberId(a))
+  if (bad !== undefined) throw new RestoreRefusal('audit_actor_invalid', bad)
+  // The placeholder rows first (the lines reference them), then the lines, then one placeholder line each.
+  for (const id of missing) {
+    await target.prepare(`INSERT INTO members (id, kind, role, status, name, title, email_norm, subject, service_name, photo_key, rev, created_at_ms, invited_by, removed_at_ms, pseudonymised_at_ms, req_id)
+      VALUES (?, 'person', 'member', 'removed', ?, NULL, NULL, NULL, NULL, NULL, 1, ?, ?, ?, ?, ?)`)
+      .bind(id, FORMER_MEMBER, at.nowMs, SYSTEM_MEMBER_ID, at.nowMs, at.nowMs, stampOf(record.restoreId)).run()
   }
   const sql = insertPartSql('audit_log', columns)
   for (let i = 0; i < toWrite.length; i += INSERT_LINES) await target.prepare(sql).bind(linesAsArray(toWrite.slice(i, i + INSERT_LINES))).run()
+  // Every placeholder row this restore wrote has its line (a run stopped after the rows writes them on the next).
+  const placed = (await target.prepare('SELECT id FROM members WHERE req_id = ?').bind(stampOf(record.restoreId)).all<{ id: string }>()).results.map(r => r.id)
+  const placeholders = [...new Set([...ours.keys(), ...missing, ...placed])].sort()
+  const unlined = placeholders.filter(id => !ours.has(id))
+  if (unlined.length > 0) {
+    await runBatch(target, unlined.map(memberId => auditInsert({
+      atMs: at.nowMs, actorId: SYSTEM_MEMBER_ID, args: { action: PLACEHOLDER, memberId, restoreId: record.restoreId },
+      target: { kind: 'member', id: memberId }, requestId: at.requestId,
+    }, null)))
+  }
 
   const throughId = lines.length > 0 ? idOf(lines[lines.length - 1]) : afterId
-  return { source, afterId, throughId, appended: toWrite.length, gap: source === 'audit_copy' ? { afterId: throughId, reason: 'live_unreadable' } : null }
+  return { source, afterId, throughId, appended: toWrite.length, gap: source === 'audit_copy' ? { afterId: throughId, reason: 'live_unreadable' } : null, placeholders }
 }

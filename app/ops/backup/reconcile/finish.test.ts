@@ -6,7 +6,9 @@
 //  2. an entry logged before the backup's point is applied to the restored D1 (C1 review M2), or skipped for a Durable
 //     Object rewound to before it;
 //  3. the audit lines newer than the backup don't come back, come back twice on a re-run, or come back with new ids;
-//  4. the restore reads `restored` before the confirm, or the confirm writes no audit line or two.
+//  4. the restore reads `restored` before the confirm, or the confirm writes no audit line or two;
+//  5. a line by a member added after the backup (no member row in the restored database) blocks the restore or is
+//     dropped, or its placeholder row can sign in, keeps anything of the person's, or is written (or audited) twice.
 // The Durable Object's point-in-time recovery doesn't run locally (Cloudflare's PITR API is not supported in local
 // development), so the test rewinds it by hand: the rows its deletions removed are put back, as a recovery to an
 // earlier time would leave them, and the restore records that time.
@@ -19,7 +21,7 @@ import { openStores } from '../../../server/db/stores.ts'
 import type { PersonDataAnswer } from '../../../server/do/brand-agent/ports.ts'
 import { seedBrand } from '../../../server/seed/seed.ts'
 import { planPersonDeletion, runPersonDeletion } from '../../delete/person.ts'
-import { addLine, addPhoto, addSetting } from '../../delete/test-support.ts'
+import { addLine, addPerson, addPhoto, addSetting } from '../../delete/test-support.ts'
 import { tables } from '../../tables/index.ts'
 import { backup } from '../backup.ts'
 import { restore } from '../restore.ts'
@@ -35,6 +37,8 @@ const at = (nowMs: number, actorId = SYSTEM_MEMBER_ID) => ({ actorId, requestId:
 const NAMES = ['members', 'settings', 'support_grants', 'audit_log', 'photos/', 'backups/', 'restore/', 'deletion-log/']
 const g2Registry = tables.filter(t => NAMES.includes(t.name))
 const replayRegistry = tables.filter(t => [...NAMES, 'BrandAgent'].includes(t.name))
+/** The target's audit lines past the backup, this restore's own placeholder lines aside. */
+const reappended = async () => (await e.RESTORE_DB.prepare("SELECT * FROM audit_log WHERE id > ? AND action <> 'restore.member_placeholder' ORDER BY id").bind(backupMaxId).all()).results
 const agent = () => e.BRAND_AGENT.getByName('restore-proof')
 const rpc = () => agent() as unknown as { personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> }
 
@@ -62,6 +66,7 @@ let ids: { admin: string; dana: string; leo: string }
 let record: RestoreRecord
 let backupMaxId: number
 let laterLines: Record<string, unknown>[]
+let nia: string
 let leoBackupRow: unknown
 const danaPhoto: string[] = []
 
@@ -81,6 +86,9 @@ beforeAll(async () => {
   leoBackupRow = await e.DB.prepare('SELECT * FROM members WHERE id = ?').bind(ids.leo).first()
   // After the backup: audit lines, then Dana's deletion (T + 40).
   for (let i = 0; i < 3; i++) await addLine(e.DB, ids.admin, ids.dana, { n: i }, T + 30 + i)
+  // Nia joins after the backup and acts: her line's actor has no member row in the restored database.
+  nia = (await addPerson(e.DB, { role: 'member', status: 'active' }, ids.admin, T + 33)).id
+  await addLine(e.DB, nia, null, { n: 'nia' }, T + 34)
   laterLines = (await e.DB.prepare('SELECT * FROM audit_log WHERE id > ? ORDER BY id').bind(backupMaxId).all()).results
   await deletePerson(ids.dana, T + 40)
   // The BrandAgent recovered to T + 5, before both deletions: both people's rows are back in its storage.
@@ -110,15 +118,21 @@ it('reconciles: the audit lines come back once with their ids, and Dana stays go
   if (!('ok' in first)) throw new Error(first.refused)
   expect(first.ok.status).toBe('restored_unreconciled')
   expect(first.ok.reconcile).toMatchObject({
-    audit: { source: 'snapshot', afterId: backupMaxId, appended: laterLines.length, gap: null }, outbox: 'p8b_pending', confirm: null, refusal: null,
+    audit: { source: 'snapshot', afterId: backupMaxId, appended: laterLines.length, gap: null, placeholders: [nia] }, outbox: 'p8b_pending', confirm: null, refusal: null,
   })
   // Leo's run (T + 10) reaches only the BrandAgent (recovered to T + 5); Dana's (T + 40) every store it names.
   const runs = first.ok.reconcile?.replay?.runs ?? []
   expect(runs.map(r => r.stores)).toEqual([['BrandAgent'], replayRegistry.map(t => t.name)])
   expect(await e.RESTORE_DB.prepare('SELECT * FROM members WHERE id = ?').bind(ids.leo).first()).toEqual(leoBackupRow)
 
-  const restored = (await e.RESTORE_DB.prepare('SELECT * FROM audit_log WHERE id > ? ORDER BY id').bind(backupMaxId).all()).results
-  expect(restored).toEqual(laterLines)
+  expect(await reappended()).toEqual(laterLines)
+  // Nia's placeholder: her id, pseudonymised and removed (no subject, so no sign-in finds it), with one line after hers.
+  expect(await e.RESTORE_DB.prepare('SELECT kind, role, status, name, title, email_norm, subject, photo_key, pseudonymised_at_ms FROM members WHERE id = ?').bind(nia).first())
+    .toEqual({ kind: 'person', role: 'member', status: 'removed', name: 'Former member', title: null, email_norm: null, subject: null, photo_key: null, pseudonymised_at_ms: T + 60 })
+  const placeholderLines = async () => (await e.RESTORE_DB.prepare("SELECT id, actor_id, target_id, args_json FROM audit_log WHERE action = 'restore.member_placeholder'").all<{ id: number }>()).results
+  const [line] = await placeholderLines()
+  expect(line).toMatchObject({ actor_id: SYSTEM_MEMBER_ID, target_id: nia, args_json: JSON.stringify({ memberId: nia, restoreId: record.restoreId }) })
+  expect(line.id).toBeGreaterThan(laterLines[laterLines.length - 1].id as number)
   const dana = await e.RESTORE_DB.prepare('SELECT name, email_norm, subject, status, pseudonymised_at_ms FROM members WHERE id = ?').bind(ids.dana).first()
   expect(dana).toEqual({ name: 'Former member', email_norm: null, subject: null, status: 'removed', pseudonymised_at_ms: T + 60 })
   expect(await e.RESTORE_DB.prepare('SELECT COUNT(*) AS n FROM settings WHERE owner = ?').bind(ids.dana).first()).toEqual({ n: 0 })
@@ -130,7 +144,10 @@ it('reconciles: the audit lines come back once with their ids, and Dana stays go
   const again = await reconcile(deps)
   if (!('ok' in again)) throw new Error(again.refused)
   expect(again.ok.reconcile?.audit).toMatchObject({ appended: 0, throughId: first.ok.reconcile?.audit?.throughId })
-  expect((await e.RESTORE_DB.prepare('SELECT * FROM audit_log WHERE id > ? ORDER BY id').bind(backupMaxId).all()).results).toEqual(laterLines)
+  expect(again.ok.reconcile?.audit?.placeholders).toEqual([nia])
+  expect(await reappended()).toEqual(laterLines)
+  expect(await placeholderLines()).toHaveLength(1)
+  expect(await e.RESTORE_DB.prepare('SELECT COUNT(*) AS n FROM members WHERE id = ?').bind(nia).first()).toEqual({ n: 1 })
 })
 
 it('ends restored only on an Admin\'s confirm, with one audit line however often it runs', async () => {

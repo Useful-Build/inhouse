@@ -109,5 +109,6 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'library.restored': return { what: 'brought back Library files', detail: files(args.fileIds.length) }
     case 'today.set_aside': return args.reason === null ? { what: 'put back an item on Today', detail: '' } : { what: SET_ASIDE[args.reason], detail: '' }
     case 'restore.confirmed': return { what: 'confirmed a restore from a backup', detail: '' }
+    case 'restore.member_placeholder': return { what: 'kept a former member’s history after a restore', detail: who(args.memberId) }
   }
 }

@@ -78,6 +78,11 @@ export const ReconcileSchema = z.object({
     appended: Count,
     /** From the daily copy only: lines after `afterId` the live database held and no copy did are lost. */
     gap: z.object({ afterId: Count, reason: z.literal('live_unreadable') }).nullable(),
+    /**
+     * Actors of appended lines with no member row in the target (added after the backup): a pseudonymised, removed
+     * placeholder row was written for each, with a `restore.member_placeholder` line. Every one so far, re-runs included.
+     */
+    placeholders: z.array(z.string()),
   }).nullable(),
   /** Step 4, P8b: the outbox hold and the check against each tool's record. Not built in P8a. */
   outbox: z.literal('p8b_pending'),
