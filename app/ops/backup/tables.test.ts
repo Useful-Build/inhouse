@@ -5,7 +5,9 @@
 //     D1 refuses it;
 //  3. an `r2KeyColumns` entry isn't a column, so a missing object goes unreported;
 //  4. an `append_only` table is updated somewhere, or its key isn't one integer column, so the rows read after the
-//     point batch aren't the rows at the point.
+//     point batch aren't the rows at the point;
+//  5. an `insert_only` table is updated somewhere, or its creation column isn't a column, so a row read after the point
+//     batch may have changed since it.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { TABLE_RULES } from './tables.ts'
@@ -50,6 +52,20 @@ describe('append-only tables (failure 4)', () => {
       for (const [path, source] of Object.entries(serverSources)) if (writes.test(source)) found.push(`${r.name}: ${path}`)
     }
     expect(Object.keys(serverSources).length).toBeGreaterThan(50)
+    expect(found).toEqual([])
+  })
+})
+
+describe('insert-only tables (failure 5)', () => {
+  it('names a real creation column for each insert_only table, and no product source updates or replaces its rows', async () => {
+    const insertOnly = TABLE_RULES.filter(r => r.mode === 'insert_only')
+    expect(insertOnly.map(r => r.name).sort()).toEqual(['notice_reads', 'tool_calls'])
+    const found: string[] = []
+    for (const r of insertOnly) {
+      if (!r.createdColumn || !(await columnsOf(r.name)).some(c => c.name === r.createdColumn)) found.push(`${r.name}: createdColumn`)
+      const writes = new RegExp(`\\bUPDATE\\s+(?:OR\\s+\\w+\\s+)?"?${r.name}\\b|\\bREPLACE\\s+INTO\\s+"?${r.name}\\b|\\bINSERT\\s+OR\\s+REPLACE\\s+INTO\\s+"?${r.name}\\b|\\bINSERT\\s+INTO\\s+"?${r.name}\\b[^;]{0,2000}?\\bON\\s+CONFLICT\\b[^;]{0,200}?\\bDO\\s+UPDATE\\b`, 'i')
+      for (const [path, source] of Object.entries(serverSources)) if (writes.test(source)) found.push(`${r.name}: ${path}`)
+    }
     expect(found).toEqual([])
   })
 })

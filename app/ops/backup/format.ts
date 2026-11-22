@@ -125,6 +125,41 @@ export async function* appendRows(db: D1Database, rule: TableRule, columns: read
   }
 }
 
+const keyList = (rule: TableRule) => `(${orderList(rule)})`
+
+/** C1: an `insert_only` table's creation column. */
+export function createdKey(rule: TableRule): string {
+  if (rule.mode !== 'insert_only' || rule.createdColumn === undefined) throw new BackupError('mode_rule', `${rule.name}: insert_only needs a createdColumn`)
+  return rule.createdColumn
+}
+
+/** The point batch's read of an `insert_only` table: its largest creation value (the point) and its row count. */
+export const pointSelect = (db: D1Database, rule: TableRule): D1PreparedStatement =>
+  db.prepare(`SELECT COALESCE(MAX(${ident(createdKey(rule))}), 0) AS point, COUNT(*) AS n FROM ${ident(rule.name)}`)
+
+/**
+ * C1: every row of a table by primary key (one or more columns, compared as a row value), a page of `READ_PAGE_ROWS` at
+ * a time; with `createdAtMost`, only the `insert_only` rows created at or before it. The `paged` and `insert_only`
+ * backups read with it, and the restore's proof re-reads a target with it.
+ * Row values: https://sqlite.org/rowvalue.html (read 2026-11-22).
+ */
+export async function* keyRows(db: D1Database, rule: TableRule, columns: readonly string[], opts: { createdAtMost?: number } = {}): AsyncGenerator<Record<string, unknown>> {
+  const created = opts.createdAtMost === undefined ? null : ident(createdKey(rule))
+  const where = (after: boolean) => [created === null ? '' : `${created} <= ?`, after ? `${keyList(rule)} > (${rule.orderBy.map(() => '?').join(', ')})` : ''].filter(Boolean)
+  const sql = (after: boolean) => {
+    const w = where(after)
+    return `SELECT ${selectList(columns)} FROM ${ident(rule.name)}${w.length > 0 ? ` WHERE ${w.join(' AND ')}` : ''} ORDER BY ${orderList(rule)} LIMIT ${READ_PAGE_ROWS}`
+  }
+  let last: unknown[] | null = null
+  for (;;) {
+    const args = [...(opts.createdAtMost === undefined ? [] : [opts.createdAtMost]), ...(last ?? [])]
+    const page: Record<string, unknown>[] = (await db.prepare(sql(last !== null)).bind(...args).all<Record<string, unknown>>()).results
+    for (const row of page) yield row
+    if (page.length < READ_PAGE_ROWS) return
+    last = rule.orderBy.map(c => page[page.length - 1][c])
+  }
+}
+
 /**
  * The restore's write of one part: one statement, the part's rows bound once as a JSON array. Never `OR REPLACE`.
  * https://developers.cloudflare.com/d1/sql-api/query-json/ (json_each over a bound JSON array), read 2026-11-20.

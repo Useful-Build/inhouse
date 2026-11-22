@@ -15,8 +15,15 @@ export interface TableRule {
   /**
    * `snapshot`: read in full inside the point batch. `append_only`: rows are only ever added with a rising id, so the
    * point batch records its max id and the rows at or below it are read after.
+   * `insert_only` (C1): rows are never updated but the key isn't one rising integer; the point batch records the
+   * largest `createdColumn` value (the point) and the row count, and the rows created at or before the point are read
+   * after, by primary key. A count that differs at the read marks the table `paged` in the manifest.
+   * `paged` (C1): an updated table that can pass 10,000 rows, read by primary key after the point batch. D1 has no read
+   * snapshot across queries, so it isn't exactly at the point: the manifest and the restore record mark it `paged`.
    */
-  mode: 'snapshot' | 'append_only'
+  mode: 'snapshot' | 'append_only' | 'insert_only' | 'paged'
+  /** `insert_only` only: the creation time column (epoch ms) that bounds the rows read after the point batch. */
+  createdColumn?: string
   /** Tables whose rows must be restored first (foreign keys). */
   after?: readonly string[]
   /** Columns that hold an R2 key (the restore reports the keys whose object is gone). */
@@ -30,33 +37,31 @@ export const TABLE_RULES: readonly TableRule[] = [
   // `actor_id` references members(id), and D1 enforces foreign keys.
   { name: 'audit_log', orderBy: ['id'], mode: 'append_only', after: ['members'] },
   // P3 and P4's tables (P8 C1). `after` comes from each table's foreign keys (tables.test.ts reads them from the
-  // migrated schema). C1's brief pages the tables that can pass 10,000 rows (`paged`: chats, chat_files, usage_turns,
-  // usage_extends, routine_slots, today_items, notices, library_uploads) and reads the never-updated composite-key
-  // ones by their creation time (`insert_only`: tool_calls, notice_reads). Until those modes land they're `snapshot`,
-  // exact at the point, and a table past 10,000 rows throws by name rather than backing up part of itself.
-  { name: 'chats', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
+  // migrated schema). The updated tables that can pass 10,000 rows are `paged`; the never-updated composite-key ones
+  // are `insert_only` by their creation time (tables.test.ts fails on any UPDATE or REPLACE of them in the product).
+  { name: 'chats', orderBy: ['id'], mode: 'paged', after: ['members'] },
   // Only ever inserted (`ON CONFLICT(id) DO NOTHING`, server/do/brand-agent/projection.ts); tables.test.ts fails on
   // any UPDATE or REPLACE in the product's code.
   { name: 'chat_messages', orderBy: ['n'], mode: 'append_only', after: ['chats'] },
   // No foreign key, but a tool call belongs to its chat.
-  { name: 'tool_calls', orderBy: ['turn_id', 'n'], mode: 'snapshot', after: ['chats'] },
-  { name: 'chat_files', orderBy: ['id'], mode: 'snapshot', after: ['chats'], r2KeyColumns: ['r2_key'] },
+  { name: 'tool_calls', orderBy: ['turn_id', 'n'], mode: 'insert_only', createdColumn: 'at_ms', after: ['chats'] },
+  { name: 'chat_files', orderBy: ['id'], mode: 'paged', after: ['chats'], r2KeyColumns: ['r2_key'] },
   { name: 'usage_months', orderBy: ['month'], mode: 'snapshot' },
-  { name: 'usage_turns', orderBy: ['turn_id'], mode: 'snapshot', after: ['usage_months'] },
-  { name: 'usage_extends', orderBy: ['turn_id', 'call_id'], mode: 'snapshot', after: ['usage_turns'] },
+  { name: 'usage_turns', orderBy: ['turn_id'], mode: 'paged', after: ['usage_months'] },
+  { name: 'usage_extends', orderBy: ['turn_id', 'call_id'], mode: 'paged', after: ['usage_turns'] },
   // The audit copy's cursor; its reset after a restore is F1's.
   { name: 'audit_copy_state', orderBy: ['id'], mode: 'snapshot' },
   { name: 'memories', orderBy: ['n'], mode: 'snapshot', after: ['members'] },
   { name: 'routines', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
-  { name: 'routine_slots', orderBy: ['slot_key'], mode: 'snapshot', after: ['routines'] },
+  { name: 'routine_slots', orderBy: ['slot_key'], mode: 'paged', after: ['routines'] },
   { name: 'routine_alerts', orderBy: ['code'], mode: 'snapshot' },
-  { name: 'today_items', orderBy: ['id'], mode: 'snapshot', after: ['routine_slots'] },
+  { name: 'today_items', orderBy: ['id'], mode: 'paged', after: ['routine_slots'] },
   { name: 'today_aside', orderBy: ['item_id'], mode: 'snapshot', after: ['members'] },
   // `activity_no_update` refuses every UPDATE (0230).
   { name: 'activity_lines', orderBy: ['n'], mode: 'append_only', after: ['members'] },
-  { name: 'notices', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
-  { name: 'notice_reads', orderBy: ['member_id', 'notice_id'], mode: 'snapshot', after: ['members', 'notices'] },
-  { name: 'library_uploads', orderBy: ['id'], mode: 'snapshot', after: ['members'], r2KeyColumns: ['r2_key'] },
+  { name: 'notices', orderBy: ['id'], mode: 'paged', after: ['members'] },
+  { name: 'notice_reads', orderBy: ['member_id', 'notice_id'], mode: 'insert_only', createdColumn: 'at_ms', after: ['members', 'notices'] },
+  { name: 'library_uploads', orderBy: ['id'], mode: 'paged', after: ['members'], r2KeyColumns: ['r2_key'] },
   { name: 'library_marks', orderBy: ['file_id'], mode: 'snapshot', after: ['members'] },
 ]
 
@@ -106,7 +111,19 @@ export async function canonicalTables(db: D1Database, registry: readonly TableEn
     if (!rules.some(r => r.name === name)) throw new BackupError('no_rule', name)
   }
   for (const r of rules) if (!canonical.includes(r.name)) throw new BackupError('rule_without_entry', r.name)
+  for (const r of rules) await checkMode(db, r)
   return { rules: restoreOrder(rules), derived }
+}
+
+/** C1: an `insert_only` rule names a real creation column, and no other mode names one. Throws `mode_rule` by name. */
+async function checkMode(db: D1Database, r: TableRule): Promise<void> {
+  if (r.mode !== 'insert_only') {
+    if (r.createdColumn !== undefined) throw new BackupError('mode_rule', `${r.name}: createdColumn is for insert_only only`)
+    return
+  }
+  if (r.createdColumn === undefined) throw new BackupError('mode_rule', `${r.name}: insert_only needs a createdColumn`)
+  const columns = (await db.prepare(`PRAGMA table_info(${ident(r.name)})`).all<{ name: string }>()).results.map(c => c.name)
+  if (!columns.includes(r.createdColumn)) throw new BackupError('mode_rule', `${r.name}: createdColumn ${r.createdColumn} is not a column`)
 }
 
 /**

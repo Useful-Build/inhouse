@@ -9,7 +9,7 @@
 import { backupManifestKey, backupPartKey } from '../../server/db/r2-keys.ts'
 import type { TableEntry } from '../tables/types.ts'
 import { BackupError } from './errors.ts'
-import { SNAPSHOT_MAX_ROWS, TableWriter, appendRows, encodeRow, maxIdSelect, snapshotSelect, tableColumns } from './format.ts'
+import { SNAPSHOT_MAX_ROWS, TableWriter, appendRows, encodeRow, keyRows, maxIdSelect, pointSelect, snapshotSelect, tableColumns } from './format.ts'
 import { BackupManifestSchema } from './manifest.ts'
 import type { BackupManifest, TableManifest } from './manifest.ts'
 import { canonicalTables } from './tables.ts'
@@ -41,16 +41,20 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
   for (const r of rules) columns.set(r.name, await tableColumns(db, r.name))
   const cols = (name: string) => columns.get(name) as string[]
 
-  // The point batch: snapshot tables whole, append-only maxima, the migration.
+  // The point batch: snapshot tables whole, append-only maxima, insert-only points and counts, the migration. `paged`
+  // tables are read after it (C1).
   const snapshotRules = rules.filter(r => r.mode === 'snapshot')
   const appendRules = rules.filter(r => r.mode === 'append_only')
+  const insertRules = rules.filter(r => r.mode === 'insert_only')
   const results = await db.batch([
     ...snapshotRules.map(r => snapshotSelect(db, r, cols(r.name))),
     ...appendRules.map(r => maxIdSelect(db, r)),
+    ...insertRules.map(r => pointSelect(db, r)),
     db.prepare('SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1'),
   ])
   const snapshotRows = new Map(snapshotRules.map((r, i) => [r.name, results[i].results as Record<string, unknown>[]]))
   const maxIds = new Map(appendRules.map((r, i) => [r.name, (results[snapshotRules.length + i].results[0] as { max: number }).max]))
+  const points = new Map(insertRules.map((r, i) => [r.name, results[snapshotRules.length + appendRules.length + i].results[0] as { point: number; n: number }]))
   const migration = (results[results.length - 1].results[0] as { name: string } | undefined)?.name
   if (!migration) throw new BackupError('no_migration', 'd1_migrations is empty')
   for (const [name, rows] of snapshotRows) if (rows.length > SNAPSHOT_MAX_ROWS) throw new BackupError('snapshot_too_large', `${name}: over ${SNAPSHOT_MAX_ROWS} rows`)
@@ -64,15 +68,22 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
       await bucket.put(key, bytes, ndjson)
       return key
     })
+    const point = points.get(r.name)
     if (r.mode === 'snapshot') {
       for (const row of snapshotRows.get(r.name) ?? []) await writer.add(encodeRow(r.name, cols(r.name), row))
-    } else {
+    } else if (r.mode === 'append_only') {
       for await (const row of appendRows(db, r, cols(r.name), maxIds.get(r.name) as number)) await writer.add(encodeRow(r.name, cols(r.name), row))
+    } else {
+      for await (const row of keyRows(db, r, cols(r.name), point === undefined ? {} : { createdAtMost: point.point })) await writer.add(encodeRow(r.name, cols(r.name), row))
     }
     const digest = await writer.finish()
+    // An insert_only table is exact when it read back the rows the point batch counted; paged tables never are.
+    const exact = r.mode === 'paged' ? false : point === undefined ? true : digest.rows === point.n
     tables.push({
       name: r.name, columns: cols(r.name), orderBy: [...r.orderBy], mode: r.mode, rows: digest.rows,
       ...(r.mode === 'append_only' ? { maxId: maxIds.get(r.name) } : {}),
+      ...(point === undefined ? {} : { point: point.point }),
+      consistency: exact ? 'exact' : 'paged',
       sha256: digest.sha256, parts: digest.parts,
     })
   }
