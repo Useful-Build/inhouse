@@ -105,7 +105,7 @@ As in the master plan:
 - **What doesn't count.** A missing or budget-skipped check doesn't count as clean.
 - **Restarts.** A bypass or a lost or doubled notice restarts the count. A release that changes behaviour restarts the
   3-day window.
-- **Model and spend.** The product model with a spend limit, per Q8, inside the house's monthly cap.
+- **Model and spend.** The product model with a spend limit, per Q8, inside the house's $50 monthly cap.
 
 ### Release order
 
