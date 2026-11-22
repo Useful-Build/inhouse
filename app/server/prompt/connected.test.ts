@@ -6,12 +6,14 @@
 //  4. a channel name carries prompt text (a newline, a sentence, a `#`, spaces, capitals) into the prompt;
 //  5. the channel line shows while Slack isn't connected, while no channel is listed, or while the accounts couldn't be read;
 //  6. a failed or thrown listAccounts still sends a connected-apps line (or "No apps are connected yet."), or fails quietly;
-//  7. a failed channel read drops the connected-apps line with it, or fails quietly.
+//  7. a failed channel read drops the connected-apps line with it, or fails quietly;
+//  8. a slow hub or channel read holds the turn's start past 3 s, or a malformed answer throws out of the builder;
+//  9. a connected account the catalog doesn't know turns into the false "No apps are connected yet."
 // Expected values come from literals here and a reference model written separately below, never from connected.ts.
 import { fc, test } from '@fast-check/vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AccountStatus, AccountSummary, HubResult, SignInState } from '../../hub/index/contract.ts'
-import { connectedLines, turnSystemPrompt } from './connected.ts'
+import { PROMPT_READ_DEADLINE_MS, connectedLines, turnSystemPrompt } from './connected.ts'
 import type { TurnPromptDeps } from './connected.ts'
 import { SYSTEM_PROMPT_V1, SYSTEM_PROMPT_VERSION, systemPromptV2 } from './system.ts'
 
@@ -41,6 +43,7 @@ function expected(accounts: AccountSummary[] | null, channels: string[]): string
   if (accounts === null) return ''
   const names: string[] = []
   for (const id of ['shopify:store', 'slack:workspace']) if (accounts.some(a => a.accountId === id && live(a))) names.push(NAMES[id]!)
+  if (names.length === 0 && accounts.some(a => !(a.accountId in NAMES) && live(a))) return ''
   const lines = [names.length === 0 ? NONE : `Connected apps: ${joinRef(names)}${TAIL}`]
   const slack = accounts.some(a => a.accountId === 'slack:workspace' && live(a))
   const ok = [...new Set(channels.filter(c => /^[a-z0-9_-]+$/.test(c) && c.length <= 80))].sort()
@@ -77,6 +80,13 @@ describe('connectedLines, the pure turn lines', () => {
     }
     expect(out).not.toMatch(/notes|mystery/i)
   })
+
+  test.prop([fc.array(accountArb.filter(a => !(a.accountId in NAMES)), { minLength: 1, maxLength: 5 })])(
+    'an unknown connected account never yields the "none" line', accounts => {
+      const out = connectedLines(accounts, ['ops'])
+      if (accounts.some(live)) expect(out).toBe('')
+      else expect(out).toBe(NONE)
+    })
 
   test.prop([accountsArb, channelsArb])('never use an Oxford comma, and stay at most two lines', (accounts, channels) => {
     const out = connectedLines(accounts, channels)
@@ -153,6 +163,42 @@ describe('turnSystemPrompt, per turn from the gateway and the channel list', () 
     const d = deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: async () => { throw new Error('d1') } })
     expect(await turnSystemPrompt(d, 't_5')).toBe(`${SYSTEM_PROMPT_V1}\n\nConnected apps: Slack${TAIL}`)
     expect(errors).toHaveBeenCalledWith(expect.objectContaining({ event: 'prompt_channels_unread', turnId: 't_5' }))
+  })
+
+  it('reads past the 3 s deadline: logged as a timeout, and v1 goes', async () => {
+    vi.useFakeTimers()
+    try {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+      expect(PROMPT_READ_DEADLINE_MS).toBe(3000)
+      const slow = deps(() => new Promise(() => {}))
+      const built = turnSystemPrompt(slow, 't_7')
+      await vi.advanceTimersByTimeAsync(2999)
+      expect(errors).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(await built).toBe(SYSTEM_PROMPT_V1)
+      expect(errors).toHaveBeenCalledWith({ event: 'prompt_accounts_unread', turnId: 't_7', code: 'timeout' })
+      // A slow channel read counts against the same deadline.
+      const slowChannels = deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: () => new Promise(() => {}) })
+      const built2 = turnSystemPrompt(slowChannels, 't_8')
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(await built2).toBe(SYSTEM_PROMPT_V1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a malformed hub answer never throws: logged, and v1 goes', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const d = deps(async () => ({ ok: true, value: [{ accountId: 'slack:workspace', configured: true } as unknown as AccountSummary] }))
+    expect(await turnSystemPrompt(d, 't_9')).toBe(SYSTEM_PROMPT_V1)
+    expect(errors).toHaveBeenCalledWith(expect.objectContaining({ event: 'prompt_build_failed', turnId: 't_9' }))
+  })
+
+  it('an unknown connected account is counted in a loud log and sends no apps line', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const d = deps(async () => ({ ok: true, value: [account('mystery:x')] }))
+    expect(await turnSystemPrompt(d, 't_10')).toBe(SYSTEM_PROMPT_V1)
+    expect(errors).toHaveBeenCalledWith({ event: 'prompt_unknown_connectors', turnId: 't_10', count: 1 })
   })
 
   it('a dropped channel name is logged loud, never echoed', async () => {

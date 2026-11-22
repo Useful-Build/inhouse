@@ -45,6 +45,7 @@ import type { Trace } from '../../../shared/contract/trace.ts'
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst } from './ports.ts'
 import { SWEEP_EVERY_MS, ensureGrantExpiry, runAuthoritySweep, runGrantExpiry, sweepBy } from './authority.ts'
 import type { AuthorityDeps, SocketAuthority } from './authority.ts'
+import { SYSTEM_PROMPT_V1 } from '../../prompt/system.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
 export const STARTING_DEADLINE_MS = 3 * 60_000
@@ -463,7 +464,7 @@ export class AgentCore {
   // ---------- start (4.4) ----------
 
   /** Testing seam: runs before each awaited step of a start (a barrier, or a reset injected there). */
-  beforeStep?: (step: 'files' | 'model' | 'reserve' | 'mint' | 'place', turnId: string) => Promise<void>
+  beforeStep?: (step: 'files' | 'model' | 'prompt' | 'reserve' | 'mint' | 'place', turnId: string) => Promise<void>
 
   private async start(turnId: string, gen: number): Promise<void> {
     let t = this.current(turnId, gen, 'starting')
@@ -492,7 +493,19 @@ export class AgentCore {
     t = this.current(turnId, gen, 'starting')
     if (!t) return
     if (!usable) return this.failUnstarted(t, { outcome: 'failed', reason: 'model_off' })
-    const systemPrompt = typeof this.d.systemPrompt === 'string' ? this.d.systemPrompt : await this.d.systemPrompt(turnId)
+    // The turn's system prompt (P5: built per turn). A builder that rejects falls back to the static v1 prompt, so the
+    // turn is never stranded in `starting`.
+    await this.beforeStep?.('prompt', turnId)
+    let systemPrompt: string
+    if (typeof this.d.systemPrompt === 'string') systemPrompt = this.d.systemPrompt
+    else {
+      try {
+        systemPrompt = await this.d.systemPrompt(turnId)
+      } catch (err) {
+        console.error({ event: 'turn_prompt_failed', turnId, error: errorText(err) })
+        systemPrompt = SYSTEM_PROMPT_V1
+      }
+    }
     t = this.current(turnId, gen, 'starting')
     if (!t) return
 

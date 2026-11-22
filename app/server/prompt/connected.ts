@@ -7,7 +7,7 @@
 import type { AccountSummary, ConnectGateway } from '../../hub/index/contract.ts'
 import { catalogByAccount } from '../api/tools-catalog.ts'
 import { listedChannels } from '../notify-slack/send.ts'
-import { systemPromptV2 } from './system.ts'
+import { SYSTEM_PROMPT_V1, systemPromptV2 } from './system.ts'
 
 export const NO_APPS_LINE = 'No apps are connected yet.'
 export const connectedAppsLine = (names: string): string =>
@@ -25,6 +25,10 @@ const slackConnected = (accounts: readonly AccountSummary[]): boolean =>
   accounts.some(a => a.accountId === SLACK_ACCOUNT && isConnected(a))
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
+/** How many connected accounts the connector catalog doesn't know (named by nobody; logged loud per turn). */
+export const unknownConnected = (accounts: readonly AccountSummary[]): number =>
+  accounts.filter(a => isConnected(a) && catalogByAccount(a.accountId) === undefined).length
+
 /** "X", "X and Y", "X, Y and Z" (no Oxford comma). */
 export function joinNames(names: readonly string[]): string {
   return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)!}`
@@ -38,6 +42,9 @@ export function joinNames(names: readonly string[]): string {
 export function connectedLines(accounts: readonly AccountSummary[] | null, channels: readonly string[]): string {
   if (accounts === null) return ''
   const names = [...new Set(accounts.filter(isConnected).flatMap(a => catalogByAccount(a.accountId)?.name ?? []))].sort(byCodeUnit)
+  // A connected account the catalog can't name: "none" would be false, so no apps line at all (and Slack, which the
+  // catalog names, isn't connected, so no channel line either).
+  if (names.length === 0 && unknownConnected(accounts) > 0) return ''
   const lines = [names.length === 0 ? NO_APPS_LINE : connectedAppsLine(joinNames(names))]
   const safe = [...new Set(channels.filter(c => SLACK_CHANNEL_NAME.test(c)))].sort(byCodeUnit)
   if (slackConnected(accounts) && safe.length > 0) lines.push(listedChannelsLine(joinNames(safe.map(c => `#${c}`))))
@@ -77,10 +84,16 @@ async function readAccounts(deps: TurnPromptDeps, turnId: string): Promise<reado
   return null
 }
 
-/** The system prompt v2 for one turn. Never throws: a failed read is logged and its line left out. */
-export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Promise<string> {
+/** The longest a turn's start waits for the hub and the channel list before it sends v1 (A9's condition). */
+export const PROMPT_READ_DEADLINE_MS = 3000
+
+async function readTurnLines(deps: TurnPromptDeps, turnId: string): Promise<string> {
   const accounts = await readAccounts(deps, turnId)
   let channels: readonly string[] = []
+  if (accounts !== null) {
+    const unknown = unknownConnected(accounts)
+    if (unknown > 0) console.error({ event: 'prompt_unknown_connectors', turnId, count: unknown })
+  }
   if (accounts !== null && deps.delivery && slackConnected(accounts)) {
     try {
       channels = await deps.channels()
@@ -90,5 +103,27 @@ export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Pr
     const dropped = channels.filter(c => !SLACK_CHANNEL_NAME.test(c)).length
     if (dropped > 0) console.error({ event: 'prompt_channel_names_dropped', turnId, dropped })
   }
-  return systemPromptV2(connectedLines(accounts, channels))
+  return connectedLines(accounts, channels)
+}
+
+/**
+ * The system prompt v2 for one turn. Never throws, by construction: a failed read is logged and its line left out; a
+ * read past the deadline, or anything else that fails, is logged and sends v1.
+ */
+export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const deadline = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), PROMPT_READ_DEADLINE_MS) })
+    const lines = await Promise.race([readTurnLines(deps, turnId), deadline])
+    if (lines === 'timeout') {
+      console.error({ event: 'prompt_accounts_unread', turnId, code: 'timeout' })
+      return SYSTEM_PROMPT_V1
+    }
+    return systemPromptV2(lines)
+  } catch (err) {
+    console.error({ event: 'prompt_build_failed', turnId, error: err instanceof Error ? err.name : typeof err })
+    return SYSTEM_PROMPT_V1
+  } finally {
+    clearTimeout(timer)
+  }
 }
