@@ -325,11 +325,18 @@ test('S4: At Act an alert reaches a listed Slack channel with no link preview, a
     if (!remote()) expect((await fakeState(request)).web.posts.length, 'no Slack post at Watch').toBe(before + 1)
     await expect.poll(async () => (((await api(page, 'GET', '/api/notifications')).json?.items ?? []) as { id: string; body?: string }[]).filter(i => !known.has(i.id) && i.body?.includes(NOTICE_TEXT)).length,
       { timeout: 60_000, message: "the person's bell holds the new alert" }).toBe(1)
-    await goTo(page, '#/chats')
-    const bell = page.getByRole('button', { name: /^Notifications, \d+ unread$/ })
-    await expect(bell).toBeVisible()
+    // What the person sees. The bell reads its notices when the app starts and on a page change, and this notice came from the agent's
+    // own tool, not a run the page was watching: so the person opens the app again, as they would. (Recording 4: without it the desktop's
+    // bell still said "Notifications" with no count.) The popup's row is the notice's headline, "Message from your Inhouse agent"; the
+    // body is read through the API above, not in the popup.
+    const unread = (((await api(page, 'GET', '/api/notifications')).json?.items ?? []) as { unread?: boolean }[]).filter(i => i.unread).length
+    expect(unread, 'the new alert is unread').toBeGreaterThan(0)
+    await page.reload()
+    await ready(page)
+    const bell = page.getByRole('button', { name: `Notifications, ${unread} unread`, exact: true })
+    await expect(bell, 'the bell counts the new alert').toBeVisible()
     await bell.click()
-    await expect(page.getByRole('dialog', { name: 'Notifications' }).getByText(NOTICE_TEXT).first()).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Notifications' }).getByRole('button', { name: /^Message from your Inhouse agent/ }).first()).toBeVisible()
     await shot(page, 'S4-watch-bell')
   } finally {
     await setStage(request, 'Watch')
