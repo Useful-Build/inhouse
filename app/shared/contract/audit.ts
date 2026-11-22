@@ -213,20 +213,24 @@ const otherLines = [
   line('tools.pause', { accountId: ConnectorAccountIdSchema, paused: z.boolean() }),
   line('tools.disconnect', { accountId: ConnectorAccountIdSchema, revoked: z.boolean() }),
   // P5 (p5-w4): one line per recipient per call (`repeat`: the same notice again, answered with the first outcome), and
-  // the channel list's change (route H). `target` is a channel id, a member id or `admins`.
+  // the channel list's change (route H). `target` is a channel id, a member id, `admins`, or `unlisted` for a channel name
+  // the agent gave that isn't listed (never the name itself: it's the agent's text).
   line('notify.send', {
     source: NotifySourceSchema,
     runId: RunIdSchema.optional(),
     systemKey: z.string().regex(/^[A-Za-z0-9:_.-]{1,128}$/).optional(),
     noticeKind: SystemNoticeKindSchema.optional(),
     kind: z.enum(['slack', 'bell']),
-    target: z.union([SlackChannelIdSchema, MemberIdSchema, z.literal('admins')]),
+    target: z.union([SlackChannelIdSchema, MemberIdSchema, z.literal('admins'), z.literal('unlisted')]),
     outcome: NotifyOutcomeSchema,
     detail: NotifyDetailSchema.optional(),
     changed: z.array(z.enum(['links', 'mentions', 'link_dropped'])).min(1).max(3).optional(),
     repeat: z.literal(true).optional(),
     textLength: z.number().int().min(0).max(2000),
     noticeSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  }).superRefine((a, ctx) => {
+    // `unlisted` only ever names a refused Slack recipient: nothing is sent to it, and it is no bell.
+    if (a.target === 'unlisted' && (a.kind !== 'slack' || a.outcome !== 'refused')) ctx.addIssue({ code: 'custom', path: ['target'], message: 'unlisted is a refused Slack recipient only' })
   }),
   line('notify.channels', {
     added: z.array(SlackChannelIdSchema).max(100),

@@ -174,7 +174,59 @@ describe('test 5: channels', () => {
     const shared = await sends("run_id = ? AND target = 'C0TEST0002'", s.runId)
     expect(shared.map(r => [r.outcome, r.detail])).toEqual([['refused', 'shared_channel']])
     expect((await lines(since)).map(l => JSON.parse(l.args_json) as { target: string; outcome: string; detail?: string }).map(a => `${a.target}:${a.outcome}:${a.detail ?? ''}`))
-      .toEqual(['C0TEST0002:refused:shared_channel', 'C0TEST0001:posted:'])
+      .toEqual(['unlisted:refused:not_listed', 'C0TEST0002:refused:shared_channel', 'C0TEST0001:posted:'])
+  })
+
+  // Ways the unlisted audit can fail, written first: no line for an unlisted name; a line that holds the name (untrusted
+  // agent text) in any column; a line that names a channel id; more or fewer than one line per refused name; a listed
+  // channel's own refusal loses its line; the over-bounds path skips it.
+  const INJECT = '#evil-CANARY-9f2e"},{"target":"admins'
+  const unlistedLines = async (since: number) => (await lines(since)).filter(l => (JSON.parse(l.args_json) as { target: string }).target === 'unlisted')
+
+  it('an unlisted name is refused and audited once, with no channel id and never the name', async () => {
+    const s = await scene()
+    const since = await lastLine()
+    const { delivery, calls } = fakeDelivery()
+    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ to: { channels: [INJECT] } }))
+    expect(out.recipients).toEqual([{ kind: 'slack', to: INJECT, outcome: 'refused', detail: 'not_listed' }])
+    expect(calls.length).toBe(0)
+    const ls = await lines(since)
+    expect(ls.map(l => [l.actor_id, l.target_kind, l.target_id])).toEqual([[s.owner, null, null]])
+    const a = JSON.parse(ls[0]!.args_json) as Record<string, unknown>
+    expect([a.source, a.runId, a.kind, a.target, a.outcome, a.detail]).toEqual(['agent', s.runId, 'slack', 'unlisted', 'refused', 'not_listed'])
+    expect(await sends('run_id = ?', s.runId)).toEqual([])
+    expect(JSON.stringify((await db.prepare('SELECT * FROM audit_log WHERE id > ?').bind(since).all()).results)).not.toContain('CANARY-9f2e')
+  })
+
+  it('one line per refused unlisted name per call, at Watch too', async () => {
+    const s = await scene('Watch')
+    const since = await lastLine()
+    await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), msg({ to: { channels: ['#nope', 'NOPE', '#random'] } }))
+    expect((await unlistedLines(since)).length).toBe(3)
+  })
+
+  it('a listed channel the hub refuses (archived, private) keeps its own line', async () => {
+    for (const reason of ['archived', 'not_public'] as const) {
+      const s = await scene()
+      const since = await lastLine()
+      const { delivery } = fakeDelivery(() => ({ ok: false, error: { code: 'connect_refused', message: `connect refused by the provider: ${reason}` } }))
+      await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg())
+      const ls = await lines(since)
+      expect(ls.map(l => [l.target_kind, l.target_id])).toEqual([['channel', 'C0TEST0001']])
+      const a = JSON.parse(ls[0]!.args_json) as { target: string; outcome: string; detail?: string }
+      expect([a.target, a.outcome, a.detail]).toEqual(['C0TEST0001', 'refused', reason])
+    }
+  })
+
+  it('over the bounds: an unlisted name is audited too, a listed one keeps its line, never the name', async () => {
+    const s = await scene()
+    const since = await lastLine()
+    const out = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), { to: { channels: [INJECT, 'ops-alerts'] }, title: 'T', text: 'y'.repeat(1501), format: 'report' })
+    expect(out.recipients.map(r => `${r.outcome}:${r.detail}`)).toEqual(['refused:not_listed', 'refused:too_long'])
+    const ls = await lines(since)
+    expect(ls.map(l => [l.target_kind, l.target_id])).toEqual([[null, null], ['channel', 'C0TEST0001']])
+    expect(ls.map(l => (JSON.parse(l.args_json) as { target: string; detail: string })).map(a => `${a.target}:${a.detail}`)).toEqual(['unlisted:not_listed', 'C0TEST0001:too_long'])
+    expect(JSON.stringify(ls)).not.toContain('CANARY-9f2e')
   })
 
   it.each([
@@ -269,9 +321,9 @@ describe('repeats, failures and audit (tests 7 and 10)', () => {
     const { delivery } = fakeDelivery()
     await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), { to: { members: [s.owner], channels: ['ops-alerts', 'nope'] }, title: `${canary} title`, text: `${canary} https://x.example.com`, format: 'message' })
     const ls = await lines(since)
-    expect(ls.map(l => [l.actor_id, l.target_kind, l.target_id])).toEqual([[s.owner, 'member', s.owner], [s.owner, 'channel', 'C0TEST0001']])
+    expect(ls.map(l => [l.actor_id, l.target_kind, l.target_id])).toEqual([[s.owner, 'member', s.owner], [s.owner, 'channel', 'C0TEST0001'], [s.owner, null, null]])
     const args = ls.map(l => JSON.parse(l.args_json) as Record<string, unknown>)
-    expect(args.map(a => [a.source, a.runId, a.kind, a.outcome, a.changed])).toEqual([['agent', s.runId, 'bell', 'posted', ['links']], ['agent', s.runId, 'slack', 'posted', ['links']]])
+    expect(args.map(a => [a.source, a.runId, a.kind, a.outcome, a.changed])).toEqual([['agent', s.runId, 'bell', 'posted', ['links']], ['agent', s.runId, 'slack', 'posted', ['links']], ['agent', s.runId, 'slack', 'refused', ['links']]])
     const everything = JSON.stringify([(await db.prepare('SELECT * FROM audit_log').all()).results, (await db.prepare('SELECT * FROM notify_sends').all()).results])
     expect(everything).not.toContain(canary)
   })
