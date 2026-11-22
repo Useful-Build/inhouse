@@ -55,14 +55,17 @@ export async function modelRoute(request: Request, path: string, grant: RunGrant
   }
   // The switched-off model (item 13): W1's resolveModel decides, from the brand's settings as they are now.
   const entry = CATALOG.find(m => m.apiId === model)
-  const resolved = entry ? resolveModel(entry.id, await d.settings()) : null
+  const settings = await d.settings()
+  const resolved = entry ? resolveModel(entry.id, settings) : null
   if (!entry || !resolved || 'refused' in resolved) return messagesError(403, 'permission_error', 'model_off')
   const price = entry.price as Price
+  // The WebSearch switch (P8a S), from the brand's settings as they are now: only true turns it on.
+  const webSearch = settings['t:websearch'] === true
 
   const headers = modelRequestHeaders(request.headers)
   if (!(headers instanceof Headers)) return messagesError(400, 'invalid_request_error', `anthropic-beta ${headers.refusedBeta.slice(0, 80)} is not allowed`)
   if (isCount) return cliCount(body, headers, grant, d)
-  return messages(request, body, model, headers, grant, price, d)
+  return messages(request, body, model, headers, grant, price, webSearch, d)
 }
 
 /** The CLI's own `count_tokens`: unpriced, at most 50 per turn (the BrandAgent counts), then 400. */
@@ -120,9 +123,12 @@ export async function worstCase(insp: Inspected, model: string, price: Price, he
   return { model, inputTokens: input + search, maxTokens: insp.maxTokens, modifiers, micro: at(input) }
 }
 
-async function messages(request: Request, body: object, model: string, headers: Headers, grant: RunGrant, price: Price, d: EgressDeps): Promise<Response> {
+async function messages(request: Request, body: object, model: string, headers: Headers, grant: RunGrant, price: Price, webSearch: boolean, d: EgressDeps): Promise<Response> {
   const insp = inspectRequest(body, price)
   if ('refused' in insp) return messagesError(400, 'invalid_request_error', insp.refused)
+  // A web_search server tool always counts at least one use (request.ts), so this refuses every search request with the
+  // switch off, before anything is priced, admitted or sent.
+  if (insp.searchUses > 0 && !webSearch) return messagesError(400, 'invalid_request_error', 'web search is off for this brand')
   const worst = await worstCase(insp, model, price, headers, d)
   if (worst instanceof Response) return worst
 

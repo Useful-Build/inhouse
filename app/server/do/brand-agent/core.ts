@@ -93,7 +93,7 @@ export interface TurnRow {
   turn_id: string; run_id: string; chat_id: string; owner_id: string; ord: number; client_key: string; payload_hash: string
   gen: number; state: TurnState; priority: 'now' | 'next' | 'later'; text: string; quote: string | null
   attachments_json: string; model: string; picker_id: string; side_model: string; effort: string; max_turns: number
-  web_fetch_json: string | null; answer_position: 'starting' | 'queued'; runner: string | null; runner_last_seq: number
+  web_fetch_json: string | null; web_search: string | null; answer_position: 'starting' | 'queued'; runner: string | null; runner_last_seq: number
   session_id: string | null; last_push_ms: number | null; last_progress_ms: number | null
   starting_deadline_ms: number | null; placed: number; pool_queued: number; query_ran: number; reserved: number
   interrupt_asked: number; budget_wait_since_ms: number | null; requeues: number; fenced: number
@@ -380,8 +380,8 @@ export class AgentCore {
     this.sql.exec(
       `INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, gen, state, priority, text, quote,
         attachments_json, model, picker_id, side_model, effort, max_turns, web_fetch_json, answer_position, created_at_ms,
-        output_format_json, on_end_json, resume_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+        output_format_json, on_end_json, resume_json, web_search)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
       turnId, runId, t.chatId, member, ord + 1, t.input.clientTurnKey, hash, t.input.priority, t.input.text,
       t.input.quote ?? null, JSON.stringify(atts), t.model, t.pickerId, t.sideModel, t.effort, t.maxTurns,
       t.webFetchDomains === null ? null : JSON.stringify(t.webFetchDomains), now,
@@ -389,6 +389,7 @@ export class AgentCore {
       extra?.onEnd === undefined ? null : JSON.stringify({ kind: extra.onEnd.kind, id: extra.onEnd.id }),
       extra?.resume === undefined ? null
         : JSON.stringify({ questionId: extra.resume.questionId, decision: extra.resume.decision, toolUseId: extra.resume.toolUseId } satisfies Resume),
+      t.webSearch === true ? 'on' : null,
     )
     if (extra?.resume !== undefined) {
       // The resume takes the question over, in this same step (A8: the end fires exactly once): the chat leaves
@@ -549,7 +550,8 @@ export class AgentCore {
       start = buildStart({
         turnId, chatId: t.chat_id, sessionId, expect, text: t.text, quote: t.quote, attachments: atts, model: t.model,
         sideModel: t.side_model, effort: t.effort as StartWithoutToken['effort'], maxTurns: t.max_turns,
-        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], systemPrompt: this.d.systemPrompt,
+        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], webSearch: t.web_search === 'on',
+        systemPrompt: this.d.systemPrompt,
         outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
       })
     } catch (err) {
@@ -1684,6 +1686,7 @@ export class AgentCore {
       by: owner === SYSTEM_MEMBER_ID ? { kind: 'service', memberId: owner } : { kind: 'person', memberId: owner },
       model: parked.model, pickerId: parked.picker_id, effort: parked.effort as SubmitTurn['effort'], sideModel: parked.side_model,
       maxTurns: parked.max_turns, webFetchDomains: parked.web_fetch_json === null ? null : JSON.parse(parked.web_fetch_json) as string[],
+      webSearch: parked.web_search === 'on',
     }
     const answer = this.admit(turn, hash, [], {
       ...(parked.output_format_json === null ? {} : { outputFormat: JSON.parse(parked.output_format_json) as OutputFormat }),

@@ -44,7 +44,7 @@ export interface Harness {
   upstreamCalls: UpstreamCall[]
   /** What the upstream answers; a test replaces it. */
   answer: (call: UpstreamCall) => Promise<Response>
-  settings: Record<string, string>
+  settings: Record<string, string | boolean>
   waits: Promise<unknown>[]
   intervals: (() => void)[]
   timeouts: FakeTimeout[]

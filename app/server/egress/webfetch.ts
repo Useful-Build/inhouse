@@ -1,6 +1,7 @@
 // The WebFetch egress (HTTPS catch-all, p3-design 8.8 and 6.2): a session's web reads, best effort. GET and HEAD only,
-// no body, cookies or authorization forwarded, port 443 only. With the brand's `t:webfetch` empty (the default) any
-// public host; with a list, only an exact host on it. Every host is resolved first through DNS over HTTPS to a pinned
+// no body, cookies or authorization forwarded, port 443 only. Only an exact host on the brand's `t:webfetch` list; with
+// the list empty or never set (the default), no host at all (P8a S: a brand lists the hosts it may read; before P8a an
+// empty list meant any public host). Every host is resolved first through DNS over HTTPS to a pinned
 // resolver, and any non-public answer refuses it; address literals are judged directly. Redirects: at most 3, each hop
 // checked the same way. Response bytes capped at 10 MB.
 //
@@ -60,7 +61,8 @@ export async function checkUrl(url: URL, list: string[], f: typeof fetch): Promi
   const host = url.hostname.replace(/\.$/, '').toLowerCase()
   const literal = addressVerdict(host)
   if (literal === 'blocked') return 'address'
-  if (list.length > 0 && !list.includes(host)) return 'not_listed'
+  // An empty list lists nothing: every host is refused (P8a S).
+  if (!list.includes(host)) return 'not_listed'
   if (literal === 'public') return null
   return (await resolvesPublic(host, f)) ? null : 'dns'
 }

@@ -32,7 +32,7 @@ describe('the seed (failures 1, 2)', () => {
     expect(actions.filter(a => a === 'member.invited')).toHaveLength(4)
     expect(actions.filter(a => a === 'member.bound')).toHaveLength(3)
     expect(actions.filter(a => a === 'inhouse.first_sign_in')).toHaveLength(1)
-    expect(actions.filter(a => a === 'setting.changed')).toHaveLength(7)
+    expect(actions.filter(a => a === 'setting.changed')).toHaveLength(8)
     expect((await stores.settings.list(seeded.members.dana, 'personal')).map(s => s.key)).toEqual(['g:name', 'g:theme', 'n:weekly'])
     // P3 (p3-design section 11): the test build's brand has a spending cap, or every E2E turn is refused cap_reached.
     expect(await db.prepare("SELECT value_json FROM settings WHERE key = 's:cap'").first('value_json')).toBe('"$320"')

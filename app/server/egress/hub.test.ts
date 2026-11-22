@@ -10,7 +10,9 @@
 //     protocol version is answered;
 //  6. a hub a version ahead (a new field, a new error code) breaks every call; a long hub message reaches the model
 //     whole; a value JSON can't carry throws out of the handler;
-//  7. a log line names a tool the hub never listed (caller text).
+//  7. a log line names a tool the hub never listed (caller text);
+//  8. at stage Watch (P8a S), a call to a tool the hub's read list doesn't name reaches the hub (a write, or a name the
+//     model made up), or the check fails open when the stage or the list can't be read.
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import type { CallerScope, HubErrorCode, HubResult, ToolInfo } from '../../hub/index/contract.ts'
@@ -60,7 +62,8 @@ function fake(): Fake {
       return (await f.call()) as HubResult<{ data: unknown }>
     },
   }
-  f.deps = { hub, now: () => 1_800_000_000_000, requestId: () => `req-${++n}`, log: e => void f.logs.push(e) }
+  // At Act by default, so these tests cover the route itself; the Watch switch has its own describe (failure 8).
+  f.deps = { hub, stage: async () => 1, now: () => 1_800_000_000_000, requestId: () => `req-${++n}`, log: e => void f.logs.push(e) }
   return f
 }
 
@@ -377,5 +380,55 @@ describe('the canary sweep (failure 1)', () => {
       expect(line).not.toContain(hubCanary)
       expect(line).not.toContain(nameCanary)
     }
+  })
+})
+
+describe('the Watch switch: only listed read tools run (P8a S, failure 8)', () => {
+  const callTool = (name: string, id = 9) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } })
+  const atWatch = () => {
+    const f = fake()
+    f.deps = { ...f.deps, stage: async () => 0 }
+    return f
+  }
+  it('a listed read tool runs: the list is read first, then the call', async () => {
+    const f = atWatch()
+    expect((await call(f, callTool('orders_search'))).body).toEqual({ jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: '{"count":2}' }] } })
+    expect(f.calls.map(c => c.name)).toEqual(['orders_search'])
+  })
+  it('a write tool the hub would run, and a made-up name, never reach the hub', async () => {
+    for (const name of ['orders_cancel', 'products_update', 'slack_post_message']) {
+      const f = atWatch()
+      const r = await call(f, callTool(name))
+      expect(r.body, name).toEqual({ jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: 'write_refused: at the Watch stage only reading tools run; nothing outside Inhouse is changed' }], isError: true } })
+      expect(f.calls, name).toEqual([])
+      expect(f.logs.map(l => l.code), name).toEqual(['write_refused'])
+    }
+  })
+  it('fails closed: an unreadable stage, a failing or malformed list, or a list error runs nothing', async () => {
+    const cases: ((f: Fake) => void)[] = [
+      f => { f.deps = { ...f.deps, stage: async () => { throw new Error('d1 down') } } },  // logged stage_unreadable (below)
+      f => { f.list = async () => { throw new Error('binding') } },
+      f => { f.list = async () => ({ nope: true }) },
+      f => { f.list = async () => ({ ok: false, error: { code: 'internal', message: 'x' } }) },
+    ]
+    for (const [i, arrange] of cases.entries()) {
+      const f = atWatch()
+      arrange(f)
+      const r = await call(f, callTool('orders_search'))
+      expect(r.body, String(i)).toMatchObject({ jsonrpc: '2.0', id: 9, result: { isError: true } })
+      expect(f.calls, String(i)).toEqual([])
+    }
+  })
+  it("a stage that can't be read is logged as stage_unreadable, not as a hub binding failure", async () => {
+    const f = atWatch()
+    f.deps = { ...f.deps, stage: async () => { throw new Error('d1 down') } }
+    await call(f, callTool('orders_search'))
+    expect(f.logs.map(l => l.code)).toEqual(['stage_unreadable'])
+    expect(f.scopes).toEqual([])
+  })
+  it('from Act the call goes to the hub as before (its own read/write split decides)', async () => {
+    const f = fake()
+    await call(f, callTool('orders_cancel'))
+    expect(f.calls.map(c => c.name)).toEqual(['orders_cancel'])
   })
 })
