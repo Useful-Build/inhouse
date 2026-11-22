@@ -28,7 +28,11 @@
 //   - `workers_dev` or `preview_urls` isn't explicitly false (wrangler turns both on when they're left out);
 //   - any string anywhere in it (a name, a host, a var) carries `inhouse-sbx-` (a sandbox config never passes as a
 //     product one);
-//   - any key at any depth is `__proto__`, `constructor` or `prototype` (both modes; see below).
+//   - any key at any depth is `__proto__`, `constructor` or `prototype` (both modes; see below);
+//   - (P4, p4-h1.md OC 4) `services` isn't exactly `[{ binding: "HUB", service: "inhouse-hub", entrypoint:
+//     "ReadGateway" }]`: no other service, no second hub entry, no other binding name or key, no missing or other
+//     entrypoint, and no `ServerGateway` entry: in P4 the product Worker reads through the hub and nothing more (P5's
+//     PR0 widens this for its gateways).
 //
 // Sandbox mode (P3 PR0 item 12), the prefix lock for the sandbox, which shares its Cloudflare account with live products:
 //   CF_SANDBOX_ACCOUNT_ID=<id> SBX_ZONE=<zone> node scripts/check-product-config.mjs --sandbox --per-pr <N> <config path>
@@ -94,7 +98,9 @@
 // was built deploys as it is); per-PR: vars.INHOUSE_TEST_BUILD is "1" (the hub's test build) and INHOUSE_ACCESS isn't
 // needed; candidate and eval: `vars`, when set, is a plain object holding only SHOPIFY_SHOP and SHOPIFY_CLIENT_ID, both
 // empty (no store credential in the sandbox account, p4 plan "Must not"), and the product rules don't apply (the hub
-// isn't the product Worker); eval: the name is exactly the eval hub's (`evalNames().hub`, `inhouse-sbx-eval-hub`), and
+// isn't the product Worker); the eval hub may instead carry exactly app/wrangler.hub.test.jsonc's vars (EVAL_TEST_HUB_VARS:
+// the hub's test build, invented test values only, for the morning-check graded run); eval: the name is exactly the eval
+// hub's (`evalNames().hub`, `inhouse-sbx-eval-hub`), and
 // the eval product's rules (the AI binding, the gateway, the eval brand marker) don't apply: the hub runs no model.
 // `secrets` (wrangler fails a deploy whose `secrets.required` aren't set) and `define` (applied at bundle time) must be
 // empty, as every unlisted key: no generated sandbox or candidate hub config carries `secrets.required`. Any
@@ -283,6 +289,41 @@ export function checkPool(config, { sandbox = false, evalMode = false } = {}) {
   return failures
 }
 
+/** The connector hub's Worker name (app/wrangler.hub.jsonc), the one entrypoint the product Worker may bind in P4, and its binding name. */
+const HUB_SERVICE = 'inhouse-hub'
+const HUB_ENTRYPOINT = 'ReadGateway'
+const HUB_BINDING = 'HUB'
+const HUB_ENTRY_KEYS = new Set(['binding', 'service', 'entrypoint'])
+
+/**
+ * P4's service rule (p4-h1.md OC 4), on any product-mode config: `services` is exactly the hub's `ReadGateway` as
+ * `HUB`, and nothing else. Every entrypoint of a Worker shares its env, so a binding left out is the only way to keep
+ * the runner's route off the hub's server methods; any other service is a door this phase didn't plan.
+ */
+export function checkHub(config) {
+  const failures = []
+  if (config.services !== undefined && !Array.isArray(config.services)) return ['services must be a list']
+  const services = config.services ?? []
+  services.forEach((s, i) => {
+    if (s?.entrypoint === 'ServerGateway') {
+      failures.push(`services[${i}] binds ServerGateway: in P4 the product Worker binds the hub's ${HUB_ENTRYPOINT} only`)
+      return
+    }
+    if (s?.service !== HUB_SERVICE) {
+      failures.push(`services[${i}] binds ${JSON.stringify(s?.service)}: in P4 the product Worker binds the hub (${HUB_BINDING}) only`)
+      return
+    }
+    if (s.binding !== HUB_BINDING) failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its binding is ${HUB_BINDING}`)
+    const extra = Object.keys(s).filter(k => !HUB_ENTRY_KEYS.has(k))
+    if (extra.length) failures.push(`services[${i}] has ${extra.join(', ')}: the hub entry is binding, service and entrypoint only`)
+    if (s.entrypoint === undefined) failures.push(`services[${i}] binds ${HUB_SERVICE} with no entrypoint (its default export): bind ${HUB_ENTRYPOINT}`)
+    else if (s.entrypoint !== HUB_ENTRYPOINT) failures.push(`services[${i}].entrypoint must be ${HUB_ENTRYPOINT}, not ${JSON.stringify(s.entrypoint)}`)
+  })
+  const named = services.filter(s => s?.service === HUB_SERVICE).length
+  if (named !== 1) failures.push(`services must name ${HUB_SERVICE} exactly once (found ${named})`)
+  return failures
+}
+
 const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype'])
 /** Every key at any depth that wrangler's parser would read differently from JSON.parse, or that names a prototype. */
 function forbiddenKeys(value, path = 'config') {
@@ -360,6 +401,25 @@ const HUB_KEYS = new Set([
 ])
 /** (P4) The candidate hub's vars: the store's shop and client id, both empty (no store in the sandbox account). */
 const CANDIDATE_HUB_VARS = new Set(['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID'])
+/**
+ * (P4, the morning-check graded run) The one other set of vars the eval hub may carry: exactly app/wrangler.hub.test.jsonc's
+ * (a test pins the two equal), the hub's TEST build (the test bundle, its seam on: test upstreams only). Every value is
+ * invented and test-only: the fixture shop, the test client id, the test token keys and the test client secret, which no
+ * real app or store accepts. The eval hub lives in the sandbox account only. Whether the bundle beside it is the test
+ * bundle is check-hub-build.mjs's to tell (its canary scan); this lock reads the config.
+ */
+export const EVAL_TEST_HUB_VARS = Object.freeze({
+  INHOUSE_TEST_BUILD: '1',
+  SHOPIFY_SHOP: 'example-fixture',
+  SHOPIFY_CLIENT_ID: 'test-client',
+  HUB_TOKEN_KEYS: '{"current":"ktest-2","keys":{"ktest-1":"1Fza49LBSBNRAEZcdP+XApWhY8ZgCJilqS4O7FoBju4=","ktest-2":"E32MH18U9aWDv8hY9zmavoxETTkRY4Xad0NJiBsPw2A="}}',
+  SHOPIFY_CLIENT_SECRET: 'test-only-client-secret-0RW9rVbhXFbVnJw6t1jyOWrJ1E7bMlc6',
+})
+/** True when `vars` holds exactly EVAL_TEST_HUB_VARS: the same keys, each the same string. */
+const isEvalTestHubVars = vars => {
+  const want = Object.entries(EVAL_TEST_HUB_VARS)
+  return Object.keys(vars).length === want.length && want.every(([k, v]) => Object.hasOwn(vars, k) && vars[k] === v)
+}
 
 /** A relative path that stays inside its folder: no `..` segment, not absolute, no backslash or NUL. */
 const isInsidePath = p => typeof p === 'string' && p !== '' && !isAbsolute(p) && !/^[A-Za-z]:/.test(p) &&
@@ -565,9 +625,13 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     const which = evalMode ? 'eval' : 'candidate'
     if (config.vars !== undefined && !plain) fail(`vars must be a plain object in the ${which} hub config`)
     const vars = plain ? config.vars : {}
-    for (const [k, v] of Object.entries(vars)) {
-      if (!CANDIDATE_HUB_VARS.has(k)) fail(`vars.${k} is set: the ${which} hub's vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only (no test switch, no secret)`)
-      else if (v !== '') fail(`vars.${k} must be empty: no store credential in the sandbox account`)
+    // The eval hub alone may instead be the hub's test build: exactly the test config's vars, nothing more or less.
+    if (!(evalMode && isEvalTestHubVars(vars))) {
+      const or = evalMode ? ', or exactly app/wrangler.hub.test.jsonc\'s vars (the hub\'s test build)' : ''
+      for (const [k, v] of Object.entries(vars)) {
+        if (!CANDIDATE_HUB_VARS.has(k)) fail(`vars.${k} is set: the ${which} hub's vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only (no test switch, no secret)${or}`)
+        else if (v !== '') fail(`vars.${k} must be empty: no store credential in the sandbox account${or}`)
+      }
     }
   } else if (evalMode) {
     if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in the eval deployment (the harness signs in through the test issuer)')
@@ -653,8 +717,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       try { config = JSON.parse(stripJsonc(text)) } catch (err) { usage(`${args[0]} isn't valid JSONC: ${err.message}`) }
       if (!config || typeof config !== 'object' || Array.isArray(config)) usage(`${args[0]} isn't a config object`)
     }
-    // Product mode adds P3's pool and gateway rules; sandbox mode runs them inside checkSandboxConfig.
-    const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : [...checkConfig(config), ...checkPool(config)]
+    // Product mode adds P3's pool and gateway rules and P4's hub binding rule; sandbox mode runs the pool rules inside
+    // checkSandboxConfig (a sandbox config holds no service binding at all).
+    const failures = sandbox ? checkSandboxConfig(config, sandboxEnv) : [...checkConfig(config), ...checkPool(config), ...checkHub(config)]
     const where = sandbox ? ` to the sandbox (${mode.candidate ? 'candidate' : mode.eval ? 'eval' : `PR ${mode.perPr}`}${mode.hub ? ' hub' : ''})` : ''
     if (failures.length) {
       console.error(`check-product-config: ${args[0]} may not deploy${where}:\n${failures.map(f => `  - ${f}`).join('\n')}`)

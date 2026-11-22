@@ -4,7 +4,7 @@
 // fails the deployable build on any `scripted-model` module or its canary, so this file must never contain the canary.
 // Owner from W3 on (p3-w3.md wires the scripted model into the egress, test builds only); PR0 adds the switch.
 type Real = typeof import('../../test/scripted-model/index.ts')
-export type { Miss, MessagesRequest, Scenario, ScriptedBlock, ScriptedModel, ScriptedTurn } from '../../test/scripted-model/index.ts'
+export type { Miss, MessagesRequest, ScenarioRoute, Scenario, ScriptedBlock, ScriptedModel, ScriptedTurn } from '../../test/scripted-model/index.ts'
 
 export const SCRIPTED_MODEL_CANARY: string = ''
 export const turnOf: Real['turnOf'] = () => {
@@ -15,3 +15,5 @@ export const createScriptedModel: Real['createScriptedModel'] = () => {
 }
 /** No scenarios outside the test build. */
 export const SCENARIOS: Real['SCENARIOS'] = {}
+/** No routes outside the test build. */
+export const routesFor: Real['routesFor'] = () => []

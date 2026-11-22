@@ -9,7 +9,7 @@
 // first (test-issuer.ts's TEST_ASSERTION_HEADER; an Access app in front sends its own token in `Cf-Access-Jwt-Assertion`),
 // else from `Cf-Access-Jwt-Assertion` as before; a token in the first is never replaced by the second, and both get the
 // same checks. This file is in the deployable Worker (its source map keeps comments), so it never spells that header's
-// name: check-product-build.mjs part 6 fails the build on it.
+// name: check-product-build.mjs part 8 fails the build on it.
 import { createRemoteJWKSet, customFetch, errors, jwtVerify } from 'jose'
 import type { JWTPayload, JWTVerifyGetKey } from 'jose'
 import { TEST_ASSERTION_HEADER, TEST_ISSUER, testIssuerKeys } from '@test-issuer'

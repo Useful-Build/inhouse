@@ -5,6 +5,7 @@ import { isIP } from 'node:net'
 import { basename, join } from 'node:path'
 import type { HookCallbackMatcher, HookEvent, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { RunConfig } from '../protocol/local.ts'
+import { APPS_SERVER, mcpServerUrls } from '../session/mcp-servers.ts'
 import type { QueryGuards, RunContext } from '../session/seam.ts'
 import { auditHook, deniedEntry, recordToolCall } from './audit.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER } from './lists.ts'
@@ -143,10 +144,15 @@ export function guardedOptions(
   if (base.env?.HOME !== home) throw new GuardConfigError("HOME must be the session user's own home")
   if (base.env?.TMPDIR !== own.tmp) throw new GuardConfigError("TMPDIR must be the session user's own temp folder")
   const servers = Object.keys(base.mcpServers ?? {})
-  if (servers.some((s) => s !== INHOUSE_MCP_SERVER)) throw new GuardConfigError(`only the "${INHOUSE_MCP_SERVER}" MCP server is allowed`)
-  // Ours is the root's proxy over http: never a program to run.
-  const inhouse = base.mcpServers?.[INHOUSE_MCP_SERVER]
-  if (inhouse !== undefined && inhouse.type !== 'http') throw new GuardConfigError(`the "${INHOUSE_MCP_SERVER}" MCP server must be an http server`)
+  if (servers.some((s) => s !== INHOUSE_MCP_SERVER && s !== APPS_SERVER)) throw new GuardConfigError(`only the "${INHOUSE_MCP_SERVER}" and "${APPS_SERVER}" MCP servers are allowed`)
+  // Ours are the root's proxy over http, each at its own route (`/mcp/`, `/hub/`): never a program to run, never
+  // another host or route.
+  for (const name of servers as (typeof INHOUSE_MCP_SERVER | typeof APPS_SERVER)[]) {
+    const server = base.mcpServers![name]!
+    if (server.type !== 'http') throw new GuardConfigError(`the "${name}" MCP server must be an http server`)
+    const proxy = base.env?.INHOUSE_PROXY_URL
+    if (!proxy || server.url !== mcpServerUrls(proxy)[name]) throw new GuardConfigError(`the "${name}" MCP server must be the proxy's own route for it`)
+  }
 
   const hostAddresses = deps.hostAddresses()
   // null: WebFetch to any public host (the hook refuses local, IP and own hosts per URL); a list: only those.
@@ -204,6 +210,7 @@ export function guardedOptions(
       `Edit(${abs(cwd)}/**)`,
       ...webFetchAllowRules(domains),
       `mcp__${INHOUSE_MCP_SERVER}`,
+      `mcp__${APPS_SERVER}`,
       ...(config.outputFormat ? [STRUCTURED_OUTPUT_TOOL] : []),
     ],
     permissionMode: 'dontAsk',

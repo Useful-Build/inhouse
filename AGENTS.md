@@ -131,6 +131,52 @@ skill before any UI change. Repo specifics:
   config) is never a worker's fix: the worker proposes it in its report, the orchestrator decides with the PR's
   review, and one that costs money goes to Wasim. The orchestrator may give a spike brief a larger budget (for
   example 4 rounds); once it's spent the worker reports back and the escalation above runs from there.
+- **The connector hub (P4):** `app/hub/` is its own package (own `package.json`, lockfile, `tsconfig.json` and
+  `vitest.config.ts`; `tsc -b` in `app/` doesn't check it). Config template `app/wrangler.hub.jsonc` (no account ids,
+  hosts or shop handles), test config `app/wrangler.hub.test.jsonc`. Connectors live in
+  `app/hub/connectors/<tool>/route.ts`, each listed in `app/hub/connectors/index.ts` (one orchestrator line per
+  connector). Checks, in `app/hub/`: `npm ci`, `npm run typecheck`, `npm run test:node` (a worker's seat);
+  `npm run test:workers`, `npm run bundle` and `npm run bundle:test` start workerd or bundle, so they run in CI or
+  under the heavy lock. Two scans, in `app/`: `node scripts/check-hub-build.mjs` (the deployable bundle carries no test
+  seam and the test bundle is caught) and `node scripts/check-hub-config.mjs <config>` (no public route, no test build,
+  no secret in `vars`; the template passes, the test config must fail). The `hub` job in `ci.yml` runs all of it, and
+  `ci` needs it. **Outside-`app/hub/` rule:** code bundled into the hub from outside `app/hub/` (the recorded upstreams
+  in `app/test/upstreams/`) imports no npm package: the `hub` job installs only `app/hub/node_modules`.
+- **Hub key rotation** (`HUB_TOKEN_KEYS`, from #95):
+  1. Add the new key to `keys` in `HUB_TOKEN_KEYS`, `current` unchanged. `wrangler secret put HUB_TOKEN_KEYS` through
+     a secret card (this deploys a version).
+  2. Set `current` to the new kid; put again. New seals use it; old envelopes still open.
+  3. Wait for the refreshes (every Shopify refresh, about every 12 h, seals under `current`; reads also re-seal
+     lazily), or call `ServerGateway.reencrypt(scope, accountId)` for each account (P5 and later; the product Worker
+     knows its accounts).
+  4. When `ServerGateway.status` shows the new `kid` for every account, remove the old key; put again.
+
+  Removing a key still in use makes that record `key_unavailable`: a client credentials account discards it and grants
+  again (log `signin_key_missing`); an OAuth account (P5) needs a reconnect.
+- **The hub in the test build (P4).** The test build runs two Workers under one `wrangler dev`: the product Worker
+  (`wrangler.test.jsonc`) and the hub (`wrangler.hub.test.jsonc`), joined by the `HUB` service binding
+  (`ReadGateway` only). The hub's upstream is the recorded Shopify fixture (`app/test/upstreams/shopify/`), never a
+  real store: no store login is in CI, a preview or the sandbox account. The product config check refuses any other
+  hub entrypoint, and `check-hub-config.mjs` refuses a public hub route.
+- **P4 routes and tables (Watch).** Routes 52 to 56 Routines (list, on and off, run now, delete, restore), 57 and 58
+  Today (list, set aside), 59 Activity, 60 and 61 the bell (list, mark read), 62 to 66 the Library (list, upload,
+  download, delete, restore), and 67 the test build's alarm-now control (404 elsewhere). Tables, all in
+  `ops/tables/`: `routines`, `routine_slots`, `routine_alerts`, `today_items`, `today_aside`, `activity_lines`,
+  `notices`, `notice_reads`, `library_uploads`, `library_marks` and the R2 prefix `library/`. Migrations
+  `0200`-`0240`. Library downloads are attachments with `nosniff` and `Content-Security-Policy: sandbox`.
+- **Routines run as `m_system`.** A routine's turn is submitted as the shared `m_system` service member
+  (`server/routines/render.ts`), with the routine id and the creator recorded on the run. There is no per-routine
+  principal. Routines read brand memory, never a person's. The BrandAgent object has three test-only RPC methods
+  (`testRunAlarm`, `testStopAfterBatch`, `testSeedCursor`, `brand-agent/index.ts:92-106`). They are real methods that
+  delegate to `@test-controls`; outside the test build that is the off module `test-controls-off.ts`, which throws.
+  `check-product-build.mjs` proves the real module and its canary (`TEST_CONTROLS_CANARY`) are absent from the
+  deployable Worker; it doesn't scan for the method names. Add no others. The only other P4 lines on the object: its
+  system prompt moved from `SYSTEM_PROMPT_V1` to `SYSTEM_PROMPT_V2`, and it imports `POKE_ID` and `TICK_KIND` from
+  `routines/tick.ts`.
+- **Prompts** live in `app/server/prompt/` (orchestrator only). Eval results are versioned and kept, never deleted:
+  morning-check results in `app/evals/morning-check/results/<date>-<sha>.json`, other eval results in
+  `app/evals/results/`. A prompt change runs the eval suite and the morning-check set
+  (`app/evals/morning-check/`, steps in the `verify` skill), and its PR carries the results.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.
@@ -149,8 +195,8 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`, `app/server/auth/**` (auth), `app/server/migrations/` (the D1
-  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops), `app/hub/{signin,crypto,scope,testing}/` (P4, not built yet: the hub's sign-in, key handling, scopes and
-  test seam), `app/wrangler.hub.jsonc` and `app/wrangler.hub.test.jsonc` (P4, not built yet: hub Worker config) and the `check-hub-*`
+  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops), `app/hub/{signin,crypto,scope,testing}/` (P4: the hub's sign-in, key handling, scopes and
+  test seam), `app/wrangler.hub.jsonc` and `app/wrangler.hub.test.jsonc` (P4: hub Worker config) and the `check-hub-*`
   scripts in `app/scripts/` (`check-hub-build.mjs`, `check-hub-config.mjs` and their fixtures).
 - **The product Worker (P2).** `app/server/` is the product Worker (entry `server/index.ts`): every `/api/*` request is
   authenticated (Access JWT), then the `Origin` check, the route (`server/routes.ts`), its row in

@@ -440,3 +440,39 @@ describe('the test build hook', () => {
     expect(await send([ask('scenario:write-output go'), write, quoting])).toEqual({ status: 200, content: [{ type: 'text', text: 'Saved outputs/table.csv.' }] })
   })
 })
+
+// P4 W6: the test build's routes (test/scripted-model/routes.ts). Ways it could fail: a route beats a marker; a team routine's
+// turn (a fixed preamble plus a person's text) matches the system prompt; a tool result quoting the route's text counts as a
+// prompt; an empty route text matches everything; the system routine's own turn stays on the default.
+describe('the scripted model\'s routes for turns with no marker', () => {
+  const user = (text: string) => ({ role: 'user' as const, content: [{ type: 'text', text }] })
+  const KEY = 'ROUTE-KEY-TEXT'
+  const routes = [{ contains: KEY, scenario: 'routed' }]
+
+  it('plays the routed scenario for a turn that contains the route\'s text, from the start', async () => {
+    const { scenarioStart } = await import('./gateway.ts')
+    expect(scenarioStart({ model: 'm', messages: [user(`before ${KEY} after`)] }, routes)).toEqual({ scenario: 'routed', from: 0 })
+  })
+  it('lets a marker win, in the same message and in a newer one', async () => {
+    const { scenarioStart } = await import('./gateway.ts')
+    expect(scenarioStart({ model: 'm', messages: [user(`${KEY} scenario:hello`)] }, routes)).toEqual({ scenario: 'hello', from: 0 })
+    expect(scenarioStart({ model: 'm', messages: [user(KEY), { role: 'assistant', content: 'ok' }, user('scenario:write-output')] }, routes)).toEqual({ scenario: 'write-output', from: 2 })
+  })
+  it('does not match a turn without the text, nor a tool result that quotes it, nor an empty route', async () => {
+    const { scenarioStart } = await import('./gateway.ts')
+    expect(scenarioStart({ model: 'm', messages: [user('something else')] }, routes).scenario).toBe('hello')
+    const quoting = { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 't', content: KEY }] }
+    expect(scenarioStart({ model: 'm', messages: [quoting] }, routes).scenario).toBe('hello')
+    expect(scenarioStart({ model: 'm', messages: [user('anything')] }, [{ contains: '', scenario: 'everything' }]).scenario).toBe('hello')
+  })
+  it('routes the morning check\'s own prompt to morning-check, and a team routine\'s turn to the default, even one that quotes the instruction of another', async () => {
+    const { scenarioStart } = await import('./gateway.ts')
+    const { routinePrompt } = await import('../routines/prompts.ts')
+    const system = routinePrompt({ origin: 'system', kind: 'morning_check', instruction: 'x', prompt_ref: 'morning-check' })
+    const team = routinePrompt({ origin: 'team', kind: 'agent', instruction: 'Check stock and say what is low.', prompt_ref: null })
+    expect(scenarioStart({ model: 'm', messages: [user(system)] }).scenario).toBe('morning-check')
+    expect(scenarioStart({ model: 'm', messages: [user(team)] }).scenario).toBe('hello')
+    expect(scenarioStart({ model: 'm', messages: [user(`${team.replace('Check stock', 'Please check the morning check')}`)] }).scenario).toBe('hello')
+  })
+})
+

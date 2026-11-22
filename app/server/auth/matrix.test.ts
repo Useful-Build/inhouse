@@ -267,6 +267,28 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/chats/:id/session/reset': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
   // Route 51 (W1 PR 6): revive one quarantined due task, release only.
   'POST /api/ops/tasks/revive': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  // Route 67 (P4 wave 4): the test build's alarm-now control, release only; its handler answers 404 outside the test build.
+  'POST /api/ops/alarm': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  // Rows 59 to 61 (P4 W4): Activity is brand data like Memory; the bell is personal, and the Inhouse team has none.
+  'GET /api/activity': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/notifications': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/notifications/read': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 57 and 58 (P4 W3): Today is brand data like Activity; setting an item aside is a write the Inhouse team may make under a live grant (audited).
+  'GET /api/today': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'PUT /api/today/:id/aside': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Rows 62 to 66 (P4 W5): the Library is brand data (Inhouse under a grant may list, download, delete and restore); the
+  // upload is people only.
+  'GET /api/library': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/uploads': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/library/:id/download': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Rows 52 to 56 (P4 W2): brand data for every person; the Inhouse team reads and writes only under a live grant.
+  'GET /api/routines': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'PUT /api/routines/:id/enabled': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/run': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
@@ -325,7 +347,7 @@ const shadowProblems = (table: readonly { method: string; pattern: string }[]) =
 }
 
 /** The closed list of `open` rows (matrix.ts): the health check, and P3's drain and warm-up (p3-design section 3). */
-const OPEN_ROWS = ['GET /api/health', 'POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive']
+const OPEN_ROWS = ['GET /api/health', 'POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm']
 const openProblems = (rows: readonly AccessRow[]) => {
   const keys = rows.filter(x => x.class === 'open').map(x => `${x.method} ${x.pattern}`)
   return [...keys.filter(k => !OPEN_ROWS.includes(k)).map(k => `${k} is open`), ...OPEN_ROWS.filter(k => !keys.includes(k)).map(k => `${k} is not open`)]
@@ -357,7 +379,7 @@ describe('the invariant checks catch a bad row', () => {
   it('open on GET /api/members, or health, drain or warm-up not open', () => {
     const members = rowFor(DESIGN_ROWS, 'GET', '/api/members')!
     expect(openProblems(DESIGN_ROWS.map(r => (r === members ? { ...r, class: 'open' as const } : r)))).toEqual(['GET /api/members is open'])
-    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open', 'POST /api/ops/drain is not open', 'GET /api/ops/drain is not open', 'DELETE /api/ops/drain is not open', 'POST /api/ops/warmup is not open', 'POST /api/ops/tasks/revive is not open'])
+    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open', 'POST /api/ops/drain is not open', 'GET /api/ops/drain is not open', 'DELETE /api/ops/drain is not open', 'POST /api/ops/warmup is not open', 'POST /api/ops/tasks/revive is not open', 'POST /api/ops/alarm is not open'])
     expect(openProblems(DESIGN_ROWS)).toEqual([])
   })
   it('a route that shadows another: GET /api/members/:id beside GET /api/members/invites', () => {
@@ -481,7 +503,7 @@ describe('canRowsProblems', () => {
 describe('P3 auth: release, smoke and ownerObject', () => {
   const key = (r: AccessRow) => `${r.method} ${r.pattern}`
   /** The rows the release job may call, and the ones smoke may call, as section 3's table lists them. */
-  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive']
+  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm']
   const SMOKE_ROWS = [
     'GET /api/me', 'GET /api/settings/personal', 'GET /api/settings/brand',
     'GET /api/chats', 'POST /api/chats', 'GET /api/chats/:id', 'POST /api/chats/:id/turns', 'GET /api/runs/active', 'GET /api/socket', 'GET /api/models',

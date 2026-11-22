@@ -46,6 +46,10 @@ const NO_CHAT = 'c_e2e_nobody'
  * id and body checks to the store's lookup, which finds no fact: 404, and nothing changes.
  */
 const NO_MEMORY = 'mem_e2eNobodyAAAAAAAAAAAAA'
+/** A Today item id of the right shape (`p_` + 22) that names nothing. */
+const NO_TODAY = 'p_e2eNobodyAAAAAAAAAAAAA'
+/** A routine id nobody has (`rt_` + 22, audit.ts `RoutineIdSchema`). */
+const NO_ROUTINE = 'rt_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -113,6 +117,28 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/ops/warmup': { design: d('open', [], ['release']), path: '/api/ops/warmup', json: {}, ...(process.env.E2E_TEST_BUILD_REMOTE ? { passes: 200, alsoPasses: [503] } : { passes: 503 }) },
   // Route 51 (W1 PR 6): an empty body passes access, then fails its schema (400), so the sweep revives nothing.
   'POST /api/ops/tasks/revive': { design: d('open', [], ['release']), path: '/api/ops/tasks/revive', json: {}, passes: 400 },
+  // Route 67 (P4 wave 4): the test build's alarm-now control runs one scheduler pass (200); the product build answers 404
+  // (server/ops/alarm-now.test.ts).
+  'POST /api/ops/alarm': { design: d('open', [], ['release']), path: '/api/ops/alarm', json: {}, passes: 200 },
+  // Rows 59 to 61 (P4 W4): Activity (brand data) and the bell (personal, no Inhouse). Reading an id nobody has is a 200 that marks nothing.
+  'GET /api/activity': { design: d('brand_data', ALL), path: '/api/activity', passes: 200 },
+  'GET /api/notifications': { design: d('personal', PEOPLE), path: '/api/notifications', passes: 200 },
+  'POST /api/notifications/read': { design: d('personal', PEOPLE), path: '/api/notifications/read', json: { ids: ['n_e2e_nobody'] }, passes: 200 },
+  // Rows 57 and 58 (P4 W3): Today (brand data). An id of the right shape that names nothing passes access and the body check to the store's lookup: 404, nothing changes.
+  'GET /api/today': { design: d('brand_data', ALL), path: '/api/today', passes: 200 },
+  'PUT /api/today/:id/aside': { design: d('brand_data', ALL), path: `/api/today/${NO_TODAY}/aside`, json: { reason: 'dismissed', ifRev: 0 }, passes: 404 },
+  // Rows 62 to 66 (P4 W5): the Library. An upload with no X-File-Name, a write with no items: 400; an id nobody has: 404.
+  'GET /api/library': { design: d('brand_data', ALL), path: '/api/library', passes: 200 },
+  'POST /api/library/uploads': { design: d('brand_data', PEOPLE), path: '/api/library/uploads', json: {}, passes: 400 },
+  'GET /api/library/:id/download': { design: d('brand_data', ALL), path: `/api/library/f_${'0'.repeat(22)}/download`, passes: 404 },
+  'POST /api/library/delete': { design: d('brand_data', ALL), path: '/api/library/delete', json: {}, passes: 400 },
+  'POST /api/library/restore': { design: d('brand_data', ALL), path: '/api/library/restore', json: {}, passes: 400 },
+  // Rows 52 to 56 (P4 W2): the Routines page. The list reads (200); a write names a routine nobody has (404, nothing written).
+  'GET /api/routines': { design: d('brand_data', ALL), path: '/api/routines', passes: 200 },
+  'PUT /api/routines/:id/enabled': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/enabled`, json: { on: false, ifRev: 1 }, passes: 404 },
+  'POST /api/routines/:id/run': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/run`, json: { clientKey: 'e2e-run-key-1' }, passes: 404 },
+  'POST /api/routines/:id/delete': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/delete`, json: { ifRev: 1 }, passes: 404 },
+  'POST /api/routines/:id/restore': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/restore`, json: { ifRev: 1 }, passes: 404 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 

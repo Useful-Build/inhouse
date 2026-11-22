@@ -1,5 +1,6 @@
 // check-product-config fixture: refused, rule "eval-brand-var" (the eval brand marker is the sandbox eval deployment's alone).
 {
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {
