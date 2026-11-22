@@ -133,6 +133,8 @@ export interface Target {
   spentUsd?(): number
   /** The month's spend and the brand's Spending cap, from the product's own usage (the product target, O2 note). */
   room?(): Promise<{ spentUsd: number; capUsd: number }>
+  /** Gives back what the target holds on the deployment (the product target's eval lease). run.ts calls it on exit and on signals. */
+  close?(): Promise<void>
 }
 
 /**

@@ -30,16 +30,19 @@
 //     --out-dir evals/morning-check/results --sha <git sha> --issuer-key-file <that deploy's test issuer private JWK> --aud <its Access aud> \
 //     [--cases ...] [--model ...] [--timeout-min 20] [--settle-min 2] [--model-setting Fast --inhouse-origin <its Inhouse app origin> --inhouse-aud <that app's Access aud>]
 //
-// The eval deploy (the graded run): its host is behind Access, so INHOUSE_EVAL_ACCESS_CLIENT_ID and _SECRET (the eval service
-// token) are both set, and every request (Run now, the settings calls) carries them as CF-Access-Client-Id and
-// CF-Access-Client-Secret, with the person JWT in both Cf-Access-Jwt-Assertion and X-Inhouse-Test-Assertion (remote.ts
-// requestHeaders, as evals/probe.ts). One of the two is refused; neither is a per-PR deploy (no Access, today's headers). The
-// eval build takes no release token: MORNING_CHECK_RELEASE_JWT with the service token is refused (no route 67 nudge). The
-// secret is never printed nor kept in the results (remote.ts cuts it from any answer or error).
+// The graded run (INHOUSE_EVAL_D1_NAME=inhouse-sbx-eval-db, the eval deploy; args.ts): its host is behind Access, so
+// INHOUSE_EVAL_ACCESS_CLIENT_ID and _SECRET must both be set, and every request carries them (targets/product.ts
+// accessHeaders) with the person's sign-in headers (testIssuerSignIn). It takes --budget <usd> (required, at most
+// MORNING_CHECK_CAP), no --model-setting and no MORNING_CHECK_RELEASE_JWT. Before any case (remote.ts gradedRun) it takes
+// the eval lease (refused while another eval run holds it), refuses a test shop override it didn't write, pins the eval
+// brand's Spending cap to MORNING_CHECK_CAP and reads it back on route 42, and sets the brand's Default model to the
+// label --model maps to (claude-sonnet-5-5 is "Fast"). Before each case it renews the lease and stops once the run has
+// spent its --budget (route 42's month total, less the total at its start). On exit and on signals the lease is given
+// back. The secret is never printed (remote.ts cuts it from any answer or error).
 // --model names the model the results claim, but a routine runs on the brand's Default model (`g:mode`, fixed in the slot
-// when it's made), never on --model. So in remote mode each case's slot model is read through the door and kept as the
-// case's `ranOn`; a case that ran on another model fails and the run stops (one case's spend at most). On the eval deploy,
-// `--model claude-sonnet-5-5` with no --model-setting therefore needs the eval brand's Default model to be Fast already.
+// when it's made). So in remote mode each case's slot model is read through the door and kept as the case's `ranOn`; a
+// case that ran on another model fails and the run stops (one case's spend at most): the backstop to the graded run's
+// Default model write.
 // --model-setting <label> (remote only, default none): before the first case, the brand's Default model (`g:mode`, route 12)
 // is set to that label and read back. Only the Inhouse team writes `g:mode` (an Admin may write only `tm:<id>:on` there and
 // gets 403 admin_read_only); it needs no grant (remote.ts SettingsApi says why). As watch-kit's setStage does, the seeded
@@ -55,7 +58,8 @@
 // MORNING_CHECK_RELEASE_JWT there's no route 67 nudge (Run now pokes the scheduler itself). --target excludes every local
 // option (--persist-dir, --base-url, --restart-cmd, --shop-pattern, --restart-wait-sec).
 // One runner per deployment: the override is one row in the build's D1, so two runs against one deployment would set each
-// other's shop. A leftover row found at the start is removed and said loudly; SIGINT and SIGTERM clear it before exiting.
+// other's shop. On a per-PR deployment a leftover row found at the start is removed and said loudly; the graded run refuses
+// one instead. SIGINT and SIGTERM clear it before exiting.
 import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
@@ -67,18 +71,18 @@ import { Build, DEFAULT_SHOP_PATTERN, shopShownBy } from './restart.ts'
 import { commandFor, hubConfigFor } from './hubconfig.ts'
 import { openResults } from './results.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
-import { refuseSharedEvalDb, runMode } from './args.ts'
+import { runMode } from './args.ts'
 import { createMorningDoor } from './door.ts'
-import { clearOnSignals, ensureDefaultModel, remoteEnv } from './remote.ts'
-import { DoorRefusal, wranglerRunner } from '../targets/door.ts'
-import { EVAL_AUD_VAR, EVAL_ISSUER_JWK_FILE, testIssuerSignIn } from '../targets/product.ts'
+import { clearOnSignals, ensureDefaultModel, gradedRun, remoteEnv, remoteHttp } from './remote.ts'
+import { createDoor, DoorRefusal, wranglerRunner } from '../targets/door.ts'
+import { accessHeaders, EVAL_AUD_VAR, EVAL_ISSUER_JWK_FILE, testIssuerSignIn } from '../targets/product.ts'
 import { SEED_INHOUSE, SEED_PEOPLE } from '../../server/seed/brand.ts'
 
 const { values: a } = parseArgs({
   options: {
     'persist-dir': { type: 'string' }, 'base-url': { type: 'string' }, 'out-dir': { type: 'string' }, sha: { type: 'string' }, cases: { type: 'string' },
     model: { type: 'string', default: 'claude-sonnet-5-5' }, 'restart-cmd': { type: 'string' }, 'timeout-min': { type: 'string', default: '20' }, 'settle-min': { type: 'string', default: '2' },
-    'shop-pattern': { type: 'string' }, 'restart-wait-sec': { type: 'string' }, target: { type: 'string' }, 'model-setting': { type: 'string' }, 'inhouse-origin': { type: 'string' }, 'inhouse-aud': { type: 'string' },
+    'shop-pattern': { type: 'string' }, 'restart-wait-sec': { type: 'string' }, target: { type: 'string' }, 'model-setting': { type: 'string' }, 'inhouse-origin': { type: 'string' }, 'inhouse-aud': { type: 'string' }, budget: { type: 'string' },
     'issuer-key-file': { type: 'string' }, aud: { type: 'string' }, sub: { type: 'string', default: SEED_PEOPLE.admin.subject }, email: { type: 'string', default: SEED_PEOPLE.admin.email },
   },
 })
@@ -99,18 +103,17 @@ const personAuth = () => signIn(a.aud, { sub: a.sub, email: a.email })
 /** Route 67's release service token (MORNING_CHECK_RELEASE_JWT, minted outside the run; test builds only), not a person. */
 const releaseAuth = releaseJwt ? { 'Cf-Access-Jwt-Assertion': releaseJwt } : null
 
-const post = async (path, body, auth) => {
-  const r = await fetch(new URL(path, m.baseUrl), { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth, Origin: new URL(m.baseUrl).origin }, body: JSON.stringify(body) })
-  if (!r.ok) throw new Error(`run.mjs: POST ${path} answered ${r.status}: ${await r.text()}`)
-}
+// Every request to the build goes through remote.ts remoteHttp: the sign-in headers, then the eval host's Access service
+// token (targets/product.ts accessHeaders; args.ts allows it on a deployed build only, and requires it on the graded run).
+const http = remoteHttp(m.mode === 'remote' && m.access ? accessHeaders(process.env) : {})
+const post = (path, body, auth) => http.post(new URL(path, m.baseUrl), body, auth)
 /**
  * One API call as one identity, signed in with signIn above (as e2e/api/kit.ts `actor` mints it): `who` is its sub and email, sent
  * to `origin` with that app's Access aud (and `Origin`). ensureDefaultModel reads the status and the JSON itself.
  */
 const callAs = (who, origin, aud) => async (method, path, body) => {
   const auth = await signIn(aud, { sub: who.subject, email: who.email })
-  const r = await fetch(new URL(path, origin), { method, headers: { 'Content-Type': 'application/json', ...auth, Origin: origin }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
-  const text = await r.text()
+  const { status, text } = await http.send(method, new URL(path, origin), auth, body)
   let json = null
   try { json = text ? JSON.parse(text) : null } catch { json = { text } }
   return { status, json }
@@ -185,24 +188,41 @@ const build = new Build({
   shopShown: shopShownBy(a['shop-pattern'] ?? DEFAULT_SHOP_PATTERN),
 })
 
-// The remote mode's door: wrangler on the sandbox database only (evals/targets/door.ts refuses any other). That door now
-// admits only the eval deployment's database (its EVAL_DB): a per-PR test deployment's inhouse-sbx-pr<N>-db is refused
-// until line A's eval-target PR adds the morning-check door rule. The refusal is the door's own message and exit 2,
-// before any case runs, never a stack trace. The eval deployment's shared database is refused here too
-// (args.ts refuseSharedEvalDb), until line A's morning-check door rule replaces both.
+// The remote mode's door: wrangler on the morning-check set's database rule (evals/targets/door.ts
+// assertMorningCheckDatabase: a PR's test database or EVAL_DB, never the candidate's). A refusal is the door's own message
+// and exit 2, before any case runs, never a stack trace.
+// On EVAL_DB (the graded run, args.ts) the same database's eval door (targets/door.ts createDoor) holds the eval lease,
+// the cap and the Default model (remote.ts gradedRun), started before runAll: one runner per eval deployment.
 let door = null
+let graded = null
 if (m.mode === 'remote') {
   try {
-    refuseSharedEvalDb(m.database)
-    door = createMorningDoor(wranglerRunner({ database: m.database, config: m.wranglerConfig, env: process.env }))
+    const run = wranglerRunner({ database: m.database, config: m.wranglerConfig, env: process.env, rule: 'morning-check' })
+    door = createMorningDoor(run)
+    if (m.graded) {
+      graded = gradedRun({
+        door: createDoor(run), admin: callAs(SEED_PEOPLE.admin, new URL(m.baseUrl).origin, a.aud), label: m.graded.label, budgetUsd: m.graded.budgetUsd,
+        tag: `morning-check:${a.sha}:${crypto.randomUUID().slice(0, 8)}`, nowMs: () => Date.now(),
+      })
+    }
   } catch (e) {
     if (!(e instanceof DoorRefusal)) throw e
     console.error(`run.mjs: STOPPED before any case. The door refused the remote run: ${e.message}`)
     process.exit(2)
   }
 }
-// An interrupted run closes the door (no more shops set), clears the override, then exits (130 on SIGINT, 143 on SIGTERM).
-if (door) clearOnSignals(door)
+// An interrupted run closes the door (no more shops set), clears the override, gives the eval lease back (graded), then
+// exits (130 on SIGINT, 143 on SIGTERM).
+if (door) clearOnSignals(door, undefined, graded ? () => graded.release() : undefined)
+if (graded) {
+  try {
+    await graded.start()
+  } catch (e) {
+    await graded.release().catch(r => console.error(`run.mjs: the eval lease could not be given back: ${r.message}`))
+    console.error(`run.mjs: STOPPED before any case. ${e.message}`)
+    process.exit(2)
+  }
+}
 const env = door ? remoteEnv({
   door,
   runNow: async clientKey => post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personAuth()),
@@ -212,6 +232,7 @@ const env = door ? remoteEnv({
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
   settleMs: Number(a['settle-min']) * 60_000,
   checkModel: true,
+  ...(graded ? { beforeCase: () => graded.beforeCase() } : {}),
   ...(m.modelSetting ? { defaultModel: () => ensureDefaultModel(settingsApi(), m.modelSetting.label) } : {}),
 }) : {
   nowMs: () => Date.now(),
@@ -241,6 +262,7 @@ try {
 } finally {
   // runAll clears the override after every case; this covers a crash part way (a failure here is printed and fails the run).
   if (door) await door.clearShop().catch(e => { console.error(`run.mjs: the test shop override could not be cleared: ${e.message}`); process.exitCode = 2 })
+  if (graded) await graded.release().catch(e => { console.error(`run.mjs: the eval lease could not be given back: ${e.message}`); process.exitCode = 2 })
   await build.stop().catch(e => console.error(`run.mjs: the build did not stop cleanly: ${e.message}`))
   for (const p of configsMade) rmSync(p, { force: true })
 }

@@ -50,6 +50,19 @@ class FakeDoor implements MemoryDoor {
   /** The server the person rows go to (make() wires it): the fake API sees the invite as the product's D1 would. */
   onInvite?: (p: { id: string; email: string; name: string }) => void
   async invitePerson(p: { id: string; email: string; name: string }) { this.calls.push(`person ${p.email}`); this.onInvite?.(p) }
+  async setDefaultModel(label: string) { this.calls.push(`mode ${label}`) }
+  /** The eval lease's takes and give-backs, apart from `calls`. */
+  leases: string[] = []
+  /** Another run holds the eval lease (takeLease refuses). */
+  otherLease = false
+  /** A test shop override on the deployment (`hub:shop`). */
+  shop: string | null = null
+  async takeLease(tag: string) {
+    this.leases.push(`take ${tag}`)
+    if (this.otherLease) throw new DoorRefusal('refusing: another eval run (morning-check:abc) holds the eval deployment')
+  }
+  async releaseLease(tag: string) { this.leases.push(`release ${tag}`) }
+  async testShop() { this.leases.push('shop?'); return this.shop }
 }
 
 interface Sent { method: string; path: string; token: string | null; body: any }
@@ -159,6 +172,38 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(ProductTargetRefusal)
     expect(door.calls).toEqual([])
     expect(srv.s.sent.filter((x) => x.method !== 'GET')).toEqual([])
+  })
+
+  // #308 review (one runner per eval deployment): the eval lease before any spend, renewed per case-repeat, given back by
+  // close(); another run's lease or a test shop override refuses before the cap is pinned or anything is cleared.
+  it('takes the eval lease before the cap, renews it each case-repeat and gives it back on close', async () => {
+    const door = new FakeDoor()
+    const target = make(server(), door)
+    await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    await (await target.seed([], { caseId: 'N02', rep: 1, canary: 'c' })).reset()
+    expect(door.leases).toEqual(['take product:7-1', 'shop?', 'take product:7-1', 'take product:7-1'])
+    await target.close!()
+    expect(door.leases.at(-1)).toBe('release product:7-1')
+    await target.close!()
+    expect(door.leases.filter((l) => l.startsWith('release'))).toHaveLength(1)
+  })
+  it('another run\'s lease or a test shop override refuses before the cap or any clear', async () => {
+    const held = new FakeDoor()
+    held.otherLease = true
+    await expect(make(server(), held).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/another eval run \(morning-check:abc\) holds the eval deployment/)
+    expect(held.calls).toEqual(['hasChat'])
+    const shop = new FakeDoor()
+    shop.shop = '"example-mc-late-orders.myshopify.com"'
+    const target = make(server(), shop)
+    await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/test shop override \(hub:shop "example-mc-late-orders\.myshopify\.com"\) is set/)
+    expect(shop.calls).toEqual(['hasChat'])
+    await target.close!()
+    expect(shop.leases).toEqual(['take product:7-1', 'shop?', 'release product:7-1'])
+  })
+  it('a target that never took the lease gives nothing back', async () => {
+    const door = new FakeDoor()
+    await make(server(), door).close!()
+    expect(door.leases).toEqual([])
   })
 
   // (a), the O2 note: the eval brand's own Spending cap is the $50 (Wasim's monthly test budget), pinned by the harness every run.

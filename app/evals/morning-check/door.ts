@@ -1,6 +1,8 @@
 // The morning-check set's door into a deployed build's D1 (the remote mode of run.mjs, and the scripted proof
 // e2e/api/morning-check-remote.spec.ts): the same `RunSql` the eval harness's memory door uses (evals/targets/door.ts:
-// `wrangler d1 execute --remote` on a per-PR sandbox database only, credentials from the environment, never logged).
+// `wrangler d1 execute --remote` with the morning-check rule, assertMorningCheckDatabase: a PR's test database for the
+// scripted proof or the eval deployment's EVAL_DB for the graded run, never the candidate's; credentials from the
+// environment, never logged).
 // Two jobs, so the deployed build gains no HTTP surface:
 //  - the test shop override: the `settings` row the test and eval builds' egress reads on each hub call
 //    (server/egress/test-shop.ts). The door owns its lifecycle: set per case, cleared at case end and at run start
@@ -9,7 +11,8 @@
 //    runner.ts and grade.ts read them unchanged.
 // Every value in a statement is checked against a pattern and quoted; nothing else reaches SQL.
 // One runner per deployment: the override is one row per deployment (one brand, one D1), so two runs against the same build
-// would set each other's shop. Never run two at once against one deployment.
+// would set each other's shop. Never run two at once against one deployment. On the eval deployment the graded run also
+// holds the eval lease (targets/door.ts takeLease), which the product eval takes too, so neither runs beside the other.
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER } from '../../server/egress/test-shop.ts'
 import { DoorRefusal, sqlString, type RunSql } from '../targets/door.ts'
 import { META, hostOf } from './expected.ts'

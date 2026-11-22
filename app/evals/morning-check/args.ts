@@ -4,27 +4,31 @@
 //  - remote (--target <origin>): a deployed test or eval build. The shop is the test shop override and the slot is read
 //    through the door (door.ts), whose database and config come from INHOUSE_EVAL_D1_NAME, INHOUSE_EVAL_WRANGLER_CONFIG and
 //    CF_SANDBOX_ACCOUNT_ID (wrangler reads CLOUDFLARE_API_TOKEN itself). MORNING_CHECK_RELEASE_JWT is optional: the eval
-//    build has none, and without it there's no nudge. The eval deploy's host is behind Access: with
-//    INHOUSE_EVAL_ACCESS_CLIENT_ID and _SECRET both set, every request carries that service token (remote.ts accessHeaders,
-//    as evals/probe.ts on main). One of the two is refused; neither is the per-PR deploy (no Access). Behind Access there's
-//    no route 67: MORNING_CHECK_RELEASE_JWT is the per-PR test deploy's only, so it's refused with the service token.
+//    build has none, and without it there's no nudge. The database (evals/targets/door.ts assertMorningCheckDatabase) is
+//    a PR's test database (the scripted proof) or EVAL_DB (the graded run).
+//  - graded (--target on EVAL_DB, the eval deployment, behind Access): INHOUSE_EVAL_ACCESS_CLIENT_ID and _SECRET both set
+//    (every request carries them: targets/product.ts accessHeaders), --budget <usd> (above zero, at most
+//    MORNING_CHECK_CAP), --model mapped to the product's Default model label (server/model/catalog.ts), no --model-setting
+//    (the door sets the Default model) and no MORNING_CHECK_RELEASE_JWT (route 67 is the per-PR test deploy's).
+//    Elsewhere the Access token is refused unless both are set, the release token is refused beside it, and --budget is
+//    refused.
 // The modes' options are mutually exclusive: a remote run given a local option (or the reverse) is refused, never ignored.
 import { DoorRefusal, EVAL_DB } from '../targets/door.ts'
+import { EVAL_ACCESS_CLIENT_ID_VAR, EVAL_ACCESS_CLIENT_SECRET_VAR, EVAL_CAP } from '../targets/product.ts'
+import { CATALOG } from '../../server/model/catalog.ts'
 
 export type RunArgs = Record<string, string | undefined>
 
 const COMMON = ['out-dir', 'sha', 'issuer-key-file', 'aud'] as const
 const LOCAL_ONLY = ['persist-dir', 'base-url', 'restart-cmd', 'shop-pattern', 'restart-wait-sec'] as const
 const DOOR_ENV = ['INHOUSE_EVAL_D1_NAME', 'INHOUSE_EVAL_WRANGLER_CONFIG', 'CF_SANDBOX_ACCOUNT_ID'] as const
-/** The eval host's Access service token (main's evals/targets/product.ts names): both, or neither (a per-PR deploy). */
-export const ACCESS_CLIENT_ID_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_ID'
-export const ACCESS_CLIENT_SECRET_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_SECRET'
 
-export interface AccessToken { id: string; secret: string }
+/** The graded run's settings: the --budget in dollars and the Default model label --model maps to. */
+export interface Graded { budgetUsd: number; label: string }
 
 export type RunMode =
   | { mode: 'local'; baseUrl: string; persistDir: string; releaseJwt: string }
-  | { mode: 'remote'; baseUrl: string; releaseJwt: string | null; database: string; wranglerConfig: string; modelSetting: { label: string; inhouseOrigin: string; inhouseAud: string } | null; access: AccessToken | null }
+  | { mode: 'remote'; baseUrl: string; releaseJwt: string | null; database: string; wranglerConfig: string; modelSetting: { label: string; inhouseOrigin: string; inhouseAud: string } | null; access: boolean; graded: Graded | null }
 
 const MODEL_SETTING = ['model-setting', 'inhouse-origin', 'inhouse-aud'] as const
 
@@ -55,23 +59,38 @@ function remoteModelSetting(a: RunArgs): { label: string; inhouseOrigin: string;
   return { label, inhouseOrigin: url.origin, inhouseAud: aud }
 }
 
-/** The Access service token from the environment: both set, neither (null), or a refusal naming the variables (never a value). */
-function accessToken(env: Record<string, string | undefined>): AccessToken | null {
-  const id = env[ACCESS_CLIENT_ID_VAR]
-  const secret = env[ACCESS_CLIENT_SECRET_VAR]
-  if (!id && !secret) return null
-  if (!id || !secret) throw new Error(`run.mjs: ${ACCESS_CLIENT_ID_VAR} and ${ACCESS_CLIENT_SECRET_VAR} are not both set, so the eval host's Access lock would refuse every call`)
-  return { id, secret }
+/** Whether the Access service token is set: both (true), neither (false), or a refusal naming the variables (never a value). */
+function accessSet(env: Record<string, string | undefined>): boolean {
+  const id = env[EVAL_ACCESS_CLIENT_ID_VAR]
+  const secret = env[EVAL_ACCESS_CLIENT_SECRET_VAR]
+  if (!id && !secret) return false
+  if (!id || !secret) throw new Error(`run.mjs: ${EVAL_ACCESS_CLIENT_ID_VAR} and ${EVAL_ACCESS_CLIENT_SECRET_VAR} are not both set, so the eval host's Access lock would refuse every call`)
+  return true
+}
+
+/** The product's Default model label for an API model id (the catalogue's picker label: claude-sonnet-5-5 is "Fast"), or a refusal. */
+export function defaultModelLabel(model: string | undefined): string {
+  const label = CATALOG.find(m => m.apiId === model)?.label
+  if (!label) throw new Error(`run.mjs: --model ${JSON.stringify(model)} is no model the product serves, so the brand's Default model can't be set to it`)
+  return label
+}
+
+/** --budget for the graded run: dollars above zero, at most the eval brand's cap (MORNING_CHECK_CAP). */
+function budgetOf(raw: string | undefined): number {
+  const capUsd = Number(EVAL_CAP.slice(1))
+  const usd = raw === undefined || !/^\d+(\.\d{1,2})?$/.test(raw) ? NaN : Number(raw)
+  if (!(usd > 0)) throw new Error('run.mjs: the graded run (EVAL_DB) needs --budget <usd> above zero: it stops before the next case once the run has spent it')
+  if (usd > capUsd) throw new Error(`run.mjs: --budget $${raw} is above the eval brand's ${EVAL_CAP} cap`)
+  return usd
 }
 
 /**
- * Remote mode never runs on the eval deployment's shared database: the door (evals/targets/door.ts) now admits only
- * EVAL_DB, and a paid product eval may be running there, so a test-shop override set on it would break the one runner
- * per deployment rule. Throws DoorRefusal (run.mjs stops with exit 2 before any case). Line A's morning-check door rule
- * replaces this.
+ * The scripted proof (e2e/api/morning-check-remote.spec.ts) never runs on the eval deployment's shared database: it writes
+ * the Default model as Fast for the scripted model, and the eval deployment runs the real one (run.mjs's graded run).
+ * Throws DoorRefusal before any write.
  */
 export function refuseSharedEvalDb(database: string): void {
-  if (database === EVAL_DB) throw new DoorRefusal(`refusing: ${EVAL_DB} is the eval deployment's shared database, and a paid product eval may be running on it (one runner per deployment)`)
+  if (database === EVAL_DB) throw new DoorRefusal(`refusing: ${EVAL_DB} is the eval deployment's shared database, where the real model runs (run.mjs's graded run), never the scripted proof`)
 }
 
 export function runMode(a: RunArgs, env: Record<string, string | undefined>): RunMode {
@@ -90,11 +109,21 @@ export function runMode(a: RunArgs, env: Record<string, string | undefined>): Ru
     const missing = DOOR_ENV.filter(k => !env[k])
     if (missing.length) throw new Error(`run.mjs: --target reads the build's D1 through the door and needs ${missing.join(', ')}`)
     const modelSetting = remoteModelSetting(a)
-    const access = accessToken(env)
+    const access = accessSet(env)
     if (access && releaseJwt) throw new Error('run.mjs: MORNING_CHECK_RELEASE_JWT is for a per-PR test deploy (route 67): the Access-locked eval host takes no release token, and Run now pokes the scheduler itself')
-    return { mode: 'remote', baseUrl: url.origin, releaseJwt, database: env.INHOUSE_EVAL_D1_NAME!, wranglerConfig: env.INHOUSE_EVAL_WRANGLER_CONFIG!, modelSetting, access }
+    const database = env.INHOUSE_EVAL_D1_NAME!
+    let graded: Graded | null = null
+    if (database === EVAL_DB) {
+      if (!access) throw new Error(`run.mjs: the graded run (${EVAL_DB}) goes to the Access-locked eval host: set ${EVAL_ACCESS_CLIENT_ID_VAR} and ${EVAL_ACCESS_CLIENT_SECRET_VAR}`)
+      if (modelSetting) throw new Error('run.mjs: the graded run sets the Default model from --model through the door: --model-setting is for a per-PR scripted run')
+      graded = { budgetUsd: budgetOf(a.budget), label: defaultModelLabel(a.model) }
+    } else if (a.budget !== undefined) {
+      throw new Error(`run.mjs: --budget is for the graded run (${EVAL_DB}) only`)
+    }
+    return { mode: 'remote', baseUrl: url.origin, releaseJwt, database, wranglerConfig: env.INHOUSE_EVAL_WRANGLER_CONFIG!, modelSetting, access, graded }
   }
-  if (accessToken(env)) throw new Error(`run.mjs: ${ACCESS_CLIENT_ID_VAR} and ${ACCESS_CLIENT_SECRET_VAR} are for a deployed build behind Access (--target) only`)
+  if (accessSet(env)) throw new Error(`run.mjs: ${EVAL_ACCESS_CLIENT_ID_VAR} and ${EVAL_ACCESS_CLIENT_SECRET_VAR} are for a deployed build behind Access (--target) only`)
+  if (a.budget !== undefined) throw new Error(`run.mjs: --budget is for the graded run (${EVAL_DB}) only`)
   for (const k of MODEL_SETTING) if (a[k] !== undefined) throw new Error(`run.mjs: --${k} is for a deployed build (--target) only`)
   for (const k of ['persist-dir', 'base-url'] as const) if (!a[k]) throw new Error(`run.mjs: --${k} is required (or --target for a deployed build)`)
   if (!releaseJwt) throw new Error('run.mjs: MORNING_CHECK_RELEASE_JWT is not set')

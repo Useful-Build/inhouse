@@ -65,6 +65,11 @@ export interface RunnerEnv {
    * routine runs on the brand's Default model, never on --model, so a mismatch would grade one model under another's name.
    */
   modelOf?(slotKey: string): Promise<string | null>
+  /**
+   * The graded run only (remote.ts gradedRun): before each case, a reason to stop there (its --budget spent, the cap
+   * reached), or null. A reason stops the run with that case and the rest as `notRun`; a failure throws.
+   */
+  beforeCase?(): Promise<string | null>
 }
 
 const ZERO: Fixed = { truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 0 }
@@ -169,6 +174,12 @@ export async function runAll(
     }
   }
   for (const c of cases) {
+    const halt = (await env.beforeCase?.()) ?? null
+    if (halt !== null) {
+      stopped = { at: c.id, reason: halt }
+      onCase?.(file())
+      break
+    }
     let r: CaseResult
     let wrongModel: string | null = null
     try {
