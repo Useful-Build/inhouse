@@ -172,7 +172,7 @@ skill before any UI change. Repo specifics:
   `check-product-build.mjs` proves the real module and its canary (`TEST_CONTROLS_CANARY`) are absent from the
   deployable Worker; it doesn't scan for the method names. Add no others. The only other P4 lines on the object: its
   system prompt moved from `SYSTEM_PROMPT_V1` to `SYSTEM_PROMPT_V2`, and it imports `POKE_ID` and `TICK_KIND` from
-  `routines/tick.ts`.
+  `routines/tick.ts`. P5 then made the prompt the per-turn v3 builder (`prompt/connected.ts`), with v2 its fallback.
 - **Prompts** live in `app/server/prompt/` (orchestrator only). Eval results are versioned and kept, never deleted:
   morning-check results in `app/evals/morning-check/results/<date>-<sha>.json`, other eval results in
   `app/evals/results/`. A prompt change runs the eval suite and the morning-check set

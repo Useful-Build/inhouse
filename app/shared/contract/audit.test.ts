@@ -330,7 +330,8 @@ describe('support.access write pairs (P4 review fold)', () => {
 describe('P5 (p5-w1): connect lines carry an account id and a closed outcome only', () => {
   it("appends its block after P4's, in this order", () => {
     const all = AuditActionSchema.options
-    expect(all.slice(all.indexOf('today.set_aside'))).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect', 'tools.pause', 'tools.disconnect', 'notify.send', 'notify.channels'])
+    // Later phases append their blocks after this one, so the check ends at P5's last action rather than at the list's end.
+    expect(all.slice(all.indexOf('today.set_aside'), all.indexOf('notify.channels') + 1)).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect', 'tools.pause', 'tools.disconnect', 'notify.send', 'notify.channels'])
   })
 
   it("refuses a pause or disconnect line with free text, a non-boolean or an extra field (P5 W3)", () => {

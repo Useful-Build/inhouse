@@ -21,10 +21,9 @@
 # of public logs), NIGHTLY_ACCESS_CLIENT_ID and NIGHTLY_ACCESS_CLIENT_SECRET (the Access service token); variables
 # NIGHTLY_SLACK_CHANNEL_ID and NIGHTLY_SLACK_NOTICES_CHANNEL_ID (test workspace channel ids, no credential), and the
 # optional NIGHTLY_ROTATION and NIGHTLY_CODEMODE ("1" or unset). NIGHTLY_HOUSE is fixed at "1": the target is the house
-# deployment. Values reach the test step only. Until P5's Slack connector (app/hub/connectors/mcp/slack) is on main, the
-# job skips with a notice; nightly.test.mjs fails once slack.live.ts is in the repo while that skip remains, so P5's squash
-# drops it. Once it is: no slack.live.ts fails, fewer than all three secrets and both channel ids fails, and a flag other
-# than "1" or unset fails. A failed case fails the night.
+# deployment. Values reach the test step only. No skip (P5's main merge dropped the pre-P5 one, #317's review): no
+# slack.live.ts fails, fewer than all three secrets and both channel ids fails, and a flag other than "1" or unset fails.
+# A failed case fails the night.
 # What it doesn't prove: acceptance 1's connect and revoke against hosted Slack (slack.live.ts has no such cases). The
 # orchestrator's live checks 1, 3 and 8 prove those, by hand. Refresh runs only with NIGHTLY_ROTATION=1.
 # NIGHTLY_ROTATION: before setting it to 1, confirm Slack's refresh-token reuse window in Slack's docs; the rotation case
@@ -153,13 +152,6 @@ jobs:
           ROTATION: ${{ vars.NIGHTLY_ROTATION }}
           CODEMODE: ${{ vars.NIGHTLY_CODEMODE }}
         run: |
-          # Before P5 lands (no hub, or no Slack connector in it, on main) is the only skip. Keyed on the connector, not the
-          # live file, so a live file moved or deleted after P5 fails below instead of skipping.
-          if [ ! -f app/hub/package.json ] || [ ! -d app/hub/connectors/mcp/slack ]; then
-            echo "::notice title=Slack connector check skipped::P5's Slack connector (app/hub/connectors/mcp/slack) isn't on main yet."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           if [ ! -f app/test/connectors/mcp/slack.live.ts ]; then
             echo "::error title=Slack live file missing::The Slack connector is on main but app/test/connectors/mcp/slack.live.ts isn't."
             exit 1
