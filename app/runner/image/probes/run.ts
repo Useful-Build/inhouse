@@ -22,7 +22,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { EventEmitter, once } from 'node:events'
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { PROTOCOL_HEADER, PROTOCOL_VERSION, type RunEvent, type RunStart } from '../../../shared/protocol/index.ts'
 import { SHARED_WRITABLE, createSessionHost, parseStatus, readProcs } from '../../src/guards/host.ts'
@@ -1253,6 +1253,12 @@ async function held(u: PoolUser, args: string[]): Promise<{ child: ChildProcess;
 }
 const sysv = (u: PoolUser, ...args: string[]) => runCommand('python3', [`${PROBES}/sysv.py`, ...args], { uid: u.uid, gid: u.gid, cwd: '/tmp' }).then((r) => r.out.trim())
 const wipe = (u: PoolUser) => host.wipeUserFiles(u).then(() => 'passed', (e: unknown) => `threw: ${String(e instanceof Error ? e.message : e)}`)
+/**
+ * The places a thrown wipe names (#335: `<place>:<error name>[:<code>]`, joined by `; `, never a path or a message: a
+ * leftover's name can be chat content); null when the wipe passed, so a probe that needs a failure fails closed.
+ */
+const failedPlaces = (r: string): string[] | null =>
+  r.startsWith('threw: ') ? r.slice('threw: '.length).split('; ').map((part) => part.slice(0, part.indexOf(':'))) : null
 const shmRows = () => readFileSync('/proc/sysvipc/shm', 'utf8').split('\n').slice(1).filter((l) => l.trim() !== '')
 
 /**
@@ -1340,7 +1346,9 @@ async function probeSysV() {
   const idC = await sysv(x, 'create', '0', '666')
   const holdC = await held(z, ['hold', idC])
   const wipeC = await wipe(x)
-  record('sysv.left-attached-elsewhere-fails-the-creator-wipe', wipeC.startsWith('threw') && wipeC.includes('shm'), `X's wipe ${wipeC}`)
+  // The wipe's text names the place only (#335); the segment still listed is the independent check of what it found.
+  const leftC = shmRows().some((l) => l.trim().split(/\s+/)[1] === idC)
+  record('sysv.left-attached-elsewhere-fails-the-creator-wipe', (failedPlaces(wipeC) ?? []).includes('sysv') && leftC, `X's wipe ${wipeC}, segment ${idC} still listed ${leftC}`)
   await holdC.end()
   await host.killAll(z)
   record('sysv.after-the-other-detaches', (await wipe(x)) === 'passed' && (await wipe(z)) === 'passed', 'X and Z wiped')
@@ -1365,8 +1373,12 @@ async function probeClosedFolder() {
     await runCommand('chmod', ['0700', d], { uid: y.uid, gid: y.gid })
   }
   const r = await wipe(x)
-  record('wipe.finds-a-file-in-another-uids-closed-folder', r.includes('/tmp/probe-closed/f'), r)
-  record('wipe.continues-past-a-failing-folder-and-reports-all', dirs.every((d) => r.includes(`${d}/f`)), r)
+  // The wipe's text names each failing place only (#335: a leftover's path can be chat content). What it found is
+  // checked on its own: the file is still there, in the closed folder the uid couldn't empty.
+  const places = failedPlaces(r) ?? []
+  const left = dirs.map((d) => existsSync(`${d}/f`))
+  record('wipe.finds-a-file-in-another-uids-closed-folder', places.includes('/tmp') && left[0] === true, `${r}; ${dirs[0]}/f still there ${left[0]}`)
+  record('wipe.continues-past-a-failing-folder-and-reports-all', dirs.every((d, i) => places.includes(dirname(d)) && left[i] === true), `${r}; still there ${JSON.stringify(left)}`)
   for (const d of dirs) rmSync(d, { recursive: true, force: true })
   record('wipe.after-cleanup', (await wipe(x)) === 'passed' && (await wipe(y)) === 'passed', 'X and Y wiped')
 }
