@@ -256,6 +256,12 @@ export const LATE_ORDERS_TEXT = [
   LATE_ORDERS_SOURCES,
 ].join('\n')
 
+/**
+ * The `morning-check` scenario's result when its read failed (the case's shop answers errors, as the graded set's
+ * `outage-all` does): nothing read, so no items, and every area a gap (shared/contract/today.ts GAP_AREAS).
+ */
+export const MORNING_CHECK_OUTAGE_ANSWER = { coverage: 'incomplete', gaps: ['orders', 'products', 'inventory', 'refunds', 'returns'], items: [] }
+
 export const SCENARIOS: Record<string, Scenario> = {
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
@@ -424,13 +430,26 @@ export const SCENARIOS: Record<string, Scenario> = {
    * The morning check's run on the recorded upstream: one read through the hub (orders), then the structured result with one
    * item (valid against `MorningCheckResultSchema`), so Today fills. The routine's prompt carries no `scenario:` marker, so
    * the orchestrator's test build names this scenario for the system routine (p4-w6 PR body, "Needs from the orchestrator").
+   * A read the hub answered `upstream_unavailable` (the morning-check set's remote proof points the hub at the outage-all
+   * shop through the test shop override, e2e/api/morning-check-remote.spec.ts) takes the `read-failed` branch: the outage
+   * result. Any other error (`internal`, a refused override's `invalid_args`) matches no branch and misses, so the proof
+   * can't pass on a failure that isn't the outage shop's.
    */
   'morning-check': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_read', name: 'mcp__apps__orders_search', input: { first: 5 } }], expect: mainLoop() },
-      { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_result', name: 'StructuredOutput', input: MORNING_CHECK_ANSWER }], expect: both(mainLoop(), resultOf('toolu_scripted_mc_read')) },
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_result', name: 'StructuredOutput', input: MORNING_CHECK_ANSWER }], expect: both(mainLoop(), resultIs('toolu_scripted_mc_read', false)) },
       { content: [{ type: 'text', text: 'Done.' }], expect: both(mainLoop('StructuredOutput'), resultOf('toolu_scripted_mc_result')) },
     ],
+    branches: {
+      'read-failed': {
+        match: r => {
+          const block = resultBlock(r, 'toolu_scripted_mc_read')
+          return block?.is_error === true && resultText(block).includes('upstream_unavailable')
+        },
+        turns: [null, { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_result', name: 'StructuredOutput', input: MORNING_CHECK_OUTAGE_ANSWER }], expect: both(mainLoop(), resultIs('toolu_scripted_mc_read', true)) }],
+      },
+    },
   },
 }
 

@@ -6,15 +6,17 @@
 // `internal` without its text and returned as `internal`. RPC error serialization is never the contract.
 // Docs read 2026-11-20: service bindings RPC (named entrypoints), RPC error handling.
 //
-// The test upstream seam (hub/testing/) is reached only from signin/signin.ts inside the guarded branch
+// The test upstream seam (hub/testing/) is reached only from signin/signin.ts and this file's shopFor (the test shop
+// override, test-shop.ts), each inside the guarded branch
 // `__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1'`; wrangler.hub.jsonc defines it "false", so esbuild drops it.
 import { WorkerEntrypoint } from 'cloudflare:workers'
-import type { AccountStatus, CallerScope, HubResult, ReadGateway as ReadApi, ServerGateway as ServerApi, ToolInfo } from './contract'
+import type { AccountStatus, CallerScope, CallToolOptions, HubResult, ReadGateway as ReadApi, ServerGateway as ServerApi, ToolInfo } from './contract'
 import { err } from './errors'
 import { log } from './log'
 import { AccountIdSchema, CallerScopeSchema, ToolNameSchema } from './schemas'
 import { callReadTool, listReadTools, toolNameForLog, type ConnectorModule, type GatewayDeps, type ShopifyReadClient } from '../registry/registry'
-import { isConfigured, loadRegistry } from '../signin/signin'
+import { isConfigured, loadRegistry, signInName } from '../signin/signin'
+import { decideTestShop } from './test-shop'
 
 export { SignIn } from '../signin/signin'
 
@@ -35,6 +37,20 @@ const scopeFields = (scope: CallerScope) =>
 
 const signInFor = (env: Env, accountId: string) => env.SIGNIN.get(env.SIGNIN.idFromName(accountId))
 
+type HubEnv = Env & { INHOUSE_TEST_BUILD?: string }
+
+/**
+ * The call's shop (test-shop.ts): the hub's own unless a test build is asked for a host its seam registers. The guard is
+ * written out in full (never behind a helper), so the deployable build drops the branch and its dynamic import.
+ */
+async function shopFor(env: HubEnv, options: unknown): Promise<HubResult<{ shop: string | null }>> {
+  if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
+    const { testUpstreams } = await import('../testing/index')
+    return decideTestShop(options, true, host => testUpstreams.has(host))
+  }
+  return decideTestShop(options, false, () => false)
+}
+
 async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
   try {
     return await fn()
@@ -44,7 +60,8 @@ async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>
   }
 }
 
-async function gatewayDeps(env: Env): Promise<GatewayDeps> {
+/** `testShop`: a test build's override handle (shopFor), read by its own SignIn object (signin.ts signInName). */
+async function gatewayDeps(env: Env, testShop: string | null = null): Promise<GatewayDeps> {
   const registry = await loadRegistry(env)
   return {
     registry,
@@ -53,12 +70,9 @@ async function gatewayDeps(env: Env): Promise<GatewayDeps> {
       graphql: async (document, variables, apiVersion) => {
         const version = apiVersion ?? c.apiVersion
         if (!version) return err('invalid_args', 'apiVersion')
-        return (await signInFor(env, c.accountId).query({
-          accountId: c.accountId,
-          document,
-          variables,
-          apiVersion: version,
-        })) as HubResult<{ data: unknown }>
+        const query = { accountId: c.accountId, document, variables, apiVersion: version }
+        if (testShop === null) return (await signInFor(env, c.accountId).query(query)) as HubResult<{ data: unknown }>
+        return (await env.SIGNIN.get(env.SIGNIN.idFromName(signInName(c.accountId, testShop))).query({ ...query, testShop })) as HubResult<{ data: unknown }>
       },
     }),
     nowMs: () => Date.now(),
@@ -73,14 +87,16 @@ export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
     })
   }
 
-  async callTool(scope: CallerScope, name: string, args: unknown): Promise<HubResult<{ data: unknown }>> {
+  async callTool(scope: CallerScope, name: string, args: unknown, options?: CallToolOptions): Promise<HubResult<{ data: unknown }>> {
     const started = Date.now()
     const parsedScope = CallerScopeSchema.safeParse(scope)
     const parsedName = ToolNameSchema.safeParse(name)
     const result = await guarded(async () => {
       if (!parsedScope.success) return err('invalid_args', 'scope')
       if (!parsedName.success) return err('invalid_args', 'name')
-      return callReadTool(await gatewayDeps(this.env), parsedScope.data, parsedName.data, args)
+      const shop = await shopFor(this.env, options)
+      if (!shop.ok) return shop
+      return callReadTool(await gatewayDeps(this.env, shop.value.shop), parsedScope.data, parsedName.data, args)
     })
     // A malformed registry already logged hub_config_invalid; this line then names no tool.
     const registry = await loadRegistry(this.env).catch(() => null)

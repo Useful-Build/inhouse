@@ -47,10 +47,19 @@ export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
   return null
 }
 /**
- * Day one: the agent's data has arrived and no tool is connected yet, so it has nothing to read. Today lists the setup
- * instead of problems. A client that is still loading isn't there yet: it doesn't know its tools.
+ * Day one: the agent's data has arrived, no tool is connected yet and the server holds nothing for Today (no cards, and no
+ * routine has run, a failed run included), so the agent has nothing to read. Today lists the setup instead of problems. A
+ * client that is still loading isn't there yet: it doesn't know its tools. The real client has no tools read until P5, so
+ * `connected` stays empty: what the server already holds for Today is what ends day one there.
  */
-export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && data.tools.connected.length === 0
+export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && noToolsYet(data)
+/**
+ * Whether a screen may say "no tools are connected yet": none is connected and the server holds nothing for Today (no cards,
+ * no routine run). With `connected` empty but cards or a run present (the real client before P5), the list is unknown, not
+ * empty, so such copy stays out.
+ */
+export const noToolsYet = (data: AgentData): boolean =>
+  data.tools.connected.length === 0 && data.problems.length === 0 && !data.routines.some(r => r.last !== undefined)
 /**
  * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
  * none is, or it's day one, when nothing is live yet and Today lists the setup instead.
@@ -315,7 +324,10 @@ export function todayCopy(ctx: Ctx): TodayCopy {
       headline: shown ? `${shown} ${shown === 1 ? 'thing needs' : 'things need'} you today.` : 'Nothing needs you today.',
       headSub: missed.length
         ? `Your Inhouse agent read ${read.length} of your ${connected.length} tools and changed nothing. ${listNames(missed)} ${missed.length === 1 ? 'needs' : 'need'} reconnecting.`
-        : `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`,
+        : read.length
+          ? `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`
+          // Cards but no connected list (the real client before P5): don't name tools it can't list.
+          : 'Your Inhouse agent checked this morning and changed nothing.',
       countLabel: `${shown} to look at`, sortLabel: 'Most urgent first',
     },
     {

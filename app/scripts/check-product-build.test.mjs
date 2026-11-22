@@ -9,6 +9,7 @@ import { expect, test } from 'vitest'
 import { SCRIPTED_MODEL_CANARY } from '../test/scripted-model/index.ts'
 import { TEST_CONTROLS_CANARY } from '../server/ops/test-controls.ts'
 import { EVAL_TRACE_CANARY } from '../server/eval-trace/on.ts'
+import { TEST_SHOP_CANARY } from '../server/egress/test-shop.ts'
 
 const script = fileURLToPath(new URL('./check-product-build.mjs', import.meta.url))
 const CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
@@ -247,4 +248,62 @@ test('no eval build folder: a usage failure (exit 2), never a pass (failure 3)',
   const r = run({ ...ISSUER_OK, productEval: null })
   expect(r.stderr).toContain('product-eval build folder')
   expect(r.status).toBe(2)
+})
+
+// Part 7: the test shop override (server/egress/test-shop.ts, `@test-shop`). Ways it can fail, written down first: the
+// deployable Worker carries its module, its canary or the hub option's name (the product could then send an override);
+// once the server imports `@test-shop`, the test or the eval build lacks the canary or the module, so the scan proves
+// nothing; the script's canary or module path drifts from the module's and vite.config.ts's alias.
+const SHOP = 'inhouse-test-shop-canary-9c4e17b2'
+const SHOP_MODULE = 'server/egress/test-shop.ts'
+const SHOP_IMPORT = { 'egress/index.ts': "import { withTestShop } from '@test-shop'" }
+const shopIn = (opts) => ({ ...opts, workerJs: `${opts.workerJs ?? ''}; const t = '${SHOP}'; o.testShopHost = h`, serverModules: [...(opts.serverModules ?? ['server/index.ts']), SHOP_MODULE] })
+const SHOP_OK = { server: { ...ISSUER_OK.server, ...SHOP_IMPORT }, productTest: shopIn(ISSUER_OK.productTest), productEval: shopIn(EVAL_OK) }
+
+test('the test shop canary and module are the module\'s, the script\'s and the alias\'s (part 7)', () => {
+  expect(TEST_SHOP_CANARY).toBe(SHOP)
+  const source = readFileSync(script, 'utf8')
+  expect(source).toContain(`const TEST_SHOP_CANARY = '${SHOP}'`)
+  expect(source).toContain("const TEST_SHOP_OPTION = 'testShopHost'")
+  const app = fileURLToPath(new URL('..', import.meta.url))
+  expect(existsSync(join(app, SHOP_MODULE))).toBe(true)
+  expect(readFileSync(join(app, 'vite.config.ts'), 'utf8')).toContain(`'./${SHOP_MODULE}'`)
+  expect(readFileSync(join(app, 'hub/index/contract.ts'), 'utf8')).toContain('export type CallToolOptions = { testShopHost?: string }')
+})
+test('the test and eval builds carry the override and the deployable Worker doesn\'t: the check passes (part 7)', () => {
+  const r = run(SHOP_OK)
+  expect(r.stdout).toContain('ok    test shop: not in the deployable Worker')
+  expect(r.stdout).toContain('ok    test shop: caught the test build.')
+  expect(r.stdout).toContain('ok    test shop: caught the eval build.')
+  expect(r.status).toBe(0)
+})
+test.each([
+  ['its canary', { workerJs: `const t = '${SHOP}'` }],
+  ['the option\'s name', { workerJs: 'o.testShopHost = h' }],
+  ['its module', { serverModules: ['server/index.ts', SHOP_MODULE] }],
+])('the deployable Worker carrying %s fails the check (part 7)', (_label, product) => {
+  const r = run({ ...SHOP_OK, product })
+  expect(r.stderr).toContain('FAIL  test shop: the deployable Worker')
+  expect(r.status).toBe(1)
+})
+test('the off stand-in in the deployable Worker\'s graph passes (part 7)', () => {
+  const r = run({ ...SHOP_OK, product: { serverModules: ['server/index.ts', 'server/egress/test-shop-off.ts'] } })
+  expect(r.stdout).toContain('ok    test shop: not in the deployable Worker')
+  expect(r.status).toBe(0)
+})
+test.each([
+  ['the test build', 'no "inhouse-test-shop-canary-9c4e17b2"', { productTest: { ...ISSUER_OK.productTest, serverModules: ['server/index.ts', SHOP_MODULE] } }],
+  ['the test build', 'no server/egress/test-shop.ts module', { productTest: { workerJs: `const c = '${CANARY}'; const t = '${SHOP}'` } }],
+  ['the eval build', 'no "inhouse-test-shop-canary-9c4e17b2"', { productEval: { ...EVAL_OK, serverModules: [...EVAL_OK.serverModules, SHOP_MODULE] } }],
+  ['the eval build', 'no server/egress/test-shop.ts module', { productEval: { ...EVAL_OK, workerJs: `${EVAL_OK.workerJs}; const t = '${SHOP}'` } }],
+])('the server imports @test-shop and %s has %s: the scan proves nothing (part 7)', (label, missing, opts) => {
+  const r = run({ ...SHOP_OK, ...opts })
+  expect(r.stderr).toContain(`FAIL  test shop: the server imports @test-shop but ${label}`)
+  expect(r.stderr).toContain(missing)
+  expect(r.status).toBe(1)
+})
+test('nothing imports @test-shop: a note, and builds without it pass (part 7)', () => {
+  const r = run(ISSUER_OK)
+  expect(r.stdout).toContain('note  test shop: no server source imports @test-shop')
+  expect(r.status).toBe(0)
 })
