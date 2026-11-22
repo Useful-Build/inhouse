@@ -132,7 +132,7 @@ PR into `main`), the live check, `AGENTS.md`, `verify` skill, feature map, `e2e/
 - S1: As the Inhouse team, connect Slack with the pre-consented test user; Tools shows it connected.
 - S2: Ask a question that needs Slack and Shopify (a supplier delay and the orders it holds up); the answer cites
   both.
-- S3: Ask over the whole order list; the answer comes from a code-mode script and stays short. (If code mode is
+- S3: Ask over the whole store (the products lowest on stock, the measured script); the answer comes from a code-mode script and stays short. (If code mode is
   deferred: the answer comes from bounded, paged reads and says how many orders it covered.)
 - S4: At Act, an alert reaches a listed Slack channel with no link preview; a channel that isn't listed is refused
   with a clear message. At Watch the same alert reaches the bell only.
