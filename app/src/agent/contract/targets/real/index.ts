@@ -15,7 +15,7 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
-import { MS_EXEMPT, MS_READ_PATH, MS_SERVED, changeMemoryElsewhere, memorySkillsRoute, resetWaitingMemory, seedWaitingMemory } from './memory-skills'
+import { MS_EXEMPT, MS_READ_PATH, MS_SERVED, changeMemoryElsewhere, memorySkillsRoute, resetOpenRequests, resetWaitingMemory, seedWaitingMemory } from './memory-skills'
 import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, settleRuns, WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, watchBuild, watchRoute } from './watch'
 
 /** The P2 methods: what this target's client serves over HTTP. */
@@ -192,6 +192,7 @@ function realTarget(origin: string): ContractTarget {
       await endLiveGrant(s)
       await resetSettings(s)
       await resetWaitingMemory(s)
+      await resetOpenRequests(s)
       // Only a build with containers can end a Run now: a containerless one (CI's contract step) would wait out the deadline.
       if (watchBuild()) await settleRuns()
       this.fixtures.personId = seeded.admin
