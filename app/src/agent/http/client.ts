@@ -1519,6 +1519,12 @@ export class HttpAgent implements AgentClient {
     return e
   }
 
+  /** Route 56's cap refusal in the page's words (#312 review); anything else as it came. */
+  private static revRefusal(e: unknown): unknown {
+    if (e instanceof AgentError && e.code === 'forbidden' && e.reason === REASON.routineLimit) return new AgentError('forbidden', 'You already have 50 routines. Delete one to restore this.', { reason: e.reason })
+    return e
+  }
+
   /** Route 54: one Run now; the run heads `routineRuns`. A retry of this call is a new run (a new key). */
   runRoutine = (id: string): Promise<RoutineRun> => guard((async () => {
     if (!this.routineOf(id)) throw this.fail(new AgentError(NOT_FOUND, MESSAGE[NOT_FOUND]))
@@ -1557,7 +1563,7 @@ export class HttpAgent implements AgentClient {
       apply: s => mark(s, what === 'delete'),
       // Nothing to send when the write ahead of this one in the lane was refused and left the routine where this one
       // would put it (an Undo queued behind a delete that failed): no request, no notice.
-      send: async () => (deletedOnServer(this.s) === (what === 'delete') ? null : postRoutineRev(this.http, k, id, what, this.routineOf(id)?.r.rev ?? found.r.rev)),
+      send: async () => (deletedOnServer(this.s) === (what === 'delete') ? null : postRoutineRev(this.http, k, id, what, this.routineOf(id)?.r.rev ?? found.r.rev).catch((e: unknown) => { throw HttpAgent.revRefusal(e) })),
       done: (s, st, others) => settle(st === null ? s : this.withRoutine(s, st.routine, what === 'delete'), others, s),
       undo: (s, _before, others) => settle(s, others, s),
       // A restored routine goes back to its place in the server's order (newest first), which only the list knows.

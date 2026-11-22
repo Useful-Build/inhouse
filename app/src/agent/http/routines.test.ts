@@ -113,6 +113,15 @@ describe('the client: routines', () => {
     expect(agent.getSnapshot().routinesDeleted.rt_a).toBeUndefined()
   })
 
+  test('a restore refused at the cap says why in the page\'s words and leaves the routine deleted (PR 312 review)', async () => {
+    const { agent } = await loaded({ ...reads({ routines: LIST }), 'POST /api/routines/rt_gone/restore': refusal(403, 'forbidden', { reason: 'routine_limit' }) })
+    const heard: unknown[] = []
+    agent.onNotice(n => heard.push(n))
+    await expect(agent.restoreRoutine('rt_gone')).rejects.toMatchObject({ code: 'forbidden', reason: 'routine_limit', message: 'You already have 50 routines. Delete one to restore this.' })
+    expect(heard).toEqual([{ type: 'error', code: 'forbidden', text: 'You already have 50 routines. Delete one to restore this.' }])
+    expect(agent.getSnapshot().routinesDeleted.rt_gone).toBe(true)
+  })
+
   test('Run now sends a key the route takes, and the run heads routineRuns; run_open and stage are refused in the page\'s words (L1)', async () => {
     const run = { routine: 'rt_a', at: at(NOW) }
     const { agent, calls } = await loaded({
