@@ -13,6 +13,8 @@ describe('notOnTeam', () => {
   it('is false for any other failure, reason or state', () => {
     expect(notOnTeam(at({ status: 'error', error: 'forbidden' }))).toBe(false)
     expect(notOnTeam(at({ status: 'error', error: 'forbidden', reason: 'grant_required' }))).toBe(false)
+    // An Inhouse team sign-in on the brand app is its own screen (start-screen.ts), not "You're not on this team".
+    expect(notOnTeam(at({ status: 'error', error: 'forbidden', reason: 'wrong_kind' }))).toBe(false)
     expect(notOnTeam(at({ status: 'error', error: 'offline', reason: 'not_invited' }))).toBe(false)
     expect(notOnTeam(at({ status: 'loading' }))).toBe(false)
     expect(notOnTeam(at({ status: 'ready' }))).toBe(false)

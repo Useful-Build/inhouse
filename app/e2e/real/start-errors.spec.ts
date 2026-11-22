@@ -1,8 +1,9 @@
 // The first read (`/api/me`) failing: a sign-in the Worker refuses (401) is the signed-out screen with "Sign in again",
-// and a server error is the load error whose Retry brings the app back without a reload. Neither is "Not connected yet".
+// an Inhouse team account on the brand app (403 wrong_kind) is its own final screen with Sign out only, and a server
+// error is the load error whose Retry brings the app back without a reload. None is "Not connected yet".
 import { expect, test } from '../support/test-build/index.js'
-import { open, people, signInAs } from '../support/clients/real.js'
-import { signIn } from '../support/test-build/index.js'
+import { inhouse, open, people, signInAs } from '../support/clients/real.js'
+import { appOrigin, signIn } from '../support/test-build/index.js'
 
 test('a token for another app (wrong audience) shows that the sign-in ended, and Sign in again reloads the page', async ({ page, context }) => {
   // The Inhouse app's token on the brand app: the Worker answers 401, as it does when the Access session has expired.
@@ -13,6 +14,32 @@ test('a token for another app (wrong audience) shows that the sign-in ended, and
   const again = page.getByRole('button', { name: 'Sign in again', exact: true })
   await Promise.all([page.waitForEvent('load'), again.click()])
   await expect(page.getByRole('heading', { level: 1, name: 'Your sign-in ended', exact: true })).toBeVisible()
+})
+
+test('an Inhouse team account on the brand app shows its own final screen: no Sign in again, no reload, no second read', async ({ page, context }) => {
+  // P8a P-auth: Alex's subject is bound to the Inhouse team row, so the brand app answers 403 wrong_kind. Before, that
+  // was a 401 and "Your sign-in ended", whose Sign in again came straight back (the loop).
+  await context.setExtraHTTPHeaders(await signIn(inhouse.subject, 'brand'))
+  const reads: string[] = []
+  page.on('request', r => { if (new URL(r.url()).pathname.startsWith('/api/')) reads.push(new URL(r.url()).pathname) })
+  await page.clock.install()
+  await page.goto(`${appOrigin('brand')}/`)
+  const loads: string[] = []
+  page.on('load', () => loads.push(page.url()))
+  await expect(page.getByRole('heading', { level: 1, name: 'This is an Inhouse team account', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your sign-in ended' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Sign in again' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
+  // Run any timer the page set (a minute of them), then check that nothing asked again or reloaded.
+  await page.clock.runFor(60_000)
+  expect(reads).toEqual(['/api/me'])
+  expect(loads).toEqual([])
+  // Sign out goes to Access's logout (the test build has no Access: only the request is checked, as in sign-out.spec.ts).
+  // Per-PR hosts have no Access, so the edge answers the logout path without the app's CSP: not clicked there.
+  if (process.env.E2E_TEST_BUILD_REMOTE) return
+  const logout = page.waitForRequest(r => new URL(r.url()).pathname === '/cdn-cgi/access/logout' && r.isNavigationRequest())
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await logout
 })
 
 test('a 503 on the first read shows the load error, and Retry lands in the app', async ({ page, context }) => {

@@ -332,9 +332,9 @@ export class HttpAgent implements AgentClient {
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
-  /** A 401, or a 403 that says the person isn't on the team (never invited, or removed): the signed-out state, whichever request met it. */
+  /** A 401, or a 403 that says the person isn't on the team (never invited, removed, or an Inhouse team sign-in): the signed-out state, whichever request met it. */
   private static gone(err: AgentError): boolean {
-    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON.notInvited || err.reason === REASON.removed))
+    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON.notInvited || err.reason === REASON.removed || err.reason === REASON.wrongKind))
   }
   private failStatus(k: ResourceKey, e: unknown) {
     const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
@@ -1252,6 +1252,9 @@ export class HttpAgent implements AgentClient {
   activeRuns = async (): Promise<Awaited<ReturnType<AgentClient['activeRuns']>>> => {
     if (!ACTIVE_RUNS_WIRED) return []
     await this.whenLoaded()
+    // The first read was refused (signed out, not on the team, an Inhouse team account): `whenLoaded` resolves then too,
+    // and the start screen is up, so nothing more is asked.
+    if (this.s.res.meta.status !== 'ready') return []
     // A run of a chat the first page didn't hold is followed when that chat opens (route 24 names it in `runs`).
     return readActiveRuns(this.http)
   }

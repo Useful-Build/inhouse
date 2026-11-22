@@ -291,6 +291,18 @@ describe('send, interrupt and stop', () => {
     expect(calls.filter(c => c.path === '/api/runs/active')).toHaveLength(1)
   })
 
+  test.each([
+    ['a 401', refusal(401, 'unauthorized')],
+    ['a 403 not invited', refusal(403, 'forbidden', { reason: 'not_invited' })],
+    ['a 403 Inhouse team account', refusal(403, 'forbidden', { reason: 'wrong_kind' })],
+  ])('the run replay is not read when the first read was refused (%s): nothing after the refusal', async (_n, answer) => {
+    const s = server({ 'GET /api/me': answer, 'GET /api/runs/active': { body: { runs: [] } } })
+    const agent = new HttpAgent({ fetch: s.fetch })
+    // The app asks at start, before the first read answers (store.ts).
+    expect(await agent.activeRuns()).toEqual([])
+    expect(s.calls.map(c => c.path)).toEqual(['/api/me'])
+  })
+
   test('the trace route answers a trace or null for a 404', async () => {
     const trace = { id: RUN, title: 'A run', durationMs: 1200, cost: { minor: 3, currency: 'USD' }, tokens: '1k', steps: [] }
     const { agent } = await loaded({ ...reads(), [`GET /api/traces/${RUN}`]: { body: trace }, 'GET /api/traces/gone': refusal(404, 'not_found') })

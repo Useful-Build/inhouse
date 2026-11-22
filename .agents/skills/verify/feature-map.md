@@ -387,6 +387,12 @@ Backend core: "You're not on this team" (P2, test build)
   Expected: one screen in place of every page, with a Sign out link to Access (not checked in e2e)
   Covered:  e2e/ship/backend-core.spec.ts (S9)
 
+Backend core: "This is an Inhouse team account" (P8a, test build)
+  Path:     sign in on the brand app with an identity bound to the Inhouse team (the Worker answers 403 wrong_kind) -> any URL
+  Selector: heading "This is an Inhouse team account", button "Sign out"
+  Expected: one final screen in place of every page, telling them to sign out and sign in with their brand account; no "Sign in again", no reload and no second read (it was a 401 and "Your sign-in ended", which looped); Sign out goes to Access's logout; the API answer is the code and reason only (no member id, name or email)
+  Covered:  e2e/real/start-errors.spec.ts, e2e/api/auth.spec.ts, src/agent/http/client.test.ts
+
 Test build and release smoke (P2)
   Path:     `npm run build:product-test` -> `wrangler dev`; `e2e/smoke/` against the test build (CI) or a release (`SMOKE_BASE_URL`)
   Selector: the `api`, `real-desktop`, `real-phone` and `smoke` projects; `ship.yml` with `build=test`

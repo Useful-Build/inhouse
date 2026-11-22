@@ -148,6 +148,7 @@ describe('reads', () => {
     ['a 401', refusal(401, 'unauthorized'), { status: 'error', error: 'unauthorized' }],
     ['a 403 not invited', refusal(403, 'forbidden', { reason: 'not_invited' }), { status: 'error', error: 'forbidden', reason: 'not_invited' }],
     ['a 403 removed', refusal(403, 'forbidden', { reason: 'removed' }), { status: 'error', error: 'forbidden', reason: 'removed' }],
+    ['a 403 Inhouse team account', refusal(403, 'forbidden', { reason: 'wrong_kind' }), { status: 'error', error: 'forbidden', reason: 'wrong_kind' }],
   ])('%s on me() is the signed-out state: meta says so and nothing else is read', async (_n, answer, meta) => {
     const { agent, calls } = await loaded({ 'GET /api/me': answer })
     expect(agent.read().resources.meta).toEqual(meta)
@@ -1205,6 +1206,21 @@ describe('the first read failing: the screen the shell shows (start-screen.ts)',
       const { agent } = await loaded({ 'GET /api/me': refusal(403, 'forbidden', { reason }) })
       expect(startScreen(agent.read())).toBe('not-on-team')
     }
+  })
+
+  test('a 403 wrong_kind (an Inhouse team sign-in on the brand app) is its own final screen, and nothing else is asked', async () => {
+    const { agent, calls } = await loaded({ 'GET /api/me': refusal(403, 'forbidden', { reason: 'wrong_kind' }) })
+    expect(startScreen(agent.read())).toBe('inhouse-account')
+    // No retry: the one read that failed is the only request, and nothing in the client asks again.
+    await agent.whenLoaded()
+    expect(calls.map(c => c.path)).toEqual(['/api/me'])
+  })
+
+  test('a 403 wrong_kind mid-session swaps the app for the Inhouse team account screen', async () => {
+    const { agent } = await loaded({ ...reads(), 'PUT /api/settings/personal/g:theme': refusal(403, 'forbidden', { reason: 'wrong_kind' }) })
+    expect(startScreen(agent.read())).toBe('app')
+    await errorOf(agent.setSetting('g:theme', 'Light'))
+    expect(startScreen(agent.read())).toBe('inhouse-account')
   })
 
   test('a 401 mid-session swaps the app for the signed-out screen', async () => {
