@@ -66,11 +66,64 @@ describe('status cards, literal states', () => {
     expect(v.shown?.slot_key).toBe('y')
     expect(causes(v)).toEqual(['failed'])
   })
+  it("shows yesterday's failed check at 06:05, before today's scheduled check is late", () => {
+    const failed = slot({
+      slot_key: 'y-failed', local_date: '2026-05-31', failure: 'run_failed',
+      claimed_at_ms: at('2026-05-31T10:00:00Z'), ended_at_ms: at('2026-05-31T10:03:00Z'),
+    })
+    const early = '2026-06-01T10:05:00Z'
+    const v = view(early, [failed])
+    expect(v.shown).toBeNull()
+    expect(v.cards).toMatchObject([{
+      cause: 'failed', hashed: 'y-failed', localDate: '2026-05-31', clock: '6:00 AM', atMs: failed.ended_at_ms,
+    }])
+    expect(causes(view('2026-06-01T10:11:00Z', [failed]))).toEqual(['not_run'])
+    expect(causes(view(early, [failed, slot({ slot_key: 'success' })]))).toEqual([])
+    const recovered = { ...failed, slot_key: 'y-recovered', failure: null, claimed_at_ms: failed.claimed_at_ms + 600_000 }
+    expect(causes(view(early, [failed, recovered]))).toEqual([])
+  })
+  describe('a failure carried from the previous local date', () => {
+    const fri = slot({ slot_key: 'fri', local_date: '2026-06-05', claimed_at_ms: at('2026-06-05T10:00:00Z'), ended_at_ms: at('2026-06-05T10:03:00Z'), failure: 'run_failed' })
+    const weekdays: RoutineFacts = { ...ROUTINE, days_mask: 0b0011111 } // Monday to Friday
+    it('a failure from two days ago shows nothing, even when the view is given it', () => {
+      const old = slot({ slot_key: 'old', local_date: '2026-05-30', failure: 'run_failed', claimed_at_ms: at('2026-05-30T10:00:00Z'), ended_at_ms: at('2026-05-30T10:03:00Z') })
+      expect(causes(view('2026-06-01T10:05:00Z', [old]))).toEqual([])
+    })
+    it('a deleted (null) routine carries nothing', () => {
+      expect(causes(view('2026-06-01T10:05:00Z', [slot({ slot_key: 'y', local_date: '2026-05-31', failure: 'run_failed' })], null))).toEqual([])
+    })
+    it('a Saturday after a failed Friday shows it; a Sunday shows nothing', () => {
+      expect(causes(view('2026-06-06T15:00:00Z', [fri], weekdays))).toEqual(['failed'])
+      expect(causes(view('2026-06-07T15:00:00Z', [fri], weekdays))).toEqual([])
+    })
+    it('exactly 06:10 still carries it; a minute later the overdue card takes over', () => {
+      const y = slot({ slot_key: 'y', local_date: '2026-05-31', failure: 'run_failed', claimed_at_ms: at('2026-05-31T10:00:00Z'), ended_at_ms: at('2026-05-31T10:03:00Z') })
+      expect(causes(view('2026-06-01T10:10:00Z', [y]))).toEqual(['failed'])
+      expect(causes(view('2026-06-01T10:11:00Z', [y]))).toEqual(['not_run'])
+    })
+    it("uses the brand's local date, not the UTC one", () => {
+      // 02:00 UTC on June 2 is 22:00 on June 1 in New York: the previous local date is May 31, not June 1.
+      const may31 = slot({ slot_key: 'may31', local_date: '2026-05-31', failure: 'run_failed', claimed_at_ms: at('2026-05-31T10:00:00Z'), ended_at_ms: at('2026-05-31T10:03:00Z') })
+      // A day off: only the previous LOCAL date (May 31) can carry. A UTC-today bug (June 2, previous June 1) finds nothing.
+      const night = view('2026-06-02T02:00:00Z', [may31], { ...ROUTINE, days_mask: 0 })
+      expect(night.cards).toMatchObject([{ cause: 'failed', hashed: 'may31' }])
+      const early = view('2026-06-01T04:30:00Z', [may31], ROUTINE) // 00:30 June 1 in New York, still June 1 locally
+      expect(early.cards).toMatchObject([{ cause: 'failed', hashed: 'may31' }])
+    })
+    it("a carried card's id is stable across times, and a dismissal hides", async () => {
+      const y = slot({ slot_key: 'y', local_date: '2026-05-31', failure: 'run_failed' })
+      const [c] = view('2026-06-01T10:05:00Z', [y]).cards
+      const same = view('2026-06-01T10:06:00Z', [y]).cards[0]
+      expect(await cardId(c.localDate, c.cause, c.hashed)).toBe(await cardId(same.localDate, same.cause, same.hashed))
+      expect(hides({ reason: 'dismissed', at_ms: at('2026-06-01T10:05:30Z') }, at('2026-06-01T10:06:00Z'), intlZone(TZ))).toBe(true)
+    })
+  })
   it('lost, missed and refused slots are failed cards; claimed and started are none', () => {
     for (const state of ['lost', 'missed', 'refused'] as const) expect(causes(view('2026-06-01T12:00:00Z', [slot({ slot_key: state, state, ended_at_ms: null })]))).toEqual(['failed'])
     for (const state of ['claimed', 'started'] as const) expect(causes(view('2026-06-01T12:00:00Z', [slot({ slot_key: state, state, ended_at_ms: null })]))).toEqual([])
   })
   it('past 06:10 with no slot today: the card; before 06:10: none; on the minute after: the card', () => {
+    expect(causes(view('2026-06-01T10:05:00Z', []))).toEqual([])
     expect(causes(view('2026-06-01T10:10:00Z', []))).toEqual([])
     expect(causes(view('2026-06-01T10:11:00Z', []))).toEqual(['not_run'])
     expect(view('2026-06-01T10:11:00Z', []).cards[0]).toMatchObject({ hashed: 'routine-morning-check|2026-06-01', localDate: '2026-06-01' })
