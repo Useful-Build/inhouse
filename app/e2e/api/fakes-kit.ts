@@ -56,7 +56,7 @@ export interface FakeSeed {
 /** What `{op:'set'}` takes: the switches of FakeMcpServer and FakeSlackWeb the specs flip. */
 export interface FakeSwitches {
   /** FakeMcpServer's own switch names; `profile` picks one fake (both when absent). */
-  mcp?: { profile?: 'slack' | 'notes'; sameToken?: boolean; rotation?: boolean; exportAfterLists?: number; missingScope?: 'hide' | 'fail'; revokeFails?: boolean; cumulative?: boolean; sse?: boolean; noS256?: boolean; staleSessions?: true }
+  mcp?: { profile?: 'slack' | 'notes'; sameToken?: boolean; rotation?: boolean; exportAfterLists?: number; expiresInS?: number; missingScope?: 'hide' | 'fail'; revokeFails?: boolean; cumulative?: boolean; sse?: boolean; noS256?: boolean; staleSessions?: true }
   web?: { rateLimitNextPost?: boolean; failNextPost?: string | null; channels?: { id: string; patch: Record<string, unknown> }[] }
 }
 

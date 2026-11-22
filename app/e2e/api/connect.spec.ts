@@ -159,40 +159,47 @@ test('with the same-token switch on, a refused reconnect does not revoke the liv
 })
 
 test('a refresh racing a disconnect: the end state is disconnected, no token, no refresh request after the disconnect', async ({ request }) => {
-  await fakeSet(request, { mcp: { rotation: true } })
-  const before = await fakeState(request)
-  const c = await freshConnect(request)
-  expect(c.location).toBe('/tools/slack?connected=1')
-  const connected = await fakeState(request)
-  const mine = connected.mcp.issuedTokens.filter(t => !before.mcp.issuedTokens.includes(t))
-  expect(mine.length, 'this connect issued a token').toBeGreaterThan(0)
-  // Positive control: the alarm of a connected, due account does refresh. Without it "no refresh after the disconnect" could be
-  // true only because the alarm never refreshes anything in this build.
-  const sendsBefore = connected.mcp.refreshSends.length
-  const live = await hook(request, { op: 'alarm', accountId: SLACK_ACCOUNT })
-  expect(live.status, live.text).toBe(200)
-  expect((await fakeState(request)).mcp.refreshSends.length, 'an alarm on a connected account sends a refresh').toBeGreaterThan(sendsBefore)
+  // A 1-second token lifetime: the hub's proactive refresh is due at half of it (hub/signin/core.ts refreshDueAt), so the alarm below
+  // has a refresh to send. At the fake's default 12 hours it would correctly do nothing for six.
+  await fakeSet(request, { mcp: { rotation: true, expiresInS: 1 } })
+  try {
+    const before = await fakeState(request)
+    const c = await freshConnect(request)
+    expect(c.location).toBe('/tools/slack?connected=1')
+    const connected = await fakeState(request)
+    expect(connected.mcp.issuedTokens.length, 'this connect issued a token').toBeGreaterThan(before.mcp.issuedTokens.length)
+    // Positive control: the alarm of a connected, due account does send a refresh. Without it "no refresh after the disconnect" could be
+    // true only because the alarm never refreshes anything. An alarm that comes before the half-life only re-arms itself, so it is fired
+    // until it sends (a condition, not a wait).
+    const sendsBefore = connected.mcp.refreshSends.length
+    await expect.poll(async () => {
+      const a = await hook(request, { op: 'alarm', accountId: SLACK_ACCOUNT })
+      expect(a.status, a.text).toBe(200)
+      return (await fakeState(request)).mcp.refreshSends.length
+    }, { message: 'an alarm on a connected account sends a refresh once it is due', timeout: 15_000 }).toBeGreaterThan(sendsBefore)
 
-  const gone = await call(request, inhouse, 'POST', `/api/tools/${encodeURIComponent(SLACK_ACCOUNT)}/disconnect`, { json: {} })
-  expect(gone.status, gone.text).toBe(200)
-  const atDisconnect = await fakeState(request)
-  const mark = atDisconnect.mcp.refreshSends.length
-  // The alarm the account would have fired for its refresh, now (the hook runs the hub's alarm once).
-  const alarm = await hook(request, { op: 'alarm', accountId: SLACK_ACCOUNT })
-  expect(alarm.status, alarm.text).toBe(200)
-  const after = await fakeState(request)
-  expect(after.mcp.refreshSends.length, 'no refresh request after the disconnect').toBe(mark)
-  // The account's current token (the newest the fake issued, after the control's refresh) was revoked by the disconnect, and the second
-  // alarm issued no newer one: a refresh that outlived the disconnect would have made a live token here. (The fake doesn't revoke a
-  // token a refresh replaced, so only the current one is expected dead.)
-  const current = atDisconnect.mcp.issuedTokens.at(-1)!
-  expect(after.mcp.issuedTokens, 'the alarm after the disconnect issued no token').toEqual(atDisconnect.mcp.issuedTokens)
-  expect(after.mcp.revoked, 'the current token was revoked at Slack').toContain(current)
-  expect(after.mcp.liveTokens).not.toContain(current)
-  const t = await readTools(request)
-  expect(t.connected).not.toContain('slack')
-  expect(t.details.slack?.canDisconnect).toBe(false)
-  await fakeSet(request, { mcp: { rotation: false } })
+    const gone = await call(request, inhouse, 'POST', `/api/tools/${encodeURIComponent(SLACK_ACCOUNT)}/disconnect`, { json: {} })
+    expect(gone.status, gone.text).toBe(200)
+    const atDisconnect = await fakeState(request)
+    const mark = atDisconnect.mcp.refreshSends.length
+    // The alarm the account would have fired for its refresh, now (the hook runs the hub's alarm once).
+    const alarm = await hook(request, { op: 'alarm', accountId: SLACK_ACCOUNT })
+    expect(alarm.status, alarm.text).toBe(200)
+    const after = await fakeState(request)
+    expect(after.mcp.refreshSends.length, 'no refresh request after the disconnect').toBe(mark)
+    // The account's current token (the newest the fake issued, after the control's refresh) was revoked by the disconnect, and the second
+    // alarm issued no newer one: a refresh that outlived the disconnect would have made a live token here. (The fake doesn't revoke a
+    // token a refresh replaced, so only the current one is expected dead.)
+    const current = atDisconnect.mcp.issuedTokens.at(-1)!
+    expect(after.mcp.issuedTokens, 'the alarm after the disconnect issued no token').toEqual(atDisconnect.mcp.issuedTokens)
+    expect(after.mcp.revoked, 'the current token was revoked at Slack').toContain(current)
+    expect(after.mcp.liveTokens).not.toContain(current)
+    const t = await readTools(request)
+    expect(t.connected).not.toContain('slack')
+    expect(t.details.slack?.canDisconnect).toBe(false)
+  } finally {
+    await fakeSet(request, { mcp: { rotation: false, expiresInS: 43_200 } })
+  }
 })
 
 test('every route answer has no field beyond the contract and carries no token', async ({ request }) => {

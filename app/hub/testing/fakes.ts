@@ -27,7 +27,7 @@ export const HUB_FAKES_CANARY = 'INHOUSE_HUB_FAKES_CANARY_3a6f'
 /** The FakeMcpServer switches the hook may set (the fake's own field names). `deliver` and `now` are functions: not settable. */
 export const MCP_SWITCHES = [
   'cumulative', 'sameToken', 'rotation', 'refreshModes', 'missingScope', 'revokeFails', 'sse', 'prmResource', 'noS256',
-  'headerMetadata', 'retryAfterS', 'asIssuer', 'exportAfterLists',
+  'headerMetadata', 'retryAfterS', 'asIssuer', 'exportAfterLists', 'expiresInS',
 ] as const
 /** The FakeSlackWeb switches the hook may set (the fake's own field names). */
 export const WEB_SWITCHES = ['rateLimitNextPost', 'failNextPost', 'throwNextPost', 'pageSize', 'padBytes'] as const
@@ -48,6 +48,8 @@ const McpSwitchesSchema = z.strictObject({
   retryAfterS: z.number().int().min(0).max(3600).optional(),
   asIssuer: z.string().min(1).max(500).nullable().optional(),
   exportAfterLists: z.number().int().min(0).max(1000).optional(),
+  /** A rotation token's lifetime in seconds (the hub refreshes proactively at half of it). */
+  expiresInS: z.number().int().min(1).max(86_400).optional(),
   /** Not a switch: calls the fake's `staleSessions()` once (every current session's next request gets a 401). */
   staleSessions: z.literal(true).optional(),
 })
