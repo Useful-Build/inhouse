@@ -19,8 +19,11 @@ import type { JWK } from 'jose'
 import { createDoor, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
 import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
 
-/** The eval brand's monthly Spending cap (decision 18: $40 enforced by us; the $60 workspace limit is the outer stop). */
-export const EVAL_CAP = '$40'
+/**
+ * The eval brand's monthly Spending cap: Wasim's monthly Anthropic test budget, $50 (2026-11-22, superseding decision 18's
+ * $40), enforced by us; the $60 workspace limit is the outer stop.
+ */
+export const EVAL_CAP = '$50'
 
 export class ProductTargetRefusal extends Error {
   override name = 'ProductTargetRefusal'
@@ -212,7 +215,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     const probe = `eval-probe-${rid()}`
     must(await api('current', 'POST', '/api/chats', { json: { id: probe, title: 'Eval probe' } }), 'create the probe chat')
     if (!(await door.hasChat(probe))) throw new ProductTargetRefusal(`refusing: ${EVAL_D1_NAME} does not hold the chat the origin just created, so it is not this deployment's database`)
-    // The O2 note: the brand's own Spending cap is the run's $40 (no second ledger). Pinned here, then read back as the
+    // The O2 note: the brand's own Spending cap is the run's $50 (no second ledger). Pinned here, then read back as the
     // product reads it: anything else refuses before any case is seeded.
     await door.setSpendingCap(EVAL_CAP)
     const { spentUsd } = await room()
@@ -221,7 +224,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   })())
 
   /** The month's spend and the cap, from route 42 (the Usage page's numbers) as the Admin eval person. */
-  // Every read refuses unless the cap is still the pinned $40 (#253 review O3): a re-seed's $320 or a Settings change can't
+  // Every read refuses unless the cap is still the pinned $50 (#253 review O3): a re-seed's $320 or a Settings change can't
   // silently lift our layer mid-run.
   async function room(): Promise<{ spentUsd: number; capUsd: number }> {
     const u = await api('lena', 'GET', '/api/usage')
