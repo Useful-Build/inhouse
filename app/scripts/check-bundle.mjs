@@ -2,8 +2,9 @@
 // Reads the built index.html, takes its module script and modulepreload links, follows each chunk's static imports
 // (dynamic `import()` calls are the lazy routes and don't count), and gzips what the browser needs before Today shows.
 // Fails when the total is over BUDGET_KB (default 241, in KiB gzipped): the split measured 226 KB on 2026-11-19
-// (247 KB before the split), so the budget leaves about 6% of room. Raised to 241 on 2026-11-23 (Wasim's OK): blank New
-// chat's prompt cards load with the page (+0.7 KB, 240.3 KB), because loading them lazily made the composer jump on every load.
+// (247 KB before the split), with about 6% of room then. Raised to 241 on 2026-11-23 (Wasim's OK): blank New chat's
+// prompt cards load with the page (+0.7 KB, 240.3 KB, so 0.7 KB of room), because loading them lazily made the composer
+// jump on every load.
 // The budget covers Today's first load only: a deep link to a lazy route adds that route's chunk on top. Raise it only on purpose, with the reason.
 // DIST overrides the build folder (for trying the script on a fake build).
 import { existsSync, readFileSync } from 'node:fs'

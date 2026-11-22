@@ -10,6 +10,9 @@ const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 /** The modules a file imports at run time (`import type` is erased by the build). */
 const runtimeImports = (src: string) => [...src.matchAll(/^(?:import|export)\s+(?!type\b)(?:[^'";]*?\bfrom\s+)?'([^']+)'/gm)].map(m => m[1])
 const PLAIN = ['keys', 'settings-table', 'error-codes', 'chat-codes']
+/** Every non-test .ts/.tsx file under dir. */
+const files = (dir: string): string[] => readdirSync(new URL(`../${dir}`, import.meta.url), { withFileTypes: true })
+  .flatMap(e => (e.isDirectory() ? files(`${dir}/${e.name}`) : /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [`${dir}/${e.name}`] : []))
 
 describe('runtimeImports', () => {
   it('reads multi-line imports and re-exports, and skips type-only ones', () => {
@@ -47,8 +50,6 @@ describe('the screens Today does not need load on first visit, not with the entr
   // scripts/check-bundle.mjs holds Today's first load to 241 KB gzip. Today and Chats stay in the entry; every other screen is a
   // lazy route in App.tsx (a dynamic import), and nothing else in src imports one at run time (that would pull it back in).
   const LAZY_SCREENS = ['Approvals', 'Routines', 'Activity', 'Tools', 'Skills', 'Library', 'Usage', 'Settings']
-  const files = (dir: string): string[] => readdirSync(new URL(`../${dir}`, import.meta.url), { withFileTypes: true })
-    .flatMap(e => (e.isDirectory() ? files(`${dir}/${e.name}`) : /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [`${dir}/${e.name}`] : []))
   for (const name of LAZY_SCREENS) {
     it(`${name} is a dynamic import in App.tsx and imported at run time nowhere else`, () => {
       const app = read('src/App.tsx')
@@ -74,4 +75,15 @@ describe('the five screens moved out of the entry are prefetched when the shell 
       expect(read('src/App.tsx').split(`import('./screens/${name}')`).length - 1).toBe(1)
     })
   }
+})
+
+describe('the New chat prompt cards load with the page', () => {
+  // Blank New chat centres its composer on the cards' height: when PromptBento was a lazy chunk, the composer painted low
+  // with no cards and jumped up when they arrived, on every load (#355). Don't win budget bytes back by making it lazy again.
+  it('ui/chat.tsx imports PromptBento up front', () => {
+    expect(runtimeImports(read('src/ui/chat.tsx'))).toContain('./PromptBento')
+  })
+  it('nothing in src imports PromptBento lazily', () => {
+    for (const file of files('src')) expect(read(file), `${file} imports PromptBento lazily`).not.toMatch(/import\(\s*['"][^'"]*PromptBento['"]/)
+  })
 })
