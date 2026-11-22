@@ -515,7 +515,8 @@ export class AgentCore {
       try {
         systemPrompt = await this.d.systemPrompt(turnId)
       } catch (err) {
-        console.error({ event: 'turn_prompt_failed', turnId, error: errorText(err) })
+        // The error's name only: a builder's message could carry hub or D1 text (P8a's log guard, A10).
+        console.error({ event: 'turn_prompt_failed', turnId, error: err instanceof Error ? err.name : typeof err })
         systemPrompt = SYSTEM_PROMPT_V2
       }
     }

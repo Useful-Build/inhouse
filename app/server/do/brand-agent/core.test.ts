@@ -165,6 +165,8 @@ describe('claim before await (4.2.1, 4.4)', () => {
       expect(h.placed()).toEqual([a.turnId])
       expect((JSON.parse(h.turn(a.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe(SYSTEM_PROMPT_V2)
       expect(errors).toHaveBeenCalledWith(expect.objectContaining({ event: 'turn_prompt_failed', turnId: a.turnId }))
+      // The error's name, never its message.
+      expect(JSON.stringify(errors.mock.calls)).not.toContain('builder broke')
     } finally {
       errors.mockRestore()
     }
