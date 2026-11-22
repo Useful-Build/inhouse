@@ -47,11 +47,13 @@ describe('expectedNextDaily', () => {
     expect(new Date(expectedNextDaily('Europe/London', 6, 0, Date.UTC(2026, 10, 21, 12))).toISOString()).toBe('2026-11-22T06:00:00.000Z')
   })
   fcTest.prop([fc.integer({ min: Date.UTC(2026, 0, 2), max: Date.UTC(2027, 11, 20) }), fc.constantFrom('America/New_York' as const, 'Europe/London' as const)])(
-    'lands on 06:00 local by Intl, after the instant and within 24 hours of it',
+    'lands on 06:00 local by Intl, after the instant and within 25 hours of it',
     (after, tz) => {
       const next = expectedNextDaily(tz, 6, 0, after)
       expect(next).toBeGreaterThan(after)
-      expect(next - after).toBeLessThanOrEqual(86_400_000)
+      // 25 hours, not 24: from 06:00 local on the day before the autumn change, the next 06:00 is 25 hours away
+      // (fast-check found [1793440800000, 'America/New_York']: 06:00 EDT on 31 Oct 2026 to 06:00 EST on 1 Nov).
+      expect(next - after).toBeLessThanOrEqual(90_000_000)
       expect(localClock(next, tz)).toMatchObject({ hour: 6, minute: 0 })
     },
   )
