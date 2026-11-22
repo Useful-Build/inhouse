@@ -14,6 +14,7 @@
 //   root's take-over walks a folder by path, so root never prepares that folder again in this container's life.
 import type { SessionUser, SessionUsers } from '../session/seam.ts'
 import { assertSessionKey } from './paths.ts'
+import { safeError } from '../safe-error.ts'
 
 /** A pool member, as /etc/passwd has it. */
 export type PoolUser = { user: string; uid: number; gid: number }
@@ -105,6 +106,8 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
    * kill have it open, and the folder is parked for good.
    */
   const reclaim = async (sessionKey: string, user: PoolUser, ran: boolean, drop: () => void) => {
+    // Which step failed, for the log (the error itself gets its name only).
+    let step: 'kill' | 'park' | 'wipe' = 'kill'
     try {
       try {
         await host.killAll(user)
@@ -112,8 +115,12 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
         if (ran) parkedForGood.add(sessionKey)
         throw e
       } finally {
+        const was = step
+        step = 'park'
         await host.parkFolder(sessionKey)
+        step = was
       }
+      step = 'wipe'
       await host.wipeUserFiles(user)
     } catch (e) {
       drop()
@@ -123,7 +130,8 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
         uid: user.uid,
         user: user.user,
         sessionKey,
-        error: String(e instanceof Error ? e.message : e),
+        step,
+        error: safeError(e),
         quarantined: quarantined.size,
         folderParkedForGood: parkedForGood.has(sessionKey),
       })

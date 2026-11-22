@@ -27,6 +27,7 @@ import { newFileId, streamFile } from '../files-io/bytes.ts'
 import type { FileRefusal } from '../files-io/bytes.ts'
 import { FILE_CAPS } from '../files-io/caps.ts'
 import { TEXT_PREVIEW_MAX, TEXT_PREVIEW_TYPES } from './kinds.ts'
+import { safeError } from '../safe-error.ts'
 
 /** One listed file, from either source, with what its card needs. */
 export interface LibraryRow {
@@ -241,7 +242,7 @@ export function libraryStore({ db, bucket }: { db: D1Database; bucket: Pick<Keye
             storage('D1', () => db.prepare("DELETE FROM library_uploads WHERE id = ? AND state = 'pending'").bind(id).run()),
           ])
           const failed = done.find(d => d.status === 'rejected')
-          if (failed) console.error(JSON.stringify({ event: 'library_upload_cleanup_failed', fileId: id, error: String((failed as PromiseRejectedResult).reason) }))
+          if (failed) console.error(JSON.stringify({ event: 'library_upload_cleanup_failed', fileId: id, error: safeError((failed as PromiseRejectedResult).reason) }))
         }
       }
     },

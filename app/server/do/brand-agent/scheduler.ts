@@ -12,6 +12,7 @@
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { BrandAgentPorts, ChatStatus, DeferDecision, InternalSubmit, Refusal } from './ports.ts'
 import type { RunTokens } from './tokens.ts'
+import { safeError } from '../../safe-error.ts'
 
 export interface DueTask {
   id: string
@@ -175,8 +176,6 @@ export function createDueTasksTable(sql: SqlStorage): void {
 
 type Row = { id: string; kind: string; gen: number; due_at_ms: number; payload_json: string | null; attempts: number }
 
-const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : 'unknown').slice(0, 500)
-
 export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
   const { sql } = o
   createDueTasksTable(sql)
@@ -199,7 +198,7 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
     const op = at === null ? o.alarm.delete() : o.alarm.set(at)
     pending.push(op.catch(err => {
       failure ??= err
-      console.error({ event: 'scheduler_alarm_failed', error: errorText(err) })
+      console.error({ event: 'scheduler_alarm_failed', error: safeError(err) })
     }))
   }
   const settled = async () => {
@@ -269,7 +268,7 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
         if (!isResult(answer)) throw new TypeError('the handler answered neither done nor retryAtMs')
         result = answer
       } catch (err) {
-        result = { retryAtMs: o.now() + backoffMs(task.attempts), error: errorText(err) }
+        result = { retryAtMs: o.now() + backoffMs(task.attempts), error: safeError(err) }
       }
       o.afterHandler?.(task, result)
       let applied = false
@@ -277,7 +276,7 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
         applied = commit(task, result)
       } catch (err) {
         degraded = true
-        console.error({ event: 'due_task_commit_failed', kind: task.kind, error: errorText(err) })
+        console.error({ event: 'due_task_commit_failed', kind: task.kind, error: safeError(err) })
       }
       if (applied && !('done' in result) && task.attempts + 1 >= MAX_ATTEMPTS) {
         console.error({ event: 'due_task_quarantined', kind: task.kind, why: 'attempts' })
@@ -308,7 +307,7 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
       } catch (err) {
         // A pass that failed part way (storage, a test's injected crash) leaves its task as it was: it runs again.
         degraded = true
-        console.error({ event: 'scheduler_pass_failed', error: errorText(err) })
+        console.error({ event: 'scheduler_pass_failed', error: safeError(err) })
       }
       // Always leave an alarm: the earliest ready task (after a failure, no sooner than the fallback delay), else the
       // fallback alone if setting that failed.
@@ -316,7 +315,7 @@ export function createScheduler<C>(o: SchedulerOptions<C>): SqlScheduler {
         changed(degraded ? o.now() + FALLBACK_ALARM_MS : undefined)
         await settled()
       } catch (err) {
-        console.error({ event: 'scheduler_alarm_fallback', error: errorText(err) })
+        console.error({ event: 'scheduler_alarm_fallback', error: safeError(err) })
         await o.alarm.set(o.now() + FALLBACK_ALARM_MS)
       }
     },

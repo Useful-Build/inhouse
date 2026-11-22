@@ -25,6 +25,7 @@ import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '.
 import { capSdkMessage, monotonicMs, parseSessionMessage, type RootMessage, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import type { SessionUser } from '../session/seam.ts'
 import type { RunStream } from './run-stream.ts'
+import { safeError } from '../safe-error.ts'
 
 /**
  * Starts a session process. It must lead its own process group (spawn it `detached`): the root kills the whole group.
@@ -128,7 +129,7 @@ export function hostSession(opts: {
       process.kill(-child.pid, 'SIGKILL')
     } catch (e) {
       // ESRCH: the group is already empty.
-      if ((e as NodeJS.ErrnoException).code !== 'ESRCH') log({ type: 'session_kill_failed', runId, error: String(e) })
+      if ((e as NodeJS.ErrnoException).code !== 'ESRCH') log({ type: 'session_kill_failed', runId, error: safeError(e) })
     }
   }
   const killAfterGrace = () => {
@@ -173,7 +174,8 @@ export function hostSession(opts: {
     }
     if (!line.ok) return failProtocol(line.error)
     const parsed = parseSessionMessage(line.value)
-    if (!parsed.ok) return failProtocol(parsed.error)
+    // The schema's report quotes what the session sent (an event, a tool input, a file name): the log gets fixed text.
+    if (!parsed.ok) return failProtocol('a message that fails its schema')
     const m = parsed.message
     if (m.type === 'ready') {
       if (sentRun) return failProtocol('ready sent twice')
@@ -220,8 +222,8 @@ export function hostSession(opts: {
     try {
       fn()
     } catch (e) {
-      if (stream.ended) return void log({ type: 'session_listener_failed', runId, what, error: String(e instanceof Error ? e.message : e).slice(0, 500) })
-      failProtocol(`${what}: ${String(e instanceof Error ? e.message : e)}`)
+      if (stream.ended) return void log({ type: 'session_listener_failed', runId, what, error: safeError(e) })
+      failProtocol(`${what}: ${safeError(e)}`)
     }
   }
 
@@ -244,8 +246,8 @@ export function hostSession(opts: {
   })
   // Pipe errors are logged, one listener per socket; the run's end comes from `close`. A write that fails on fd 4
   // (EPIPE once the session is gone) breaks fd 4 only: fd 3 is still read to its end.
-  fromSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, fd: 3, error: e.message }))
-  toSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, fd: 4, error: e.message }))
+  fromSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, fd: 3, error: safeError(e) }))
+  toSession?.on('error', (e) => log({ type: 'session_pipe_error', runId, fd: 4, error: safeError(e) }))
   // Nothing comes to the root on fd 4; read it anyway, so its end is seen and it closes with the session.
   toSession?.resume()
   // Only stderr's tail is kept, for the crash log's stack frames: the session's stdout can hold anything it printed (chat content, a
@@ -280,7 +282,7 @@ export function hostSession(opts: {
   }
 
   child.on('error', (e) => {
-    log({ type: 'session_error', runId, error: e.message })
+    log({ type: 'session_error', runId, error: safeError(e) })
     if (child.pid === undefined) {
       // It never started: no exit follows, and the pipes may never close.
       for (const s of child.stdio) s?.destroy()

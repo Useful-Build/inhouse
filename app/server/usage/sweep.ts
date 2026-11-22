@@ -8,6 +8,7 @@ import type { DueTask, Scheduler, TaskContext, TaskHandler, TaskResult } from '.
 import { RUN_TOKEN_TTL_MS } from '../do/brand-agent/tokens.ts'
 import { createUsageLedger } from './ledger.ts'
 import type { UsageLedger } from './ledger.ts'
+import { safeError } from '../safe-error.ts'
 
 /**
  * What the BrandAgent knows of a turn's model calls, in micro-USD: closed calls at their actual cost plus calls still
@@ -63,7 +64,7 @@ export async function sweepOnce(o: { db: D1Database; sql: SqlStorage; nowMs: num
         r.settled++
       } catch (err) {
         r.failed++
-        console.error({ event: 'usage_sweep_turn_failed', turnId: row.turn_id, error: err instanceof Error ? `${err.name}: ${err.message}`.slice(0, 300) : 'unknown' })
+        console.error({ event: 'usage_sweep_turn_failed', turnId: row.turn_id, error: safeError(err) })
       }
     }
     if (rows.length < SWEEP_BATCH) break
