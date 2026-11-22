@@ -1,8 +1,8 @@
 // The test-fakes hook, product side (W5's API specs; route 76, `POST /api/ops/test-fakes`, server/ops/fakes-hook.ts).
 // Import it only as `@test-fakes`: `vite build --mode product-test` resolves that to this file, every other build (the
 // deployable product and the eval build included) to test-fakes-off.ts, so this never enters a deployable Worker
-// (scripts/check-product-build.mjs part 8 scans for the canary below and for this module). It runs in the BrandAgent
-// (BrandAgent.testFakes), whose env has DB and the three hub bindings; it reaches the hub over those bindings only.
+// (scripts/check-product-build.mjs part 8 scans for the canary below and for this module). It runs in the Worker
+// request (fakes-hook.ts), whose env has DB, FILES and the three hub bindings; it reaches the hub over those bindings only.
 //
 // CLOSE TO AUTH, on purpose and only here: `notify` runs `notification_send` as a named member (an impersonation of a
 // run's person) and `hub` calls the hub's ReadGateway with a run-kind scope no run token stands behind. Both exist so a
@@ -24,6 +24,8 @@
 // - `systemNotice`: { notice }: sendSystemNotice(env, notice) with the real env. Answers its SystemNoticeResult.
 // - `logs`: { since?: { product?, hub? } }: the captured log lines of this isolate and the hub's. Answers
 //   `{ lines: [{ worker: 'product' | 'hub', line }], next: { product, hub } }`: the product's lines, then the hub's.
+//   "This isolate" is the Worker request's: the BrandAgent's lines are in it only locally (one isolate for the Worker
+//   and the object). On the remote per-PR deploy the object may run in another isolate, so its lines may be missing.
 // - `transcripts`: the R2 session store's objects (`sessions/`, the runner's transcripts) as texts. Answers `{ texts }`.
 //   Empty in the local test build (no container writes a session); filled on the per-PR remote deploy.
 import { z } from 'zod'
@@ -95,7 +97,10 @@ export function installLogCapture(): void {
     }
   }
 }
-// In the test build, from the isolate's start (this module loads with the BrandAgent). Tests install it themselves.
+// In the test build, from the isolate's start (this module loads with the Worker entry, which the BrandAgent's class is
+// exported from, so locally, where the Worker and the object share one isolate, the object's lines land in the same
+// buffer). Only locally: on the remote per-PR deploy the BrandAgent may run in another isolate, and `logs` (which runs in
+// the Worker request) may then miss its lines. Tests install it themselves.
 if (__INHOUSE_TEST_BUILD__) installLogCapture()
 
 export function productLogs(since = 0): { lines: string[]; next: number } {
@@ -254,4 +259,16 @@ export async function runTestFakes(body: unknown, env: TestFakesEnv): Promise<Te
     case 'transcripts':
       return transcriptsOp(env)
   }
+}
+
+/**
+ * Route 76's entry (fakes-hook.ts): one op in the Worker request. A handler's env has no `DB` or `FILES` (api.ts
+ * `handlerEnv`: D1 and R2 only through stores), and the ops need both raw, so they come from the Worker's own env here,
+ * in this test-build-only module, never in the handler (which every build bundles). The rest is the handler's env.
+ */
+export async function runTestFakesInWorker(body: unknown, handlerEnv: Omit<TestFakesEnv, 'DB' | 'FILES'>): Promise<TestFakesAnswer> {
+  // Imported here, not at the top: scripts/check-product-build.test.mjs loads this module in Node for its canary.
+  const { env } = await import('cloudflare:workers')
+  const { DB, FILES } = env as unknown as Pick<TestFakesEnv, 'DB' | 'FILES'>
+  return runTestFakes(body, { ...handlerEnv, DB, FILES })
 }
