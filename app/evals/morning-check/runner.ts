@@ -61,14 +61,14 @@ export interface RunnerEnv {
   beforeCases?(): Promise<void>
 }
 
-const ZERO: Fixed = { truncated: 0, dropped: 0, deduped: 0, overflow: 0 }
+const ZERO: Fixed = { truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 0 }
 
 /** The inverse of `fixedWords` (server/today/words.ts): the normaliser's counts from a summary's tail. */
 export function parseFixed(text: string | null): Fixed {
   const inside = /\(fixed: ([^)]*)\)/.exec(text ?? '')?.[1]
   if (inside === undefined) return { ...ZERO }
   const n = (word: string) => Number(new RegExp(`(\\d+) ${word}`).exec(inside)?.[1] ?? 0)
-  return { truncated: n('cut'), dropped: n('dropped'), deduped: n('repeated'), overflow: n('over the cap') }
+  return { truncated: n('cut'), dropped: n('dropped'), deduped: n('repeated'), overflow: n('over the cap'), costsRemoved: n('costs? removed') }
 }
 
 interface StoredItem { key: string; sev: string; sources: { n: string }[] }

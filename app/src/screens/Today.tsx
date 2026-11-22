@@ -3,7 +3,7 @@ import { Fragment } from 'react'
 import { Composer } from '../components/Composer'
 import { amountOf, draftView, flags, handled, issueCards, kindIcon, pendingIds, readingTools, riskLabel, setupRows, todayCopy, todayEmptyState, TONE_TEXT, toolView } from '../state/derive'
 import { isUrgent } from '../ui/severity'
-import { fmtMoney } from '../lib/format'
+import { fmtMoney, hasAmount } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -191,7 +191,7 @@ export function Today() {
                     <div className="min-h-3.5 flex-1" />
                     <div className={`flex flex-wrap items-baseline gap-x-2 pb-4 ${done}`}>
                       {/* A card with no money at stake (a status card, an item the check couldn't put a value on) shows no amount. */}
-                      {p.cost.minor > 0 && <span className="text-2xl leading-none font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>}
+                      {hasAmount(p.cost) && <span className="text-2xl leading-none font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>}
                       <span className="text-sm text-pretty text-muted-foreground">{p.costNote}</span>
                     </div>
                   </div>

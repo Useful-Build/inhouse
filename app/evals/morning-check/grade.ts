@@ -4,7 +4,7 @@
 // `fixture_*` tool fails (H1 OC 6). A `lenient` case (expected.ts) takes any subset of its items and any superset of its gaps.
 import type { MorningCaseMeta } from './expected.ts'
 
-export interface Fixed { truncated: number; dropped: number; deduped: number; overflow: number }
+export interface Fixed { truncated: number; dropped: number; deduped: number; overflow: number; costsRemoved: number }
 
 /** What a run left behind, read from the stored rows (the normalised result, the slot's summary and its tool calls). */
 export type Observed =
