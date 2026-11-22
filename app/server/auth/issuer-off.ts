@@ -11,6 +11,8 @@ export const TEST_ISSUER_CANARY: string = ''
  * with `!== undefined`, so `''` would demand `iss === ''`.)
  */
 export const TEST_ISSUER: string = ''
+/** No test issuer's header: authenticate.ts reads `Cf-Access-Jwt-Assertion` alone in this build. */
+export const TEST_ASSERTION_HEADER: string = ''
 export const testIssuerKeys: Real['testIssuerKeys'] = () => {
   throw new Error('The test issuer is not in this build.')
 }
