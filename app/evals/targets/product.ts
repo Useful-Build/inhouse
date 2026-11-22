@@ -52,6 +52,12 @@ export const TEST_ASSERTION_HEADER = 'X-Inhouse-Test-Assertion'
 /** The Access service token's header names, lowercased: a caller's own copy is dropped before ours goes on. */
 const EDGE_KEYS = new Set(['cf-access-client-id', 'cf-access-client-secret'])
 
+/**
+ * How long a person's signed headers are reused: half the test issuer's token life (test-issuer-mint.ts: 600 s). The first
+ * paid baseline (inhouse-ops run 44967754241) cached them for the whole run and died on a 401 10 min 38 s in.
+ */
+export const SIGN_REFRESH_MS = 300_000
+
 /** The Access service token's headers, or a refusal naming the variables (never their values). */
 export function accessHeaders(env: Record<string, string | undefined>): Record<string, string> {
   const id = env[EVAL_ACCESS_CLIENT_ID_VAR]
@@ -83,6 +89,8 @@ export interface ProductTargetOptions {
   model?: string
   /** The headers that sign `key` in. Default: a test-issuer token from INHOUSE_EVAL_ISSUER_JWK_FILE and INHOUSE_EVAL_AUD. */
   signIn?: (key: PersonKey) => Promise<Record<string, string>>
+  /** The clock the sign-in cache reads (tests). Default: Date.now. */
+  now?: () => number
   /** The memory door. Default: wrangler on INHOUSE_EVAL_D1_NAME (door.ts), made only after the eval-brand check passed. */
   door?: MemoryDoor
   /** Milliseconds between reads while a turn runs. */
@@ -136,11 +144,17 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   const pollMs = opts.pollMs ?? 2000
   const people: People = { current: '', tom: '', lena: '' }
   const signIn = opts.signIn ?? testIssuerSignIn(opts.env)
-  const headersOf = new Map<PersonKey, Record<string, string>>()
+  const now = opts.now ?? Date.now
+  // Each person's signed headers and when they were signed: re-signed once SIGN_REFRESH_MS old, well before expiry.
+  const headersOf = new Map<PersonKey, { headers: Record<string, string>; at: number }>()
 
   async function api(who: PersonKey, method: string, path: string, o: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<{ status: number; json: any; text: string }> {
-    let h = headersOf.get(who)
-    if (!h) headersOf.set(who, (h = await signIn(who)))
+    let signed = headersOf.get(who)
+    if (!signed || now() - signed.at >= SIGN_REFRESH_MS) {
+      signed = { headers: await signIn(who), at: now() }
+      headersOf.set(who, signed)
+    }
+    const h = signed.headers
     // The service token last, and any caller's token header dropped first in any case (#277 review F4: Headers would join
     // a differently cased duplicate with ours), so nothing replaces or corrupts it.
     const headers: Record<string, string> = Object.fromEntries(Object.entries({ ...h, ...o.headers }).filter(([k]) => !EDGE_KEYS.has(k.toLowerCase())))
@@ -155,8 +169,12 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     try { json = JSON.parse(text) } catch { /* not JSON */ }
     return { status: res.status, json, text }
   }
-  const must = (r: { status: number; text: string }, what: string, ok: number[] = [200, 201]): void => {
-    if (!ok.includes(r.status)) throw new Error(`${what}: ${r.status} ${r.text.slice(0, 200)}`)
+  // What and the status, and the Worker's error code when it's a plain code: never the response body, which can be an
+  // Access page with hostnames and a Ray ID, and ends up in report.json (#280 review 2).
+  const must = (r: { status: number; json?: any }, what: string, ok: number[] = [200, 201]): void => {
+    if (ok.includes(r.status)) return
+    const code = r.json?.error?.code
+    throw new Error(`${what}: ${r.status}${typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? ` ${code}` : ''}`)
   }
 
   let door: MemoryDoor | undefined = opts.door

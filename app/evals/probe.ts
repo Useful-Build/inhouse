@@ -12,8 +12,9 @@
 //    policy doesn't: the anonymous call then reaches the Worker);
 //  - any 401 or 403 that isn't the Worker's JSON counts as the edge's refusal (another zone rule would too), though the
 //    signed half then fails the same way, so the probe can't pass without Access letting the token in.
-// Reads only /api/me: no chat, no model, no write. Prints no token or secret. Exit 0 the lock holds and lets the harness
+// Reads /api/me and stops a made-up turn (404): no chat, no model, no write. Prints no token or secret. Exit 0 the lock holds and lets the harness
 // in, 1 it doesn't, 2 usage.
+import { randomBytes } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { accessHeaders, EVAL_ORIGIN_VAR, ProductTargetRefusal, testIssuerSignIn } from './targets/product.ts'
 
@@ -54,6 +55,18 @@ export async function probeEvalLock(env: Record<string, string | undefined>, doF
   } else {
     f.push(`GET /api/me with the service token was refused at the edge (${res.status}): Access didn't take the service token`)
   }
+
+  // The stop path every case's reset takes (POST /api/turns/<id>/stop, product.ts endTurns), for a made-up turn: signed
+  // in, the Worker answers 404 not_found and nothing is spent (the first paid baseline died on a refused stop).
+  const turn = `t_${randomBytes(16).toString('base64url').slice(0, 22)}`
+  const stop = await doFetch(`${origin}/api/turns/${turn}/stop`, {
+    method: 'POST', redirect: 'manual', body: '{}', signal: timeout(),
+    headers: { ...(await signIn('current')), 'Content-Type': 'application/json', Origin: origin, ...edge },
+  })
+  const stopText = await stop.text()
+  let code: unknown
+  try { code = JSON.parse(stopText)?.error?.code } catch { /* not JSON */ }
+  if (!(stop.status === 404 && code === 'not_found')) f.push(`POST /api/turns/<made-up>/stop answered ${stop.status}, not 404 not_found: the stop path every case's reset takes is refused`)
   return f
 }
 

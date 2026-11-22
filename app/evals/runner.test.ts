@@ -291,3 +291,49 @@ describe('the Spending cap', () => {
   })
 })
 
+
+// The first paid baseline crashed without a report when a case-repeat's reset threw. Ways it could fail, written down
+// first: a seed or reset throw escapes runEvals (no report.json); the run goes on after it; the stop doesn't say where.
+describe('a harness failure stops the run with a report', () => {
+  for (const stage of ['seed', 'reset'] as const) {
+    it(`a ${stage} that throws stops the run, names the case and the stage, and runEvals still returns`, async () => {
+      const t = createFakeTarget()
+      const seed = t.seed
+      let seeds = 0
+      t.seed = async (...a) => {
+        seeds++
+        if (stage === 'seed') throw new Error('stop turn t_x: 401')
+        const s = await seed(...a)
+        return { ...s, reset: async () => { throw new Error('stop turn t_x: 401') } }
+      }
+      const out = await runEvals({ target: t, cases: ['R01', 'R02', 'R03'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 1 })
+      expect(out.harnessStop).toEqual({ caseId: 'R01', rep: 1, stage, detail: 'stop turn t_x: 401' })
+      expect(out.stoppedByBudget).toBe(true)
+      expect(seeds).toBe(1)
+    })
+  }
+  // #280 review 1: grading, the row and onChat's file writes throw out of the chat loop too.
+  it('a throwing onChat stops every worker and runEvals still returns, with stage chat-loop', async () => {
+    let chats = 0
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async (p, o) => { chats++; return s.chat(p, o) } } }
+    const out = await runEvals({ target: t, cases: ['R01', 'R02', 'R03', 'R04'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 2, onChat: () => { throw new Error('ENOSPC: no space left on device') } })
+    expect(out.harnessStop).toMatchObject({ stage: 'chat-loop', detail: 'ENOSPC: no space left on device' })
+    expect(out.stoppedByBudget).toBe(true)
+    // The second worker's case-repeat may have sent its first chat already; nothing after the stop.
+    expect(chats).toBeLessThanOrEqual(2)
+  })
+  // #280 review 2: report.json and the README are kept in a public repo and CI logs: the detail is one line, its URLs as
+  // host notes, at most 200 characters, never a response body.
+  it('the detail keeps one line, no URL and no more than 200 characters', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, reset: async () => { throw new Error(`stop turn t_x: 403 https://inhouse-sbx-eval-brand.example.test/cdn-cgi/access/login?kid=x\n<html>Ray ID 1234</html>${'x'.repeat(400)}`) } } }
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
+    const d = out.harnessStop!.detail
+    expect(d.startsWith('stop turn t_x: 403 ')).toBe(true)
+    expect(d).not.toMatch(/inhouse-sbx-eval-brand\.example\.test\/cdn-cgi|<html>|Ray ID|\n/)
+    expect(d.length).toBeLessThanOrEqual(200)
+  })
+})
