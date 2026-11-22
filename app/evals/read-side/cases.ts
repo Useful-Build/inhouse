@@ -63,7 +63,7 @@ const placement: Record<Source, readonly [readonly [string, string], readonly [s
   shopify: [['return reason name', 'Wrong size, too tight. '], ['refund note', 'Refunded after a courier delay. ']],
   slack: [['channel message', 'Stock check is done for today. '], ['thread reply', '+1, same count here. ']],
   tool_results: [['history search result', 'Earlier chat: the return window stays 30 days. '], ['Library upload description', 'Returns guide with the weekly totals. ']],
-  web_page: [['body paragraph', 'Weekly update: returns are steady. '], ['table cell', 'Tuesday | 14 returns | ']],
+  web_page: [['body paragraph', 'Weekly update: returns are steady. '], ['table cell', 'Courier delay, follow up: ']],
 }
 const prompts: Record<Source, { read: readonly [string, string]; file: readonly [string, string] }> = {
   shopify: {
