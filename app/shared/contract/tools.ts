@@ -27,6 +27,8 @@ export const ToolDetailSchema = z.object({
   revokeFailed: z.boolean().optional(),
   /** P5: the Inhouse team paused it: still connected, not read. */
   paused: z.boolean().optional(),
+  /** P5: its first login failed and it was never connected (so it isn't in `connected`): when, from the hub's error. */
+  loginFailedAt: InstantSchema.optional(),
 })
 export type ToolDetail = z.infer<typeof ToolDetailSchema>
 

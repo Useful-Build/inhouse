@@ -152,6 +152,8 @@ export function toolView(ctx: Ctx, key: string): ToolView {
   const d0 = display()
   // `disconnected` means `tools.connection` has this tool (toolState), with when its login failed.
   const lostAt = state === 'disconnected' ? fmtTime(ctx.data.tools.connection[key]!.since, d0) : ''
+  // A first login that failed (never connected, so `off`): the same failed-login status and line as a lost one.
+  const failedFirst = state === 'off' && d.loginFailedAt ? fmtTime(d.loginFailedAt, d0) : null
   const lastRead = ctx.data.tools.lastRead[key] ?? ctx.data.tools.lastRead.default
   const readAt = fmtTime(lastRead, d0)
   const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet', off: 'Off' }[state]
@@ -160,9 +162,9 @@ export function toolView(ctx: Ctx, key: string): ToolView {
     ({ key: k, icon, title, text, need, locked: ctx.S < need, tag: ctx.S < need ? STAGE_TAGS[need] : tagOf })
   return {
     key, name: d.name, state,
-    statusText: { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}`, off: 'Not connected' }[state],
+    statusText: failedFirst !== null ? `Disconnected · login expired at ${failedFirst}` : { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}`, off: 'Not connected' }[state],
     // Being connected: on day one, when Today's setup list says it connects; else when it goes live ("Live by Fri, Nov 20").
-    listLine: state === 'connecting' ? setup ?? sinceLine(d, d0) : { connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting', off: 'Not connected' }[state],
+    listLine: state === 'connecting' ? setup ?? sinceLine(d, d0) : failedFirst !== null ? 'Needs reconnecting' : { connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting', off: 'Not connected' }[state],
     connectedRow: state === 'connecting' ? 'Not yet' : state === 'off' ? 'Not connected' : `${sinceLine(d, d0)}, by your Inhouse team`,
     lastRead: state === 'connecting' || state === 'off' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
     abilities: [

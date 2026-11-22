@@ -357,6 +357,9 @@ export class SignInCore {
       scopes: check.scopes,
       failures: 0,
       lastError: null,
+      // A client-credentials account has no completeConnect: its first successful grant is when it was connected. Kept
+      // through every refresh grant, so the Tools page's "since" never moves (disconnect leaves only via completeConnect).
+      connectedAtMs: r1.connectedAtMs ?? grant.startMs,
     }
     this.#write(next)
     log('signin_grant', { accountId, code: 'ok', generation: next.generation, kid: token.kid, state: 'active' })
@@ -548,6 +551,9 @@ export class SignInCore {
     if ((await this.#kind(accountId)) === 'oauth_mcp') return this.#disconnectMcp(accountId)
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')
+    // connectedAtMs is kept here: only completeConnect leaves `disconnected`, and it sets a new one. A future reconnect
+    // path for a client-credentials account (a grant out of `disconnected`) must clear connectedAtMs first, or the grant's
+    // `r1.connectedAtMs ?? grant.startMs` would keep the old connect date.
     const next: SignInRecord = {
       ...r,
       state: 'disconnected',
@@ -768,8 +774,18 @@ export class SignInCore {
   async accountStatus(accountId: string): Promise<HubResult<AccountStatus>> {
     const base = this.status(accountId)
     if (!base.ok) return base
-    const r = normalize(this.#read() ?? this.#fresh(accountId))
-    const kind = r.kind === 'oauth_mcp' || (await this.#kind(accountId)) === 'oauth_mcp' ? 'oauth_mcp' : 'client_credentials'
+    // Kind first (it may await the registry), so the backfill below runs only for a client-credentials account.
+    const kind = await this.#kind(accountId)
+    const raw = this.#read()
+    const r = normalize(raw ?? this.#fresh(accountId))
+    // A client-credentials record granted before connectedAtMs was kept: its current token's grant time. That is the
+    // latest grant, so the first connect was at or before it (an upper bound on the true connect time, never the clock).
+    // Read and written with no await in between, so it can't overwrite a newer record; later reads and refresh grants
+    // keep it. A record that never held a token (a failed first grant) gets no date.
+    if (raw && kind === 'client_credentials' && r.connectedAtMs === null && r.obtainedAtMs !== null && (r.state === 'active' || r.state === 'failed')) {
+      r.connectedAtMs = r.obtainedAtMs
+      this.#write({ ...raw, connectedAtMs: r.obtainedAtMs })
+    }
     let needsReconnect = false
     if (kind === 'oauth_mcp') {
       const p = await this.#provider(accountId)
