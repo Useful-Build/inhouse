@@ -204,10 +204,12 @@ describe('expMs (P3): the sign-in window ends at the token\'s exp', () => {
 })
 
 describe('binding (through in-memory stores)', () => {
-  it('answers not_invited and removed with 403 and their reason, wrong_kind with 401', async () => {
+  it('answers not_invited, removed and wrong_kind with 403 and their reason, never a principal', async () => {
     expect((await run(await person({ sub: 'sub-new' }))).out).toEqual({ refused: 'forbidden', reason: 'not_invited' })
     expect((await run(await person({ sub: 'sub-gone' }))).out).toEqual({ refused: 'forbidden', reason: 'removed' })
-    expect((await run(await person({ sub: 'sub-ih' }))).out).toEqual({ refused: 'unauthorized' })
+    // P8a P-auth: an Inhouse team identity on the brand app is told apart from an ended session (401), so the client can
+    // show a final screen instead of "Sign in again" (a reload loop). The answer is the reason alone: no member id or name.
+    expect((await run(await person({ sub: 'sub-ih' }))).out).toEqual({ refused: 'forbidden', reason: 'wrong_kind' })
   })
   it('answers 503 with no principal when the stores fail', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})

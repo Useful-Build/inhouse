@@ -11,8 +11,9 @@ export interface SignIn {
 }
 
 /**
- * Why a brand-app sign-in gets no principal: `not_invited` and `removed` answer 403 with that `reason`; `wrong_kind`
- * (the subject is bound to an `inhouse` or `service` row) answers 401.
+ * Why a brand-app sign-in gets no principal: each answers 403 with that `reason`. `wrong_kind` is a subject bound to an
+ * `inhouse` or `service` row (P8a P-auth: it was 401, which the client can't tell from an ended session, so it showed
+ * "Sign in again" and looped). The answer is the reason alone: no member id, name or email.
  */
 export type SignInRefusal = 'not_invited' | 'removed' | 'wrong_kind'
 

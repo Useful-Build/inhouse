@@ -332,9 +332,9 @@ export class HttpAgent implements AgentClient {
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
-  /** A 401, or a 403 that says the person isn't on the team (never invited, or removed): the signed-out state, whichever request met it. */
+  /** A 401, or a 403 that says the person isn't on the team (never invited, removed, or an Inhouse team sign-in): the signed-out state, whichever request met it. */
   private static gone(err: AgentError): boolean {
-    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON.notInvited || err.reason === REASON.removed))
+    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON.notInvited || err.reason === REASON.removed || err.reason === REASON.wrongKind))
   }
   private failStatus(k: ResourceKey, e: unknown) {
     const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
