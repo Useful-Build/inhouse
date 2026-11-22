@@ -105,6 +105,8 @@
 // `secrets` (wrangler fails a deploy whose `secrets.required` aren't set) and `define` (applied at bundle time) must be
 // empty, as every unlisted key: no generated sandbox or candidate hub config carries `secrets.required`. Any
 // runtime secret the candidate hub needs is a per-run value the ops deploy sets at deploy time, not a store credential.
+// (P5) `worker_loaders` may be exactly [{ "binding": "LOADER" }] in a hub config and nothing else; the product config
+// still refuses it.
 // Eval mode (p3-eval-observability rev 2, rec 2): the eval build's deployment (vite --mode product-eval), deployed from
 // main only by the ops repo. The one mode that allows the AI binding and gateway vars beside the test issuer (the eval
 // harness signs in through it and grades the real model; Q2's one named spend exception). Every sandbox rule above holds,
@@ -399,6 +401,19 @@ const HUB_KEYS = new Set([
   'name', 'account_id', 'workers_dev', 'preview_urls', 'vars', 'durable_objects', 'migrations', 'main', 'observability',
   'rules', 'python_modules', '$schema', 'compatibility_date', 'compatibility_flags', 'no_bundle', 'limits', 'send_metrics',
 ])
+/** (P5) The one loader binding a sandbox hub config may hold: dynamic Workers for code mode, as the hub's own configs pin it. */
+const HUB_LOADER_SHAPE = 'worker_loaders may only be exactly [{ "binding": "LOADER" }] in a sandbox hub config'
+/** Why a hub's `worker_loaders` is not exactly [{ binding: "LOADER" }] (null: it is). */
+function hubLoaderFault(value) {
+  if (!Array.isArray(value)) return `${HUB_LOADER_SHAPE}: it is not a list`
+  if (value.length !== 1) return `${HUB_LOADER_SHAPE}: it has ${value.length} entries`
+  const e = value[0]
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return `${HUB_LOADER_SHAPE}: its entry is not an object`
+  const extra = Object.keys(e).filter(k => k !== 'binding')
+  if (extra.length) return `${HUB_LOADER_SHAPE}: its entry has extra keys (${extra.join(', ')})`
+  if (e.binding !== 'LOADER') return `${HUB_LOADER_SHAPE}: its binding is ${JSON.stringify(e.binding)}, not "LOADER"`
+  return null
+}
 /** (P4) The candidate hub's vars: the store's shop and client id, both empty (no store in the sandbox account). */
 const CANDIDATE_HUB_VARS = new Set(['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID'])
 /**
@@ -484,6 +499,10 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
 
   for (const [key, value] of Object.entries(config)) {
     if (key === 'env' || key === 'ai' || key === 'services' || FORBIDDEN.has(key)) continue // each has its own rule
+    if (hub && key === 'worker_loaders') { // (P5) a hub may hold exactly the LOADER binding; the product still may not
+      if (!isEmpty(value)) { const fault = hubLoaderFault(value); if (fault) fail(fault) }
+      continue
+    }
     if (!SANDBOX_KEYS.has(key) && !isEmpty(value)) fail(`${key} is set: a sandbox config may not use it (it could reach resources or files outside the sandbox)`)
     else if (hub && !HUB_KEYS.has(key) && !isEmpty(value)) fail(`${key} is set: a sandbox hub config may not use it (the hub has no route, assets or storage but its own Durable Objects)`)
   }
