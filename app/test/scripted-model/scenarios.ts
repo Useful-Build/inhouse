@@ -242,6 +242,20 @@ export const MORNING_CHECK_ANSWER = {
   ],
 }
 
+/** The `late-orders` scenario's answer (the P4 ship spec's S3): a table of at most LATE_ORDERS_BOUND rows, then the sources it read. */
+export const LATE_ORDERS_BOUND = 3
+export const LATE_ORDERS_ORDERS = ['#1001', '#1002', '#1003']
+export const LATE_ORDERS_SOURCES = 'Sources: Shopify orders, the 3 oldest unfulfilled.'
+export const LATE_ORDERS_TEXT = [
+  'These orders are late (the 3 oldest, not all of them):',
+  '',
+  '| Order | Waiting | Why |',
+  '| --- | --- | --- |',
+  ...LATE_ORDERS_ORDERS.map((o, i) => `| ${o} | ${i + 4} days | Unfulfilled |`),
+  '',
+  LATE_ORDERS_SOURCES,
+].join('\n')
+
 /**
  * The `morning-check` scenario's result when its read failed (the case's shop answers errors, as the graded set's
  * `outage-all` does): nothing read, so no items, and every area a gap (shared/contract/today.ts GAP_AREAS).
@@ -389,6 +403,14 @@ export const SCENARIOS: Record<string, Scenario> = {
     HUB_WRITE_REFUSED_ANSWER,
     HUB_WRITE_NOT_REFUSED_ANSWER,
   ),
+
+  /** One bounded read of the orders through the hub, then a table of the late ones with its sources (the P4 ship spec's S3). */
+  'late-orders': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_late_read', name: 'mcp__apps__orders_search', input: { first: LATE_ORDERS_BOUND } }], expect: mainLoop() },
+      { content: [{ type: 'text', text: LATE_ORDERS_TEXT }], expect: both(mainLoop(), resultIs('toolu_scripted_late_read', false)) },
+    ],
+  },
 
   /** Prints the runner's environment into a file the spec reads back through the Library (`outputs/env.txt`), then answers. */
   'env-to-file': {
