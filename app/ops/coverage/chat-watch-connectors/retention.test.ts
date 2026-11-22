@@ -61,6 +61,9 @@ describe('chats (failure 1)', () => {
     const live = `c_${token()}`
     const oldObjs = await addChat(db, bucket, { id: old, owner: seeded.members.dana, lastAtMs: cut - 1, marker: 'old' })
     const liveObjs = await addChat(db, bucket, { id: live, owner: seeded.members.dana, lastAtMs: cut + 1, marker: 'live' })
+    // Exactly at the chats cutoff: kept.
+    const edge = `c_${token()}`
+    await addChat(db, bucket, { id: edge, owner: seeded.members.dana, lastAtMs: cut, marker: 'edge' })
     // The live chat's first message is years old: it stays with its chat.
     await db.prepare('UPDATE chat_messages SET at_ms = ? WHERE chat_id = ?').bind(cut - 900 * DAY, live).run()
     // The chat cascade's stores (tool_calls and chat_files have own-age jobs too, planned on their own as the handler does).
@@ -71,6 +74,7 @@ describe('chats (failure 1)', () => {
     expect(await object(oldObjs.fileKey)).toBe(false)
     expect(await object(oldObjs.sessionKey)).toBe(false)
     expect(await has('chats', 'id = ?', live)).toBe(1)
+    expect(await has('chats', 'id = ?', edge)).toBe(1)
     expect(await has('chat_messages', 'chat_id = ?', live)).toBe(2)
     expect(await object(liveObjs.fileKey)).toBe(true)
     expect(await object(liveObjs.sessionKey)).toBe(true)
@@ -84,7 +88,8 @@ describe('chats (failure 1)', () => {
     const gone = `c_${token()}`
     const kept = `c_${token()}`
     await addChat(db, bucket, { id: gone, owner: seeded.members.dana, lastAtMs: now - DAY, deletedAtMs: trashCut - 1, marker: 'trash1' })
-    await addChat(db, bucket, { id: kept, owner: seeded.members.dana, lastAtMs: now - DAY, deletedAtMs: trashCut + DAY, marker: 'trash2' })
+    // Exactly at the trash cutoff: kept (strictly before goes), so a `<=` or an early purge is caught (#346 review M3).
+    await addChat(db, bucket, { id: kept, owner: seeded.members.dana, lastAtMs: now - DAY, deletedAtMs: trashCut, marker: 'trash2' })
     await retain(['chats'], now)
     expect(await has('chats', 'id = ?', gone)).toBe(0)
     expect(await has('chats', 'id = ?', kept)).toBe(1)

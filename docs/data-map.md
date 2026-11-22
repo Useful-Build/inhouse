@@ -13,45 +13,45 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 `app/ops/coverage/chat-watch-connectors/data-map.ts`, and a test fails when the two differ. Don't edit it by hand.
 
 <!-- stores:start -->
-| Store | Kind | Holds | Personal data | Retention | Export | Deletion | Accepted keep |
-|---|---|---|---|---|---|---|---|
-| `members` | D1 table | Team members and service rows | Name, email, title, sign-in subject, photo key | Kept while the deployment lives | Yes | Pseudonymised in place (the id stays) |  |
-| `settings` | D1 table | Brand and personal settings | Personal settings; an approver setting names a member id | Kept while the deployment lives | Yes | Rows whose `owner` is the person deleted |  |
-| `support_grants` | D1 table | Inhouse team support grants | Member ids of who granted and ended them | Kept while the deployment lives | Yes | Kept: the brand access history: created_by and ended_by keep the pseudonymous id |  |
-| `audit_log` | D1 table | The audit log | Member ids only | Never shortened | Yes | Kept: decision Q3: never shortened or edited |  |
-| `photos/` | R2 prefix | Member photos | Photo bytes | Replaced on upload; with the person | Yes | Objects under the person's prefix deleted |  |
-| `chats` | D1 table | Chats | Owner id, titles | Chats setting (default 12 months) from last activity; trash 30 days | Yes | Deleted: the chat cascade over the person's own chats, soft-deleted ones included |  |
-| `chat_messages` | D1 table | Chat messages, the agent's answers too | Message text, author id | With its chat | Yes | Deleted: with its chat, in the chat cascade |  |
-| `tool_calls` | D1 table | A redacted record of each tool call | Member id, input hashes | Steps setting (default 12 months); with its chat | Yes | Deleted: with its chat, in the chat cascade |  |
-| `BrandAgent` | Durable Object | The agent's live state: runs, turns, run events, run tokens | Turn text, run events, owner ids | Ended runs by the steps setting; a chat's rows with the chat | No | Deleted: personData deletes the person's rows; authority.id keeps a removed member's id so their sends stay refused (an accepted keep, line A), flags.value (paused_by) keeps the pseudonymous id | A removed member's id in the removed set (refuses their sends) |
-| `sessions/` | R2 prefix | Agent session transcripts | Transcript text | With its chat | No | Deleted: the transcripts under sessions/<chatId>/ of the person's chats, before their rows (keys name chats, not people) |  |
-| `chat_files` | D1 table | Chat attachments and outputs | File names, uploader id | With its chat; a Library-deleted output 30 days after its mark | Yes | Deleted: with its chat, in the chat cascade |  |
-| `files/` | R2 prefix | Chat file bytes | File bytes | With its chat or its trashed row | Yes | Deleted: the objects under files/<chatId>/ of the person's chats, before their rows (keys name chats, not people) |  |
-| `usage_months` | D1 table | Monthly AI spend and cap | None | Kept while the deployment lives | Yes | Kept: no person data: the brand's monthly bill |  |
-| `usage_turns` | D1 table | Each turn's reserved and settled spend | Member id | Kept while the deployment lives | Yes | Kept: the brand's bill: member_id is pseudonymous once the member row is |  |
-| `usage_extends` | D1 table | Each model call's hold and cost | None | Kept while the deployment lives | No | Kept: no person data: a call's hold and cost, keyed by its turn |  |
-| `audit_copy_state` | D1 table | The audit copy's cursor | None | Kept while the deployment lives | No | Kept: no person data: the audit copy's cursor |  |
-| `audit-copy/` | R2 prefix | The audit log's daily copy | Member ids only | Never shortened | No | Kept: decision Q3: the audit log's daily copy is never shortened (people by member id only) |  |
-| `memories` | D1 table | Remembered facts, brand and personal | Fact text, owner and creator ids | Forgotten facts 30 days after their last update; others kept | Yes | Rows whose `owner_id` is the person deleted | Brand facts a person saved |
-| `memories_fts` | D1 table | The search index over facts | A copy of fact text | Follows its source | No | Follows its source |  |
-| `chat_messages_fts` | D1 table | The search index over messages | A copy of message text | Follows its source | No | Follows its source |  |
-| `Runner` | Durable Object | The runner pool's container state | None | Holds nothing kept | No | Kept: holds nothing of a person's (p3-design section 11) |  |
-| `activity_lines` | D1 table | The Activity feed | Member ids only, names shown at read | Steps setting (default 12 months) | Yes | Kept: ids only, rendered as A former member once the member row is pseudonymised; no UPDATE needed |  |
-| `notices` | D1 table | The bell's notices | Member ids; team and admin notices may carry text | Steps setting (default 12 months) | No | Deleted: a notice addressed only to the person (audience = member) goes, after its reads (notice_reads references notices); a team or admin notice keeps person_id and body (an accepted keep) | Team and admin notice text |
-| `notice_reads` | D1 table | Which member read which notice | Member id | With its notice | No | Rows whose `member_id` is the person deleted |  |
-| `routines` | D1 table | Routines | Instruction text, creator id | Kept while the routine is | Yes | Kept: a routine runs on after its creator is removed (Wasim, 2026-11-19): creator_id is pseudonymous; instruction is an accepted keep | Routine instructions (a routine runs on after its creator is removed) |
-| `routine_slots` | D1 table | Each routine run | Prompt and result text, creator and requester ids | Steps setting (default 12 months) | Yes | Kept: routine history and Today's foreign key: the ids are pseudonymous; prompt_text and result_text are accepted keeps | Routine prompts and results |
-| `routine_alerts` | D1 table | Two invariant counters | None | Kept while the deployment lives | No | Kept: no person data: two invariant codes and a count |  |
-| `library_uploads` | D1 table | Library uploads | File names, uploader id | Pending after 1 day; trash 30 days after its mark; otherwise until deleted | Yes | Kept: the brand's own files: created_by is pseudonymous |  |
-| `library_marks` | D1 table | Library trash marks | Member id of who deleted | With its file | Yes | Kept: the brand's trash: deleted_by is pseudonymous; a chat output's mark goes with the chat cascade |  |
-| `library/` | R2 prefix | Library file bytes | File bytes | With its upload row | Yes | Kept: the brand's own files, with their library_uploads rows (keys name files, not people) |  |
-| `today_items` | D1 table | Today's items | Store data, no person key | Steps setting (default 12 months) | Yes | Kept: store data with no person key; item_json is an accepted keep | Today item text |
-| `today_aside` | D1 table | Today items set aside | Member id | Steps setting (default 12 months) | Yes | Kept: the team's Today state: by is pseudonymous |  |
-| `backups/` | R2 prefix | D1 backups | Copies of every backed-up table | 30 days (bucket lifecycle rule) | No | Kept: kept 30 days by the R2 lifecycle rule (Q3) |  |
-| `restore/` | R2 prefix | Restore records and snapshots | A copy of the audit log at a restore | 30 days (bucket lifecycle rule) | No | Kept: kept 30 days by the R2 lifecycle rule (Q3) |  |
-| `deletion-log/` | R2 prefix | What each deletion and retention run removed | Member ids and counts only | Never shortened | Yes | Kept: the deletion log is never shortened |  |
-| `egress_fetches` | D1 table | Outbound web requests by host | None | 30 days | No | Kept: no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged |  |
-| `SignIn` | Durable Object | The connector hub's sealed tokens | None (client credentials) | Kept while the connection is | No | Kept: the brand's connector token (client credentials): no person connects it on P4; pending items sweep themselves |  |
+| Store | Kind | Holds | Personal data | Retention | Export | Deletion | Backup | Accepted keep |
+|---|---|---|---|---|---|---|---|---|
+| `members` | D1 table | Team members and service accounts | Name, email, title, sign-in subject, photo key | Kept while the deployment lives | Yes | Name and email removed; the member id stays | Nightly, exact |  |
+| `settings` | D1 table | Brand and personal settings | Personal settings; an approver setting names a member id | Kept while the deployment lives | Yes | Rows that belong to the person deleted | Nightly, exact |  |
+| `support_grants` | D1 table | Support access the brand granted | Member ids of who granted and ended it | Kept while the deployment lives | Yes | Kept: the access history keeps the member id, which no longer names anyone | Nightly, exact |  |
+| `audit_log` | D1 table | The audit log | Member ids only | Never shortened | Yes | Kept: the audit log is never shortened or edited | Nightly, exact (rows only added) |  |
+| `photos/` | R2 prefix | Member photos | Photo bytes | Replaced on upload; deleted with the person | Yes | Objects that belong to the person deleted | Not backed up |  |
+| `chats` | D1 table | Chats | Owner id, titles | Chats setting (default 12 months) from last activity; deleted chats 30 days after deletion | Yes | Deleted with all of the person's own chats, deleted ones included | Nightly, copied in pages (may lag the snapshot by minutes) |  |
+| `chat_messages` | D1 table | Chat messages, the agent's answers too | Message text, author id | With its chat | Yes | Deleted with the person's chats | Nightly, exact (rows only added) |  |
+| `tool_calls` | D1 table | A record of each tool call, without its inputs | Member id, input fingerprints | Steps setting (default 12 months); with its chat | Yes | Deleted with the person's chats | Nightly, exact unless rows arrive during the copy |  |
+| `BrandAgent` | Durable Object | The agent's live state: runs, turns, run events, run tokens | Question text, run events, owner ids | Finished runs by the steps setting; a chat's state with the chat | No | The person's runs, turns, events and tokens deleted, once none of their turns is still running | Durable Object point-in-time recovery | A removed member's id in the removed list, so their sends stay refused |
+| `sessions/` | R2 prefix | Agent session transcripts | Transcript text | With its chat | No | Deleted with the person's chats | Not backed up (kept through a database restore) |  |
+| `chat_files` | D1 table | Chat attachments and outputs | File names, uploader id | With its chat; an output deleted from the Library goes 30 days after | Yes | Deleted with the person's chats | Nightly, copied in pages (may lag the snapshot by minutes) |  |
+| `files/` | R2 prefix | Chat file bytes | File bytes | With its chat or its deleted file | Yes | Deleted with the person's chats | Not backed up (kept through a database restore) |  |
+| `usage_months` | D1 table | Monthly AI spend and cap | None | Kept while the deployment lives | Yes | Kept: no personal data | Nightly, exact |  |
+| `usage_turns` | D1 table | Each turn's reserved and settled spend | Member id | Kept while the deployment lives | Yes | Kept: the brand's bill keeps the member id, which no longer names anyone | Nightly, copied in pages (may lag the snapshot by minutes) |  |
+| `usage_extends` | D1 table | Each model call's hold and cost | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, copied in pages (may lag the snapshot by minutes) |  |
+| `audit_copy_state` | D1 table | Where the audit log's daily copy has reached | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, exact |  |
+| `audit-copy/` | R2 prefix | The audit log's daily copy | Member ids only | Never shortened | No | Kept: the audit log's copy is never shortened | Not backed up (it is itself a copy) |  |
+| `memories` | D1 table | Remembered facts, brand and personal | Fact text, owner and creator ids | Forgotten facts 30 days after their last change; others kept | Yes | Rows that belong to the person deleted | Nightly, exact | Brand facts a person saved |
+| `memories_fts` | D1 table | The search index over facts | A copy of fact text | Follows its source | No | Follows its source | Rebuilt from its source after a restore |  |
+| `chat_messages_fts` | D1 table | The search index over messages | A copy of message text | Follows its source | No | Follows its source | Rebuilt from its source after a restore |  |
+| `Runner` | Durable Object | The agent runners' working state | None | Holds nothing kept | No | Kept: no personal data | Nothing to restore |  |
+| `activity_lines` | D1 table | The Activity feed | Member ids only, names shown when read | Steps setting (default 12 months) | Yes | Kept: lines keep the member id and show "Former member" | Nightly, exact (rows only added) |  |
+| `notices` | D1 table | The bell's notices | Member ids; team and admin notices may carry text | Steps setting (default 12 months) | No | Notices addressed only to the person deleted, with their reads | Nightly, copied in pages (may lag the snapshot by minutes) | Team and admin notice text |
+| `notice_reads` | D1 table | Which member read which notice | Member id | With its notice | No | Rows that belong to the person deleted | Nightly, exact unless rows arrive during the copy |  |
+| `routines` | D1 table | Routines | Instruction text, creator id | Kept while the routine is | Yes | Kept: a routine keeps running after its creator leaves; the creator id no longer names anyone | Nightly, exact | Routine instructions |
+| `routine_slots` | D1 table | Each routine run | Prompt and result text, creator and requester ids | Steps setting (default 12 months) | Yes | Kept: routine history keeps the member ids, which no longer name anyone | Nightly, copied in pages (may lag the snapshot by minutes) | Routine prompts and results |
+| `routine_alerts` | D1 table | Two internal counters | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, exact |  |
+| `library_uploads` | D1 table | Library uploads | File names, uploader id | Unfinished uploads after 1 day; deleted files 30 days after deletion; otherwise until deleted | Yes | Kept: the brand's own files keep the uploader id, which no longer names anyone | Nightly, copied in pages (may lag the snapshot by minutes) |  |
+| `library_marks` | D1 table | Library files moved to the trash | Member id of who deleted | With its file | Yes | Kept: the brand's trash keeps the member id; marks on the person's chat outputs go with their chats | Nightly, exact |  |
+| `library/` | R2 prefix | Library file bytes | File bytes | With its upload | Yes | Kept: the brand's own files | Not backed up (kept through a database restore) |  |
+| `today_items` | D1 table | Today's items | Store data, no member id | Steps setting (default 12 months) | Yes | Kept: no member id | Nightly, copied in pages (may lag the snapshot by minutes) | Today item text |
+| `today_aside` | D1 table | Today items set aside | Member id | Steps setting (default 12 months) | Yes | Kept: the team's Today keeps the member id, which no longer names anyone | Nightly, exact |  |
+| `backups/` | R2 prefix | Database backups | Copies of every backed-up table | 30 days (bucket lifecycle rule) | No | Kept: backups expire after 30 days, so a deleted person leaves them within that window | Is the backup |  |
+| `restore/` | R2 prefix | Restore records and snapshots | A copy of the audit log at a restore | 30 days (bucket lifecycle rule) | No | Kept: expires after 30 days, like the backups | Restore records |  |
+| `deletion-log/` | R2 prefix | What each deletion and retention run removed | Member ids and counts only | Never shortened | Yes | Kept: the deletion log is never shortened | Not backed up (replayed after a restore) |  |
+| `egress_fetches` | D1 table | Outbound web requests by host | None | 30 days | No | Kept: no member id; removed after 30 days | Nightly, exact (rows only added) |  |
+| `SignIn` | Durable Object | The connector hub's sealed tokens | None | Kept while the connection is | No | Kept: no personal data | Not restored: reconnect |  |
 <!-- stores:end -->
 
 ## Terms
