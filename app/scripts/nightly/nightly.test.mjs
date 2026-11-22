@@ -169,9 +169,15 @@ describe('nightly.yml', () => {
     expect(wf()).toMatch(/\n  schedule:\n    - cron: "\d+ \d+ \* \* \*"\n/)
     expect(wf()).toMatch(/\n  workflow_dispatch:\n/)
   })
-  it('runs main only, with no secrets and read-only contents', () => {
-    expect(wf()).toMatch(/\n    if: github\.ref == 'refs\/heads\/main'\n/)
-    expect(wf()).not.toMatch(/secrets\./)
+  // P4 Acc 9 (bootstrap): the connector check holds the read fixture's three secrets, so "no secrets" became "only
+  // those three, only in the connectors job". The eval key stays out (no other secret name can appear).
+  it('runs main only, with read-only contents and no secret outside the connectors job', () => {
+    const text = wf()
+    expect(text.match(/\n    if: github\.ref == 'refs\/heads\/main'\n/g)).toHaveLength(2)
+    const connectors = text.slice(text.indexOf('\n  connectors:\n'), text.indexOf('\n  notify:\n'))
+    const rest = text.replace(connectors, '')
+    expect(rest).not.toMatch(/secrets\./)
+    expect(new Set(connectors.match(/secrets\.[A-Z_]+/g))).toEqual(new Set(['secrets.SHOPIFY_SHOP', 'secrets.SHOPIFY_CLIENT_ID', 'secrets.SHOPIFY_CLIENT_SECRET']))
     expect(wf()).toMatch(/\npermissions:\n  contents: read\n/)
     expect(wf()).toMatch(/persist-credentials: false/)
   })
@@ -179,7 +185,7 @@ describe('nightly.yml', () => {
   it('a failure opens or updates one issue, from a job of its own that alone may write issues', () => {
     const text = wf()
     const notify = text.slice(text.indexOf('\n  notify:\n'))
-    expect(notify).toMatch(/^\n  notify:\n    needs: probes\n    if: failure\(\)\n/)
+    expect(notify).toMatch(/^\n  notify:\n    needs: \[probes, connectors\]\n    if: failure\(\)\n/)
     expect(notify).toMatch(/\n    permissions:\n      issues: write\n/)
     expect(notify).not.toMatch(/actions\/checkout|npm |contents: write/)
     expect(notify).toMatch(/TITLE: Nightly guard check failing\n/)
@@ -189,6 +195,22 @@ describe('nightly.yml', () => {
     // The probes job keeps read-only contents: the workflow grants nothing more, and only notify adds issues: write.
     expect(text.slice(0, text.indexOf('\n  notify:\n'))).not.toMatch(/issues: write/)
     expect(text.match(/issues: write/g)).toHaveLength(1)
+  })
+  // P4 Acc 9: the live connector files against the read fixture, from its own environment. Ways it can fail: it writes
+  // (the recorder or a reseed runs), a real failure is masked, the secrets reach a step other than the test run.
+  it('runs the connector live files read-only, unmasked, with the secrets on the test step only', () => {
+    const text = wf()
+    const connectors = text.slice(text.indexOf('\n  connectors:\n'), text.indexOf('\n  notify:\n'))
+    expect(connectors).toMatch(/\n    environment: shopify-read-fixture\n/)
+    expect(connectors).toMatch(/\n    permissions:\n      contents: read\n/)
+    expect(connectors).toMatch(/\n        run: npm run test:live -- test\/connectors\/shopify\/\n/)
+    const code = text.split('\n').filter(l => !l.trim().startsWith('#')).join('\n')
+    expect(code).not.toMatch(/continue-on-error|record\.live|upstreams\/shopify|seed/i)
+    // A secret's value appears once each, on the test step; the gate step sees only `!= ''`.
+    for (const name of ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET']) {
+      expect(connectors.match(new RegExp(`\\$\\{\\{ secrets\\.${name} \\}\\}`, 'g'))).toHaveLength(1)
+      expect(connectors.match(new RegExp(`secrets\\.${name}`, 'g'))).toHaveLength(2)
+    }
   })
   it('runs probes.sh, and no eval step', () => {
     expect(wf()).toMatch(/\n        run: sh app\/scripts\/nightly\/probes\.sh\n/)
