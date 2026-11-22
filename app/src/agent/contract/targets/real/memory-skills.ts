@@ -9,6 +9,7 @@
 // (`injectError`). The skills list is route 79, read by `agent.skills`; `GET /api/skills`'s own checks are the API spec's.
 import { MemoryIdSchema } from '../../../../../shared/contract/memory'
 import { WaitingMemoryListSchema } from '../../../../../shared/contract/memory-approvals'
+import { TeamRequestsListSchema } from '../../../../../shared/contract/team-requests'
 import type { ResourceKey } from '../../../types'
 import type { Signer } from './me'
 import { persistDir } from './watch'
@@ -31,7 +32,8 @@ const enc = (v: unknown): string => encodeURIComponent(String(v))
 
 /**
  * The route a served P6a write sends to (its verbs and exact path), from the call's arguments; null for any other method. A
- * tool request taken back (`on` false) goes to route 83 on an id the call doesn't carry, so it has no fixed path here.
+ * tool request taken back (`on` false) goes to route 83 on a request id the call doesn't carry (the client looks it up), so it
+ * has NO forced-failure route: an armed refusal for it never fires, and no shared case arms one for it.
  */
 export function memorySkillsRoute(method: string, args: unknown[]): { verbs: string[]; path: string } | null {
   switch (method) {
@@ -57,6 +59,12 @@ export async function resetWaitingMemory(s: Signer): Promise<void> {
   for (const f of await waitingList(s)) need(`reject waiting fact ${f.key}`, await s.api('admin', 'PUT', `/api/memory/brand/${enc(f.key)}/approved`, { approved: false, ifRev: f.rev }))
 }
 
+/** Takes back every open request the Admin made (route 83), so a request case starts with none of its own open (a tool request left open would fail the next run). */
+export async function resetOpenRequests(s: Signer): Promise<void> {
+  const open = TeamRequestsListSchema.parse(need('read the open requests', await s.api('admin', 'GET', '/api/team-requests?status=open')))
+  for (const r of open.items.filter(x => x.mine)) need(`withdraw request ${r.id}`, await s.api('admin', 'PUT', `/api/team-requests/${enc(r.id)}/withdrawn`, { ifRev: r.rev }))
+}
+
 /** The slice of node:sqlite the seeding uses (this program has no Node types; the module is loaded by name at run time). */
 interface Sqlite { DatabaseSync: new (file: string) => { prepare(sql: string): { get(...p: unknown[]): unknown; run(...p: unknown[]): unknown }; close(): void } }
 interface Fs { readdirSync(dir: string, o: { recursive: true; withFileTypes: true }): { isFile(): boolean; name: string; parentPath: string }[] }
@@ -67,7 +75,8 @@ const newKey = (): string => MemoryIdSchema.parse(`mem_${btoa(String.fromCharCod
 
 /**
  * Puts team facts waiting into the test build's local D1, oldest first, as an agent's saves would leave them (no route makes
- * one). Any fact already waiting is rejected first. Returns the keys in the order given. Fails loud when no local D1 with a
+ * one). Any fact already waiting is rejected first, and any team fact left from an earlier run with these exact words is
+ * deleted (the case approves some, so a re-run would find them active), all in one transaction: a failed insert leaves nothing. Returns the keys in the order given. Fails loud when no local D1 with a
  * `memories` table is found (CONTRACT_PERSIST_DIR names the test build's --persist-to directory).
  */
 export async function seedWaitingMemory(s: Signer, createdBy: string, texts: string[], o: { dir?: string; now?: number } = {}): Promise<string[]> {
@@ -82,11 +91,20 @@ export async function seedWaitingMemory(s: Signer, createdBy: string, texts: str
     try {
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get() === undefined) continue
       db.prepare('PRAGMA busy_timeout = 10000').run()
-      return texts.map((text, i) => {
-        const key = newKey()
-        db.prepare("INSERT INTO memories (id, scope, owner_id, text, status, created_by, created_at_ms, updated_at_ms) VALUES (?, 'brand', NULL, ?, 'waiting', ?, ?, ?)").run(key, text, createdBy, start + i, start + i)
-        return key
-      })
+      db.prepare('BEGIN IMMEDIATE').run()
+      try {
+        for (const text of texts) db.prepare("DELETE FROM memories WHERE scope = 'brand' AND text = ?").run(text)
+        const keys = texts.map((text, i) => {
+          const key = newKey()
+          db.prepare("INSERT INTO memories (id, scope, owner_id, text, status, created_by, created_at_ms, updated_at_ms) VALUES (?, 'brand', NULL, ?, 'waiting', ?, ?, ?)").run(key, text, createdBy, start + i, start + i)
+          return key
+        })
+        db.prepare('COMMIT').run()
+        return keys
+      } catch (e) {
+        db.prepare('ROLLBACK').run()
+        throw e
+      }
     } finally {
       db.close()
     }
