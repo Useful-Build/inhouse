@@ -143,8 +143,10 @@ async function checkMode(db: D1Database, r: TableRule): Promise<void> {
     if (r.mode !== 'append_only') throw new BackupError('mode_rule', `${r.name}: ${r.mode} needs a createdColumn`)
     return
   }
-  const columns = (await db.prepare(`PRAGMA table_info(${ident(r.name)})`).all<{ name: string }>()).results.map(c => c.name)
-  if (!columns.includes(r.createdColumn)) throw new BackupError('mode_rule', `${r.name}: createdColumn ${r.createdColumn} is not a column`)
+  const column = (await db.prepare(`PRAGMA table_info(${ident(r.name)})`).all<{ name: string; notnull: number; pk: number }>()).results.find(c => c.name === r.createdColumn)
+  if (!column) throw new BackupError('mode_rule', `${r.name}: createdColumn ${r.createdColumn} is not a column`)
+  // A NULL creation time fails `<= point`, so the bounded read would drop the row silently (B2, #336 round 2).
+  if (column.notnull !== 1 && column.pk === 0) throw new BackupError('mode_rule', `${r.name}: createdColumn ${r.createdColumn} may be NULL`)
 }
 
 /**

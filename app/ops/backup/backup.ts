@@ -12,6 +12,7 @@ import { BackupError } from './errors.ts'
 import { SNAPSHOT_MAX_ROWS, TableWriter, appendRows, encodeRow, keyRows, maxIdSelect, pointSelect, snapshotSelect, tableColumns } from './format.ts'
 import { BackupManifestSchema } from './manifest.ts'
 import type { BackupManifest, TableManifest } from './manifest.ts'
+import { KeySet } from './key-set.ts'
 import { canonicalTables, ident } from './tables.ts'
 import type { TableRule } from './tables.ts'
 
@@ -67,8 +68,10 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
   // C1: the closure check. Tables come in restore order (each after its foreign keys' parents), so every parent's
   // backed-up keys are known before its children are read; a child whose parent isn't in the backup fails it by name
   // (a clock-skewed row created after the point batch with a time inside the bound), before any manifest is written.
-  const keys = new Map<string, Set<string>>()
-  for (const fk of fks.values()) for (const f of fk) keys.set(`${f.table}.${f.to}`, new Set())
+  // Each referenced parent column's backed-up keys, 8 bytes a key (key-set.ts), so a parent that grows without bound
+  // (usage_turns, about 365,000 ids a year) stays well inside the isolate's 128 MB.
+  const keys = new Map<string, KeySet>()
+  for (const fk of fks.values()) for (const f of fk) keys.set(`${f.table}.${f.to}`, new KeySet())
   for (const r of rules) {
     const tableFks = fks.get(r.name) ?? []
     const add = async (row: Record<string, unknown>) => {

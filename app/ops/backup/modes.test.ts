@@ -171,6 +171,8 @@ describe('misuse (failure 5)', () => {
     expect(await codeOf(canonicalTables(e.DB, undefined, swap('tool_calls', r => ({ ...r, createdColumn: undefined }))))).toEqual(['mode_rule', 'backup: mode_rule (tool_calls: insert_only needs a createdColumn)'])
     expect(await codeOf(canonicalTables(e.DB, undefined, swap('members', r => ({ ...r, createdColumn: 'created_at_ms' }))))).toEqual(['mode_rule', 'backup: mode_rule (members: createdColumn is not for snapshot)'])
     expect(await codeOf(canonicalTables(e.DB, undefined, swap('chats', r => ({ ...r, createdColumn: undefined }))))).toEqual(['mode_rule', 'backup: mode_rule (chats: paged needs a createdColumn)'])
+    // B2 (#336 round 2): a creation column that may be NULL would drop its NULL rows from the bounded read silently.
+    expect(await codeOf(canonicalTables(e.DB, undefined, swap('chats', r => ({ ...r, createdColumn: 'deleted_at_ms' }))))).toEqual(['mode_rule', 'backup: mode_rule (chats: createdColumn deleted_at_ms may be NULL)'])
     expect(await codeOf(canonicalTables(e.DB, undefined, swap('tool_calls', r => ({ ...r, createdColumn: 'nope' }))))).toEqual(['mode_rule', 'backup: mode_rule (tool_calls: createdColumn nope is not a column)'])
   })
 })
