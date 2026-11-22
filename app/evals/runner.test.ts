@@ -69,14 +69,16 @@ describe('the fixture target replays S5', () => {
     expect(out.rows).toHaveLength(138)
     expect(out.notRun.map((n) => n.id).sort()).toEqual(['X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
     const report = buildReport(CASES, out.rows, META)
-    expect(report.summary.all).toMatchObject({ runs: 129, pass: 125 })
+    // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
+    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served.
+    expect(report.summary.all).toMatchObject({ runs: 129, pass: 119 })
   })
 })
 
 describe('needs and people keys', () => {
   it('a product-target run over C01-C05 reports them as not run, with no network call', async () => {
     let calls = 0
-    const target = createProductTarget({ paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }, fetch: (() => { calls++; throw new Error('network') }) as unknown as typeof fetch })
+    const target = createProductTarget({ paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_RUN: '7-1', INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }, fetch: (() => { calls++; throw new Error('network') }) as unknown as typeof fetch })
     const out = await runEvals({ target, cases: CASES.filter((c) => /^C0[1-5]$/.test(c.id)), reps: 3, concurrency: 1 })
     expect(out.rows).toEqual([])
     expect(out.notRun.map((n) => n.id)).toEqual(['C01', 'C02', 'C03', 'C04', 'C05'])
@@ -94,7 +96,7 @@ describe('needs and people keys', () => {
 })
 
 describe('the product target refuses without --paid, a budget and the eval brand', () => {
-  const ok = { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }
+  const ok = { INHOUSE_EVAL_RUN: '7-1', INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }
   it.each([
     ['no --paid', { paid: false, budgetUsd: 2, env: ok }],
     ['no budget', { paid: true, env: ok }],
@@ -335,5 +337,30 @@ describe('a harness failure stops the run with a report', () => {
     expect(d.startsWith('stop turn t_x: 403 ')).toBe(true)
     expect(d).not.toMatch(/inhouse-sbx-eval-brand\.example\.test\/cdn-cgi|<html>|Ray ID|\n/)
     expect(d.length).toBeLessThanOrEqual(200)
+  })
+})
+
+// The first full baseline: T09 and T11 ran against tools the product serves only as stubs. A case whose expected tool the
+// target lists as unbuilt is not run, like a case whose `needs` the target doesn't provide.
+describe('unbuilt tools and the cause of a failed run', () => {
+  // #282 review M1: a case expecting a tool the product serves only as a stub still runs: picking the stub proves the
+  // tool choice, and it grades on tool, args and notCalled as any other.
+  it('a case expecting a stub tool still runs and grades on tool, args and notCalled', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    const call = (input: Record<string, unknown>) => async () => ({ toolCalls: [{ name: 'mcp__inhouse__notification_send', input, result: 'notification_send isn\'t available yet', isError: true }], answer: 'I couldn\'t tell Tom yet.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.02 })
+    for (const [input, args] of [[{ to: { members: [S5_PEOPLE.tom] } }, true], [{ recipient: 'Tom' }, false]] as const) {
+      t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: call(input) } }
+      const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'T09')!], reps: 1, concurrency: 1 })
+      expect(out.notRun).toEqual([])
+      expect(out.rows[0]!.checks, JSON.stringify(input)).toEqual({ tool: true, args, forbidden: true })
+    }
+  })
+  it('a chat that ran but ended without an answer gets its cause and turn id on the row', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: '', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure: 'runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
+    expect(out.rows[0]).toMatchObject({ runOk: false, err: 'the turn ended without an answer: runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
   })
 })

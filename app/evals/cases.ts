@@ -19,6 +19,10 @@ const distractors: SeedFact[] = [
   { fact: 'Tom wants reorder alerts in Slack, never by email.', scope: 'person', person: 'tom' },
 ]
 
+// T11's days as P4's routine_create takes them (line B, fleet/watch server/routines/schedule.ts DaysSchema): "weekdays", or
+// exactly Monday to Friday as day codes, in any order.
+const WEEKDAYS = /^(?:weekdays|\[(?=[^\]]*"mon")(?=[^\]]*"tue")(?=[^\]]*"wed")(?=[^\]]*"thu")(?=[^\]]*"fri")(?![^\]]*"sat")(?![^\]]*"sun")"[a-z]{3}"(?:,"[a-z]{3}"){4}\])$/
+
 const S5_CASES: Case[] = [
   // ---------- recall: seeded fact, fresh chat ----------
   { id: "R01", cat: "recall", seed: [norda, ...distractors], chats: [{ prompt: "How long does Norda take to deliver, and what's their minimum order?", expect: { tool: "memory_search", args: { query: /norda|ceramic/i }, answer: [/6 weeks|six weeks/i, /120/] } }] },
@@ -46,15 +50,15 @@ const S5_CASES: Case[] = [
   { id: "T01", cat: "choice", pair: "memory_save/brand", chats: [{ prompt: "Remember that our packaging supplier is Kraftwerk Boxes and they ship from Poland.", expect: { tool: "memory_save", args: { scope: "brand", fact: /kraftwerk/i }, notCalled: ["notification_send", "team_request_create"] } }] },
   { id: "T02", cat: "choice", pair: "memory_save/person", chats: [{ prompt: "I prefer my replies in German from now on.", expect: { tool: "memory_save", args: { scope: "person", fact: /german|deutsch/i } } }] },
   { id: "T03", cat: "choice", pair: "memory_update/save", seed: [norda], chats: [{ prompt: "Norda's minimum order is 150 now, not 120.", expect: { tool: "memory_update", args: { memory_id: "m_norda", fact: /150/ }, notCalled: ["memory_save"] } }] },
-  { id: "T04", cat: "choice", pair: "memory_forget/routine_delete", seed: [{ memoryId: "m_moss", fact: "The Moss glaze mug is our bestseller.", scope: "brand" }], chats: [{ prompt: "Forget what we have saved about the Moss glaze, it's wrong.", expect: { tool: "memory_forget", args: { memory_id: "m_moss" }, notCalled: ["routine_delete", "approval_withdraw"] } }] },
+  { id: "T04", cat: "choice", pair: "memory_forget/routine_delete", seed: [{ memoryId: "m_moss", fact: "The Moss glaze mug is our bestseller.", scope: "person", person: "current" }], chats: [{ prompt: "Forget what we have saved about the Moss glaze, it's wrong.", expect: { tool: "memory_forget", args: { memory_id: "m_moss" }, notCalled: ["routine_delete", "approval_withdraw"] } }] },
   { id: "T05", cat: "choice", pair: "memory_list/search", seed: [norda, returns, ...distractors], chats: [{ prompt: "Show me everything you have saved. I want to tidy it up.", expect: { tool: "memory_list", notCalled: ["history_search"] } }] },
   { id: "T06", cat: "choice", pair: "history_search/memory_search", seed: [returns], chats: [{ prompt: "What did we decide about returns in our chat last month?", expect: { tool: "history_search", args: { query: /return/i } } }] },
   // ---------- tool choice: approvals, questions, notifications, routines, team ----------
   { id: "T07", cat: "choice", pair: "approval_request/notification_send", chats: [{ prompt: "Refund 24.90 euro to Anna Weber for order 1042.", expect: { tool: "approval_request", args: { action: /1042|refund|24/i }, notCalled: ["notification_send"] } }] },
   { id: "T08", cat: "choice", pair: "approval_request/notification_send", chats: [{ prompt: "Email the customer Anna Weber that her parcel is delayed by two days.", expect: { tool: "approval_request", notCalled: ["notification_send"] } }] },
-  { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Tom the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { person: "tom" } }, notCalled: ["approval_request"] } }] },
+  { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Tom the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { members: { person: "tom" } } }, notCalled: ["approval_request"] } }] },
   { id: "T10", cat: "choice", pair: "question_ask/AskUserQuestion", chats: [{ prompt: "I can't decide between Norda and a cheaper supplier for the mug reorder. Ask me which to go with, give me options.", expect: { tool: "question_ask", notCalled: ["approval_request", "AskUserQuestion"] } }] },
-  { id: "T11", cat: "choice", pair: "routine_create/notification_send", chats: [{ prompt: "Every weekday at 06:00 check stock and tell me which items are low.", expect: { tool: "routine_create", args: { schedule: /06:00|6:00|6 ?am/i }, notCalled: ["notification_send"] } }] },
+  { id: "T11", cat: "choice", pair: "routine_create/notification_send", chats: [{ prompt: "Every weekday at 06:00 check stock and tell me which items are low.", expect: { tool: "routine_create", args: { days: WEEKDAYS, time: "06:00" }, notCalled: ["notification_send"] } }] },
   { id: "T12", cat: "choice", needs: ["routines"], pair: "routine_update/delete", chats: [{ prompt: "Pause the Monday stock report routine for now.", expect: { tool: "routine_update", args: { routine_id: "r_mon_stock" }, notCalled: ["routine_delete"] } }] },
   { id: "T13", cat: "choice", needs: ["routines"], pair: "routine_delete/memory_forget", chats: [{ prompt: "Delete the daily orders summary routine, we don't need it.", expect: { tool: "routine_delete", args: { routine_id: "r_daily_orders" }, notCalled: ["memory_forget"] } }] },
   { id: "T14", cat: "choice", pair: "team_request_create/notification_send", chats: [{ prompt: "Can we get TikTok Shop connected? We can't see its orders yet.", expect: { tool: "team_request_create", args: { title: /tiktok/i }, notCalled: ["notification_send"] } }] },
@@ -81,6 +85,9 @@ const S5_CASES: Case[] = [
 export const S5_LEGACY_EXPECT: Record<string, Expect[]> = {
   R10: [{ tool: 'memory_search', answerNot: [/pdf/i] }],
   T02: [{ tool: 'memory_save', args: { scope: 'person', fact: /german/i } }],
+  // S5 ran against its own mock tools (to: [ids], schedule: "weekdays 06:00"); the cases now follow P4/P5's real schemas.
+  T09: [{ tool: 'notification_send', args: { to: { person: 'tom' } }, notCalled: ['approval_request'] }],
+  T11: [{ tool: 'routine_create', args: { schedule: /06:00|6:00|6 ?am/i }, notCalled: ['notification_send'] }],
 }
 
 const LISTED = ['docs.example.com']
