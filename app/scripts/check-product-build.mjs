@@ -33,6 +33,12 @@
 //      build only (vite.config.ts). Its canary (EVAL_CANARY) and that module are in neither the deployable Worker nor the
 //      test build's (built from PR code on every PR); the eval build must carry both, or the scan proves nothing; and the
 //      eval build carries no scripted model (it runs the real model).
+//   8. The test-fakes hook (P5 W5, route 76): `@test-fakes` resolves to server/ops/test-fakes.ts in the test build only
+//      (vite.config.ts), not in the eval build, which is deployed. That module (which calls notification_send as a named
+//      member and the hub's ReadGateway with a run scope), its canary (TEST_FAKES_CANARY) and that run scope's
+//      synthetic principal (`m_test_fakes`) are in neither the deployable Worker nor the eval build, source maps
+//      included; the test build must carry all three as soon as any server source imports
+//      `@test-fakes`, or the scan proves nothing. (Part 8, not 7: fleet/watch's #291 holds part 7, the test shop.)
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -293,5 +299,42 @@ if (inEval.scripted.length) {
   bad = true
   console.error(`FAIL  eval trace: the eval build carries the scripted model (${relative(root, evalWorker)}):\n${show(inEval.scripted)}`)
 } else console.log('ok    eval trace: no scripted model in the eval build.')
+
+// ---------- 8. the test-fakes hook ----------
+/** app/server/ops/test-fakes.ts's TEST_FAKES_CANARY (check-product-build.test.mjs keeps the two equal). */
+const TEST_FAKES_CANARY = 'inhouse-test-fakes-canary-6b2f90d4'
+/** The synthetic principal the hook's `hub` op calls the ReadGateway as (test-fakes.ts): a run scope only it builds. */
+const TEST_FAKES_PRINCIPAL = 'm_test_fakes'
+/** The real module only: the off stand-in (test-fakes-off.ts) is what every other build bundles. */
+const TEST_FAKES_MODULE = /(^|\/)server\/ops\/test-fakes\.ts($|\?)/
+/** The hook's canary and synthetic principal in a Worker's files (its source maps included), and its module in the graph. */
+function testFakesScan(dir) {
+  const hits = []
+  for (const f of walk(dir).filter(f => TEXT.test(f))) {
+    const text = readFileSync(f, 'utf8')
+    for (const needle of [TEST_FAKES_CANARY, TEST_FAKES_PRINCIPAL]) if (text.includes(needle)) hits.push(`"${needle}" in ${relative(root, f)}`)
+  }
+  for (const id of JSON.parse(readFileSync(join(dir, '..', 'server-modules.json'), 'utf8'))) if (TEST_FAKES_MODULE.test(id)) hits.push(`module ${id}`)
+  return hits
+}
+for (const [label, dir] of [['the deployable Worker', productWorker], ['the eval build', evalWorker]]) {
+  const hits = testFakesScan(dir)
+  if (hits.length) {
+    bad = true
+    console.error(`FAIL  test fakes: ${label} (${relative(root, dir)}) has the test-fakes hook:\n${show(hits)}`)
+  } else console.log(`ok    test fakes: not in ${label} (${relative(root, dir)}).`)
+}
+if (serverImports('@test-fakes')) {
+  const hits = testFakesScan(testWorker)
+  const missing = [
+    ...(hits.some(h => h.includes(TEST_FAKES_CANARY)) ? [] : [`no "${TEST_FAKES_CANARY}"`]),
+    ...(hits.some(h => h.includes(`"${TEST_FAKES_PRINCIPAL}"`)) ? [] : [`no "${TEST_FAKES_PRINCIPAL}"`]),
+    ...(hits.some(h => h.startsWith('module ')) ? [] : ['no server/ops/test-fakes.ts module']),
+  ]
+  if (missing.length) {
+    bad = true
+    console.error(`FAIL  test fakes: the server imports @test-fakes but the test build (${relative(root, testWorker)}) has ${missing.join(' and ')}, so the scan proves nothing.`)
+  } else console.log('ok    test fakes: caught the test build.')
+} else console.log('note  test fakes: no server source imports @test-fakes, so the test build need not carry it.')
 
 process.exit(bad ? 1 : 0)

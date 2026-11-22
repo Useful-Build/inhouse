@@ -23,6 +23,7 @@ import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
 import { drainState, startDrain, undrain } from './ops/drain.ts'
 import { alarmNow } from './ops/alarm-now.ts'
+import { testFakes } from './ops/fakes-hook.ts'
 import { warmup } from './ops/warmup.ts'
 import { reviveTask } from './ops/revive.ts'
 // P4 W4: Activity and the bell (rows 59 to 61).
@@ -180,6 +181,8 @@ export const routes: readonly Route[] = [
   /* 73 */ { method: 'GET', pattern: '/api/notify/channels', handler: listNotifyChannels },
   /* 74 */ { method: 'GET', pattern: '/api/notify/channels/available', handler: availableNotifyChannels },
   /* 75 */ { method: 'PUT', pattern: '/api/notify/channels', handler: putNotifyChannels },
+  // P5 W5: the test build's test-fakes hook (404 elsewhere), for the connector API specs.
+  /* 76 */ { method: 'POST', pattern: '/api/ops/test-fakes', handler: testFakes },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

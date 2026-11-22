@@ -8,6 +8,7 @@ import type { AccountSummary, CallerScope, ConnectGateway as ConnectApi, HubResu
 import { err } from '../index/errors'
 import { log } from '../index/log'
 import { isConfigured, loadRegistry, signInFor } from '../signin/signin'
+import { refuseTestFakes } from './test-gate'
 import * as G from './gateway'
 
 async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
@@ -17,6 +18,21 @@ async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>
     log('hub_internal', { code: 'internal' })
     return err('internal')
   }
+}
+
+/**
+ * `guarded`, and in the hub's TEST bundle only, each answer's JSON also kept in a bounded in-isolate list the test-fakes
+ * hook reads (hub/testing/fakes.ts, `state.connect.bodies`, for W5's strict-parse check). The deployable bundle drops
+ * the branch (the define is "false").
+ */
+async function answered<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
+  const r = await guarded(fn)
+  if (__INHOUSE_HUB_TEST__) {
+    const bodies = ((globalThis as { __inhouseHubTestConnectBodies?: string[] }).__inhouseHubTestConnectBodies ??= [])
+    bodies.push(JSON.stringify(r))
+    if (bodies.length > 500) bodies.shift()
+  }
+  return r
 }
 
 async function deps(env: Env): Promise<G.ConnectDeps> {
@@ -30,21 +46,38 @@ async function deps(env: Env): Promise<G.ConnectDeps> {
 
 export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi {
   async startConnect(scope: CallerScope, req: { accountId: string; memberId: string }): Promise<HubResult<{ authorizeUrl: string; expiresAt: Instant }>> {
-    return guarded(async () => G.startConnect(await deps(this.env), scope, req))
+    return answered(async () => G.startConnect(await deps(this.env), scope, req))
   }
   async completeConnect(scope: CallerScope, req: { state: string; code: string; memberId: string }): Promise<HubResult<{ accountId: string }>> {
-    return guarded(async () => G.completeConnect(await deps(this.env), scope, req))
+    return answered(async () => G.completeConnect(await deps(this.env), scope, req))
   }
   async failConnect(scope: CallerScope, req: { state: string; memberId: string; error: string }): Promise<HubResult<{ accountId: string | null }>> {
-    return guarded(async () => G.failConnect(await deps(this.env), scope, req))
+    return answered(async () => G.failConnect(await deps(this.env), scope, req))
   }
   async disconnect(scope: CallerScope, accountId: string): Promise<HubResult<{ revoked: boolean }>> {
-    return guarded(async () => G.disconnect(await deps(this.env), scope, accountId))
+    return answered(async () => G.disconnect(await deps(this.env), scope, accountId))
   }
   async setPaused(scope: CallerScope, accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>> {
-    return guarded(async () => G.setPaused(await deps(this.env), scope, accountId, paused))
+    return answered(async () => G.setPaused(await deps(this.env), scope, accountId, paused))
   }
   async listAccounts(scope: CallerScope): Promise<HubResult<AccountSummary[]>> {
-    return guarded(async () => G.listAccounts(await deps(this.env), scope))
+    return answered(async () => G.listAccounts(await deps(this.env), scope))
+  }
+  /**
+   * TEST BUILD ONLY (contract.ts `testFakes`): refused with `not_configured` outside the test bundle whatever the scope,
+   * and with `invalid_args` for any scope but `server` inside it (test-gate.ts). The import sits inside the guard written
+   * out in full, so the deployable bundle (define "false") never bundles the hook.
+   */
+  async testFakes(scope: CallerScope, op: unknown): Promise<HubResult<unknown>> {
+    return guarded(async () => {
+      const testBuild = __INHOUSE_HUB_TEST__ && (this.env as Env & { INHOUSE_TEST_BUILD?: string }).INHOUSE_TEST_BUILD === '1'
+      const refused = refuseTestFakes(testBuild, scope)
+      if (refused) return refused
+      if (__INHOUSE_HUB_TEST__ && (this.env as Env & { INHOUSE_TEST_BUILD?: string }).INHOUSE_TEST_BUILD === '1') {
+        const { runHubFakesOp } = await import('../testing/fakes')
+        return runHubFakesOp(this.env, op)
+      }
+      return err('not_configured', 'testFakes')
+    })
   }
 }

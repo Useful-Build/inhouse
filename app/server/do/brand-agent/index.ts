@@ -23,6 +23,7 @@ import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
 import { runAlarmNow } from '@test-controls'
+import { runTestFakes } from '@test-fakes'
 import { createRunTokens } from './tokens.ts'
 import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
 import type { HubSocket, SocketPrincipal } from './sockets.ts'
@@ -90,6 +91,17 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
    */
   async testRunAlarm(): Promise<{ ran: true }> {
     return runAlarmNow(() => this.sched.alarm())
+  }
+
+  /**
+   * The test build's test-fakes hook (route 76, server/ops/fakes-hook.ts): one op of server/ops/test-fakes.ts with this
+   * object's env (DB and the three hub bindings). Outside the test build `@test-fakes` is the off module, which throws;
+   * route 76 answers 404 there first.
+   */
+  async testFakes(body: unknown): Promise<{ status: number; json: string }> {
+    const answer = await runTestFakes(body, this.env)
+    // The body as JSON text: it crosses the RPC boundary as data only.
+    return { status: answer.status, json: JSON.stringify(answer.body) }
   }
 
   /**

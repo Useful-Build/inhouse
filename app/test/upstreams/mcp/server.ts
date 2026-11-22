@@ -222,6 +222,11 @@ export class FakeMcpServer {
     for (const s of this.sessions.values()) s.stale = true
   }
 
+  /** Counts `tools/list` from zero again, so `exportAfterLists` is measured from now (the test-fakes hook's reset). */
+  restartLists(): void {
+    this.#lists = 0
+  }
+
   /** Every live access token issued to `user`. */
   liveTokens(user: string = SLACK_TEST.user): string[] {
     return [...this.tokens].filter(([, t]) => t.user === user && !t.revoked).map(([k]) => k)

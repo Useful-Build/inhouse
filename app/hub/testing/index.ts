@@ -27,17 +27,32 @@ export const testUpstreams = new Map<string, TestUpstream>()
 
 // The recorded Shopify store (P4 W1): the read fixture as recorded (recordings/fixture/), for the test config's
 // SHOPIFY_SHOP. Unit tests that need the planted edge cases use the hand dataset directly.
-testUpstreams.set('example-fixture.myshopify.com', createShopifyUpstream(shopifyFixtureDataset))
+// Its requests (path and method only) and the access tokens it issues are kept for the test-fakes hook's `state`
+// (./fakes.ts); the token is read from the upstream's own answer, so the fake itself is unchanged.
+export const shopifyRequests: { path: string; method: string }[] = []
+export const shopifyIssuedTokens: string[] = []
+const shopifyFixture = createShopifyUpstream(shopifyFixtureDataset)
+testUpstreams.set('example-fixture.myshopify.com', async req => {
+  const path = new URL(req.url).pathname
+  shopifyRequests.push({ path, method: req.method })
+  const res = await shopifyFixture(req)
+  if (path === '/admin/oauth/access_token' && res.ok) {
+    const token = ((await res.clone().json()) as { access_token?: unknown }).access_token
+    if (typeof token === 'string') shopifyIssuedTokens.push(token)
+  }
+  return res
+})
 
 // The fake OAuth MCP servers (P5 W1): Slack's profile and the generic `notes` server. slack.com answers only the OAuth
 // paths; W4's Web API paths join it with their fake.
-const slackMcp = createMcpUpstream('slack')
-const notesMcp = createMcpUpstream('notes')
+// Exported for the test-fakes hook (./fakes.ts, W5): it reads their logs and flips their switches in this isolate.
+export const slackMcp = createMcpUpstream('slack')
+export const notesMcp = createMcpUpstream('notes')
 testUpstreams.set('mcp.slack.com', slackMcp.fetch)
 testUpstreams.set('notes.example.com', notesMcp.fetch)
 testUpstreams.set('auth.notes.example.com', notesMcp.fetch)
 // slack.com by path: W1's OAuth paths, then W4's fake Web API (P5 W4).
-const slackWeb = createSlackWebUpstream()
+export const slackWeb = createSlackWebUpstream()
 testUpstreams.set('slack.com', req => {
   const path = new URL(req.url).pathname
   if ((SLACK_OAUTH_PATHS as readonly string[]).includes(path)) return slackMcp.fetch(req)

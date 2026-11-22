@@ -232,6 +232,9 @@ export default defineConfig(({ mode }) => {
         // P4's test-build controls (server/ops/test-controls.ts, route 67) the same way: every other build gets
         // server/ops/test-controls-off.ts (check-product-build.mjs proves it).
         '@test-controls': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/ops/test-controls.ts' : './server/ops/test-controls-off.ts', import.meta.url)),
+        // P5 W5's test-fakes hook (server/ops/test-fakes.ts, route 76) in the test build only: every other build, the eval
+        // build included, gets server/ops/test-fakes-off.ts (check-product-build.mjs part 8 proves it).
+        '@test-fakes': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/ops/test-fakes.ts' : './server/ops/test-fakes-off.ts', import.meta.url)),
         // The eval trace (p3-eval-observability rev 2, rec 5) only in the eval build; every other build, the test build
         // included, gets server/eval-trace/off.ts (check-product-build.mjs proves the module and its canary absent).
         '@eval-trace': fileURLToPath(new URL(mode === PRODUCT_EVAL ? './server/eval-trace/on.ts' : './server/eval-trace/off.ts', import.meta.url)),
