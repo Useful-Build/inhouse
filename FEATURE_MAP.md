@@ -1,8 +1,6 @@
-Status: approved by Wasim, 2026-11-19 (revised map, PR #20).
-
 # Inhouse feature map
 
-Format and workflow: global `verification` skill, `references/feature-map.md`. Each entry has a `Covered:` line naming its spec files, or `gap`. Seed every path with `?demo` at Stage Act and Scenario Normal unless it says otherwise (see [SKILL.md](SKILL.md)). Gaps are listed first.
+Every screen, flow, selector, expected behavior, and E2E spec coverage in one place. Read the relevant section before changing a screen, user flow, or spec, and update its `Expected:`, `Covered:`, or `Gaps` lines in the same PR for any user-facing change. Each entry uses four fields (`Path`, `Selector`, `Expected`, `Covered` or `gap`). Unless noted, demo paths start at `?demo` with Stage Act and Scenario Normal (see [VERIFY.md](VERIFY.md)). Gaps are listed first.
 
 ## Gaps
 

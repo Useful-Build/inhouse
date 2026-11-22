@@ -8,16 +8,14 @@ The pieces live in the repo, so you can check each claim against the files and t
 
 ## What the agents read first
 
-- **[AGENTS.md](../AGENTS.md)** is the rules file every agent loads: layout, commands, what "done" means, which paths
-  are sensitive and how changes land.
-- **The verify skill** ([.agents/skills/verify/SKILL.md](../.agents/skills/verify/SKILL.md)) says how to boot, seed,
-  drive and test the app: ports, demo switches, storage keys, every suite and how to run it.
-- **The feature map** ([feature-map.md](../.agents/skills/verify/feature-map.md)) lists what each screen does, as a
-  path, a selector and an expected result, with a `Covered:` line naming the specs that check it. Its Gaps section
-  says plainly what no spec checks. An agent changing a screen finds its entry, and a user-facing change updates it.
-- **Plans** in [docs/plans/](plans/) are approved before work starts. Each one has its decisions, a work plan split by
-  file ownership, an acceptance checklist and a must-not list. Plans get second opinions from two model families
-  (Claude Fable and GPT) before the owner approves them.
+The repo keeps 5 core markdown files in the root so any model or cloud runner loads what it needs without external skill plumbing:
+
+- **[AGENTS.md](../AGENTS.md)** is always loaded: layout, commands, workflow, and repo invariants.
+- **[REVIEW.md](../REVIEW.md)** holds the risk tiers, sensitive paths, severity rules, and fresh-context PR review workflow (always read from `main`).
+- **[VERIFY.md](../VERIFY.md)** says how to boot, seed, drive, test, and run targeted live QA on the app.
+- **[DESIGN.md](../DESIGN.md)** defines the design bar, `ui-base` ownership, hard token rules, dark mode, and UI copy voice.
+- **[FEATURE_MAP.md](../FEATURE_MAP.md)** lists what each screen does, as a path, selector, expected result, and `Covered:` specs, with a `Gaps` section at the top. An agent changing a screen reads its entry and updates it in the same PR.
+- **Plans** in [docs/plans/](plans/) are approved before big multi-phase work starts. Each one has decisions, ownership, and an acceptance checklist.
 
 ## The change loop
 
